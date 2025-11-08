@@ -2,12 +2,13 @@
   const STORAGE_KEY = "HFY_AUTH_ID_TOKEN";
   const GRAMPS_STORAGE_KEY = "HFY_AUTH_USER_GRAMPS_ID";
   const CONFIG = window.HFY_AUTH_CONFIG || {};
+  const DEFAULT_CLIENT_ID = "770284891867-3sfgo71osgn2ani7v4f6s6nj97m15r7e.apps.googleusercontent.com";
   const featureFlags = window.HFYFeatureFlags;
   const listeners = new Set();
   const LOGOUT_REDIRECT = CONFIG.logoutRedirect || "/logged-out/";
 
   const state = {
-    clientId: CONFIG.clientId || "",
+    clientId: CONFIG.clientId || DEFAULT_CLIENT_ID,
     idToken: null,
     profile: null,
     signedIn: false,
