@@ -1,4 +1,16 @@
 (() => {
+  window.addEventListener("error", (event) => {
+    const errorContainer = document.getElementById("person-error");
+    const loading = document.getElementById("person-loading");
+    if (errorContainer) {
+      errorContainer.textContent = event.error ? event.error.message : (event.message || "Unexpected error rendering profile.");
+      errorContainer.classList.remove("d-none");
+    }
+    if (loading) {
+      loading.classList.add("d-none");
+    }
+  });
+
   const config = window.HFY_PERSON_CONFIG || {};
   const state = {
     env: config.env || "dev",
@@ -6,6 +18,19 @@
     mediaBase: normalizeBase(config.mediaBase || "/media/"),
     lastDataUrl: null
   };
+  const loginRedirect = config.loginRedirect || "/family-login/";
+  const lightboxState = {
+    items: [],
+    modal: null,
+    currentIndex: 0,
+    listenersBound: false,
+    keyHandler: null,
+    lastTrigger: null,
+    elements: {}
+  };
+  let currentFamilyTreeMarkup = "";
+  const FAMILY_TREE_MODAL_ID = "familyTreeModal";
+  const FAMILY_TREE_MODAL_CONTENT_ID = "familyTreeModalContent";
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -20,26 +45,55 @@
     const params = new URLSearchParams(window.location.search);
     const personId = params.get("id");
 
-    if (!personId) {
-      showError("Missing required person id. Use ?id=<GRAMPS_ID> in the URL.", { loading, error });
+    (async () => {
+      if (!personId) {
+        showError("Missing required person id. Use ?id=<GRAMPS_ID> in the URL.", { loading, error });
+        return;
+      }
+
+      const authorized = await requireAuthenticated({ loading, error });
+      if (!authorized) {
+        return;
+      }
+
+      fetchPerson(personId)
+        .then((person) => {
+          try {
+            renderPerson(person, personId);
+            hideLoading(loading);
+            content.classList.remove("d-none");
+          } catch (err) {
+            console.error("[ERROR] Failed to render person profile:", err);
+            showError(err.message || "Unable to render person profile.", { loading, error });
+          }
+        })
+        .catch((err) => {
+          console.error("[ERROR] Failed to load person record:", err);
+          showError(err.message || "Unable to load person record.", { loading, error });
+        });
+    })();
+  });
+
+  document.addEventListener("click", (event) => {
+    const zoomTrigger = event.target.closest("[data-family-tree-zoom]");
+    if (!zoomTrigger) {
       return;
     }
-
-    fetchPerson(personId)
-      .then((person) => {
-        hideLoading(loading);
-        renderPerson(person, personId);
-        content.classList.remove("d-none");
-      })
-      .catch((err) => {
-        console.error("[ERROR] Failed to load person record:", err);
-        showError(err.message || "Unable to load person record.", { loading, error });
-      });
+    if (!currentFamilyTreeMarkup) {
+      return;
+    }
+    const modalContent = document.getElementById(FAMILY_TREE_MODAL_CONTENT_ID);
+    if (modalContent) {
+      modalContent.innerHTML = `<div class="family-tree-embed family-tree-embed--modal">${currentFamilyTreeMarkup}</div>`;
+    }
   });
 
   function hideLoading(loadingEl) {
     if (loadingEl) {
       loadingEl.classList.add("d-none");
+      loadingEl.setAttribute("aria-hidden", "true");
+      loadingEl.hidden = true;
+      loadingEl.style.display = "none";
     }
   }
 
@@ -63,6 +117,32 @@
     return response.json();
   }
 
+  async function requireAuthenticated() {
+    const featureFlags = await waitForFeatureFlags();
+    const auth = await waitForAuth();
+
+    const flagState = featureFlags && typeof featureFlags.getState === "function" ? featureFlags.getState() : {};
+    if (flagState.loggedIn && flagState.sessionToken) {
+      return true;
+    }
+
+    const token = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
+
+    if (featureFlags && typeof featureFlags.verifySession === "function" && token) {
+      try {
+        const result = await featureFlags.verifySession({ googleIdToken: token });
+        if (result && result.allowed) {
+          return true;
+        }
+      } catch (err) {
+        console.error("[HFY_PERSON] verifySession failed", err);
+      }
+    }
+
+    redirectToLogin();
+    return false;
+  }
+
   function renderPerson(person, personId) {
     if (!person) {
       throw new Error("No person data returned.");
@@ -70,11 +150,13 @@
 
     updateDocumentTitle(person);
     renderHero(person);
-    toggleSection("person-media-section", renderMediaGallery(person));
-    toggleSection("person-notes-section", renderNotes(person));
-    toggleSection("person-family-section", renderFamily(person));
+    const hasMedia = renderMediaGallery(person);
+    const hasFamilyList = renderFamily(person);
+    const hasFamilyVisualization = renderFamilyVisualization(person);
+    toggleSection("person-media-section", hasMedia);
+    toggleSection("person-family-section", hasFamilyList || hasFamilyVisualization);
     toggleSection("person-events-section", renderEvents(person));
-    renderDebug(person, personId);
+    // Debug section removed for production experience.
   }
 
   function updateDocumentTitle(person) {
@@ -94,26 +176,67 @@
     const photoUrl = resolveMediaPath(person.primaryPhoto);
     const placeholder = person.primaryPhoto && person.primaryPhoto.placeholderImage;
     const lifespan = buildLifespan(person);
+    const notesMarkup = buildNotesMarkup(person);
 
     container.innerHTML = `
-      <div class="row align-items-center">
-        <div class="col-md-4 text-center mb-4 mb-md-0">
+      <div class="row align-items-start gy-4">
+        <div class="col-lg-4 text-center mb-4 mb-lg-0">
           ${photoUrl ? renderPhotoTag(photoUrl, person.displayName, placeholder) : renderPhotoPlaceholder()}
         </div>
-        <div class="col-md-8">
-          <h1 class="display-4 mb-3">${escapeHtml(person.displayName || "Unknown Person")}</h1>
-          ${renderLivingBadge(person.isLiving)}
-          <div class="person-metadata">
-            ${lifespan.birth ? `<p class="mb-2"><strong>Born:</strong> ${lifespan.birth}</p>` : ""}
-            ${lifespan.death ? `<p class="mb-2"><strong>Died:</strong> ${lifespan.death}</p>` : ""}
-            ${person.gender ? `<p class="mb-2"><strong>Gender:</strong> ${escapeHtml(capitalize(person.gender))}</p>` : ""}
-            <p class="text-muted small mb-0">ID: ${escapeHtml(person.grampsId || "Unknown")}</p>
+        <div class="col-lg-8">
+          <div class="person-details">
+            <h1 class="display-4 mb-3">${escapeHtml(person.displayName || "Unknown Person")}</h1>
+            ${renderLivingBadge(person.isLiving)}
+            <div class="person-metadata">
+              ${lifespan.birth ? `<p class="mb-2"><strong>Born:</strong> ${lifespan.birth}</p>` : ""}
+              ${lifespan.death ? `<p class="mb-2"><strong>Died:</strong> ${lifespan.death}</p>` : ""}
+              ${person.gender ? `<p class="mb-2"><strong>Gender:</strong> ${escapeHtml(capitalize(person.gender))}</p>` : ""}
+              <p class="text-muted small mb-0">ID: ${escapeHtml(person.grampsId || "Unknown")}</p>
+            </div>
           </div>
+          ${notesMarkup}
         </div>
       </div>
     `;
 
     section.classList.remove("d-none");
+  }
+
+  function waitForFeatureFlags(timeoutMs = 6000) {
+    return waitForGlobal(() => window.HFYFeatureFlags, timeoutMs);
+  }
+
+  function waitForAuth(timeoutMs = 6000) {
+    return waitForGlobal(() => window.HFY_AUTH, timeoutMs);
+  }
+
+  function waitForGlobal(getter, timeoutMs) {
+    const existing = getter();
+    if (existing) {
+      return Promise.resolve(existing);
+    }
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const interval = setInterval(() => {
+        const value = getter();
+        if (value) {
+          clearInterval(interval);
+          resolve(value);
+        } else if (Date.now() - start >= timeoutMs) {
+          clearInterval(interval);
+          resolve(null);
+        }
+      }, 100);
+    });
+  }
+
+  function redirectToLogin() {
+    const next = window.location.pathname + window.location.search + window.location.hash;
+    const target = new URL(loginRedirect, window.location.origin);
+    if (next) {
+      target.searchParams.set("next", next);
+    }
+    window.location.replace(target.toString());
   }
 
   function renderPhotoTag(url, displayName, fallback) {
@@ -127,6 +250,35 @@
         style="max-width: 320px; width: 100%;"
         ${safeFallback ? `onerror="this.src='${safeFallback}'"` : ""}
       >
+    `;
+  }
+
+  function buildNotesMarkup(person) {
+    const notes = Array.isArray(person.notes) ? person.notes : [];
+    const heading = `<h2 class="h4 mb-3">Notes &amp; Biography</h2>`;
+
+    if (!notes.length) {
+      return `
+        <div class="notes-panel mt-4">
+          ${heading}
+          <p class="text-muted mb-0">No notes available.</p>
+        </div>
+      `;
+    }
+
+    const noteCards = notes.map((note) => {
+      if (note && note.html) {
+        return `<div class="card mb-3"><div class="card-body">${note.html}</div></div>`;
+      }
+      const raw = note && note.raw ? escapeHtml(note.raw) : "Note content unavailable.";
+      return `<div class="card mb-3"><div class="card-body"><p class="mb-0">${raw}</p></div></div>`;
+    }).join("");
+
+    return `
+      <div class="notes-panel mt-4">
+        ${heading}
+        ${noteCards}
+      </div>
     `;
   }
 
@@ -144,6 +296,16 @@
     }
     if (isLiving === false) {
       return `<span class="badge bg-secondary mb-3">Deceased</span>`;
+    }
+    return "";
+  }
+
+  function renderRelationBadge(isLiving) {
+    if (isLiving === true) {
+      return ` <span class="badge bg-success badge-sm">Living</span>`;
+    }
+    if (isLiving === false) {
+      return ` <span class="badge bg-secondary badge-sm">Deceased</span>`;
     }
     return "";
   }
@@ -175,24 +337,31 @@
       return false;
     }
 
-    const markup = items.map((media) => {
+    const markup = items.map((media, index) => {
       const url = resolveMediaPath(media);
       const placeholder = media && media.placeholderImage ? escapeHtml(media.placeholderImage) : "";
       const title = media && media.title ? escapeHtml(media.title) : "";
       const alt = title || "Media item";
+      const hasUrl = Boolean(url);
+      const triggerStart = hasUrl
+        ? `<button type="button" class="media-lightbox-trigger" data-media-index="${index}" aria-label="View ${alt} in lightbox">`
+        : `<div>`;
+      const triggerEnd = hasUrl ? `</button>` : `</div>`;
 
       return `
-        <div class="col-md-4 col-sm-6">
+        <div class="col-6 col-md-4 col-lg-2">
           <div class="card h-100">
             ${url ? `
-              <img
-                src="${url}"
-                class="card-img-top"
-                alt="${alt}"
-                ${placeholder ? `onerror="this.src='${placeholder}'"` : ""}
-              >
+              ${triggerStart}
+                <img
+                  src="${url}"
+                  class="card-img-top"
+                  alt="${alt}"
+                  ${placeholder ? `onerror="this.src='${placeholder}'"` : ""}
+                >
+              ${triggerEnd}
             ` : `
-              <div class="card-img-top bg-secondary d-flex align-items-center justify-content-center" style="height: 200px;">
+              <div class="card-img-top bg-secondary d-flex align-items-center justify-content-center" style="height: 170px;">
                 <span class="text-white small">Media missing</span>
               </div>
             `}
@@ -203,30 +372,7 @@
     }).join("");
 
     grid.innerHTML = markup;
-    return true;
-  }
-
-  function renderNotes(person) {
-    const container = document.getElementById("person-notes");
-    if (!container) {
-      return false;
-    }
-
-    const notes = Array.isArray(person.notes) ? person.notes : [];
-    if (!notes.length) {
-      container.innerHTML = `<p class="text-muted mb-0">No notes available.</p>`;
-      return false;
-    }
-
-    container.innerHTML = notes.map((note) => {
-      if (note && note.html) {
-        return `<div class="card mb-3"><div class="card-body">${note.html}</div></div>`;
-      }
-
-      const raw = note && note.raw ? escapeHtml(note.raw) : "Note content unavailable.";
-      return `<div class="card mb-3"><div class="card-body"><p class="mb-0">${raw}</p></div></div>`;
-    }).join("");
-
+    initializeLightbox(items);
     return true;
   }
 
@@ -240,126 +386,150 @@
     const parentFamilies = Array.isArray(tree.parentFamilies) ? tree.parentFamilies : [];
     const spouseFamilies = Array.isArray(tree.spouseFamilies) ? tree.spouseFamilies : [];
 
-    const sections = [];
+    const categories = {
+      parents: new Map(),
+      siblings: new Map(),
+      spouses: new Map(),
+      children: new Map()
+    };
 
-    if (parentFamilies.length) {
-      const markup = parentFamilies.map((family) => {
-        const father = renderRelativeLine("Father", family.father);
-        const mother = renderRelativeLine("Mother", family.mother);
-        const siblings = renderSiblingList(person, family.children);
-        const listItems = [father, mother, siblings].filter(Boolean).join("");
+    const personHandle = person.handle;
 
-        if (!listItems.length) {
+    const addRelative = (bucket, relative, label) => {
+      if (!relative || !relative.displayName) {
+        return;
+      }
+      if (relative.handle && relative.handle === personHandle) {
+        return;
+      }
+      const key = relative.handle || `${label || ""}:${relative.displayName}`;
+      if (!bucket.has(key)) {
+        bucket.set(key, { relative, label });
+      }
+    };
+
+    parentFamilies.forEach((family) => {
+      addRelative(categories.parents, family.father, "Father");
+      addRelative(categories.parents, family.mother, "Mother");
+      (Array.isArray(family.children) ? family.children : []).forEach((child) => {
+        addRelative(categories.siblings, child);
+      });
+    });
+
+    spouseFamilies.forEach((family) => {
+      const possibleParents = [family.father, family.mother];
+      possibleParents.forEach((relative) => {
+        if (!relative) return;
+        const label = "Spouse";
+        addRelative(categories.spouses, relative, label);
+      });
+      (Array.isArray(family.children) ? family.children : []).forEach((child) => {
+        addRelative(categories.children, child);
+      });
+    });
+
+    const orderedCategories = [
+      { key: "parents", heading: "Parents" },
+      { key: "siblings", heading: "Siblings" },
+      { key: "spouses", heading: "Spouses" },
+      { key: "children", heading: "Children" }
+    ];
+
+    const sections = orderedCategories
+      .map(({ key, heading }) => {
+        const entries = Array.from(categories[key].values());
+        if (!entries.length) {
           return "";
         }
-
+        const items = entries
+          .map(({ relative, label }) => renderFamilyRelative(relative, label))
+          .join("");
         return `
-          <div class="mb-4">
-            <ul class="list-unstyled ms-3">
-              ${listItems}
+          <li class="mb-3">
+            <strong class="d-block mb-2">${heading}</strong>
+            <ul class="list-unstyled mb-0 ms-3">
+              ${items}
             </ul>
-          </div>
+          </li>
         `;
-      }).filter(Boolean).join("");
+      })
+      .filter(Boolean);
 
-      if (markup.length) {
-        sections.push(`<h4>Parents</h4>${markup}`);
-      }
+    if (!sections.length) {
+      container.innerHTML = `<p class="text-muted mb-0">No family data available.</p>`;
+      return false;
     }
 
-    if (spouseFamilies.length) {
-      const markup = spouseFamilies.map((family) => {
-        const spouse = renderRelativeLine("Spouse", family.spouse || family.partner);
-        const childrenList = renderChildrenList(family.children);
-        const content = [];
-
-        if (spouse) {
-          content.push(spouse);
-        }
-
-        if (!spouse && !childrenList) {
-          content.push(`<p class="text-muted mb-2"><em>Spouse data not available.</em></p>`);
-        }
-
-        if (childrenList) {
-          content.push(childrenList);
-        }
-
-        if (!content.length) {
-          return "";
-        }
-
-        return `
-          <div class="mb-3">
-            ${content.join("")}
-          </div>
-        `;
-      }).filter(Boolean).join("");
-
-      if (markup.length) {
-        sections.push(`<h4 class="mt-4">Spouse &amp; Children</h4>${markup}`);
-      }
-    }
-
-    container.innerHTML = sections.length ? sections.join("") : `<p class="text-muted mb-0">No family data available.</p>`;
-    return sections.length > 0;
-  }
-
-  function renderRelativeLine(label, relative) {
-    if (!relative || !relative.displayName) {
-      return "";
-    }
-
-    const displayValue = escapeHtml(relative.displayName);
-    const link = relative.grampsId ? `<a href="/person/?id=${encodeURIComponent(relative.grampsId)}" class="link-primary text-decoration-none">${displayValue}</a>` : displayValue;
-    const badge = relative.isLiving ? ` <span class="badge bg-success badge-sm">Living</span>` : "";
-
-    return `<li><strong>${label}:</strong> ${link}${badge}</li>`;
-  }
-
-  function renderSiblingList(person, siblings) {
-    const items = (Array.isArray(siblings) ? siblings : []).filter((sibling) => sibling && sibling.handle !== person.handle && sibling.displayName);
-
-    if (!items.length) {
-      return "";
-    }
-
-    const markup = items.map((sibling) => {
-      const name = escapeHtml(sibling.displayName);
-      const badge = sibling.isLiving ? ` <span class="badge bg-success badge-sm">Living</span>` : "";
-      const link = sibling.grampsId ? `<a href="/person/?id=${encodeURIComponent(sibling.grampsId)}" class="link-primary text-decoration-none">${name}</a>` : name;
-      return `<li>${link}${badge}</li>`;
-    }).join("");
-
-    return `
-      <li class="mt-2">
-        <strong>Siblings:</strong>
-        <ul class="mb-0">
-          ${markup}
-        </ul>
-      </li>
-    `;
-  }
-
-  function renderChildrenList(children) {
-    const items = (Array.isArray(children) ? children : []).filter((child) => child && child.displayName);
-    if (!items.length) {
-      return "";
-    }
-
-    const markup = items.map((child) => {
-      const name = escapeHtml(child.displayName);
-      const badge = child.isLiving ? ` <span class="badge bg-success badge-sm">Living</span>` : "";
-      const link = child.grampsId ? `<a href="/person/?id=${encodeURIComponent(child.grampsId)}" class="link-primary text-decoration-none">${name}</a>` : name;
-      return `<li>${link}${badge}</li>`;
-    }).join("");
-
-    return `
-      <p class="mb-2"><strong>Children:</strong></p>
-      <ul class="mb-0 ms-3">
-        ${markup}
+    container.innerHTML = `
+      <ul class="list-unstyled family-list mb-0">
+        ${sections.join("")}
       </ul>
     `;
+
+    return true;
+  }
+
+  function renderFamilyVisualization(person) {
+    const container = document.getElementById("person-family-visualization");
+    if (!container) {
+      return false;
+    }
+
+    const media = person.familyTreeMedia;
+    if (!media || !media.path) {
+      container.innerHTML = "";
+      container.classList.add("d-none");
+      return false;
+    }
+
+    const svgUrl = resolveMediaAssetPath(media.path);
+    if (!svgUrl) {
+      container.innerHTML = "";
+      container.classList.add("d-none");
+      return false;
+    }
+
+    container.innerHTML = `<div class="text-muted small py-4 text-center">Loading family tree…</div>`;
+    container.classList.remove("d-none");
+
+    fetch(svgUrl, { credentials: "same-origin" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Unable to load SVG (HTTP ${response.status})`);
+        }
+        return response.text();
+      })
+      .then((svgMarkup) => {
+        currentFamilyTreeMarkup = svgMarkup;
+        const zoomButton = `
+          <div class="text-end mt-5 pt-2">
+            <button type="button"
+                    class="btn btn-outline-light btn-sm"
+                    data-family-tree-zoom
+                    data-bs-toggle="modal"
+                    data-bs-target="#${FAMILY_TREE_MODAL_ID}">
+              Zoom in
+            </button>
+          </div>
+        `;
+        container.innerHTML = `<div class="family-tree-embed">${svgMarkup}</div>${zoomButton}`;
+      })
+      .catch((error) => {
+        console.error("[ERROR] Failed to load family tree visualization:", error);
+        container.innerHTML = `<p class="text-muted small mb-0">Unable to load family tree visualization.</p>`;
+      });
+
+    return true;
+  }
+
+  function renderFamilyRelative(relative, label) {
+    const name = escapeHtml(relative.displayName);
+    const link = relative.grampsId
+      ? `<a href="/person/?id=${encodeURIComponent(relative.grampsId)}" class="link-primary text-decoration-none">${name}</a>`
+      : name;
+    const badge = renderRelationBadge(relative.isLiving);
+    const labelPrefix = label ? `<span class="text-muted small me-2">${escapeHtml(label)}: </span>` : "";
+    return `<li class="mb-1">${labelPrefix}${link}${badge}</li>`;
   }
 
   function renderEvents(person) {
@@ -404,22 +574,6 @@
     return true;
   }
 
-  function renderDebug(person, personId) {
-    const debug = document.getElementById("person-debug");
-    if (!debug) {
-      return;
-    }
-
-    const lines = [
-      `Person ID: ${personId}`,
-      `Handle: ${person.handle || "Unknown"}`,
-      `Data source: ${state.lastDataUrl || "Unknown"}`,
-      `Environment: ${state.env}`
-    ];
-
-    debug.textContent = lines.join("\n");
-  }
-
   function toggleSection(sectionId, shouldShow) {
     const section = document.getElementById(sectionId);
     if (!section) {
@@ -458,6 +612,24 @@
     }
 
     return `${state.mediaBase}${filename}`;
+  }
+
+  function resolveMediaAssetPath(pathname) {
+    if (!pathname) {
+      return null;
+    }
+
+    if (/^https?:\/\//i.test(pathname)) {
+      return pathname;
+    }
+
+    const trimmedPath = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+    if (state.mediaBase.startsWith("http://") || state.mediaBase.startsWith("https://")) {
+      return `${state.mediaBase}${trimmedPath}`;
+    }
+
+    const normalizedBase = state.mediaBase.endsWith("/") ? state.mediaBase : `${state.mediaBase}/`;
+    return `${normalizedBase}${trimmedPath}`;
   }
 
   function deriveMediaFilename(media) {
@@ -533,5 +705,215 @@
 
     const str = String(value);
     return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  function initializeLightbox(items) {
+    lightboxState.items = items;
+    const grid = document.getElementById("person-media-grid");
+    const modalEl = document.getElementById("mediaLightbox");
+    if (!grid || !modalEl) {
+      return;
+    }
+
+    if (!lightboxState.elements.modalEl) {
+      lightboxState.elements = {
+        modalEl,
+        image: document.getElementById("mediaLightboxImage"),
+        caption: document.getElementById("mediaLightboxCaption"),
+        meta: document.getElementById("mediaLightboxMeta"),
+        counter: document.getElementById("mediaLightboxCounter"),
+        spinner: document.getElementById("mediaLightboxSpinner"),
+        download: document.getElementById("mediaLightboxDownload"),
+        prevBtn: modalEl.querySelector(".lightbox-prev"),
+        nextBtn: modalEl.querySelector(".lightbox-next")
+      };
+    }
+
+    if (!lightboxState.listenersBound) {
+      grid.addEventListener("click", handleMediaTriggerClick);
+      bindLightboxControls();
+      lightboxState.listenersBound = true;
+    }
+  }
+
+  function handleMediaTriggerClick(event) {
+    const trigger = event.target.closest(".media-lightbox-trigger");
+    if (!trigger) {
+      return;
+    }
+    event.preventDefault();
+    const index = Number(trigger.getAttribute("data-media-index"));
+    if (Number.isNaN(index)) {
+      return;
+    }
+    lightboxState.lastTrigger = trigger;
+    openLightbox(index);
+  }
+
+  function bindLightboxControls() {
+    const { modalEl, prevBtn, nextBtn } = lightboxState.elements;
+    if (prevBtn) {
+      prevBtn.addEventListener("click", () => stepLightbox(-1));
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => stepLightbox(1));
+    }
+    if (modalEl) {
+      modalEl.addEventListener("shown.bs.modal", attachLightboxKeyboard);
+      modalEl.addEventListener("hidden.bs.modal", detachLightboxKeyboard);
+    }
+  }
+
+  function attachLightboxKeyboard() {
+    lightboxState.keyHandler = (event) => {
+      if (event.key === "ArrowRight") {
+        stepLightbox(1);
+      } else if (event.key === "ArrowLeft") {
+        stepLightbox(-1);
+      }
+    };
+    document.addEventListener("keydown", lightboxState.keyHandler);
+  }
+
+  function detachLightboxKeyboard() {
+    if (lightboxState.keyHandler) {
+      document.removeEventListener("keydown", lightboxState.keyHandler);
+      lightboxState.keyHandler = null;
+    }
+    if (lightboxState.lastTrigger && typeof lightboxState.lastTrigger.focus === "function") {
+      lightboxState.lastTrigger.focus();
+    }
+  }
+
+  function stepLightbox(delta) {
+    const nextIndex = lightboxState.currentIndex + delta;
+    if (nextIndex < 0 || nextIndex >= lightboxState.items.length) {
+      return;
+    }
+    openLightbox(nextIndex, { reopen: true });
+  }
+
+  function openLightbox(index, options = {}) {
+    const items = lightboxState.items || [];
+    if (!items.length || !items[index]) {
+      return;
+    }
+    lightboxState.currentIndex = index;
+
+    const modal = ensureLightboxModal();
+    if (!modal) {
+      const fallbackUrl = resolveMediaPath(items[index]);
+      if (fallbackUrl) {
+        window.open(fallbackUrl, "_blank", "noopener");
+      }
+      return;
+    }
+
+    renderLightboxContent(items[index]);
+    if (!options.reopen) {
+      modal.show();
+    }
+  }
+
+  function ensureLightboxModal() {
+    if (!lightboxState.elements.modalEl) {
+      return null;
+    }
+    if (!lightboxState.modal) {
+      const ModalCtor = window.bootstrap && window.bootstrap.Modal;
+      if (!ModalCtor) {
+        return null;
+      }
+      lightboxState.modal = new ModalCtor(lightboxState.elements.modalEl, {
+        keyboard: true,
+        focus: true,
+        backdrop: true
+      });
+    }
+    return lightboxState.modal;
+  }
+
+  function renderLightboxContent(media) {
+    const {
+      image,
+      caption,
+      meta,
+      counter,
+      spinner,
+      download,
+      prevBtn,
+      nextBtn
+    } = lightboxState.elements;
+    if (!image || !caption || !meta || !counter || !spinner) {
+      return;
+    }
+
+    toggleSpinner(true);
+    image.classList.add("d-none");
+    caption.textContent = media.title || "Untitled media";
+    meta.innerHTML = buildLightboxMeta(media);
+    counter.textContent = `Media ${lightboxState.currentIndex + 1} of ${lightboxState.items.length}`;
+
+    const mediaUrl = resolveMediaPath(media);
+    if (download) {
+      if (mediaUrl) {
+        download.classList.remove("disabled");
+        download.href = mediaUrl;
+      } else {
+        download.classList.add("disabled");
+        download.removeAttribute("href");
+      }
+    }
+
+    if (prevBtn && nextBtn) {
+      prevBtn.classList.toggle("d-none", lightboxState.items.length <= 1);
+      nextBtn.classList.toggle("d-none", lightboxState.items.length <= 1);
+      prevBtn.disabled = lightboxState.currentIndex === 0;
+      nextBtn.disabled = lightboxState.currentIndex >= lightboxState.items.length - 1;
+    }
+
+    if (!mediaUrl) {
+      toggleSpinner(false);
+      caption.textContent = `${caption.textContent} (media unavailable)`;
+      return;
+    }
+
+    const loader = new Image();
+    loader.onload = () => {
+      image.src = mediaUrl;
+      image.alt = media.title || "Media preview";
+      toggleSpinner(false);
+      image.classList.remove("d-none");
+    };
+    loader.onerror = () => {
+      toggleSpinner(false);
+      caption.textContent = `${caption.textContent} (failed to load media)`;
+    };
+    loader.src = mediaUrl;
+  }
+
+  function buildLightboxMeta(media) {
+    const chips = [];
+    if (media.grampsId) {
+      chips.push(`<span class="badge bg-secondary">ID ${escapeHtml(media.grampsId)}</span>`);
+    }
+    if (media.mime) {
+      chips.push(`<span class="badge bg-dark text-uppercase">${escapeHtml(media.mime)}</span>`);
+    }
+    if (media.handle) {
+      chips.push(`<span class="badge bg-dark">${escapeHtml(media.handle)}</span>`);
+    }
+    return chips.join("");
+  }
+
+  function toggleSpinner(show) {
+    const { spinner } = lightboxState.elements;
+    if (!spinner) {
+      return;
+    }
+    spinner.classList.toggle("d-none", !show);
+    spinner.setAttribute("aria-hidden", show ? "false" : "true");
+    spinner.hidden = !show;
+    spinner.style.display = show ? "" : "none";
   }
 })();

@@ -38,7 +38,7 @@
   <link rel="stylesheet" href="/css/main.css" />
 </head>
 
-  <body class="min-vh-100 d-flex flex-column">
+  <body>
     
 
 
@@ -57,7 +57,7 @@
       <span class="navbar-toggler-icon"></span>
     </button>
     <div class="collapse navbar-collapse" id="navbarCollapse">
-      <ul class="navbar-nav me-auto mb-2 mb-md-0">
+      <ul class="navbar-nav mb-2 mb-md-0">
         <li class="nav-item">
           
           <a class="nav-link active" aria-current="page" href="/about/">ABOUT</a>
@@ -66,27 +66,124 @@
           
           <a class="nav-link"  href="/contact/">CONTACT</a>
         </li>
+        <li class="nav-item" data-feature="familyLoginLink">
+          
+          <a class="nav-link"  href="/family-login/">FAMILY LOGIN</a>
+        </li>
+        <li class="nav-item d-none" data-feature="myRecordLink" hidden>
+          <a class="nav-link text-uppercase small" href="#" data-my-record-link aria-disabled="true">MY RECORD</a>
+        </li>
+        <li class="nav-item d-none" data-feature="logoutLink" hidden>
+          <a class="nav-link text-uppercase small" href="#" data-auth-signout-link>LOG OUT</a>
+        </li>
       </ul>
+      <div class="navbar-search-wrapper d-none" data-feature="navbarSearch" aria-hidden="true" hidden>
+        <form class="search-form" role="search" data-search-form>
+          <div class="search-control position-relative">
+            <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+            </svg>
+            <input
+              type="search"
+              id="hf-search-input"
+              name="query"
+              class="form-control search-input"
+              placeholder="Search"
+              autocomplete="off"
+              aria-label="Search family"
+              data-search-input
+            />
+            <div class="search-autocomplete shadow-sm" data-search-autocomplete hidden>
+              <ul class="list-unstyled mb-0" data-search-list></ul>
+              <div class="search-autocomplete-footer small text-muted d-flex justify-content-between align-items-center px-3 py-2">
+                <span data-search-count></span>
+                <button type="button" class="btn btn-link btn-sm p-0" data-search-view-all hidden>View all</button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 </nav>
 
-    <main class="container flex-grow-1 py-5">
+    <main class="container py-5">
       
-<section class="py-5">
+<section class="home-hero py-5 about-hero">
   <div class="container">
-    <p>Hello World!</p>
+    <div class="row g-4 align-items-center">
+      <div class="col-12 col-lg-5">
+        <figure class="mb-0">
+          <img
+            src="/images/Adell-MinorSr-1901-cropped.jpg"
+            class="img-fluid rounded shadow-lg home-hero__image"
+            alt="Adell Minor Sr. and family portrait from 1901"
+          >
+        </figure>
+      </div>
+      <div class="col-12 col-lg-7">
+        <h1 class="display-5 fw-bold mb-4">Honoring the Harrison Family Legacy</h1>
+        <div class="home-hero__copy">
+          <p class="lead">
+            In native Louisiana, the Houma and Bayougoula Indian Nations were among the native Americans who inhabited the area along the Mississippi River. Around 1790, the area now known as North Baton Rouge and Clinton, Louisiana, would be colonized by multi-national European migrants, including French, German, English, and Spanish.
+          </p>
+          <p>
+            As early as the year 1719, hundreds of enslaved men and women were taken against their will from West African nations, transported across the Atlantic Ocean, and deposited at seaports along the southeastern shores of the United States. The mostly untraceable journey of these enslaved men and women (and free black people) remains the most inhumane, brutal, and complex period in American history. Between 1719 and 1802, the number of enslaved Africans in the United States increased from 1.2 million to 4.5 million.
+          </p>
+          <p>
+            The full story of Joseph Harrison's (born around 1802) and Kitty Wade Harrison's (born around 1803) birth, life, and death remains unknown. Documentation has linked the couple’s migration (perhaps from Virginia) and their permanent residency to areas in and around St. Helena Parish, including Darlington, Greensburg, Chipola, and Liverpool, and East Feliciana Parish in Felixville and Clinton, Louisiana.
+          </p>
+          <p class="mb-0">
+            Joseph and Kitty Wade Harrison seeded nine generations to date. Over the next two hundred twenty (222) years, their descendants, armed with stamina, wit, and wisdom, have contributed to their communities' social, economic, and educational success. Across many productive careers, the Harrisons have made an impact as farmers, businesspeople, creative entrepreneurs, homemakers, educators, architects, transportation and mechanical engineers, corporate employees, leaders in the food service industries, accountants, lawyers, doctors, health care professionals, members of the military, administrators, in areas of information technology and computer engineering; all of which contributed to the building of the civil society in America.
+          </p>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
     </main>
-    <footer class="bg-dark text-light py-4 mt-auto border-top border-light-subtle">
-  <div class="container text-center small">
-    <p class="mb-0 opacity-75">&copy; 2025 Harrison Family. All rights reserved.</p>
+    <footer class="site-footer bg-dark text-light border-top border-light-subtle mt-auto fixed-bottom">
+  <div class="container">
+    <div class="site-footer__inner d-flex align-items-center justify-content-center">
+      <p class="site-footer__text text-center mb-0 opacity-75">&copy; 2025 Harrison Family. All rights reserved.</p>
+    </div>
   </div>
 </footer>
 
+    <script>
+      window.HFY_FEATURE_FLAGS = Object.assign(
+        {
+          gateway: {
+            endpoint: "/api/check-allowed",
+            context: "site",
+            enforceAssets: false
+          }
+        },
+        {"defaultState":{"loggedIn":false,"sessionToken":null,"userGrampsID":null,"hasRecord":false},"gateway":{"endpoint":"/api/check-allowed","context":"site","enforceAssets":false,"debug":false},"components":{"navbarSearch":{"description":"Global navigation search experience (autocomplete + search results entry point).","showWhen":{"loggedIn":[true,"true"]},"assets":[{"type":"json","path":"/person/index.json"},{"type":"json","path":"/person/search-index.json"}]},"familyLoginLink":{"description":"Primary navigation link routing to the family login experience.","showWhen":{"loggedIn":[false,"false","unknown",null]}},"logoutLink":{"description":"Navigation link that signs the user out of the site.","showWhen":{"loggedIn":[true,"true"]}},"myRecordLink":{"description":"Personalized navigation link that points directly to the signed-in visitor's Gramps record.","showWhen":{"loggedIn":[true,"true"],"hasRecord":[true,"true"]}}}},
+        window.HFY_FEATURE_FLAGS || {}
+      );
+    </script>
+    <script src="/js/feature-flags.js"></script>
+    <script>
+      window.HFY_AUTH_CONFIG = Object.assign(
+        {},
+        {"clientId":"","loginRedirect":"/family-login/","logoutRedirect":"/logged-out/","debug":false},
+        window.HFY_AUTH_CONFIG || {}
+      );
+    </script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="/js/auth.js"></script>
+    <script>
+      window.HFY_SEARCH_CONFIG = Object.assign({
+        manifestUrl: "/person/index.json",
+        indexUrl: "/person/search-index.json",
+        searchPage: "/search/",
+        personUrlBase: "/person/?id="
+      }, window.HFY_SEARCH_CONFIG || {});
+    </script>
     <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/search-navbar.js"></script>
     
   </body>
 </html>

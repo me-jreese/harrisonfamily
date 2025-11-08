@@ -83,6 +83,7 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'media/' \
     --exclude 'private/' \
     --exclude 'place/' \
+    --exclude 'README.md' \
     --exclude '.DS_Store'
 fi
 
