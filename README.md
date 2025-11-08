@@ -4,6 +4,7 @@ A modern, privacy-focused genealogy website that preserves and shares the Harris
 
 **Live site**: [https://harrisonfamily.us](https://harrisonfamily.us)
 
+
 ---
 
 ## About the Harrison Family
@@ -115,6 +116,10 @@ With these tools installed, you can execute deployment commands directly from yo
 ## Adapting This Repository for Your Own Family Site
 
 This codebase is designed to be reusable for any family using Gramps as their genealogy database. Here's how to adapt it:
+
+> [!NOTE]
+> The repo directory now holds only sanitized assets and templates that can be shared publicly. After you clone it, rename the top level folder to `workspace/`, and maintain a separate repo/ directory if you wish to manage deployment with github. This also allows you to use workspace files to run an 11ty server locally for preview and debugging first, then transform the site files into production assets in the repo. All sensitive or environment-specific data lives in `workspace-local/` which ensures none of your private family data is pushed to your repo. After editing private assets, run `python repo/scripts/sync_sanitized_assets.py --sync` followed by `./repo/scripts/export_workspace_samples.sh` to ensure the repo root mirrors the sanitized workspace for collaborators.
+
 
 ### Prerequisites
 1. **Gramps Database**: A working Gramps installation with your family tree populated
