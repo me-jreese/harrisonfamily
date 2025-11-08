@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure we always run from the repo root so relative paths resolve correctly.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+CHECK_SCRIPT="$REPO_ROOT/scripts/check-deployment-sync.sh"
+if [ -x "$CHECK_SCRIPT" ]; then
+  "$CHECK_SCRIPT"
+else
+  echo "[WARNING] Missing deployment sync checker at $CHECK_SCRIPT. Skipping comparison step."
+fi
+
+if ! command -v trufflehog >/dev/null 2>&1; then
+  echo "[ERROR] trufflehog is not installed or not on PATH. Install it before committing." >&2
+  exit 1
+fi
+
+echo "[INFO] Running trufflehog secret scan..."
+
+if trufflehog --no-update --fail filesystem .; then
+  echo "[INFO] Trufflehog scan passed (no secrets detected)."
+else
+  status=$?
+  if [ "$status" -eq 183 ]; then
+    echo "[ERROR] Trufflehog detected potential secrets. Remove them or add to an allowlist before committing." >&2
+  else
+    echo "[ERROR] Trufflehog exited with status $status. See output above for details." >&2
+  fi
+  exit "$status"
+fi

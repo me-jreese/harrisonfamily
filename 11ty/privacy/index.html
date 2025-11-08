@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+  
+
+
+
+
+
+
+  
+
+
+
+  
+
+
+
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy · Harrison Family</title>
+  <meta name="description" content="How the Harrison Family Website handles authentication, access logs, and genealogical data." />
+  <link rel="canonical" href="https://harrisonfamily.us/privacy/" />
+
+  <meta property="og:title" content="Privacy Policy" />
+  <meta property="og:description" content="How the Harrison Family Website handles authentication, access logs, and genealogical data." />
+  <meta property="og:url" content="https://harrisonfamily.us/privacy/" />
+  <meta property="og:site_name" content="Harrison Family" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://harrisonfamily.us/assets/social-share.jpg" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@harrisonfamily" />
+  <meta name="twitter:title" content="Privacy Policy" />
+  <meta name="twitter:description" content="How the Harrison Family Website handles authentication, access logs, and genealogical data." />
+  <meta name="twitter:image" content="https://harrisonfamily.us/assets/social-share.jpg" />
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+
+  <body>
+    
+
+  
+
+
+<nav class="navbar navbar-expand-md navbar-dark fixed-top navbar-hf">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="/">HARRISON FAMILY</a>
+    <button
+      class="navbar-toggler"
+      type="button"
+      data-bs-toggle="collapse"
+      data-bs-target="#navbarCollapse"
+      aria-controls="navbarCollapse"
+      aria-expanded="false"
+      aria-label="Toggle navigation"
+    >
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarCollapse">
+      <ul class="navbar-nav mb-2 mb-md-0">
+        <li class="nav-item">
+          
+          <a class="nav-link"  href="/about/">ABOUT</a>
+        </li>
+        <li class="nav-item">
+          
+          <a class="nav-link"  href="/contact/">CONTACT</a>
+        </li>
+        <li class="nav-item" data-feature="familyLoginLink">
+          
+          <a class="nav-link"  href="/family-login/">FAMILY LOGIN</a>
+        </li>
+        <li class="nav-item d-none" data-feature="myRecordLink" hidden>
+          <a class="nav-link text-uppercase small" href="#" data-my-record-link aria-disabled="true">MY RECORD</a>
+        </li>
+        <li class="nav-item d-none" data-feature="logoutLink" hidden>
+          <a class="nav-link text-uppercase small" href="#" data-auth-signout-link>LOG OUT</a>
+        </li>
+      </ul>
+      <div class="navbar-search-wrapper d-none" data-feature="navbarSearch" aria-hidden="true" hidden>
+        <form class="search-form" role="search" data-search-form>
+          <div class="search-control position-relative">
+            <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+            </svg>
+            <input
+              type="search"
+              id="hf-search-input"
+              name="query"
+              class="form-control search-input"
+              placeholder="Search"
+              autocomplete="off"
+              aria-label="Search family"
+              data-search-input
+            />
+            <div class="search-autocomplete shadow-sm" data-search-autocomplete hidden>
+              <ul class="list-unstyled mb-0" data-search-list></ul>
+              <div class="search-autocomplete-footer small text-muted d-flex justify-content-between align-items-center px-3 py-2">
+                <span data-search-count></span>
+                <button type="button" class="btn btn-link btn-sm p-0" data-search-view-all hidden>View all</button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</nav>
+
+    <main class="container py-5">
+      
+<section class="py-5">
+  <div class="container">
+    <header class="mb-4 text-center text-md-start">
+      <h1 class="display-5 fw-bold">Harrison Family Website Privacy Policy</h1>
+      <p class="text-muted mb-1">Last updated: November 6, 2025 &middot; Contact: info [@] harrisonfamily [D0T] us</p>
+    </header>
+
+    <article class="privacy-policy text-light">
+      <hr>
+      <h2>1. Introduction</h2>
+      <p>The Harrison Family Website (“we,” “our,” “us”) provides a private digital archive of family history and media. This Privacy Policy explains how we handle personal information, including data processed through Google Sign-In, in compliance with Google’s API Services User Data Policy and applicable privacy laws.</p>
+
+      <hr>
+      <h2>2. Scope</h2>
+      <p>This policy applies to all use of the website located at <a href="https://harrisonfamily.us/">https://harrisonfamily.us</a> and its subpages (the “Site”). It specifically governs:</p>
+      <ul>
+        <li>Authentication via Google Identity Services.</li>
+        <li>Access to private genealogical content derived from the Gramps family database.</li>
+        <li>Any data hosted in our AWS infrastructure (S3 + CloudFront) and served through Cloudflare.</li>
+      </ul>
+
+      <hr>
+      <h2>3. Data We Collect</h2>
+      <h3>3.1 From Google Sign-In</h3>
+      <ul>
+        <li>Your verified Google account email address.</li>
+        <li>Your Google profile name and ID token, for identity verification.</li>
+      </ul>
+      <p>We do not request or access any other Google account data (e.g., contacts, photos, Drive files).</p>
+
+      <h3>3.2 From Site Interaction</h3>
+      <ul>
+        <li>Access logs (browser type, IP address, timestamp) collected by AWS CloudFront for diagnostic and security purposes.</li>
+        <li>No tracking cookies or analytics services are used.</li>
+      </ul>
+
+      <h3>3.3 From Genealogical Data</h3>
+      <ul>
+        <li>Family data derived from a read-only export of Gramps records, including names, relationships, dates, places, and media.</li>
+        <li>Living persons’ details are visible only to authenticated and whitelisted users.</li>
+        <li>No additional personal data is collected from you when you browse family pages.</li>
+      </ul>
+
+      <hr>
+      <h2>4. How We Use Your Data</h2>
+      <table class="table table-dark table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <th scope="col">Data Type</th>
+            <th scope="col">Purpose</th>
+            <th scope="col">Retention</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Google account email</td>
+            <td>Verify identity and confirm whitelisted access to private content.</td>
+            <td>Not stored permanently; verified in-session only via token validation.</td>
+          </tr>
+          <tr>
+            <td>Google ID token</td>
+            <td>Authenticate session locally in your browser (no server-side storage).</td>
+            <td>Discarded upon sign-out or page close.</td>
+          </tr>
+          <tr>
+            <td>Access logs</td>
+            <td>Detect abuse, ensure system stability.</td>
+            <td>Rotated automatically by AWS (approximately 90 days).</td>
+          </tr>
+          <tr>
+            <td>Gramps genealogical data</td>
+            <td>Display family history.</td>
+            <td>Stored in static JSON on AWS S3; updated manually by archivists.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <hr>
+      <h2>5. Data Sharing and Disclosure</h2>
+      <p>We do not share, sell, or transmit user data to any third parties. The only external systems involved are:</p>
+      <ul>
+        <li>Google Identity Services, which handles sign-in and token issuance.</li>
+        <li>Amazon Web Services (AWS), which stores static site and data assets.</li>
+        <li>Cloudflare, which provides DNS and HTTPS routing.</li>
+      </ul>
+      <p>Each provider processes minimal data necessary for website functionality under its own privacy policy.</p>
+
+      <hr>
+      <h2>6. Security</h2>
+      <ul>
+        <li>HTTPS enforced for all traffic via Cloudflare + AWS ACM certificates.</li>
+        <li>All data hosted on private S3 buckets using Origin Access Control (OAC).</li>
+        <li>JSON and media served through CloudFront with restricted access policies.</li>
+        <li>Living-person data visible only after client-side token validation using Google Sign-In.</li>
+        <li>MFA required for administrative AWS access.</li>
+        <li>ETL scripts operate in read-only mode when accessing the live Gramps database.</li>
+      </ul>
+      <p>No sensitive data (e.g., tokens, credentials) is stored in public repositories.</p>
+
+      <hr>
+      <h2>7. Data Retention and Deletion</h2>
+      <ul>
+        <li>Authentication data is stored only in your browser session.</li>
+        <li>Access logs expire automatically after approximately 90 days.</li>
+        <li>Family data persists indefinitely for archival purposes but can be updated or removed by authorized archivists upon request.</li>
+      </ul>
+      <p>To request deletion or correction of personal information, email info [@] harrisonfamily [D0T] us.</p>
+
+      <hr>
+      <h2>8. Children’s Privacy</h2>
+      <p>This site is intended for family members and is not directed to children under 13. Accounts for minors are managed by their guardians.</p>
+
+      <hr>
+      <h2>9. International Data Transfers</h2>
+      <p>All data is stored and processed in the United States using AWS (us-west-2 region).</p>
+
+      <hr>
+      <h2>10. Your Rights</h2>
+      <p>You may request any of the following:</p>
+      <ul>
+        <li>Confirmation of whether your data appears in our genealogical exports.</li>
+        <li>Correction or removal of inaccuracies about you or your immediate relatives.</li>
+        <li>Removal of media in which you appear.</li>
+      </ul>
+      <p>Send requests to info [@] harrisonfamily [D0T] us with sufficient identifying information.</p>
+
+      <hr>
+      <h2>11. Changes to This Policy</h2>
+      <p>We may update this Privacy Policy periodically. The most recent revision date appears at the top of this page. Material changes will be announced on the Site before taking effect.</p>
+
+      <hr>
+      <h2>12. Contact</h2>
+      <p>If you have privacy concerns or requests regarding your data, email <strong>info [@] harrisonfamily [D0T] us</strong> with the subject line <em>“Privacy Inquiry — Harrison Family Website.”</em></p>
+    </article>
+  </div>
+</section>
+
+    </main>
+    <footer class="site-footer bg-dark text-light border-top border-light-subtle mt-auto fixed-bottom">
+  <div class="container">
+    <div class="site-footer__inner d-flex align-items-center justify-content-center">
+      <p class="site-footer__text text-center mb-0 opacity-75">&copy; 2025 Harrison Family. All rights reserved.</p>
+    </div>
+  </div>
+</footer>
+
+    <script>
+      window.HFY_FEATURE_FLAGS = Object.assign(
+        {
+          gateway: {
+            endpoint: "/api/check-allowed",
+            context: "site",
+            enforceAssets: false
+          }
+        },
+        {"defaultState":{"loggedIn":false,"sessionToken":null,"userGrampsID":null,"hasRecord":false},"gateway":{"endpoint":"/api/check-allowed","context":"site","enforceAssets":false,"debug":false},"components":{"navbarSearch":{"description":"Global navigation search experience (autocomplete + search results entry point).","showWhen":{"loggedIn":[true,"true"]},"assets":[{"type":"json","path":"/person/index.json"},{"type":"json","path":"/person/search-index.json"}]},"familyLoginLink":{"description":"Primary navigation link routing to the family login experience.","showWhen":{"loggedIn":[false,"false","unknown",null]}},"logoutLink":{"description":"Navigation link that signs the user out of the site.","showWhen":{"loggedIn":[true,"true"]}},"myRecordLink":{"description":"Personalized navigation link that points directly to the signed-in visitor's Gramps record.","showWhen":{"loggedIn":[true,"true"],"hasRecord":[true,"true"]}}}},
+        window.HFY_FEATURE_FLAGS || {}
+      );
+    </script>
+    <script src="/js/feature-flags.js"></script>
+    <script>
+      window.HFY_AUTH_CONFIG = Object.assign(
+        {},
+        {"clientId":"","loginRedirect":"/family-login/","logoutRedirect":"/logged-out/","debug":false},
+        window.HFY_AUTH_CONFIG || {}
+      );
+    </script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="/js/auth.js"></script>
+    <script>
+      window.HFY_SEARCH_CONFIG = Object.assign({
+        manifestUrl: "/person/index.json",
+        indexUrl: "/person/search-index.json",
+        searchPage: "/search/",
+        personUrlBase: "/person/?id="
+      }, window.HFY_SEARCH_CONFIG || {});
+    </script>
+    <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/search-navbar.js"></script>
+    
+  </body>
+</html>

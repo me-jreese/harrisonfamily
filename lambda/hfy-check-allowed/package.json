@@ -1,0 +1,18 @@
+{
+  "name": "hfy-check-allowed",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lambda handler that validates Google sign-ins and returns Harrison Family grampsId mappings.",
+  "main": "index.mjs",
+  "scripts": {
+    "lint": "eslint .",
+    "zip": "npm run build --if-present && zip -r ../dist/check-allowed.zip index.mjs node_modules",
+    "postinstall": "rm -rf ../dist && mkdir -p ../dist"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.645.0",
+    "@aws-sdk/client-secrets-manager": "^3.645.0",
+    "google-auth-library": "^9.14.1"
+  }
+}

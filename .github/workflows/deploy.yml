@@ -1,0 +1,71 @@
+name: Deploy Site
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-west-2
+      CF_DISTRIBUTION_ID: E2JCDK3QLQNNYB
+      LAMBDA_NAME: hfy-check-allowed
+      GCP_PROJECT_ID: harrisonfamily
+      GCF_REGION: us-west2
+      GCF_FUNCTION: getAllowlist
+      GCF_ENV_VARS: HFY_ALLOWLIST_SECRET=harrisonfamily-allowlist,GCP_PROJECT=harrisonfamily
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync static site to S3
+        run: |
+          aws s3 sync repo/11ty/ s3://harrisonfamily-frontend --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation --distribution-id $CF_DISTRIBUTION_ID --paths "/*"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Package Lambda
+        working-directory: repo/lambda/hfy-check-allowed
+        run: |
+          npm ci
+          mkdir -p ../../dist
+          zip -r ../../dist/hfy-check-allowed.zip index.mjs package.json package-lock.json node_modules
+
+      - name: Deploy Lambda
+        run: |
+          aws lambda update-function-code --function-name $LAMBDA_NAME --zip-file fileb://repo/dist/hfy-check-allowed.zip
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          export_default_credentials: true
+
+      - name: Deploy Google Cloud Function
+        run: |
+          gcloud functions deploy $GCF_FUNCTION \
+            --region=$GCF_REGION \
+            --gen2 \
+            --runtime=python311 \
+            --source=repo/functions/get-allowlist \
+            --entry-point=get_allowlist \
+            --trigger-http \
+            --no-allow-unauthenticated \
+            --set-env-vars=$GCF_ENV_VARS

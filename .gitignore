@@ -1,0 +1,27 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# General build artifacts
+dist/
+build/
+coverage/
+.nyc_output/
+
+# Python / scripts
+.venv/
+venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+
+# Logs
+*.log
+
+# Ensure external references stay out of the repo
+../agent-reference/
+../workspace/
+../reports/

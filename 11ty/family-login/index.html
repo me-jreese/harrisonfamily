@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+  
+
+
+
+
+
+
+  
+
+
+
+  
+
+
+
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Family Login · Harrison Family</title>
+  <meta name="description" content="Modern genealogy archive for the Harrison family." />
+  <link rel="canonical" href="https://harrisonfamily.us/family-login/" />
+
+  <meta property="og:title" content="Family Login" />
+  <meta property="og:description" content="Modern genealogy archive for the Harrison family." />
+  <meta property="og:url" content="https://harrisonfamily.us/family-login/" />
+  <meta property="og:site_name" content="Harrison Family" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://harrisonfamily.us/assets/social-share.jpg" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@harrisonfamily" />
+  <meta name="twitter:title" content="Family Login" />
+  <meta name="twitter:description" content="Modern genealogy archive for the Harrison family." />
+  <meta name="twitter:image" content="https://harrisonfamily.us/assets/social-share.jpg" />
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+
+  <body>
+    
+
+
+<nav class="navbar navbar-expand-md navbar-dark fixed-top navbar-hf">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="/">HARRISON FAMILY</a>
+    <button
+      class="navbar-toggler"
+      type="button"
+      data-bs-toggle="collapse"
+      data-bs-target="#navbarCollapse"
+      aria-controls="navbarCollapse"
+      aria-expanded="false"
+      aria-label="Toggle navigation"
+    >
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarCollapse">
+      <ul class="navbar-nav mb-2 mb-md-0">
+        <li class="nav-item">
+          
+          <a class="nav-link"  href="/about/">ABOUT</a>
+        </li>
+        <li class="nav-item">
+          
+          <a class="nav-link"  href="/contact/">CONTACT</a>
+        </li>
+        <li class="nav-item" data-feature="familyLoginLink">
+          
+          <a class="nav-link active" aria-current="page" href="/family-login/">FAMILY LOGIN</a>
+        </li>
+        <li class="nav-item d-none" data-feature="myRecordLink" hidden>
+          <a class="nav-link text-uppercase small" href="#" data-my-record-link aria-disabled="true">MY RECORD</a>
+        </li>
+        <li class="nav-item d-none" data-feature="logoutLink" hidden>
+          <a class="nav-link text-uppercase small" href="#" data-auth-signout-link>LOG OUT</a>
+        </li>
+      </ul>
+      <div class="navbar-search-wrapper d-none" data-feature="navbarSearch" aria-hidden="true" hidden>
+        <form class="search-form" role="search" data-search-form>
+          <div class="search-control position-relative">
+            <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+            </svg>
+            <input
+              type="search"
+              id="hf-search-input"
+              name="query"
+              class="form-control search-input"
+              placeholder="Search"
+              autocomplete="off"
+              aria-label="Search family"
+              data-search-input
+            />
+            <div class="search-autocomplete shadow-sm" data-search-autocomplete hidden>
+              <ul class="list-unstyled mb-0" data-search-list></ul>
+              <div class="search-autocomplete-footer small text-muted d-flex justify-content-between align-items-center px-3 py-2">
+                <span data-search-count></span>
+                <button type="button" class="btn btn-link btn-sm p-0" data-search-view-all hidden>View all</button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</nav>
+
+    <main class="container py-5">
+      
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-6">
+        <div class="card bg-dark text-light border border-light-subtle shadow-sm">
+          <div class="card-body p-4">
+            <h1 class="h3 text-uppercase letter-spacing-wide mb-3">Family Login</h1>
+            <p class="text-muted mb-4">
+              Sign in with your approved Google account to access private family records, search, and media.
+              If you need access, reach out to the site administrator.
+            </p>
+
+            <div class="alert alert-info" data-auth-status>
+              Loading authentication status…
+            </div>
+
+            <div class="d-flex justify-content-center my-4" data-google-signin-button>
+              <!-- Google Sign-In will render here -->
+            </div>
+
+            <div class="text-center d-grid gap-2 col-10 mx-auto">
+              <button type="button" class="btn btn-outline-light btn-sm d-none w-100" data-auth-signout>
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+    </main>
+    <footer class="site-footer bg-dark text-light border-top border-light-subtle mt-auto fixed-bottom">
+  <div class="container">
+    <div class="site-footer__inner d-flex align-items-center justify-content-center">
+      <p class="site-footer__text text-center mb-0 opacity-75">&copy; 2025 Harrison Family. All rights reserved.</p>
+    </div>
+  </div>
+</footer>
+
+    <script>
+      window.HFY_FEATURE_FLAGS = Object.assign(
+        {
+          gateway: {
+            endpoint: "/api/check-allowed",
+            context: "site",
+            enforceAssets: false
+          }
+        },
+        {"defaultState":{"loggedIn":false,"sessionToken":null,"userGrampsID":null,"hasRecord":false},"gateway":{"endpoint":"/api/check-allowed","context":"site","enforceAssets":false,"debug":false},"components":{"navbarSearch":{"description":"Global navigation search experience (autocomplete + search results entry point).","showWhen":{"loggedIn":[true,"true"]},"assets":[{"type":"json","path":"/person/index.json"},{"type":"json","path":"/person/search-index.json"}]},"familyLoginLink":{"description":"Primary navigation link routing to the family login experience.","showWhen":{"loggedIn":[false,"false","unknown",null]}},"logoutLink":{"description":"Navigation link that signs the user out of the site.","showWhen":{"loggedIn":[true,"true"]}},"myRecordLink":{"description":"Personalized navigation link that points directly to the signed-in visitor's Gramps record.","showWhen":{"loggedIn":[true,"true"],"hasRecord":[true,"true"]}}}},
+        window.HFY_FEATURE_FLAGS || {}
+      );
+    </script>
+    <script src="/js/feature-flags.js"></script>
+    <script>
+      window.HFY_AUTH_CONFIG = Object.assign(
+        {},
+        {"clientId":"","loginRedirect":"/family-login/","logoutRedirect":"/logged-out/","debug":false},
+        window.HFY_AUTH_CONFIG || {}
+      );
+    </script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="/js/auth.js"></script>
+    <script>
+      window.HFY_SEARCH_CONFIG = Object.assign({
+        manifestUrl: "/person/index.json",
+        indexUrl: "/person/search-index.json",
+        searchPage: "/search/",
+        personUrlBase: "/person/?id="
+      }, window.HFY_SEARCH_CONFIG || {});
+    </script>
+    <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/search-navbar.js"></script>
+    
+  </body>
+</html>
