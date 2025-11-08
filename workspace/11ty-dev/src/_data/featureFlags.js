@@ -1,13 +1,12 @@
 const gatewayEndpoint = process.env.HFY_FEATURE_FLAGS__GATEWAY__ENDPOINT || "/api/check-allowed";
 const gatewayContext = process.env.HFY_FEATURE_FLAGS__GATEWAY__CONTEXT || "site";
-const runtimeEnv = process.env.HFY_ENV || process.env.NODE_ENV || "dev";
 const hasExplicitEnforceFlag = Object.prototype.hasOwnProperty.call(
   process.env,
   "HFY_FEATURE_FLAGS__GATEWAY__ENFORCE_ASSETS"
 );
 const gatewayEnforceAssets = hasExplicitEnforceFlag
   ? process.env.HFY_FEATURE_FLAGS__GATEWAY__ENFORCE_ASSETS === "true"
-  : runtimeEnv === "prod";
+  : true;
 const flagsDebug = process.env.HFY_FEATURE_FLAGS__DEBUG === "true";
 
 module.exports = () => ({

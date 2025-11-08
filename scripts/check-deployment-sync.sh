@@ -52,7 +52,7 @@ run_rsync_check() {
   fi
 
   local raw_output cleaned_output
-  local -a rsync_cmd=(rsync -ain --delete)
+  local -a rsync_cmd=(rsync -ain --delete --omit-dir-times)
   if [ "${#extra_opts[@]}" -gt 0 ]; then
     rsync_cmd+=("${extra_opts[@]}")
   fi
