@@ -29,7 +29,7 @@ jobs:
 
       - name: Sync static site to S3
         run: |
-          aws s3 sync repo/11ty/ s3://harrisonfamily-frontend --delete
+          aws s3 sync 11ty/ s3://harrisonfamily-frontend --delete
 
       - name: Invalidate CloudFront cache
         run: |
@@ -41,7 +41,7 @@ jobs:
           node-version: '20'
 
       - name: Package Lambda
-        working-directory: repo/lambda/hfy-check-allowed
+        working-directory: lambda/hfy-check-allowed
         run: |
           npm ci
           mkdir -p ../../dist
@@ -49,7 +49,7 @@ jobs:
 
       - name: Deploy Lambda
         run: |
-          aws lambda update-function-code --function-name $LAMBDA_NAME --zip-file fileb://repo/dist/hfy-check-allowed.zip
+          aws lambda update-function-code --function-name $LAMBDA_NAME --zip-file fileb://dist/hfy-check-allowed.zip
 
       - name: Setup gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
@@ -64,7 +64,7 @@ jobs:
             --region=$GCF_REGION \
             --gen2 \
             --runtime=python311 \
-            --source=repo/functions/get-allowlist \
+            --source=functions/get-allowlist \
             --entry-point=get_allowlist \
             --trigger-http \
             --no-allow-unauthenticated \
