@@ -38,6 +38,17 @@
     }
   }
 
+  const isProductionHost =
+    typeof window !== "undefined" &&
+    window.location &&
+    window.location.hostname === "harrisonfamily.us";
+  if (isProductionHost && gatewayConfig.enforceAssets !== true) {
+    console.error(
+      `${LOG_PREFIX} Production domain detected but enforceAssets was false. Forcing it to true to protect gated assets.`
+    );
+    gatewayConfig.enforceAssets = true;
+  }
+
   hydrateSessionState();
 
   function normalizeAllowed(allowed) {
