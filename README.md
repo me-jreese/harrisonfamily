@@ -275,6 +275,20 @@ The Eleventy build artifacts in `11ty/` are safe to commit because they only inc
    - Invalidate CloudFront (`E2JCDK3QLQNNYB`)
    - Re-package and deploy the AWS Lambda + GCP Cloud Function
 
+### CloudFront Function
+- `scripts/cloudfront/append-index.js` ensures clean URLs (`/about/`, `/contact/`) resolve by appending `index.html` before CloudFront hits the S3 origin.
+- After editing the file, update/publish the function:
+  ```bash
+  aws cloudfront update-function --name HFYAppendIndex \
+    --if-match "$(aws cloudfront describe-function --name HFYAppendIndex --query 'ETag' --output text)" \
+    --function-code fileb://scripts/cloudfront/append-index.js \
+    --function-config Comment='Append index.html to directory paths',Runtime=cloudfront-js-1.0
+
+  aws cloudfront publish-function --name HFYAppendIndex \
+    --if-match "$(aws cloudfront describe-function --name HFYAppendIndex --query 'ETag' --output text)"
+  ```
+- The distribution already associates this function on the viewer-request event; re-run `aws cloudfront update-distribution` only if you rename/replace the function ARN.
+
 ### Manual Steps Outside Git
 - Run the ETL (`scripts/etl/export_person_data.py`) and upload JSON/media to S3
 - Publish allowlist updates via `scripts/infra/publish_allowlists.sh` (writes to S3 + Secret Manager)
