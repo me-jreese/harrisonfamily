@@ -9,24 +9,27 @@ SANITIZED_DIRS=(
   "gcloud"
   "gcloud-config"
   "harrisonfamily-frontend"
-  "tests"
 )
-
-DEST="$PROJECT_ROOT/repo/docs/workspace"
-mkdir -p "$DEST"
 
 for dir in "${SANITIZED_DIRS[@]}"; do
   src="$PROJECT_ROOT/workspace/${dir}"
-  dst="$DEST/${dir}"
+  dst="$PROJECT_ROOT/repo/${dir}"
   if [ -d "$src" ]; then
     rm -rf "$dst"
     mkdir -p "$dst"
     rsync -a "$src/" "$dst/"
-    echo "[OK] Copied workspace/${dir} -> repo/docs/workspace/${dir}"
+    echo "[OK] Copied workspace/${dir} -> repo/${dir}"
   fi
  done
 
+if [ -d "$PROJECT_ROOT/workspace/tests/login-flow" ]; then
+  rm -rf "$PROJECT_ROOT/repo/tests/login-flow"
+  mkdir -p "$PROJECT_ROOT/repo/tests"
+  rsync -a "$PROJECT_ROOT/workspace/tests/login-flow/" "$PROJECT_ROOT/repo/tests/login-flow/"
+  echo "[OK] Copied workspace/tests/login-flow -> repo/tests/login-flow"
+fi
+
 if [ -f "$PROJECT_ROOT/workspace/coming-soon-index.html" ]; then
-  cp "$PROJECT_ROOT/workspace/coming-soon-index.html" "$DEST/coming-soon-index.html"
+  cp "$PROJECT_ROOT/workspace/coming-soon-index.html" "$PROJECT_ROOT/repo/coming-soon-index.html"
   echo "[OK] Copied workspace/coming-soon-index.html"
 fi
