@@ -58,6 +58,12 @@ jobs:
           service_account_key: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
           export_default_credentials: true
 
+      - name: Verify gcloud authentication
+        run: |
+          gcloud auth activate-service-account --key-file="$GOOGLE_GHA_CREDS_PATH"
+          gcloud config set project $GCP_PROJECT_ID
+          gcloud auth list
+
       - name: Deploy Google Cloud Function
         run: |
           gcloud functions deploy $GCF_FUNCTION \
