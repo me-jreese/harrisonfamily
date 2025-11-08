@@ -48,7 +48,12 @@ if [[ ! -f "${LOG_FILE}" ]]; then
   exit 1
 fi
 
-mapfile -t PROMOTE_ENTRIES < <(python3 - <<'PY' "${LOG_FILE}"
+PROMOTE_ENTRIES=()
+while IFS=$'\t' read -r workspace repo notes; do
+  [[ -n "${workspace}" ]] || continue
+  [[ -n "${repo}" ]] || continue
+  PROMOTE_ENTRIES+=("${workspace}"$'\t'"${repo}"$'\t'"${notes}")
+done < <(python3 - <<'PY' "${LOG_FILE}"
 import json, sys, pathlib
 log_path = pathlib.Path(sys.argv[1])
 with log_path.open() as f:
@@ -80,7 +85,7 @@ copy_file() {
     return
   fi
   mkdir -p "$(dirname "${dest}")"
-  cp "${src}" "${dest}"
+  rsync -a "${src}" "${dest}"
   echo "[OK] Copied file ${src} -> ${dest} (${notes})"
 }
 

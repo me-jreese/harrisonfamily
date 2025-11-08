@@ -1,6 +1,6 @@
 (() => {
   const config = window.HFY_SEARCH_CONFIG || {};
-  const featureFlags = window.HFYFeatureFlags;
+  let featureFlags = window.HFYFeatureFlags;
   const pageSection = document.querySelector('[data-search-page]');
   const resultsContainer = document.querySelector('[data-search-results]');
   const resultsList = document.querySelector('[data-search-results-list]');
@@ -136,22 +136,15 @@
     return query;
   }
 
-  function getLatestGoogleIdToken() {
-    if (window.HFY_AUTH && typeof window.HFY_AUTH.getLatestIdToken === 'function') {
-      return window.HFY_AUTH.getLatestIdToken();
-    }
-    return undefined;
-  }
-
   async function buildAuthHeaders() {
-    if (!featureFlags) {
+    const flags = await waitForFeatureFlags();
+    if (!flags) {
       return {};
     }
 
-    const ffConfig = featureFlags.config || {};
-    const gateway = ffConfig.gateway || {};
+    const gateway = (flags.config && flags.config.gateway) || {};
     const enforcementEnabled = gateway.enforceAssets === true;
-    const existingToken = featureFlags.requireSessionToken && featureFlags.requireSessionToken();
+    const existingToken = flags.requireSessionToken && flags.requireSessionToken();
 
     if (!enforcementEnabled) {
       return existingToken ? { 'X-HFY-Session': existingToken } : {};
@@ -161,14 +154,14 @@
       return { 'X-HFY-Session': existingToken };
     }
 
-    await featureFlags.verifySession({
-      googleIdToken: getLatestGoogleIdToken()
+    const { token } = await waitForSessionToken({
+      timeoutMs: 8000,
+      label: "[HFY_SEARCH_PAGE] buildAuthHeaders"
     });
-    const refreshedToken = featureFlags.requireSessionToken && featureFlags.requireSessionToken();
-    if (!refreshedToken) {
+    if (!token) {
       throw new Error('Unable to obtain session token for search assets.');
     }
-    return { 'X-HFY-Session': refreshedToken };
+    return { 'X-HFY-Session': token };
   }
 
   async function loadData() {
@@ -214,33 +207,30 @@
   }
 
   async function requireAuthenticated() {
-    const featureFlags = await waitForFeatureFlags();
-    const auth = await waitForAuth();
-
-    const flagState = featureFlags && typeof featureFlags.getState === "function" ? featureFlags.getState() : {};
-    if (flagState.loggedIn && flagState.sessionToken) {
+    const { token } = await waitForSessionToken({
+      timeoutMs: 8000,
+      label: "[HFY_SEARCH_PAGE]"
+    });
+    if (token) {
       return true;
     }
-
-    const token = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
-
-    if (featureFlags && typeof featureFlags.verifySession === "function" && token) {
-      try {
-        const result = await featureFlags.verifySession({ googleIdToken: token });
-        if (result && result.allowed) {
-          return true;
-        }
-      } catch (err) {
-        console.error("[HFY_SEARCH] verifySession failed", err);
-      }
-    }
-
+    console.warn("[HFY_SEARCH_PAGE] Unable to obtain session token; redirecting to login.");
     redirectToLogin();
     return false;
   }
 
+  let sessionVerifyPromise = null;
+
   function waitForFeatureFlags(timeoutMs = 6000) {
-    return waitForGlobal(() => window.HFYFeatureFlags, timeoutMs);
+    if (featureFlags && typeof featureFlags.getState === "function") {
+      return Promise.resolve(featureFlags);
+    }
+    return waitForGlobal(() => window.HFYFeatureFlags, timeoutMs).then((resolved) => {
+      if (resolved) {
+        featureFlags = resolved;
+      }
+      return resolved;
+    });
   }
 
   function waitForAuth(timeoutMs = 6000) {
@@ -265,6 +255,45 @@
         }
       }, 100);
     });
+  }
+
+  async function waitForSessionToken({ timeoutMs = 6000, label = "[HFY_SEARCH_PAGE]" } = {}) {
+    const flags = await waitForFeatureFlags();
+    const auth = await waitForAuth();
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const token = flags && typeof flags.requireSessionToken === "function" ? flags.requireSessionToken() : null;
+      if (token) {
+        return { token, featureFlags: flags, auth };
+      }
+
+      const idToken = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
+      if (sessionVerifyPromise) {
+        await sessionVerifyPromise.catch(() => {});
+        continue;
+      }
+      if (idToken && flags && typeof flags.verifySession === "function") {
+        sessionVerifyPromise = flags
+          .verifySession({ googleIdToken: idToken })
+          .catch((error) => {
+            console.warn(`${label} verifySession attempt failed`, error);
+          })
+          .finally(() => {
+            sessionVerifyPromise = null;
+          });
+        await sessionVerifyPromise;
+        continue;
+      }
+
+      await delay(150);
+    }
+
+    return { token: null, featureFlags: flags, auth };
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   function redirectToLogin() {

@@ -2,6 +2,7 @@
   const config = window.HFY_FEATURE_FLAGS || {};
   const components = config.components || {};
   const gatewayConfig = config.gateway || {};
+  const SESSION_STORAGE_KEY = "HFY_GATEWAY_SESSION_V1";
   const state = Object.assign(
     {
       loggedIn: false,
@@ -36,6 +37,8 @@
       console.debug(`${LOG_PREFIX} ${message}`, ...args);
     }
   }
+
+  hydrateSessionState();
 
   function normalizeAllowed(allowed) {
     if (!allowed) {
@@ -135,6 +138,7 @@
         state.sessionToken = null;
         state.userGrampsID = null;
         state.hasRecord = false;
+        clearSessionState();
         return false;
       }
 
@@ -153,6 +157,10 @@
         sessionTokenPreview: `${payload.sessionToken.slice(0, 6)}...`,
         grampsId: payload.grampsId
       });
+      persistSessionState({
+        token: payload.sessionToken,
+        grampsId: payload.grampsId || null
+      });
       applyFeatureVisibility();
       return payload;
     } catch (error) {
@@ -161,6 +169,7 @@
       state.sessionToken = null;
       state.userGrampsID = null;
       state.hasRecord = false;
+      clearSessionState();
       return false;
     } finally {
       state.verifying = false;
@@ -189,6 +198,10 @@
     },
     updateState(partialState = {}) {
       Object.assign(state, partialState);
+       if (Object.prototype.hasOwnProperty.call(partialState, "sessionToken") && partialState.sessionToken === null) {
+         state.sessionToken = null;
+         clearSessionState();
+       }
       applyFeatureVisibility();
     },
     shouldShow(featureKey, overrides = {}) {
@@ -205,4 +218,67 @@
   window.HFYFeatureFlags = featureAPI;
 
   onReady(applyFeatureVisibility);
+
+  function hydrateSessionState() {
+    if (typeof sessionStorage === "undefined") {
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.token) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return;
+      }
+      if (parsed.expiresAt && Number(parsed.expiresAt) < Date.now()) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return;
+      }
+      state.sessionToken = parsed.token;
+      state.userGrampsID = parsed.grampsId || null;
+      state.hasRecord = Boolean(parsed.grampsId);
+      state.sessionExpiresAt = parsed.expiresAt || null;
+      state.loggedIn = true;
+      state.verifiedAt = parsed.verifiedAt || null;
+      logDebug("Restored session token from storage.", {
+        hasToken: true,
+        grampsId: state.userGrampsID
+      });
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Unable to hydrate session cache`, error);
+    }
+  }
+
+  function persistSessionState({ token, grampsId }) {
+    if (typeof sessionStorage === "undefined" || !token) {
+      return;
+    }
+    try {
+      sessionStorage.setItem(
+        SESSION_STORAGE_KEY,
+        JSON.stringify({
+          token,
+          grampsId: grampsId || null,
+          expiresAt: state.sessionExpiresAt,
+          verifiedAt: state.verifiedAt
+        })
+      );
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Unable to persist session cache`, error);
+    }
+  }
+
+  function clearSessionState() {
+    if (typeof sessionStorage === "undefined") {
+      return;
+    }
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Unable to clear session cache`, error);
+    }
+  }
 })();

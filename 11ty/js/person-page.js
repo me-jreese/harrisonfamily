@@ -31,6 +31,7 @@
   let currentFamilyTreeMarkup = "";
   const FAMILY_TREE_MODAL_ID = "familyTreeModal";
   const FAMILY_TREE_MODAL_CONTENT_ID = "familyTreeModalContent";
+  let sessionVerifyPromise = null;
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -51,12 +52,12 @@
         return;
       }
 
-      const authorized = await requireAuthenticated({ loading, error });
-      if (!authorized) {
-        return;
-      }
+    const authorized = await requireAuthenticated({ loading, error });
+    if (!authorized) {
+      return;
+    }
 
-      fetchPerson(personId)
+    fetchPerson(personId)
         .then((person) => {
           try {
             renderPerson(person, personId);
@@ -109,7 +110,8 @@
     const dataUrl = buildDataUrl(personId);
     state.lastDataUrl = dataUrl;
 
-    const response = await fetch(dataUrl, { credentials: "same-origin" });
+    const fetchOptions = await buildAuthorizedFetchOptions();
+    const response = await fetch(dataUrl, fetchOptions);
     if (!response.ok) {
       throw new Error(`Person record ${personId} not found (HTTP ${response.status}).`);
     }
@@ -118,27 +120,14 @@
   }
 
   async function requireAuthenticated() {
-    const featureFlags = await waitForFeatureFlags();
-    const auth = await waitForAuth();
-
-    const flagState = featureFlags && typeof featureFlags.getState === "function" ? featureFlags.getState() : {};
-    if (flagState.loggedIn && flagState.sessionToken) {
+    const { token } = await waitForSessionToken({
+      timeoutMs: 8000,
+      label: "[HFY_PERSON]"
+    });
+    if (token) {
       return true;
     }
-
-    const token = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
-
-    if (featureFlags && typeof featureFlags.verifySession === "function" && token) {
-      try {
-        const result = await featureFlags.verifySession({ googleIdToken: token });
-        if (result && result.allowed) {
-          return true;
-        }
-      } catch (err) {
-        console.error("[HFY_PERSON] verifySession failed", err);
-      }
-    }
-
+    console.warn("[HFY_PERSON] Unable to obtain session token before timeout; redirecting to login.");
     redirectToLogin();
     return false;
   }
@@ -237,6 +226,62 @@
       target.searchParams.set("next", next);
     }
     window.location.replace(target.toString());
+  }
+
+  async function buildAuthorizedFetchOptions() {
+    const { token } = await waitForSessionToken({
+      timeoutMs: 2000,
+      label: "[HFY_PERSON] fetchPerson"
+    });
+    if (token) {
+      return {
+        credentials: "include",
+        headers: {
+          "X-HFY-Session": token
+        }
+      };
+    }
+    return { credentials: "include" };
+  }
+
+  async function waitForSessionToken({ timeoutMs = 6000, label = "[HFY_SESSION]" } = {}) {
+    const featureFlags = await waitForFeatureFlags();
+    const auth = await waitForAuth();
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const token = featureFlags && typeof featureFlags.requireSessionToken === "function" ? featureFlags.requireSessionToken() : null;
+      if (token) {
+        return { token, featureFlags, auth };
+      }
+
+      const idToken = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
+      const flagState = featureFlags && typeof featureFlags.getState === "function" ? featureFlags.getState() : {};
+      if (flagState && flagState.verifying && sessionVerifyPromise) {
+        await sessionVerifyPromise.catch(() => {});
+        continue;
+      }
+      if (idToken && featureFlags && typeof featureFlags.verifySession === "function" && !sessionVerifyPromise) {
+        sessionVerifyPromise = featureFlags
+          .verifySession({ googleIdToken: idToken })
+          .catch((err) => {
+            console.warn(`${label} verifySession attempt failed`, err);
+          })
+          .finally(() => {
+            sessionVerifyPromise = null;
+          });
+        await sessionVerifyPromise;
+        continue;
+      }
+
+      await delay(150);
+    }
+
+    return { token: null, featureFlags, auth };
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   function renderPhotoTag(url, displayName, fallback) {
