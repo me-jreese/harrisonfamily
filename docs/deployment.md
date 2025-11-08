@@ -67,6 +67,7 @@ All source templates and front-end scripts live under `projects/harrisonfamily/w
 **Promotion steps:**
 1. Record every Eleventy-related file you touched in the session log (`workspace/session-logs/...json`).
 2. Run `HFY_ENV=prod HFY_DATA_BASE=https://harrisonfamily.us/person/ HFY_MEDIA_BASE=https://harrisonfamily.us/media/ npm run build` inside `workspace/11ty-dev`.
+   - Setting `HFY_ENV=prod` automatically flips `gateway.enforceAssets=true` so the front-end sends `X-HFY-Session` on every `person/*.json` and `search-*.json` fetch. If you need to override this (e.g., for local dev), set `HFY_FEATURE_FLAGS__GATEWAY__ENFORCE_ASSETS=false` explicitly; otherwise **never** run the production build without `HFY_ENV=prod` or the CloudFront/S3 origin will return HTTP 403 for protected JSON.
 3. Promote the generated assets using the helper script:
    ```bash
    ./repo/scripts/promote_workspace_assets.sh --log docs/session-logs/<your-log>.json
