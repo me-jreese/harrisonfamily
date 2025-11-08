@@ -59,8 +59,12 @@ jobs:
           export_default_credentials: true
 
       - name: Verify gcloud authentication
+        env:
+          GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
         run: |
-          gcloud auth activate-service-account --key-file="$GOOGLE_GHA_CREDS_PATH"
+          KEY_FILE="$RUNNER_TEMP/gcp-key.json"
+          printf '%s' "$GCP_SERVICE_ACCOUNT_KEY" > "$KEY_FILE"
+          gcloud auth activate-service-account --key-file="$KEY_FILE"
           gcloud config set project $GCP_PROJECT_ID
           gcloud auth list
 
