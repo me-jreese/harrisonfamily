@@ -1,0 +1,32 @@
+{
+  "DistributionConfig": {
+    "Comment": "HFY template",
+    "Aliases": {
+      "Quantity": 2,
+      "Items": ["example.com", "www.example.com"]
+    },
+    "Origins": {
+      "Quantity": 1,
+      "Items": [
+        {
+          "Id": "s3-origin",
+          "DomainName": "example-bucket.s3.amazonaws.com",
+          "S3OriginConfig": {"OriginAccessIdentity": ""}
+        }
+      ]
+    },
+    "DefaultCacheBehavior": {
+      "TargetOriginId": "s3-origin",
+      "ViewerProtocolPolicy": "redirect-to-https",
+      "AllowedMethods": {"Quantity": 2, "Items": ["GET", "HEAD"], "CachedMethods": {"Quantity": 2, "Items": ["GET", "HEAD"]}},
+      "Compress": true,
+      "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6"
+    },
+    "Enabled": true,
+    "ViewerCertificate": {
+      "ACMCertificateArn": "arn:aws:acm:us-east-1:ACCOUNT:certificate/ID",
+      "SSLSupportMethod": "sni-only"
+    },
+    "PriceClass": "PriceClass_100"
+  }
+}

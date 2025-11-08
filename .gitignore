@@ -23,5 +23,4 @@ __pycache__/
 
 # Ensure external references stay out of the repo
 ../agent-reference/
-../workspace/
 ../reports/
