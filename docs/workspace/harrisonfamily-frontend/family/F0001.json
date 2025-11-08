@@ -1,0 +1,6 @@
+{
+  "handle": "F0001",
+  "grampsId": "F0001",
+  "parents": ["I0001", "I0002"],
+  "children": ["I0003"]
+}

@@ -1,0 +1,10 @@
+{
+  "handle": "M0001",
+  "grampsId": "M0001",
+  "title": "Sample Photo",
+  "s3Key": "media/M0001.jpg",
+  "mimeType": "image/jpeg",
+  "checksum": "d41d8cd98f00b204e9800998ecf8427e",
+  "size": 0,
+  "missing": true
+}

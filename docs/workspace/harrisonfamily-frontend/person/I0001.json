@@ -1,0 +1,30 @@
+{
+  "grampsId": "I0001",
+  "displayName": "Sample Person",
+  "givenName": "Sample",
+  "surname": "Person",
+  "isLiving": false,
+  "lifespanSummary": "1900–1980",
+  "events": [
+    {
+      "type": "Birth",
+      "date": "1900-01-01",
+      "place": "Sample Town"
+    }
+  ],
+  "familyTree": {
+    "families": ["F0001"],
+    "graphviz": "digraph G { I0001 [label=\"Sample Person\"]; }"
+  },
+  "mediaGallery": [
+    {
+      "handle": "M0001",
+      "title": "Sample Photo",
+      "thumbnail": "/media/M0001.jpg"
+    }
+  ],
+  "primaryPhoto": {
+    "handle": "M0001",
+    "title": "Sample Photo"
+  }
+}

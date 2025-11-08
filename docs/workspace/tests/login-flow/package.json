@@ -1,0 +1,13 @@
+{
+  "name": "hfy-login-flow-tests",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "PLAYWRIGHT_HEADLESS=0 playwright test --headed --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
