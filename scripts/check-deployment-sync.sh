@@ -65,7 +65,7 @@ run_rsync_check() {
   cleaned_output=$(printf "%s\n" "$raw_output" | sed '/^sending incremental file list$/d' | sed '/^$/d')
   if [ -n "$cleaned_output" ]; then
     echo "[ERROR] $label is out of sync with its workspace source." >&2
-    echo "        Review $DOC_PATH and run the promotion steps before committing." >&2
+    echo "        Review $DOC_PATH and run scripts/promote_workspace_assets.sh with the current session log before committing." >&2
     echo "$cleaned_output"
     exit 1
   fi
