@@ -16,9 +16,23 @@
   );
   const ANY = "any";
   const LOG_PREFIX = "[HFYFeatureFlags]";
+  const debugEnabled = (() => {
+    if (config.debug) {
+      return true;
+    }
+    if (typeof window !== "undefined" && window.HFY_DEBUG_FEATURES === true) {
+      return true;
+    }
+    try {
+      return typeof localStorage !== "undefined" && localStorage.getItem("HFY_DEBUG_FEATURES") === "true";
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Unable to read HFY_DEBUG_FEATURES flag`, error);
+      return false;
+    }
+  })();
 
   function logDebug(message, ...args) {
-    if (config.debug) {
+    if (debugEnabled) {
       console.debug(`${LOG_PREFIX} ${message}`, ...args);
     }
   }
@@ -87,8 +101,17 @@
       return false;
     }
 
+    if (!googleIdToken) {
+      logDebug("verifySession called without googleIdToken");
+    }
+
     try {
       state.verifying = true;
+      logDebug("POSTing to gateway endpoint", {
+        endpoint: gatewayConfig.endpoint,
+        context: gatewayConfig.context,
+        hasIdToken: Boolean(googleIdToken)
+      });
       const response = await fetch(gatewayConfig.endpoint, {
         method: "POST",
         headers: {
@@ -126,7 +149,9 @@
           : null;
       state.verifiedAt = Date.now();
       logDebug("Session verified via gateway.", {
-        verifiedAt: state.verifiedAt
+        verifiedAt: state.verifiedAt,
+        sessionTokenPreview: `${payload.sessionToken.slice(0, 6)}...`,
+        grampsId: payload.grampsId
       });
       applyFeatureVisibility();
       return payload;

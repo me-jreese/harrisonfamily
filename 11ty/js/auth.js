@@ -25,8 +25,23 @@
   let myRecordLinks = [];
   let hasRedirectedToRecord = false;
 
-  function logDebug(message, ...args) {
+  const debugEnabled = (() => {
     if (CONFIG.debug) {
+      return true;
+    }
+    if (typeof window !== "undefined" && window.HFY_DEBUG_AUTH === true) {
+      return true;
+    }
+    try {
+      return typeof localStorage !== "undefined" && localStorage.getItem("HFY_DEBUG_AUTH") === "true";
+    } catch (error) {
+      console.warn("[HFY_AUTH] Unable to read HFY_DEBUG_AUTH flag", error);
+      return false;
+    }
+  })();
+
+  function logDebug(message, ...args) {
+    if (debugEnabled) {
       console.debug("[HFY_AUTH]", message, ...args);
     }
   }
@@ -123,15 +138,25 @@
 
   async function ensureGatewaySession() {
     if (!featureFlags || typeof featureFlags.verifySession !== "function" || !state.idToken) {
+      logDebug("Skipping ensureGatewaySession; feature flags or idToken missing.", {
+        hasFeatureFlags: Boolean(featureFlags),
+        idTokenPresent: Boolean(state.idToken)
+      });
       return;
     }
     try {
+      logDebug("Verifying session with gateway…");
       const result = await featureFlags.verifySession({
         googleIdToken: state.idToken
       });
       if (result && result.allowed) {
+        logDebug("Gateway verification succeeded.", {
+          grampsId: result.grampsId,
+          hasSessionToken: Boolean(result.sessionToken)
+        });
         syncUserRecord(result.grampsId || null);
       } else {
+        logDebug("Gateway verification returned denied result.", result);
         syncUserRecord(null);
       }
       notifySubscribers();
@@ -172,6 +197,7 @@
   }
 
   function syncUserRecord(grampsId) {
+    logDebug("syncUserRecord", { grampsId, previous: state.userGrampsID });
     state.userGrampsID = grampsId || null;
     persistUserGrampsID(state.userGrampsID);
     updateMyRecordLinks();
@@ -184,6 +210,10 @@
       logDebug("Credential response missing payload");
       return;
     }
+    logDebug("Received credential response from Google Identity.", {
+      profilePreview: response.select_by,
+      redirecting: window.location.pathname
+    });
     state.idToken = response.credential;
     state.profile = decodeJwt(response.credential) || {};
     state.signedIn = true;
@@ -313,6 +343,7 @@
     const storedToken = localStorage.getItem(STORAGE_KEY);
     const storedGrampsId = localStorage.getItem(GRAMPS_STORAGE_KEY);
     if (!storedToken) {
+      logDebug("No stored ID token found in localStorage.");
       if (storedGrampsId) {
         syncUserRecord(storedGrampsId);
       }
@@ -323,6 +354,9 @@
       persistToken(null);
       return;
     }
+    logDebug("Restoring stored session from localStorage.", {
+      hasGrampsId: Boolean(storedGrampsId)
+    });
     state.idToken = storedToken;
     state.profile = profile;
     state.signedIn = true;
@@ -343,6 +377,7 @@
 
   function shouldRedirectToRecord() {
     if (!state.userGrampsID) {
+      logDebug("shouldRedirectToRecord skipped: missing userGrampsID.");
       return false;
     }
     if (hasRedirectedToRecord) {
@@ -356,8 +391,14 @@
     if (!shouldRedirectToRecord()) {
       return;
     }
+    const featureState = featureFlags && typeof featureFlags.getState === "function" ? featureFlags.getState() : {};
+    if (!featureState.sessionToken) {
+      logDebug("Deferring redirect; sessionToken missing.", featureState);
+      return;
+    }
     hasRedirectedToRecord = true;
     const destination = `/person/?id=${encodeURIComponent(state.userGrampsID)}`;
+    logDebug("Redirecting to My Record.", { destination });
     window.location.assign(destination);
   }
 
