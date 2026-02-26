@@ -21,6 +21,7 @@
     ready: false,
     loading: false,
   };
+  let loadDataPromise = null;
 
   function normalize(text) {
     return (text || '').toLowerCase();
@@ -165,45 +166,47 @@
   }
 
   async function loadData() {
-    if (state.loading || state.ready) {
-      return;
-    }
+    if (state.ready) return;
+    if (loadDataPromise) return loadDataPromise;
 
     state.loading = true;
+    loadDataPromise = (async () => {
+      const manifestUrl = config.manifestUrl || '/person/index.json';
+      const indexUrl = config.indexUrl || '/person/search-index.json';
 
-    const manifestUrl = config.manifestUrl || '/person/index.json';
-    const indexUrl = config.indexUrl || '/person/search-index.json';
+      try {
+        const authorized = await requireAuthenticated();
+        if (!authorized) {
+          return;
+        }
+        const headers = await buildAuthHeaders();
+        const fetchOptions = Object.keys(headers).length ? { headers, credentials: 'include' } : {};
 
-    try {
-      const authorized = await requireAuthenticated();
-      if (!authorized) {
+        const [manifest, index] = await Promise.all([
+          fetch(manifestUrl, fetchOptions).then((res) => {
+            if (!res.ok) throw new Error('Failed to load manifest');
+            return res.json();
+          }),
+          fetch(indexUrl, fetchOptions).then((res) => {
+            if (!res.ok) throw new Error('Failed to load search index');
+            return res.json();
+          }),
+        ]);
+
+        state.manifest = Array.isArray(manifest.people) ? manifest.people : manifest;
+        state.searchIndex = Array.isArray(index.documents) ? index.documents : [];
+        state.store = new Map(state.manifest.map((entry) => [entry.grampsId, entry]));
+        state.ready = true;
+      } catch (err) {
+        console.error('[Search] Failed to load search data:', err);
+        statusEl.textContent = 'Unable to load search data. Please try again later.';
+      } finally {
         state.loading = false;
-        return;
+        loadDataPromise = null;
       }
-      const headers = await buildAuthHeaders();
-      const fetchOptions = Object.keys(headers).length ? { headers, credentials: 'include' } : {};
+    })();
 
-      const [manifest, index] = await Promise.all([
-        fetch(manifestUrl, fetchOptions).then((res) => {
-          if (!res.ok) throw new Error('Failed to load manifest');
-          return res.json();
-        }),
-        fetch(indexUrl, fetchOptions).then((res) => {
-          if (!res.ok) throw new Error('Failed to load search index');
-          return res.json();
-        }),
-      ]);
-
-      state.manifest = Array.isArray(manifest.people) ? manifest.people : manifest;
-      state.searchIndex = Array.isArray(index.documents) ? index.documents : [];
-      state.store = new Map(state.manifest.map((entry) => [entry.grampsId, entry]));
-      state.ready = true;
-      state.loading = false;
-    } catch (err) {
-      console.error('[Search] Failed to load search data:', err);
-      state.loading = false;
-      statusEl.textContent = 'Unable to load search data. Please try again later.';
-    }
+    return loadDataPromise;
   }
 
   async function requireAuthenticated() {
