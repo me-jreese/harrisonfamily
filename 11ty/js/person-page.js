@@ -31,7 +31,6 @@
   let currentFamilyTreeMarkup = "";
   const FAMILY_TREE_MODAL_ID = "familyTreeModal";
   const FAMILY_TREE_MODAL_CONTENT_ID = "familyTreeModalContent";
-  let sessionVerifyPromise = null;
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -247,41 +246,61 @@
   async function waitForSessionToken({ timeoutMs = 6000, label = "[HFY_SESSION]" } = {}) {
     const featureFlags = await waitForFeatureFlags();
     const auth = await waitForAuth();
-    const start = Date.now();
 
-    while (Date.now() - start < timeoutMs) {
-      const token = featureFlags && typeof featureFlags.requireSessionToken === "function" ? featureFlags.requireSessionToken() : null;
-      if (token) {
-        return { token, featureFlags, auth };
-      }
-
-      const idToken = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
-      const flagState = featureFlags && typeof featureFlags.getState === "function" ? featureFlags.getState() : {};
-      if (flagState && flagState.verifying && sessionVerifyPromise) {
-        await sessionVerifyPromise.catch(() => {});
-        continue;
-      }
-      if (idToken && featureFlags && typeof featureFlags.verifySession === "function" && !sessionVerifyPromise) {
-        sessionVerifyPromise = featureFlags
-          .verifySession({ googleIdToken: idToken })
-          .catch((err) => {
-            console.warn(`${label} verifySession attempt failed`, err);
-          })
-          .finally(() => {
-            sessionVerifyPromise = null;
-          });
-        await sessionVerifyPromise;
-        continue;
-      }
-
-      await delay(150);
+    // Fast path: session token already available (e.g., restored from sessionStorage)
+    const immediateToken =
+      featureFlags && typeof featureFlags.requireSessionToken === "function"
+        ? featureFlags.requireSessionToken()
+        : null;
+    if (immediateToken) {
+      return { token: immediateToken, featureFlags, auth };
     }
 
-    return { token: null, featureFlags, auth };
-  }
+    // Event-driven path: subscribe to auth change events, resolve when token appears
+    return new Promise((resolve) => {
+      let resolved = false;
+      let unsubscribe = null;
+      let fallbackTimer = null;
+      const deadline = Date.now() + timeoutMs;
 
-  function delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+      function checkToken() {
+        if (resolved) {
+          return;
+        }
+        const token =
+          featureFlags && typeof featureFlags.requireSessionToken === "function"
+            ? featureFlags.requireSessionToken()
+            : null;
+        if (token) {
+          resolved = true;
+          if (unsubscribe) {
+            unsubscribe();
+          }
+          clearInterval(fallbackTimer);
+          resolve({ token, featureFlags, auth });
+        }
+      }
+
+      if (auth && typeof auth.onChange === "function") {
+        unsubscribe = auth.onChange(() => checkToken());
+      }
+
+      // Slow fallback poll (500ms) guards against edge cases where onChange is unavailable
+      fallbackTimer = setInterval(() => {
+        if (Date.now() >= deadline) {
+          if (!resolved) {
+            resolved = true;
+            if (unsubscribe) {
+              unsubscribe();
+            }
+            clearInterval(fallbackTimer);
+            resolve({ token: null, featureFlags, auth });
+          }
+          return;
+        }
+        checkToken();
+      }, 500);
+    });
   }
 
   function renderPhotoTag(url, displayName, fallback) {

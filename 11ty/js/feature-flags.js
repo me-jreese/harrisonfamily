@@ -188,7 +188,13 @@
   }
 
   function requireSessionToken() {
-    return state.sessionToken || null;
+    if (!state.sessionToken) return null;
+    if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) {
+      state.sessionToken = null;
+      clearSessionState();
+      return null;
+    }
+    return state.sessionToken;
   }
 
   function onReady(callback) {
@@ -221,6 +227,24 @@
     },
     refresh() {
       applyFeatureVisibility();
+    },
+    acceptSession(payload) {
+      if (!payload || !payload.sessionToken) {
+        return false;
+      }
+      state.loggedIn = true;
+      state.sessionToken = payload.sessionToken;
+      state.userGrampsID = payload.grampsId || null;
+      state.hasRecord = Boolean(payload.grampsId);
+      state.sessionExpiresAt = payload.expiresAt
+        ? Date.parse(payload.expiresAt)
+        : payload.expiresIn
+          ? Date.now() + Number(payload.expiresIn) * 1000
+          : null;
+      state.verifiedAt = Date.now();
+      persistSessionState({ token: payload.sessionToken, grampsId: payload.grampsId || null });
+      applyFeatureVisibility();
+      return true;
     },
     verifySession,
     requireSessionToken
