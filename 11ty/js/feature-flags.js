@@ -188,7 +188,13 @@
   }
 
   function requireSessionToken() {
-    return state.sessionToken || null;
+    if (!state.sessionToken) return null;
+    if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) {
+      state.sessionToken = null;
+      clearSessionState();
+      return null;
+    }
+    return state.sessionToken;
   }
 
   function onReady(callback) {

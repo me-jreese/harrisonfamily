@@ -219,7 +219,6 @@
     return false;
   }
 
-  let sessionVerifyPromise = null;
 
   function waitForFeatureFlags(timeoutMs = 6000) {
     if (featureFlags && typeof featureFlags.getState === "function") {
@@ -260,36 +259,61 @@
   async function waitForSessionToken({ timeoutMs = 6000, label = "[HFY_SEARCH_PAGE]" } = {}) {
     const flags = await waitForFeatureFlags();
     const auth = await waitForAuth();
-    const start = Date.now();
 
-    while (Date.now() - start < timeoutMs) {
-      const token = flags && typeof flags.requireSessionToken === "function" ? flags.requireSessionToken() : null;
-      if (token) {
-        return { token, featureFlags: flags, auth };
-      }
-
-      const idToken = auth && typeof auth.getLatestIdToken === "function" ? auth.getLatestIdToken() : null;
-      if (sessionVerifyPromise) {
-        await sessionVerifyPromise.catch(() => {});
-        continue;
-      }
-      if (idToken && flags && typeof flags.verifySession === "function") {
-        sessionVerifyPromise = flags
-          .verifySession({ googleIdToken: idToken })
-          .catch((error) => {
-            console.warn(`${label} verifySession attempt failed`, error);
-          })
-          .finally(() => {
-            sessionVerifyPromise = null;
-          });
-        await sessionVerifyPromise;
-        continue;
-      }
-
-      await delay(150);
+    // Fast path: session token already available (e.g., restored from sessionStorage)
+    const immediateToken =
+      flags && typeof flags.requireSessionToken === "function"
+        ? flags.requireSessionToken()
+        : null;
+    if (immediateToken) {
+      return { token: immediateToken, featureFlags: flags, auth };
     }
 
-    return { token: null, featureFlags: flags, auth };
+    // Event-driven path: subscribe to auth change events, resolve when token appears
+    return new Promise((resolve) => {
+      let resolved = false;
+      let unsubscribe = null;
+      let fallbackTimer = null;
+      const deadline = Date.now() + timeoutMs;
+
+      function checkToken() {
+        if (resolved) {
+          return;
+        }
+        const token =
+          flags && typeof flags.requireSessionToken === "function"
+            ? flags.requireSessionToken()
+            : null;
+        if (token) {
+          resolved = true;
+          if (unsubscribe) {
+            unsubscribe();
+          }
+          clearInterval(fallbackTimer);
+          resolve({ token, featureFlags: flags, auth });
+        }
+      }
+
+      if (auth && typeof auth.onChange === "function") {
+        unsubscribe = auth.onChange(() => checkToken());
+      }
+
+      // Slow fallback poll (500ms) guards against edge cases where onChange is unavailable
+      fallbackTimer = setInterval(() => {
+        if (Date.now() >= deadline) {
+          if (!resolved) {
+            resolved = true;
+            if (unsubscribe) {
+              unsubscribe();
+            }
+            clearInterval(fallbackTimer);
+            resolve({ token: null, featureFlags: flags, auth });
+          }
+          return;
+        }
+        checkToken();
+      }, 500);
+    });
   }
 
   function delay(ms) {
