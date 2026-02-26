@@ -2,7 +2,7 @@
   const STORAGE_KEY = "HFY_AUTH_ID_TOKEN";
   const GRAMPS_STORAGE_KEY = "HFY_AUTH_USER_GRAMPS_ID";
   const CONFIG = window.HFY_AUTH_CONFIG || {};
-  const DEFAULT_CLIENT_ID = "770284891867-3sfgo71osgn2ani7v4f6s6nj97m15r7e.apps.googleusercontent.com";
+  const DEFAULT_CLIENT_ID = "REPLACE_WITH_GOOGLE_CLIENT_ID";
   const featureFlags = window.HFYFeatureFlags;
   const listeners = new Set();
   const LOGOUT_REDIRECT = CONFIG.logoutRedirect || "/logged-out/";
@@ -317,6 +317,10 @@
 
     updateUI();
 
+    // Restore any stored session immediately — does not depend on GIS SDK load.
+    // This ensures auth.onChange fires for returning users without waiting for GIS.
+    restoreStoredSession();
+
     try {
       const googleAccounts = await waitForGoogleClient();
       state.googleReady = true;
@@ -327,17 +331,19 @@
         context: "signin",
         auto_select: false
       });
-      renderGoogleButton(googleAccounts);
-      googleAccounts.prompt();
+      if (!state.signedIn) {
+        renderGoogleButton(googleAccounts);
+        googleAccounts.prompt();
+      }
     } catch (error) {
       console.error("[HFY_AUTH] Unable to initialize Google Sign-In", error);
-      setStatus({
-        message: "Google Sign-In is unavailable right now. Please try again later.",
-        variant: "danger"
-      });
+      if (!state.signedIn) {
+        setStatus({
+          message: "Google Sign-In is unavailable right now. Please try again later.",
+          variant: "danger"
+        });
+      }
     }
-
-    restoreStoredSession();
   }
 
   function restoreStoredSession() {
@@ -403,6 +409,13 @@
     window.location.assign(destination);
   }
 
+  function getMagicLinkEndpoint() {
+    return (
+      (featureFlags && featureFlags.config && featureFlags.config.gateway && featureFlags.config.gateway.endpoint) ||
+      "/api/check-allowed"
+    );
+  }
+
   const authAPI = {
     isSignedIn() {
       return state.signedIn;
@@ -420,6 +433,46 @@
         return () => listeners.delete(callback);
       }
       return () => {};
+    },
+    async requestMagicLink(email) {
+      try {
+        const res = await fetch(getMagicLinkEndpoint(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.toLowerCase().trim() })
+        });
+        return res.json();
+      } catch (error) {
+        console.error("[HFY_AUTH] requestMagicLink failed", error);
+        return { error: error.message };
+      }
+    },
+    async verifyMagicLink(token, email) {
+      try {
+        const res = await fetch(getMagicLinkEndpoint(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ magic_token: token, email: email.toLowerCase().trim() }),
+          credentials: "include"
+        });
+        const data = await res.json();
+        if (data.allowed && data.sessionToken) {
+          state.signedIn = true;
+          state.profile = { email: email.toLowerCase().trim(), source: "magic_link" };
+          state.idToken = null;
+          persistToken(null);
+          if (featureFlags && typeof featureFlags.acceptSession === "function") {
+            featureFlags.acceptSession(data);
+          }
+          syncUserRecord(data.grampsId || null);
+          updateUI();
+          notifySubscribers();
+        }
+        return data;
+      } catch (error) {
+        console.error("[HFY_AUTH] verifyMagicLink failed", error);
+        return { error: error.message };
+      }
     }
   };
 

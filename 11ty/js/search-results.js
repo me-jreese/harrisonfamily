@@ -296,6 +296,21 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  async function subscribeToAuthChanges() {
+    const auth = await waitForAuth();
+    if (!auth || typeof auth.onChange !== "function") {
+      return;
+    }
+    auth.onChange((snapshot) => {
+      if (snapshot && snapshot.signedIn && !state.ready && !state.loading) {
+        loadData();
+      }
+    });
+    if (typeof auth.isSignedIn === "function" && auth.isSignedIn() && !state.ready) {
+      loadData();
+    }
+  }
+
   function redirectToLogin() {
     const next = window.location.pathname + window.location.search + window.location.hash;
     const target = new URL(loginRedirect, window.location.origin);
@@ -336,6 +351,7 @@
     executeSearch(query);
   });
 
+  subscribeToAuthChanges();
   bootstrap();
 
   async function bootstrap() {
