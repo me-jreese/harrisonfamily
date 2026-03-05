@@ -33,37 +33,17 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      - name: Sync static site to S3
-        run: |
-          aws s3 sync 11ty/ s3://harrisonfamily-frontend --delete
-
-      - name: Patch OAuth client ID in deployed files
+      - name: Patch OAuth client ID in source files
         env:
           HFY_GOOGLE_CLIENT_ID: ${{ secrets.HFY_GOOGLE_CLIENT_ID }}
         run: |
-          FILES=(
-            "js/auth.js"
-            "index.html"
-            "about/index.html"
-            "contact/index.html"
-            "family-login/index.html"
-            "logged-out/index.html"
-            "privacy/index.html"
-            "search/index.html"
-            "terms/index.html"
-            "person/index.html"
-            "private/index.html"
-          )
-          for f in "${FILES[@]}"; do
-            mkdir -p "/tmp/$(dirname "$f")"
-            aws s3 cp "s3://harrisonfamily-frontend/$f" "/tmp/$f"
-            sed -i "s/REPLACE_WITH_GOOGLE_CLIENT_ID/${HFY_GOOGLE_CLIENT_ID}/g" "/tmp/$f"
-            CONTENT_TYPE="text/html; charset=utf-8"
-            [[ "$f" == *.js ]] && CONTENT_TYPE="application/javascript; charset=utf-8"
-            aws s3 cp "/tmp/$f" "s3://harrisonfamily-frontend/$f" \
-              --content-type "$CONTENT_TYPE" \
-              --cache-control "max-age=300, public"
-          done
+          find 11ty -type f \( -name '*.html' -o -name '*.js' \) \
+            -exec grep -l 'REPLACE_WITH_GOOGLE_CLIENT_ID' {} + \
+          | xargs -r sed -i "s/REPLACE_WITH_GOOGLE_CLIENT_ID/${HFY_GOOGLE_CLIENT_ID}/g"
+
+      - name: Sync static site to S3
+        run: |
+          aws s3 sync 11ty/ s3://harrisonfamily-frontend --delete
 
       - name: Invalidate CloudFront cache
         run: |
