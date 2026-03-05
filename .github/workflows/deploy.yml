@@ -43,7 +43,13 @@ jobs:
 
       - name: Sync static site to S3
         run: |
-          aws s3 sync 11ty/ s3://harrisonfamily-frontend --delete
+          aws s3 sync 11ty/ s3://harrisonfamily-frontend --delete \
+            --exclude 'person/*.json' \
+            --exclude 'media/*' \
+            --exclude 'family/*' \
+            --exclude 'event/*' \
+            --exclude 'note/*' \
+            --exclude 'place/*'
 
       - name: Invalidate CloudFront cache
         run: |
