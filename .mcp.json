@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jreese": {
+      "type": "url",
+      "url": "https://mcp.jreese.net/sse"
+    }
+  }
+}
