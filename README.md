@@ -66,7 +66,7 @@ This project leverages open-source tools and cloud infrastructure to deliver a f
 
 ## Built with AI-Assisted Development
 
-This project was developed using AI CLI tools powered by the **[agentharmony](https://github.com/me-jreese/agentharmony)** framework—a structured methodology for managing complex software projects through conversational AI agents.
+This project was developed using AI CLI tools powered by the **[agentharmony](https://github.com/me-jreese/agentharmony)** framework—a structured methodology for managing complex software projects through conversational AI agents. That project evolved into **[Enceladus](https://github.com/NX-2021-L/enceladus)**, which now manages CI/CD for this project.
 
 ### What is agentharmony?
 
