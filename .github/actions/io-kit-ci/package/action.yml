@@ -1,0 +1,36 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:957e781752bfd06ce4f3ad44dfd1ea1c3e2fa968cc777b2cef0673b963a2e71d
+name: io-kit package
+description: Upload the release artifact (build output, extra artifacts, release.json) named io-kit-release-<sha>; rollback redeploys it later.
+inputs:
+  out:
+    description: Build output directory (build.out).
+    default: 11ty
+  artifacts:
+    description: JSON array of extra artifact paths (artifacts).
+    default: '["dist/hfy-check-allowed.zip"]'
+runs:
+  using: composite
+  steps:
+    - name: Collect release paths
+      id: paths
+      shell: bash
+      env:
+        OUT: ${{ inputs.out }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+      run: |
+        set -euo pipefail
+        mkdir -p .io-kit-ci
+        printf '{"sha":"%s","ref":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_REF_NAME" "$GITHUB_RUN_ID" > .io-kit-ci/release.json
+        {
+          echo 'paths<<IOKIT_EOF'
+          echo "$OUT"
+          jq -r '.[]' <<<"$ARTIFACTS"
+          echo '.io-kit-ci/release.json'
+          echo 'IOKIT_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: io-kit-release-${{ github.sha }}
+        path: ${{ steps.paths.outputs.paths }}
+        if-no-files-found: error
+        retention-days: 90

@@ -1,0 +1,27 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:b8bda1be8bedb011973b7cc8072f7fbd97a790baf7c156c81e0a9683458db14e
+name: io-kit deploy static
+description: aws s3 sync the build output to each s3_static target with --delete; excluded globs are never deleted.
+inputs:
+  out:
+    description: Build output directory (build.out).
+    default: 11ty
+  targets:
+    description: JSON array of s3_static targets.
+    default: '[{"kind":"s3_static","bucket":"harrisonfamily-frontend","distribution":"E2JCDK3QLQNNYB","exclude":["person/*.json","media/*","family/*","event/*","note/*","place/*"],"invalidate":["/*"]}]'
+runs:
+  using: composite
+  steps:
+    - name: Sync to S3
+      shell: bash
+      env:
+        OUT: ${{ inputs.out }}
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        set -euo pipefail
+        while IFS= read -r target; do
+          bucket=$(jq -r '.bucket' <<<"$target")
+          args=()
+          while IFS= read -r pattern; do args+=(--exclude "$pattern"); done < <(jq -r '.exclude // [] | .[]' <<<"$target")
+          echo "sync $OUT -> s3://$bucket (excluding: ${args[*]:-none})"
+          aws s3 sync "$OUT/" "s3://$bucket/" --delete --only-show-errors "${args[@]}"
+        done < <(jq -c '.[]' <<<"$TARGETS")

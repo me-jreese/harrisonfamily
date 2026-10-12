@@ -1,0 +1,23 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:6c3b71538b31962d2c9f581d7a24b3a68436ad61b35c20024673704babbbc79c
+name: io-kit invalidate
+description: Create a CloudFront invalidation for each s3_static target with a distribution and wait for it to complete.
+inputs:
+  targets:
+    description: JSON array of s3_static targets that carry a distribution.
+    default: '[{"kind":"s3_static","bucket":"harrisonfamily-frontend","distribution":"E2JCDK3QLQNNYB","exclude":["person/*.json","media/*","family/*","event/*","note/*","place/*"],"invalidate":["/*"]}]'
+runs:
+  using: composite
+  steps:
+    - name: Invalidate CloudFront
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        set -euo pipefail
+        while IFS= read -r target; do
+          dist=$(jq -r '.distribution' <<<"$target")
+          mapfile -t paths < <(jq -r '.invalidate // ["/*"] | .[]' <<<"$target")
+          id=$(aws cloudfront create-invalidation --distribution-id "$dist" --paths "${paths[@]}" --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$dist" --id "$id"
+          echo "invalidated $dist: ${paths[*]}"
+        done < <(jq -c '.[]' <<<"$TARGETS")

@@ -1,0 +1,10 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:e4e726f9c2af626d321e57615dd0c2c1e6b1cf6d4121632dc4771a096d8ef65e
+name: io-kit secret scan
+description: TruffleHog scan of the pushed or PR commit range (pinned version). Checkout must use fetch-depth 0.
+runs:
+  using: composite
+  steps:
+    - name: TruffleHog
+      uses: trufflesecurity/trufflehog@v3.88.0
+      with:
+        extra_args: --results=verified,unknown --fail

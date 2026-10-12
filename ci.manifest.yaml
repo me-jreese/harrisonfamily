@@ -1,0 +1,36 @@
+stack: static
+branch: main
+node_version: "20"
+build:
+  cmd: bash scripts/ci/patch-client-id.sh && bash scripts/ci/package-lambda.sh
+  out: 11ty
+  env:
+    HFY_GOOGLE_CLIENT_ID: {secret: HFY_GOOGLE_CLIENT_ID}
+artifacts:
+  - dist/hfy-check-allowed.zip
+parity:
+  mode: report
+secrets_scan: trufflehog
+deploy:
+  aws_role_secret: AWS_DEPLOY_ROLE_TO_ASSUME
+  region: us-west-2
+  targets:
+    - kind: s3_static
+      bucket: harrisonfamily-frontend
+      distribution: E2JCDK3QLQNNYB
+      exclude:
+        - "person/*.json"
+        - "media/*"
+        - "family/*"
+        - "event/*"
+        - "note/*"
+        - "place/*"
+      invalidate: ["/*"]
+    - kind: lambda
+      name: hfy-check-allowed
+      zip: dist/hfy-check-allowed.zip
+  smoke:
+    - https://harrisonfamily.us/
+    - https://harrisonfamily.us/family-login/
+  rollback:
+    strategy: previous_artifact

@@ -1,0 +1,57 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:0be4bf2a5f7139a30ec49948b5616df87fedad3ded13c64697fa4c43da108f44
+name: io-kit parity report
+description: Always run io-kit-ci check (pipeline_drift to the step summary; fails only in block mode), then the optional @io-kit/parity baseline check. Without a baseline the report notes "no baseline" and passes.
+inputs:
+  baseline:
+    description: Baseline file (parity.baseline). Optional.
+    default: ""
+  mode:
+    description: report or block (parity.mode).
+    default: report
+  args:
+    description: JSON array of extra parity diff options (parity.args).
+    default: "[]"
+  node-version:
+    description: Node version for actions/setup-node.
+    default: "20"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - name: Pipeline drift and parity baseline
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline }}
+        MODE: ${{ inputs.mode }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        set -uo pipefail
+        summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+        status=0
+        npx --no-install io-kit-ci check >drift.txt 2>drift.err
+        drift_rc=$?
+        cat drift.txt drift.err
+        {
+          echo '### io-kit pipeline drift'
+          if [ "$drift_rc" -eq 0 ]; then echo 'no pipeline_drift'; else echo '```'; cat drift.txt drift.err; echo '```'; fi
+        } >> "$summary"
+        if [ "$drift_rc" -ge 2 ] || { [ "$drift_rc" -ne 0 ] && [ "$MODE" = block ]; }; then status=1; fi
+        if [ -z "$BASELINE" ]; then
+          echo 'no baseline (parity.baseline is not set); parity baseline check skipped'
+          { echo '### io-kit parity'; echo 'no baseline'; } >> "$summary"
+        elif [ ! -f "$BASELINE" ]; then
+          echo "no baseline ($BASELINE not found); parity baseline check skipped"
+          { echo '### io-kit parity'; echo "no baseline ($BASELINE not found)"; } >> "$summary"
+          if [ "$MODE" = block ]; then echo "::error::parity.mode is block but baseline $BASELINE does not exist"; status=1; fi
+        else
+          extra=(); while IFS= read -r arg; do extra+=("$arg"); done < <(jq -r '.[]' <<<"$ARGS")
+          cli_mode=report-only
+          [ "$MODE" = block ] && cli_mode=blocking
+          npx --no-install io-kit-parity baseline check --baseline "$BASELINE" --mode "$cli_mode" ${extra[@]+"${extra[@]}"} 2>&1 | tee parity-report.txt
+          baseline_rc=${PIPESTATUS[0]}
+          { echo '### io-kit parity'; echo '```'; cat parity-report.txt; echo '```'; } >> "$summary"
+          [ "$baseline_rc" -eq 0 ] || status=1
+        fi
+        exit "$status"

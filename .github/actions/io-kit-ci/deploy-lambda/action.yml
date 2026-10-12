@@ -1,0 +1,44 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:38aad792c98659bfac06341fab0f18176f79db86d5804ed0e8349dd8faadc2da
+name: io-kit deploy lambda
+description: Update function code; with an alias also publish a version and point the alias at it. Rollback mode repoints the alias to the previous version, or (no alias) re-uploads the restored zip.
+inputs:
+  targets:
+    description: JSON array of lambda targets (name, optional alias, zip).
+    default: '[{"kind":"lambda","name":"hfy-check-allowed","zip":"dist/hfy-check-allowed.zip"}]'
+  rollback:
+    description: "true when called by the rollback action: aliased targets are repointed to the previous published version; alias-less targets re-upload the restored previous zip."
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Update function code (and alias when configured)
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+        ROLLBACK: ${{ inputs.rollback }}
+      run: |
+        set -euo pipefail
+        while IFS= read -r target; do
+          name=$(jq -r '.name' <<<"$target"); alias=$(jq -r '.alias // empty' <<<"$target"); zip=$(jq -r '.zip' <<<"$target")
+          if [ "$ROLLBACK" = true ] && [ -n "$alias" ]; then
+            cur=$(aws lambda get-alias --function-name "$name" --name "$alias" --query FunctionVersion --output text)
+            prev=$(aws lambda list-versions-by-function --function-name "$name" --output json | jq -r --argjson cur "$cur" '[.Versions[].Version | select(. != "$LATEST") | tonumber | select(. < $cur)] | max // empty')
+            [ -n "$prev" ] || { echo "::error::rollback: $name has no published version before $cur"; exit 1; }
+            aws lambda update-alias --function-name "$name" --name "$alias" --function-version "$prev" >/dev/null
+            echo "$name:$alias rolled back from version $cur to $prev"
+            continue
+          fi
+          aws lambda update-function-code --function-name "$name" --zip-file "fileb://$zip" >/dev/null
+          aws lambda wait function-updated --function-name "$name"
+          if [ -z "$alias" ]; then
+            echo "$name: code updated on \$LATEST (no alias configured)"
+            continue
+          fi
+          version=$(aws lambda publish-version --function-name "$name" --query Version --output text)
+          if aws lambda get-alias --function-name "$name" --name "$alias" >/dev/null 2>&1; then
+            aws lambda update-alias --function-name "$name" --name "$alias" --function-version "$version" >/dev/null
+          else
+            aws lambda create-alias --function-name "$name" --name "$alias" --function-version "$version" >/dev/null
+          fi
+          echo "$name:$alias -> version $version"
+        done < <(jq -c '.[]' <<<"$TARGETS")

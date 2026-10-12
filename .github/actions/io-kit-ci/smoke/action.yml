@@ -1,0 +1,32 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:6599734ff6cf19d2583d497f9c30c2b884178139ea6ec565fd441398298ef5bd
+name: io-kit smoke
+description: curl each smoke URL (no redirect following); any status outside 2xx/3xx fails.
+inputs:
+  urls:
+    description: JSON array of URLs (deploy.smoke).
+    default: '["https://harrisonfamily.us/","https://harrisonfamily.us/family-login/"]'
+  override-url:
+    description: Single http(s) URL that replaces `urls` (deploy workflow_dispatch input smoke_url). Empty keeps `urls`.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Smoke
+      shell: bash
+      env:
+        URLS: ${{ inputs.urls }}
+        OVERRIDE: ${{ inputs.override-url }}
+      run: |
+        set -uo pipefail
+        if [ -n "$OVERRIDE" ]; then
+          case "$OVERRIDE" in
+            http://*|https://*) URLS=$(jq -cn --arg u "$OVERRIDE" '[$u]'); echo "smoke_url override: $OVERRIDE" ;;
+            *) echo "::error::smoke_url must start with http:// or https://"; exit 1 ;;
+          esac
+        fi
+        failed=0
+        while IFS= read -r url; do
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 --retry 3 --retry-delay 5 --retry-all-errors "$url" || echo 000)
+          if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then echo "ok   $code $url"; else echo "::error::smoke FAIL $code $url"; failed=1; fi
+        done < <(jq -r '.[]' <<<"$URLS")
+        exit "$failed"

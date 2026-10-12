@@ -1,0 +1,28 @@
+# @io-kit/ci 0.1.1 rendered — do not edit; sha256:873b799bd0e273511788262b629472a276336469b15b86dc37fcde3900911671
+name: io-kit build
+description: Run the manifest build command and verify the output directory exists.
+inputs:
+  cmd:
+    description: Build command (build.cmd).
+    default: bash scripts/ci/patch-client-id.sh && bash scripts/ci/package-lambda.sh
+  out:
+    description: Build output directory (build.out).
+    default: 11ty
+  node-version:
+    description: Node version for actions/setup-node.
+    default: "20"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - name: Build
+      shell: bash
+      env:
+        CMD: ${{ inputs.cmd }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        bash -c "$CMD"
+        test -d "$OUT" || { echo "::error::build.out '$OUT' was not produced by the build command"; exit 1; }
