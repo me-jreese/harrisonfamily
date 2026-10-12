@@ -9,7 +9,7 @@ const ULID = (n) => `01JZZZZZZZZZZZZZZZZZZZZ${String(n).padStart(3, "0")}`;
 const T0 = "2026-01-01T00:00:00.000Z";
 
 async function stub(page, { signedIn = true } = {}) {
-  const s = { posts: [], comments: [], uploads: 0, puts: 0, postBodies: [], n: 0 };
+  const s = { posts: [], comments: [], uploads: 0, puts: 0, postBodies: [], n: 0, deletes: [] };
   s.posts.push({ id: ULID(1), type: "post", author: { id: "I9003", label: "Ann Other" }, subject: "I9003", body: "Seeded older post", attachments: [], visibility: "published", created_at: T0, updated_at: T0, can: { edit: false, delete: false, publish: false } });
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/person/*.json", (r) => r.fulfill({ json: r.request().url().includes("I9001") ? PERSON : [] }));
@@ -25,6 +25,7 @@ async function stub(page, { signedIn = true } = {}) {
     const req = r.request();
     const u = new URL(req.url());
     const id = u.pathname.split("/")[3];
+    if (req.method() === "DELETE") { s.deletes.push(id); s.posts = s.posts.filter((p) => p.id !== id); return r.fulfill({ status: 204, body: "" }); }
     if (req.method() === "GET" && id) { const p = s.posts.find((x) => x.id === id); return p ? r.fulfill({ json: p }) : r.fulfill({ status: 404, json: { error: "not_found", message: "no such post" } }); }
     if (req.method() === "GET") {
       const subj = u.searchParams.get("subject");
@@ -57,7 +58,8 @@ test("compose on own page (stubbed upload) -> timeline -> /posts/?id= -> comment
   const s = await stub(page);
   await page.goto("/person/?id=I9001&hfy_flags=postsV2", { waitUntil: "domcontentloaded" });
   const mine = page.locator("[data-hfy-my-posts]");
-  await expect(mine.getByText("Share something")).toBeVisible();
+  await expect(mine.getByRole("heading", { name: "share something" })).toBeVisible();
+  await expect(mine.locator('input[name="subject"]')).toHaveCount(0); // capabilities subject:false: the page's person is the subject
   const box = mine.getByRole("textbox").first();
   await box.fill("Garden photo day");
   await mine.locator('input[type=file]').first().setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
@@ -68,6 +70,7 @@ test("compose on own page (stubbed upload) -> timeline -> /posts/?id= -> comment
   expect(await box.evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(16);
   await submit.click();
   await expect(mine.getByText("Garden photo day")).toBeVisible();
+  await expect(mine.getByRole("status").filter({ hasText: /^posted$/ })).toBeVisible(); // the 3 s status ping
   expect(s.postBodies[0]).toMatchObject({ visibility: "published", subject: "I9001", body: "Garden photo day" });
   expect(s.postBodies[0].attachments[0]).toMatchObject({ kind: "image", mime: "image/png" });
   expect(s.uploads).toBe(1);
@@ -79,7 +82,7 @@ test("compose on own page (stubbed upload) -> timeline -> /posts/?id= -> comment
   await expect(tl.getByText("Seeded older post")).toBeVisible();
   const order = await tl.locator("li").allInnerTexts();
   expect(order[0]).toContain("Garden photo day");
-  await tl.getByRole("link", { name: /view post/i }).first().click();
+  await tl.getByRole("link", { name: /^comments/ }).first().click();
   await expect(page).toHaveURL(/\/posts\/\?id=01JZ/);
   const one = page.locator("[data-hfy-post]");
   await expect(one.getByText("Garden photo day")).toBeVisible();
@@ -87,7 +90,46 @@ test("compose on own page (stubbed upload) -> timeline -> /posts/?id= -> comment
   await cbox.fill("Lovely!");
   await one.locator("[data-hfy-comments]").getByRole("button", { name: /^post$/i }).click();
   await expect(one.locator("[data-hfy-comments]").getByRole("list").getByText("Lovely!")).toBeVisible();
+  await expect(one.locator("[data-hfy-comments]").getByRole("status").filter({ hasText: /^posted$/ })).toBeVisible();
   expect(await noHScroll(page)).toBe(true);
+});
+
+test("delete asks first: inline 'delete this post?' -> keep (nothing sent) / delete (DELETE sent, row gone)", async ({ page }) => {
+  const s = await stub(page);
+  s.posts.push({ id: ULID(7), type: "post", author: ME, subject: ME.id, body: "Mine to delete", attachments: [], visibility: "published", created_at: T0, updated_at: T0, can: { edit: true, delete: true, publish: false } });
+  await page.goto("/posts/?hfy_flags=postsV2", { waitUntil: "domcontentloaded" });
+  const row = page.locator(".hfy-posts__item", { hasText: "Mine to delete" });
+  await expect(row).toBeVisible();
+  await expect(page.locator(".hfy-posts__item", { hasText: "Seeded older post" }).getByRole("button", { name: "delete" })).toHaveCount(0);
+  await row.getByRole("button", { name: "delete" }).click();
+  const ask = row.getByRole("group", { name: "delete this post?" });
+  await expect(ask).toBeVisible();
+  await expect(ask.getByRole("button", { name: "keep" })).toBeFocused();
+  await ask.getByRole("button", { name: "keep" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(s.deletes).toEqual([]);
+  await row.getByRole("button", { name: "delete" }).click();
+  await row.getByRole("group", { name: "delete this post?" }).getByRole("button", { name: "delete" }).click();
+  await expect(page.locator(".hfy-posts__item", { hasText: "Mine to delete" })).toHaveCount(0);
+  expect(s.deletes).toEqual([ULID(7)]);
+});
+
+test("home: the timeline mounts in the page's own <main>, above the footer, and uses the one time format", async ({ page }) => {
+  const s = await stub(page);
+  s.posts[0].created_at = new Date(Date.now() - 5 * 60e3).toISOString();
+  await page.goto("/?hfy_flags=postsV2,shellV2", { waitUntil: "domcontentloaded" });
+  const tl = page.locator("[data-hfy-timeline]");
+  await expect(tl.getByText("Seeded older post")).toBeVisible();
+  await expect(tl.getByRole("heading", { name: "latest from the family" })).toBeVisible();
+  await expect(tl.locator("time").first()).toHaveText("5 min ago");
+  const where = await page.evaluate(() => {
+    const host = document.getElementById("hfy-timeline");
+    const footer = document.querySelector("footer");
+    return { pageMain: Boolean(host.closest("main:not([data-io-scroller])")), beforeFooter: Boolean(footer) && Boolean(host.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING), above: !footer || host.getBoundingClientRect().bottom <= footer.getBoundingClientRect().top + 0.5 };
+  });
+  expect(where.pageMain, "inside main:not([data-io-scroller])").toBe(true);
+  expect(where.beforeFooter, "the footer follows the timeline in the DOM").toBe(true);
+  expect(where.above, "and on screen").toBe(true);
 });
 
 test("someone else's person page: no composer; /posts/ lists; missing id shows a banner", async ({ page }) => {
@@ -98,7 +140,7 @@ test("someone else's person page: no composer; /posts/ lists; missing id shows a
   await page.goto("/posts/", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Seeded older post")).toBeVisible();
   await page.goto("/posts/?id=01JNOPE", { waitUntil: "domcontentloaded" });
-  await expect(page.locator("[data-hfy-banner]")).toContainText("not found");
+  await expect(page.locator("[data-hfy-banner]")).toContainText("that post wasn't found. if that's wrong, text J.");
 });
 
 test("flag off: homepage, person and /posts/ unchanged, no posts islands requested", async ({ page }) => {
@@ -107,7 +149,9 @@ test("flag off: homepage, person and /posts/ unchanged, no posts islands request
   page.on("request", (q) => { if (/\/js\/islands\/(timeline|my-posts|posts)/.test(q.url())) asked.push(q.url()); });
   await page.goto("/?hfy_flags=-postsV2", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(500);
-  await page.goto("/person/?id=I9001", { waitUntil: "domcontentloaded" });
+  // -personV2 too: with personV2 on (flags.json) its notes island replaces the legacy note as soon as it loads, a race this check lost
+  // about one run in eight; the check is about postsV2 leaving the page alone.
+  await page.goto("/person/?id=I9001&hfy_flags=-postsV2,-personV2", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("LEGACY NOTE")).toBeVisible();
   await page.goto("/posts/", { waitUntil: "domcontentloaded" });
   await expect(page.getByText(/posts are loading/i)).toBeVisible();

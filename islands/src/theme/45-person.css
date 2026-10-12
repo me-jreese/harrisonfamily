@@ -1,0 +1,551 @@
+/* 45-person.css (legacy area): the person page (/person/?id=) rendered by 11ty/js/person-page.js, styled to the DS
+   PersonRecord, FamilyTree and Lightbox specs. Overrides of main.css person rules use the #id of the region they sit in so
+   they win on specificity; each names the main.css literal it replaces. Aliases only (theme-lint), 1px hairline excepted. */
+
+/* ---------------------------------------------------------------- loading: skeletons, never a blank page */
+.person-loading {
+  display: grid;
+  gap: var(--io-space-6);
+  padding-block: var(--io-space-6);
+}
+.person-skeleton {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--io-space-4);
+}
+@media (min-width: 43rem) {
+  .person-skeleton { grid-template-columns: auto 1fr; align-items: center; gap: var(--io-space-6); }
+}
+.person-skeleton__portrait,
+.person-skeleton__line,
+.person-skeleton__block {
+  background-color: var(--io-color-semantic-surface-sunken);
+  animation: hfy-skeleton calc(var(--io-motion-duration-slow) * 4) var(--io-motion-easing-standard) infinite alternate;
+}
+.person-skeleton__portrait {
+  width: calc(var(--io-space-5) * 6);
+  aspect-ratio: 4 / 5;
+  border-radius: var(--io-radius-lg);
+}
+.person-skeleton__lines { display: grid; gap: var(--io-space-3); }
+.person-skeleton__line { height: var(--io-space-5); border-radius: var(--io-radius-sm); }
+.person-skeleton__line--name { height: var(--io-typography-size-display-sm); width: min(100%, calc(var(--io-space-9) * 5)); }
+.person-skeleton__line--meta { width: min(80%, calc(var(--io-space-9) * 4)); }
+.person-skeleton__block { height: calc(var(--io-space-9) * 3); border-radius: var(--io-radius-md); }
+.person-loading__text { margin: 0; color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
+@keyframes hfy-skeleton { from { opacity: 0.55; } to { opacity: 1; } }
+@media (min-width: 43rem) {
+  .person-skeleton__portrait { width: calc(var(--io-space-5) * 8); }
+}
+
+/* ---------------------------------------------------------------- page rhythm: life, family, photos, stories, comments */
+#person-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--io-space-6);
+}
+@media (min-width: 64rem) {
+  #person-content { gap: var(--io-space-8); }
+}
+/* sections carry .mb-5 (48px) in the template; the gap above is the only section spacing */
+#person-content > section { margin-bottom: 0; }
+/* .section-spacer {height:25px} (person-page.js also removes them) */
+.person-profile .section-spacer { display: none; }
+/* section headings: display serif, heading size, regular, lowercase (life · family · photos · stories) */
+#person-content > section > .container > h2,
+#person-content .notes-panel > h2 {
+  font-family: var(--io-typography-font-display);
+  font-size: var(--io-typography-size-xl);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-typography-leading-snug);
+  text-transform: lowercase;
+  color: var(--io-color-semantic-text);
+  margin-bottom: var(--io-space-4);
+}
+
+/* ---------------------------------------------------------------- hero */
+/* .person-profile .person-hero {padding:2rem 0; border-bottom:1px solid hsla(0,0%,100%,.12)} */
+#person-hero-section {
+  padding-top: var(--io-space-6);
+  padding-bottom: var(--io-space-6);
+  border-bottom: 1px solid var(--io-color-semantic-border);
+}
+.person-hero-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--io-space-4);
+  align-items: center;
+}
+@media (min-width: 43rem) {
+  .person-hero-grid { grid-template-columns: auto 1fr; gap: var(--io-space-6); }
+}
+/* portrait 120 / 160 / 200, radius.lg, 1px border, uncropped.
+   .person-profile .person-photo {border:3px solid rgba(88,182,231,.3); box-shadow:0 4px 12px rgba(0,0,0,.3)};
+   .person-photo-placeholder {border:2px dashed hsla(0,0%,100%,.2)} + inline 320 x 400 */
+#person-hero .person-photo,
+#person-hero .person-photo-placeholder {
+  display: block;
+  width: calc(var(--io-space-5) * 6);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-lg);
+  box-shadow: none;
+}
+#person-hero .person-photo {
+  height: auto;
+  background-color: var(--io-color-semantic-surface);
+}
+#person-hero .person-photo-placeholder {
+  aspect-ratio: 4 / 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--io-space-3);
+  text-align: center;
+  background-color: var(--io-color-semantic-surface-sunken);
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+@media (min-width: 43rem) {
+  #person-hero .person-photo, #person-hero .person-photo-placeholder { width: calc(var(--io-space-5) * 8); }
+}
+@media (min-width: 64rem) {
+  #person-hero .person-photo, #person-hero .person-photo-placeholder { width: calc(var(--io-space-5) * 10); }
+}
+/* name: display serif 36 / 48 / 60 (was .display-4 Inter) */
+#person-hero h1 {
+  font-family: var(--io-typography-font-display);
+  font-weight: var(--io-typography-weight-regular);
+  font-size: var(--io-typography-size-display-sm);
+  line-height: var(--io-typography-leading-tight);
+  color: var(--io-color-semantic-text);
+  margin: 0 0 var(--io-space-2);
+  overflow-wrap: break-word;
+}
+@media (min-width: 43rem) {
+  #person-hero h1 { font-size: var(--io-typography-size-display); }
+}
+@media (min-width: 64rem) {
+  #person-hero h1 { font-size: var(--io-typography-size-display-lg); }
+}
+.person-lifespan {
+  margin: 0;
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-md);
+}
+.person-living { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- empty state (one pattern) */
+.person-empty {
+  padding: var(--io-space-6) var(--io-space-4);
+  text-align: center;
+  background-color: var(--io-color-semantic-surface-raised);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+}
+.person-empty__title {
+  margin: 0 0 var(--io-space-1);
+  font-family: var(--io-typography-font-display);
+  font-size: var(--io-typography-size-xl);
+  color: var(--io-color-semantic-text);
+}
+.person-empty__text {
+  margin: 0;
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+
+/* ---------------------------------------------------------------- life: the timeline */
+/* .timeline-item::before {12px #58b6e7 dot, border 2px #07111c}; ::after {2px rgba(88,182,231,.3) rail}; rows were cards */
+.timeline-rows {
+  list-style: none;
+  margin: 0 0 0 calc(var(--io-space-3) / 2);
+  padding: 0 0 0 var(--io-space-4);
+  border-left: 1px solid var(--io-color-semantic-border);
+}
+.timeline-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--io-control-h-lg);
+  padding-block: var(--io-space-2);
+}
+.timeline-row::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--io-space-4) - var(--io-space-3) / 2 - 1px / 2);
+  top: calc(var(--io-space-3) + var(--io-space-1) / 2);
+  width: var(--io-space-3);
+  height: var(--io-space-3);
+  border-radius: var(--io-radius-pill);
+  background-color: var(--io-color-semantic-accent);
+}
+.timeline-date {
+  font-family: var(--io-typography-font-mono);
+  font-size: var(--io-typography-size-sm);
+  color: var(--io-color-semantic-text-dim);
+}
+.timeline-event { color: var(--io-color-semantic-text); }
+.timeline-note { color: var(--io-color-semantic-text); }
+.timeline-place { color: var(--io-color-semantic-text-dim); }
+
+/* ---------------------------------------------------------------- family: the list */
+/* .person-profile .family-tree .family-list>li:not(:last-child) {margin-bottom:1.5rem}; badges .7rem (11.2px) */
+#person-family-data .family-groups { display: grid; gap: var(--io-space-4); }
+#person-family-data .family-group__title {
+  margin: 0 0 var(--io-space-1);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  line-height: var(--io-typography-leading-normal);
+  color: var(--io-color-semantic-text-dim);
+}
+#person-family-data .family-list { list-style: none; margin: 0; padding: 0; }
+#person-family-data .family-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--io-space-2);
+  min-height: var(--io-control-tap-min);
+  margin: 0;
+}
+#person-family-data .family-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+}
+#person-family-data .family-meta { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
+
+/* ---------------------------------------------------------------- family: the tree frame
+   .family-tree-visualization {background:rgba(16,24,38,.65); border:1px solid hsla(0,0%,100%,.08); radius .75rem;
+   padding 1.25rem; min-height 320px; overflow:auto}; svg {width:100%; height:auto}. Frame 320 / 440 / 560. */
+/* The frame is a column: a toolbar band (44 + space-2 above and below) over the pannable viewport, so the toolbar never covers a
+   family member's name at any pan or zoom (the DS preview draws the tree below the toolbar for the same reason, viewBox 0 -40). */
+.family-tree-visualization {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+  height: calc(var(--io-space-9) * 5);
+  background-color: var(--io-color-semantic-surface-sunken);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+}
+@media (min-width: 43rem) {
+  .family-tree-visualization { height: calc(var(--io-space-9) * 6 + var(--io-control-h-lg)); }
+}
+@media (min-width: 64rem) {
+  .family-tree-visualization { height: calc(var(--io-space-9) * 8 + var(--io-space-8)); }
+}
+.family-tree-visualization .family-tree-embed {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+  cursor: grab;
+}
+.family-tree-visualization .family-tree-embed.is-panning { cursor: grabbing; user-select: none; }
+.family-tree-visualization .family-tree-embed:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: calc(-1 * var(--io-control-focus-ring));
+}
+/* natural size (person-page.js sets width/height; "fit" sets width 100%) */
+.family-tree-visualization .family-tree-embed svg { display: block; max-width: none; }
+/* fit: person-page.js sizes the drawing to the whole viewport (contain); it is centred in it */
+.family-tree-visualization.is-fit .family-tree-embed svg { max-width: 100%; margin-inline: auto; }
+.tree-toolbar {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--io-space-1);
+  padding: var(--io-space-2);
+}
+.tree-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--io-control-h-md);
+  height: var(--io-control-h-md);
+  min-width: var(--io-control-tap-min);
+  padding: 0;
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  background-color: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: box-shadow var(--io-motion-duration-fast) var(--io-motion-easing-standard);
+}
+.tree-btn:hover { box-shadow: var(--io-elevation-1); border-color: var(--io-color-semantic-text-dim); }
+.tree-btn[aria-pressed="true"] {
+  background-color: var(--io-color-semantic-token-pill-bg);
+  color: var(--io-color-semantic-token-pill-fg);
+  border-color: var(--io-color-semantic-accent);
+}
+.tree-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.tree-btn:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+.tree-skeleton {
+  position: absolute;
+  inset: calc(var(--io-control-h-md) + var(--io-space-4)) var(--io-space-4) var(--io-space-8);
+  border-radius: var(--io-radius-sm);
+  background-color: var(--io-color-semantic-surface-raised);
+  animation: hfy-skeleton calc(var(--io-motion-duration-slow) * 4) var(--io-motion-easing-standard) infinite alternate;
+}
+.tree-status {
+  position: absolute;
+  left: var(--io-space-4);
+  bottom: var(--io-space-3);
+  margin: 0;
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+.tree-error { margin: var(--io-space-4); }
+
+/* Graphviz nodes. Stop-gap for the ETL (upstream: role classes on g.node, currentColor labels, Source Sans 3 16): person-page.js
+   tags each g.node with its role (data-role + class), so bs-bridge `.tree .<role> {fill; color}` drives the shape fill and the
+   label ink. CSS beats the SVG presentation attributes (fill="var(--bs-*)", font-family="Inter,…", label fill var(--bs-white)).
+   Untagged nodes keep their attributes. */
+.tree .node[data-role] :is(path, polygon, ellipse) {
+  fill: inherit;
+  stroke: var(--io-color-semantic-border-strong);
+}
+.tree .node[data-role] text {
+  fill: currentColor;
+  stroke: none; /* bs-bridge `.tree .child/.grandchild {stroke}` is inherited by the label otherwise */
+  font-family: var(--io-typography-font-ui);
+}
+/* main.css a {color:#58b6e7} and a:hover {#ffc107} also match SVG <a>: the label ink must come from the role */
+.tree .node a, .tree .node a:hover, .tree .node a:focus { color: inherit; }
+.tree .node a:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); }
+/* active: the focus person gets a 2px accent.secondary edge */
+.tree .node.focus :is(path, polygon, ellipse) { stroke: var(--io-color-semantic-accent-secondary); stroke-width: 2; }
+/* edges: stroke var(--bs-light) (the child fill) → border.strong */
+.tree .edge path { stroke: var(--io-color-semantic-border-strong); }
+.tree .edge polygon { fill: var(--io-color-semantic-border-strong); stroke: var(--io-color-semantic-border-strong); }
+
+/* KIT ROOT CAUSE (@io-kit/tokens 0.4.0 harrisonfamily): tree.parent = archive-500 and dark tree.spouse = columbia-600 are mid-tones
+   where neither ink reaches the 4.5:1 text floor (paper ink 4.08 / 4.31:1, dark ink 4.25 / 4.02:1), so no alias of the shipped
+   semantic tokens can fix the labels. The HFY-R72 amendment drafted for @io-kit/tokens 0.4.1 moves tree.parent to archive-600 and
+   dark tree.spouse to columbia-700 (plus tree-*-ink tokens). Interim HFY override until 0.4.1 ships: inside the tree and its legend
+   only, the two Bootstrap roles the bs-bridge reads point at those palette steps, so the node fill, its label ink (text, from the
+   bridge) and the legend swatch move together. Screen only: print keeps the daylight theme's own values. DELETE this block when
+   islands/ moves to @io-kit/tokens 0.4.1 (then point the bridge's label inks at the new tree-*-ink tokens). */
+@media screen {
+  .tree {
+    --bs-secondary: var(--io-color-palette-archive-600);
+    --bs-info: var(--io-color-palette-columbia-700);
+  }
+}
+
+/* legend: seven 20px swatches bound to the same --bs-* roles as the SVG (so the two can never disagree), 16px labels */
+.tree-legend {
+  list-style: none;
+  margin: var(--io-space-3) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--io-space-2);
+  font-size: var(--io-typography-size-sm);
+}
+@media (min-width: 43rem) {
+  .tree-legend { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.tree-legend .tree { display: inline-flex; align-items: center; gap: var(--io-space-2); color: var(--io-color-semantic-text); }
+.tree-legend i {
+  display: inline-block;
+  flex: none;
+  width: var(--io-space-5);
+  height: var(--io-space-5);
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-sm);
+}
+.tree-legend .focus { background-color: var(--bs-primary); }
+.tree-legend .parent { background-color: var(--bs-secondary); }
+.tree-legend .grandparent { background-color: var(--bs-dark); }
+.tree-legend .sibling { background-color: var(--bs-warning); }
+.tree-legend .spouse { background-color: var(--bs-info); }
+.tree-legend .child { background-color: var(--bs-light); }
+.tree-legend .grandchild { background-color: var(--bs-info-bg-subtle); }
+
+/* ---------------------------------------------------------------- photos: the gallery */
+/* columns 1 / 2 / 3 at the DS breakpoints (688 / 1024); the template's col-md-6 / col-lg-4 switch at Bootstrap's 768 / 992 */
+@media (min-width: 43rem) {
+  #person-media-grid > .col-md-6 { flex: 0 0 auto; width: 50%; }
+}
+@media (min-width: 64rem) {
+  #person-media-grid > .col-lg-4 { width: calc(100% / 3); }
+}
+.gallery-item { margin: 0; }
+/* .media-gallery .card {rgba(255,255,255,.05); hover translateY(-4px) + rgba(88,182,231,.2) shadow}; img cover 250px */
+.gallery-photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 5;
+  object-fit: contain;
+  background-color: var(--io-color-semantic-surface-sunken);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  transition: box-shadow var(--io-motion-duration-fast) var(--io-motion-easing-standard);
+}
+.gallery-photo--missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--io-space-3);
+  text-align: center;
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+.media-lightbox-trigger { display: block; border-radius: var(--io-radius-md); }
+.media-lightbox-trigger:hover .gallery-photo { box-shadow: var(--io-elevation-2); }
+/* .media-lightbox-trigger:focus-visible {outline:2px solid #58b6e7} */
+.media-lightbox-trigger:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+.gallery-caption {
+  margin-top: var(--io-space-2);
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+
+/* ---------------------------------------------------------------- stories */
+/* .person-profile .notes-panel .card {background:rgba(45,62,80,.3); border-color:hsla(0,0%,100%,.15)} (personV2 notes) */
+.person-profile .notes-panel .card {
+  background-color: var(--io-color-semantic-surface-raised);
+  border-color: var(--io-color-semantic-border);
+}
+#person-content .story {
+  background-color: var(--io-color-semantic-surface-raised);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  padding: var(--io-space-4);
+  margin-bottom: var(--io-space-3);
+  font-size: var(--io-typography-size-md);
+  line-height: var(--io-typography-leading-relaxed);
+}
+#person-content .story > :last-child { margin-bottom: 0; }
+
+/* ---------------------------------------------------------------- lightbox */
+/* #mediaLightbox .modal-dialog {max-width:min(1100px,100vw)}, from 992 {margin:3rem auto; height:calc(100% - 6rem)}: full screen */
+#mediaLightbox .modal-dialog {
+  margin: 0;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+}
+/* .modal-content {background-color:rgba(8,18,28,.95)}, from 992 {border-radius:.75rem} */
+#mediaLightbox .modal-content {
+  height: 100%;
+  color: var(--io-color-semantic-text);
+  background-color: var(--io-color-semantic-scrim);
+  border: 0;
+  border-radius: 0;
+  box-shadow: var(--io-elevation-3);
+}
+/* top row 56: counter left, download + close right */
+#mediaLightbox .modal-header {
+  min-height: var(--io-control-h-lg);
+  gap: var(--io-space-3);
+  padding: calc(var(--io-space-2) + var(--io-safe-top)) var(--io-space-4) var(--io-space-2);
+  border-bottom: 0;
+}
+.lightbox-counter {
+  margin-right: auto;
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+.lightbox-actions { display: flex; align-items: center; gap: var(--io-space-2); margin-left: auto; }
+/* .lightbox-close {color:#fff; font-size:2.25rem; transparent}; :hover,:focus {#ffc107} */
+#mediaLightbox .lightbox-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  margin-left: 0;
+  padding: 0;
+  color: var(--io-color-semantic-text);
+  background-color: var(--io-color-semantic-surface-raised);
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  font-size: var(--io-typography-size-xl);
+  line-height: 1;
+}
+#mediaLightbox .lightbox-close:hover, #mediaLightbox .lightbox-close:focus { color: var(--io-color-semantic-link-hover); }
+#mediaLightbox .lightbox-close:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+#mediaLightbox .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--io-space-3);
+  padding: 0 var(--io-space-4) calc(var(--io-space-4) + var(--io-safe-bottom));
+}
+#mediaLightbox .modal-body > .mt-3 { margin-top: 0; }
+/* .lightbox-image-wrapper {min-height:240px}; img {max-height:60vh; width:100%} */
+.lightbox-image-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--io-space-9) * 3);
+  touch-action: pan-y pinch-zoom;
+}
+#mediaLightboxImage {
+  width: auto;
+  max-width: min(100%, calc(var(--io-space-9) * 18 + var(--io-space-8)));
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: var(--io-radius-md);
+  box-shadow: none;
+}
+/* .lightbox-nav {44px round, opacity .85} on .btn-outline-light */
+#mediaLightbox .lightbox-nav {
+  z-index: 1;
+  width: var(--io-control-tap-min);
+  height: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  padding: 0;
+  border-radius: var(--io-radius-pill);
+  background-color: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text);
+  border-color: var(--io-color-semantic-border-strong);
+  font-size: var(--io-typography-size-xl);
+  opacity: 1;
+}
+/* below 688 the arrows go; swipe left/right steps and swipe down closes (person-page.js) */
+@media (max-width: 42.99rem) {
+  #mediaLightbox .lightbox-nav { display: none; }
+}
+#mediaLightboxCaption {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--io-color-semantic-text);
+  font-size: var(--io-typography-size-md);
+}
+.lightbox-meta { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
+/* caption bar: bottom at 375; from 688 centred under the photo, max 600, then 68ch at 1024 */
+@media (min-width: 43rem) {
+  #mediaLightbox .modal-body > .mt-3 {
+    align-self: center;
+    width: 100%;
+    max-width: calc(var(--io-space-9) * 9 + var(--io-space-6));
+    text-align: center;
+  }
+  #mediaLightboxCaption { margin-inline: auto; }
+}
+@media (min-width: 64rem) {
+  #mediaLightbox .modal-body > .mt-3 { max-width: 68ch; }
+}
+.lightbox-error { margin: 0; }

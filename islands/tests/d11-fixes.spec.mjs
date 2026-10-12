@@ -93,11 +93,12 @@ for (const flags of ["notifyV2,shellV2", "notifyV2"]) test(`D-11 item 3: /me/not
 });
 
 // ---------------------------------------------------------------- item 4 + follow-up 7: /search contrast, install hint at the top
-test("D-11 item 4: /search count, 'hide toggles' and the empty state meet 4.5:1 on the dark shell", async ({ page }) => {
+test("D-11 item 4: /search count, title, rows and the empty state meet 4.5:1 on the dark shell", async ({ page }) => {
   await hermetic(page, { legacyToken: true });
   await page.goto("/search/?q=Quillfeather&hfy_flags=searchV2", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#hfy-search-v2").getByRole("link", { name: /Mary Quillfeather/ })).toBeVisible();
-  for (const sel of [".io-search-header__count", ".io-search__controls-toggle", ".io-search-header__title", ".hfy-search__name", ".hfy-search__meta"]) {
+  // (the "hide toggles" control is gone: the DS pass renders the search island with controlsToggle={false})
+  for (const sel of [".io-search-header__count", ".io-search-header__title", ".hfy-search__name", ".hfy-search__meta"]) {
     const rows = await contrastOf(page, sel);
     expect(rows.length, sel).toBeGreaterThan(0);
     for (const r of rows) expect(r.ratio, `${sel} "${r.text}"`).toBeGreaterThanOrEqual(4.5);
@@ -115,10 +116,10 @@ test("D-11 follow-up 7: the iOS install hint is the first thing in the scroller 
   await hermetic(page, { legacyToken: true });
   await page.goto("/search/?q=Quillfeather&hfy_flags=searchV2", { waitUntil: "domcontentloaded" });
   const hint = page.locator("[data-hfy-install]");
-  await expect(hint).toContainText("Add to Home Screen");
+  await expect(hint).toContainText("add to home screen");
   await expect(page.locator("#hfy-search-v2").getByRole("link", { name: /Mary Quillfeather/ })).toBeVisible();
   const order = await page.evaluate(() => {
-    const main = document.querySelector("main[data-io-scroller]");
+    const main = document.querySelector("[data-io-scroller]");
     const kids = [...main.children];
     const search = document.getElementById("hfy-search-v2");
     return { hintIndex: kids.findIndex((k) => k.hasAttribute("data-hfy-install")), searchInside: main.querySelector(".hfy-content").contains(search), hintBottom: main.querySelector("[data-hfy-install]").getBoundingClientRect().bottom, searchTop: search.getBoundingClientRect().top };
@@ -130,22 +131,25 @@ test("D-11 follow-up 7: the iOS install hint is the first thing in the scroller 
 });
 
 // ---------------------------------------------------------------- item 5: the shell scroller is a focusable, named region
-test("D-11 item 5: main[data-io-scroller] is keyboard-focusable with an accessible name and scrolls from the keyboard", async ({ page }) => {
+// DS pass: the scroller is a role=region <div> named "page content", so the page's own Eleventy <main> is the only main landmark.
+test("D-11 item 5: [data-io-scroller] is a keyboard-focusable named region and scrolls from the keyboard", async ({ page }) => {
   await hermetic(page);
   await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
-  const scroller = page.locator("main[data-io-scroller]");
+  const scroller = page.locator("[data-io-scroller]");
   await expect(scroller).toHaveAttribute("tabindex", "0");
-  await expect(scroller).toHaveAttribute("aria-label", "Page content");
-  await expect(page.getByRole("main", { name: "Page content" })).toBeAttached();
-  await page.evaluate(() => document.querySelector("main[data-io-scroller]").focus());
-  expect(await page.evaluate(() => document.activeElement === document.querySelector("main[data-io-scroller]"))).toBe(true);
-  expect(await page.evaluate(() => { const s = document.querySelector("main[data-io-scroller]"); return s.scrollHeight > s.clientHeight; }), "the page overflows the scroller").toBe(true);
+  await expect(scroller).toHaveAttribute("role", "region");
+  await expect(scroller).toHaveAttribute("aria-label", "page content");
+  await expect(page.getByRole("region", { name: "page content" })).toBeAttached();
+  await expect(page.getByRole("main")).toHaveCount(1);
+  await page.evaluate(() => document.querySelector("[data-io-scroller]").focus());
+  expect(await page.evaluate(() => document.activeElement === document.querySelector("[data-io-scroller]"))).toBe(true);
+  expect(await page.evaluate(() => { const s = document.querySelector("[data-io-scroller]"); return s.scrollHeight > s.clientHeight; }), "the page overflows the scroller").toBe(true);
   await page.keyboard.press("PageDown");
-  await expect.poll(() => page.evaluate(() => document.querySelector("main[data-io-scroller]").scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => document.querySelector("[data-io-scroller]").scrollTop)).toBeGreaterThan(0);
   // keyboard focus shows a ring (inset outline) on the scroller
-  await page.evaluate(() => { document.body.focus(); document.querySelector("main[data-io-scroller]").blur(); });
+  await page.evaluate(() => { document.body.focus(); document.querySelector("[data-io-scroller]").blur(); });
   await page.keyboard.press("Tab");
-  const ring = await page.evaluate(() => { const s = document.querySelector("main[data-io-scroller]"); const cs = getComputedStyle(s); return { focused: document.activeElement === s, width: cs.outlineWidth, style: cs.outlineStyle }; });
+  const ring = await page.evaluate(() => { const s = document.querySelector("[data-io-scroller]"); const cs = getComputedStyle(s); return { focused: document.activeElement === s, width: cs.outlineWidth, style: cs.outlineStyle }; });
   if (ring.focused) { expect(ring.style).toBe("solid"); expect(parseFloat(ring.width)).toBeGreaterThanOrEqual(2); }
 });
 
@@ -155,9 +159,16 @@ test("D-11 follow-up 2: authV2 signed out: /posts/ and the home timeline send no
   const errors = [];
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
   await page.goto("/posts/?hfy_flags=authV2,postsV2", { waitUntil: "domcontentloaded" });
-  await expect(page.locator("[data-hfy-banner]")).toContainText("Sign in");
+  // the living-person gate: neutral (not a danger banner, not role=alert), one line and one 44px "sign in"
+  const gate = page.locator("[data-hfy-gate]");
+  await expect(gate).toContainText("this page is family-only. sign in to see it.");
+  await expect(gate).toHaveAttribute("role", "status");
+  expect((await gate.getByRole("link", { name: "sign in" }).boundingBox()).height).toBeGreaterThanOrEqual(44);
+  await expect(page.locator("[data-hfy-banner]")).toHaveCount(0);
   await page.goto("/?hfy_flags=authV2,postsV2", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(800);
+  // the public home page shows no gate at all: the timeline renders nothing signed out (the hero offers sign in)
+  await expect(page.locator("[data-hfy-timeline], [data-hfy-gate], [data-hfy-banner], #hfy-timeline [role=alert]")).toHaveCount(0);
   expect(api.filter((a) => a.includes("/api/posts"))).toEqual([]);
   expect(errors.filter((e) => /401|Unauthorized/.test(e))).toEqual([]);
 });
@@ -215,7 +226,8 @@ test("D-11 item 6: searchV2's 8 s legacy-token fallback sends /family-login/?nex
   await hermetic(page, { signedIn: false });
   await page.route("**/person/index.json", (r) => r.fulfill({ status: 401, json: {} }));
   await page.route("**/auth/login**", (r) => r.fulfill({ contentType: "text/html", body: "<h1>edge login</h1>" }));
-  await page.goto("/?hfy_flags=searchV2");
+  // the legacy-token path is authV2-off only; the build flags now have authV2 on, so the override pins it off for this tab
+  await page.goto("/?hfy_flags=searchV2,-authV2");
   const here = "/search/?query=Harrison#top";
   await page.goto(here);
   await page.waitForURL((u) => u.pathname === "/family-login/", { timeout: 25_000 });

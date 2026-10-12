@@ -1,0 +1,65 @@
+/*
+ * 20 base (foundation): global element rules. hfy-theme.css loads right after the Eleventy main.css (head block B), so these
+ * equal-specificity element selectors override main.css's literal body / link / heading values (#07111c ground, #fff text,
+ * Inter 16px). Aliases only: --io-* tokens, never literals.
+ */
+
+/* bs-bridge gap fills that are global (main.css declares them as literals on :root). */
+:root {
+  --bs-heading-color: var(--io-color-semantic-text);
+  --bs-emphasis-color: var(--io-color-semantic-text);
+  --bs-font-sans-serif: var(--io-typography-font-ui);
+}
+
+body {
+  margin: 0;
+  background-color: var(--io-color-semantic-surface);
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-md);
+  /* DS README "body 18px / 1.6" (the bridges emit leading-normal 1.5; recorded as a DS amendment) */
+  line-height: var(--io-typography-leading-relaxed);
+}
+
+a {
+  color: var(--io-color-semantic-link);
+  text-decoration-color: currentColor;
+  text-underline-offset: var(--io-space-1);
+}
+a:hover,
+a:focus {
+  color: var(--io-color-semantic-link-hover);
+  text-decoration-color: currentColor;
+}
+
+/* Headings are the archival serif, regular weight (lowercase is the brand; no small caps). Sizes are per surface. */
+h1, h2, h3, h4,
+.h1, .h2, .h3, .h4 {
+  font-family: var(--io-typography-font-display);
+  font-weight: var(--io-typography-weight-regular);
+  color: var(--io-color-semantic-text);
+  line-height: var(--io-typography-leading-tight);
+}
+
+/*
+ * One focus rule system-wide: a solid ring in the focus colour (gold in dark, Columbia 700 in daylight). Unlayered, so it beats
+ * @io-kit/shell's teal :where(.io-shell) ring, which sits in @layer io-kit.components.
+ */
+:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+
+/* No input under 16px (no iOS focus zoom): 100% keeps a larger inherited size, the token is the floor. */
+input,
+select,
+textarea {
+  font-size: max(100%, var(--io-control-input-min-font));
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--io-typography-font-mono);
+}

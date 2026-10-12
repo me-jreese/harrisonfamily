@@ -31,6 +31,56 @@ export function safeReturnTo(value, origin, extraOrigins = []) {
 /** Kit routes that live at the root of auth.<site>; at /auth/* they are reached as /auth/<route>. */
 const ROOT_ROUTES = new Set(["/login", "/verify", "/link", "/password/forgot", "/password/reset"]);
 const ABS_LINK = /(["'])\/(login|verify|link|password\/forgot|password\/reset)(?=["'?#&])/g;
+/** The same routes as an encoded returnTo value on a kit redirect (`/login?returnTo=%2Flink`): they need the mount too. */
+const RETURN_TO_ROOT = /([?&]returnTo=)%2F(login|verify|link|password%2Fforgot|password%2Freset)(?=$|[&#])/i;
+
+/**
+ * HFY override (design system, SignIn): the edge pages load the self-hosted brand fonts that 11ty/css/auth-edge.css declares
+ * (/fonts/*.woff2, same origin as the page). Kit root cause: @io-kit/auth 2.1.2 cspFor() emits no font-src, so `default-src 'none'`
+ * refuses every web font; upstream: theme.fontOrigins. Appends `font-src 'self'` to a CSP that has no font-src; never touches one
+ * that does, so a kit release that emits its own font-src wins and this becomes a no-op.
+ */
+export const FONT_SRC = "font-src 'self'";
+export function cspWithFontSrc(csp) {
+  if (typeof csp !== "string" || !csp.trim()) return csp;
+  if (/(^|;)\s*font-src(\s|;|$)/i.test(csp)) return csp;
+  return `${csp.replace(/[\s;]+$/, "")}; ${FONT_SRC}`;
+}
+
+/**
+ * HFY override (design system, SignIn): the Google button on the dark archive ground. Kit root cause: @io-kit/auth 2.1.2 loginPage()
+ * hard-codes the GIS button as data-theme="outline" (a white slab on the dark card) and data-width="280" (narrower than the 343px
+ * sign-in buttons at 375); upstream: a manifest GIS button theme/width. Only the g_id_signin element's attributes are rewritten.
+ * Google draws the button itself and caps it at 40px tall (data-size="large"): accepted as a design-system exception.
+ */
+export function gisButtonDark(html) {
+  return html.replace(/<div class="g_id_signin"[^>]*>/, (tag) => tag.replace('data-theme="outline"', 'data-theme="filled_black"').replace('data-width="280"', 'data-width="343"'));
+}
+
+/**
+ * HFY override (design system, SignIn: one focus rule, a 2px gold ring at a 2px offset). Google GIS draws its own focus inside its
+ * cross-origin iframe (a 2px #00639b ring, 2.90:1 on surface / 2.57:1 on surface.raised, under the 3:1 non-text floor) and the page
+ * cannot style it: while focus is in the iframe, document.activeElement is the IFRAME but it matches neither :focus nor :focus-visible,
+ * and .gsi matches neither :focus-within nor :has(iframe:focus). Kit / Google root cause: @io-kit/auth 2.1.2 loginPage() offers no
+ * focus hook for the GIS button; upstream: a kit hook (or the broker-mode button, which is the kit's own markup).
+ * This appends a small script, under the page's own script nonce (the CSP is script-src 'nonce-…'), that marks .gsi with
+ * data-gis-focus when keyboard focus (the last key was Tab) moves into the GIS iframe, and clears it when focus or a pointer comes
+ * back to the page; 11ty/css/auth-edge.css draws the ring on it. Pages without a .gsi row, or without a nonce, are left alone.
+ */
+export const GIS_FOCUS_SCRIPT = '(function(){var g=document.querySelector(".gsi");if(!g)return;var k=false;' +
+  'function off(){g.removeAttribute("data-gis-focus")}' +
+  'document.addEventListener("keydown",function(e){k=e.key==="Tab"},true);' +
+  'document.addEventListener("pointerdown",function(){k=false;off()},true);' +
+  'document.addEventListener("focusin",function(e){var t=e.target;if(!(t&&t.tagName==="IFRAME"&&g.contains(t)))off()},true);' +
+  'window.addEventListener("focus",off);' +
+  'window.addEventListener("blur",function(){setTimeout(function(){var a=document.activeElement;' +
+  'if(k&&a&&a.tagName==="IFRAME"&&g.contains(a))g.setAttribute("data-gis-focus","")},0)})})();';
+export function gisFocusRing(html) {
+  if (typeof html !== "string" || !/class="gsi"/.test(html) || html.includes("data-hfy-gis-focus")) return html;
+  const nonce = /<script\b[^>]*\bnonce="([^"]+)"/i.exec(html)?.[1];
+  if (!nonce || !/<\/body>/i.test(html)) return html;
+  return html.replace(/<\/body>/i, `<script nonce="${nonce}" data-hfy-gis-focus>${GIS_FOCUS_SCRIPT}</script></body>`);
+}
 
 /** Applies runtime ids (public config from the Lambda environment) to the committed manifest, then validates it. */
 export function loadManifest(raw, env = process.env) {
@@ -168,13 +218,20 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
   function adapt(res) {
     const out = { ...res, headers: { ...(res.headers ?? {}) } };
     if (out.cookies) out.cookies = out.cookies.map(stripDomain); // host-only cookie: drop the kit's Domain attribute
+    const ct = Object.entries(out.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
+    const isHtml = /text\/html/i.test(String(ct));
     for (const k of Object.keys(out.headers)) {
       const v = out.headers[k];
       if (k.toLowerCase() === "set-cookie") out.headers[k] = Array.isArray(v) ? v.map(stripDomain) : stripDomain(String(v));
-      if (k.toLowerCase() === "location" && typeof v === "string") out.headers[k] = v.replace(/^\/(login|verify|link|password\/forgot|password\/reset)(?=$|[?#])/, `${MOUNT}/$1`);
+      // The kit's signed-out /link redirect is "/login?returnTo=%2Flink": both the path and the returnTo value need the mount,
+      // or the member signs in and lands on /link, which is not a page on the site.
+      if (k.toLowerCase() === "location" && typeof v === "string") out.headers[k] = v.replace(/^\/(login|verify|link|password\/forgot|password\/reset)(?=$|[?#])/, `${MOUNT}/$1`).replace(RETURN_TO_ROOT, "$1%2Fauth%2F$2");
+      // HFY override, see cspWithFontSrc (kit root cause: @io-kit/auth 2.1.2 cspFor() emits no font-src; upstream: theme.fontOrigins).
+      if (isHtml && k.toLowerCase() === "content-security-policy" && typeof v === "string") out.headers[k] = cspWithFontSrc(v);
     }
-    const ct = Object.entries(out.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
-    if (/text\/html/.test(ct) && typeof out.body === "string") out.body = out.body.replace(ABS_LINK, `$1${MOUNT}/$2`);
+    // HFY overrides, see gisButtonDark (kit root cause: @io-kit/auth 2.1.2 loginPage() hard-codes the light 280px GIS button) and
+    // gisFocusRing (Google draws its own sub-3:1 focus ring inside the GIS iframe; the kit offers no focus hook).
+    if (isHtml && typeof out.body === "string") out.body = gisFocusRing(gisButtonDark(out.body.replace(ABS_LINK, `$1${MOUNT}/$2`)));
     return out;
   }
 

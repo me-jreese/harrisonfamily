@@ -5,6 +5,8 @@ import { userContentPolicy } from "@io-kit/comments";
 import { Comments } from "../lib/comments-ui.jsx";
 import { mountAt } from "../lib/mount.jsx";
 
+// The Notes card stays the legacy person-page.js note markup (.card > .card-body inside .notes-panel), so the legacy theme
+// partials style the island's notes and the no-JS / flag-off notes identically.
 export function Notes({ notes }) {
   return notes.map((n, i) => (
     <div className="card mb-3" key={i}><div className="card-body"><KitMarkdown source={n.raw} policy={userContentPolicy} className="hfy-note" /></div></div>
@@ -38,6 +40,7 @@ async function init() {
       mountAt((h) => panel.appendChild(h), <Notes notes={notes} />, "hfy-notes-v2");
     }
   } catch { /* keep the legacy notes */ }
-  mountAt((h) => { h.className = "mt-4"; panel.closest(".col-lg-8")?.appendChild(h) ?? content.appendChild(h); }, <Comments subject={`person:${id}`} />, "hfy-person-comments");
+  // Interface contract (f): the comments host is the LAST child of #person-content, after life, family, photos and stories.
+  mountAt((h) => content.appendChild(h), <Comments subject={`person:${id}`} />, "hfy-person-comments");
 }
 init();

@@ -8,12 +8,12 @@ const MANIFEST = { people: [
 ] };
 const INDEX = { documents: MANIFEST.people.map((p) => ({ grampsId: p.grampsId, searchText: p.displayName.toLowerCase() })) };
 
-async function prep(page, { delayMs = 0 } = {}) {
+async function prep(page, { delayMs = 0, manifestStatus = 200 } = {}) {
   await page.addInitScript(() => {
     try { sessionStorage.setItem("HFY_GATEWAY_SESSION_V1", JSON.stringify({ token: "test-token", grampsId: null, expiresAt: Date.now() + 3600e3, verifiedAt: Date.now() })); } catch {}
   });
   const hits = [];
-  await page.route("**/person/index.json", async (r) => { hits.push("manifest"); if (delayMs) await new Promise((x) => setTimeout(x, delayMs)); r.fulfill({ json: MANIFEST }); });
+  await page.route("**/person/index.json", async (r) => { hits.push("manifest"); if (delayMs) await new Promise((x) => setTimeout(x, delayMs)); r.fulfill(manifestStatus === 200 ? { json: MANIFEST } : { status: manifestStatus, json: {} }); });
   await page.route("**/person/search-index.json", (r) => r.fulfill({ json: INDEX }));
   return hits;
 }
@@ -28,6 +28,9 @@ test("flag on: search page renders, surname query returns local results, 375px c
   await expect(root.getByRole("link", { name: /Brambleton/ })).toHaveCount(0);
   await expect(root.getByRole("link", { name: /Mary Quillfeather/ })).toHaveAttribute("href", "/person/?id=I0001");
   await expect(page.locator("[data-search-page]")).toBeHidden();
+  await expect(root.getByRole("heading", { level: 2, name: "people" })).toBeVisible();
+  await expect(root.locator(".io-search-header__count")).toHaveText("2 people");
+  await expect(root.getByRole("textbox").first()).toHaveAttribute("placeholder", "a first name, a town, or a year");
   const a = await page.evaluate(() => {
     const r = document.querySelector("#hfy-search-v2");
     const small = [];
@@ -48,9 +51,32 @@ test("flag on: search page renders, surname query returns local results, 375px c
 test("flag on: skeleton while the corpus loads (never blank), no false empty state", async ({ page }) => {
   await prep(page, { delayMs: 1500 });
   await page.goto("/search/?q=Quillfeather&hfy_flags=searchV2", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("status", { name: /Loading the family index/ })).toBeVisible();
-  await expect(page.locator("#hfy-search-v2").getByText(/^No people/)).toHaveCount(0);
-  await expect(page.locator("#hfy-search-v2").getByRole("link", { name: /Mary Quillfeather/ })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("status", { name: "loading the family index" })).toBeVisible();
+  const root = page.locator("#hfy-search-v2");
+  await expect(root.locator(".io-search-header__count")).toHaveText("looking…"); // never a false 0
+  await expect(root.locator(".io-search-zero")).toHaveCount(0);
+  // the skeleton renders after the controls
+  expect(await page.evaluate(() => Boolean(document.querySelector("#hfy-search-v2 .io-search__controls").compareDocumentPosition(document.querySelector(".hfy-search__skeleton")) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await expect(root.getByRole("link", { name: /Mary Quillfeather/ })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("status", { name: "loading the family index" })).toHaveCount(0);
+});
+
+test("flag on: zero results say what to try; an index error is a banner (count hidden, no zero state)", async ({ page }) => {
+  await prep(page);
+  await page.goto("/search/?q=zzzznomatch&hfy_flags=searchV2", { waitUntil: "domcontentloaded" });
+  const zero = page.locator("#hfy-search-v2 .io-search-zero");
+  await expect(zero.locator(".io-search-zero__title")).toHaveText('nothing for "zzzznomatch".');
+  await expect(zero.locator(".io-search-zero__text")).toHaveText("try a first name, or a town.");
+  await zero.getByRole("button", { name: "clear filters" }).click();
+  await expect(page.locator("#hfy-search-v2").getByRole("link", { name: /Ada Brambleton/ })).toBeVisible();
+
+  const other = await page.context().newPage();
+  await prep(other, { manifestStatus: 500 });
+  await other.goto("/search/?q=Quillfeather&hfy_flags=searchV2", { waitUntil: "domcontentloaded" });
+  const root = other.locator("#hfy-search-v2");
+  await expect(root.getByRole("alert")).toHaveText("that didn't work. try again, or text J.", { timeout: 10_000 });
+  await expect(root.locator(".io-search-header__count")).toHaveCount(0);
+  await expect(root.locator(".io-search-zero")).toHaveCount(0);
 });
 
 test("flag off: old Lunr page, no island", async ({ page }) => {

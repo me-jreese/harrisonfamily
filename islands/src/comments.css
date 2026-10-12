@@ -1,0 +1,167 @@
+/* HFY comments (DS components/Comments) over @io-kit/comments 0.1.0. Imported AFTER @io-kit/comments/comments.css.
+   Kit root cause (file upstream, then drop the remap block): @io-kit/comments 0.1.0 declares its defaults on :where(.io-comments)
+   under names outside the kit-bridge contract (--io-comments-fg, -fg-muted, -bg, -accent-fg, -font, -radius, -gap, -gap-sm,
+   -gap-xs, -text-sm, -input-size, -control-height) and with CSS system colours (Canvas, CanvasText, GrayText, Highlight,
+   HighlightText). Declared on the element itself, those defaults also shadow the contract names the bridge sets on :root
+   (--io-comments-surface, -border, -accent, -danger, -radius-pill), so the thread rendered in system colours on a 40px control.
+   `.hfy-comments .io-comments` outranks :where(), so all 17 names are remapped to semantic tokens here (not to the contract
+   names: --io-comments-surface: var(--io-comments-surface) would be a cycle). */
+.hfy-comments .io-comments {
+  --io-comments-fg: var(--io-color-semantic-text);
+  --io-comments-fg-muted: var(--io-color-semantic-text-dim);
+  --io-comments-bg: var(--io-color-semantic-surface-sunken);
+  --io-comments-surface: var(--io-color-semantic-surface-raised);
+  --io-comments-border: var(--io-color-semantic-border);
+  --io-comments-accent: var(--io-color-semantic-accent);
+  --io-comments-accent-fg: var(--io-color-semantic-accent-text);
+  --io-comments-danger: var(--io-color-semantic-danger);
+  --io-comments-font: var(--io-typography-font-ui);
+  --io-comments-radius: var(--io-radius-md);
+  --io-comments-radius-pill: var(--io-radius-pill);
+  --io-comments-gap: var(--io-space-3);
+  --io-comments-gap-sm: var(--io-space-2);
+  --io-comments-gap-xs: var(--io-space-1);
+  --io-comments-text-sm: var(--io-typography-size-sm);
+  --io-comments-input-size: var(--io-control-input-min-font);
+  --io-comments-control-height: var(--io-control-h-md);
+  gap: var(--io-space-4);
+  background: transparent;
+  font-size: var(--io-typography-size-md);
+  line-height: var(--io-typography-leading-relaxed);
+}
+
+.hfy-comments {
+  max-inline-size: 68ch;
+  margin-block-start: var(--io-comments-space-6);
+  color: var(--io-comments-text);
+  font-family: var(--io-comments-font-ui);
+  font-size: var(--io-comments-font-size);
+  line-height: var(--io-typography-leading-relaxed);
+  overflow-wrap: anywhere;
+}
+.hfy-comments a:not(.hfy-btn) { color: var(--io-comments-link); }
+.hfy-comments a:not(.hfy-btn):hover { color: var(--io-comments-link-hover); }
+
+/* Signed out: one line and one button, no thread. */
+.hfy-comments__signin { display: grid; justify-items: start; gap: var(--io-comments-space-3); }
+.hfy-comments__signin > p { margin: 0; color: var(--io-comments-text-dim); }
+.hfy-comments__skeleton { display: grid; gap: var(--io-comments-space-3); }
+.hfy-comments__skeleton > .hfy-skeleton { min-block-size: var(--io-comments-control-h); }
+
+/* Rows: no card, a hairline between comments. */
+.hfy-comments .io-comments-list { gap: 0; }
+.hfy-comments .io-comments-comment {
+  gap: var(--io-comments-space-2);
+  padding: var(--io-comments-space-3) 0;
+  border: 0;
+  border-block-end: 1px solid var(--io-comments-border);
+  border-radius: 0;
+  background: transparent;
+}
+.hfy-comments .io-comments-meta { gap: var(--io-comments-space-2); color: var(--io-comments-text-dim); font-size: var(--io-comments-font-size-sm); }
+.hfy-comments .io-comments-author { color: var(--io-comments-text); font-weight: var(--io-typography-weight-semibold); }
+.hfy-comments .io-comments-media img { border-radius: var(--io-comments-radius-md); }
+.hfy-comments .io-comments-empty { color: var(--io-comments-text-dim); }
+
+/* Loading never paints blank: while the thread is busy its "loading comments" line becomes a skeleton block (text kept for AT). */
+.hfy-comments .io-comments[aria-busy="true"] > .io-comments-empty {
+  position: relative;
+  overflow: hidden;
+  min-block-size: calc(var(--io-comments-control-h) * 3);
+  border-radius: var(--io-comments-radius-sm);
+  background: var(--io-comments-surface-sunken);
+  color: transparent;
+}
+.hfy-comments .io-comments[aria-busy="true"] > .io-comments-empty::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--io-comments-surface-raised), transparent);
+  transform: translateX(-100%);
+  animation: hfy-shimmer calc(var(--io-comments-duration-slow) * 4) var(--io-comments-easing) infinite;
+}
+@media (prefers-reduced-motion: reduce) { .hfy-comments .io-comments[aria-busy="true"] > .io-comments-empty::after { animation: none; } }
+
+/* Controls: label type (16/600) on the one control height. */
+.hfy-comments .io-comments-control {
+  min-height: var(--io-comments-control-h);
+  min-width: var(--io-comments-tap-min);
+  padding: 0 var(--io-comments-space-4);
+  border: 1px solid var(--io-comments-border-strong);
+  border-radius: var(--io-comments-radius-md);
+  background: var(--io-comments-surface-raised);
+  color: var(--io-comments-text);
+  font-family: var(--io-comments-font-ui);
+  font-size: var(--io-comments-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-comments .io-comments-post { border-color: var(--io-comments-accent); background: var(--io-comments-accent); color: var(--io-comments-accent-text); }
+.hfy-comments .io-comments-control:disabled { opacity: 0.5; }
+/* Edit and delete are quiet, link-coloured buttons (44 tall); the moderation summary reads as a link too. */
+.hfy-comments .io-comments-actions { gap: var(--io-comments-space-1); margin-inline-start: calc(-1 * var(--io-comments-space-2)); }
+.hfy-comments .io-comments-body > :first-child { margin-block-start: 0; }
+.hfy-comments .io-comments-body > :last-child { margin-block-end: 0; }
+.hfy-comments .io-comments-actions > .io-comments-control { padding-inline: var(--io-comments-space-2); border-color: transparent; background: transparent; color: var(--io-comments-link); }
+.hfy-comments .io-comments-actions > .io-comments-control:hover { color: var(--io-comments-link-hover); }
+.hfy-comments .io-comments-moderation > summary { display: flex; align-items: center; min-block-size: var(--io-comments-tap-min); color: var(--io-comments-link); font-size: var(--io-comments-font-size-sm); }
+
+/* Composer: one row, one height. The input and Post are both control.h.md (44): a 24px line box, padding to 44 inside a 1px
+   border, growing to three lines where field-sizing exists. The counter and errors sit below. */
+.hfy-comments .io-comments-composer { gap: var(--io-comments-space-2); }
+.hfy-comments .io-comments-composer > .io-comments-row:first-child { flex-wrap: nowrap; gap: var(--io-comments-space-2); }
+.hfy-comments .io-comments-input {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--io-comments-control-h);
+  max-block-size: calc(var(--io-comments-control-h) + var(--io-typography-size-sm) * var(--io-typography-leading-normal) * 2);
+  padding: calc((var(--io-comments-control-h) - var(--io-typography-size-sm) * var(--io-typography-leading-normal)) / 2 - 1px) var(--io-comments-space-3);
+  border: 1px solid var(--io-comments-border);
+  border-radius: var(--io-comments-radius-md);
+  background: var(--io-comments-surface-sunken);
+  color: var(--io-comments-text);
+  font-family: var(--io-comments-font-ui);
+  font-size: var(--io-control-input-min-font);
+  line-height: var(--io-typography-leading-normal);
+  field-sizing: content;
+  resize: none;
+}
+.hfy-comments .io-comments-input::placeholder { color: var(--io-comments-text-dim); }
+.hfy-comments .io-comments-input:hover { border-color: var(--io-comments-border-strong); }
+.hfy-comments .io-comments-composer .io-comments-post { flex: none; min-width: calc(2 * var(--io-comments-control-h)); }
+.hfy-comments .io-comments-counter { color: var(--io-comments-text-dim); font-size: var(--io-comments-font-size-sm); }
+.hfy-comments .io-comments-error {
+  padding: var(--io-comments-space-3) var(--io-comments-space-4);
+  border: 1px solid var(--io-comments-danger);
+  border-radius: var(--io-comments-radius-md);
+  background: var(--io-comments-surface-raised);
+  color: var(--io-comments-danger);
+  font-size: var(--io-comments-font-size-sm);
+}
+.hfy-comments .hfy-ping { margin-block-start: var(--io-comments-space-2); }
+
+/* Reactions: compact pills on control.h.sm (tap.min on a coarse pointer); pressed = a thin accent border on the token-pill colours. */
+.hfy-comments .io-comments-reactions,
+.hfy-comments .io-comments-picker { gap: var(--io-comments-space-2); }
+.hfy-comments .io-comments-reaction {
+  min-height: var(--io-comments-control-h-sm);
+  min-width: var(--io-comments-tap-min);
+  padding: 0 var(--io-comments-space-3);
+  border: 1px solid var(--io-comments-border);
+  border-radius: var(--io-comments-radius-pill);
+  background: var(--io-comments-surface-raised);
+  color: var(--io-comments-text);
+  font-family: var(--io-comments-font-ui);
+  font-size: var(--io-comments-font-size-sm);
+}
+.hfy-comments .io-comments-reaction[aria-pressed="true"] { border-width: 1px; border-color: var(--io-comments-accent); background: var(--io-comments-token-pill-bg); color: var(--io-comments-token-pill-fg); }
+@media (pointer: coarse) { .hfy-comments .io-comments-reaction { min-height: var(--io-comments-tap-min); } }
+
+/* Delete asks first (comments-ui guardCommentDeletes): while the inline `delete this comment?` prompt is open, that comment's own
+   actions row is hidden and the prompt (delete in danger outline, keep) takes its place; both answers are 44px. */
+.hfy-comments [data-hfy-confirming] .io-comments-actions { display: none; }
+.hfy-comments [data-hfy-confirming] > .io-comments-comment { padding-block-end: 0; border-block-end: 0; }
+.hfy-comments .hfy-comments__confirm {
+  margin: 0;
+  padding-block: var(--io-comments-space-2) var(--io-comments-space-3);
+  border-block-end: 1px solid var(--io-comments-border);
+}

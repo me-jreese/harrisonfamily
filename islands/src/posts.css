@@ -1,11 +1,387 @@
-/* HFY-TSK-067: skeletons, banners and layout glue around @io-kit/content. Tokens with fallbacks; no new colours. */
-.hfy-posts { max-width: 40rem; margin: 0 auto; padding: 0 1rem; box-sizing: border-box; overflow-wrap: anywhere; }
-.hfy-posts img { max-width: 100%; height: auto; }
-.hfy-posts__list { display: grid; gap: 1rem; list-style: none; margin: 1rem 0; padding: 0; }
-.hfy-banner { padding: .75rem 1rem; border: 1px solid currentColor; border-radius: .5rem; margin: 1rem 0; }
-.hfy-skeleton { display: block; height: 7rem; border-radius: .5rem; background: linear-gradient(90deg, rgba(128,128,128,.15), rgba(128,128,128,.3), rgba(128,128,128,.15)); background-size: 200% 100%; animation: hfy-shimmer 1.2s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .hfy-skeleton { animation: none; } }
-@keyframes hfy-shimmer { to { background-position: -200% 0; } }
-.hfy-posts__open, .hfy-posts__more { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 1rem; box-sizing: border-box; font-size: 1rem; }
-.hfy-posts__composer input, .hfy-posts__composer textarea, .hfy-posts__composer select { font-size: 16px; }
-.hfy-posts__composer button, .hfy-posts__composer input[type=file] { min-height: 44px; }
+/* HFY posts islands (timeline, /posts/, own-page posting) and the island-owned primitives every island shares (.hfy-h, .hfy-btn,
+   .hfy-banner, .hfy-gate, .hfy-skeleton, .hfy-ping, .hfy-empty, .hfy-confirm). DS components/Posts. Every value aliases an --io-content-* /
+   --io-feed-* contract token (kit-bridge) or an --io-typography-* token: no literals, no fallbacks (lint no-literal-token-values).
+   @io-kit/content 0.1.1 content.css reads the Enceladus short names (--fg, --bg-surface, ...) with literal fallbacks and sizes
+   meta and labels at 0.875em (15.75px, under the 16px floor); the rules below restate what the islands need on the contract. */
+
+/* ---- island-owned primitives (replace Bootstrap's .h3/.h4/.btn-primary inside islands) ------------------------------------ */
+.hfy-h {
+  margin: 0 0 var(--io-content-space-4);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-display);
+  font-weight: var(--io-typography-weight-regular);
+  font-size: var(--io-typography-size-xl);
+  line-height: var(--io-typography-leading-snug);
+  letter-spacing: normal;
+  text-transform: none;
+}
+/* A page title (only /posts/ uses h1.hfy-h): DS type `display` (48), display-sm (36) under 688. */
+h1.hfy-h { font-size: var(--io-typography-size-display-sm); line-height: var(--io-typography-leading-tight); }
+@media (min-width: 43rem) { h1.hfy-h { font-size: var(--io-typography-size-display); } }
+
+.hfy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--io-content-space-2);
+  box-sizing: border-box;
+  min-height: var(--io-content-control-h);
+  min-width: var(--io-content-tap-min);
+  margin: 0;
+  padding: 0 var(--io-content-space-4);
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  line-height: var(--io-content-line-height);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--io-content-duration-fast) var(--io-content-easing);
+}
+/* :hover / :focus / :visited are restated so an <a class="hfy-btn"> keeps its ink against the base `a:hover, a:focus` link rule. */
+.hfy-btn:hover, .hfy-btn:focus, .hfy-btn:visited { color: var(--io-content-text); text-decoration: none; }
+.hfy-btn--primary, .hfy-btn--primary:hover, .hfy-btn--primary:focus, .hfy-btn--primary:visited { border-color: var(--io-content-accent); background: var(--io-content-accent); color: var(--io-content-accent-text); }
+.hfy-btn--danger, .hfy-btn--danger:hover, .hfy-btn--danger:focus { border-color: var(--io-content-danger); background: transparent; color: var(--io-content-danger); }
+.hfy-btn--quiet, .hfy-btn--quiet:focus, .hfy-btn--quiet:visited { border-color: transparent; background: transparent; color: var(--io-content-link); }
+.hfy-btn--quiet:hover { color: var(--io-content-link-hover); }
+.hfy-btn:disabled, .hfy-btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+
+/* Errors live in banners (danger on surface.raised), never in empty states. */
+.hfy-banner {
+  margin: 0 0 var(--io-content-space-4);
+  padding: var(--io-content-space-3) var(--io-content-space-4);
+  border: 1px solid var(--io-content-danger);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+  color: var(--io-content-danger);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size-sm);
+  line-height: var(--io-content-line-height);
+}
+/* A link inside a banner sentence is still a 44px target (hard floor; DS audit rule 1): an inline-flex box on the tap minimum, so
+   the line it sits on grows instead of the target shrinking to the text. */
+.hfy-banner a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-block-size: var(--io-content-tap-min);
+  min-inline-size: var(--io-content-tap-min);
+  color: var(--io-content-link);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: underline;
+}
+.hfy-banner a:hover { color: var(--io-content-link-hover); }
+
+/* The living-person gate (posts-ui SignInGate): neutral, not a danger banner (a sign-in gate is not an error). One line in text on
+   surface.raised and one 44px primary "sign in". */
+.hfy-gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-content-space-3);
+  margin: 0 0 var(--io-content-space-4);
+  padding: var(--io-content-space-3) var(--io-content-space-4);
+  border: 1px solid var(--io-content-border);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size-sm);
+  line-height: var(--io-content-line-height);
+}
+.hfy-gate > p { flex: 1 1 calc(var(--io-content-space-6) * 8); margin: 0; }
+
+/* Status pings report in text.dim ("posted", "saved"). The element stays mounted and rendered (empty = no height) so aria-live
+   announces the change. */
+.hfy-ping { margin: 0; color: var(--io-content-text-dim); font-family: var(--io-content-font-ui); font-size: var(--io-content-font-size-sm); }
+
+/* Loading never paints blank: skeleton rows in surface.sunken with a token shimmer; still under prefers-reduced-motion. */
+.hfy-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  min-block-size: var(--io-content-font-size-sm);
+  border-radius: var(--io-content-radius-sm);
+  background: var(--io-content-surface-sunken);
+}
+.hfy-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--io-content-surface-raised), transparent);
+  transform: translateX(-100%);
+  animation: hfy-shimmer calc(var(--io-content-duration-slow) * 4) var(--io-content-easing) infinite;
+}
+@keyframes hfy-shimmer { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .hfy-skeleton::after { animation: none; } }
+.hfy-skeleton--name { inline-size: 40%; }
+.hfy-skeleton--body { inline-size: 100%; min-block-size: calc(var(--io-content-font-size) * 3); margin-block-start: var(--io-content-space-3); }
+
+/* One empty-state pattern: a heading line in display serif, one body sentence in text.dim, at most one primary button. */
+.hfy-empty { display: grid; justify-items: center; gap: var(--io-content-space-2); padding: var(--io-content-space-6) var(--io-content-space-4); text-align: center; }
+.hfy-empty__title { margin: 0; color: var(--io-content-text); font-family: var(--io-content-font-display); font-weight: var(--io-typography-weight-regular); font-size: var(--io-typography-size-xl); line-height: var(--io-typography-leading-snug); }
+.hfy-empty__text { margin: 0; color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); }
+
+/* Ask a scoped question before acting: `delete this post?` -> delete / keep, inline, no dialog. */
+.hfy-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-content-space-2) var(--io-content-space-3); margin-block-start: var(--io-content-space-3); }
+.hfy-confirm > p { flex: 1 1 100%; margin: 0; color: var(--io-content-text); font-size: var(--io-content-font-size); }
+
+/* ---- posts island layout ------------------------------------------------------------------------------------------------ */
+.hfy-posts {
+  box-sizing: border-box;
+  max-inline-size: 68ch;
+  margin-inline: auto;
+  padding-inline: var(--io-content-space-4);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size);
+  line-height: var(--io-typography-leading-relaxed);
+  overflow-wrap: anywhere;
+}
+/* The shell owns the page gutter. */
+html.hfy-shell-v2 .hfy-posts { padding-inline: 0; }
+.hfy-posts a:not(.hfy-btn) { color: var(--io-content-link); }
+.hfy-posts a:not(.hfy-btn):hover { color: var(--io-content-link-hover); }
+.hfy-posts img { max-inline-size: 100%; block-size: auto; }
+/* On the person page the section shares the page's left gutter with life, family, photos, stories and comments (it was centred,
+   so its heading sat 16px / 144px right of theirs at 688 / 1024); it keeps the 68ch reading measure. */
+.hfy-posts__mine { margin-block-start: var(--io-content-space-6); margin-inline: 0; }
+/* Home: the timeline is its own section under the hero (layout gutter space.8). */
+.hfy-posts[data-hfy-timeline] { margin-block: var(--io-space-8); }
+
+/* Feed rows: edge-to-edge with a hairline on phones; cards on surface.raised from 688. */
+.hfy-posts__list { display: grid; gap: 0; margin: 0 0 var(--io-content-space-4); padding: 0; list-style: none; }
+.hfy-posts__item { padding-block: var(--io-feed-space-4); border-block-end: 1px solid var(--io-feed-border); }
+@media (min-width: 43rem) {
+  .hfy-posts__list { gap: var(--io-feed-space-4); }
+  .hfy-posts__item {
+    padding: var(--io-feed-space-6);
+    border: 1px solid var(--io-feed-border);
+    border-radius: var(--io-feed-radius-md);
+    background: var(--io-feed-surface-raised);
+    box-shadow: var(--io-feed-elevation-1);
+  }
+}
+/* DS Posts anatomy (posts-ui PostRow): avatar 32 · name · time on one 32px row, the body and photo full width below, then ONE 44px
+   footer row. The avatar shares row 1 with the kit card, whose meta line is indented past it; the card is transparent, so the
+   avatar shows through. */
+.hfy-posts__post { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.hfy-posts__post > .hfy-posts__avatar { grid-area: 1 / 1; }
+.hfy-posts__post > .iok-content-card { grid-area: 1 / 1 / auto / -1; min-width: 0; }
+.hfy-posts__post > .hfy-posts__footer,
+.hfy-posts__post > .hfy-confirm { grid-column: 1 / -1; }
+.hfy-posts__post > .iok-content-card > .iok-content-meta {
+  align-items: center;
+  min-block-size: var(--io-content-control-h-sm);
+  padding-inline-start: calc(var(--io-content-control-h-sm) + var(--io-content-space-2));
+}
+.hfy-posts__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  inline-size: var(--io-content-control-h-sm);
+  block-size: var(--io-content-control-h-sm);
+  border-radius: var(--io-content-radius-pill);
+  background: var(--io-content-accent);
+  color: var(--io-content-accent-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size-sm);
+  font-weight: var(--io-typography-weight-bold);
+  line-height: 1;
+}
+.hfy-posts__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-content-space-1);
+  min-block-size: var(--io-content-tap-min);
+  margin-block-start: var(--io-content-space-2);
+  margin-inline-start: calc(-1 * var(--io-content-space-2));
+}
+.hfy-posts__footer > .hfy-btn { padding-inline: var(--io-content-space-2); }
+
+.hfy-posts__open, .hfy-posts__more {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-block-size: var(--io-content-tap-min);
+  min-inline-size: var(--io-content-tap-min);
+  font-size: var(--io-content-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-posts__more { margin-block-end: var(--io-content-space-4); }
+
+/* ---- @io-kit/content inside the islands --------------------------------------------------------------------------------- */
+.hfy-posts .iok-content { color: var(--io-content-text); font-family: var(--io-content-font-ui); }
+.hfy-posts .iok-content-card { gap: var(--io-content-space-2); padding: 0; border: 0; border-radius: 0; background: transparent; }
+.hfy-posts .iok-content-meta { gap: var(--io-content-space-2); color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); }
+.hfy-posts .iok-content-meta > span:first-child { color: var(--io-content-text); font-weight: var(--io-typography-weight-semibold); }
+.hfy-posts .iok-content-badge { padding: 0 var(--io-content-space-2); border: 1px solid var(--io-content-border-strong); border-radius: var(--io-content-radius-pill); }
+.hfy-posts .iok-content-title { color: var(--io-content-text); font-family: var(--io-content-font-display); font-weight: var(--io-typography-weight-regular); font-size: var(--io-typography-size-lg); line-height: var(--io-typography-leading-snug); }
+.hfy-posts .iok-content-article { gap: var(--io-content-space-3); max-inline-size: 68ch; }
+.hfy-posts .iok-content-article .iok-content-title { font-size: var(--io-typography-size-display-sm); line-height: var(--io-typography-leading-tight); }
+/* Photos stay uncropped but never taller than 4:5 of the column (DS Posts: "optional photo (radius.md, max 4:5)"): a 9:16 phone
+   photo is drawn narrower instead of filling the screen. The list is the inline-size container the cap is measured against. */
+.hfy-posts .iok-content-media { gap: var(--io-content-space-2); container-type: inline-size; }
+.hfy-posts .iok-content-media > li { max-inline-size: 100%; }
+.hfy-posts .iok-content-media img {
+  display: block;
+  inline-size: auto;
+  block-size: auto;
+  max-inline-size: 100%;
+  max-block-size: 125cqi;
+  object-fit: contain;
+  border-radius: var(--io-content-radius-md);
+}
+.hfy-posts .iok-content-actions { gap: var(--io-content-space-2); }
+/* The kit always renders the actions row; with nothing in it the grid gap alone left a blank band under the body. */
+.hfy-posts .iok-content-actions:empty { display: none; }
+/* Markdown bodies: no paragraph margin above the first block or below the last (the card's gap spaces them). */
+.hfy-posts .kit-md > :first-child { margin-block-start: 0; }
+.hfy-posts .kit-md > :last-child { margin-block-end: 0; }
+/* Composer (DS Posts): ONE row, one height at every width — the input (44, grows with the text), the photo button (44) and post
+   (44, the primary). The kit form is display:contents so its field and its submit button join the HFY photo button in one grid;
+   the attachments, an error and the status ping take the full width on the rows below, only when they have something in them. */
+.hfy-posts__composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: var(--io-content-space-2);
+  margin-block-end: var(--io-content-space-6);
+}
+.hfy-posts__composer > .iok-content-composer { display: contents; }
+.hfy-posts__composer .iok-content-field { grid-area: 1 / 1; }
+.hfy-posts__composer .hfy-posts__photo { grid-area: 1 / 2; }
+.hfy-posts__composer .iok-content-composer > button[type="submit"] { grid-area: 1 / 3; }
+.hfy-posts__composer .iok-content-attachments,
+.hfy-posts__composer .iok-content-error,
+.hfy-posts__composer > .hfy-ping { grid-column: 1 / -1; }
+/* The field's label names the textarea for assistive tech; on screen the placeholder carries it (my-posts sets it). */
+.hfy-posts__composer .iok-content-field > span,
+.hfy-posts__composer .iok-content-attachments > legend {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* One line is exactly control.h (44): a 24px line box padded inside the 1px border; it grows with the text where field-sizing exists. */
+.hfy-posts__composer .iok-content textarea {
+  min-height: var(--io-content-control-h);
+  max-block-size: calc(var(--io-content-control-h) * 4);
+  padding: calc((var(--io-content-control-h) - var(--io-content-font-size-sm) * var(--io-typography-leading-normal)) / 2 - 1px) var(--io-content-space-3);
+  line-height: var(--io-typography-leading-normal);
+}
+/* Photos: no fieldset chrome; hidden while nothing is attached. The kit's native file input ("Choose File" / "No file chosen",
+   browser copy) is never shown: the HFY "add a photo" button opens it (my-posts pickPhoto), and the island keeps it out of the tab
+   order and the accessibility tree, so the button is the one control. */
+.hfy-posts__composer .iok-content-attachments { gap: var(--io-content-space-2); margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+.hfy-posts__composer .iok-content-attachments:not(:has(.iok-content-attachment)) { display: none; }
+.hfy-posts__composer .iok-content-attachments > input[type="file"] { display: none; }
+.hfy-posts__composer .iok-content-attachment { grid-template-columns: auto minmax(0, 1fr) auto; }
+.hfy-posts__thumb {
+  display: block;
+  inline-size: var(--io-content-control-h);
+  block-size: var(--io-content-control-h);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-sunken);
+  object-fit: cover;
+}
+/* The photo button: a 44 square with a line icon under 688 (its name is "add a photo"), icon and words from 688. */
+.hfy-posts__photo { padding-inline: var(--io-content-space-3); }
+.hfy-posts__photo-icon {
+  display: block;
+  flex: none;
+  inline-size: var(--io-content-space-6);
+  block-size: var(--io-content-space-6);
+  background: currentColor;
+  -webkit-mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='10' r='1.5'/%3E%3Cpath d='m21 16-5-5-8 8'/%3E%3C/svg%3E");
+  mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='10' r='1.5'/%3E%3Cpath d='m21 16-5-5-8 8'/%3E%3C/svg%3E");
+}
+@media (max-width: 42.99rem) {
+  .hfy-posts__photo { padding-inline: 0; }
+  .hfy-posts__photo-label {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* Composer: 16px fields on surface.sunken, labels at the 16px floor, Post is the one primary. */
+.hfy-posts .iok-content-composer { gap: var(--io-content-space-3); }
+.hfy-posts .iok-content-field { gap: var(--io-content-space-1); }
+.hfy-posts .iok-content-field > span,
+.hfy-posts .iok-content-attachments > legend { color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-posts .iok-content input,
+.hfy-posts .iok-content textarea,
+.hfy-posts .iok-content select {
+  box-sizing: border-box;
+  min-height: var(--io-content-control-h);
+  padding: var(--io-content-space-2) var(--io-content-space-3);
+  border: 1px solid var(--io-content-border);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-sunken);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size-sm);
+  line-height: var(--io-content-line-height);
+}
+.hfy-posts .iok-content input:hover,
+.hfy-posts .iok-content textarea:hover { border-color: var(--io-content-border-strong); }
+.hfy-posts .iok-content textarea::placeholder,
+.hfy-posts .iok-content input::placeholder { color: var(--io-content-text-dim); }
+/* One control height to start (the DS composer row is 44 / 44 / 44); grows with the text where field-sizing exists. */
+.hfy-posts .iok-content textarea { min-height: var(--io-content-control-h); field-sizing: content; resize: vertical; }
+.hfy-posts .iok-content input[type="file"] { padding-block: var(--io-content-space-1); }
+.hfy-posts .iok-content input[type="file"]::file-selector-button {
+  min-height: calc(var(--io-content-control-h) - var(--io-content-space-3));
+  margin-inline-end: var(--io-content-space-3);
+  padding: 0 var(--io-content-space-3);
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+  color: var(--io-content-text);
+  font: inherit;
+  font-weight: var(--io-typography-weight-semibold);
+  cursor: pointer;
+}
+.hfy-posts .iok-content-attachments { gap: var(--io-content-space-2); padding: var(--io-content-space-3); border: 1px dashed var(--io-content-border-strong); border-radius: var(--io-content-radius-md); }
+.hfy-posts .iok-content button {
+  box-sizing: border-box;
+  min-height: var(--io-content-control-h);
+  min-width: var(--io-content-tap-min);
+  padding: 0 var(--io-content-space-4);
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-posts .iok-content button[type="submit"],
+.hfy-posts .iok-content button[data-primary] { border-color: var(--io-content-accent); background: var(--io-content-accent); color: var(--io-content-accent-text); }
+.hfy-posts .iok-content button:disabled { opacity: 0.5; }
+/* Card actions (edit, delete) are quiet, link-coloured buttons; the confirm row carries the danger. */
+.hfy-posts .iok-content-actions { margin-inline-start: calc(-1 * var(--io-content-space-2)); }
+.hfy-posts .iok-content-actions button { padding-inline: var(--io-content-space-2); border-color: transparent; background: transparent; color: var(--io-content-link); }
+.hfy-posts .iok-content-actions button:hover { color: var(--io-content-link-hover); }
+.hfy-posts .iok-content-error {
+  padding: var(--io-content-space-3) var(--io-content-space-4);
+  border: 1px solid var(--io-content-danger);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+  color: var(--io-content-danger);
+  font-size: var(--io-content-font-size-sm);
+}

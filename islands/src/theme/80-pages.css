@@ -1,0 +1,103 @@
+/*
+ * 80 pages (foundation): the repo-owned page hosts and the preview-flags banner. Aliases only.
+ */
+
+/* .hfy-page: the <main> of the island pages (posts/, me/notifications/) and offline.html. Gutters 16 / 24 / 64 at 375 / 688 / 1024. */
+.hfy-page {
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--io-space-6) var(--io-space-4) var(--io-space-8);
+}
+@media (min-width: 43rem) {
+  .hfy-page {
+    padding-inline: var(--io-space-6);
+  }
+}
+@media (min-width: 64rem) {
+  .hfy-page {
+    padding-inline: var(--io-space-9);
+  }
+}
+/* A page title is DS type `display` (48), display-sm (36) under 688; serif, regular weight, tight leading. (30px, size-2xl, is
+   not a DS type style.) */
+.hfy-page h1 {
+  margin: 0 0 var(--io-space-4);
+  font-family: var(--io-typography-font-display);
+  font-size: var(--io-typography-size-display-sm);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-typography-leading-tight);
+}
+@media (min-width: 43rem) {
+  .hfy-page h1 {
+    font-size: var(--io-typography-size-display);
+  }
+}
+.hfy-page p {
+  margin: 0 0 var(--io-space-4);
+}
+/* a status line beside an island (e.g. notifications not turned on yet): body size, dim */
+.hfy-page__note {
+  color: var(--io-color-semantic-text-dim);
+}
+
+/* offline.html (served by /sw.js for a navigation that failed): one heading, one dim sentence, one action. */
+.hfy-offline {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.hfy-offline__retry {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  font-weight: var(--io-typography-weight-semibold);
+}
+
+/*
+ * Preview-flags banner (feature-flags.js renderOverrideBanner, class hfy-flag-banner): a fixed chip at the bottom-left.
+ * Under the shell's compact bottom bar it sits above the bar.
+ */
+.hfy-flag-banner {
+  position: fixed;
+  left: var(--io-space-2);
+  bottom: calc(var(--io-space-2) + var(--io-safe-bottom));
+  z-index: 2147483000;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--io-space-1);
+  max-width: calc(100vw - 2 * var(--io-space-2));
+  margin: 0;
+  padding: 0 var(--io-space-1) 0 var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-accent-secondary);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  line-height: var(--io-typography-leading-snug);
+  box-shadow: var(--io-elevation-2);
+}
+html.hfy-shell-v2:has(.io-shell[data-bp="compact"]) .hfy-flag-banner {
+  bottom: calc(var(--io-control-h-lg) + var(--io-safe-bottom) + var(--io-space-2));
+}
+.hfy-flag-banner button {
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  margin: 0;
+  padding: 0 var(--io-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--io-color-semantic-link);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: var(--io-space-1);
+  cursor: pointer;
+}
+.hfy-flag-banner button:hover {
+  color: var(--io-color-semantic-link-hover);
+}

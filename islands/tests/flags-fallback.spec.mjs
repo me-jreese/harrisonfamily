@@ -1,6 +1,10 @@
-// HFY-R58: preview-flag override safety. sessionStorage only, a visible "Preview flags on — turn off" banner, automatic
+// HFY-R58: preview-flag override safety. sessionStorage only, a visible "preview flags on — turn off" banner, automatic
 // clear + legacy fallback when a flagged dependency is unavailable (island 404, /auth/session unreachable), and an authV2
 // sign-out that also runs the legacy signOut. All data is synthetic; /auth and /api are stubbed per test.
+// The build flags (/_data/flags.json) are pinned to all-off here: production turned every flag on (12:40Z), and these tests
+// exercise the preview override on top of a flags-off build, which is what the override exists for.
+// Design-system pass: theme-color is a static head meta on every page (islands/heads.mjs block A, the surface token); only the
+// manifest link is still added by the shell once it has mounted.
 import { test, expect } from "@playwright/test";
 
 const MANIFEST = { people: [
@@ -12,8 +16,12 @@ const INDEX = { documents: MANIFEST.people.map((p) => ({ grampsId: p.grampsId, s
 const override = (page) => page.evaluate(() => ({ session: sessionStorage.getItem("hfy:flags"), local: localStorage.getItem("hfy:flags") }));
 const banner = (page) => page.locator("[data-hfy-flag-banner][role=region]");
 
+const THEME_COLOR = "#141210"; // --io-color-semantic-surface (archive-950)
+const PAGES = ["/", "/about/", "/contact/", "/family-login/", "/logged-out/", "/person/?id=I0001", "/privacy/", "/private/", "/search/", "/terms/", "/posts/", "/me/notifications/", "/offline.html"];
+
 async function hermetic(page) {
   await page.route("https://accounts.google.com/**", (r) => r.abort());
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: {} }));
 }
 
 // Legacy gateway session (sessionStorage) so legacy search can load its data without a sign-in.
@@ -31,7 +39,10 @@ test("banner shows while an override is active; 'turn off' clears it and reloads
   await page.goto("/about/?hfy_flags=shellV2");
   await expect(page.locator("#hfy-shell-root .io-shell")).toBeVisible();
   await expect(banner(page)).toBeVisible();
-  await expect(banner(page)).toContainText("Preview flags on");
+  await expect(banner(page)).toContainText("preview flags on —");
+  await expect(banner(page).getByRole("button")).toHaveText("turn off");
+  await expect(banner(page)).toHaveClass(/\bhfy-flag-banner\b/);
+  expect(await page.locator("style[data-hfy-flag-banner]").count(), "styled by the theme layer, no injected <style>").toBe(0);
   const off = banner(page).getByRole("button", { name: "Turn off preview flags" });
   const box = await off.boundingBox();
   expect(box.height).toBeGreaterThanOrEqual(44);
@@ -68,25 +79,48 @@ test("a pre-R58 localStorage override is purged and ignored", async ({ page }) =
   await expect(banner(page)).toHaveCount(0);
 });
 
-test("shell island 404: navbar restored, no manifest/theme-color, override auto-cleared", async ({ page }) => {
+test("shell island 404: navbar restored, no manifest, static theme-color untouched, override auto-cleared", async ({ page }) => {
   await page.route("**/js/islands/shell.js", (r) => r.fulfill({ status: 404, body: "not found" }));
   await page.goto("/about/?hfy_flags=shellV2");
   await expect.poll(() => override(page)).toEqual({ session: null, local: null });
   await expect(page.locator("nav.navbar-hf")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.classList.contains("hfy-shell-v2"))).toBe(false);
   expect(await page.locator('link[rel=manifest]').count()).toBe(0);
-  expect(await page.locator('meta[name="theme-color"]').count()).toBe(0);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", THEME_COLOR);
   await expect(banner(page)).toHaveCount(0);
   await page.goto("/about/");
   await page.waitForTimeout(400);
   expect(await page.locator("#hfy-shell-root").count()).toBe(0);
 });
 
-test("shell mounted: manifest and theme-color are applied only after the shell loads", async ({ page }) => {
-  await page.goto("/about/?hfy_flags=shellV2");
+test("shell mounted: the manifest link appears only after the shell loads; theme-color is static throughout", async ({ page }) => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await page.route("**/js/islands/shell.js", async (r) => { await held; return r.continue(); });
+  await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(300);
+  expect(await page.locator('link[rel=manifest]').count(), "no manifest before the shell").toBe(0);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", THEME_COLOR);
+  release();
   await expect(page.locator("#hfy-shell-root .io-shell")).toBeVisible();
   await expect(page.locator('link[rel=manifest]')).toHaveCount(1);
   await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", THEME_COLOR);
+});
+
+test("theme-color is static on every page (no JS needed) and nothing links the manifest without the shell", async ({ browser }) => {
+  const ctx = await browser.newContext({ javaScriptEnabled: false });
+  const page = await ctx.newPage();
+  await page.route(/accounts\.google\.com/, (r) => r.abort());
+  for (const path of PAGES) {
+    await page.goto(path);
+    const metas = await page.locator('meta[name="theme-color"]').evaluateAll((els) => els.map((e) => e.getAttribute("content")));
+    expect(metas, path).toEqual([THEME_COLOR]);
+    expect(await page.locator('link[rel=manifest]').count(), path).toBe(0);
+  }
+  await ctx.close();
 });
 
 test("searchV2 with the search island 404: legacy /search/ page still searches; override auto-cleared", async ({ page }) => {

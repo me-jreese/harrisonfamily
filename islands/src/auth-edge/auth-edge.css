@@ -1,0 +1,300 @@
+/* Stylesheet for the @io-kit/auth edge pages: /auth/login, /auth/link, /auth/password/forgot, /auth/password/reset, /auth/verify,
+   the access-denied page and the edge 404. Source of 11ty/css/auth-edge.css; design system components/SignIn.
+
+   11ty/css/auth-edge.css is a REPO-OWNED BUILD OUTPUT: islands/build.mjs bundles this file (the hfy:fonts @font-face rules, the
+   @io-kit/tokens harrisonfamily theme.css and kit-bridge.css, then the rules below) into one minified file. Edit this source, never the
+   output, and rebuild. auth/edge.manifest.json theme.cssUrl points at the output (HFY-TSK-069).
+
+   Same origin only. The edge page CSP is `style-src 'unsafe-inline' https://harrisonfamily.us ...` and, through the HFY override in
+   auth/src/edge.js, `font-src 'self'`; so this file and the woff2 files it names must be served from https://harrisonfamily.us. There is
+   no runtime @import: every @import here is resolved at build time, so the page makes one stylesheet request.
+
+   Cascade contract (@io-kit/auth 2.1.2 pages.js layout()): the <link> to this file comes BEFORE the page's inline <style> (BASE_CSS).
+   An equal-specificity inline rule therefore wins, so every rule below that must beat one is prefixed with `html` (html:root is 0,1,1
+   against the inline :root at 0,1,0; html main is 0,0,2 against main at 0,0,1).
+
+   Kit root cause (record upstream): BASE_CSS reads the legacy --io-bg, --io-fg, --io-muted, --io-accent, --io-on-accent, --io-surface,
+   --io-border, --io-danger, --io-radius and --io-font names, not the --io-auth-* skinning contract that kit-bridge.css declares. The
+   html:root block remaps those ten names onto --io-auth-*. Delete it when @io-kit/auth reads --io-auth-* itself.
+
+   Every value is a token alias (lint no-literal-token-values, islands/tests/theme-lint.test.mjs). */
+@import "hfy:fonts";
+@import "@io-kit/tokens/harrisonfamily/theme.css";
+@import "@io-kit/tokens/harrisonfamily/kit-bridge.css";
+
+/* 1. The ten BASE_CSS variables -> the --io-auth-* contract (HFY override of the kit root cause above). */
+html:root {
+  --io-bg: var(--io-auth-surface);
+  --io-fg: var(--io-auth-text);
+  --io-muted: var(--io-auth-text-dim);
+  --io-accent: var(--io-auth-accent);
+  --io-on-accent: var(--io-auth-accent-text);
+  --io-surface: var(--io-auth-surface-raised);
+  --io-border: var(--io-auth-border-strong);
+  --io-danger: var(--io-auth-danger);
+  --io-radius: var(--io-auth-radius-md);
+  --io-font: var(--io-auth-font-ui);
+}
+
+/* .path and form become flex containers below; keep the kit's `hidden` paths (the passkey prompt) hidden. */
+[hidden] { display: none !important; }
+
+html body {
+  font-family: var(--io-auth-font-ui);
+  font-size: var(--io-auth-font-size);
+  line-height: var(--io-typography-leading-relaxed);
+}
+
+/* 2. Layout. Under 43rem (688): edge to edge, space-4 gutter, no card border. From 43rem: one 440 card centred on surface. */
+html main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--io-space-3);
+  padding: var(--io-space-4);
+}
+@media (min-width: 43rem) {
+  html main {
+    /* 440 (redline card width) = 7 x space-9 - space-2: no layout.card token yet (DS amendment). */
+    max-width: calc(var(--io-space-9) * 7 - var(--io-space-2));
+    margin: var(--io-space-8) auto;
+    padding: var(--io-space-6);
+    background: var(--io-auth-surface-raised);
+    border: 1px solid var(--io-auth-border);
+    border-radius: var(--io-auth-radius-lg);
+    box-shadow: var(--io-auth-elevation-2);
+  }
+}
+
+/* Wordmark (display serif, a proper noun keeps its case). Decorative: the h1 names the page, so the alternative text is empty. */
+html main::before {
+  content: "Harrison Family";
+  content: "Harrison Family" / "";
+  display: block;
+  font-family: var(--io-auth-font-display);
+  font-size: var(--io-typography-size-display-sm);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-typography-leading-tight);
+  color: var(--io-auth-text);
+}
+
+/* Page heading: display serif at heading size (forgot, reset, linked methods, denied, 404). */
+html h1 {
+  margin: 0;
+  font-family: var(--io-auth-font-display);
+  font-size: var(--io-typography-size-xl);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-typography-leading-snug);
+  color: var(--io-auth-text);
+}
+/* Login: the h1 is the greeting line under the wordmark (anatomy), body size in the UI face. */
+html main:has(#path-password) > h1 {
+  font-family: var(--io-auth-font-ui);
+  font-size: var(--io-typography-size-md);
+  line-height: var(--io-typography-leading-relaxed);
+}
+/* Section headings that stay visible: the linked-methods page and the add-a-passkey prompt. */
+html h2 {
+  margin: 0;
+  font-family: var(--io-auth-font-display);
+  font-size: var(--io-typography-size-lg);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-typography-leading-snug);
+  color: var(--io-auth-text);
+}
+html p { margin: 0; }
+/* The subtitle is the step-by-step help: one step per line (\n in the manifest copy). On login it goes last (anatomy). */
+html main > p { white-space: pre-line; }
+html main:has(#path-password) > p { order: 1; }
+/* After a sign-in the kit swaps the paths for the add-a-passkey prompt but leaves the sign-in help up; it no longer applies. */
+html main:has(#pk-prompt:not([hidden])) > p { display: none; }
+
+/* 3. The sign-in paths are rows of the one card, not three boxed cards. */
+html .path {
+  display: flex;
+  flex-direction: column;
+  gap: var(--io-space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+/* Their headings are for screen readers only; the button and field labels say the same thing on screen. */
+html #path-google > h2,
+html #path-password > h2,
+html #path-passkey > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* The "or" hairline between the Google path and the email path. The label's ground matches what is behind it. */
+html #path-password {
+  position: relative;
+  margin-top: var(--io-space-2);
+  padding-top: var(--io-space-6);
+  border-top: 1px solid var(--io-auth-border);
+}
+html #path-password::before {
+  content: "or";
+  content: "or" / "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 var(--io-space-3);
+  background: var(--io-auth-surface);
+  color: var(--io-auth-text-dim);
+  font-size: var(--io-auth-font-size-sm);
+  line-height: var(--io-typography-leading-normal);
+}
+@media (min-width: 43rem) {
+  html #path-password::before { background: var(--io-auth-surface-raised); }
+}
+
+/* 4. Controls. */
+html form {
+  display: flex;
+  flex-direction: column;
+}
+html label {
+  margin: 0 0 var(--io-space-1);
+  font-size: var(--io-auth-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+}
+/* Inputs read control.h.md (44) and the 16px floor directly: --io-auth-control-h is the 56 sign-in button height. */
+html input {
+  height: var(--io-control-h-md);
+  min-height: var(--io-control-h-md);
+  margin: 0 0 var(--io-space-3);
+  padding: 0 var(--io-space-3);
+  font-size: var(--io-control-input-min-font);
+  background: var(--io-auth-surface-sunken);
+  color: var(--io-auth-text);
+  border: 1px solid var(--io-auth-border);
+  border-radius: var(--io-auth-radius-md);
+  transition: border-color var(--io-auth-duration-fast) var(--io-auth-easing);
+}
+html input:hover { border-color: var(--io-auth-border-strong); }
+/* The reset code: the kit renders one field, not six cells, so it gets the cell look (56 tall, mono digits, spaced, centred). */
+html input[autocomplete="one-time-code"] {
+  height: var(--io-auth-control-h-lg);
+  min-height: var(--io-auth-control-h-lg);
+  font-family: var(--io-auth-font-mono);
+  font-size: var(--io-typography-size-xl);
+  letter-spacing: var(--io-space-2);
+  text-align: center;
+}
+/* Primary: Columbia, 56 tall (--io-auth-control-h = control.h.lg), label size, semibold. */
+html button,
+html .btn {
+  min-height: var(--io-auth-control-h);
+  padding: 0 var(--io-space-4);
+  font-size: var(--io-typography-size-md);
+  font-weight: var(--io-typography-weight-semibold);
+  background: var(--io-auth-accent);
+  color: var(--io-auth-accent-text);
+  border: 1px solid var(--io-auth-accent);
+  border-radius: var(--io-auth-radius-md);
+  transition: background-color var(--io-auth-duration-fast) var(--io-auth-easing), border-color var(--io-auth-duration-fast) var(--io-auth-easing);
+}
+/* Secondary: one primary per screen, so the passkey path, "not now", "sign in" escape links and list buttons are raised + strong edge. */
+html .btn.alt,
+html #pk-btn,
+html ul.linked button {
+  background: var(--io-auth-surface-raised);
+  color: var(--io-auth-text);
+  border-color: var(--io-auth-border-strong);
+}
+/* Kit pages.js renders "not now" with an inline style (background/colour/border on the legacy names, margin-top 8px): only !important
+   reaches it. The path's gap already spaces it. */
+html #pk-later {
+  margin-top: 0 !important;
+  background: var(--io-auth-surface-raised) !important;
+  color: var(--io-auth-text) !important;
+  border: 1px solid var(--io-auth-border-strong) !important;
+}
+/* Linked methods and passkeys: one row per method, the remove button at the end of its row. */
+html ul.linked { margin: 0; }
+html ul.linked li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--io-space-2);
+  padding: var(--io-space-2) 0;
+  border-bottom: 1px solid var(--io-auth-border);
+}
+html ul.linked button {
+  flex: none;
+  width: auto;
+  min-height: var(--io-auth-tap-min);
+  font-size: var(--io-auth-font-size-sm);
+}
+
+/* Google draws its own button in an iframe (filled_black, 343 wide: auth/src/edge.js gisButtonDark) and caps it at 40 tall; the row keeps
+   the 56 sign-in height so both paths line up. The GIS iframe document is light: with the page in color-scheme dark, Chrome paints a
+   mismatched iframe on an opaque canvas (a white box round the button), so the iframe element takes the document's scheme. */
+html .gsi {
+  min-height: var(--io-auth-control-h);
+  align-items: center;
+}
+html .gsi iframe { color-scheme: light; }
+/* Keyboard focus on the Google button gets the one DS focus rule. Google draws its own ring inside the cross-origin iframe (2.90:1 /
+   2.57:1, under the 3:1 floor) and no selector can see focus in there, so auth/src/edge.js (gisFocusRing, under the page nonce) marks
+   the row with data-gis-focus while keyboard focus is in the iframe; the row is centred on the button and draws the gold ring.
+   The kit's BASE_CSS clips the row (overflow:hidden), which cut the iframe's own ring at 375: the row no longer clips (the iframe's
+   10px side margins stay inside the 16px gutter, so there is still no horizontal scroll). */
+html .gsi {
+  overflow: visible;
+  align-self: center;
+  border-radius: var(--io-auth-radius-md);
+}
+html .gsi[data-gis-focus] {
+  outline: var(--io-auth-focus-ring) solid var(--io-auth-focus);
+  outline-offset: var(--io-auth-focus-offset);
+}
+
+/* Quiet links. "verify your email" is a dead end here: POST /auth/verify answers 410 signup_disabled (auth/src/edge.js). */
+html .links { margin: 0; }
+html .links a[href^="/auth/verify"] { display: none; }
+html a {
+  color: var(--io-auth-link);
+  text-underline-offset: var(--io-space-1);
+}
+html a:hover { color: var(--io-auth-link-hover); }
+/* "forgot password?" is the quiet button of the anatomy: label size, semibold, link colour, underlined on hover only. */
+html .links a {
+  font-size: var(--io-auth-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: none;
+}
+html .links a:hover { text-decoration: underline; }
+
+/* 5. Errors are banners above the form (danger on surface.raised), never red text alone; a done message is a neutral banner. */
+html .msg { margin: 0; }
+html .msg.show {
+  order: -1;
+  padding: var(--io-space-3) var(--io-space-4);
+  font-size: var(--io-auth-font-size-sm);
+  background: var(--io-auth-surface-raised);
+  color: var(--io-auth-danger);
+  border: 1px solid var(--io-auth-danger);
+  border-radius: var(--io-auth-radius-md);
+}
+html form > .msg.show { margin: 0 0 var(--io-space-3); }
+html .msg.show.ok {
+  color: var(--io-auth-text);
+  border-color: var(--io-auth-border-strong);
+}
+
+/* 6. Focus: one rule system-wide, a solid ring in focus (gold in dark) with the control offset. */
+html :focus-visible {
+  outline: var(--io-auth-focus-ring) solid var(--io-auth-focus);
+  outline-offset: var(--io-auth-focus-offset);
+}

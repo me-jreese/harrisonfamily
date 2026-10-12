@@ -1,12 +1,13 @@
 // HFY-TSK-068: /me/notifications with notifyV2 at 375px; /api stubbed (preferences kept in memory).
 import { test, expect } from "@playwright/test";
 
-async function stub(page) {
+async function stub(page, { prefsStatus = 200 } = {}) {
   const state = { enabled: true, types: {}, extra: {} };
   await page.route("**/api/notifications/**", async (r) => {
     const req = r.request(); const u = new URL(req.url());
     if (u.pathname.endsWith("/vapid-public-key")) return r.fulfill({ json: { public_key: "AAAA" } });
     if (u.pathname.endsWith("/preferences")) {
+      if (prefsStatus !== 200) return r.fulfill({ status: prefsStatus, json: { error: "server" } });
       if (req.method() === "PUT") { Object.assign(state, req.postDataJSON()); return r.fulfill({ json: state }); }
       return r.fulfill({ json: state });
     }
@@ -20,14 +21,17 @@ test("flag on: settings render, a toggle persists via /api, 375px clean", async 
   await page.goto("/me/notifications/?hfy_flags=notifyV2", { waitUntil: "domcontentloaded" });
   const root = page.locator(".hfy-notify");
   await expect(root).toBeVisible();
-  await expect(root.getByText("Comments on my record", { exact: true })).toBeVisible();
-  await expect(root.getByText("Mentions", { exact: true })).toBeVisible();
+  await expect(root.getByText("someone comments on my page", { exact: true })).toBeVisible();
+  await expect(root.getByText("someone mentions me", { exact: true })).toBeVisible();
+  await expect(root.getByRole("heading", { name: "family" })).toBeVisible();
   await expect(page.locator("[data-notify-off]")).toHaveCount(0);
+  // bulkActions dropped; the island's own iOS aside is gone (PushNudge carries the iOS line); no error banner on a good load
+  await expect(root.locator('[data-testid="notify-bulk"], .hfy-notify__ios, [data-hfy-banner]')).toHaveCount(0);
   const first = root.locator('[data-type="mention"] [role=switch]');
   await first.click();
   await expect.poll(() => Object.keys(state.types).length).toBeGreaterThan(0);
   await page.reload();
-  await expect(root.getByText("Comments on my record", { exact: true })).toBeVisible();
+  await expect(root.getByText("someone comments on my page", { exact: true })).toBeVisible();
   expect(Object.values(state.types).some((t) => t.enabled === false)).toBe(true);
   const a = await page.evaluate(() => {
     const r = document.querySelector(".hfy-notify");
@@ -35,7 +39,9 @@ test("flag on: settings render, a toggle persists via /api, 375px clean", async 
     r.querySelectorAll("a[href], button, select, [role=switch], label").forEach((el) => {
       const b = el.getBoundingClientRect();
       if (b.width === 0 && b.height === 0) return;
-      if (b.height < 43.5) small.push(`${el.tagName} ${(el.textContent || "").trim().slice(0, 20)} ${Math.round(b.width)}x${Math.round(b.height)}`);
+      // DS switch: 52 x 32 drawn, its 44 hit area is the ::before box.
+      const h = el.getAttribute("role") === "switch" ? parseFloat(getComputedStyle(el, "::before").height) : b.height;
+      if (h < 43.5) small.push(`${el.tagName} ${(el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 20)} ${Math.round(b.width)}x${Math.round(h)}`);
     });
     const smallInputs = [...r.querySelectorAll("input:not([type=checkbox]):not([type=radio]), select, textarea")].filter((el) => el.getBoundingClientRect().width > 0 && parseFloat(getComputedStyle(el).fontSize) < 16).length;
     return { small, smallInputs, scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth };
@@ -45,8 +51,17 @@ test("flag on: settings render, a toggle persists via /api, 375px clean", async 
   expect(a.scrollW).toBeLessThanOrEqual(a.innerW);
 });
 
+test("prefs load fails: a danger banner says so (the kit alone would show defaults silently)", async ({ page }) => {
+  await stub(page, { prefsStatus: 500 });
+  await page.goto("/me/notifications/?hfy_flags=notifyV2", { waitUntil: "domcontentloaded" });
+  const banner = page.locator(".hfy-notify [data-hfy-banner]");
+  await expect(banner).toHaveText("that didn't work. try again, or text J.");
+  await expect(banner).toHaveAttribute("role", "alert");
+});
+
 test("flag off: page says not enabled, no island", async ({ page }) => {
-  await page.goto("/me/notifications/", { waitUntil: "domcontentloaded" });
+  // _data/flags.json ships every flag on, so "off" is the explicit preview override.
+  await page.goto("/me/notifications/?hfy_flags=-notifyV2", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-notify-off]")).toBeVisible();
   expect(await page.locator(".hfy-notify").count()).toBe(0);
 });

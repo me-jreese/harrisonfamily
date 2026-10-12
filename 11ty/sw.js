@@ -1,9 +1,13 @@
 /* HFY-TSK-064: offline shell only. Registered by the shellV2 island; scope "/". Serve with Cache-Control: no-cache. */
 // HFY-R58: bump VERSION whenever the caching strategy changes; activate drops every other cache (incl. stale shell.js).
-const VERSION = "hfy-shell-v2";
-const PRECACHE = ["/offline.html", "/js/islands/shell.js", "/js/islands/shell.css", "/manifest.webmanifest", "/images/pwa-192.png"];
+// v3 (design-system pass): the theme layer /css/hfy-theme.css (network-first, offline from any cached ?v) and the self-hosted
+// faces under /fonts/ (content-hashed names: cache-first).
+const VERSION = "hfy-shell-v3";
+const THEME = "/css/hfy-theme.css";
+const PRECACHE = ["/offline.html", THEME, "/js/islands/shell.js", "/js/islands/shell.css", "/manifest.webmanifest", "/images/pwa-192.png"];
 const ISLANDS = "/js/islands/";
 const CHUNKS = "/js/islands/chunks/";
+const FONTS = "/fonts/";
 
 // HFY-TSK-068: @io-kit/notify's notify-sw (push + notificationclick deep links) is copied to /js/islands/ by islands/build.mjs.
 try { importScripts("/js/islands/notify-sw.js"); } catch (e) { /* not shipped yet */ }
@@ -28,6 +32,23 @@ function fetchAndStore(event, req) {
   });
 }
 
+// The theme layer is linked as /css/hfy-theme.css?v=<sha8>: keep only the newest copy (whatever its ?v) for offline use.
+function fetchTheme(event, req) {
+  return fetch(req).then((res) => {
+    if (res.ok && res.status === 200 && res.type === "basic") {
+      const copy = res.clone();
+      event.waitUntil(
+        caches.open(VERSION).then((c) =>
+          c.keys()
+            .then((keys) => Promise.all(keys.filter((k) => new URL(k.url).pathname === THEME && k.url !== req.url).map((k) => c.delete(k))))
+            .then(() => c.put(req, copy))
+        ).catch(() => {})
+      );
+    }
+    return res;
+  });
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
@@ -37,9 +58,14 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(fetch(req).catch(() => caches.match("/offline.html")));
     return;
   }
-  // Content-hashed chunks never change under a URL: cache-first, stored on first use so the shell works offline.
-  if (url.pathname.startsWith(CHUNKS)) {
+  // Content-hashed chunks and font files never change under a URL: cache-first, stored on first use so the shell works offline.
+  if (url.pathname.startsWith(CHUNKS) || url.pathname.startsWith(FONTS)) {
     event.respondWith(caches.match(req).then((hit) => hit || fetchAndStore(event, req)));
+    return;
+  }
+  // The theme layer: network-first (a deploy changes it under the same path), offline from the cached copy of any ?v.
+  if (url.pathname === THEME) {
+    event.respondWith(fetchTheme(event, req).catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || Response.error())));
     return;
   }
   // Stable names (shell.js, <island>.js/.css, manifest, ...): network-first, so after a deploy the entry module always

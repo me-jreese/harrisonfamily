@@ -1,0 +1,20 @@
+{
+  "_note": "Synthetic data for islands-look.spec.mjs (no real family data). created_at offsets are minutes before the test runs.",
+  "me": { "id": "I9001", "label": "Test Member" },
+  "posts": [
+    { "id": "01JZZZZZZZZZZZZZZZZZZZZ003", "type": "post", "author": { "id": "I9001", "label": "Test Member" }, "subject": "I9001", "body": "A synthetic post from the test member.", "attachments": [], "visibility": "published", "agoMin": 180, "can": { "edit": true, "delete": true, "publish": true } },
+    { "id": "01JZZZZZZZZZZZZZZZZZZZZ002", "type": "post", "author": { "id": "I9003", "label": "Ann Other" }, "subject": "I9003", "body": "A synthetic post from someone else.", "attachments": [], "visibility": "published", "agoMin": 12960, "can": { "edit": false, "delete": false, "publish": false } }
+  ],
+  "comments": [
+    { "id": "01HZZZZZZZZZZZZZZZZZZZZZ01", "author": { "id": "I9003", "label": "Ann Other" }, "body": "A synthetic comment that mentions @I0044.", "agoMin": 1560, "can": { "edit": false, "delete": false, "react": true } },
+    { "id": "01HZZZZZZZZZZZZZZZZZZZZZ02", "author": { "id": "I9001", "label": "Test Member" }, "body": "A synthetic reply from the test member.", "agoMin": 5, "can": { "edit": true, "delete": true, "react": false } }
+  ],
+  "reactions": { "comment:01HZZZZZZZZZZZZZZZZZZZZZ01": [{ "emoji": "❤️", "by": "I9001" }, { "emoji": "❤️", "by": "I9005" }] },
+  "person": { "grampsId": "I9001", "displayName": "Test Member (synthetic)", "gender": "female", "isLiving": false, "notes": [{ "raw": "# early life\n\nA synthetic note.", "html": "<p>LEGACY NOTE</p>" }] },
+  "preferences": { "enabled": true, "types": { "reply_to_me": { "enabled": false, "level": 0 }, "mention": { "enabled": true, "level": 1 } }, "extra": {} },
+  "manifest": { "people": [
+    { "grampsId": "I0001", "displayName": "Mary Quillfeather", "isLiving": false, "lifespanSummary": "1901 – 1980", "primaryPhoto": null },
+    { "grampsId": "I0002", "displayName": "Tomas Quillfeather", "isLiving": true, "lifespanSummary": "b. 1975", "primaryPhoto": null },
+    { "grampsId": "I0003", "displayName": "Ada Brambleton", "isLiving": false, "lifespanSummary": "1850 – 1920", "primaryPhoto": null }
+  ] }
+}
