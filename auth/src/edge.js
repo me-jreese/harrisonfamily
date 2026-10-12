@@ -124,18 +124,20 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
   }
 
   /**
-   * The signed-in member behind the io_id cookie: {sub, label, email, amr, authTime}. Everything comes from the VERIFIED token
-   * (signature, issuer, audience, expiry, token_use=id). resolveAuth maps claims to a principal that has no `email`, so the adapter hook
-   * below reads it from the same verified claims object (no second, unverified decode). authTime is epoch seconds: the token's auth_time
-   * claim, else its iat (the kit's claimsToPrincipal rule); amr is [] when the token has none.
+   * The signed-in member behind the io_id cookie: {sub, label, email, amr, authTime, exp}. Everything comes from the VERIFIED token
+   * (signature, issuer, audience, expiry, token_use=id). resolveAuth maps claims to a principal that has no `email` or `exp`, so the adapter
+   * hook below reads them from the same verified claims object (no second, unverified decode). authTime is epoch seconds: the token's
+   * auth_time claim, else its iat (the kit's claimsToPrincipal rule); amr is [] when the token has none; exp is the token's expiry.
    */
   async function sessionOf(event) {
     const tok = cookiesOf(event).io_id;
     if (!tok) return null;
     let email;
+    let exp;
     const adapter = {
       toPrincipal: (claims) => {
         if (typeof claims.email === "string" && claims.email) email = claims.email;
+        if (Number.isFinite(claims.exp)) exp = Math.floor(claims.exp);
         return claimsToPrincipal(claims, COGNITO_GROUP_CLAIM);
       },
     };
@@ -147,14 +149,20 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
         email,
         amr: Array.isArray(principal.amr) ? principal.amr : [],
         authTime: Number.isFinite(principal.authTime) ? Math.floor(principal.authTime) : 0,
+        exp,
       };
     } catch {
       return null;
     }
   }
+  /**
+   * GET /auth/session. `exp` (epoch seconds) is when the io_id session token expires (HFY-R66): the cookie is HttpOnly, so this is how a page
+   * knows to POST /auth/refresh (X-Requested-With: io-kit; the io_rt cookie is Path=/auth) before its first data fetch when the session is
+   * about to lapse. Signed out (no io_id, or an invalid/expired one) is {authenticated: false}; a page may still try one refresh then.
+   */
   async function sessionInfo(event) {
     const s = await sessionOf(event);
-    return s ? json(200, { authenticated: true, sub: s.sub, grampsId: s.sub, label: s.label }) : json(200, { authenticated: false });
+    return s ? json(200, { authenticated: true, sub: s.sub, grampsId: s.sub, label: s.label, ...(s.exp !== undefined ? { exp: s.exp } : {}) }) : json(200, { authenticated: false });
   }
 
   function adapt(res) {

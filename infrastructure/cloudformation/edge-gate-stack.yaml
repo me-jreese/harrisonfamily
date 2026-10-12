@@ -4,11 +4,25 @@ Description: >-
   session before person/family/event/note/place/media data is served. Lambda@Edge functions must live in us-east-1.
   Deploy order and rollback: cloudfront/README.md ("Private data gate").
 
+# Code updates (cfn-code-never-updates, edge-gate-update-same-key-fails): scripts/ci/package-edge-gate.sh prints CodeKey and CodeSha256
+# for each build. CodeKey is content-addressed (lambda/hfy-edge-gate-<first 16 hex of the zip's SHA-256>.zip), so new code is always a
+# new S3 key: CloudFormation then updates Function.Code ($LATEST) first, and replaces Version (CodeSha256 and Description change),
+# which publishes a NEW numbered version whose code PublishVersion checks against CodeSha256. A zip that does not match CodeSha256
+# fails the stack update and rolls back; nothing half-applied reaches CloudFront. There is no default key on purpose: a fixed key
+# (the old lambda/hfy-edge-gate.zip) cannot ship a fix, because re-uploading to it leaves Function.Code unchanged.
 Parameters:
   FunctionName: { Type: String, Default: hfy-edge-gate }
-  CodeBucket: { Type: String, Description: "S3 bucket (in us-east-1) holding hfy-edge-gate.zip" }
-  CodeKey: { Type: String, Default: lambda/hfy-edge-gate.zip }
-  CodeSha256: { Type: String, Description: "Base64 SHA-256 of the zip, printed by scripts/ci/package-edge-gate.sh. A new value publishes a new Lambda version (the version is replaced; old ones are retained because CloudFront replicas pin them)" }
+  CodeBucket: { Type: String, Description: "S3 bucket (in us-east-1) holding the zip at CodeKey" }
+  CodeKey:
+    Type: String
+    AllowedPattern: "^lambda/hfy-edge-gate-[0-9a-f]{16}\\.zip$"
+    ConstraintDescription: "the content-addressed key printed by scripts/ci/package-edge-gate.sh (lambda/hfy-edge-gate-<16 hex>.zip)"
+    Description: "Content-addressed S3 key of this build, printed by scripts/ci/package-edge-gate.sh"
+  CodeSha256:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9+/]{43}=$"
+    ConstraintDescription: "base64 SHA-256 of the zip (44 characters), printed by scripts/ci/package-edge-gate.sh"
+    Description: "Base64 SHA-256 of the zip at CodeKey. A new value publishes a new Lambda version (the version is replaced; old ones are retained because CloudFront replicas pin them)"
 
 Rules:
   UsEast1Only:
@@ -57,7 +71,7 @@ Resources:
     Properties:
       FunctionName: !Ref Function
       CodeSha256: !Ref CodeSha256
-      Description: !Sub "code ${CodeSha256}"
+      Description: !Sub "code ${CodeSha256} (s3 ${CodeKey})"
 
 Outputs:
   EdgeGateVersionArn:

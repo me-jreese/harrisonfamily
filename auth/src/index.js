@@ -2,7 +2,7 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createLocalJWKSet, exportJWK, importPKCS8 } from "jose";
-import { createIdentityService, createPasskeyService, ddbChallengeStore, ddbFromDocumentClient, ddbPasskeyStore, ddbRefreshStore } from "@io-kit/auth/server";
+import { createIdentityService, createPasskeyService, ddbChallengeStore, ddbFromDocumentClient, ddbRefreshStore } from "@io-kit/auth/server";
 import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator, loadPasskeyBrowserBundle } from "@io-kit/auth/edge/deploy";
 import { createAuthEdge, loadManifest } from "./edge.js";
 import { DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthStore } from "./oauth.js";
@@ -10,6 +10,7 @@ import { createMembership } from "./membership.js";
 import { forbidden, originVerified } from "./origin.js";
 import { cognitoProvisioner } from "./cognito.js";
 import { hfyLinkStore } from "./linkstore.js";
+import { hfyPasskeyStore } from "./passkeystore.js";
 import { ddbRateLimiter } from "./ratelimit.js";
 
 const sdk = (name) => import(name);
@@ -75,13 +76,16 @@ async function init() {
         }),
       })
     : undefined;
-  // Passkeys (HFY-TSK-078, HFY-R52/R53/R57): same table; credentials PASSKEY#<id> + GSI1PKs, challenges PASSKEYCHAL#<challenge> (DynamoDB TTL).
+  // Passkeys (HFY-TSK-078, HFY-R52/R53/R57): same table; credentials PASSKEY#<id> + GSI1PK/GSI1SK, challenges PASSKEYCHAL#<challenge> (DynamoDB TTL).
+  // userVerification stays "preferred" for sign-in (HFY-R67). The kit's amr is ["passkey", "hwk"|"swk"] plus "mfa" only when the
+  // authenticator performed user verification, and the MCP step-up delete accepts only "mfa" (api/src/policy.js STRONG_AMR).
   const pk = m.providers.find((p) => p.kind === "passkey");
   const authOrigin = String(m.authOrigin ?? `https://${m.site}`).replace(/\/+$/, "");
   const passkeys = pk
     ? createPasskeyService({
-        rpID: pk.rpId ?? m.site, rpName: pk.rpName ?? m.site, origin: pk.origins ?? [authOrigin],
-        store: ddbPasskeyStore({ client: ddb, tableName }), challenges: ddbChallengeStore({ client: ddb, tableName }),
+        rpID: pk.rpId ?? m.site, rpName: pk.rpName ?? m.site, origin: pk.origins ?? [authOrigin], userVerification: "preferred",
+        store: hfyPasskeyStore({ client: ddb, tableName }), // writes GSI1SK so GSI1 indexes PASSKEY# items (HFY-R67)
+        challenges: ddbChallengeStore({ client: ddb, tableName }),
       })
     : undefined;
   return createAuthEdge({

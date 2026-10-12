@@ -118,6 +118,47 @@ describe("session + JWKS endpoints", () => {
   });
 });
 
+describe("session continuity under authV2 (HFY-R66): /auth/session exp + POST /auth/refresh at the /auth mount", () => {
+  const pick = (res, name) => (res.cookies ?? []).find((c) => c.startsWith(`${name}=`));
+  const value = (c) => c.split(";")[0];
+  const refresh = (cookie, headers = {}) => edge({ ...post("/auth/refresh", {}), headers: { ...post("/", {}).headers, ...(cookie ? { cookie } : {}), ...headers } });
+
+  it("/auth/session reports when io_id expires (the cookie is HttpOnly, so this is how a page knows to refresh early)", async () => {
+    const res = await edge(post("/auth/google", { credential: await gToken("ana@example.com") }));
+    const id = value(pick(res, "io_id"));
+    const { exp } = (await jwtVerify(id.slice(6), createLocalJWKSet({ keys: [sessionPub] }), { issuer: "https://harrisonfamily.us/auth" })).payload;
+    const s = JSON.parse((await edge(get("/auth/session", { headers: { cookie: id } }))).body);
+    expect(s).toEqual({ authenticated: true, sub: "I0111", grampsId: "I0111", label: "ana@example.com", exp });
+    expect(exp - Math.floor(Date.now() / 1000)).toBeGreaterThan(3500); // accessTtlSeconds 3600
+  });
+
+  it("with io_id gone (the browser drops it after 1 h) the io_rt cookie alone gets a new host-only io_id and rotates io_rt", async () => {
+    const res = await edge(post("/auth/google", { credential: await gToken("ana@example.com") }));
+    const rt = pick(res, "io_rt");
+    expect(rt).toMatch(/Path=\/auth(;|$)/); // sent only to /auth/*, which is where /auth/refresh lives
+    expect(rt).toMatch(/HttpOnly/i);
+    const r = await refresh(value(rt));
+    expect(r.statusCode).toBe(200);
+    expect(r.headers["cache-control"]).toBe("no-store");
+    const body = JSON.parse(r.body);
+    expect(Number.isInteger(body.exp)).toBe(true);
+    expect((r.cookies ?? []).join("\n")).not.toMatch(/Domain=/i);
+    const id = pick(r, "io_id");
+    expect(id).toMatch(/HttpOnly/i);
+    expect(value(pick(r, "io_rt"))).not.toBe(value(rt));
+    const s = JSON.parse((await edge(get("/auth/session", { headers: { cookie: value(id) } }))).body);
+    expect(s).toMatchObject({ authenticated: true, sub: "I0111", exp: body.exp });
+    expect((await refresh(value(rt))).statusCode).toBe(401); // the rotated token is spent (reuse also revokes its family)
+  });
+
+  it("refresh is 401 without a refresh cookie and 403 without the X-Requested-With guard (so a page can tell 'sign in again' apart)", async () => {
+    expect((await refresh(undefined)).statusCode).toBe(401);
+    expect((await refresh("io_rt=ios_not-a-real-token")).statusCode).toBe(401);
+    const res = await edge(post("/auth/google", { credential: await gToken("ana@example.com") }));
+    expect((await refresh(value(pick(res, "io_rt")), { "x-requested-with": "" })).statusCode).toBe(403);
+  });
+});
+
 describe("login page under the /auth mount", () => {
   it("serves both paths, rewrites root-relative links to /auth/*, with no payload-hash workaround", async () => {
     const res = await edge(get("/auth/login"));

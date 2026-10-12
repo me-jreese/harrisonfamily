@@ -65,7 +65,16 @@ export function createMcpCore({ registry, policy = POLICY, now, logger }) {
   return createMcpServer({ registry, policy, assurance: { stepUpMaxAgeSeconds: STEP_UP_MAX_AGE_SECONDS, strongAmr: STRONG_AMR }, logger, ...(now ? { now } : {}), serverInfo: { name: "hfy-mcp", version: "0.1.0" } });
 }
 
-const actorFor = (principal) => ({ id: principal.sub, label: principal.sub, admin: principal.groups.includes(ADMIN_GROUP) });
+/**
+ * The member's display label from the VERIFIED access token: the auth edge mints the io_id session label as `name` (preserved on refresh).
+ * Only `name` counts: never the `email` claim (it would publish an address as a comment/post author), and no claim means the sub (gramps_id).
+ */
+export const tokenLabel = (claims) => {
+  const n = typeof claims?.name === "string" ? claims.name.trim() : "";
+  return n === "" ? undefined : n;
+};
+/** The API actor an MCP call runs as: the same {id, label, admin} shape the HTTP path builds from the io_id session (src/auth.js). */
+export const actorFor = (principal) => ({ id: principal.sub, label: principal.label ?? principal.sub, admin: principal.groups.includes(ADMIN_GROUP) });
 const audOk = (aud, want) => (Array.isArray(aud) ? aud.includes(want) : aud === want);
 
 export function createMcpMount({ config = loadMcpConfig(), invoke, resolveGroups, log = console, now, fetch }) {
@@ -83,7 +92,8 @@ export function createMcpMount({ config = loadMcpConfig(), invoke, resolveGroups
     const c = pass.claims;
     // Authorization comes from the S3 groups config, never from the token's own groups claim.
     const groups = await resolveGroups({ sub: pass.principal.sub, email: typeof c.email === "string" ? c.email : undefined, emailVerified: c.email_verified });
-    return server.fetch(req, { ...pass.principal, groups });
+    const label = tokenLabel(c);
+    return server.fetch(req, { ...pass.principal, groups, ...(label ? { label } : {}) });
   };
   return { handle: lambdaAdapter(edge, downstream), edge, server, registry, config };
 }

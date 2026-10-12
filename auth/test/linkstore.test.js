@@ -7,61 +7,7 @@ import { buildResolver } from "@io-kit/auth/edge/deploy";
 import { createIdentityService, ddbLinkStore, memoryRefreshStore } from "@io-kit/auth/server";
 import { createAuthEdge, loadManifest } from "../src/edge.js";
 import { hfyLinkStore } from "../src/linkstore.js";
-
-const TEMPLATE = new URL("../../infrastructure/cloudformation/app-stack.yaml", import.meta.url);
-
-/** Table + GSI key schema and attribute types of the hfy-app table, parsed from app-stack.yaml (flow-style entries). */
-function tableSchema(yaml) {
-  const table = yaml.slice(yaml.indexOf("Type: AWS::DynamoDB::Table"));
-  const types = Object.fromEntries([...table.matchAll(/\{\s*AttributeName:\s*(\w+),\s*AttributeType:\s*(\w+)\s*\}/g)].map((m) => [m[1], m[2]]));
-  const keys = (block) => Object.fromEntries([...block.matchAll(/\{\s*AttributeName:\s*(\w+),\s*KeyType:\s*(HASH|RANGE)\s*\}/g)].map((m) => [m[2], m[1]]));
-  const gsiBlock = table.slice(table.indexOf("GlobalSecondaryIndexes:"));
-  const indexes = {};
-  for (const m of gsiBlock.matchAll(/- IndexName:\s*(\w+)\s*\n([\s\S]*?)Projection:/g)) indexes[m[1]] = keys(m[2]);
-  const base = keys(table.slice(table.indexOf("KeySchema:"), table.indexOf("GlobalSecondaryIndexes:")));
-  return { types, base, indexes };
-}
-
-const typeOk = (v, t) => (t === "S" ? typeof v === "string" && v.length > 0 : t === "N" ? typeof v === "number" : t === "B" ? v instanceof Uint8Array : false);
-const ddbError = (name, message) => Object.assign(new Error(message), { name });
-
-/** The kit's `{get, put, query}` client over an in-memory table that enforces the given key schema. */
-function fakeTable(schema) {
-  const items = new Map();
-  const keyOf = (k) => JSON.stringify([k[schema.base.HASH], k[schema.base.RANGE]]);
-  const evalCond = (expr, existing) =>
-    expr.split(/\s+AND\s+/).every((c) => {
-      const m = /^attribute_(exists|not_exists)\((\w+)\)$/.exec(c.trim());
-      if (!m) throw new Error(`fake table: unsupported condition ${c}`);
-      const has = existing !== undefined && existing[m[2]] !== undefined;
-      return m[1] === "exists" ? has : !has;
-    });
-  return {
-    items,
-    async get({ Key }) {
-      const it = items.get(keyOf(Key));
-      return it ? { Item: structuredClone(it) } : {};
-    },
-    async put({ Item, ConditionExpression }) {
-      for (const k of [schema.base.HASH, schema.base.RANGE]) if (!typeOk(Item[k], schema.types[k])) throw ddbError("ValidationException", `missing key ${k}`);
-      // DynamoDB rejects a GSI key attribute of the wrong type (or an empty string)
-      for (const [name, t] of Object.entries(schema.types)) if (Item[name] !== undefined && !typeOk(Item[name], t)) throw ddbError("ValidationException", `bad type for ${name}`);
-      const k = keyOf(Item);
-      if (ConditionExpression && !evalCond(ConditionExpression, items.get(k))) throw ddbError("ConditionalCheckFailedException", "conditional request failed");
-      items.set(k, structuredClone(Item));
-      return {};
-    },
-    async query({ IndexName, KeyConditionExpression, ExpressionAttributeValues }) {
-      const ks = schema.indexes[IndexName];
-      if (!ks) throw ddbError("ValidationException", `no index ${IndexName}`);
-      const m = /^(\w+) = (:\w+)$/.exec(KeyConditionExpression);
-      if (!m || m[1] !== ks.HASH) throw ddbError("ValidationException", "key condition must name the index hash key");
-      const indexed = [...items.values()].filter((it) => [ks.HASH, ks.RANGE].filter(Boolean).every((a) => typeOk(it[a], schema.types[a]))); // sparse index
-      const hits = indexed.filter((it) => it[ks.HASH] === ExpressionAttributeValues[m[2]]).sort((a, b) => (ks.RANGE ? String(a[ks.RANGE]).localeCompare(String(b[ks.RANGE])) : 0));
-      return { Items: structuredClone(hits) };
-    },
-  };
-}
+import { TEMPLATE, fakeTable, tableSchema } from "./fake-table.js";
 
 const TABLE = "hfy-app";
 const google = (email, linkedAt = 1) => ({ kind: "google", mode: "gis_id_token", email, idpIssuer: "https://accounts.google.com", idpSub: "g-1", linkedAt });

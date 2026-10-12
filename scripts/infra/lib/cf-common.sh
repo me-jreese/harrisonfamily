@@ -1,10 +1,13 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016 # the jq programs are single-quoted on purpose
 # Shared plumbing for scripts/infra/add-*-behavior.sh. Sourced, not executed. The config transforms live in cf.jq.
 #
 #   cf_load DIST CFG_FILE   fetch (or copy) the config into $CF_WORK/before.json and set CF_ETAG
 #   cf_apply DIST DRY WHAT  compare norm(before) with norm($CF_WORK/after.json); when they are equal print "no change" and
 #                           return WITHOUT calling update-distribution (HFY-R58: true no-op). Otherwise print a redacted diff,
 #                           save a timestamped pre-change backup outside the repo, and update with the fetched ETag.
+#   cf_response_headers_policy NAME WANT_FILE CACHE_CONTROL DRY OFFLINE
+#                           find-or-create the custom response headers policy NAME (sets CF_RHP_ID); see the function.
 #
 # Secrets: the X-Origin-Verify value is never printed; diffs are redacted. The backup holds it and is written mode 600.
 
@@ -71,4 +74,41 @@ cf_apply() { # DIST DRY WHAT
   echo "saved the pre-change DistributionConfig to $backup (mode 600, holds the origin-verify header)"
   echo "roll back with: aws cloudfront update-distribution --id $1 --if-match <current ETag> --distribution-config file://$backup"
   aws cloudfront update-distribution --id "$1" --if-match "$CF_ETAG" --distribution-config "file://$d/after.json" --query 'Distribution.Status' --output text
+}
+
+# cf_response_headers_policy NAME WANT_FILE CACHE_CONTROL DRY OFFLINE -> sets CF_RHP_ID (HFY-R65). Idempotent find-or-create of the
+# custom response headers policy called NAME (names are unique per account): an existing policy that already forces
+# Cache-Control: CACHE_CONTROL (cf.jq rhp_forces_cache_control) is used as is, with no write; one that does not is put back to
+# WANT_FILE (a ResponseHeadersPolicyConfig) with its ETag; a missing one is created from WANT_FILE. DRY=1 only reads (a missing
+# policy gets a placeholder id and "would create"); OFFLINE=1 (--config-file) makes no AWS call at all.
+# shellcheck disable=SC2034 # CF_RHP_ID is the result, read by the caller
+cf_response_headers_policy() {
+  local name=$1 want=$2 value=$3 dry=$4 offline=$5 list id cur etag
+  CF_RHP_ID=""
+  if [ "$offline" = 1 ]; then
+    CF_RHP_ID="<$name policy id>"; echo "(dry-run) response headers policy $name not looked up (offline); using a placeholder id"; return 0
+  fi
+  list=$(aws cloudfront list-response-headers-policies --type custom --output json)
+  id=$(jq -r --arg n "$name" '[.ResponseHeadersPolicyList.Items[]? | .ResponseHeadersPolicy | select(.ResponseHeadersPolicyConfig.Name == $n) | .Id] | first // empty' <<<"$list")
+  if [ -z "$id" ]; then
+    if [ "$dry" = 1 ]; then
+      CF_RHP_ID="<new $name policy id>"; echo "(dry-run) would create response headers policy $name (Cache-Control: $value, override)"; return 0
+    fi
+    id=$(aws cloudfront create-response-headers-policy --response-headers-policy-config "file://$want" --output json | jq -r '.ResponseHeadersPolicy.Id // empty')
+    [ -n "$id" ] || { echo "create-response-headers-policy $name returned no id" >&2; return 1; }
+    echo "created response headers policy $name ($id): Cache-Control: $value, override"
+  else
+    cur=$(jq -c --arg id "$id" '[.ResponseHeadersPolicyList.Items[]? | .ResponseHeadersPolicy | select(.Id == $id) | .ResponseHeadersPolicyConfig] | first' <<<"$list")
+    if cf_jq -e --arg v "$value" 'include "cf"; rhp_forces_cache_control($v)' <<<"$cur" >/dev/null; then
+      echo "response headers policy $name ($id) already forces Cache-Control: $value"
+    elif [ "$dry" = 1 ]; then
+      echo "(dry-run) would put response headers policy $name ($id) back to Cache-Control: $value, override"
+    else
+      etag=$(aws cloudfront get-response-headers-policy-config --id "$id" --output json | jq -r '.ETag // empty')
+      [ -n "$etag" ] || { echo "no ETag for response headers policy $id" >&2; return 1; }
+      aws cloudfront update-response-headers-policy --id "$id" --if-match "$etag" --response-headers-policy-config "file://$want" --output json >/dev/null
+      echo "updated response headers policy $name ($id): Cache-Control: $value, override"
+    fi
+  fi
+  CF_RHP_ID=$id
 }

@@ -14,6 +14,19 @@ const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const SCOPE_RE = /^[A-Za-z0-9:._\/ -]{1,200}$/;
 const MAX_AGE_RE = /^[0-9]{1,9}$/; // OIDC max_age: a non-negative integer number of seconds
+const NAME_MAX = 200;
+
+/**
+ * The member's display label for the access token's `name` claim (the MCP actor label, api/src/mcp.js). It comes from the io_id session
+ * label, which is the allowlist entry's `label`. The kit falls back to the member's EMAIL when an entry has no label (and principal
+ * displayName falls back to the email claim), and a post or comment author label is shown to the whole family, so an email-shaped label
+ * is never minted; nor is a label that is just the sub, empty, over-long or carrying control characters. No claim = the API uses the sub.
+ */
+export function displayNameOf(label, sub) {
+  const n = typeof label === "string" ? label.trim() : "";
+  if (!n || n === sub || n.length > NAME_MAX || n.includes("@") || /[\u0000-\u001f\u007f]/.test(n)) return undefined;
+  return n;
+}
 
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
@@ -97,9 +110,10 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     }
     if (!(await groupsFor(session.sub))) return back({ error: "access_denied", error_description: "not on the family access list" });
     const code = b64u(random(32));
+    const name = displayNameOf(session.label, session.sub);
     await store.put({
       PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope: scopeOf(q.scope),
-      ...assuranceOf(session),
+      ...assuranceOf(session), ...(name ? { name } : {}),
       expiresAt: now() + CODE_TTL_S * 1000, ttl: secs() + CODE_TTL_S + 60,
     });
     return back({ code });
@@ -117,11 +131,14 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
   /**
    * HFY-R64: the access token carries email, amr (only when non-empty) and auth_time (always; 0 when unknown, which the MCP server reads as stale).
    * auth_time is the original sign-in time: refresh grants pass the stored value through, they never advance it.
+   * `name` (the member's display label, see displayNameOf) is carried the same way: from the session at authorize, preserved on refresh.
    */
-  async function issue({ sub, resource, scope, groups, family, email, amr, authTime }) {
+  async function issue({ sub, resource, scope, groups, family, email, amr, authTime, name }) {
     const iat = secs();
     const a = assuranceOf({ email, amr, authTime });
-    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access", ...(a.email ? { email: a.email } : {}), ...(a.amr ? { amr: a.amr } : {}), auth_time: a.authTime })
+    const n = displayNameOf(name, sub);
+    if (n) a.name = n;
+    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access", ...(a.email ? { email: a.email } : {}), ...(a.name ? { name: a.name } : {}), ...(a.amr ? { amr: a.amr } : {}), auth_time: a.authTime })
       .setProtectedHeader({ alg: "RS256", kid: signer.kid, typ: "at+jwt" })
       .setSubject(sub).setIssuer(base).setAudience(resource).setIssuedAt(iat).setExpirationTime(iat + ACCESS_TTL_S).setJti(b64u(random(12)))
       .sign(signer.privateKey);
@@ -142,7 +159,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the authorization request");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)), email: rec.email, amr: rec.amr, authTime: rec.authTime });
+      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)), email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name });
     }
     if (p.grant_type === "refresh_token") {
       const rt = p.refresh_token;
@@ -159,7 +176,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the grant");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family, email: rec.email, amr: rec.amr, authTime: rec.authTime }); // never refreshes auth_time
+      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family, email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name }); // never refreshes auth_time
     }
     return err(400, "unsupported_grant_type", "authorization_code and refresh_token are supported");
   }

@@ -1,5 +1,6 @@
 """Static checks on infrastructure/cloudformation/edge-gate-stack.yaml (HFY-TSK-080). Offline; run via scripts/infra/test/run.sh."""
 import pathlib
+import re
 import unittest
 
 import yaml
@@ -33,6 +34,29 @@ class EdgeGateStack(unittest.TestCase):
         v = self.t["Resources"]["Version"]
         self.assertEqual(v["DeletionPolicy"], "Retain")  # CloudFront replicas pin versions
         self.assertEqual(self.t["Outputs"]["EdgeGateVersionArn"]["Value"], {"Ref": "Version"})
+
+    # cfn-code-never-updates / edge-gate-update-same-key-fails: every build is a new S3 key, so Function.Code changes with the code
+    def test_code_location_is_content_addressed(self):
+        code = self.t["Resources"]["Function"]["Properties"]["Code"]
+        self.assertEqual(code, {"S3Bucket": {"Ref": "CodeBucket"}, "S3Key": {"Ref": "CodeKey"}})
+        key = self.t["Parameters"]["CodeKey"]
+        self.assertNotIn("Default", key, "a fixed default key cannot ship a fix (re-uploading to it leaves Function.Code unchanged)")
+        pat = re.compile(key["AllowedPattern"])
+        self.assertTrue(pat.match("lambda/hfy-edge-gate-c95a950493cf12bd.zip"))
+        for bad in ("lambda/hfy-edge-gate.zip", "lambda/hfy-edge-gate-latest.zip", "lambda/hfy-edge-gate-C95A950493CF12BD.zip", "x/lambda/hfy-edge-gate-c95a950493cf12bd.zip"):
+            self.assertIsNone(pat.match(bad), bad)
+
+    def test_version_republishes_on_every_code_change(self):
+        v = self.t["Resources"]["Version"]["Properties"]
+        self.assertEqual(v["FunctionName"], {"Ref": "Function"})
+        self.assertEqual(v["CodeSha256"], {"Ref": "CodeSha256"})  # PublishVersion checks $LATEST against it
+        desc = v["Description"]["Fn::Sub"]
+        self.assertIn("${CodeSha256}", desc)
+        self.assertIn("${CodeKey}", desc)
+        sha = re.compile(self.t["Parameters"]["CodeSha256"]["AllowedPattern"])
+        self.assertTrue(sha.match("yVqVBJPPEr2B7YfniOoUVe9MWf8dx3df2Jg6wEKlotw="))
+        self.assertIsNone(sha.match("c95a950493cf12bd"))
+        self.assertNotIn("Default", self.t["Parameters"]["CodeSha256"])
 
     def test_us_east_1_only(self):
         a = self.t["Rules"]["UsEast1Only"]["Assertions"][0]["Assert"]

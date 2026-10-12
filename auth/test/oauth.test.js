@@ -5,7 +5,7 @@ import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet, jwtVerify, deco
 import { buildResolver } from "@io-kit/auth/edge/deploy";
 import { createIdentityService, memoryLinkStore, memoryRefreshStore } from "@io-kit/auth/server";
 import { createAuthEdge, loadManifest } from "../src/edge.js";
-import { createOAuthServer, memoryOAuthStore } from "../src/oauth.js";
+import { createOAuthServer, displayNameOf, memoryOAuthStore } from "../src/oauth.js";
 import { createMembership } from "../src/membership.js";
 
 const raw = JSON.parse(readFileSync(new URL("../edge.manifest.json", import.meta.url), "utf8"));
@@ -311,9 +311,10 @@ describe("access tokens carry email, amr and auth_time (HFY-R64)", () => {
     expect(payload.auth_time).toBe(iat - 1000);
     expect("amr" in payload).toBe(false);
   });
-  it("/auth/session keeps its shape (no email, amr or auth time leak into it)", async () => {
-    const r = await edge(evGet("/auth/session", {}, { cookie: await sessionCookie({ iat: nowS() - 10, amr: ["passkey", "mfa"] }) }));
-    expect(JSON.parse(r.body)).toEqual({ authenticated: true, sub: "I0111", grampsId: "I0111", label: "Ana" });
+  it("/auth/session keeps its shape (no email, amr or auth time leak into it); it adds only the session expiry (HFY-R66)", async () => {
+    const iat = nowS() - 10;
+    const r = await edge(evGet("/auth/session", {}, { cookie: await sessionCookie({ iat, amr: ["passkey", "mfa"] }) }));
+    expect(JSON.parse(r.body)).toEqual({ authenticated: true, sub: "I0111", grampsId: "I0111", label: "Ana", exp: iat + 3600 });
   });
   it("refresh keeps the original auth_time, email and amr while iat advances (it never refreshes auth_time)", async () => {
     const authTime = nowS() - 90;
@@ -323,11 +324,11 @@ describe("access tokens carry email, amr and auth_time (HFY-R64)", () => {
     const second = (await token({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: "mcp-harrisonfamily" })).body;
     const b = await access(second);
     expect(b.iat - a.iat).toBe(1800);
-    expect(b).toMatchObject({ auth_time: authTime, email: "ana@example.com", amr: ["passkey", "hwk", "mfa"] });
+    expect(b).toMatchObject({ auth_time: authTime, email: "ana@example.com", amr: ["passkey", "hwk", "mfa"], name: "Ana" });
     clock += 1_800_000; // a second rotation: the value still comes from the original sign-in
     const c = await access((await token({ grant_type: "refresh_token", refresh_token: second.refresh_token })).body);
     expect(c.iat - a.iat).toBe(3600);
-    expect(c).toMatchObject({ auth_time: authTime, email: "ana@example.com", amr: ["passkey", "hwk", "mfa"] });
+    expect(c).toMatchObject({ auth_time: authTime, email: "ana@example.com", amr: ["passkey", "hwk", "mfa"], name: "Ana" });
   });
   it("a refresh token minted before this change (no email/amr/authTime on its record) yields auth_time 0, no amr and no email, and stays that way", async () => {
     const rt = "hfyrt_legacy-record-without-assurance-fields";
@@ -337,13 +338,37 @@ describe("access tokens carry email, amr and auth_time (HFY-R64)", () => {
     expect(a.auth_time).toBe(0);
     expect("amr" in a).toBe(false);
     expect("email" in a).toBe(false);
+    expect("name" in a).toBe(false); // no name on the record: the MCP server labels the actor with the sub
     const b = await access((await token({ grant_type: "refresh_token", refresh_token: first.refresh_token })).body);
     expect(b.auth_time).toBe(0);
   });
   it("issue() persists the values on the refresh record", async () => {
     const authTime = nowS() - 45;
     const first = await grantFor(await sessionCookie({ iat: authTime, amr: ["passkey", "mfa"] }));
-    expect(await oauthStore.get(`MCPRT#${keyOf(first.refresh_token)}`)).toMatchObject({ email: "ana@example.com", amr: ["passkey", "mfa"], authTime });
+    expect(await oauthStore.get(`MCPRT#${keyOf(first.refresh_token)}`)).toMatchObject({ email: "ana@example.com", amr: ["passkey", "mfa"], authTime, name: "Ana" });
+  });
+});
+
+describe("access tokens carry the member's display label as name (MCP author label)", () => {
+  it("code grant: name is the io_id session label, stored on the code and the refresh record", async () => {
+    const p = pkce();
+    const code = await getCode(await sessionCookie({ iat: nowS() - 5, name: "Jane Harrison", sub: "I0111" }), p);
+    expect(await oauthStore.get(`MCPCODE#${keyOf(code)}`)).toMatchObject({ sub: "I0111", name: "Jane Harrison" });
+    const body = (await token(codeGrant(code, p.verifier))).body;
+    expect(await access(body)).toMatchObject({ sub: "I0111", name: "Jane Harrison", email: "ana@example.com" });
+    expect(await oauthStore.get(`MCPRT#${keyOf(body.refresh_token)}`)).toMatchObject({ name: "Jane Harrison" });
+    expect((await access((await token({ grant_type: "refresh_token", refresh_token: body.refresh_token })).body)).name).toBe("Jane Harrison");
+  });
+  it("never mints an email as name: neither the kit's email fallback label nor a session without a name claim", async () => {
+    expect("name" in (await access(await grantFor(cookieAna)))).toBe(false); // allowlist string entry: the kit labels the member with the email
+    expect("name" in (await access(await grantFor(await sessionCookie({ iat: nowS() - 5, name: "ana@example.com" }))))).toBe(false);
+    expect("name" in (await access(await grantFor(await sessionCookie({ iat: nowS() - 5, name: undefined }))))).toBe(false); // displayName falls back to email
+  });
+  it("displayNameOf: a trimmed, printable, non-email label that is not just the sub", () => {
+    expect(displayNameOf("  Jane Harrison ", "I0111")).toBe("Jane Harrison");
+    expect(displayNameOf("Zoë O'Brien-Harrison", "I0111")).toBe("Zoë O'Brien-Harrison");
+    for (const bad of [undefined, null, 42, "", "   ", "I0111", "jane@example.com", "Jane\nHarrison", "Jane\u0000", "x".repeat(201)]) expect(displayNameOf(bad, "I0111"), JSON.stringify(bad)).toBeUndefined();
+    expect(displayNameOf("x".repeat(200), "I0111")).toHaveLength(200);
   });
 });
 

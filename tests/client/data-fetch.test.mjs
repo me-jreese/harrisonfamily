@@ -55,15 +55,25 @@ test("a gate 401 under authV2 sends the visitor to the edge sign-in and back; ot
   assert.equal(off.window.location.replaced, null);
 });
 
-test("consumers take the authV2 path before building any X-HFY-Session request", () => {
+test("consumers take the authV2 path before building any X-HFY-Session request, and fetch data through dataFetch", () => {
   const person = read("js/person-page.js");
   const build = person.slice(person.indexOf("async function buildAuthorizedFetchOptions"));
   assert.ok(build.indexOf("edgeSessionInit()") > -1 && build.indexOf("edgeSessionInit()") < build.indexOf("X-HFY-Session"));
   assert.match(person, /async function requireAuthenticated\(\) \{\s*if \(await edgeSessionInit\(\)\)/);
+  assert.match(person, /const response = await dataFetch\(dataUrl, fetchOptions\);/);
+  assert.match(person, /dataFetch\(svgUrl, \{ credentials: "same-origin" \}, \{ interactive: false \}\)/);
   for (const f of ["js/search-results.js", "js/search-navbar.js"]) {
     const s = read(f);
     assert.match(s, /async function requireAuthenticated\(\) \{\s*if \(await edgeSessionInit\(\)\)/, f);
     assert.match(s, /const headers = edgeInit \? \{\} : await buildAuthHeaders\(\);/, f);
-    assert.match(s, /dataResponse\(res\)/, f);
+    assert.match(s, /dataFetch\(manifestUrl, fetchOptions/, f);
+    assert.match(s, /dataFetch\(indexUrl, fetchOptions/, f);
+    assert.doesNotMatch(s, /\bfetch\((manifestUrl|indexUrl)/, f);
+    assert.match(s, /flags\.dataFetch\(url, init, options\) : fetch\(url, init\)/, f);
+  }
+  for (const f of ["../islands/src/islands/person.jsx", "../islands/src/lib/people-corpus.js"]) {
+    const s = read(f);
+    assert.match(s, /dataFetch\(url, init/, f);
+    assert.doesNotMatch(s, /dataResponse/, f);
   }
 });

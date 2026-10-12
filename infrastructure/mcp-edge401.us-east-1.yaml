@@ -35,14 +35,20 @@ Resources:
             }
             return response;
           };
-  # Lambda@Edge needs a numbered version. Changing the code above makes CloudFormation publish a new one (the logical id is stable; CodeSha256 forces it).
+  # Lambda@Edge needs a numbered version, and CloudFormation only publishes one when the Version resource itself changes: an edit
+  # to the inline code above updates $LATEST but, on its own, leaves this resource (and Edge401FunctionVersionArn) on the old
+  # version (edge401-version-not-republished). So the Description carries "code sha256 <first 16 hex of SHA-256(ZipFile text)>":
+  # editing the code means updating that hash, a Description change replaces the Version, and the replacement publishes a new
+  # numbered version from the updated $LATEST (the old one is retained for CloudFront replicas). The inline code has no stable zip
+  # hash to put in CodeSha256, hence the source hash. scripts/infra/test/run.sh (test_mcp_edge401_stack.py) fails, printing the
+  # expected value, whenever the code and this hash disagree. After a redeploy, rerun scripts/infra/add-mcp-behavior.sh.
   Edge401Version:
     Type: AWS::Lambda::Version
     DeletionPolicy: Retain          # replicas cannot be deleted while CloudFront still references them
     UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref Edge401Function
-      Description: restore WWW-Authenticate on 401
+      Description: "restore WWW-Authenticate on 401 (code sha256 e63a3390202a0923)"
 Outputs:
   Edge401FunctionVersionArn:
     Description: Versioned ARN to attach as origin-response (scripts/infra/add-mcp-behavior.sh --edge401-arn)

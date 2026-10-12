@@ -18,6 +18,7 @@ Two kinds of files live here:
 | `js/islands/**` | **committed build output** of `islands/` — rebuild with `scripts/ci/build-islands.sh` (or `cd islands && npm run build`) and commit; `npm run check:islands` fails if it is stale |
 | `js/auth-v2.js` | flag-gated two-path sign-in (HFY-TSK-062) |
 | `js/feature-flags.js`, `js/search-navbar.js`, `js/search-results.js` | carry repo-only changes (flag override, island loader, searchV2 hand-off) not yet ported to the workspace |
+| `js/person-page.js` | carries the authV2 data-gate path (`dataFetchInit`/`dataResponse`, HFY-TSK-080) not yet ported to the workspace; the workspace copy still waits for the legacy `X-HFY-Session` token, which breaks person pages once the data gate is attached |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | PWA shell (HFY-TSK-064) |
 | `posts/`, `me/` | pages for `postsV2` / `notifyV2` islands (HFY-TSK-067/068) |
 | `*/index.html` `<script src="/js/auth-v2.js" defer>` tags | added in the repo (HFY-TSK-062); the workspace templates do not emit them yet |
@@ -44,15 +45,19 @@ rsync -a --delete -n -i \
   --exclude js/islands/ \
   --exclude js/auth-v2.js \
   --exclude js/feature-flags.js --exclude js/search-navbar.js --exclude js/search-results.js \
+  --exclude js/person-page.js \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \
   --exclude 'images/pwa-*.png' \
-  --exclude posts/ --exclude me/ \
+  --exclude posts/ --exclude me/ --exclude uploads/ \
   ./_site/ ../repo/11ty/
 ```
 
 Then check `git diff 11ty/` before committing: every `index.html` must still load `/js/auth-v2.js`, and
-`git status 11ty/js/islands` must be clean. The `scripts/check-deployment-sync.sh` pre-commit check and
-`scripts/promote_workspace_assets.sh` need the same exclude list (owned outside this directory).
+`git status 11ty/js/islands` must be clean. The `scripts/check-deployment-sync.sh` pre-commit check uses the same exclude list
+(`scripts/infra/test/run.sh` fails when the two differ). `scripts/promote_workspace_assets.sh` (owned outside this directory) has no
+exclude list: it copies whatever a session log marks `"promote": true`, and a directory entry is synced with `rsync --delete`. Until it
+learns these excludes, never mark a repo-owned path above (for example `11ty/js/person-page.js`) or the whole `_site` → `11ty`
+directory for promotion; refresh 11ty output with the rsync above instead.
 
 The production copy only contains static HTML/CSS/JS; person data and media are fetched at runtime from the CDN
 (`HFY_DATA_BASE`, `HFY_MEDIA_BASE`).

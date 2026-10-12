@@ -24,9 +24,10 @@ async function authInit() {
   return {};
 }
 
+/** HFY-R66: authV2 refreshes a lapsed edge session and retries a gate 401 once before sending the visitor to sign in. */
 async function getJson(url, init) {
-  const res = await fetch(url, init);
-  window.HFYFeatureFlags?.dataResponse?.(res);
+  const flags = window.HFYFeatureFlags;
+  const res = await (flags && flags.dataFetch ? flags.dataFetch(url, init) : fetch(url, init));
   if (!res.ok) throw new Error("Could not load " + url + " (" + res.status + ")");
   return res.json();
 }

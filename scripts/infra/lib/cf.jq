@@ -114,3 +114,11 @@ def remove_gate_behaviors($pats; $fn):
       | select(((.PathPattern as $p | $pats | index($p)) != null
                 and any((.LambdaFunctionAssociations.Items // [])[]; (.LambdaFunctionARN | test(":function:" + $fn + ":[0-9]+$")))) | not) ]
   | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length);
+
+# HFY-R65: does the input ResponseHeadersPolicyConfig force Cache-Control to exactly $value on every response? True only when it
+# has a single Cache-Control custom header with that value and Override:true, and does not also list Cache-Control in
+# RemoveHeadersConfig. Header names compare case-insensitively, as HTTP does.
+def rhp_forces_cache_control($value):
+  ([(.CustomHeadersConfig.Items // [])[] | select((.Header // "" | ascii_downcase) == "cache-control")]) as $cc
+  | ($cc | length) == 1 and $cc[0].Value == $value and $cc[0].Override == true
+    and ([(.RemoveHeadersConfig.Items // [])[] | (.Header // "" | ascii_downcase)] | index("cache-control")) == null;

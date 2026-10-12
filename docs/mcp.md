@@ -13,9 +13,14 @@ It is mounted in the `hfy-api` Lambda (`api/src/index.js` routes `/mcp*` and `/.
 | --- | --- | --- |
 | `comments.list`, `posts.list`, `posts.get` | mcp-authors, hfy-admin | session |
 | `comments.create`, `posts.create` | mcp-authors, hfy-admin (agents: dry_run) | session |
-| `*.delete` | hfy-admin | step_up: `amr` has mfa, hwk or passkey and `auth_time` within 300 s |
+| `*.delete` | hfy-admin | step_up: `amr` contains `mfa` and `auth_time` within 300 s |
+
+Step-up (HFY-R67, `STRONG_AMR = ["mfa"]` in `api/src/policy.js`): only a sign-in where user verification was performed counts. The auth edge's passkeys use `userVerification: "preferred"`, and the kit's `passkeyAmr` always emits `passkey` plus `hwk` (device-bound) or `swk` (synced), adding `mfa` only when UV happened. So `passkey`, `hwk` or `swk` without `mfa` is a single possession factor (for example a PIN-less security key) and does NOT unlock deletes. iPhone passkeys always perform UV, so they carry `mfa`. `pwd` and `fed` (Google) are never a step-up. The published policy document (`api/dist/policy.json`, `stepUp.amr`) carries the same list.
 
 Non-members authenticate and get an empty `tools/list` with `_meta.reason {code: not_in_group, group: mcp-authors}`. Members never see delete tools (existence not revealed); a non-fresh admin sees them disabled (`step_up_required`).
+
+## Who a tool call runs as
+Each tool runs the route's own handler as the actor `{id: sub, label, admin}`, the same shape the HTTP path builds from the io_id session (`api/src/auth.js`). `label` is the access token's `name` claim (trimmed). The auth edge mints it from the io_id session label in `auth/src/oauth.js` and keeps it on refresh, like `email`, `amr` and `auth_time`. When the token has no usable `name`, the label is the `sub` (gramps_id). The `email` claim is never used as a label. The label is what gets stored as `author.label` on comments, posts, their index items and the D-15 audit entry, and it names the actor in push notifications. Authorization (`admin`, groups) never comes from the token; see below.
 
 ## Groups config (HFY-TSK-073), read-only, fail closed
 `s3://$GROUPS_BUCKET/$GROUPS_KEY` (defaults `harrisonfamily` / `config/groups.json`; cached 60 s):
@@ -48,5 +53,5 @@ mcp-conformance:
 
 ## Known gaps
 - `@io-kit/ci` 0.1.3 has `stack: mcp` but no MCP deploy-target kind (targets: s3_static, lambda, cloudfront_function, codeartifact), and `ci_jobs_file` replaces the generated jobs wholesale; so no gated-off MCP target was added to `ci.manifest.yaml`. The MCP deploys with the `hfy-api` Lambda.
-- The auth edge's access tokens carry no `amr`/`auth_time` (only `iat`) and no `email`: until it emits `amr` (passkey/mfa) and the sign-in `auth_time`, every delete is correctly denied `step_up_required`.
+- Access tokens carry `email`, `amr` and `auth_time` (HFY-R64) and `name` (this release). A token minted by an auth edge that predates `name` still works: its calls are labelled with the gramps_id until the MCP client authorizes again (a refresh keeps the original grant's claims). A token without `mfa` in `amr` (or with a stale `auth_time`) is denied deletes with `step_up_required`.
 - The packaged `resolveRefs` does not expand `$fixture:` refs embedded in header values (`Bearer $fixture:...`); the test harness expands them. MCP call audit goes to structured logs (`mcp.audit`), not the D-15 DDB items (route writes keep their own D-15 audit).

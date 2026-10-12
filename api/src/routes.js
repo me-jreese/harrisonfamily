@@ -40,7 +40,7 @@ const MCP = {
   "comments.create": { tool: "hfy_comments_create", description: "Create a comment (or a reply with parentId) on a subject.",
     input: schema({ subject: str("person:<gramps_id> or post:<ulid>"), body: { type: "string", maxLength: 1000 }, parentId: str("Comment id to reply to") }, ["subject", "body"]),
     args: (a) => ({ body: pick(a, ["subject", "body", "parentId"]) }) },
-  "comments.delete": { tool: "hfy_comments_delete", description: "Delete any comment. Requires hfy-admin and a fresh step-up (mfa, hwk or passkey within 5 minutes).",
+  "comments.delete": { tool: "hfy_comments_delete", description: "Delete any comment. Requires hfy-admin and a fresh step-up (a user-verified sign-in, amr mfa, within 5 minutes).",
     input: schema({ subject: str("person:<gramps_id> or post:<ulid>"), id: str("Comment id"), reason: str("Optional audit reason") }, ["subject", "id"]),
     args: (a) => ({ params: { id: a.id }, query: pick(a, ["subject", "reason"]) }) },
   "posts.list": { tool: "hfy_posts_list", description: "List posts, newest first (filters: subject, type, author, visibility).",
@@ -50,7 +50,7 @@ const MCP = {
   "posts.create": { tool: "hfy_posts_create", description: "Create a post as a DRAFT. Publishing is a human action in the site UI; there is no visibility argument.",
     input: schema({ type: { enum: ["post", "article", "document"] }, subject: str("Record id the post is about"), title: { type: "string", maxLength: 200 }, body: str("Post body") }, ["body"]),
     args: (a) => ({ body: { ...pick(a, ["type", "subject", "title", "body"]), visibility: "draft" } }) },
-  "posts.delete": { tool: "hfy_posts_delete", description: "Delete any post and its discussion. Requires hfy-admin and a fresh step-up (mfa, hwk or passkey within 5 minutes).",
+  "posts.delete": { tool: "hfy_posts_delete", description: "Delete any post and its discussion. Requires hfy-admin and a fresh step-up (a user-verified sign-in, amr mfa, within 5 minutes).",
     input: schema({ id: str("Post id") }, ["id"]), args: (a) => ({ params: { id: a.id } }) },
 };
 const need = (v, field) => {

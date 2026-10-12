@@ -7,5 +7,6 @@
   "skewSeconds": 60,
   "jwksTtlSeconds": 300,
   "minRefetchSeconds": 30,
-  "fetchTimeoutMs": 2000
+  "failureBackoffSeconds": 2,
+  "fetchTimeoutMs": 3000
 }

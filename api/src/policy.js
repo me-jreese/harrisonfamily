@@ -16,7 +16,12 @@
 export const AUTHORS_GROUP = "mcp-authors";
 export const ADMIN_GROUP = "hfy-admin";
 export const STEP_UP_MAX_AGE_SECONDS = 300;
-export const STRONG_AMR = ["mfa", "hwk", "passkey"];
+/**
+ * HFY-R67: step-up means user verification was performed, so ONLY "mfa" counts. The auth edge's passkeys run with userVerification "preferred":
+ * the kit's passkeyAmr always emits "passkey" plus "hwk"/"swk" and adds "mfa" only when UV happened. "passkey"/"hwk"/"swk" alone are a single
+ * possession factor (a PIN-less security key left on a shared computer) and must not unlock deletes. iPhone passkeys always perform UV.
+ */
+export const STRONG_AMR = ["mfa"];
 
 const BOTH = [AUTHORS_GROUP, ADMIN_GROUP];
 /** Action ids are the route names in routes.js. Exact rows beat globs; `*.delete` covers every delete action (current and future). */

@@ -2,6 +2,9 @@
 // Verifies the RS256 `io_id` session cookie minted by the auth edge (auth/): signature against its JWKS, iss, aud, exp/nbf
 // with a clock skew. Allow = the request is returned unchanged. Deny = 401 JSON for fetch/XHR/subresource requests, 302 to
 // /auth/login?returnTo=<path> for top-level navigations. Fail closed: any error is a deny. Dependency-free (node:crypto only).
+// Every response the gate generates carries Cache-Control: private, no-store (HFY-R65): Cloudflare proxies the site in front of
+// CloudFront, and a shared cache must never keep a gate answer. Allowed responses get the same header from the behaviors'
+// response headers policy (scripts/infra/add-data-gate-behaviors.sh).
 import { createPublicKey, verify } from "node:crypto";
 
 const DEFAULTS = {
@@ -10,8 +13,10 @@ const DEFAULTS = {
   skewSeconds: 60,
   jwksTtlSeconds: 300,
   minRefetchSeconds: 30,
-  fetchTimeoutMs: 2000,
+  failureBackoffSeconds: 2,
+  fetchTimeoutMs: 3000,
 };
+export const NO_STORE = "private, no-store";
 const MAX_TOKEN_CHARS = 8192;
 
 export function createGate(config, deps = {}) {
@@ -21,17 +26,21 @@ export function createGate(config, deps = {}) {
   const now = deps.now ?? (() => Date.now());
   const log = deps.log ?? ((m) => console.log(m));
 
-  // Module-scope JWKS cache: kid -> KeyObject. A refetch happens when the cache is older than the TTL or the kid is unknown,
-  // but never more often than minRefetchSeconds (so a stream of forged kids cannot turn the gate into a JWKS hammer).
+  // Module-scope JWKS cache: kid -> KeyObject. A refetch happens when the cache is older than the TTL or the kid is unknown.
+  // Rate limit: after a SUCCESSFUL fetch, no refetch for minRefetchSeconds (a stream of forged kids cannot turn the gate into a
+  // JWKS hammer). After a FAILED fetch (network error, timeout, non-2xx, no usable key), the next request may retry once
+  // failureBackoffSeconds have passed, so one slow answer from a cold auth edge does not lock a fresh container into denying
+  // every member for minRefetchSeconds. A failed fetch never drops the last good keys, and no key is always a deny (fail closed).
   let keys = new Map();
   let fetchedAt = 0;
-  let lastAttemptAt = null;
+  let lastAttemptAt = null; // when the last fetch attempt finished
+  let lastAttemptFailed = false;
   let inflight = null;
 
   function refresh() {
     if (inflight) return inflight;
-    lastAttemptAt = now();
     inflight = (async () => {
+      let ok = false;
       try {
         const res = await fetchImpl(cfg.jwksUrl, { signal: AbortSignal.timeout(cfg.fetchTimeoutMs), headers: { accept: "application/json" } });
         if (!res.ok) throw new Error(`jwks http ${res.status}`);
@@ -41,11 +50,13 @@ export function createGate(config, deps = {}) {
           if (jwk?.kty !== "RSA" || typeof jwk.kid !== "string" || (jwk.use && jwk.use !== "sig") || (jwk.alg && jwk.alg !== "RS256")) continue;
           try { next.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" })); } catch { /* skip an unusable key */ }
         }
-        if (next.size > 0) { keys = next; fetchedAt = now(); }
+        if (next.size > 0) { keys = next; fetchedAt = now(); ok = true; }
         else log("edge-gate: jwks had no usable RS256 keys");
       } catch (e) {
         log(`edge-gate: jwks refresh failed: ${e?.message ?? e}`); // the previous keys (if any) stay usable
       } finally {
+        lastAttemptAt = now();
+        lastAttemptFailed = !ok;
         inflight = null;
       }
     })();
@@ -56,8 +67,10 @@ export function createGate(config, deps = {}) {
     const t = now();
     const fresh = keys.size > 0 && t - fetchedAt < cfg.jwksTtlSeconds * 1000;
     if (fresh && keys.has(kid)) return keys.get(kid);
-    const cooling = lastAttemptAt !== null && t - lastAttemptAt < cfg.minRefetchSeconds * 1000;
-    if (!cooling) await refresh();
+    const waitMs = (lastAttemptFailed ? cfg.failureBackoffSeconds : cfg.minRefetchSeconds) * 1000;
+    const cooling = lastAttemptAt !== null && t - lastAttemptAt < waitMs;
+    if (inflight) await inflight; // a fetch already under way: share its result rather than deny while it runs
+    else if (!cooling) await refresh();
     return keys.get(kid) ?? null;
   }
 
@@ -114,7 +127,7 @@ export function createGate(config, deps = {}) {
         statusDescription: "Found",
         headers: {
           location: [{ key: "Location", value: `${cfg.loginPath}?returnTo=${encodeURIComponent(path)}` }],
-          "cache-control": [{ key: "Cache-Control", value: "no-store" }],
+          "cache-control": [{ key: "Cache-Control", value: NO_STORE }],
         },
       };
     }
@@ -123,7 +136,7 @@ export function createGate(config, deps = {}) {
       statusDescription: "Unauthorized",
       headers: {
         "content-type": [{ key: "Content-Type", value: "application/json" }],
-        "cache-control": [{ key: "Cache-Control", value: "no-store" }],
+        "cache-control": [{ key: "Cache-Control", value: NO_STORE }],
       },
       body: JSON.stringify({ error: "unauthenticated" }),
     };
