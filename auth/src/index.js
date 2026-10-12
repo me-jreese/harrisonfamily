@@ -2,14 +2,15 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createLocalJWKSet, exportJWK, importPKCS8 } from "jose";
-import { createIdentityService, ddbFromDocumentClient, ddbRefreshStore } from "@io-kit/auth/server";
-import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator } from "@io-kit/auth/edge/deploy";
+import { createIdentityService, createPasskeyService, ddbChallengeStore, ddbFromDocumentClient, ddbRefreshStore } from "@io-kit/auth/server";
+import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator, loadPasskeyBrowserBundle } from "@io-kit/auth/edge/deploy";
 import { createAuthEdge, loadManifest } from "./edge.js";
-import { createOAuthServer, ddbOAuthStore } from "./oauth.js";
+import { DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthStore } from "./oauth.js";
 import { createMembership } from "./membership.js";
 import { forbidden, originVerified } from "./origin.js";
 import { cognitoProvisioner } from "./cognito.js";
 import { hfyLinkStore } from "./linkstore.js";
+import { hfyPasskeyStore } from "./passkeystore.js";
 import { ddbRateLimiter } from "./ratelimit.js";
 
 const sdk = (name) => import(name);
@@ -64,9 +65,10 @@ async function init() {
   const resources = csv(process.env.MCP_RESOURCES);
   const oauth = redirectUris.length
     ? createOAuthServer({
-        issuer: m.session.issuer, redirectUris, resources: resources.length ? resources : ["https://mcp.harrisonfamily.us"],
+        issuer: m.session.issuer, redirectUris, resources: resources.length ? resources : [DEFAULT_MCP_RESOURCE],
         corsOrigins: csv(process.env.MCP_CORS_ORIGINS),
         ...(process.env.MCP_CLIENT_ID ? { clientId: process.env.MCP_CLIENT_ID } : {}),
+        jwks: createLocalJWKSet({ keys: [publicJwk] }),
         store: ddbOAuthStore({ doc, cmds: lib, table: tableName }), signer: { privateKey, kid },
         groupsFor: createMembership({
           readAllowlist: () => readObject(m.resolver.bucket, m.resolver.key),
@@ -74,8 +76,20 @@ async function init() {
         }),
       })
     : undefined;
+  // Passkeys (HFY-TSK-078, HFY-R52/R53/R57): same table; credentials PASSKEY#<id> + GSI1PK/GSI1SK, challenges PASSKEYCHAL#<challenge> (DynamoDB TTL).
+  // userVerification stays "preferred" for sign-in (HFY-R67). The kit's amr is ["passkey", "hwk"|"swk"] plus "mfa" only when the
+  // authenticator performed user verification, and the MCP step-up delete accepts only "mfa" (api/src/policy.js STRONG_AMR).
+  const pk = m.providers.find((p) => p.kind === "passkey");
+  const authOrigin = String(m.authOrigin ?? `https://${m.site}`).replace(/\/+$/, "");
+  const passkeys = pk
+    ? createPasskeyService({
+        rpID: pk.rpId ?? m.site, rpName: pk.rpName ?? m.site, origin: pk.origins ?? [authOrigin], userVerification: "preferred",
+        store: hfyPasskeyStore({ client: ddb, tableName }), // writes GSI1SK so GSI1 indexes PASSKEY# items (HFY-R67)
+        challenges: ddbChallengeStore({ client: ddb, tableName }),
+      })
+    : undefined;
   return createAuthEdge({
-    manifest: m, identity, publicJwk, ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
+    manifest: m, identity, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
     limiter: ddbRateLimiter({ doc, cmds: lib, table: tableName }), // POST /auth/password/forgot (HFY-R58 ruling 5)
     verify: { issuers: [m.session.issuer], audiences: [m.session.audience], jwks: createLocalJWKSet({ keys: [publicJwk] }) },
   });

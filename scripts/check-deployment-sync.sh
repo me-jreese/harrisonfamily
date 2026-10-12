@@ -92,6 +92,7 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'js/feature-flags.js' \
     --exclude 'js/search-navbar.js' \
     --exclude 'js/search-results.js' \
+    --exclude 'js/person-page.js' \
     --exclude 'sw.js' \
     --exclude 'manifest.webmanifest' \
     --exclude 'offline.html' \
@@ -99,6 +100,8 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'posts/' \
     --exclude 'me/'
   # The excludes after .DS_Store are repo-owned files the Eleventy workspace does not produce (11ty/README.md, HFY-R46/R58).
+  # js/person-page.js carries the authV2 data-gate path (HFY-TSK-080) that the workspace copy lacks. Keep this list equal to the
+  # 11ty/README.md refresh rsync (scripts/infra/test/run.sh checks it).
 fi
 
 if [ "$needs_lambda_check" -eq 1 ]; then

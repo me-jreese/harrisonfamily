@@ -1,8 +1,8 @@
-// harrisonfamily auth edge, mounted at https://harrisonfamily.us/auth/* (HFY-R31), on @io-kit/auth 2.0.0's createEdgeApp.
+// harrisonfamily auth edge, mounted at https://harrisonfamily.us/auth/* (HFY-R31), on @io-kit/auth 2.1.1's createEdgeApp.
 // The kit deployable is written for auth.<site> (routes at the root). This wrapper adapts it to a path mount and adds the three
 // things the kit does not ship: GET /auth/.well-known/jwks.json (HFY-R38), GET /auth/session, and host-only cookies (HFY-R31).
 import { createEdgeApp, validateManifest } from "@io-kit/auth/edge/deploy";
-import { resolveAuth } from "@io-kit/auth/server";
+import { COGNITO_GROUP_CLAIM, claimsToPrincipal, resolveAuth } from "@io-kit/auth/server";
 import { FORGOT_LIMITS, clientIp, rateKey } from "./ratelimit.js";
 
 export const MOUNT = "/auth";
@@ -81,8 +81,8 @@ function jsonBodyOf(event) {
  * `limiter` ({hit(key, {limit, windowSeconds})}, see ratelimit.js) rate-limits POST /auth/password/forgot per `forgotLimits`;
  * without one the route is not limited (unit tests). A limiter failure fails closed (503): no email is sent.
  */
-export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, limiter, forgotLimits = FORGOT_LIMITS, log = console }) {
-  const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}) });
+export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, log = console }) {
+  const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}), ...(passkeys ? { passkeys, ...(passkeyClientScript ? { passkeyClientScript } : {}) } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
   const siteOrigin = String(manifest.authOrigin ?? `https://${manifest.site}`).replace(/\/+$/, "");
   const returnOrigins = (manifest.returnOrigins ?? []).map((o) => String(o).replace(/\/+$/, ""));
@@ -123,19 +123,46 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     return k && typeof res.headers[k] === "string" ? { ...res, headers: { ...res.headers, [k]: safe(res.headers[k]) } } : res;
   }
 
+  /**
+   * The signed-in member behind the io_id cookie: {sub, label, email, amr, authTime, exp}. Everything comes from the VERIFIED token
+   * (signature, issuer, audience, expiry, token_use=id). resolveAuth maps claims to a principal that has no `email` or `exp`, so the adapter
+   * hook below reads them from the same verified claims object (no second, unverified decode). authTime is epoch seconds: the token's
+   * auth_time claim, else its iat (the kit's claimsToPrincipal rule); amr is [] when the token has none; exp is the token's expiry.
+   */
   async function sessionOf(event) {
     const tok = cookiesOf(event).io_id;
     if (!tok) return null;
+    let email;
+    let exp;
+    const adapter = {
+      toPrincipal: (claims) => {
+        if (typeof claims.email === "string" && claims.email) email = claims.email;
+        if (Number.isFinite(claims.exp)) exp = Math.floor(claims.exp);
+        return claimsToPrincipal(claims, COGNITO_GROUP_CLAIM);
+      },
+    };
     try {
-      const { principal } = await resolveAuth(tok, { ...verify, identity: undefined, tokenUse: "id" });
-      return { sub: principal.sub, label: principal.displayName ?? principal.sub };
+      const { principal } = await resolveAuth(tok, { ...verify, identity: undefined, tokenUse: "id", adapter });
+      return {
+        sub: principal.sub,
+        label: principal.displayName ?? principal.sub,
+        email,
+        amr: Array.isArray(principal.amr) ? principal.amr : [],
+        authTime: Number.isFinite(principal.authTime) ? Math.floor(principal.authTime) : 0,
+        exp,
+      };
     } catch {
       return null;
     }
   }
+  /**
+   * GET /auth/session. `exp` (epoch seconds) is when the io_id session token expires (HFY-R66): the cookie is HttpOnly, so this is how a page
+   * knows to POST /auth/refresh (X-Requested-With: io-kit; the io_rt cookie is Path=/auth) before its first data fetch when the session is
+   * about to lapse. Signed out (no io_id, or an invalid/expired one) is {authenticated: false}; a page may still try one refresh then.
+   */
   async function sessionInfo(event) {
     const s = await sessionOf(event);
-    return s ? json(200, { authenticated: true, sub: s.sub, grampsId: s.sub, label: s.label }) : json(200, { authenticated: false });
+    return s ? json(200, { authenticated: true, sub: s.sub, grampsId: s.sub, label: s.label, ...(s.exp !== undefined ? { exp: s.exp } : {}) }) : json(200, { authenticated: false });
   }
 
   function adapt(res) {
@@ -164,6 +191,8 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
       if (method !== "GET" && method !== "HEAD") return json(405, { code: "METHOD_NOT_ALLOWED" });
       return { statusCode: 200, headers: { "content-type": "application/json", "cache-control": "public, max-age=300" }, body: jwksBody };
     }
+    // HFY-TSK-078: "Manage passkeys" lives on the kit's account page (lists and removes the caller's own credentials; DELETE /auth/passkey/:id).
+    if (rel === "/passkeys") return method === "GET" || method === "HEAD" ? { statusCode: 302, headers: { location: `${MOUNT}/link`, "cache-control": "no-store" }, body: "" } : json(405, { code: "METHOD_NOT_ALLOWED" });
     if (rel === "/session") return method === "GET" ? sessionInfo(event) : json(405, { code: "METHOD_NOT_ALLOWED" });
     if (oauth) {
       const r = await oauth.handle(rel, event, () => sessionOf(event));
@@ -191,7 +220,7 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     }
     const kitPath = ROOT_ROUTES.has(rel) ? rel : raw;
     const res = adapt(await app({ ...ev, rawPath: kitPath }));
-    if (rel === "/password") return sanitizeReturnBody(res);
+    if (rel === "/password" || rel === "/passkey/login/verify") return sanitizeReturnBody(res); // the kit's own returnTo check lets "/\t/evil.example" through
     if (rel === "/callback" && res.statusCode >= 300 && res.statusCode < 400) return sanitizeLocation(res);
     return res;
   };

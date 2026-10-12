@@ -9,6 +9,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Same credentials path as search-results.js: X-HFY-Session header + credentials:include once the session token exists. */
 async function authInit() {
   const flags = window.HFYFeatureFlags;
+  const edge = flags && flags.dataFetchInit ? await flags.dataFetchInit() : null;
+  if (edge) return edge; // authV2: the io_id cookie is the credential at the edge data gate (HFY-TSK-080)
   const enforce = Boolean(flags && flags.config && flags.config.gateway && flags.config.gateway.enforceAssets);
   let token = null;
   const end = Date.now() + 8000;
@@ -22,8 +24,10 @@ async function authInit() {
   return {};
 }
 
+/** HFY-R66: authV2 refreshes a lapsed edge session and retries a gate 401 once before sending the visitor to sign in. */
 async function getJson(url, init) {
-  const res = await fetch(url, init);
+  const flags = window.HFYFeatureFlags;
+  const res = await (flags && flags.dataFetch ? flags.dataFetch(url, init) : fetch(url, init));
   if (!res.ok) throw new Error("Could not load " + url + " (" + res.status + ")");
   return res.json();
 }

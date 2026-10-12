@@ -69,6 +69,10 @@
         })
         .catch((err) => {
           console.error("[ERROR] Failed to load person record:", err);
+          if (err && err.signInUrl) {
+            showSignIn(err.signInUrl, { loading, error });
+            return;
+          }
           showError(err.message || "Unable to load person record.", { loading, error });
         });
     })();
@@ -105,12 +109,34 @@
     }
   }
 
+  // HFY-R66: the edge session could not be recovered and the automatic sign-in redirect was skipped (this tab was just sent
+  // there), so offer the sign-in as a link instead of looping.
+  function showSignIn(url, { loading, error }) {
+    hideLoading(loading);
+    if (!error) {
+      return;
+    }
+    error.textContent = "Your sign-in has expired. ";
+    const link = document.createElement("a");
+    link.href = url;
+    link.textContent = "Sign in again";
+    error.appendChild(link);
+    error.appendChild(document.createTextNode(" to view this record."));
+    error.classList.remove("d-none");
+  }
+
   async function fetchPerson(personId) {
     const dataUrl = buildDataUrl(personId);
     state.lastDataUrl = dataUrl;
 
     const fetchOptions = await buildAuthorizedFetchOptions();
-    const response = await fetch(dataUrl, fetchOptions);
+    const response = await dataFetch(dataUrl, fetchOptions);
+    if (response.status === 401 && (await edgeSessionInit())) {
+      const featureFlags = window.HFYFeatureFlags;
+      const err = new Error("Your sign-in has expired.");
+      err.signInUrl = featureFlags && typeof featureFlags.signInUrl === "function" ? featureFlags.signInUrl() : "/auth/login";
+      throw err;
+    }
     if (!response.ok) {
       throw new Error(`Person record ${personId} not found (HTTP ${response.status}).`);
     }
@@ -118,7 +144,27 @@
     return response.json();
   }
 
+  // HFY-R66: data requests go through HFYFeatureFlags.dataFetch. authV2 off: exactly fetch(url, init). authV2 on: the edge
+  // session is refreshed once if it lapsed, a gate 401 is refreshed and retried once, and only an interactive load that still
+  // fails goes to /auth/login. Without feature-flags.js on the page this is a plain fetch.
+  async function dataFetch(url, init, options) {
+    const featureFlags = await waitForFeatureFlags();
+    if (featureFlags && typeof featureFlags.dataFetch === "function") {
+      return featureFlags.dataFetch(url, init, options);
+    }
+    return fetch(url, init);
+  }
+
+  // HFY-TSK-080: true when authV2 is on, i.e. data requests carry the io_id cookie and the edge gate decides access.
+  async function edgeSessionInit() {
+    const featureFlags = await waitForFeatureFlags();
+    return featureFlags && typeof featureFlags.dataFetchInit === "function" ? featureFlags.dataFetchInit() : null;
+  }
+
   async function requireAuthenticated() {
+    if (await edgeSessionInit()) {
+      return true; // no legacy token under authV2; dataFetch refreshes on a gate 401 and only then sends the visitor to /auth/login
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 8000,
       label: "[HFY_PERSON]"
@@ -228,6 +274,10 @@
   }
 
   async function buildAuthorizedFetchOptions() {
+    const edgeInit = await edgeSessionInit();
+    if (edgeInit) {
+      return edgeInit; // authV2: cookie only, no X-HFY-Session
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 2000,
       label: "[HFY_PERSON] fetchPerson"
@@ -556,7 +606,8 @@
     container.innerHTML = `<div class="text-muted small py-4 text-center">Loading family tree…</div>`;
     container.classList.remove("d-none");
 
-    fetch(svgUrl, { credentials: "same-origin" })
+    // Background load: under authV2 a lapsed session is refreshed and retried, but a failure never redirects (the record shows).
+    dataFetch(svgUrl, { credentials: "same-origin" }, { interactive: false })
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Unable to load SVG (HTTP ${response.status})`);

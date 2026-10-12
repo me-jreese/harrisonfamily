@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # MCP-C03-style live check: validates an MCP access token against the LIVE auth edge (metadata + JWKS), without printing it.
-#   MCP_TOKEN=<access_token> scripts/mcp/token-smoke.sh [--base https://harrisonfamily.us/auth] [--audience https://mcp.harrisonfamily.us]
+#   MCP_TOKEN=<access_token> scripts/mcp/token-smoke.sh [--base https://harrisonfamily.us/auth] [--audience https://harrisonfamily.us/mcp]
 # Obtain a token by running the authorization-code + PKCE flow against /authorize and /token (e.g. from the MCP inspector), then pass it in
 # MCP_TOKEN. Checks: RFC 8414 metadata shape (S256, public client), RS256 signature via jwks_uri, kid, iss, aud, sub (gramps_id), groups, exp.
 set -euo pipefail
-BASE=https://harrisonfamily.us/auth; AUD=https://mcp.harrisonfamily.us
+BASE=https://harrisonfamily.us/auth; AUD=https://harrisonfamily.us/mcp
 while [ $# -gt 0 ]; do case "$1" in --base) BASE=$2; shift;; --audience) AUD=$2; shift;; *) echo "unknown arg $1" >&2; exit 2;; esac; shift; done
 : "${MCP_TOKEN:?set MCP_TOKEN to an access token from /auth/token}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -141,6 +141,19 @@
     return query;
   }
 
+  // HFY-TSK-080: under authV2 the io_id cookie is the credential (edge gate); no X-HFY-Session header is sent. null when authV2 is off.
+  async function edgeSessionInit() {
+    const flags = await waitForFeatureFlags();
+    return flags && typeof flags.dataFetchInit === "function" ? flags.dataFetchInit() : null;
+  }
+
+  // HFY-R66: authV2 off -> exactly fetch(url, init). authV2 on -> lapsed sessions are refreshed and a gate 401 retried once;
+  // only if that fails does this page (an interactive load) go to /auth/login.
+  async function dataFetch(url, init, options) {
+    const flags = await waitForFeatureFlags();
+    return flags && typeof flags.dataFetch === "function" ? flags.dataFetch(url, init, options) : fetch(url, init);
+  }
+
   async function buildAuthHeaders() {
     const flags = await waitForFeatureFlags();
     if (!flags) {
@@ -184,15 +197,16 @@
         if (!authorized) {
           return;
         }
-        const headers = await buildAuthHeaders();
-        const fetchOptions = Object.keys(headers).length ? { headers, credentials: 'include' } : {};
+        const edgeInit = await edgeSessionInit();
+        const headers = edgeInit ? {} : await buildAuthHeaders();
+        const fetchOptions = edgeInit || (Object.keys(headers).length ? { headers, credentials: 'include' } : {});
 
         const [manifest, index] = await Promise.all([
-          fetch(manifestUrl, fetchOptions).then((res) => {
+          dataFetch(manifestUrl, fetchOptions).then((res) => {
             if (!res.ok) throw new Error('Failed to load manifest');
             return res.json();
           }),
-          fetch(indexUrl, fetchOptions).then((res) => {
+          dataFetch(indexUrl, fetchOptions).then((res) => {
             if (!res.ok) throw new Error('Failed to load search index');
             return res.json();
           }),
@@ -215,6 +229,9 @@
   }
 
   async function requireAuthenticated() {
+    if (await edgeSessionInit()) {
+      return true; // no legacy token under authV2; dataFetch refreshes on a gate 401 and only then sends the visitor to /auth/login
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 8000,
       label: "[HFY_SEARCH_PAGE]"
@@ -329,6 +346,15 @@
   }
 
   async function subscribeToAuthChanges() {
+    // HFY-R66: under authV2 the preload follows the edge session (what the data gate checks), not the legacy HFY_AUTH state.
+    if (await edgeSessionInit()) {
+      const flags = await waitForFeatureFlags();
+      const session = flags && typeof flags.edgeSession === "function" ? await flags.edgeSession() : null;
+      if (session && session.authenticated === true && !state.ready && !state.loading) {
+        loadData();
+      }
+      return;
+    }
     const auth = await waitForAuth();
     if (!auth || typeof auth.onChange !== "function") {
       return;

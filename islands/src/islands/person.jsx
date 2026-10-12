@@ -24,8 +24,13 @@ async function init() {
   await waitFor(() => !content.classList.contains("d-none") && content.querySelector(".notes-panel"));
   const panel = content.querySelector(".notes-panel");
   try {
-    const token = window.HFYFeatureFlags?.requireSessionToken?.();
-    const res = await fetch(`/person/${encodeURIComponent(id)}.json`, { credentials: "include", headers: token ? { "X-HFY-Session": token } : {} });
+    const flags = window.HFYFeatureFlags;
+    const edge = (await flags?.dataFetchInit?.()) ?? null; // authV2: cookie only at the edge data gate (HFY-TSK-080)
+    const token = edge ? null : flags?.requireSessionToken?.();
+    const url = `/person/${encodeURIComponent(id)}.json`;
+    const init = edge ?? { credentials: "include", headers: token ? { "X-HFY-Session": token } : {} };
+    // HFY-R66: refresh + one retry on a gate 401; background load (the legacy page already rendered), so it never redirects.
+    const res = await (flags?.dataFetch ? flags.dataFetch(url, init, { interactive: false }) : fetch(url, init));
     const person = res.ok ? await res.json() : null;
     const notes = (person?.notes || []).filter((n) => n && typeof n.raw === "string" && n.raw.trim());
     if (notes.length) {

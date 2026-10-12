@@ -8,9 +8,13 @@
 //   does not mint the legacy X-HFY-Session token that person/search pages need, so they get the legacy GIS sign-in instead
 //   of a redirect loop.
 // - "Log out" ends the edge session AND runs the legacy signOut (Google ID token, gramps id, gateway session, auto-select).
+// HFY-R66: the session probe is HFYFeatureFlags.edgeSession() (one GET /auth/session per page, shared with the data fetches),
+// which refreshes a lapsed io_id from the refresh cookie once before reporting. An authenticated edge session is laid over the
+// legacy feature state there, so the navbar search, My Record and Log out follow the edge session (navbarSearch was hidden
+// for edge-only sign-ins before).
 (function () {
-  var LEGACY_LOCAL_KEYS = ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID"];
-  var LEGACY_SESSION_KEYS = ["HFY_GATEWAY_SESSION_V1"];
+  var SIGNOUT_LOCAL_KEYS = ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID", "hfy:edge-session"];
+  var SIGNOUT_SESSION_KEYS = ["HFY_GATEWAY_SESSION_V1"];
   var LOGOUT_TIMEOUT_MS = 4000;
 
   function getJSON(url, init) {
@@ -22,6 +26,14 @@
   function dependencyUnavailable(what) {
     var f = flags();
     if (f && typeof f.flagUnavailable === "function") f.flagUnavailable(what);
+  }
+  // Resolves {authenticated, sub, ...} or null when /auth/session is unreachable (not a 200 JSON with a boolean "authenticated").
+  function sessionProbe() {
+    var f = flags();
+    if (f && typeof f.edgeSession === "function") return f.edgeSession();
+    return getJSON("/auth/session", { credentials: "same-origin", cache: "no-store" }).then(function (s) {
+      return s && typeof s.authenticated === "boolean" ? s : null;
+    });
   }
 
   function apply(session) {
@@ -37,8 +49,8 @@
 
   // Clears the legacy credentials synchronously so they are gone even if the page is closed mid-logout.
   function clearLegacyCredentials() {
-    LEGACY_LOCAL_KEYS.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
-    LEGACY_SESSION_KEYS.forEach(function (k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
+    SIGNOUT_LOCAL_KEYS.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
+    SIGNOUT_SESSION_KEYS.forEach(function (k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
     try {
       if (window.google && window.google.accounts && window.google.accounts.id) window.google.accounts.id.disableAutoSelect();
     } catch (e) { /* GIS not loaded */ }
@@ -53,6 +65,10 @@
 
   function signOut() {
     clearLegacyCredentials();
+    var f = flags();
+    if (f && typeof f.forgetEdgeSession === "function") {
+      try { f.forgetEdgeSession(); } catch (e) { /* keep signing out */ }
+    }
     var done = fetch("/auth/logout", {
       method: "POST",
       credentials: "same-origin",
@@ -87,8 +103,8 @@
     : getJSON("/_data/flags.json", { cache: "no-store" });
   flagsReady.then(function (f) {
     if (!f || f.authV2 !== true) return;
-    getJSON("/auth/session", { credentials: "same-origin", cache: "no-store" }).then(function (s) {
-      if (!s || typeof s.authenticated !== "boolean") {
+    sessionProbe().then(function (s) {
+      if (!s) {
         dependencyUnavailable("/auth/session");
         return;
       }

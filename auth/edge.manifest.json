@@ -3,7 +3,9 @@
   "site": "harrisonfamily.us",
   "authOrigin": "https://harrisonfamily.us",
   "cookieDomain": ".harrisonfamily.us",
-  "returnOrigins": ["https://harrisonfamily.us"],
+  "returnOrigins": [
+    "https://harrisonfamily.us"
+  ],
   "idp": {
     "kind": "cognito",
     "userPoolId": "REPLACED_AT_RUNTIME_FROM_COGNITO_USER_POOL_ID",
@@ -11,8 +13,22 @@
     "domain": "https://harrisonfamily.us/auth"
   },
   "providers": [
-    { "kind": "google", "mode": "gis_id_token", "clientId": "REPLACED_AT_RUNTIME_FROM_GOOGLE_CLIENT_ID" },
-    { "kind": "password" }
+    {
+      "kind": "google",
+      "mode": "gis_id_token",
+      "clientId": "REPLACED_AT_RUNTIME_FROM_GOOGLE_CLIENT_ID"
+    },
+    {
+      "kind": "password"
+    },
+    {
+      "kind": "passkey",
+      "rpId": "harrisonfamily.us",
+      "rpName": "Harrison Family",
+      "origins": [
+        "https://harrisonfamily.us"
+      ]
+    }
   ],
   "session": {
     "issuer": "https://harrisonfamily.us/auth",
@@ -22,15 +38,27 @@
     "accessTtlSeconds": 3600,
     "profile": "installed"
   },
-  "store": { "kind": "dynamodb", "tableEnv": "AUTH_TABLE" },
-  "resolver": { "kind": "s3_allowlist", "bucket": "harrisonfamily", "key": "config/userGrampsID.json", "cacheSeconds": 300 },
+  "store": {
+    "kind": "dynamodb",
+    "tableEnv": "AUTH_TABLE"
+  },
+  "resolver": {
+    "kind": "s3_allowlist",
+    "bucket": "harrisonfamily",
+    "key": "config/userGrampsID.json",
+    "cacheSeconds": 300
+  },
   "theme": {
     "cssUrl": "https://harrisonfamily.us/css/main.css",
-    "vars": { "--io-accent": "#7a3b2e", "--io-on-accent": "#ffffff", "--io-surface": "#faf6f1" }
+    "vars": {
+      "--io-accent": "#7a3b2e",
+      "--io-on-accent": "#ffffff",
+      "--io-surface": "#faf6f1"
+    }
   },
   "copy": {
     "title": "Sign in to the Harrison family archive",
-    "subtitle": "Family members only. Use Google or your email and password; both reach the same account.",
+    "subtitle": "Family members only. Use Google, your email and password, or a passkey; all reach the same account.",
     "denied_body": "This email address is not on the family access list. Ask a family administrator to add it."
   }
 }
