@@ -579,7 +579,9 @@ for owned in js/auth.js css/auth-edge.css css/hfy-theme.css fonts/; do
   contains "the README refresh rsync excludes $owned" "$README_EX" "$owned"
   contains "the README repo-owned table lists $owned" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "$owned"
 done
-check "auth/edge.manifest.json theme.cssUrl is the repo-owned stylesheet, served from the site origin (login CSP style-src)" test "$(jq -r .theme.cssUrl "$ROOT/auth/edge.manifest.json")" = "https://harrisonfamily.us/css/auth-edge.css"
+CSS_URL=$(jq -r .theme.cssUrl "$ROOT/auth/edge.manifest.json")
+check "auth/edge.manifest.json theme.cssUrl is the repo-owned stylesheet, served from the site origin (login CSP style-src)" test "${CSS_URL%%\?*}" = "https://harrisonfamily.us/css/auth-edge.css"
+check "...versioned ?v=<sha8 of 11ty/css/auth-edge.css> (Cloudflare caches static files for 4 h; islands/build.mjs stamps it)" test "${CSS_URL#*\?v=}" = "$(shasum -a 256 "$ROOT/11ty/css/auth-edge.css" | cut -c1-8)"
 check "...and that file exists in 11ty/css" test -s "$ROOT/11ty/css/auth-edge.css"
 eq "the README rsync and the sync check exclude the same paths (besides .DS_Store)" "$(printf '%s\n' "$SYNC_EX" | grep -vx '.DS_Store')" "$README_EX"
 if command -v rsync >/dev/null && command -v git >/dev/null; then

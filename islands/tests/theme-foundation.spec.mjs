@@ -100,7 +100,7 @@ test("the shell early hint: html.hfy-shell-v2 is set before the flags fetch reso
 test("the hint is written only after the shell loaded; a 404 shell removes the class, writes '0' and keeps the theme", async ({ page }) => {
   await stubs(page, { holdFlags: false, holdIslands: false });
   await page.addInitScript(() => { try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("hfy:shell-hint", "1"); } } catch {} });
-  await page.route("**/js/islands/shell.js", (r) => r.fulfill({ status: 404, body: "not found" }));
+  await page.route("**/js/islands/shell.js*", (r) => r.fulfill({ status: 404, body: "not found" }));
   await page.goto("/about/?hfy_flags=shellV2");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("hfy:shell-hint"))).toBe("0");
   expect(await page.evaluate(() => document.documentElement.classList.contains("hfy-shell-v2"))).toBe(false);
@@ -122,7 +122,7 @@ test("a shell that loads writes the hint '1'; with the flag forced off the hint 
 test("islands load CSS first: the module is requested only after its stylesheet settled", async ({ page }) => {
   await stubs(page, { holdFlags: false, holdIslands: false });
   const order = [];
-  await page.route("**/js/islands/shell.css", async (r) => { await sleep(800); order.push("css-done"); return r.continue(); });
+  await page.route("**/js/islands/shell.css*", async (r) => { await sleep(800); order.push("css-done"); return r.continue(); });
   page.on("request", (q) => { if (new URL(q.url()).pathname === "/js/islands/shell.js") order.push("js-requested"); });
   await page.goto("/about/?hfy_flags=shellV2");
   await expect(page.locator("#hfy-shell-root .io-shell")).toBeVisible();
@@ -141,7 +141,7 @@ test("a page that lost head block B still gets the theme from feature-flags.js",
   await expect.poll(async () => (await bodyStyle(page)).bg).toBe(SURFACE);
   // appended after main.css, so the theme still wins the cascade
   expect(await page.evaluate(() => {
-    const links = [...document.querySelectorAll('link[rel="stylesheet"]')].map((l) => l.getAttribute("href"));
+    const links = [...document.querySelectorAll('link[rel="stylesheet"]')].map((l) => l.getAttribute("href").replace(/\?v=[0-9a-f]{8}$/, ""));
     return links.indexOf("/css/main.css") < links.indexOf("/css/hfy-theme.css");
   })).toBe(true);
 });

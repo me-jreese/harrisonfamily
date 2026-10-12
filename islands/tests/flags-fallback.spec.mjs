@@ -80,7 +80,7 @@ test("a pre-R58 localStorage override is purged and ignored", async ({ page }) =
 });
 
 test("shell island 404: navbar restored, no manifest, static theme-color untouched, override auto-cleared", async ({ page }) => {
-  await page.route("**/js/islands/shell.js", (r) => r.fulfill({ status: 404, body: "not found" }));
+  await page.route("**/js/islands/shell.js*", (r) => r.fulfill({ status: 404, body: "not found" }));
   await page.goto("/about/?hfy_flags=shellV2");
   await expect.poll(() => override(page)).toEqual({ session: null, local: null });
   await expect(page.locator("nav.navbar-hf")).toBeVisible();
@@ -97,7 +97,7 @@ test("shell island 404: navbar restored, no manifest, static theme-color untouch
 test("shell mounted: the manifest link appears only after the shell loads; theme-color is static throughout", async ({ page }) => {
   let release;
   const held = new Promise((r) => { release = r; });
-  await page.route("**/js/islands/shell.js", async (r) => { await held; return r.continue(); });
+  await page.route("**/js/islands/shell.js*", async (r) => { await held; return r.continue(); });
   await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(300);
   expect(await page.locator('link[rel=manifest]').count(), "no manifest before the shell").toBe(0);
@@ -125,7 +125,7 @@ test("theme-color is static on every page (no JS needed) and nothing links the m
 
 test("searchV2 with the search island 404: legacy /search/ page still searches; override auto-cleared", async ({ page }) => {
   await legacySearchSession(page);
-  await page.route("**/js/islands/search.js", (r) => r.fulfill({ status: 404, body: "not found" }));
+  await page.route("**/js/islands/search.js*", (r) => r.fulfill({ status: 404, body: "not found" }));
   await page.goto("/search/?query=Quillfeather&hfy_flags=searchV2", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-search-page]")).toBeVisible();
   await expect(page.locator("[data-search-results-list] .search-result-card").first()).toBeVisible({ timeout: 10_000 });
@@ -139,7 +139,7 @@ test.describe("desktop navbar", () => {
 
   test("searchV2 with the shell island 404: legacy navbar search still suggests", async ({ page }) => {
     await legacySearchSession(page);
-    await page.route("**/js/islands/shell.js", (r) => r.fulfill({ status: 404, body: "not found" }));
+    await page.route("**/js/islands/shell.js*", (r) => r.fulfill({ status: 404, body: "not found" }));
     await page.goto("/about/?hfy_flags=searchV2");
     await expect(page.locator("nav.navbar-hf")).toBeVisible();
     const input = page.locator("[data-search-form] [data-search-input]");

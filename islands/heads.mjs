@@ -7,7 +7,8 @@
 //     color-scheme meta, a static theme-color meta (the resolved surface token), the shell early hint
 //     (html.hfy-shell-v2 when localStorage "hfy:shell-hint" is "1"), and the preload of the UI face;
 //   block B, immediately AFTER main.css: <link rel=stylesheet href=/css/hfy-theme.css?v=<sha8>>, so the cascade is
-//     main.css first and the theme second.
+//     main.css first and the theme second. (Its ?v is the same sha8 of the file that assets.mjs writes on every other script,
+//     stylesheet and manifest reference of the page, so the two stay consistent; the main.css anchor matches with or without it.)
 // Pages without main.css (posts/, me/notifications/, offline.html) get A then B right after </title>.
 // offline.html gets no early hint: it never loads feature-flags.js (so nothing would mount the shell or clear the class), and
 // html.hfy-shell-v2 there would leave the shell's pre-mount placeholder bars (theme partial 60) painted on the offline page.
@@ -35,7 +36,8 @@ export const PAGES = [
 
 export const HINT_KEY = "hfy:shell-hint";
 export const HINT_SCRIPT = `<script>try{localStorage.getItem("${HINT_KEY}")==="1"&&document.documentElement.classList.add("hfy-shell-v2")}catch(e){}</script>`;
-const MAIN_CSS = /<link\b[^>]*\bhref=["']\/css\/main\.css["'][^>]*>/i;
+// (the href may carry the ?v=<sha8> that islands/assets.mjs writes: the anchor is found whether or not the page is versioned yet)
+const MAIN_CSS = /<link\b[^>]*\bhref=["']\/css\/main\.css(?:\?[^"']*)?["'][^>]*>/i;
 const TITLE_END = /<\/title>/i;
 const BLOCK = (id) => new RegExp(`[ \\t]*<!-- hfy-theme:start ${id} -->[\\s\\S]*?<!-- hfy-theme:end ${id} -->[ \\t]*\\r?\\n?`, "g");
 

@@ -14,14 +14,19 @@
 //   */index.html, offline.html   the hfy-theme head blocks (heads.mjs) and, on the 10 Eleventy pages, the DS Voice copy (copy.mjs:
 //                            home hero, about / family-login headings, page titles, the footer)
 //   manifest.webmanifest     theme_color / background_color = the resolved surface token
+//   sw.js, js/feature-flags.js   their hfy-asset-versions marker block (assets.mjs): the content hashes of the files they load
+//   (every page again)       every same-origin script / stylesheet / manifest reference carries ?v=<sha8 of the file>
+//                            (assets.mjs), so a deploy is picked up although Cloudflare caches static files for 4 h
+//   ../auth/edge.manifest.json   theme.cssUrl carries ?v=<sha8 of css/auth-edge.css> (one textual edit, the file is not re-serialised;
+//                            only when the site is the repo's own 11ty/, never for a scratch --site copy)
 import { build } from "esbuild";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
 import { expectedHeads, resolveToken } from "./heads.mjs";
 import { COPY_PAGES, applyCopy } from "./copy.mjs";
+import { htmlPages, sha8, stampSources, versionHtml, versionManifestCss } from "./assets.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -42,9 +47,9 @@ const notifySw = join(here, "node_modules", "@io-kit", "notify", "sw", "notify-s
 const tokensDir = join(here, "node_modules", "@io-kit", "tokens", "dist", "harrisonfamily");
 const themeDir = join(here, "src", "theme");
 const authEdgeSrc = join(here, "src", "auth-edge", "auth-edge.css");
+const authManifest = join(here, "..", "auth", "edge.manifest.json");
 const TARGET = ["es2020", "safari15"];
 const posix = (p) => p.split(sep).join("/");
-const sha8 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 8);
 
 const entries = readdirSync(join(here, "src", "islands")).filter((f) => /\.jsx?$/.test(f)).map((f) => join(here, "src", "islands", f));
 
@@ -181,7 +186,26 @@ async function buildAll() {
   const heads = expectedHeads(site, { themeColor, cssHref: `/css/hfy-theme.css?v=${sha8(themeCss)}`, preloadHref: preloadHref() });
   // DS Voice copy on the Eleventy pages (copy.mjs): applied after the head blocks, so both are rewritten idempotently together.
   for (const [rel, text] of heads) files.set(rel, COPY_PAGES.includes(rel) ? applyCopy(text, rel) : text);
-  return { files, dirs };
+
+  // Asset versioning (assets.mjs). Order matters: the stamped sources (sw.js, then feature-flags.js, which carries sw.js's hash)
+  // are final before any page is hashed against them, and the pages come last.
+  const hashOf = (rel) => {
+    if (files.has(rel)) return sha8(asBuffer(files.get(rel)));
+    const abs = join(site, rel);
+    return existsSync(abs) && statSync(abs).isFile() ? sha8(readFileSync(abs)) : null;
+  };
+  const islandNames = entries.map((f) => basename(f).replace(/\.jsx?$/, ""));
+  stampSources({ site, files, islandNames, hashOf });
+  for (const rel of new Set([...htmlPages(site), ...heads.keys()].filter((r) => r.endsWith(".html")))) {
+    const text = files.has(rel) ? files.get(rel) : readFileSync(join(site, rel), "utf8");
+    files.set(rel, versionHtml(text, hashOf, rel));
+  }
+  // Outputs outside the site directory (absolute path -> text): the sign-in stylesheet's version in the auth edge manifest.
+  const external = new Map();
+  if (site === resolve(here, "..", "11ty") && existsSync(authManifest)) {
+    external.set(authManifest, versionManifestCss(readFileSync(authManifest, "utf8"), hashOf));
+  }
+  return { files, dirs, external };
 }
 
 function listFiles(dir) {
@@ -199,7 +223,8 @@ function listFiles(dir) {
 const asBuffer = (v) => (Buffer.isBuffer(v) ? v : Buffer.from(v, "utf8"));
 const ignorable = (rel) => rel.endsWith(".DS_Store");
 
-const { files, dirs } = await buildAll();
+const { files, dirs, external } = await buildAll();
+const repoRel = (abs) => posix(relative(resolve(here, ".."), abs));
 
 if (checkMode) {
   const problems = [];
@@ -214,11 +239,12 @@ if (checkMode) {
       if (!set.has(rel) && !ignorable(rel)) problems.push(`extra ${rel}`);
     }
   }
+  for (const [abs, want] of external) if (!readFileSync(abs).equals(asBuffer(want))) problems.push(`stale ${repoRel(abs)}`);
   if (problems.length) {
     console.error(`${site} is out of date with islands/ (run \`npm run build\` and commit):\n  ${problems.join("\n  ")}`);
     process.exit(1);
   }
-  console.log(`${site} is up to date (${files.size} generated files)`);
+  console.log(`${site} is up to date (${files.size + external.size} generated files)`);
 } else {
   // Directories this build owns outright (js/islands, fonts) hold exactly its outputs: stale chunks and old font hashes are pruned.
   for (const [dir, set] of dirs) {
@@ -233,5 +259,10 @@ if (checkMode) {
     writeFileSync(abs, buf);
     written += 1;
   }
-  console.log(`built ${files.size} files into ${site} (${written} written)`);
+  for (const [abs, want] of external) {
+    if (readFileSync(abs).equals(asBuffer(want))) continue;
+    writeFileSync(abs, asBuffer(want));
+    written += 1;
+  }
+  console.log(`built ${files.size + external.size} files into ${site} (${written} written)`);
 }

@@ -73,7 +73,8 @@ All source templates and front-end scripts live under `projects/harrisonfamily/w
    ./repo/scripts/promote_workspace_assets.sh --log docs/session-logs/<your-log>.json
    ```
    The script copies only the entries flagged with `"promote": true` (JS bundles, CSS, HTML, etc.) into `repo/11ty/` without touching repo-only files.
-4. Verify parity (pre-commit runs automatically) and commit/push. The repo now contains `repo/11ty/index.html`, `repo/11ty/search/index.html`, `repo/11ty/js/*.js`, `repo/11ty/css/*.css`, etc.—all safe to commit.
+4. Run `cd repo/islands && npm run build` (needs `CODEARTIFACT_AUTH_TOKEN`; see `repo/11ty/README.md`). It re-applies what the Eleventy templates do not emit yet: the hfy-theme head blocks, the DS Voice copy and the **`?v=<sha8 of the file>` content-hash version on every same-origin `<script src>` / `<link rel="stylesheet">` / manifest reference** (plus the hashes stamped into `js/feature-flags.js` and `sw.js` for the island loader and the service worker). Cloudflare caches static files for 4 h and CloudFront invalidations do not reach it, so a page that is not rebuilt after a refresh makes visitors mix old and new files. `npm run check:islands` must pass.
+5. Verify parity (pre-commit runs automatically) and commit/push. The repo now contains `repo/11ty/index.html`, `repo/11ty/search/index.html`, `repo/11ty/js/*.js`, `repo/11ty/css/*.css`, etc.—all safe to commit.
 
 > [!WARNING]
 > Never run `rsync -a --delete workspace/11ty-dev/_site/ repo/11ty/` directly. That command will remove repo-only files (e.g., docs, README) if they are not present in `_site/`. Always use `scripts/promote_workspace_assets.sh` so only the files recorded in your session log are copied.

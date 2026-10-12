@@ -1,6 +1,6 @@
 // Design system SignIn (components/SignIn): the real edge pages (createAuthEdge, real CSP header) on http://localhost:$E2E_PORT, themed by
-// the BUILT stylesheet. The manifest cssUrl is pointed at ${ORIGIN}/css/auth-edge.css and the same server serves /css and /fonts from
-// $SITE, a scratch copy of the site built with islands/build.mjs (so this never tests a stale committed 11ty/css/auth-edge.css):
+// the BUILT stylesheet. The manifest cssUrl is pointed at ${ORIGIN}/css/auth-edge.css?v=<the committed sha8> and the same server serves
+// /css and /fonts from $SITE, a scratch copy of the site built with islands/build.mjs (so this never tests a stale committed 11ty/css/auth-edge.css):
 //   rsync -a --delete 11ty/ $SCRATCH/site-signin/ && (cd islands && node build.mjs --site $SCRATCH/site-signin)
 //   cd auth && SITE=$SCRATCH/site-signin E2E_PORT=4175 npm run e2e:theme
 // Chrome (channel chrome) at 375 and 1024: /auth/login, /auth/password/forgot, /auth/password/reset, /auth/link signed out (302 to login)
@@ -38,7 +38,10 @@ Object.assign(m, { site: "localhost", authOrigin: ORIGIN, returnOrigins: [ORIGIN
 delete m.cookieDomain;
 m.resolver.cacheSeconds = 0;
 m.session.issuer = `${ORIGIN}/auth`;
-m.theme = { ...m.theme, cssUrl: `${ORIGIN}/css/auth-edge.css` }; // after validation: the committed manifest stays https-only
+// after validation: the committed manifest stays https-only. The committed cssUrl's ?v=<sha8> is kept, so the pages (and the real CSP)
+// are exercised with the versioned stylesheet URL exactly as production serves it.
+const committedCss = new URL(raw.theme.cssUrl);
+m.theme = { ...m.theme, cssUrl: `${ORIGIN}${committedCss.pathname}${committedCss.search}` };
 const pkProv = m.providers.find((p) => p.kind === "passkey");
 Object.assign(pkProv, { rpId: "localhost", origins: [ORIGIN] });
 
