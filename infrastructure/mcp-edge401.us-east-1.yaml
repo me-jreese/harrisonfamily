@@ -1,0 +1,49 @@
+# HFY-TSK-077 / recipe C step 2 (@io-kit/mcp README): the Lambda@Edge origin-response function that restores WWW-Authenticate on a 401.
+# A Lambda Function URL remaps WWW-Authenticate to x-amzn-remapped-www-authenticate, and a CloudFront Function cannot run on 4xx (MCP-C09, KD-83).
+# Lambda@Edge functions MUST live in us-east-1:
+#   aws cloudformation deploy --region us-east-1 --stack-name hfy-mcp-edge401 --template-file infrastructure/mcp-edge401.us-east-1.yaml --capabilities CAPABILITY_IAM
+# Then: scripts/infra/add-mcp-behavior.sh (reads the Edge401FunctionVersionArn output) attaches it to /mcp* and the PRM behavior.
+# The inline code is the CommonJS twin of @io-kit/mcp infra/edge-401-header.mjs; api/test/mcp-infra.test.js runs it against 401, 200 and no-header cases.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: hfy MCP Lambda@Edge origin-response function that restores WWW-Authenticate on 401 (us-east-1 only)
+Resources:
+  Edge401Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Action: "sts:AssumeRole", Principal: { Service: [lambda.amazonaws.com, edgelambda.amazonaws.com] } }
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+  Edge401Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: hfy-mcp-edge401
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !GetAtt Edge401Role.Arn
+      MemorySize: 128
+      Timeout: 3
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            const response = event.Records[0].cf.response;
+            if (String(response.status) !== "401") return response;
+            const remapped = response.headers["x-amzn-remapped-www-authenticate"];
+            if (remapped && remapped.length > 0 && !response.headers["www-authenticate"]) {
+              response.headers["www-authenticate"] = [{ key: "WWW-Authenticate", value: remapped[0].value }];
+            }
+            return response;
+          };
+  # Lambda@Edge needs a numbered version. Changing the code above makes CloudFormation publish a new one (the logical id is stable; CodeSha256 forces it).
+  Edge401Version:
+    Type: AWS::Lambda::Version
+    DeletionPolicy: Retain          # replicas cannot be deleted while CloudFront still references them
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref Edge401Function
+      Description: restore WWW-Authenticate on 401
+Outputs:
+  Edge401FunctionVersionArn:
+    Description: Versioned ARN to attach as origin-response (scripts/infra/add-mcp-behavior.sh --edge401-arn)
+    Value: !Ref Edge401Version

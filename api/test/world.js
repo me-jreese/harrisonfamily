@@ -58,5 +58,5 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept 
     const r = await handler(ev(method, path, opts));
     return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : undefined, headers: r.headers };
   };
-  return { ddb: raw, call, sent, presigned, subscriptions, preferences, now };
+  return { ddb: raw, handler, call, sent, presigned, subscriptions, preferences, now };
 }

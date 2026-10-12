@@ -1,0 +1,18 @@
+# MCP tool -> the human route handler that performs the same action (@io-kit/parity map.yaml). Tool names equal the caps.json action names.
+surfaces:
+  mcp-tools:
+    hfy_comments_list: { handler: "api:comments.list" }
+    hfy_comments_create: { handler: "api:comments.create" }
+    hfy_comments_delete: { handler: "api:comments.delete" }
+    hfy_posts_list: { handler: "api:posts.list" }
+    hfy_posts_get: { handler: "api:posts.get" }
+    hfy_posts_create: { handler: "api:posts.create" }
+    hfy_posts_delete: { handler: "api:posts.delete" }
+  hfy-mcp:
+    hfy_comments_list: { handler: "api:comments.list" }
+    hfy_comments_create: { handler: "api:comments.create" }
+    hfy_comments_delete: { handler: "api:comments.delete" }
+    hfy_posts_list: { handler: "api:posts.list" }
+    hfy_posts_get: { handler: "api:posts.get" }
+    hfy_posts_create: { handler: "api:posts.create" }
+    hfy_posts_delete: { handler: "api:posts.delete" }
