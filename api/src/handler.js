@@ -16,13 +16,28 @@ export function createHandler(deps) {
       listPrincipals: scanSubscribedPrincipals(ddb, cmds, table),
     });
     const base = { ddb, cmds, table, actor, now, ulid, uid };
+    const commenterIds = async (threadId) => {
+      const ids = new Set();
+      let key;
+      for (let i = 0; i < 20; i += 1) {
+        const r = await ddb.send(new cmds.QueryCommand({
+          TableName: table, KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+          ExpressionAttributeValues: { ":pk": `THREAD#${threadId}`, ":sk": "C#" }, ...(key ? { ExclusiveStartKey: key } : {}),
+        }));
+        for (const it of r.Items ?? []) if (it.comment?.author?.id) ids.add(it.comment.author.id);
+        key = r.LastEvaluatedKey;
+        if (!key) break;
+      }
+      return [...ids];
+    };
     const content = createContentSource({ ...base, audit: deps.audit });
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000,
       getPost: (id) => content.get(id),
       onCreated: async (c, { parent }) => {
         const postAuthorId = c.threadId.startsWith("post:") ? (await content.get(c.threadId.slice(5))).author.id : undefined;
-        await notifier.onComment(c, { parent }, { postAuthorId });
+        const earlierCommenters = await commenterIds(c.threadId);
+        await notifier.onComment(c, { parent }, { postAuthorId, earlierCommenters });
       },
     });
     const notifyHandler = () =>

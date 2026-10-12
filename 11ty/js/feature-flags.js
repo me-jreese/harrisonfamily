@@ -288,7 +288,12 @@
       flagsPromise = fetch(FLAGS_URL, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : {}))
         .catch(() => ({}))
-        .then((build) => Object.assign({}, build, overrideFlags));
+        .then((build) => {
+          const merged = Object.assign({}, build, overrideFlags);
+          // HFY-R48: the search island's launcher lives in the shell, so searchV2 implies shellV2 (unless explicitly forced off).
+          if (merged.searchV2 === true && overrideFlags.shellV2 !== false) merged.shellV2 = true;
+          return merged;
+        });
     }
     return flagsPromise;
   }
@@ -344,6 +349,12 @@
       if (legacy) legacy.setAttribute("hidden", "");
       loadIsland("search", { onError() { if (legacy) legacy.removeAttribute("hidden"); document.documentElement.classList.remove("hfy-search-v2"); } });
     });
+  });
+
+  // HFY-TSK-068 (D-08): notifyV2 mounts the notifications island on the static /me/notifications/ page.
+  resolveFlags().then((flags) => {
+    if (flags.notifyV2 !== true || !/^\/me\/notifications\/?$/.test(window.location.pathname)) return;
+    loadIsland("notifications", { onError() { /* the page keeps its "not enabled" text */ } });
   });
 
   onReady(applyFeatureVisibility);

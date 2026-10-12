@@ -1,6 +1,6 @@
 // KitShell (frame="bare") replaces the Bootstrap navbar on every page when flag shellV2 is on (HFY-TSK-064).
 import "../shell.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { defineNavRegistry } from "@io-kit/shell";
 import { KitShell, ScrollTopZone, SearchLauncher, useShellScroll, usePwaInstall, useDisplayMode, detectPlatform } from "@io-kit/shell/react";
 import { mountAt } from "../lib/mount.jsx";
@@ -13,7 +13,6 @@ export const NAV = [
   { id: "posts", label: "Posts", route: "/posts/", icon: "\u270E", order: 3 },
   { id: "me", label: "Me", route: "/family-login/", icon: "\u263A", order: 4 }
 ];
-const registry = defineNavRegistry({ items: NAV.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" });
 const router = { pathname: window.location.pathname, navigate: (href) => window.location.assign(href) };
 
 function InstallPrompt() {
@@ -55,21 +54,25 @@ function Content() {
 }
 
 // searchV2 (HFY-TSK-065): SearchLauncher gets local-corpus suggestions; with the flag off it only routes to /search/?q=.
-function useSearchV2() {
+function useFlag(name) {
   const [on, setOn] = useState(false);
-  useEffect(() => { window.HFYFeatureFlags?.resolveFlags?.().then((f) => setOn(f.searchV2 === true)); }, []);
+  useEffect(() => { window.HFYFeatureFlags?.resolveFlags?.().then((f) => setOn(f[name] === true)); }, [name]);
   return on;
 }
 
 function Shell() {
-  const searchV2 = useSearchV2();
+  const searchV2 = useFlag("searchV2");
+  // notifyV2 (HFY-TSK-068): "Me" opens the notification settings page.
+  const notifyV2 = useFlag("notifyV2");
+  const nav = NAV.map((i) => (i.id === "me" && notifyV2 ? { ...i, route: "/me/notifications/" } : i));
+  const registry = useMemo(() => defineNavRegistry({ items: nav.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" }), [notifyV2]);
   return (
     <KitShell frame="bare" registry={registry} user={{ groups: [] }} router={router} stack="enceladus" title="Harrison Family" palette={false}>
       <div className="hfy-col">
       <ScrollTopZone as="header" className="hfy-bar io-safe-top">
         <a className="hfy-bar__brand" href="/">HARRISON FAMILY</a>
         <nav className="hfy-bar__links" aria-label="Primary">
-          {NAV.map((i) => <a key={i.id} href={i.route} aria-current={router.pathname === i.route ? "page" : undefined}>{i.label}</a>)}
+          {nav.map((i) => <a key={i.id} href={i.route} aria-current={router.pathname === i.route ? "page" : undefined}>{i.label}</a>)}
         </nav>
         <div className="hfy-bar__end"><SearchLauncher to="/search/" label="Search" placeholder="Search the family" suggest={searchV2 ? suggestPeople : undefined} /></div>
       </ScrollTopZone>

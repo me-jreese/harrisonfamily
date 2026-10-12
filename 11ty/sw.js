@@ -2,7 +2,7 @@
 const VERSION = "hfy-shell-v1";
 const PRECACHE = ["/offline.html", "/js/islands/shell.js", "/js/islands/shell.css", "/manifest.webmanifest", "/images/pwa-192.png"];
 
-// HOOK (HFY-TSK-068): @io-kit/notify's notify-sw (push + notificationclick) is pulled in here once built.
+// HFY-TSK-068: @io-kit/notify's notify-sw (push + notificationclick deep links) is copied to /js/islands/ by islands/build.mjs.
 try { importScripts("/js/islands/notify-sw.js"); } catch (e) { /* not shipped yet */ }
 
 self.addEventListener("install", (event) => {

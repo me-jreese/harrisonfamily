@@ -73,7 +73,7 @@ describe("posts: Q-4 permissions and D-15 audit", () => {
     const { body } = await w.call("POST", "/api/posts", { token: ann, body: { body: "news" } });
     await w.call("POST", `/api/posts/${body.id}/visibility`, { token: ann, body: { visibility: "published" } });
     expect(w.sent).toHaveLength(1);
-    expect(w.sent[0].payload.notification).toMatchObject({ title: "Family news", body: "There is a new family post.", navigate: `/posts/${body.id}` });
+    expect(w.sent[0].payload.notification).toMatchObject({ title: "Family news", body: "There is a new family post.", navigate: `/posts/?id=${body.id}` });
   });
 });
 
@@ -111,7 +111,7 @@ describe("comments", () => {
     expect((await w.call("POST", "/api/comments", { token: olive, body: { subject: `post:${p.id}`, body: "hi" } })).status).toBe(404);
     await w.call("POST", `/api/posts/${p.id}/visibility`, { token: ann, body: { visibility: "published" } });
     expect((await w.call("POST", "/api/comments", { token: olive, body: { subject: `post:${p.id}`, body: "hi" } })).status).toBe(201);
-    expect(w.sent.at(-1).payload.notification.navigate).toBe(`/posts/${p.id}`);
+    expect(w.sent.at(-1).payload.notification.navigate).toBe(`/posts/?id=${p.id}`);
   });
 });
 

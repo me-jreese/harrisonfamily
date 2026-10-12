@@ -1,0 +1,6 @@
+/* D-11 sizing for the notification settings. */
+.hfy-notify { max-width: 100%; box-sizing: border-box; overflow-x: clip; }
+.hfy-notify button, .hfy-notify select, .hfy-notify input:not([type=checkbox]):not([type=radio]) { min-height: 44px; font-size: 16px; }
+.hfy-notify input[type=checkbox], .hfy-notify input[type=radio] { width: 24px; height: 24px; }
+.hfy-notify label { min-height: 44px; display: inline-flex; align-items: center; }
+.hfy-notify__ios { margin: 12px 0; padding: 12px; border: 1px solid rgba(127,127,127,.4); border-radius: 8px; }

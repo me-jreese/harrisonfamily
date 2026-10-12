@@ -1,7 +1,7 @@
 // HFY-TSK-064: islands build. Every src/islands/*.jsx is an entry -> ../11ty/js/islands/<name>.js (+ <name>.css).
 // Shared code (react, @io-kit/*) is split into chunks. Output is gitignored; CI runs scripts/ci/build-islands.sh.
 import { build } from "esbuild";
-import { readdirSync, rmSync } from "node:fs";
+import { copyFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,3 +24,6 @@ await build({
   loader: { ".css": "css" },
   logLevel: "info"
 });
+
+// HFY-TSK-068: the kit service-worker module that /sw.js importScripts (push + notificationclick deep links).
+copyFileSync(join(here, "node_modules", "@io-kit", "notify", "sw", "notify-sw.js"), join(out, "notify-sw.js"));
