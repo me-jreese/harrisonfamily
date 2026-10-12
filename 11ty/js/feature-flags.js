@@ -381,6 +381,26 @@
   }
   featureAPI.resolveFlags = resolveFlags;
 
+  // HFY-TSK-080: the private data paths (/person/*.json, /family|event|note|place|media/*) are gated at the edge by the io_id
+  // session cookie (Lambda@Edge, edge-gate/). With authV2 on, data fetches therefore send that cookie (credentials
+  // "same-origin") and NOT the legacy X-HFY-Session token, which nothing validates any more. With authV2 off this resolves null
+  // and every caller keeps its legacy request exactly as before. NOTE: once the gate is live, authV2-off visitors cannot read
+  // person data, which is why the gate and the authV2 flip ship together (cloudfront/README.md, "Private data gate").
+  let authV2Seen = false;
+  featureAPI.dataFetchInit = function dataFetchInit() {
+    return resolveFlags().then((flags) => {
+      authV2Seen = flags.authV2 === true;
+      return authV2Seen ? { credentials: "same-origin" } : null;
+    });
+  };
+  // Call with each data response: a 401 from the gate under authV2 sends the visitor to the edge sign-in and back.
+  featureAPI.dataResponse = function dataResponse(response) {
+    if (authV2Seen && response && response.status === 401) {
+      window.location.replace("/auth/login?returnTo=" + encodeURIComponent(window.location.pathname + window.location.search + window.location.hash));
+    }
+    return response;
+  };
+
   // Island loader pattern: HFYFeatureFlags.loadIsland("name") injects /js/islands/<name>.js (+ .css) once.
   // Every requested island has a settle promise: true once its module graph has loaded and run, false on a 404 or
   // network failure (the loader then drops any preview override and the caller's onError restores the legacy UI).

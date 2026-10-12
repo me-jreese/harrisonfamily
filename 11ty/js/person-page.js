@@ -111,6 +111,7 @@
 
     const fetchOptions = await buildAuthorizedFetchOptions();
     const response = await fetch(dataUrl, fetchOptions);
+    if (window.HFYFeatureFlags && window.HFYFeatureFlags.dataResponse) window.HFYFeatureFlags.dataResponse(response);
     if (!response.ok) {
       throw new Error(`Person record ${personId} not found (HTTP ${response.status}).`);
     }
@@ -118,7 +119,16 @@
     return response.json();
   }
 
+  // HFY-TSK-080: true when authV2 is on, i.e. data requests carry the io_id cookie and the edge gate decides access.
+  async function edgeSessionInit() {
+    const featureFlags = await waitForFeatureFlags();
+    return featureFlags && typeof featureFlags.dataFetchInit === "function" ? featureFlags.dataFetchInit() : null;
+  }
+
   async function requireAuthenticated() {
+    if (await edgeSessionInit()) {
+      return true; // no legacy token exists under authV2; a 401 from the gate redirects to /auth/login
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 8000,
       label: "[HFY_PERSON]"
@@ -228,6 +238,10 @@
   }
 
   async function buildAuthorizedFetchOptions() {
+    const edgeInit = await edgeSessionInit();
+    if (edgeInit) {
+      return edgeInit; // authV2: cookie only, no X-HFY-Session
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 2000,
       label: "[HFY_PERSON] fetchPerson"

@@ -1,0 +1,11 @@
+{
+  "issuer": "https://harrisonfamily.us/auth",
+  "audience": "harrisonfamily-web",
+  "jwksUrl": "https://harrisonfamily.us/auth/.well-known/jwks.json",
+  "cookie": "io_id",
+  "loginPath": "/auth/login",
+  "skewSeconds": 60,
+  "jwksTtlSeconds": 300,
+  "minRefetchSeconds": 30,
+  "fetchTimeoutMs": 2000
+}

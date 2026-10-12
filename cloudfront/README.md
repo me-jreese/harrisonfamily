@@ -12,7 +12,7 @@ The genealogy site uses a **single CloudFront distribution** that serves:
 - API Gateway endpoints for `/api/check-allowed` authentication
 
 **Key design decisions:**
-- No Lambda@Edge or CloudFront Functions for data processing (keeps costs low)
+- No Lambda@Edge or CloudFront Functions for data processing (keeps costs low). One exception: the private data gate below (HFY-TSK-080) is a single Lambda@Edge viewer-request function on the data paths only
 - CloudFront Function for clean URL rewrites (`/about/` → `/about/index.html`)
 - Origin Access Control (OAC) instead of legacy Origin Access Identity (OAI)
 - PriceClass_100 (North America + Europe only) to minimize costs
@@ -100,11 +100,49 @@ Scripts (each takes `--dry-run`, and `--config-file FILE` for an offline dry run
   `/api/check-allowed*` pin exists; `--legacy-origin ORIGIN_ID` then names the origin to pin it to.
 - `add-auth-behavior.sh`: auth edge origin and behaviors.
 - `add-uploads-behavior.sh`: `/uploads/*` with the response headers policy (`--response-headers-policy-id` overrides the stack output).
+- `add-data-gate-behaviors.sh`: the private data gate (next section); `--remove` rolls it back.
 
 All three merge in place: an existing origin or behavior keeps its position and every field the script does not manage. When the
 result equals the live config (ignoring how CloudFront orders string sets and fills in defaults) they print `no change` and do not
 call `update-distribution`. Before a real update they save the pre-change config (mode 600, it holds the origin-verify header) under
 `${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}` and print the rollback command. Offline tests: `scripts/infra/test/run.sh`.
+
+#### Private data gate (HFY-TSK-080, HFY-R63)
+
+Person and related JSON used to be served publicly from the bucket by the default behavior (the legacy `X-HFY-Session` header was
+never validated). The gate closes that: `edge-gate/` is a dependency-free Lambda@Edge viewer-request function (Node 22) that
+verifies the `io_id` session cookie minted by the auth edge (RS256 signature against `https://harrisonfamily.us/auth/.well-known/jwks.json`,
+`iss`, `aud`, `exp`/`nbf` with 60 s skew; JWKS cached per container with a 300 s TTL, one refetch per 30 s on an unknown `kid`).
+Issuer, audience and JWKS URL are baked in at build time from `edge-gate/gate.config.json` (Lambda@Edge has no environment variables;
+a test pins them to `auth/edge.manifest.json`). Allowed requests pass unchanged. Denied ones get `401 {"error":"unauthenticated"}`
+(`Cache-Control: no-store`) for fetch/XHR/subresources, or `302 /auth/login?returnTo=<path>` for top-level navigations.
+
+`scripts/infra/add-data-gate-behaviors.sh` attaches it with `CachingDisabled` (no response is ever shared between users) to
+`/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` on the site's S3 origin. It is `/person/*.json`, not
+`/person/*`, because `/person/` is the public person-page shell that the default behavior's HFYAppendIndex function resolves to
+`index.html`. New behaviors are appended after the existing ones (api, auth, uploads); a gated pattern is only moved when an
+existing broader behavior such as the legacy `/person/*` would shadow it. Nothing else changes. It merges in place, so reruns are a true no-op.
+
+Cutover order (the HFY-TSK-069 runbook step; the gate and the authV2 flip ship together):
+
+1. Build (no npm install, no CodeArtifact token): `bash scripts/ci/package-edge-gate.sh` (prints `CodeSha256=`); upload `dist/hfy-edge-gate.zip` to a **us-east-1** bucket.
+2. `aws cloudformation deploy --region us-east-1 --stack-name hfy-edge-gate --template-file infrastructure/cloudformation/edge-gate-stack.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides CodeBucket=<bucket> CodeSha256=<sha>`. The stack publishes the version (`AWS::Lambda::Version`) and outputs `EdgeGateVersionArn`.
+3. `scripts/infra/add-data-gate-behaviors.sh --dry-run`, review the diff, then run it without `--dry-run` (reads the ARN from the stack, saves a backup). Wait for the distribution to deploy (a Lambda@Edge association takes minutes).
+4. Flip `authV2` to `true` in `11ty/_data/flags.json` and deploy the site. Verify signed in (data loads) and signed out (`curl -i https://harrisonfamily.us/person/index.json` is 401 JSON).
+
+**Why 3 and 4 are one change:** with the gate live, an `authV2`-off visitor has no `io_id` request path: the legacy client sends `X-HFY-Session`
+and `credentials: include`, so a visitor who happens to hold an edge session still works, but anyone on the legacy Google sign-in only
+cannot read person, search or media data. Under `authV2` the client (`HFYFeatureFlags.dataFetchInit`) fetches with `credentials: 'same-origin'`,
+sends no `X-HFY-Session`, and a gate 401 redirects to `/auth/login?returnTo=...`. Apply step 4 immediately after step 3 (or use the
+`?hfy_flags=authV2` preview to check first). Islands (`islands/`, committed bundle) still use the legacy token wait and need a rebuild with
+`scripts/ci/build-islands.sh` before `searchV2`/`personV2` are used under `authV2`.
+
+Rollback: set `authV2` back to `false` only if you also remove the gate, because the legacy flow cannot read gated data. Then
+`scripts/infra/add-data-gate-behaviors.sh --remove` (deletes exactly the six gated behaviors, and only ones carrying the hfy-edge-gate
+association; data is public again once the distribution deploys). The pre-change config is also saved under
+`${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}`; restore it with `aws cloudfront update-distribution --if-match <ETag>`.
+The Lambda stack can stay: replicas of a retained version are deleted by CloudFront hours after the last association is removed.
+Tests: `node --test edge-gate/test/*.test.mjs tests/client/*.test.mjs` and `scripts/infra/test/run.sh`.
 
 ### CloudFront Functions
 
