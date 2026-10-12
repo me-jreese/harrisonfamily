@@ -1,0 +1,120 @@
+{
+  "ETag": "E1LIVEETAG",
+  "DistributionConfig": {
+    "CallerReference": "hfy-sample",
+    "Aliases": { "Quantity": 2, "Items": ["www.example-family.us", "example-family.us"] },
+    "DefaultRootObject": "index.html",
+    "Origins": {
+      "Quantity": 2,
+      "Items": [
+        {
+          "Id": "s3-frontend",
+          "DomainName": "example-frontend.s3.us-west-2.amazonaws.com",
+          "OriginPath": "",
+          "CustomHeaders": { "Quantity": 0 },
+          "S3OriginConfig": { "OriginAccessIdentity": "", "OriginReadTimeout": 30 },
+          "ConnectionAttempts": 3,
+          "ConnectionTimeout": 10,
+          "OriginShield": { "Enabled": false },
+          "OriginAccessControlId": "EOACEXAMPLE"
+        },
+        {
+          "Id": "api-gateway-hfy-check-allowed",
+          "DomainName": "abc123example.execute-api.us-west-2.amazonaws.com",
+          "OriginPath": "/prod",
+          "CustomHeaders": { "Quantity": 0 },
+          "CustomOriginConfig": {
+            "HTTPPort": 80,
+            "HTTPSPort": 443,
+            "OriginProtocolPolicy": "https-only",
+            "OriginSslProtocols": { "Quantity": 1, "Items": ["TLSv1.2"] },
+            "OriginReadTimeout": 30,
+            "OriginKeepaliveTimeout": 5,
+            "IpAddressType": "ipv4"
+          },
+          "ConnectionAttempts": 3,
+          "ConnectionTimeout": 10,
+          "OriginShield": { "Enabled": false },
+          "OriginAccessControlId": ""
+        }
+      ]
+    },
+    "OriginGroups": { "Quantity": 0 },
+    "DefaultCacheBehavior": {
+      "TargetOriginId": "s3-frontend",
+      "TrustedSigners": { "Enabled": false, "Quantity": 0 },
+      "TrustedKeyGroups": { "Enabled": false, "Quantity": 0 },
+      "ViewerProtocolPolicy": "redirect-to-https",
+      "AllowedMethods": { "Quantity": 2, "Items": ["HEAD", "GET"], "CachedMethods": { "Quantity": 2, "Items": ["HEAD", "GET"] } },
+      "SmoothStreaming": false,
+      "Compress": true,
+      "LambdaFunctionAssociations": { "Quantity": 0 },
+      "FunctionAssociations": {
+        "Quantity": 1,
+        "Items": [{ "FunctionARN": "arn:aws:cloudfront::123456789012:function/HFYAppendIndex", "EventType": "viewer-request" }]
+      },
+      "FieldLevelEncryptionId": "",
+      "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+      "GrpcConfig": { "Enabled": false }
+    },
+    "CacheBehaviors": {
+      "Quantity": 2,
+      "Items": [
+        {
+          "PathPattern": "/person/*",
+          "TargetOriginId": "s3-frontend",
+          "TrustedSigners": { "Enabled": false, "Quantity": 0 },
+          "TrustedKeyGroups": { "Enabled": false, "Quantity": 0 },
+          "ViewerProtocolPolicy": "redirect-to-https",
+          "AllowedMethods": { "Quantity": 2, "Items": ["HEAD", "GET"], "CachedMethods": { "Quantity": 2, "Items": ["HEAD", "GET"] } },
+          "SmoothStreaming": false,
+          "Compress": true,
+          "LambdaFunctionAssociations": { "Quantity": 0 },
+          "FunctionAssociations": { "Quantity": 0 },
+          "FieldLevelEncryptionId": "",
+          "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+          "GrpcConfig": { "Enabled": false }
+        },
+        {
+          "PathPattern": "/api/*",
+          "TargetOriginId": "api-gateway-hfy-check-allowed",
+          "TrustedSigners": { "Enabled": false, "Quantity": 0 },
+          "TrustedKeyGroups": { "Enabled": false, "Quantity": 0 },
+          "ViewerProtocolPolicy": "https-only",
+          "AllowedMethods": {
+            "Quantity": 7,
+            "Items": ["HEAD", "DELETE", "POST", "GET", "OPTIONS", "PUT", "PATCH"],
+            "CachedMethods": { "Quantity": 2, "Items": ["HEAD", "GET"] }
+          },
+          "SmoothStreaming": false,
+          "Compress": false,
+          "LambdaFunctionAssociations": { "Quantity": 0 },
+          "FunctionAssociations": { "Quantity": 0 },
+          "FieldLevelEncryptionId": "",
+          "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+          "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+          "GrpcConfig": { "Enabled": false }
+        }
+      ]
+    },
+    "CustomErrorResponses": { "Quantity": 0 },
+    "Comment": "harrisonfamily sample (sanitized, live-shaped)",
+    "Logging": { "Enabled": false, "IncludeCookies": false, "Bucket": "", "Prefix": "" },
+    "PriceClass": "PriceClass_100",
+    "Enabled": true,
+    "ViewerCertificate": {
+      "CloudFrontDefaultCertificate": false,
+      "ACMCertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
+      "SSLSupportMethod": "sni-only",
+      "MinimumProtocolVersion": "TLSv1.2_2021",
+      "Certificate": "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
+      "CertificateSource": "acm"
+    },
+    "Restrictions": { "GeoRestriction": { "RestrictionType": "none", "Quantity": 0 } },
+    "WebACLId": "",
+    "HttpVersion": "http2",
+    "IsIPV6Enabled": true,
+    "ContinuousDeploymentPolicyId": "",
+    "Staging": false
+  }
+}

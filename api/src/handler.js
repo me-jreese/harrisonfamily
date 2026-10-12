@@ -1,7 +1,7 @@
 // Lambda Function URL (payload v2) handler. All logic is injected through `deps` so tests run offline.
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
-import { createCommentSource, toCommentPrincipal } from "./comments.js";
+import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments.js";
 import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
 import { BASE_PATH, matchRoute } from "./routes.js";
 import { createUploads } from "./uploads.js";
@@ -10,6 +10,15 @@ import { HttpError, errorResponse, json } from "./http.js";
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
   const uid = () => ulid(now());
+  const pushEnabled = Boolean(deps.webpush && deps.vapid);
+  /** Post-commit side effects (push fan-out, thread cleanup): the write already succeeded, so failures are logged, never returned. */
+  const afterCommit = async (label, fn) => {
+    try {
+      await fn();
+    } catch (e) {
+      log.error?.(`${label} failed (write already committed)`, e instanceof Error ? e.message : String(e));
+    }
+  };
 
   function build(actor, event) {
     const notifier = createNotifier({
@@ -31,20 +40,24 @@ export function createHandler(deps) {
       }
       return [...ids];
     };
-    const content = createContentSource({ ...base, audit: deps.audit });
+    const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase });
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000,
       getPost: (id) => content.get(id),
-      onCreated: async (c, { parent }) => {
+      // Without push configured there is nobody to notify: skip the post read and the commenters Query entirely.
+      onCreated: (c, { parent }) => pushEnabled && afterCommit("comment notification", async () => {
         const postAuthorId = c.threadId.startsWith("post:") ? (await content.get(c.threadId.slice(5))).author.id : undefined;
         const earlierCommenters = await commenterIds(c.threadId);
         await notifier.onComment(c, { parent }, { postAuthorId, earlierCommenters });
-      },
+      }),
     });
+    const afterPublished = (post) => afterCommit("publish notification", () => notifier.onPublished(post));
+    // A deleted post takes its discussion with it (each removed comment is audited); best effort after the post delete.
+    const afterPostDeleted = (id) => afterCommit("post thread purge", () => purgeThread(base, `post:${id}`, actor.id));
     const notifyHandler = () =>
       createNotifyHandler({ vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id })(event);
     const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, bucket: deps.mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
-    return { content, comments, notifier, notifyHandler, uploads };
+    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted };
   }
 
   return async function handler(event) {

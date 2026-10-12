@@ -2,7 +2,8 @@
 // items written in the same TransactWriteItems call as the data change.
 import { ContentError, POST_TYPES, VISIBILITIES, auditEntry, canView, computeCan, withCan, DEFAULT_LIMIT, MAX_LIMIT } from "@io-kit/content";
 import { postKeys, gsiPosts, gsiAuthor, gsiSubject } from "./keys.js";
-import { auditItem, transact, queryPartition } from "./txn.js";
+import { auditItem, transact, queryPartition, versionGuard } from "./txn.js";
+import { IMAGE_TYPES, UPLOAD_PREFIX } from "./uploads.js";
 
 const hash = (s) => {
   let h = 5381;
@@ -12,8 +13,59 @@ const hash = (s) => {
 const filterId = (f) => hash(JSON.stringify([f?.subject ?? null, f?.type ?? null, f?.author ?? null, f?.visibility ?? null]));
 
 const MAX_BODY = 20_000; // keeps post item x3 + audit before/after well under the 400KB item limit
+export const MAX_TITLE = 200;
+export const MAX_ATTACHMENTS = 10;
+export const MAX_ALT = 500;
+/** Serialized post cap: the audit item carries before + after, so 2x this stays well under DynamoDB's 400 KB item limit. */
+export const MAX_POST_BYTES = 100_000;
+/** A record id the post is about: a bare gramps id (I0044), `person:<id>`, `post:<ulid>`, or another plain identifier. */
+export const POST_SUBJECT_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const ULID_RE = "[0-9A-HJKMNP-TV-Z]{26}";
+const UPLOAD_PATH_RE = new RegExp(`^/${UPLOAD_PREFIX}/${ULID_RE}/[a-z0-9][a-z0-9._-]{0,80}$`);
+const MIME_RE = /^[a-z]+\/[a-z0-9][a-z0-9.+-]{0,99}$/i;
+const invalid = (field, message) => new ContentError("validation", message, { field });
+const isDim = (v) => Number.isInteger(v) && v > 0 && v <= 100_000;
 
-export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid }) {
+/**
+ * Attachments may only reference this site's member uploads (`<mediaPublicBase>/uploads/posts/<ulid>/<name>` or the same
+ * path relative), so a post can neither break the timeline renderer nor pull images from third-party hosts.
+ * Returns a normalized copy holding only the known Attachment fields.
+ */
+export function normalizeAttachments(raw, mediaPublicBase) {
+  if (!Array.isArray(raw)) throw invalid("attachments", "attachments must be an array");
+  if (raw.length > MAX_ATTACHMENTS) throw invalid("attachments", `at most ${MAX_ATTACHMENTS} attachments`);
+  const base = String(mediaPublicBase ?? "").replace(/\/+$/, "");
+  return raw.map((a) => {
+    if (a === null || typeof a !== "object" || Array.isArray(a)) throw invalid("attachments", "each attachment must be an object");
+    if (a.kind !== "image" && a.kind !== "file") throw invalid("attachments", "attachment kind must be image or file");
+    if (typeof a.url !== "string" || a.url.length > 2048) throw invalid("attachments", "attachment url is required");
+    const path = base && a.url.startsWith(`${base}/`) ? a.url.slice(base.length) : a.url;
+    if (!UPLOAD_PATH_RE.test(path)) throw invalid("attachments", "attachment url must be a member upload");
+    if (typeof a.mime !== "string" || !MIME_RE.test(a.mime)) throw invalid("attachments", "attachment mime is required");
+    if (a.kind === "image" && !Object.hasOwn(IMAGE_TYPES, a.mime)) throw invalid("attachments", "image attachments must be jpeg, png, webp or heic");
+    if (a.alt !== undefined && a.alt !== null && (typeof a.alt !== "string" || a.alt.length > MAX_ALT)) throw invalid("attachments", `alt text must be a string of at most ${MAX_ALT} characters`);
+    for (const k of ["width", "height"]) if (a[k] !== undefined && a[k] !== null && !isDim(a[k])) throw invalid("attachments", `attachment ${k} must be a positive integer`);
+    return {
+      kind: a.kind, url: a.url, mime: a.mime,
+      ...(isDim(a.width) ? { width: a.width } : {}),
+      ...(isDim(a.height) ? { height: a.height } : {}),
+      ...(typeof a.alt === "string" ? { alt: a.alt } : {}),
+    };
+  });
+}
+function checkTitle(v) {
+  if (typeof v !== "string" || v.length > MAX_TITLE) throw invalid("title", `title must be a string of at most ${MAX_TITLE} characters`);
+  return v;
+}
+function checkSubject(v) {
+  if (typeof v !== "string" || !POST_SUBJECT_RE.test(v)) throw invalid("subject", "subject must be a record id");
+  return v;
+}
+function checkSize(post) {
+  if (Buffer.byteLength(JSON.stringify(post), "utf8") > MAX_POST_BYTES) throw invalid("body", "post is too large");
+}
+
+export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us" }) {
   const requireActor = () => {
     if (!actor) throw new ContentError("forbidden", "sign in to write");
     return actor;
@@ -46,19 +98,24 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
   }
   const allKeys = (id) => [postKeys(id), { PK: `POST#${id}`, SK: "IDX#AUTHOR" }, { PK: `POST#${id}`, SK: "IDX#SUBJECT" }];
 
+  /**
+   * One TransactWriteItems: the data change plus its D-15 audit item. Non-create writes are guarded on the stored
+   * `updated_at` that `before` was read with, so a concurrent change cancels this write (409 conflict) instead of being
+   * silently overwritten, and the audit `before` is exactly the state this write replaced.
+   */
   async function commit(op, id, before, after, at, { create = false } = {}) {
     const who = requireActor();
     const entry = auditEntry(op, id, who.id, before, after, at);
+    const guard = create ? { condition: "attribute_not_exists(PK)" } : versionGuard("post", "updated_at", before.updated_at);
     const puts = [];
     const deletes = [];
     if (after) {
       const items = itemsFor(after);
-      items.forEach((item, i) =>
-        puts.push({ item, ...(i === 0 ? { condition: create ? "attribute_not_exists(PK)" : "attribute_exists(PK)" } : {}) }),
-      );
+      items.forEach((item, i) => puts.push({ item, ...(i === 0 ? guard : {}) }));
       if (!after.subject) deletes.push({ PK: `POST#${id}`, SK: "IDX#SUBJECT" });
     } else {
-      deletes.push(...allKeys(id));
+      const [main, ...rest] = allKeys(id);
+      deletes.push({ key: main, ...guard }, ...rest);
     }
     puts.push({ item: auditItem(entry, uid(), table) });
     try {
@@ -106,20 +163,23 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       validateBody(input.body);
       if (input.type !== undefined && !POST_TYPES.includes(input.type)) throw new ContentError("validation", "unknown type", { field: "type" });
       if (input.visibility !== undefined && input.visibility !== "draft" && input.visibility !== "published") throw new ContentError("validation", "visibility must be draft or published", { field: "visibility" });
+      const present = (v) => v !== undefined && v !== null; // null on create means "not set"
+      if (present(input.ref) && (typeof input.ref !== "string" || input.ref.length > 200)) throw invalid("ref", "ref must be a short string");
       const at = new Date(now()).toISOString();
       const post = {
         id: ulid(now()),
         type: input.type ?? "post",
         author: { id: who.id, label: who.label },
-        ...(input.subject !== undefined ? { subject: input.subject } : {}),
-        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(present(input.subject) ? { subject: checkSubject(input.subject) } : {}),
+        ...(present(input.title) ? { title: checkTitle(input.title) } : {}),
         body: input.body,
-        attachments: structuredClone(input.attachments ?? []),
+        attachments: normalizeAttachments(input.attachments ?? [], mediaPublicBase),
         visibility: input.visibility === "published" ? "published" : "draft", // one write, one audit entry (drafts:false hosts)
         created_at: at,
         updated_at: at,
-        ...(input.ref !== undefined ? { ref: input.ref } : {}),
+        ...(present(input.ref) ? { ref: input.ref } : {}),
       };
+      checkSize(post);
       await commit("create", post.id, null, post, at, { create: true });
       return view(post);
     },
@@ -130,13 +190,14 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       const before = structuredClone(current);
       const next = { ...current };
       if (patch.body !== undefined) next.body = patch.body;
-      if (patch.attachments !== undefined) next.attachments = structuredClone(patch.attachments);
-      for (const k of ["title", "subject"]) {
+      if (patch.attachments !== undefined) next.attachments = normalizeAttachments(patch.attachments, mediaPublicBase);
+      for (const [k, check] of [["title", checkTitle], ["subject", checkSubject]]) {
         const v = patch[k];
         if (v === null) delete next[k];
-        else if (v !== undefined) next[k] = v;
+        else if (v !== undefined) next[k] = check(v);
       }
       next.updated_at = new Date(now()).toISOString();
+      checkSize(next);
       await commit("update", id, before, next, next.updated_at);
       return view(next);
     },

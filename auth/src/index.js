@@ -2,12 +2,15 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createLocalJWKSet, exportJWK, importPKCS8 } from "jose";
-import { createIdentityService, ddbFromDocumentClient, ddbLinkStore, ddbRefreshStore } from "@io-kit/auth/server";
+import { createIdentityService, ddbFromDocumentClient, ddbRefreshStore } from "@io-kit/auth/server";
 import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator } from "@io-kit/auth/edge/deploy";
 import { createAuthEdge, loadManifest } from "./edge.js";
 import { createOAuthServer, ddbOAuthStore } from "./oauth.js";
 import { createMembership } from "./membership.js";
 import { forbidden, originVerified } from "./origin.js";
+import { cognitoProvisioner } from "./cognito.js";
+import { hfyLinkStore } from "./linkstore.js";
+import { ddbRateLimiter } from "./ratelimit.js";
 
 const sdk = (name) => import(name);
 
@@ -44,7 +47,7 @@ async function init() {
   const gis = m.providers.find((p) => p.kind === "google" && p.mode === "gis_id_token");
   const identity = createIdentityService({
     resolver,
-    links: ddbLinkStore({ client: ddb, tableName }),
+    links: hfyLinkStore({ client: ddb, tableName }), // writes GSI1SK so GSI1 indexes LINK# items (HFY-R58 ruling 6)
     ...(gis ? { google: { clientId: gis.clientId } } : {}),
     sessions: {
       issuer: m.session.issuer, audience: m.session.audience, kid,
@@ -53,7 +56,7 @@ async function init() {
       accessTtlSeconds: m.session.accessTtlSeconds, defaultProfile: m.session.profile,
     },
     passwordAuth: cognitoPasswordAuthenticator(cog),
-    passwords: await cognitoProvisioner(m.idp.userPoolId),
+    passwords: await cognitoAdmin(m.idp.userPoolId, resolver),
   });
   // MCP authorization server (HFY-TSK-076). Redirect URIs and resources come from stack parameters; unset => OAuth routes are off.
   const csv = (v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -73,26 +76,16 @@ async function init() {
     : undefined;
   return createAuthEdge({
     manifest: m, identity, publicJwk, ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
+    limiter: ddbRateLimiter({ doc, cmds: lib, table: tableName }), // POST /auth/password/forgot (HFY-R58 ruling 5)
     verify: { issuers: [m.session.issuer], audiences: [m.session.audience], jwks: createLocalJWKSet({ keys: [publicJwk] }) },
   });
 }
 
-async function cognitoProvisioner(userPoolId) {
+/** AdminCreateUser happens only after the allowlist check, inside cognitoProvisioner (HFY-R58 ruling 5). */
+async function cognitoAdmin(userPoolId, resolver) {
   const cip = await sdk("@aws-sdk/client-cognito-identity-provider");
   const client = new cip.CognitoIdentityProviderClient({});
-  const call = (C, input) => client.send(new cip[C](input));
-  return {
-    async setPassword({ email, password }) {
-      let user;
-      try { user = await call("AdminGetUserCommand", { UserPoolId: userPoolId, Username: email }); }
-      catch {
-        user = await call("AdminCreateUserCommand", { UserPoolId: userPoolId, Username: email, MessageAction: "SUPPRESS", UserAttributes: [{ Name: "email", Value: email }, { Name: "email_verified", Value: "true" }] });
-      }
-      await call("AdminSetUserPasswordCommand", { UserPoolId: userPoolId, Username: email, Password: password, Permanent: true });
-      const attrs = user.UserAttributes ?? user.User?.Attributes ?? [];
-      return { idpIssuer: `https://cognito-idp.${userPoolId.split("_")[0]}.amazonaws.com/${userPoolId}`, idpSub: String(attrs.find((a) => a.Name === "sub")?.Value ?? "") };
-    },
-  };
+  return cognitoProvisioner({ userPoolId, resolver, send: (name, input) => client.send(new cip[`${name}Command`](input)) });
 }
 
 let app;

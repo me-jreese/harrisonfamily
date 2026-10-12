@@ -84,7 +84,21 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'private/' \
     --exclude 'place/' \
     --exclude 'README.md' \
-    --exclude '.DS_Store'
+    --exclude '.DS_Store' \
+    --exclude 'uploads/' \
+    --exclude '_data/flags.json' \
+    --exclude 'js/islands/' \
+    --exclude 'js/auth-v2.js' \
+    --exclude 'js/feature-flags.js' \
+    --exclude 'js/search-navbar.js' \
+    --exclude 'js/search-results.js' \
+    --exclude 'sw.js' \
+    --exclude 'manifest.webmanifest' \
+    --exclude 'offline.html' \
+    --exclude 'images/pwa-*.png' \
+    --exclude 'posts/' \
+    --exclude 'me/'
+  # The excludes after .DS_Store are repo-owned files the Eleventy workspace does not produce (11ty/README.md, HFY-R46/R58).
 fi
 
 if [ "$needs_lambda_check" -eq 1 ]; then

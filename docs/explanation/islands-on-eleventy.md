@@ -1,0 +1,84 @@
+# Why React islands on a generated Eleventy site
+
+The harrisonfamily front end is two things layered on each other. Underneath is a static site that Eleventy renders from a private Gramps export. On top of it sit small React applications, called islands, that each take over one part of a page when its feature flag is on. In the repository, `11ty/` holds the rendered site, not the templates that produce it.
+
+This page explains why each of those choices was made and what the split costs. The mechanics (which flag loads which bundle, which file mounts where) are in the [front-end reference](../reference/front-end.md).
+
+## The starting point: a static site from a private export
+
+Gramps is the source of truth for family records. An ETL step turns its export into per-person JSON and media files, and Eleventy renders ten pages (home, about, contact, search, person, the family directory, sign-in, signed-out, and the privacy and terms pages) into plain HTML, CSS and JavaScript. The pages committed to the repository carry no per-person records. Person data and media sit in the private bucket, and the person and search scripts fetch them from the CDN at runtime, sending the member's session header once someone has signed in.
+
+A static site suits this project for four reasons:
+
+- **Cost.** Serving files from S3 through CloudFront needs no server running while nobody visits. The main metered compute sits behind `/auth` and `/api`. The rest is the legacy sign-in path (the `hfy-check-allowed` Lambda, and the allowlist Cloud Function that its own legacy workflow still deploys) and a CloudFront Function on the default behavior if one is attached. The [cost estimate](../reference/cost-estimate.md) prices the app backend separately from the static-site baseline.
+- **Privacy.** The build output is a tree of files that can be read before it ships. That tree is not private by construction, though. Every Eleventy build, the production build included, copies the person, family, event, note, place and media data into `_site/`. The boundary is the exclude list applied when `_site/` is copied into `11ty/` and when `11ty/` is synced to the bucket. Those lists are kept separately, in the refresh command, in `scripts/check-deployment-sync.sh` and in the deploy pipeline, and nothing keeps them in step: the refresh command that `11ty/README.md` carried before E5 omitted `place/`. [Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md) gives a command with the full list, and [family data privacy](family-data-privacy.md) explains the wider model.
+- **A small attack surface.** No server renders the pages and no database stands behind them. The only dynamic origins are the auth edge and the API, both behind the CDN (see [edge and origin design](edge-and-origin-design.md)).
+- **Pages that work without a framework.** The public pages are complete HTML. The member pages use plain scripts. Nothing in the base site depends on React, which is what allows React to be added a piece at a time.
+
+## Why islands instead of an SPA rewrite
+
+Release 1 of E5 added a new app shell, a new search, notes and comments on person pages, posts, and notifications. Building these as a single-page application would have meant replacing pages that already worked, moving routing into the client, and shipping everything at once. Islands do the reverse. They enhance pages that already exist, one surface at a time.
+
+Three properties make that safe:
+
+- **Each island owns one surface.** The shell owns the navigation frame on every page. The search island owns `/search/`, and the person island owns notes and comments on the person page. The posts islands own the composer on a member's own person page, the homepage timeline and `/posts/`, and the notifications island owns `/me/notifications/`. An island either creates its own host element beside the content it enhances, or mounts into a `[data-island="<name>"]` slot that the static page already contains ([`islands/src/lib/mount.jsx`](../../islands/src/lib/mount.jsx)).
+- **Failures fall back to the legacy page.** The loader in [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) injects an island's bundle only when its flag resolves on. If the shell bundle fails to load, the loader removes the shell class and the old navbar returns. If the search bundle fails, the loader shows the Lunr search section again, and it works, because the legacy search scripts stand down only after the island has actually mounted (HFY-R58), not merely because the flag is on. `/posts/` and `/me/notifications/` are new pages with no legacy version. Their only fallback is static placeholder text, which stays on screen if the bundle fails or the flag is off. Islands that act only after they load (person notes and comments, the timeline, the own-page composer) need no fallback, because a failed load leaves the page as it was. Any failed island also ends a tester's preview override, so a broken preview does not follow them from page to page.
+- **With every flag off, the existing pages behave as before E5.** Every flag in [`11ty/_data/flags.json`](../../11ty/_data/flags.json) ships `false`. In that state, no island bundle is fetched and the new sign-in script exits without changing the page. The E5 additions are still deployed but inert: the two new pages show their placeholder text, the service worker, manifest and offline page sit in the bucket with nothing registering or linking them, and each page fetches the flags file to learn that its flags are off.
+
+This is what makes the [release model](release-model.md) work. Each flag can be turned on independently, by build-time file or per browser with an override, and turning it off is the rollback ([toggle a feature flag](../how-to/toggle-a-feature-flag.md)). The flags have one coupling: `searchV2` implies `shellV2`, because the search launcher lives in the shell.
+
+## Why the islands use shared @io-kit packages
+
+The islands are thin. Most of what they render comes from io-wide packages: `@io-kit/shell`, `search`, `search-ui`, `md`, `comments`, `content`, `notify` and `tokens`, all pinned to exact versions in [`islands/package.json`](../../islands/package.json). These components are shared across io's projects rather than written for this site.
+
+Where a package needs data from the site, it can define a contract for it and ship a suite that tests an implementation against that contract. Two packages are used that way here: `@io-kit/comments`, with its comment source, and `@io-kit/content`, with its content source. The harrisonfamily side writes an adapter against its own `/api` for each and proves it by running the kit's suite in [`islands/tests/`](../../islands/tests/). The comments suite runs against a mocked `/api` backed by the kit's in-memory store. The content suite drives the real `api/` handler. That keeps the site-specific code to the part that is specific to this site.
+
+The shell is `KitShell` in its bare frame on the Enceladus shell stack. The site uses the kit's navigation registry, scroll hooks and PWA-install hook, and supplies its own install banner on top of that hook ([`islands/src/islands/shell.jsx`](../../islands/src/islands/shell.jsx)).
+
+The cost is access. The packages are published to a private AWS CodeArtifact registry, which [`islands/.npmrc`](../../islands/.npmrc) points the `@io-kit` scope at. Every install, on a laptop or in CI, needs a short-lived registry token. That is why [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh) refuses to run without one.
+
+## Why 11ty/ holds output, not source
+
+The Eleventy source (templates, data files, public scripts and styles) lives in the private Dropbox project workspace, `<eleventy-source>`, next to the private data it reads. Its data files load person and media data from a sibling directory at build time. Its config also copies that data into `_site/` on every build, not only for local preview, so the build output always contains it and only the exclude lists keep it out of `11ty/` and the bucket. Keeping the source there keeps the private inputs, and the code that reads them, out of Git.
+
+The repository carries the deployable artifact instead: the rendered HTML, CSS and JavaScript that are safe to publish, and the built island bundles, which the deploy pipeline syncs to the bucket. Git therefore records what shipped, with one exception: the pipeline substitutes the Google client ID for a placeholder in the HTML and JavaScript before it packages the release. Apart from that, a reviewer never has to reason about what a template might render.
+
+One file breaks the pattern. [`workspace/11ty-dev/src/_data/featureFlags.js`](../../workspace/11ty-dev/src/_data/featureFlags.js) is a tracked copy of an Eleventy data file. It holds the gateway and visibility config rendered into each page as `window.HFY_FEATURE_FLAGS`. It currently matches its original in `<eleventy-source>`, but nothing in the repository builds from it. It is a stray copy, not a second source, and it can drift without anything noticing.
+
+## The consequence: two sources of truth
+
+E5 was built in the repository, against the artifact. Its front-end work was written directly into `11ty/`: the build-time flags, a new sign-in script and its include on each rendered page, the flag resolver and island loader with `searchV2` bail-outs in the legacy search scripts, the PWA files, and two new pages. The [front-end reference](../reference/front-end.md#what-11ty-contains) lists each file.
+
+None of this work exists in `<eleventy-source>`. For E5, `11ty/` is not output at all. It is the only copy. The site now has two sources of truth, and the tools around `11ty/` still assume it has one:
+
+- The refresh that `11ty/README.md` documented before E5 rebuilds the source and runs `rsync -a --delete` from `_site/` into `11ty/`. It excludes `README.md`, `media/`, `person/`, `family/`, `event/`, `note/` and `private/`, and nothing else. Such a refresh therefore deletes every E5-only file and overwrites the E5-edited scripts and pages with their pre-E5 versions. The E5 edits to `person/index.html` and `private/index.html` survive only because those directories are excluded. The failure is quiet: the result is a working pre-E5 site, so nothing looks broken.
+- The session-log promotion script, [`scripts/promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh), copies a file entry with `rsync -a` and deletes nothing for it, but mirrors a directory entry with `rsync -a --delete`, which removes destination files the source lacks. Listed files that E5 also edited are overwritten, and a listed directory such as `js/` can delete E5-only files such as `js/auth-v2.js`.
+- The pre-commit parity check, [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh), compares `_site/` against `11ty/` with a dry-run `rsync --delete`. It excludes the files the repository owns, the E5-only files and `js/islands/` among them, but it still compares the E5-edited pages. Until the source emits the `auth-v2.js` tag, those pages count as drift whenever `11ty/` files are staged.
+
+There are two ways to get back to one source of truth, and neither has been chosen:
+
+1. **Mirror E5 into the source.** Port each E5 file and edit into `<eleventy-source>`: static files into `public/`, the script include and the two new pages into templates. `11ty/` then becomes pure output again and the refresh is safe. The port has to be done and checked by hand, and the source stays outside Git, so front-end review still happens on rendered output.
+2. **Move the source into the repository.** Bring the templates and public assets under Git, and keep the private data and the readers that load it outside. The source's data files and config assume sibling private directories, so separating them is real work. A CI build would also need either access to the private data or a source that no longer needs it.
+
+Until that choice is made, treat the E5 files in `11ty/` as hand-maintained, and refresh only with a procedure that preserves them ([refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)).
+
+## Where the island bundles come from
+
+[`islands/build.mjs`](../../islands/build.mjs) bundles each `islands/src/islands/*.jsx` with esbuild into `11ty/js/islands/<name>.js` and `<name>.css`. It splits the shared code (React and the kit packages) into hashed chunks and copies the kit's notification service-worker module alongside them.
+
+So the islands have a source of their own, inside the repository, and `11ty/js/islands/` is its output. That output is committed (HFY-R58). Building needs the private package registry, which CI cannot reach, and the deploy only syncs what is in `11ty/`. A bundle that is not committed would never ship, and one uploaded by hand would be deleted by the next deploy. [The release model](release-model.md#why-island-bundles-are-committed-output) explains the trade-off, and `npm run check:islands` catches a bundle that no longer matches its source. Unlike the rest of `11ty/`, this directory has exactly one source, so it is never refreshed from `<eleventy-source>`.
+
+## The PWA rides on the shell island
+
+Installability and offline support are capabilities of the shell island, not of the site. With `shellV2` on, the loader adds the manifest link and theme color to the page, and the shell island registers `/sw.js` and offers the install prompt. Nothing else registers the service worker.
+
+The worker precaches the offline page, the shell bundle, the manifest and an icon. It answers failed page navigations with `offline.html`, leaves `/auth` and `/api` alone, and imports the kit's notification module for push and notification-click deep links ([`11ty/sw.js`](../../11ty/sw.js)). It fetches the island entry modules network first, so that after a deploy an entry module always matches the hashed chunks on the server, and keeps the hashed chunks cache first, because a hashed name never changes content. The manifest link is added only after the shell has actually loaded, so a failed shell never advertises an installable app.
+
+So installability, the offline page and push delivery all follow `shellV2`. With the flag off, new visitors get no manifest and no worker. Turning the flag off does not unregister a worker that a browser has already installed, though. That worker keeps serving the offline page for failed navigations until it is replaced or removed.
+
+## Further reading
+
+- [Front-end reference](../reference/front-end.md): flags, islands, mount points and the files behind them.
+- [Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md): rebuild from `<eleventy-source>` without erasing E5.
+- [Build and preview the islands](../how-to/build-and-preview-the-islands.md): produce `11ty/js/islands/` locally.
+- [The release model](release-model.md): how flags stage a release and roll it back.

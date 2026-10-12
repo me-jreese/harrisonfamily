@@ -1,0 +1,410 @@
+# System architecture
+
+Reference for the deployed system: edge, storage, compute, identity store, data and stacks.
+
+The region is `us-west-2`, except the CloudFront certificate, which lives in `us-east-1` because CloudFront only accepts certificates from that region. Values in angle brackets, such as `<site>`, `<site-bucket>`, `<distribution-id>`, `<aws-account-id>` and `<github-owner>`, are placeholders for deployment-specific identifiers; the forms are listed in [Private data and secrets](private-data-and-secrets.md#placeholders). For why the system is shaped this way, read [Edge and origin design](../explanation/edge-and-origin-design.md) and [The identity model](../explanation/identity-model.md).
+
+## Overview
+
+```text
+browser ──HTTPS──▶ CloudFront <distribution-id>          (ACM certificate in us-east-1)
+                    ├─ /api/check-allowed* (legacy pin, ordered before /api/*)
+                    │          ──────────────────▶ API Gateway ▶ Lambda hfy-check-allowed
+                    ├─ /api/*  ──X-Origin-Verify──▶ Function URL ▶ Lambda hfy-api
+                    ├─ /auth/*,
+                    │  /.well-known/oauth-authorization-server*
+                    │          ──X-Origin-Verify──▶ Function URL ▶ Lambda hfy-auth-edge
+                    ├─ /uploads/* ──OAC───────────▶ S3 <site-bucket>/uploads/   (nosniff + sandbox CSP)
+                    └─ default (*) ──OAC──────────▶ S3 <site-bucket>   (HFYAppendIndex on viewer-request)
+
+hfy-api        ▶ DynamoDB hfy-app · S3 <config-bucket> (admins) · presigned PUT into <site-bucket>/uploads/posts/
+               ▶ JWKS from https://<site>/auth/.well-known/jwks.json (back through CloudFront)
+               ▶ Secrets Manager (VAPID secret) and web push services (subscription endpoints), only when HasVapid
+hfy-auth-edge  ▶ DynamoDB hfy-app · S3 <config-bucket> (allowlist, admins) · Cognito hfy-users
+               ▶ Secrets Manager (session signing key)
+               ▶ Google signing keys, to verify GIS ID tokens (the kit's Google provider)
+```
+
+The diagram shows every outbound dependency of the two stack functions. While `authV2` is `false`, the default, sign-in goes through the legacy `/api/check-allowed` path, not the auth edge; see [Legacy check-allowed route](#legacy-check-allowed-route).
+
+## Request routing
+
+One CloudFront distribution, `<distribution-id>`, serves the whole site. The live distribution configuration is not in the repository. [`cloudfront/distribution.json`](../../cloudfront/distribution.json) is a sanitized template of the configuration before the behavior scripts ran: the S3 origin, plus the legacy API Gateway origin behind `/api/*`. Values marked *(sample)* come from the sanitized sample configuration that predates E5, so the default behavior below is documented, not verifiable. The behaviors that the scripts in [`scripts/infra/`](../../scripts/infra/) add are defined exactly by those scripts. The legacy pin copies whatever behavior served `/api/check-allowed` before.
+
+| Path pattern | Origin | Viewer protocol | Allowed methods | Cache policy | Origin request policy | Response headers policy | Functions | Defined by |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `/api/check-allowed*` (legacy pin) | The origin that served `/api/check-allowed` before, normally the `hfy-check-allowed` API Gateway | Copied | Copied | Copied | Copied | Copied | Copied | Cloned by [`scripts/infra/add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) (HFY-R58); see [Legacy check-allowed route](#legacy-check-allowed-route) |
+| `/api/*` | `hfy-api-origin` | redirect-to-https | GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE | CachingDisabled | AllViewerExceptHostHeader | none | none | [`scripts/infra/add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) |
+| `/auth/*` | `hfy-auth-origin` | redirect-to-https | GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE | CachingDisabled | AllViewerExceptHostHeader | none | none | [`scripts/infra/add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) |
+| `/.well-known/oauth-authorization-server*` | `hfy-auth-origin` | redirect-to-https | GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE | CachingDisabled | AllViewerExceptHostHeader | none | none | [`scripts/infra/add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) |
+| `/uploads/*` | The default behavior's S3 origin, or `--origin-id` | redirect-to-https | GET, HEAD | CachingOptimized | none | The stack's `UploadsResponseHeadersPolicy`: `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` | none, so `HFYAppendIndex` does not run | [`scripts/infra/add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) (HFY-R58) |
+| Default (`*`) | S3 `<site-bucket>` via OAC | redirect-to-https | GET, HEAD, OPTIONS (sample) | CachingOptimized (sample) | CORS-S3Origin (sample) | Custom security-headers policy: `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` (sample) | `HFYAppendIndex`, viewer-request | Not in the repo; created by [Stand up the static site](../how-to/stand-up-the-static-site.md#3-create-the-distribution) |
+
+The managed policies the scripts use:
+
+| Policy | Kind | ID |
+| --- | --- | --- |
+| CachingDisabled | Cache policy | `4135ea2d-6df8-44a3-9df3-4b5a84be39ad` |
+| CachingOptimized | Cache policy | `658327ea-f89d-4fab-a63d-7e88639e58f6` |
+| AllViewerExceptHostHeader | Origin request policy | `b689b0a8-53d0-40ab-baf2-68738e2966ac` |
+
+All the script-built behaviors set `Compress: true` and have no CloudFront Function or Lambda@Edge association. On the three Lambda behaviors, `CachedMethods` is GET, HEAD, which has no effect under CachingDisabled: nothing on these paths is cached. On `/uploads/*`, each upload key is unique, so caching is safe.
+
+- **Order.** CloudFront tries cache behaviors in list order and uses the first match; the default behavior applies last. The scripts merge in place: an origin with the same ID, or a behavior with the same path pattern, keeps its position and every field the script does not manage, and a missing one is appended at the end of its list. `add-api-behavior.sh` places the legacy pin immediately before the first other behavior that matches `/api/check-allowed`. The three Lambda path patterns and `/uploads/*` do not overlap, so their relative order does not affect routing.
+- **Re-runs.** A script whose result equals the live configuration (compared in a normalized form) prints `no change` and makes no `update-distribution` call. Before a real update it saves the configuration it read as a backup. [Repository operations](repository-operations.md#cloudfront-behavior-scripts) has the full behavior.
+- **Root discovery.** The auth edge's issuer is `https://<site>/auth`, so RFC 8414 discovery is served at `/.well-known/oauth-authorization-server/auth`. [`auth/src/edge.js`](../../auth/src/edge.js) answers that path; the same document is also served under `/auth/.well-known/`. Both answer only when MCP OAuth is enabled, that is when `MCP_REDIRECT_URIS` (stack parameter `McpRedirectUris`) is not empty ([`auth/src/index.js`](../../auth/src/index.js)). Otherwise both return `404 {"code":"NOT_FOUND"}`. See [Identity services](identity-services.md#mcp-authorization-server).
+
+### Legacy check-allowed route
+
+While `authV2` is `false`, the default in [`11ty/_data/flags.json`](../../11ty/_data/flags.json), this is the live sign-in path. The pages set `gateway.endpoint` to `/api/check-allowed`, and both [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) and the legacy sign-in in [`11ty/js/auth.js`](../../11ty/js/auth.js) POST to it. An API Gateway HTTP API serves the path, and `hfy-check-allowed` is the Lambda behind it. Before the app behaviors, the gateway was reached through the old `/api/*` behavior, as in [`cloudfront/distribution.json`](../../cloudfront/distribution.json). The gateway, its origin and that behavior are not in the repo IaC.
+
+[`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps the path on the gateway when it points `/api/*` at `hfy-api` (HFY-R58). It clones the behavior that serves `/api/check-allowed` before the change under the pattern `/api/check-allowed*`, with the same origin, policies and associations, and orders it ahead of `/api/*`. An existing pin is kept exactly as it is on every rerun. When only `hfy-api` or the default behavior would serve the path and no pin exists, the script refuses with exit `3` unless `--legacy-origin <origin-id>` names the origin to pin to. The pin is never removed by the script; HFY-TSK-069 retires it. [Repository operations](repository-operations.md#the-legacy-apicheck-allowed-pin) gives each case.
+
+If the pin is missing, `POST /api/check-allowed` reaches `hfy-api`, which has no such route and returns `404` with code `not_found` ([`api/src/handler.js`](../../api/src/handler.js)), and legacy sign-in is broken for as long as `authV2` is off. The live order is shown by `aws cloudfront get-distribution-config --id <distribution-id>`. The symptom is in [Diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md#legacy-check-allowed-returns-404).
+
+### HFYAppendIndex
+
+A CloudFront Function (runtime `cloudfront-js-1.0`) on the default behavior's viewer-request event. Source: [`scripts/cloudfront/append-index.js`](../../scripts/cloudfront/append-index.js). It is created and published by hand ([Stand up the static site](../how-to/stand-up-the-static-site.md#4-create-and-attach-hfyappendindex)).
+
+| Request URI | Rewritten to |
+| --- | --- |
+| Ends in `/` | URI + `index.html` |
+| Contains no `.` | URI + `/index.html` |
+| Anything else | Unchanged |
+
+### Distribution settings
+
+| Setting | Value | Source |
+| --- | --- | --- |
+| Aliases | Apex and `www` of `<site>` | Sample and template |
+| Viewer certificate | ACM certificate in `us-east-1`, `sni-only` | Template |
+| Price class | `PriceClass_100` | Sample and template |
+| Default root object | `index.html` | Sample |
+
+## Origins
+
+| Origin ID | Domain | Connection | Access control | Custom header | Defined by |
+| --- | --- | --- | --- | --- | --- |
+| Not in the repo | `<site-bucket>` S3 endpoint | S3 origin | Origin Access Control | None | Console or CLI ([Stand up the static site](../how-to/stand-up-the-static-site.md#3-create-the-distribution)) |
+| `hfy-api-origin` | Host of the `hfy-app` output `FunctionUrl` | Custom origin, `https-only`, `TLSv1.2`, ports 80/443, read timeout 30 s, keep-alive 5 s, empty origin path | None (`OriginAccessControlId` is empty) | `X-Origin-Verify` | [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) |
+| `hfy-auth-origin` | Host of the `hfy-app` output `AuthFunctionUrl` | Same as `hfy-api-origin` | None | `X-Origin-Verify` | [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) |
+| Not in the repo (`api-gateway-hfy-check-allowed` in the sample) | The legacy `hfy-check-allowed` API Gateway endpoint | Custom origin with an origin path (sample: `https-only`, `TLSv1.2`) | None | None | Console or CLI, before E5. Reached through the `/api/check-allowed*` pin |
+
+- **Header value.** Each script takes the `X-Origin-Verify` value from `$ORIGIN_VERIFY` or from the Secrets Manager secret `harrisonfamily/cloudfront/origin-verify`, writes it into the distribution config, and redacts it in every diff it prints. `--dry-run` prints the redacted diff and changes nothing. The distribution holds its own copy of the value.
+- **Origin check.** Both Lambdas check the header before any routing ([`api/src/origin.js`](../../api/src/origin.js), [`auth/src/origin.js`](../../auth/src/origin.js)). The comparison is constant-time over SHA-256 digests. A missing or wrong header, or an unset `ORIGIN_VERIFY`, returns `403 {"error":"forbidden"}`.
+- **Timeouts.** Both functions time out at 15 s, inside the 30 s origin read timeout.
+
+## Buckets
+
+None of the buckets is managed by a stack.
+
+### `<site-bucket>`
+
+| Prefix | Contents | Written by | Excluded from the deploy's `--delete` |
+| --- | --- | --- | --- |
+| Root | The static site, synced from `11ty/` | The `s3_static` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), run by [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) | No (this is what the sync owns) |
+| `person/`, `family/`, `event/`, `note/`, `place/`, `media/` | Private Gramps data and media | The private data sync ([Refresh the family data](../how-to/refresh-the-family-data.md)), which syncs these six prefixes and nothing else | Yes: `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` |
+| `uploads/posts/<ulid>/<name>` | Photos attached to member posts (`UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js), HFY-R58). Served through the `/uploads/*` CloudFront behavior | Browsers, by presigned PUT issued by `hfy-api` | Yes: `uploads/*`. The deploy role also denies `s3:PutObject` and `s3:DeleteObject` here ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml), `ProtectMemberUploads`) |
+| `media/posts/<ulid>/<name>` | Legacy: photos uploaded before HFY-R58, if any remain. Nothing moved them | No writer since HFY-R58 | Yes, under `media/*`. The private data sync deletes them unless run with `--no-delete` |
+| `js/islands/` | Island bundles | The `11ty/` sync, from the committed build output (HFY-R58) | No (this is site output) |
+
+- **Reads.** CloudFront reads the bucket through OAC. The bucket policy that [Stand up the static site](../how-to/stand-up-the-static-site.md#1-create-the-site-bucket) applies allows `s3:GetObject` only to `cloudfront.amazonaws.com` for this distribution, with Block Public Access on.
+- **Island bundles.** `11ty/js/islands/` is committed, so every deploy ships the bundles in the commit and its `--delete` sync removes any bundle that is not committed. See [Build and preview the islands](../how-to/build-and-preview-the-islands.md).
+- **Uploads.** `/uploads/*` is served from the same S3 origin through its own behavior, with the uploads response headers policy. The private data sync cannot name `uploads/`, and the site deploy excludes it.
+- **CORS rule.** Applied by hand from [`infrastructure/cloudformation/media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json), after its `_comment` key is removed. It allows origin `https://<site>`, method `PUT`, headers `Content-Type` and `Content-Length`, and `MaxAgeSeconds` 3000.
+
+### `<config-bucket>`
+
+| Key | Contents | Read by |
+| --- | --- | --- |
+| `config/userGrampsID.json` | Map of verified email to Gramps ID | `hfy-auth-edge` (sign-in resolver, cached 300 s; MCP membership, cached 60 s); `hfy-check-allowed` (legacy, cached per container) |
+| `config/allowed_hashes.json` | Array of HMAC-SHA256 hex digests of allowlisted emails | `hfy-check-allowed` (legacy, cached per container) |
+| `config/admins.json` | Array of Gramps IDs, or `{"admins": [...]}` | `hfy-api` (cached 60 s, fails closed); `hfy-auth-edge` (MCP `admins` group, cached 60 s) |
+
+The edge takes this bucket and the allowlist key from [`auth/edge.manifest.json`](../../auth/edge.manifest.json) (`resolver`), and the admin key from `ADMIN_LIST_KEY`. The API takes both from `ADMIN_LIST_BUCKET` and `ADMIN_LIST_KEY`. See [Manage family access](../how-to/manage-family-access.md).
+
+### `<code-bucket>`
+
+| Key | Contents | Built by |
+| --- | --- | --- |
+| `lambda/hfy-api.zip` | `hfy-api` package | [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh), into `dist/` |
+| `lambda/hfy-auth-edge.zip` | `hfy-auth-edge` package, including `edge.manifest.json` | [`scripts/ci/package-auth.sh`](../../scripts/ci/package-auth.sh), into `dist/` |
+
+No script uploads the zips; that is a manual step before a stack deploy. See [Deploy the app stack](../how-to/deploy-the-app-stack.md).
+
+## Compute
+
+| Function | Runtime and architecture | Memory | Timeout | Handler | Invoked through | Defined by |
+| --- | --- | --- | --- | --- | --- | --- |
+| `hfy-api` | `nodejs22.x`, `arm64` | 256 MB | 15 s | `src/index.handler` | Function URL, AuthType `NONE`, `BUFFERED`, behind `/api/*` | [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) |
+| `hfy-auth-edge` | `nodejs22.x`, `arm64` | 512 MB | 15 s | `src/index.handler` | Function URL, AuthType `NONE`, `BUFFERED`, behind `/auth/*` and root discovery | [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) |
+| `hfy-check-allowed` (legacy) | Not in the repo; the kit build packages it with Node 20 | Not in the repo | Not in the repo | `handler` exported from [`index.mjs`](../../lambda/hfy-check-allowed/index.mjs) | `/api/check-allowed`, through API Gateway ([route](#legacy-check-allowed-route)) | Not in IaC; code shipped by the `lambda` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), through [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) |
+| `getAllowlist` (legacy, Google Cloud) | `python311`, Cloud Functions gen2, region `us-west2` | Default | Default | `get_allowlist` in [`main.py`](../../functions/get-allowlist/main.py) | HTTP trigger with `--no-allow-unauthenticated` | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) (`gcloud functions deploy`) |
+
+- **Stack functions.** Each has a log group `/aws/lambda/<name>` with 30-day retention, a role `<name>-role`, and two resource policies for principal `*`: `lambda:InvokeFunctionUrl` with `FunctionUrlAuthType: NONE`, and `lambda:InvokeFunction` with `InvokedViaFunctionUrl: true`. The origin check is the only gate on the URL.
+- **Legacy functions.** Both are scheduled to be replaced by the auth edge (HFY-TSK-062), and both are still deployed on every push to `main`: [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) updates `hfy-check-allowed`, and [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) deploys `getAllowlist`.
+  - `hfy-check-allowed` is on the live sign-in path. `authV2` is `false`, the default in [`11ty/_data/flags.json`](../../11ty/_data/flags.json), and with it off [`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js) does nothing and the legacy flow runs: `/api/check-allowed` to `hfy-check-allowed` ([route](#legacy-check-allowed-route)). The auth edge handles sign-in only when `authV2` is on.
+  - `getAllowlist` is on no sign-in path, and nothing in the repo calls it. The first line of its workflow marks it `retired by HFY-TSK-062`, but the workflow's triggers are active ([Identity services](identity-services.md#legacy-getallowlist)).
+  - The planned retirement order is in [The identity model](../explanation/identity-model.md#retirement-order-once-authv2-is-flipped).
+
+### Environment
+
+| Function | Variables set by the stack |
+| --- | --- |
+| `hfy-api` | `TABLE_NAME`, `SESSION_JWKS_URL`, `ORIGIN_VERIFY`, `SESSION_ISSUER`, `SESSION_AUDIENCE`, `SESSION_COOKIE`, `ADMIN_LIST_BUCKET`, `ADMIN_LIST_KEY`, `MEDIA_BUCKET`, `MEDIA_PUBLIC_BASE`, and `VAPID_SECRET` only when `HasVapid` is true |
+| `hfy-auth-edge` | `AUTH_TABLE`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `GOOGLE_CLIENT_ID`, `MCP_REDIRECT_URIS`, `MCP_RESOURCES`, `MCP_CORS_ORIGINS`, `ORIGIN_VERIFY`, `ADMIN_LIST_KEY` |
+
+The edge's remaining settings, such as issuer, audience, signing-key secret name, key ID and allowlist location, come from [`auth/edge.manifest.json`](../../auth/edge.manifest.json), which is packaged with the code. For the API routes and the edge endpoints, see [API](api.md) and [Identity services](identity-services.md).
+
+### IAM
+
+| Role | Statement | Actions | Resource |
+| --- | --- | --- | --- |
+| `hfy-api-role` | `Logs` | `logs:CreateLogStream`, `logs:PutLogEvents` | Its own log group |
+| | `Table` | `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem` | `hfy-app` and `hfy-app/index/*` |
+| | `AdminList` | `s3:GetObject` | `<config-bucket>/config/*` |
+| | `PostPhotoUploads` | `s3:PutObject` | `<site-bucket>/uploads/posts/*` |
+| | `Secrets` (only when `HasVapid`) | `secretsmanager:GetSecretValue` | The VAPID secret |
+| `hfy-auth-edge-role` | `Logs` | `logs:CreateLogStream`, `logs:PutLogEvents` | Its own log group |
+| | `RefreshAndLinkStore` | `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query` | `hfy-app` and `hfy-app/index/*` |
+| | `Allowlist` | `s3:GetObject` | `<config-bucket>/config/userGrampsID.json` and `<config-bucket>/config/admins.json` |
+| | `SigningKey` | `secretsmanager:GetSecretValue` | `harrisonfamily/auth-edge/session-signing-key-*` |
+| | `CognitoAdminLink` | `cognito-idp:AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminConfirmSignUp`, `AdminUpdateUserAttributes` | User pool `hfy-users` |
+
+## Identity store
+
+Cognito user pool `hfy-users`, logical ID `UserPool` in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml).
+
+| Setting | Value |
+| --- | --- |
+| Deletion and replacement policy | `Retain` |
+| Username | Email (`UsernameAttributes: [email]`); email is auto-verified |
+| Sign-up | Admin-created users only (`AllowAdminCreateUserOnly: true`, HFY-R58) |
+| Email change | `AttributesRequireVerificationBeforeUpdate: [email]` |
+| MFA | `OFF` |
+| Password policy | At least 12 characters; lowercase, uppercase and a number required; symbols not required; temporary passwords valid 7 days |
+| Account recovery | Verified email |
+| Verification | `CONFIRM_WITH_CODE` |
+| Email sending | `COGNITO_DEFAULT`; with `HasSes`, `DEVELOPER` through the SES identity `SesIdentityArn`, and `From` set to `SesFromAddress` with `HasSesFrom` |
+| Schema | `email`, required and mutable |
+
+App client `hfy-web`, logical ID `UserPoolClient`:
+
+| Setting | Value |
+| --- | --- |
+| Client secret | None (`GenerateSecret: false`) |
+| Auth flows | `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH` |
+| User existence errors | Prevented (`ENABLED`) |
+| Identity providers | `COGNITO` |
+| Token lifetimes | Refresh 30 days; access 60 minutes; ID 60 minutes |
+
+The edge, not the browser, calls Cognito with `USER_PASSWORD_AUTH`, then mints its own RS256 session. It also uses the five admin calls in `CognitoAdminLink` to give an allowlisted, linked member a password, and to repair a user left from before the pool was locked down ([`auth/src/cognito.js`](../../auth/src/cognito.js)).
+
+## DynamoDB table `hfy-app`
+
+### Definition
+
+| Property | Value |
+| --- | --- |
+| Billing | `PAY_PER_REQUEST` |
+| Primary key | `PK` (string, hash), `SK` (string, range) |
+| Index `GSI1` | `GSI1PK` (string, hash), `GSI1SK` (string, range), projection `ALL` |
+| Time to live | Attribute `ttl`, enabled |
+| Point-in-time recovery | Enabled |
+| Server-side encryption | Enabled (`SSEEnabled: true`) |
+| Deletion and replacement policy | `Retain` |
+
+### Item layout
+
+This section is the single list of the table's keys: every item's `PK`, `SK`, `GSI1` keys and `ttl`. What each item holds is listed with the service that writes it, in [API: Table layout](api.md#table-layout) and [Identity services: Stored records](identity-services.md#stored-records), and those pages link here for the keys.
+
+`<principal>` and `<gramps-id>` are the member's Gramps ID, which is the session `sub`. `<thread-id>` is `person:<gramps-id>` or `post:<ulid>`. A dash means the attribute is not set.
+
+Written by `hfy-api`:
+
+| Item | PK | SK | GSI1PK / GSI1SK | `ttl` | Source |
+| --- | --- | --- | --- | --- | --- |
+| Post | `POST#<ulid>` | `META` | `POSTS` / `<ulid>` | - | [`api/src/content.js`](../../api/src/content.js) |
+| Post, author index | `POST#<ulid>` | `IDX#AUTHOR` | `AUTHOR#<gramps-id>` / `<ulid>` | - | [`api/src/content.js`](../../api/src/content.js) |
+| Post, subject index (only when the post has a subject) | `POST#<ulid>` | `IDX#SUBJECT` | `SUBJECT#<subject>` / `<ulid>` | - | [`api/src/content.js`](../../api/src/content.js) |
+| Comment | `THREAD#<thread-id>` | `C#<ulid>` | `COMMENTS` / `<ulid>` | - | [`api/src/comments.js`](../../api/src/comments.js) |
+| Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
+| Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
+| Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
+| Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
+
+Each post and comment change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
+
+Written by `hfy-auth-edge`, through the `@io-kit/auth` 2.0.0 stores and the local stores wired in [`auth/src/index.js`](../../auth/src/index.js). `<scope>` is `email+ip` or `ip`, and the hash covers the email and client IP, so neither is stored:
+
+| Item | PK | SK | GSI1PK / GSI1SK | `ttl` |
+| --- | --- | --- | --- | --- |
+| Session refresh token | `REFRESH#<sha256-hex-of-token>` | `META` | - | Token expiry plus 1 day |
+| Revoked refresh family | `FAMILY#<family>` | `META` | - | 32 days after revocation |
+| Identity link, one per email | `LINK#<email>` | `META` | `SUB#<gramps-id>` / `LINK#<email>`, set by [`auth/src/linkstore.js`](../../auth/src/linkstore.js) | - |
+| Forgot-password counter, one per key and window | `RATE#forgot:<scope>#<sha256-base64url>` | `W#<window-seconds>#<window-start>` | - | Window end plus 300 s |
+
+Written by `hfy-auth-edge` for MCP OAuth ([`auth/src/oauth.js`](../../auth/src/oauth.js)). Codes and tokens are stored only as base64url SHA-256 digests:
+
+| Item | PK | SK | `ttl` |
+| --- | --- | --- | --- |
+| Authorization code, consumed by an atomic delete | `MCPCODE#<digest>` | `META` | 180 s |
+| Refresh token | `MCPRT#<digest>` | `META` | 30 days plus 1 hour |
+| Used refresh token, for replay detection | `MCPRTUSED#<digest>` | `META` | 30 days plus 1 hour |
+| Revoked token family | `MCPFAM#<family>` | `META` | 30 days plus 1 hour |
+
+### Notes
+
+- **`SUB#` appears twice without collision.** It is the PK of subscription items and the GSI1PK of link items. These are different attributes. The API's subscriber scan filters on `begins_with(PK, "SUB#")`, which link items (PK `LINK#`) never match, and subscription items set no `GSI1PK`.
+- **Access.** Both roles cover the whole table and its indexes, with no key-prefix condition. The API may `Scan`; the edge may not. The API's only scan is `scanSubscribedPrincipals` in [`api/src/notify.js`](../../api/src/notify.js), which finds push subscribers when a post is published.
+- **Expiry.** TTL deletion is not immediate, so readers check `expiresAt` or `ttl` themselves.
+
+## CloudFormation stacks
+
+### `hfy-app`
+
+Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml). It is deployed by hand ([Deploy the app stack](../how-to/deploy-the-app-stack.md)). Because the roles are named, the deploy needs `CAPABILITY_NAMED_IAM`.
+
+#### Parameters
+
+| Parameter | Default | Used for |
+| --- | --- | --- |
+| `TableName` | `hfy-app` | Table name; `TABLE_NAME`, `AUTH_TABLE` |
+| `FunctionName` | `hfy-api` | API function, log group and role names |
+| `CodeBucket` | None (required) | `<code-bucket>` |
+| `CodeKey` | `lambda/hfy-api.zip` | API package key |
+| `ConfigBucket` | `<config-bucket>` | `ADMIN_LIST_BUCKET`; S3 grants for both roles |
+| `MediaBucket` | `<site-bucket>` | `MEDIA_BUCKET`; API upload grant on `uploads/posts/*` |
+| `MediaPublicBase` | `https://<site>` | `MEDIA_PUBLIC_BASE`, the origin that serves `uploads/` |
+| `AdminListKey` | `config/admins.json` | `ADMIN_LIST_KEY` for both functions; edge S3 grant |
+| `VapidSecretName` | Empty | `VAPID_SECRET`; drives `HasVapid` |
+| `SessionIssuer` | `https://<site>/auth` | `SESSION_ISSUER` |
+| `SessionAudience` | `harrisonfamily-web` | `SESSION_AUDIENCE` |
+| `SessionJwksUrl` | `https://<site>/auth/.well-known/jwks.json` | `SESSION_JWKS_URL` |
+| `SessionCookie` | `io_id` | `SESSION_COOKIE` |
+| `AuthFunctionName` | `hfy-auth-edge` | Edge function, log group and role names |
+| `AuthCodeKey` | `lambda/hfy-auth-edge.zip` | Edge package key |
+| `UserPoolName` | `hfy-users` | User pool name |
+| `AllowlistKey` | `config/userGrampsID.json` | Edge S3 grant |
+| `SigningKeySecretName` | `harrisonfamily/auth-edge/session-signing-key` | Edge Secrets Manager grant |
+| `McpRedirectUris` | `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback` | `MCP_REDIRECT_URIS`; empty turns the MCP OAuth routes off |
+| `McpResources` | `https://mcp.<site>` | `MCP_RESOURCES` |
+| `McpCorsOrigins` | `https://claude.ai,https://claude.com` | `MCP_CORS_ORIGINS` |
+| `OriginVerifySecretName` | `harrisonfamily/cloudfront/origin-verify` | Dynamic reference for `ORIGIN_VERIFY` |
+| `GoogleClientId` | None (required, public value) | `GOOGLE_CLIENT_ID` |
+| `SesIdentityArn` | Empty | A verified SES identity, in the stack's region, for Cognito email; drives `HasSes` |
+| `SesFromAddress` | Empty | The `From` address when `SesIdentityArn` is set; drives `HasSesFrom` |
+
+#### Conditions
+
+- `HasVapid` is true when `VapidSecretName` is not empty. It adds the `Secrets` statement to `hfy-api-role` and sets `VAPID_SECRET`. When it is false, notifications are stored and configured but not sent. [Turn on push notifications](../how-to/turn-on-push-notifications.md) sets it.
+- `HasSes` is true when `SesIdentityArn` is not empty. The user pool then sends email through SES instead of Cognito's default sender, which allows about 50 emails a day for the account.
+- `HasSesFrom` is true when `HasSes` is true and `SesFromAddress` is not empty.
+
+#### Resources
+
+| Logical ID | Type | Name or key properties |
+| --- | --- | --- |
+| `Table` | `AWS::DynamoDB::Table` | `hfy-app` ([definition](#definition)) |
+| `LogGroup` | `AWS::Logs::LogGroup` | `/aws/lambda/hfy-api`, 30 days |
+| `Role` | `AWS::IAM::Role` | `hfy-api-role` |
+| `Function` | `AWS::Lambda::Function` | `hfy-api` |
+| `FunctionUrl` | `AWS::Lambda::Url` | AuthType `NONE`, `BUFFERED` |
+| `InvokeUrlPermission` | `AWS::Lambda::Permission` | `lambda:InvokeFunctionUrl`, principal `*` |
+| `InvokeFunctionPermission` | `AWS::Lambda::Permission` | `lambda:InvokeFunction`, principal `*`, via Function URL |
+| `UploadsResponseHeadersPolicy` | `AWS::CloudFront::ResponseHeadersPolicy` | `<FunctionName>-uploads-sandbox`: `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'`, both with override |
+| `UserPool` | `AWS::Cognito::UserPool` | `hfy-users`, `Retain` |
+| `UserPoolClient` | `AWS::Cognito::UserPoolClient` | `hfy-web` |
+| `AuthLogGroup` | `AWS::Logs::LogGroup` | `/aws/lambda/hfy-auth-edge`, 30 days |
+| `AuthRole` | `AWS::IAM::Role` | `hfy-auth-edge-role` |
+| `AuthFunction` | `AWS::Lambda::Function` | `hfy-auth-edge` |
+| `AuthFunctionUrl` | `AWS::Lambda::Url` | AuthType `NONE`, `BUFFERED` |
+| `AuthInvokeUrlPermission` | `AWS::Lambda::Permission` | `lambda:InvokeFunctionUrl`, principal `*` |
+| `AuthInvokeFunctionPermission` | `AWS::Lambda::Permission` | `lambda:InvokeFunction`, principal `*`, via Function URL |
+
+#### Outputs
+
+| Output | Value | Read by |
+| --- | --- | --- |
+| `FunctionUrl` | `hfy-api` Function URL | `add-api-behavior.sh` |
+| `TableName` | Table name | |
+| `FunctionName` | `hfy-api` | |
+| `UploadsResponseHeadersPolicyId` | The uploads response headers policy | `add-uploads-behavior.sh` |
+| `AuthFunctionUrl` | `hfy-auth-edge` Function URL | `add-auth-behavior.sh` |
+| `AuthFunctionName` | `hfy-auth-edge` | |
+| `UserPoolId` | User pool ID | |
+| `UserPoolClientId` | `hfy-web` client ID | |
+
+No output is exported.
+
+#### `ORIGIN_VERIFY`
+
+Both functions set `ORIGIN_VERIFY` to `{{resolve:secretsmanager:<OriginVerifySecretName>:SecretString}}`, with no version stage or version ID, so it names the `AWSCURRENT` version. The resolved value is stored in each function's environment configuration, and neither function reads Secrets Manager for it at runtime.
+
+CloudFormation resolves a `secretsmanager` dynamic reference only when it creates the resource or applies an update that modifies that resource ([AWS: Secrets Manager dynamic references, Considerations](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-secretsmanager.html#dynamic-references-secretsmanager-considerations)). So:
+
+- A new value under the same secret name reaches neither function. A stack deploy that changes neither the template nor the parameters is a no-op, and one that modifies only other resources leaves both functions on the old value.
+- An update that modifies one function for another reason, such as a new `CodeKey`, resolves the reference again for that function only.
+- A new value takes an update that modifies both function resources, plus a re-run of both behavior scripts. [Rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md) does this by creating a new secret and changing `OriginVerifySecretName`, which changes both functions' environment.
+
+### `harrisonfamily-github-roles`
+
+Template: [`infrastructure/cloudformation/github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml). It is deployed once by hand with admin credentials, `CAPABILITY_NAMED_IAM`, in `us-west-2`.
+
+| Parameter | Default |
+| --- | --- |
+| `GitHubOrg` | `<github-owner>` |
+| `GitHubRepo` | `harrisonfamily` |
+| `OIDCProviderArn` | `arn:aws:iam::<aws-account-id>:oidc-provider/token.actions.githubusercontent.com` (an existing provider; the stack does not create it) |
+
+The single resource, `GitHubDeployRole`, is the role `harrisonfamily-github-deploy-role`, with a maximum session of 3600 s.
+
+**Trust.** `sts:AssumeRoleWithWebIdentity` from the OIDC provider, when `token.actions.githubusercontent.com:aud` equals `sts.amazonaws.com` and `token.actions.githubusercontent.com:sub` matches `repo:<github-owner>/harrisonfamily:ref:refs/heads/main`. Only runs on `main` can assume it, so a manual dispatch from another branch cannot.
+
+**Permissions** (inline policy `HarrisonFamilyDeployPolicy`):
+
+| Statement | Effect | Actions | Resource |
+| --- | --- | --- | --- |
+| `S3SiteSync` | Allow | `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket` | `arn:aws:s3:::<site-bucket>` and `arn:aws:s3:::<site-bucket>/*` |
+| `ProtectMemberUploads` | Deny | `s3:DeleteObject`, `s3:PutObject` | `arn:aws:s3:::<site-bucket>/uploads/*` |
+| `CloudFrontInvalidation` | Allow | `cloudfront:CreateInvalidation`, `cloudfront:GetInvalidation` | `arn:aws:cloudfront::<aws-account-id>:distribution/<distribution-id>` |
+| `LambdaDeploy` | Allow | `lambda:UpdateFunctionCode`, `GetFunction`, `GetFunctionConfiguration`, `ListVersionsByFunction`, `PublishVersion`, `GetAlias`, `CreateAlias`, `UpdateAlias` | `hfy-check-allowed`, `hfy-api` and `hfy-auth-edge` in `us-west-2`, each with its versions and aliases |
+
+Nothing else is granted. CI cannot write under `uploads/`, and cannot update either stack, any IAM or Cognito resource, the distribution's configuration, `<config-bucket>` or `<code-bucket>`. The role could update the code of `hfy-api` and `hfy-auth-edge`, but `ci.manifest.yaml` has no target for them. Why each grant exists is in [Repository operations](repository-operations.md#deploy-role-github-rolesyaml).
+
+**Output.** `DeployRoleArn`, exported as `harrisonfamily-github-roles-DeployRoleArn`. Its value goes in the repository secret `AWS_DEPLOY_ROLE_TO_ASSUME`.
+
+## Not managed by any stack
+
+| Component | How it is managed |
+| --- | --- |
+| CloudFront distribution and its default behavior | Console or CLI; not in the repo |
+| `/api/*`, `/auth/*` and root-discovery behaviors and their origins; the legacy `/api/check-allowed*` pin; the `/uploads/*` behavior | [`scripts/infra/add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`scripts/infra/add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh), [`scripts/infra/add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) |
+| `HFYAppendIndex` | Created and published with the CLI ([Stand up the static site](../how-to/stand-up-the-static-site.md#4-create-and-attach-hfyappendindex)); the code is in [`scripts/cloudfront/append-index.js`](../../scripts/cloudfront/append-index.js) ([details](#hfyappendindex)) |
+| ACM certificate (`us-east-1`) | Console or CLI ([Stand up the static site](../how-to/stand-up-the-static-site.md#2-request-the-certificate)) |
+| `<site-bucket>`, `<config-bucket>`, `<code-bucket>` | Not in the repo |
+| `<site-bucket>` CORS rule | Manual `put-bucket-cors` from [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json) |
+| Uploads to `<code-bucket>` | Manual, after the package scripts |
+| Secrets Manager secrets | [`scripts/infra/create-origin-verify.sh`](../../scripts/infra/create-origin-verify.sh), [`scripts/infra/create-session-key.sh`](../../scripts/infra/create-session-key.sh); others by hand |
+| GitHub OIDC provider | Pre-existing; referenced by ARN |
+| `hfy-check-allowed` and its API Gateway | Configuration not in the repo; code updated by [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) |
+| `getAllowlist` (Google Cloud) | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) |
+
+## Secrets
+
+The secrets inventory is owned by [Private data and secrets](private-data-and-secrets.md): each secret's name, contents, readers, creator and rotation are listed under [Secrets Manager](private-data-and-secrets.md#secrets-manager), [Google Cloud](private-data-and-secrets.md#google-cloud-legacy-retiring), [GitHub repository secrets](private-data-and-secrets.md#github-repository-secrets) and [Local-only tokens and environment variables](private-data-and-secrets.md#local-only-tokens-and-environment-variables).
+
+This page covers only where secrets shape the system: the `X-Origin-Verify` header under [Origins](#origins) and [`ORIGIN_VERIFY`](#origin_verify), the `SigningKey` and `Secrets` statements under [IAM](#iam), and the [`HasVapid` condition](#conditions). The API holds no signing key; it verifies sessions against the edge's JWKS ([API: Session verification](api.md#session-verification)).
+
+## Discrepancies in the code
+
+- The `app-stack.yaml` `Description` says `hfy-api` is "behind an IAM-auth Function URL", but both Function URLs are AuthType `NONE`, gated only by `X-Origin-Verify`.
+- The stack parameters `SigningKeySecretName` and `AllowlistKey`, and `ConfigBucket` as far as the edge is concerned, only scope the edge's IAM grants. The edge reads the secret name, bucket and allowlist key from [`auth/edge.manifest.json`](../../auth/edge.manifest.json). If one side changes without the other, the edge reads a resource its role cannot access.
+- [`api/src/keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<id>` / `META`) and `gsiThread`, which no module uses. Comments live under `THREAD#` / `C#` ([`api/src/comments.js`](../../api/src/comments.js)).
+- [`cloudfront/distribution.json`](../../cloudfront/distribution.json) uses `S3OriginConfig` with an empty OAI rather than OAC, and has none of the script-managed behaviors described above. [Stand up the static site](../how-to/stand-up-the-static-site.md#3-create-the-distribution) adds the OAC.
+
+## Related pages
+
+- [Edge and origin design](../explanation/edge-and-origin-design.md), [The identity model](../explanation/identity-model.md), [Member content design](../explanation/member-content-design.md), [Family data privacy](../explanation/family-data-privacy.md), [Release model](../explanation/release-model.md)
+- [Codebase map](codebase-map.md), [API](api.md), [Identity services](identity-services.md), [Repository operations](repository-operations.md), [Private data and secrets](private-data-and-secrets.md), [Cost estimate](cost-estimate.md)
+- [Stand up the static site](../how-to/stand-up-the-static-site.md), [Deploy the app stack](../how-to/deploy-the-app-stack.md), [Rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md), [Rotate the session signing key](../how-to/rotate-the-session-signing-key.md), [Diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md)

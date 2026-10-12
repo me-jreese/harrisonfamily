@@ -9,12 +9,26 @@ const err = (name, message) => Object.assign(new Error(message), { name });
 export function createFakeDdb() {
   const rows = new Map();
   const calls = [];
-  const cond = (expr, existing) => {
+  // Condition subset the API uses: clauses joined by AND, each attribute_exists(path), attribute_not_exists(path) or
+  // `path = :value`, where path is dotted plain names or #placeholders (ExpressionAttributeNames).
+  const resolve = (item, path, names = {}) =>
+    path.split(".").reduce((o, part) => (o == null ? undefined : o[part.startsWith("#") ? names[part] ?? fail(`unknown name ${part}`) : part]), item);
+  const fail = (m) => { throw new Error(`fake: ${m}`); };
+  const cond = (expr, existing, names, values = {}) => {
     if (!expr) return true;
-    if (expr === "attribute_not_exists(PK)") return !existing;
-    if (expr === "attribute_exists(PK)") return !!existing;
-    throw new Error(`fake: unsupported condition ${expr}`);
+    return expr.split(/\s+AND\s+/).every((clause) => {
+      let m;
+      if ((m = /^attribute_exists\(([#\w.]+)\)$/.exec(clause))) return resolve(existing, m[1], names) !== undefined;
+      if ((m = /^attribute_not_exists\(([#\w.]+)\)$/.exec(clause))) return resolve(existing, m[1], names) === undefined;
+      if ((m = /^([#\w.]+) = (:\w+)$/.exec(clause))) {
+        if (!(m[2] in values)) fail(`unknown value ${m[2]}`);
+        const v = resolve(existing, m[1], names);
+        return v !== undefined && JSON.stringify(v) === JSON.stringify(values[m[2]]);
+      }
+      return fail(`unsupported condition ${expr}`);
+    });
   };
+  const condOf = (op, existing) => cond(op.ConditionExpression, existing, op.ExpressionAttributeNames, op.ExpressionAttributeValues);
   function query(i) {
     const v = i.ExpressionAttributeValues ?? {};
     let items;
@@ -51,10 +65,11 @@ export function createFakeDdb() {
         case "GetCommand":
           return { Item: rows.has(kk(i.Key)) ? structuredClone(rows.get(kk(i.Key))) : undefined };
         case "PutCommand":
-          if (!cond(i.ConditionExpression, rows.get(kk(i.Item)))) throw err("ConditionalCheckFailedException", "condition failed");
+          if (!condOf(i, rows.get(kk(i.Item)))) throw err("ConditionalCheckFailedException", "condition failed");
           rows.set(kk(i.Item), structuredClone(i.Item));
           return {};
         case "DeleteCommand":
+          if (!condOf(i, rows.get(kk(i.Key)))) throw err("ConditionalCheckFailedException", "condition failed");
           rows.delete(kk(i.Key));
           return {};
         case "QueryCommand":
@@ -71,7 +86,10 @@ export function createFakeDdb() {
             if (seen.has(key)) throw err("ValidationException", "Transaction request cannot include multiple operations on one item");
             seen.add(key);
           }
-          for (const t of i.TransactItems) if (t.Put && !cond(t.Put.ConditionExpression, rows.get(kk(t.Put.Item)))) throw err("TransactionCanceledException", "cancelled");
+          for (const t of i.TransactItems) {
+            const op = t.Put ?? t.Delete;
+            if (!condOf(op, rows.get(t.Put ? kk(t.Put.Item) : kk(t.Delete.Key)))) throw err("TransactionCanceledException", "cancelled");
+          }
           for (const t of i.TransactItems) {
             if (t.Put) rows.set(kk(t.Put.Item), structuredClone(t.Put.Item));
             else rows.delete(kk(t.Delete.Key));

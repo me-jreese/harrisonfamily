@@ -41,6 +41,7 @@ function Content() {
     Array.from(document.body.childNodes).forEach((n) => {
       if (n === host?.closest("#hfy-shell-root")) return;
       if (n.nodeType === 1 && /^(SCRIPT|NOSCRIPT)$/.test(n.nodeName)) return;
+      if (n.nodeType === 1 && n.hasAttribute("data-hfy-keep")) return; // fixed overlays (preview-flags banner) stay in <body>
       if (n.nodeType === 3 && !n.textContent.trim()) return;
       host.appendChild(n);
     });

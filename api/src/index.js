@@ -1,14 +1,14 @@
 // Lambda entry point: wires real AWS clients. Handler is `src/index.handler`.
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
 import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
+import { createPresignPut } from "./presign.js";
 
 const env = process.env;
 const cmds = { GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand, TransactWriteCommand };
@@ -61,8 +61,7 @@ export const handler = async (event) => {
       ddb, cmds, table, authenticate, ulid: createUlidFactory(),
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
-      presignPut: ({ bucket, key, contentType, size, expiresIn }) =>
-        getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: size }), { expiresIn }),
+      presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
       ...p,

@@ -2,7 +2,9 @@
 //   comment   PK THREAD#<threadId>  SK C#<ulid>           GSI1PK COMMENTS  GSI1SK <ulid>
 //   reaction  PK THREAD#<threadId>  SK R#<target>#<by>    (one per principal per target)
 import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, commentTarget, computeCan, canWrite, isEmoji } from "@io-kit/comments";
-import { auditItem, transact } from "./txn.js";
+import { ContentError } from "@io-kit/content";
+import { HttpError } from "./http.js";
+import { auditItem, transact, versionGuard } from "./txn.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -30,6 +32,17 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       throw create ? new CommentError("validation", "invalid thread id", "threadId") : new CommentError("not_found", `thread ${t}`);
     }
   };
+  // A post:<id> thread is exactly as visible as its post: a draft, withdrawn or deleted post hides its whole discussion
+  // (list, create, edit, react) from anyone who cannot view the post. getPost throws not_found unless the viewer can see it.
+  async function checkPostVisible(t) {
+    if (!t.startsWith("post:") || !getPost) return;
+    try {
+      await getPost(t.slice(5));
+    } catch (e) {
+      if (e instanceof ContentError && e.code === "not_found") throw new CommentError("not_found", `thread ${t}`);
+      throw e;
+    }
+  }
   async function getComment(t, id) {
     checkThread(t);
     if (typeof id !== "string" || !ID_RE.test(id)) throw new CommentError("not_found", `comment ${id}`);
@@ -63,7 +76,8 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     try {
       await transact(ddb, cmds, table, { puts, deletes });
     } catch (e) {
-      throw new CommentError("server", e?.name === "TransactionCanceledException" ? "comment changed concurrently" : "store unavailable");
+      if (e?.name === "TransactionCanceledException") throw new HttpError(409, "conflict", "comment changed concurrently");
+      throw new CommentError("server", "store unavailable");
     }
     if (self.audit) await self.audit(entry);
   }
@@ -72,6 +86,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     ...(audit ? { audit } : {}),
     async list(t, opts = {}) {
       checkThread(t);
+      await checkPostVisible(t);
       const limit = Math.min(Math.max(Math.trunc(opts.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
       let lo = "C#";
       if (opts.cursor !== undefined) {
@@ -98,7 +113,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       const who = need();
       checkThread(t, true);
       const text = body(input.body);
-      if (t.startsWith("post:") && getPost) await getPost(t.slice(5)); // not_found unless the post exists and is visible
+      await checkPostVisible(t); // not_found unless the post exists and is visible
       let parent;
       if (input.parentId !== undefined) {
         parent = await getComment(t, input.parentId);
@@ -111,30 +126,37 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       if (onCreated) await onCreated(c, { parent });
       return view(c);
     },
+    // edit and delete are guarded on the edited_at they read (absent => never edited): a concurrent edit cancels the
+    // write (409) instead of being lost, and the D-15 `before` is exactly the version replaced.
     async edit(t, id, input) {
       const who = need();
       const c = await getComment(t, id);
+      await checkPostVisible(t);
       if (!computeCan(c, who, canOpts).edit) throw new CommentError("forbidden", "cannot edit this comment");
       const text = body(input.body);
       if (text === c.body) return view(c);
       const at = iso();
       const next = { ...c, body: text, edited_at: at };
       await commit(auditEntry("edit", id, who.id, structuredClone(c), next, at), {
-        put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, condition: "attribute_exists(PK)" },
+        put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...versionGuard("comment", "edited_at", c.edited_at) },
       });
       return view(next);
     },
+    // Not gated on post visibility: an author or admin can always remove a comment, even under a withdrawn post.
     async delete(t, id, opts = {}) {
       const who = need();
       const c = await getComment(t, id);
       if (!computeCan(c, who, canOpts).delete) throw new CommentError("forbidden", "cannot delete this comment");
       const cascade = (await reactionRows(t, `R#${commentTarget(id)}#`)).map((i) => ({ PK: i.PK, SK: i.SK }));
       const reason = opts.reason !== undefined && who.roles?.includes("admin") && c.author.id !== who.id ? opts.reason : undefined;
-      await commit(auditEntry("delete", id, who.id, structuredClone(c), null, iso(), reason), { deletes: [cKey(t, id), ...cascade] });
+      await commit(auditEntry("delete", id, who.id, structuredClone(c), null, iso(), reason), {
+        deletes: [{ key: cKey(t, id), ...versionGuard("comment", "edited_at", c.edited_at) }, ...cascade],
+      });
     },
     async react(t, target, emoji) {
       const who = need();
       checkThread(t);
+      await checkPostVisible(t);
       if (!isEmoji(emoji)) throw new CommentError("validation", "not an emoji", "emoji");
       let owner;
       if (target.startsWith("comment:")) owner = (await getComment(t, target.slice(8))).author.id;
@@ -155,4 +177,41 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     },
   };
   return self;
+}
+
+/**
+ * Removes a whole thread (comments + reactions), e.g. after its post is deleted. Each removed comment gets its own D-15
+ * `delete` audit item (reason "post deleted") in the same transaction as the delete; at most 100 items per transaction.
+ * Returns the number of comments removed.
+ */
+export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), uid }, t, principalId, reason = "post deleted") {
+  const rows = [];
+  let key;
+  for (let i = 0; i < 50; i += 1) {
+    const r = await ddb.send(new cmds.QueryCommand({
+      TableName: table, KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": threadPk(t) }, ...(key ? { ExclusiveStartKey: key } : {}),
+    }));
+    rows.push(...(r.Items ?? []));
+    key = r.LastEvaluatedKey;
+    if (!key) break;
+  }
+  let batch = { puts: [], deletes: [] };
+  const size = () => batch.puts.length + batch.deletes.length;
+  const flush = async () => {
+    if (size() > 0) await transact(ddb, cmds, table, batch);
+    batch = { puts: [], deletes: [] };
+  };
+  let removed = 0;
+  for (const row of rows) {
+    const isComment = row.SK.startsWith("C#") && row.comment;
+    if (size() + (isComment ? 2 : 1) > 100) await flush();
+    batch.deletes.push({ PK: row.PK, SK: row.SK });
+    if (isComment) {
+      const at = new Date(now()).toISOString();
+      batch.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
+      removed += 1;
+    }
+  }
+  await flush();
+  return removed;
 }

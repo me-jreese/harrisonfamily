@@ -1,0 +1,91 @@
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:2af4e62e29f8d89e6397f4fef8a49219515810c6e9c5ab8c9623868d133efa78
+name: io-kit deploy
+run-name: io-kit deploy ${{ inputs.target_environment || github.ref_name }}
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Label set by the promote relay (the approval gate lives in io-kit-promote.yml).
+        required: false
+        type: string
+      smoke_url:
+        description: Optional URL that replaces the manifest smoke URLs for this run (rollback drill without a manifest change).
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: io-kit-deploy-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/io-kit-ci/build
+        env:
+          HFY_GOOGLE_CLIENT_ID: ${{ secrets.HFY_GOOGLE_CLIENT_ID }}
+      - uses: ./.github/actions/io-kit-ci/package
+  deploy:
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: io-kit-release-${{ github.sha }}
+          path: .
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+      - id: deploy_static
+        uses: ./.github/actions/io-kit-ci/deploy-static
+      - id: deploy_lambda
+        uses: ./.github/actions/io-kit-ci/deploy-lambda
+  invalidate:
+    needs:
+      - deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+      - uses: ./.github/actions/io-kit-ci/invalidate
+  smoke:
+    needs:
+      - invalidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/io-kit-ci/smoke
+        with:
+          override-url: ${{ inputs.smoke_url }}
+  rollback_on_smoke_fail:
+    needs:
+      - smoke
+    if: ${{ always() && needs.smoke.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+      - uses: ./.github/actions/io-kit-ci/rollback

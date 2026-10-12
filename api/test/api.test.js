@@ -149,11 +149,13 @@ describe("caps.json (AC2)", () => {
 
 describe("uploads.presign (HFY-TSK-067)", () => {
   const ok = { filename: "Grandma's Garden (1).JPG", contentType: "image/jpeg", size: 2048 };
-  it("401 without a session; 201 returns uploadUrl + publicUrl under media/posts/<ulid>/<safe-name>", async () => {
+  it("401 without a session; 201 returns uploadUrl + publicUrl under uploads/posts/<ulid>/<safe-name> (not media/, HFY-R58)", async () => {
     expect((await w.call("POST", "/api/uploads", { body: ok })).status).toBe(401);
     const r = await w.call("POST", "/api/uploads", { token: ann, body: ok });
     expect(r.status).toBe(201);
-    expect(r.body.publicUrl).toMatch(/^https:\/\/harrisonfamily\.us\/media\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/grandma-s-garden-1\.jpg$/);
+    expect(r.body.publicUrl).toMatch(/^https:\/\/harrisonfamily\.us\/uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/grandma-s-garden-1\.jpg$/);
+    expect(r.body.key.startsWith("media/")).toBe(false);
+    expect(r.body.headers).toEqual({ "Content-Type": "image/jpeg" }); // the client must send exactly this: it is signed
     expect(r.body.uploadUrl).toContain(`https://presign.test/harrisonfamily-frontend/${r.body.key}`);
     expect(w.presigned.at(-1)).toMatchObject({ bucket: "harrisonfamily-frontend", contentType: "image/jpeg", size: 2048 });
   });
@@ -165,7 +167,7 @@ describe("uploads.presign (HFY-TSK-067)", () => {
   });
   it("path traversal in the filename cannot escape the key prefix", async () => {
     const r = await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, filename: "../../../etc/passwd.png" } });
-    expect(r.body.key).toMatch(/^media\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/passwd\.jpg$/);
+    expect(r.body.key).toMatch(/^uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/passwd\.jpg$/);
   });
 });
 
