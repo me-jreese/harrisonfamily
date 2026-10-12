@@ -13,6 +13,7 @@ export const REFRESH_TTL_S = 30 * 86400;
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const SCOPE_RE = /^[A-Za-z0-9:._\/ -]{1,200}$/;
+const MAX_AGE_RE = /^[0-9]{1,9}$/; // OIDC max_age: a non-negative integer number of seconds
 
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
@@ -79,25 +80,53 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     }
     const resource = q.resource ? resources.find((r) => r === q.resource) : resources[0];
     if (!resource) return back({ error: "invalid_target", error_description: "unknown resource" });
+    // HFY-R64 / RFC 9470: max_age and prompt=login ask for a fresh sign-in (the MCP server's step-up delete needs auth_time within 300 s).
+    let maxAge;
+    if (q.max_age !== undefined) {
+      if (typeof q.max_age !== "string" || !MAX_AGE_RE.test(q.max_age)) return back({ error: "invalid_request", error_description: "max_age must be a non-negative integer" });
+      maxAge = Number(q.max_age);
+    }
+    const promptLogin = typeof q.prompt === "string" && q.prompt.split(/\s+/).includes("login");
     const session = await sessionOf();
-    if (!session) return redirectTo(`${mount}/login?next=${encodeURIComponent(`${mount}/authorize?${new URLSearchParams(q).toString()}`)}`);
+    const authTime = Number.isFinite(session?.authTime) ? session.authTime : 0;
+    if (!session || promptLogin || (maxAge !== undefined && secs() - authTime > maxAge)) {
+      // Back here after the sign-in: `prompt` is dropped (else prompt=login would loop), max_age is kept (a fresh sign-in has authTime ~ now, so it passes).
+      const next = new URLSearchParams(q);
+      next.delete("prompt");
+      return redirectTo(`${mount}/login?next=${encodeURIComponent(`${mount}/authorize?${next.toString()}`)}`);
+    }
     if (!(await groupsFor(session.sub))) return back({ error: "access_denied", error_description: "not on the family access list" });
     const code = b64u(random(32));
     await store.put({
       PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope: scopeOf(q.scope),
+      ...assuranceOf(session),
       expiresAt: now() + CODE_TTL_S * 1000, ttl: secs() + CODE_TTL_S + 60,
     });
     return back({ code });
   }
 
-  async function issue({ sub, resource, scope, groups, family }) {
+  /** The sign-in facts an access token carries: email, amr (string[]), authTime (epoch seconds, 0 = unknown). Tolerates records that predate HFY-R64. */
+  function assuranceOf(src) {
+    const out = { authTime: Number.isFinite(src?.authTime) && src.authTime > 0 ? Math.floor(src.authTime) : 0 };
+    if (typeof src?.email === "string" && src.email) out.email = src.email;
+    const amr = Array.isArray(src?.amr) ? src.amr.filter((m) => typeof m === "string" && m) : [];
+    if (amr.length) out.amr = amr;
+    return out;
+  }
+
+  /**
+   * HFY-R64: the access token carries email, amr (only when non-empty) and auth_time (always; 0 when unknown, which the MCP server reads as stale).
+   * auth_time is the original sign-in time: refresh grants pass the stored value through, they never advance it.
+   */
+  async function issue({ sub, resource, scope, groups, family, email, amr, authTime }) {
     const iat = secs();
-    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access" })
+    const a = assuranceOf({ email, amr, authTime });
+    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access", ...(a.email ? { email: a.email } : {}), ...(a.amr ? { amr: a.amr } : {}), auth_time: a.authTime })
       .setProtectedHeader({ alg: "RS256", kid: signer.kid, typ: "at+jwt" })
       .setSubject(sub).setIssuer(base).setAudience(resource).setIssuedAt(iat).setExpirationTime(iat + ACCESS_TTL_S).setJti(b64u(random(12)))
       .sign(signer.privateKey);
     const refreshToken = `hfyrt_${b64u(random(32))}`;
-    await store.put({ PK: `MCPRT#${keyOf(refreshToken)}`, clientId, sub, resource, scope, family, expiresAt: now() + REFRESH_TTL_S * 1000, ttl: secs() + REFRESH_TTL_S + 3600 });
+    await store.put({ PK: `MCPRT#${keyOf(refreshToken)}`, clientId, sub, resource, scope, family, ...a, expiresAt: now() + REFRESH_TTL_S * 1000, ttl: secs() + REFRESH_TTL_S + 3600 });
     return json(200, { access_token: accessToken, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refreshToken, scope });
   }
 
@@ -113,7 +142,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the authorization request");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)) });
+      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)), email: rec.email, amr: rec.amr, authTime: rec.authTime });
     }
     if (p.grant_type === "refresh_token") {
       const rt = p.refresh_token;
@@ -130,7 +159,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the grant");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family });
+      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family, email: rec.email, amr: rec.amr, authTime: rec.authTime }); // never refreshes auth_time
     }
     return err(400, "unsupported_grant_type", "authorization_code and refresh_token are supported");
   }
