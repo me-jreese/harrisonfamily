@@ -14,30 +14,5 @@
 .hfy-search a, .hfy-search button { min-height: 44px; }
 .hfy-search input:not([type=checkbox]):not([type=radio]), .hfy-search select { min-height: 44px; box-sizing: border-box; }
 
-/* HFY-TSK-069 (D-11 item 4): dark theme bridge for the kit search contract.
-   Kit root cause (@io-kit/search-ui 1.0.8, css/theme.css): the package ships NEUTRAL LIGHT defaults on :root
-   (--io-search-text #18181b, --io-search-text-dim #52525b, --io-search-surface #fff ...). HFY imports them (search.jsx) but the shell is dark
-   (#0a0a0f), and @io-kit/tokens' harrisonfamily kit-bridge.css (--io-search-* aliases) is loaded EARLIER than this island's CSS, so the neutral
-   defaults win: .io-search-header__count, .io-search__controls-toggle, .io-search-zero__text were #52525b on #0a0a0f (2.55:1) and
-   .io-search-zero__title #18181b on #0a0a0f (1.11:1). The prebuilt themes/enceladus.css would fix it but drags in ~200 KB of Cloudscape theme,
-   so the contract is mapped here to the shell's own dark short names (tokens.css --bg/--fg/..., same values as that enceladus theme).
-   Scoped to html.hfy-shell-v2 (the dark shell): searchV2 with -shellV2 (a dev override) renders on the light legacy page, where the kit's
-   neutral light defaults are right. Specificity (0,1,1) also beats the neutral :root block whatever the stylesheet order.
-   Remove when HFY gets a generated search theme (io-kit-search-theme) or the kit scopes its defaults with :where(:root). */
-html.hfy-shell-v2 {
-  --io-search-canvas: var(--bg, #0a0a0f);
-  --io-search-surface: var(--bg-surface, #111827);
-  --io-search-surface-raised: var(--bg-surface-alt, #1c2333);
-  --io-search-text: var(--fg, #eef2f7);
-  --io-search-text-dim: var(--fg-muted, #6b8a94);
-  --io-search-accent: var(--accent, #3d9ba8);
-  --io-search-accent-hover: var(--accent-hover, #7ac8d4);
-  --io-search-accent-text: var(--bg, #0a0a0f);
-  --io-search-focus: var(--accent-hover, #7ac8d4);
-  --io-search-border: var(--enc-slate, #2e4d5c);
-  --io-search-danger: var(--danger, #c85060);
-  --io-search-token-bg: var(--bg-surface-alt, #1c2333);
-  --io-search-token-fg: var(--fg, #eef2f7);
-  --io-search-scrim: rgba(10, 10, 15, 0.6);
-  --io-search-sticky-bg: var(--bg, #0a0a0f);
-}
+/* HFY-TSK-069 (D-11 item 4) override removed: @io-kit/search-ui 1.0.10 (DVP-TSK-A72) scopes its neutral defaults with :where(:root),
+   so the harrisonfamily kit-bridge (@io-kit/tokens) dark --io-search-* aliases win regardless of stylesheet order. */
