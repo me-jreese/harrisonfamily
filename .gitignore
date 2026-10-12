@@ -35,3 +35,4 @@ api/dist/
 islands/node_modules/
 islands/test-results/
 islands/playwright-report/
+!.github/actions/io-kit-ci/build/
