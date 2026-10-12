@@ -24,3 +24,7 @@ __pycache__/
 # Ensure external references stay out of the repo
 ../agent-reference/
 ../reports/
+
+# api (HFY-TSK-063)
+node_modules/
+api/dist/

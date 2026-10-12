@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  harrisonfamily app backend (HFY-TSK-063, R32): DynamoDB table hfy-app, Lambda hfy-api behind an IAM-auth
+  Function URL that only the site's CloudFront distribution (Lambda OAC) may invoke.
+
+Parameters:
+  TableName: { Type: String, Default: hfy-app }
+  FunctionName: { Type: String, Default: hfy-api }
+  CodeBucket: { Type: String, Description: S3 bucket holding the hfy-api.zip package }
+  CodeKey: { Type: String, Default: lambda/hfy-api.zip }
+  ConfigBucket: { Type: String, Default: harrisonfamily, Description: Bucket with config/admins.json }
+  AdminListKey: { Type: String, Default: config/admins.json }
+  SessionKeySecretName: { Type: String, Description: Secrets Manager secret holding the auth-edge session signing key (PEM or JSON with kid) }
+  VapidSecretName: { Type: String, Default: "", Description: Optional secret {subject,publicKey,privateKey} for web push; empty disables sending }
+  SessionIssuer: { Type: String, Default: "https://harrisonfamily.us/auth" }
+  SessionAudience: { Type: String, Default: harrisonfamily }
+  SessionCookie: { Type: String, Default: io_id }
+  DistributionId: { Type: String, Default: E2JCDK3QLQNNYB, Description: CloudFront distribution allowed to invoke the Function URL }
+
+Conditions:
+  HasVapid: !Not [!Equals [!Ref VapidSecretName, ""]]
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: GSI1PK, AttributeType: S }
+        - { AttributeName: GSI1SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - { AttributeName: GSI1PK, KeyType: HASH }
+            - { AttributeName: GSI1SK, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      SSESpecification: { SSEEnabled: true }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FunctionName}
+      RetentionInDays: 30
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${FunctionName}-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
+      Policies:
+        - PolicyName: hfy-api
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${FunctionName}:*
+              - Sid: Table
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem]
+                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              - Sid: AdminList
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/config/*
+              - Sid: Secrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SessionKeySecretName}-*
+                  - !If
+                    - HasVapid
+                    - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${VapidSecretName}-*
+                    - !Ref AWS::NoValue
+
+  Function:
+    Type: AWS::Lambda::Function
+    DependsOn: LogGroup
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 15
+      Handler: src/index.handler
+      Role: !GetAtt Role.Arn
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+          SESSION_KEY_SECRET: !Ref SessionKeySecretName
+          SESSION_ISSUER: !Ref SessionIssuer
+          SESSION_AUDIENCE: !Ref SessionAudience
+          SESSION_COOKIE: !Ref SessionCookie
+          ADMIN_LIST_BUCKET: !Ref ConfigBucket
+          ADMIN_LIST_KEY: !Ref AdminListKey
+          VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
+
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt Function.Arn
+      AuthType: AWS_IAM
+      InvokeMode: BUFFERED
+
+  # CloudFront OAC signs requests as cloudfront.amazonaws.com; scope both grants to the one distribution.
+  InvokeUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
+      FunctionUrlAuthType: AWS_IAM
+
+  InvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
+
+Outputs:
+  FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }
+  TableName: { Value: !Ref Table }
+  FunctionName: { Value: !Ref Function }
