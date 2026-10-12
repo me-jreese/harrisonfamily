@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "site": "harrisonfamily.us",
+  "authOrigin": "https://harrisonfamily.us",
+  "cookieDomain": ".harrisonfamily.us",
+  "returnOrigins": ["https://harrisonfamily.us"],
+  "idp": {
+    "kind": "cognito",
+    "userPoolId": "REPLACED_AT_RUNTIME_FROM_COGNITO_USER_POOL_ID",
+    "clientId": "REPLACED_AT_RUNTIME_FROM_COGNITO_CLIENT_ID",
+    "domain": "https://harrisonfamily.us/auth"
+  },
+  "providers": [
+    { "kind": "google", "mode": "gis_id_token", "clientId": "REPLACED_AT_RUNTIME_FROM_GOOGLE_CLIENT_ID" },
+    { "kind": "password" }
+  ],
+  "session": {
+    "issuer": "https://harrisonfamily.us/auth",
+    "audience": "harrisonfamily-web",
+    "kid": "hfy-session-1",
+    "signingKeySecretName": "harrisonfamily/auth-edge/session-signing-key",
+    "accessTtlSeconds": 3600,
+    "profile": "installed"
+  },
+  "store": { "kind": "dynamodb", "tableEnv": "AUTH_TABLE" },
+  "resolver": { "kind": "s3_allowlist", "bucket": "harrisonfamily", "key": "config/userGrampsID.json", "cacheSeconds": 300 },
+  "theme": {
+    "cssUrl": "https://harrisonfamily.us/css/main.css",
+    "vars": { "--io-accent": "#7a3b2e", "--io-on-accent": "#ffffff", "--io-surface": "#faf6f1" }
+  },
+  "copy": {
+    "title": "Sign in to the Harrison family archive",
+    "subtitle": "Family members only. Use Google or your email and password; both reach the same account.",
+    "denied_body": "This email address is not on the family access list. Ask a family administrator to add it."
+  }
+}

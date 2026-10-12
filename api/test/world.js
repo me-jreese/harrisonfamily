@@ -1,14 +1,14 @@
-import { generateKeyPairSync } from "node:crypto";
-import { SignJWT, exportPKCS8 } from "jose";
+import { generateKeyPairSync, createPublicKey } from "node:crypto";
+import { SignJWT, createLocalJWKSet } from "jose";
 import { createUlidFactory, ulidTime } from "@io-kit/feed";
 import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createFakeDdb, cmds } from "./fake-ddb.js";
-import { createAdminList, createAuthenticator, jwksFromSecret } from "../src/auth.js";
+import { createAdminList, createAuthenticator } from "../src/auth.js";
 import { createHandler } from "../src/handler.js";
 
 export const TABLE = "hfy-app";
 export const ISSUER = "https://harrisonfamily.us/auth";
-export const AUDIENCE = "harrisonfamily";
+export const AUDIENCE = "harrisonfamily-web";
 
 /** Strictly increasing fake clock (like the kit memory stores) starting an hour after `after`. */
 export function ticker(after = Date.now()) {
@@ -29,7 +29,7 @@ export function makeApi({ admins = ["I0099"], withPush = true } = {}) {
   const ddb = createFakeDdb();
   const now = ticker();
   const sent = [];
-  const jwks = jwksFromSecret(pem);
+  const jwks = createLocalJWKSet({ keys: [{ ...createPublicKey(pem).export({ format: "jwk" }), kid: "hfy-session-1", alg: "RS256", use: "sig" }] });
   const authenticate = createAuthenticator({
     issuer: ISSUER, audience: AUDIENCE, getJwks: async () => jwks,
     getAdmins: createAdminList({ load: async () => ({ admins }) }), log: { warn() {}, error() {} },

@@ -5,7 +5,7 @@ import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
-import { createAdminList, createAuthenticator, jwksFromSecret } from "./auth.js";
+import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 
 const env = process.env;
@@ -16,8 +16,8 @@ const secrets = new SecretsManagerClient({});
 const table = env.TABLE_NAME ?? "hfy-app";
 
 const secretString = async (id) => (await secrets.send(new GetSecretValueCommand({ SecretId: id }))).SecretString ?? "";
-let jwksP;
-const getJwks = () => (jwksP ??= secretString(env.SESSION_KEY_SECRET).then((s) => jwksFromSecret(s, env.SESSION_KID)).catch((e) => { jwksP = undefined; throw e; }));
+const jwks = createJwks(env.SESSION_JWKS_URL ?? "https://harrisonfamily.us/auth/.well-known/jwks.json");
+const getJwks = async () => jwks;
 
 const getAdmins = createAdminList({
   load: async () => {
@@ -44,7 +44,7 @@ async function loadPush() {
 
 const authenticate = createAuthenticator({
   issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth",
-  audience: env.SESSION_AUDIENCE ?? "harrisonfamily",
+  audience: env.SESSION_AUDIENCE ?? "harrisonfamily-web",
   cookieName: env.SESSION_COOKIE ?? "io_id",
   getJwks,
   getAdmins,

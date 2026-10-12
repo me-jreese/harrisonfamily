@@ -10,12 +10,19 @@ Parameters:
   CodeKey: { Type: String, Default: lambda/hfy-api.zip }
   ConfigBucket: { Type: String, Default: harrisonfamily, Description: Bucket with config/admins.json }
   AdminListKey: { Type: String, Default: config/admins.json }
-  SessionKeySecretName: { Type: String, Description: Secrets Manager secret holding the auth-edge session signing key (PEM or JSON with kid) }
-  VapidSecretName: { Type: String, Default: "", Description: Optional secret {subject,publicKey,privateKey} for web push; empty disables sending }
+  VapidSecretName: { Type: String, Default: "", Description: "Optional secret {subject,publicKey,privateKey} for web push; empty disables sending" }
   SessionIssuer: { Type: String, Default: "https://harrisonfamily.us/auth" }
-  SessionAudience: { Type: String, Default: harrisonfamily }
+  SessionAudience: { Type: String, Default: harrisonfamily-web }
+  SessionJwksUrl: { Type: String, Default: "https://harrisonfamily.us/auth/.well-known/jwks.json", Description: Auth-edge JWKS the API verifies sessions with (HFY-R38; the API never holds the signing key) }
   SessionCookie: { Type: String, Default: io_id }
-  DistributionId: { Type: String, Default: E2JCDK3QLQNNYB, Description: CloudFront distribution allowed to invoke the Function URL }
+  DistributionId: { Type: String, Default: E2JCDK3QLQNNYB, Description: CloudFront distribution allowed to invoke the Function URLs }
+  # --- auth edge (HFY-TSK-062) ---
+  AuthFunctionName: { Type: String, Default: hfy-auth-edge }
+  AuthCodeKey: { Type: String, Default: lambda/hfy-auth-edge.zip, Description: Key of hfy-auth-edge.zip in CodeBucket }
+  UserPoolName: { Type: String, Default: hfy-users }
+  AllowlistKey: { Type: String, Default: config/userGrampsID.json, Description: Email -> gramps_id map the auth edge resolves principals against }
+  SigningKeySecretName: { Type: String, Default: harrisonfamily/auth-edge/session-signing-key, Description: Secret created by scripts/infra/create-session-key.sh }
+  GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
 
 Conditions:
   HasVapid: !Not [!Equals [!Ref VapidSecretName, ""]]
@@ -77,15 +84,13 @@ Resources:
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/config/*
-              - Sid: Secrets
-                Effect: Allow
-                Action: secretsmanager:GetSecretValue
-                Resource:
-                  - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SessionKeySecretName}-*
-                  - !If
-                    - HasVapid
-                    - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${VapidSecretName}-*
-                    - !Ref AWS::NoValue
+              - !If
+                - HasVapid
+                - Sid: Secrets
+                  Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${VapidSecretName}-*
+                - !Ref AWS::NoValue
 
   Function:
     Type: AWS::Lambda::Function
@@ -102,7 +107,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref TableName
-          SESSION_KEY_SECRET: !Ref SessionKeySecretName
+          SESSION_JWKS_URL: !Ref SessionJwksUrl
           SESSION_ISSUER: !Ref SessionIssuer
           SESSION_AUDIENCE: !Ref SessionAudience
           SESSION_COOKIE: !Ref SessionCookie
@@ -135,7 +140,135 @@ Resources:
       Principal: cloudfront.amazonaws.com
       SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
 
+  # ---------------- auth edge (HFY-TSK-062): Cognito pool + hfy-auth-edge at https://harrisonfamily.us/auth/* ----------------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: "OFF"
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: false }
+      AccountRecoverySetting:
+        RecoveryMechanisms: [{ Name: verified_email, Priority: 1 }]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      Schema:
+        - { Name: email, AttributeDataType: String, Required: true, Mutable: true }
+      VerificationMessageTemplate: { DefaultEmailOption: CONFIRM_WITH_CODE }
+      EmailConfiguration: { EmailSendingAccount: COGNITO_DEFAULT }
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: hfy-web
+      GenerateSecret: false
+      # The edge, not the browser, calls Cognito (InitiateAuth USER_PASSWORD_AUTH) and then mints its own RS256 session.
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders: [COGNITO]
+      RefreshTokenValidity: 30
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      TokenValidityUnits: { RefreshToken: days, AccessToken: minutes, IdToken: minutes }
+
+  AuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AuthFunctionName}
+      RetentionInDays: 30
+
+  AuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AuthFunctionName}-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
+      Policies:
+        - PolicyName: hfy-auth-edge
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AuthFunctionName}:*
+              - Sid: RefreshAndLinkStore
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query]
+                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              - Sid: Allowlist
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/${AllowlistKey}
+              - Sid: SigningKey
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SigningKeySecretName}-*
+              - Sid: CognitoAdminLink
+                Effect: Allow
+                Action: [cognito-idp:AdminGetUser, cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword]
+                Resource: !GetAtt UserPool.Arn
+
+  AuthFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AuthLogGroup
+    Properties:
+      FunctionName: !Ref AuthFunctionName
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 15
+      Handler: src/index.handler
+      Role: !GetAtt AuthRole.Arn
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref AuthCodeKey }
+      Environment:
+        Variables:
+          AUTH_TABLE: !Ref TableName
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          COGNITO_CLIENT_ID: !Ref UserPoolClient
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+
+  AuthFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt AuthFunction.Arn
+      AuthType: AWS_IAM
+      InvokeMode: BUFFERED
+
+  AuthInvokeUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
+      FunctionUrlAuthType: AWS_IAM
+
+  AuthInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthFunction
+      Action: lambda:InvokeFunction
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
+
 Outputs:
   FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }
   TableName: { Value: !Ref Table }
   FunctionName: { Value: !Ref Function }
+  AuthFunctionUrl: { Description: Auth edge Function URL (CloudFront origin for /auth/*), Value: !GetAtt AuthFunctionUrl.FunctionUrl }
+  AuthFunctionName: { Value: !Ref AuthFunction }
+  UserPoolId: { Value: !Ref UserPool }
+  UserPoolClientId: { Value: !Ref UserPoolClient }

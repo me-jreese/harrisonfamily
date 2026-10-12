@@ -5,7 +5,7 @@ Kits: `@io-kit/content` (posts, CS suite), `@io-kit/comments` (comments, CC suit
 
 ## Auth and permissions
 
-Every route needs a session: the auth-edge cookie (`SESSION_COOKIE`, default `io_id`) is an RS256 token verified with `resolveAuth` against the public half of the signing key in Secrets Manager (`SESSION_KEY_SECRET`; PEM or JSON `{privateKey, kid}`). `iss` must be `SESSION_ISSUER`, `aud` `SESSION_AUDIENCE`. No or bad cookie is 401. `sub` is the member's gramps_id.
+Every route needs a session: the auth-edge cookie (`SESSION_COOKIE`, default `io_id`) is an RS256 token verified with `resolveAuth` against the public half of the signing key in Secrets Manager (`SESSION_JWKS_URL`; PEM or JSON `{privateKey, kid}`). `iss` must be `SESSION_ISSUER`, `aud` `SESSION_AUDIENCE`. No or bad cookie is 401. `sub` is the member's gramps_id.
 Q-4: authors edit and delete their own posts and comments; admins (gramps_ids in `s3://$ADMIN_LIST_BUCKET/$ADMIN_LIST_KEY`, default `harrisonfamily/config/admins.json`, a JSON array or `{"admins": [...]}`, cached 60 s, fail closed) delete any. `can` is computed server-side on every item. POST/PUT/PATCH require `content-type: application/json` (CSRF defence with SameSite cookies).
 
 ## Routes (`/api`)

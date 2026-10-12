@@ -1,20 +1,11 @@
 // Principal from the auth-edge session cookie (@io-kit/auth/server) + S3-driven admin list (Q-4).
-import { createPublicKey } from "node:crypto";
-import { createLocalJWKSet } from "jose";
+import { createRemoteJWKSet } from "jose";
 import { resolveAuth } from "@io-kit/auth/server";
 import { parseCookies } from "./http.js";
 
-/** Secret is a PEM private key, or JSON {privateKey|pem, kid}. Only the derived PUBLIC key is kept in memory. */
-export function jwksFromSecret(secretString, defaultKid = "hfy-session-1") {
-  let pem = secretString;
-  let kid = defaultKid;
-  if (secretString.trim().startsWith("{")) {
-    const o = JSON.parse(secretString);
-    pem = o.privateKey ?? o.private_key ?? o.pem;
-    kid = o.kid ?? kid;
-  }
-  const jwk = createPublicKey(pem).export({ format: "jwk" });
-  return createLocalJWKSet({ keys: [{ ...jwk, kid, alg: "RS256", use: "sig" }] });
+/** Remote JWKS published by the auth edge (HFY-R38). The edge alone holds the signing key; the API only ever sees public keys. */
+export function createJwks(url, opts = {}) {
+  return createRemoteJWKSet(new URL(url), { cooldownDuration: 30_000, cacheMaxAge: 600_000, timeoutDuration: 5_000, ...opts });
 }
 
 export function createAdminList({ load, ttlMs = 60_000, now = () => Date.now(), log = console }) {
