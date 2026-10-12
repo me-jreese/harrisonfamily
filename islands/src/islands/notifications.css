@@ -104,7 +104,11 @@
 .hfy-notify .iok-notify-nudge [data-testid="push-nudge-dismiss"] { border-color: transparent; color: var(--io-notify-link); font-size: 0; }
 .hfy-notify .iok-notify-nudge [data-testid="push-nudge-dismiss"]::after { content: attr(aria-label); font-size: var(--io-notify-font-size-sm); }
 /* The one primary CTA on a phone screen is control.h.lg. */
-@media (max-width: 42.99rem) { .hfy-notify .iok-notify-nudge [data-testid="push-nudge-on"] { min-height: var(--io-notify-control-h-lg); } }
+/* Under 688 it is also full width, with "not now" centred under it (DS Notifications preview; it was a 124px inline button). */
+@media (max-width: 42.99rem) {
+  .hfy-notify .iok-notify-nudge [data-testid="push-nudge-on"] { flex: 1 1 100%; min-height: var(--io-notify-control-h-lg); }
+  .hfy-notify .iok-notify-nudge [data-testid="push-nudge-dismiss"] { flex: 1 1 100%; justify-content: center; }
+}
 
 /* Rows: 56 tall, label sentence (16) over its description (16, text.dim), switch right, hairline between. */
 .hfy-notify .iok-notify-row {

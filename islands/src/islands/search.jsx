@@ -19,6 +19,7 @@ const storage = createMemoryCorpusStorage();
 
 // The contract's CollectionHeader / ZeroResults / EmptyState props carry no corpus-pending, error or query text, so the island's
 // overrides read them from context. The ui object is module-level so the component identities never change (no remounts).
+const PLACEHOLDER = "a first name, a town, or a year";
 const SearchState = createContext({ pending: false, error: null, q: "" });
 const tokenText = (query) => query.tokens.map((t) => (Array.isArray(t.value) ? t.value.join("–") : String(t.value ?? ""))).filter(Boolean).join(" ");
 
@@ -64,7 +65,12 @@ function Empty() {
   );
 }
 
-const UI = { ...cloudscapeUi, CollectionHeader: Header, ZeroResults: Zero, EmptyState: Empty };
+// The filter sheet's editor FilterInput gets no placeholder from CollectionSearch (@io-kit/search-ui 1.0.10 passes one to the row-1 input
+// only), so it fell back to the kit's English "Filter by text, property or value". The wrapper gives it the house line. Module-level, so
+// the component identity never changes (no remounts). Kit follow-up: a labels / i18n prop on CollectionSearch.
+const FilterInput = (p) => <cloudscapeUi.FilterInput {...p} placeholder={p.placeholder ?? PLACEHOLDER} />;
+
+const UI = { ...cloudscapeUi, CollectionHeader: Header, ZeroResults: Zero, EmptyState: Empty, FilterInput };
 // The engine's relevance order (no sort spec), relabelled in the house style.
 const SORTS = [{ id: "relevance", label: "best match" }];
 
@@ -78,7 +84,8 @@ function Skeleton() {
 
 function Row({ row }) {
   const f = row.fields;
-  const meta = f.living ? `living${f.lifespan ? ` · ${f.lifespan}` : ""}` : f.lifespan;
+  // DS (theme QA before / after): "living" is a text.dim word after the lifespan, "b. 1975 · living".
+  const meta = f.living ? `${f.lifespan ? `${f.lifespan} · ` : ""}living` : f.lifespan;
   return (
     <a className="hfy-search__row" href={`/person/?id=${encodeURIComponent(row.id)}`}>
       {f.photo ? <img className="hfy-search__photo" src={f.photo} alt="" /> : <span className="hfy-search__photo hfy-search__photo--none" aria-hidden="true">{(f.given || row.title || "").trim().charAt(0)}</span>}
@@ -106,7 +113,7 @@ function SearchApp() {
         <CollectionSearch
           ui={UI} title="people" things="people" rows={idx.rows} properties={peopleProperties}
           query={query} onQueryChange={setQuery} corpusPending={pending} error={error}
-          placeholder="a first name, a town, or a year" autoFocus={params.get("focus") === "1"}
+          placeholder={PLACEHOLDER} autoFocus={params.get("focus") === "1"}
           controlsToggle={false} sortOptions={SORTS} renderRow={(row) => <Row row={row} />} pageSize={30} loadMore="button"
         />
       </SearchState.Provider>

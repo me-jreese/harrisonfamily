@@ -8,37 +8,37 @@
   const ASSET_V = {
     "islands": {
       "my-posts": {
-        "js": "c5f21b66",
-        "css": "aa4bb2fa"
+        "js": "dafa6bd1",
+        "css": "6b1f4442"
       },
       "notifications": {
-        "js": "afbb2b24",
-        "css": "23739dc1"
+        "js": "d14efab5",
+        "css": "56799f74"
       },
       "person": {
-        "js": "d1f6d3d5",
-        "css": "14609d32"
+        "js": "f0d246dc",
+        "css": "d416dda8"
       },
       "posts": {
-        "js": "347bef6c",
-        "css": "fba2c517"
+        "js": "2823bed3",
+        "css": "04cffdda"
       },
       "search": {
-        "js": "fcc957da",
-        "css": "2d72b9d3"
+        "js": "497de112",
+        "css": "9e007813"
       },
       "shell": {
-        "js": "e37b4872",
-        "css": "184cd8cd"
+        "js": "442f7b19",
+        "css": "89b22c11"
       },
       "timeline": {
-        "js": "7a4959d0",
-        "css": "aa4bb2fa"
+        "js": "e389c11d",
+        "css": "6b1f4442"
       }
     },
-    "theme": "e6060ff3",
+    "theme": "b5c5cdf0",
     "manifest": "c0f9b5fc",
-    "sw": "d5f9f7c0"
+    "sw": "b7ab88f2"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

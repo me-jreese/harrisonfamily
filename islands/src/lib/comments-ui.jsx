@@ -44,6 +44,20 @@ function watchPlaceholders(root) {
   return () => mo.disconnect();
 }
 
+// DS Comments: the quiet delete button reads --io-comments-danger. @io-kit/comments 0.1.0 Comment gives it no hook (the edit, delete and
+// moderation buttons share one class), so the delete button is found by its label and tagged; comments.css colours the tag.
+function watchDeleteButtons(root, labels = LABELS) {
+  if (!root || typeof MutationObserver === "undefined") return () => {};
+  const apply = () => root.querySelectorAll(".io-comments-actions > .io-comments-control").forEach((b) => {
+    if (b.textContent.trim() === labels.delete) b.setAttribute("data-hfy-danger", "");
+    else b.removeAttribute("data-hfy-danger");
+  });
+  apply();
+  const mo = new MutationObserver(apply);
+  mo.observe(root, { subtree: true, childList: true, characterData: true });
+  return () => mo.disconnect();
+}
+
 /**
  * DS Comments / Voice: ask a scoped question before deleting — `delete this comment?` -> delete / keep, inline, no dialog.
  * Kit root cause (@io-kit/comments 0.1.0, dist/src/react.js Comment): the own-comment delete button calls props.onDelete directly;
@@ -121,6 +135,7 @@ export function Comments({ subject }) {
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => watchTimeTitles(root.current), []);
   useEffect(() => watchPlaceholders(root.current), []);
+  useEffect(() => watchDeleteButtons(root.current), []);
   useEffect(() => guardCommentDeletes(root.current), []);
   const sid = session?.authenticated ? session.sub : null;
   // The API does not expose roles; a moderator is whoever can delete someone else's comment (server-computed can.delete).

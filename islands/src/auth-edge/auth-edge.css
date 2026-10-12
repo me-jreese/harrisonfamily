@@ -9,20 +9,22 @@
    auth/src/edge.js, `font-src 'self'`; so this file and the woff2 files it names must be served from https://harrisonfamily.us. There is
    no runtime @import: every @import here is resolved at build time, so the page makes one stylesheet request.
 
-   Cascade contract (@io-kit/auth 2.1.2 pages.js layout()): the <link> to this file comes BEFORE the page's inline <style> (BASE_CSS).
+   Cascade contract (@io-kit/auth 2.2.0 pages.js layout()): the <link> to this file comes BEFORE the page's inline <style> (BASE_CSS).
    An equal-specificity inline rule therefore wins, so every rule below that must beat one is prefixed with `html` (html:root is 0,1,1
    against the inline :root at 0,1,0; html main is 0,0,2 against main at 0,0,1).
 
-   Kit root cause (record upstream): BASE_CSS reads the legacy --io-bg, --io-fg, --io-muted, --io-accent, --io-on-accent, --io-surface,
-   --io-border, --io-danger, --io-radius and --io-font names, not the --io-auth-* skinning contract that kit-bridge.css declares. The
-   html:root block remaps those ten names onto --io-auth-*. Delete it when @io-kit/auth reads --io-auth-* itself.
+   Kit root cause (fixed in @io-kit/auth 2.2.0): BASE_CSS read the legacy --io-bg, --io-fg, --io-muted, --io-accent, --io-on-accent,
+   --io-surface, --io-border, --io-danger, --io-radius and --io-font names, not the --io-auth-* skinning contract that kit-bridge.css
+   declares. 2.2.0 reads --io-auth-* first (themed(contract, legacy, fallback)), so the html:root block below is now a redundant no-op
+   (it maps each legacy name onto the same --io-auth-* value): deletable once the committed pages have been checked without it
+   (HFY-TSK-084 keeps it until a deploy has proved 2.2.0 on production).
 
    Every value is a token alias (lint no-literal-token-values, islands/tests/theme-lint.test.mjs). */
 @import "hfy:fonts";
 @import "@io-kit/tokens/harrisonfamily/theme.css";
 @import "@io-kit/tokens/harrisonfamily/kit-bridge.css";
 
-/* 1. The ten BASE_CSS variables -> the --io-auth-* contract (HFY override of the kit root cause above). */
+/* 1. The ten BASE_CSS legacy variables -> the --io-auth-* contract (redundant since @io-kit/auth 2.2.0, see the header; deletable). */
 html:root {
   --io-bg: var(--io-auth-surface);
   --io-fg: var(--io-auth-text);
@@ -105,8 +107,20 @@ html p { margin: 0; }
 /* The subtitle is the step-by-step help: one step per line (\n in the manifest copy). On login it goes last (anatomy). */
 html main > p { white-space: pre-line; }
 html main:has(#path-password) > p { order: 1; }
-/* After a sign-in the kit swaps the paths for the add-a-passkey prompt but leaves the sign-in help up; it no longer applies. */
+/* After a sign-in the kit swaps the paths for the add-a-passkey prompt but leaves the sign-in help up; it no longer applies. The help
+   paragraph goes; the greeting h1 ('sign in to see the private pages.') is just as stale but is the page's heading, so it is visually
+   hidden and stays for screen readers (the same pattern as the path headings below). */
 html main:has(#pk-prompt:not([hidden])) > p { display: none; }
+html main:has(#pk-prompt:not([hidden])) > h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
 /* 3. The sign-in paths are rows of the one card, not three boxed cards. */
 html .path {
@@ -190,6 +204,8 @@ html input[autocomplete="one-time-code"] {
   font-size: var(--io-typography-size-xl);
   letter-spacing: var(--io-space-2);
   text-align: center;
+  /* letter-spacing also trails the last digit; an equal indent at the start puts the digits on the centre line (QA2: 4px left). */
+  text-indent: var(--io-space-2);
 }
 /* Primary: Columbia, 56 tall (--io-auth-control-h = control.h.lg), label size, semibold. */
 html button,
@@ -212,8 +228,10 @@ html ul.linked button {
   color: var(--io-auth-text);
   border-color: var(--io-auth-border-strong);
 }
-/* Kit pages.js renders "not now" with an inline style (background/colour/border on the legacy names, margin-top 8px): only !important
-   reaches it. The path's gap already spaces it. */
+/* Kit pages.js rendered "not now" with an inline style (background/colour/border on the legacy names, margin-top 8px), which only
+   !important reached; @io-kit/auth 2.2.0 renders the button without one (class alt, themed by BASE_CSS), so this block is now redundant
+   (the .btn.alt rule above gives the same look; the path's gap spaces it). Deletable with the html:root remap once production has
+   been checked on 2.2.0. */
 html #pk-later {
   margin-top: 0 !important;
   background: var(--io-auth-surface-raised) !important;
@@ -289,6 +307,35 @@ html .msg.show {
 }
 html form > .msg.show { margin: 0 0 var(--io-space-3); }
 html .msg.show.ok {
+  color: var(--io-auth-text);
+  border-color: var(--io-auth-border-strong);
+}
+/* The allowlist state (DS SignIn states: a banner with an accent.secondary border, the sentence in text colour, and "copy my email").
+   Not being on the list yet is not the member's mistake, so it is not an error banner. The kit marks every failure 'msg show', so
+   auth/src/edge.js (allowlistNotice) sets data-detail="not_allowlisted" on the message and adds the copy button, and (deniedNotice)
+   marks the denied page's sentence data-state="not_allowlisted". Kit root cause and upstream there. */
+html .msg.show[data-detail="not_allowlisted"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--io-space-2);
+}
+html .msg.show[data-detail="not_allowlisted"],
+html p[data-state="not_allowlisted"] {
+  padding: var(--io-space-3) var(--io-space-4);
+  font-size: var(--io-auth-font-size-sm);
+  background: var(--io-auth-surface-raised);
+  color: var(--io-auth-text);
+  border: 1px solid var(--io-auth-accent-secondary);
+  border-radius: var(--io-auth-radius-md);
+}
+/* "copy my email": the secondary button, one control.h.md (44) tall, as wide as its label. */
+html .msg button[data-copy-email] {
+  width: auto;
+  min-height: var(--io-control-h-md);
+  padding: 0 var(--io-space-4);
+  font-size: var(--io-auth-font-size-sm);
+  background: var(--io-auth-surface-raised);
   color: var(--io-auth-text);
   border-color: var(--io-auth-border-strong);
 }

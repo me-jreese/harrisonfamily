@@ -36,12 +36,25 @@ export const HERO = {
     // The Eleventy output also closes this h1 with a second <h1> (an empty heading in the DOM); the rewrite closes it properly.
     ["<h1>Welcome to the Harrison Family Website!<h1>", "<h1>hi family. this is where we keep our history.</h1>"],
     ["<h1>Welcome to the Harrison Family Website!</h1>", "<h1>hi family. this is where we keep our history.</h1>"],
-    ["<h3>Learn about our heritage and help us preserve our family history.</h3>", "<h3>learn about our heritage and help us preserve our family history.</h3>"],
+    // The sub-line is a lede paragraph, not an <h3> (it skipped a heading level under the h1; QA2). Both the original and the already
+    // lowercased h3 become the paragraph, so the rewrite stays idempotent (the new markup contains neither).
+    ["<h3>Learn about our heritage and help us preserve our family history.</h3>", '<p class="home-hero__lede">learn about our heritage and help us preserve our family history.</p>'],
+    ["<h3>learn about our heritage and help us preserve our family history.</h3>", '<p class="home-hero__lede">learn about our heritage and help us preserve our family history.</p>'],
     ['href="/about/">About Us</a>', 'href="/about/">our story</a>'],
     ['data-feature="familyLoginLink">Family Login</a>', 'data-feature="familyLoginLink">sign in</a>'],
   ],
   "about/index.html": [["Honoring the Harrison Family Legacy</h1>", "honoring the Harrison family legacy</h1>"]],
   "family-login/index.html": [['mb-3">Family Login</h1>', 'mb-3">sign in</h1>']],
+};
+
+/**
+ * Intrinsic size of each page's hero photograph (width x height of the committed file in 11ty/images/), written as width/height
+ * attributes so the browser reserves the box before the file arrives (the unsized <img> pushed the copy from y=148 to y=520 on load,
+ * a 0.325 layout shift; QA2). CSS still decides the displayed size (.home-hero__image).
+ */
+export const HERO_IMAGES = {
+  "index.html": { src: "/images/00_mama_harrison.jpg", width: 3038, height: 3931 },
+  "about/index.html": { src: "/images/Adell-MinorSr-1901-cropped.jpg", width: 2358, height: 1784 },
 };
 
 /** Every page with the Eleventy footer. */
@@ -72,8 +85,13 @@ export function applyCopy(html, page) {
     }
   }
   for (const [from, to] of HERO[page] || []) out = out.split(from).join(to);
+  // The fallback navbar's wordmark: the site name as a proper noun, not shouted ("HARRISON FAMILY"; the shell's own wordmark is
+  // "Harrison Family" in the display serif). Painted only until the shell mounts.
+  out = out.split('class="navbar-brand" href="/">HARRISON FAMILY</a>').join('class="navbar-brand" href="/">Harrison Family</a>');
+  const img = HERO_IMAGES[page];
+  if (img) out = out.replace(new RegExp(`(<img\\s+src="${esc(img.src)}")(?![^>]*\\swidth=)`), `$1 width="${img.width}" height="${img.height}"`);
   return out;
 }
 
 /** Strings that must not survive on any page (theme-delivery / copy tests). */
-export const RETIRED = [/All rights reserved/, /Welcome to the Harrison Family Website!/, />About Us</, />Family Login</, /Harrison Family Heritage<\/title>/];
+export const RETIRED = [/All rights reserved/, /Welcome to the Harrison Family Website!/, />About Us</, />Family Login</, /Harrison Family Heritage<\/title>/, />HARRISON FAMILY</];

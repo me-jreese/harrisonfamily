@@ -54,12 +54,15 @@ code, pre, kbd { font-size: var(--io-typography-size-sm); }
   backdrop-filter: blur(var(--io-space-2));
   font-family: var(--io-typography-font-ui);
 }
-/* .navbar-hf .navbar-brand {color:#fff; letter-spacing:.08em; font-size:1.1rem} */
+/* .navbar-hf .navbar-brand {color:#fff; letter-spacing:.08em; font-size:1.1rem}. The wordmark is the display serif at regular weight
+   (as the shell's), in proper case (copy.mjs): the legacy uppercase Source Sans 600 showed for a moment on a first visit (QA2). */
 .navbar-hf .navbar-brand {
   color: var(--bs-navbar-brand-color);
   letter-spacing: normal;
-  font-size: var(--io-typography-size-md);
-  font-weight: var(--io-typography-weight-semibold);
+  text-transform: none;
+  font-family: var(--io-typography-font-display);
+  font-size: var(--io-typography-size-lg);
+  font-weight: var(--io-typography-weight-regular);
   min-height: var(--io-control-tap-min);
   display: inline-flex;
   align-items: center;
@@ -194,8 +197,10 @@ code, pre, kbd { font-size: var(--io-typography-size-sm); }
   --bs-btn-bg: transparent;
   --bs-btn-border-color: var(--io-color-semantic-border-strong);
   --bs-btn-hover-color: var(--io-color-semantic-text);
-  --bs-btn-hover-bg: var(--io-color-semantic-surface-raised);
-  --bs-btn-hover-border-color: var(--io-color-semantic-border-strong);
+  /* hover is visible on a surface.raised card (the home hero): the fill goes to surface.sunken and the edge to text.dim (QA2: the
+     raised fill on the raised hero showed no change at all) */
+  --bs-btn-hover-bg: var(--io-color-semantic-surface-sunken);
+  --bs-btn-hover-border-color: var(--io-color-semantic-text-dim);
   --bs-btn-active-color: var(--io-color-semantic-text);
   --bs-btn-active-bg: var(--io-color-semantic-surface-raised);
   --bs-btn-active-border-color: var(--io-color-semantic-border-strong);

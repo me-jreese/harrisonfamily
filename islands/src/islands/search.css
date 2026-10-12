@@ -45,8 +45,17 @@
   font-size: var(--io-search-font-size);
   line-height: var(--io-search-line-height);
 }
-/* The shell owns the page gutter. */
-html.hfy-shell-v2 .hfy-search { padding-inline: 0; }
+/* The shell owns the page gutter. The island still clips sideways (a long name must not widen the page), and under the shell its inline
+   padding was 0, so the 2px focus ring at a 2px offset of every control on the island's edge (the input, Filter, Clear, the pill edit
+   button, the result rows) fell 4px outside the clip box and showed only its top and bottom bars (QA2 major, audit rule 7). The clip box
+   now owns the ring's room: padded by it and pulled back out by the same amount with a negative margin, so the content stays on the
+   gutter and the page still has nothing to scroll sideways. (overflow-clip-margin is no use with single-axis overflow-x: clip.) */
+html.hfy-shell-v2 .hfy-search {
+  --io-hfy-ring-room: calc(var(--io-search-focus-ring) + var(--io-search-focus-offset));
+  padding-inline: var(--io-hfy-ring-room);
+  margin-inline: calc(-1 * var(--io-hfy-ring-room));
+  max-width: calc(100% + 2 * var(--io-hfy-ring-room));
+}
 
 /* The page h1 is for assistive tech; the visible title is the collection header ("people", display serif). */
 .hfy-search__title {
@@ -72,6 +81,13 @@ html.hfy-shell-v2 .hfy-search { padding-inline: 0; }
 /* Banners: errors in danger, the stale/degraded line on an accent.secondary border, both on surface.raised. */
 #hfy-search-v2 .io-search__banner { background: var(--io-search-surface-raised); color: var(--io-search-danger); font-size: var(--io-search-font-size-sm); }
 #hfy-search-v2 .io-search__status { font-size: var(--io-search-font-size-sm); }
+/* The zero state is a card, as in the DS preview: surface.raised, a border, radius.md and 32px padding. */
+#hfy-search-v2 .io-search-zero {
+  padding: var(--io-space-7);
+  border: 1px solid var(--io-search-border);
+  border-radius: var(--io-search-radius-md);
+  background: var(--io-search-surface-raised);
+}
 #hfy-search-v2 .io-search-zero__title { color: var(--io-search-text); font-family: var(--io-search-font-display); font-weight: var(--io-typography-weight-regular); font-size: var(--io-typography-size-xl); }
 #hfy-search-v2 .io-search-zero__text { font-size: var(--io-search-font-size-sm); }
 
@@ -128,8 +144,12 @@ html.hfy-shell-v2 .hfy-search { padding-inline: 0; }
 .hfy-search__name { color: var(--io-search-link); font-family: var(--io-search-font-display); font-size: var(--io-search-font-size); overflow-wrap: anywhere; }
 .hfy-search__meta { opacity: 1; color: var(--io-search-text-dim); font-size: var(--io-search-font-size-sm); }
 
-/* Loading never paints blank: skeleton rows (surface.sunken, token shimmer) under the controls. */
+/* Loading never paints blank: skeleton rows (surface.sunken, token shimmer) under the controls. At 1024 the settled results are two
+   columns, so the skeleton is too (it was one column and the layout jumped when the results arrived). */
 .hfy-search__skeleton { display: grid; gap: var(--io-search-space-2); margin: var(--io-search-space-2) 0; }
+@media (min-width: 64rem) {
+  .hfy-search__skeleton { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--io-search-space-2) var(--io-search-space-4); }
+}
 .hfy-search__skel-row {
   block-size: var(--io-search-tap-min);
   border-radius: var(--io-search-radius-sm);
@@ -195,6 +215,20 @@ html.hfy-shell-v2 .hfy-search { padding-inline: 0; }
 @media (max-width: 42.99rem) {
   .io-search-scope .io-search__sheetdone { block-size: var(--io-search-control-h-lg); }
 }
+/* Kit root cause (@io-kit/search-ui 1.0.10 components.css): .io-search__sheetfooter paints the page ground (--io-search-surface) as a box
+   inside the surface.raised panel that @io-kit/shell paints, a dark band inset 12px with the Done button on it. The footer takes the
+   panel's colour; its border-top divider stays. Upstream: read surface-raised in the footer. */
+.io-search-scope .io-search__sheetfooter { background: var(--io-search-surface-raised); }
+/* Voice (QA2): the kit's own labels are hard-coded Title case English ("Filter (1)", "Clear", "Show more", "Done", the sheet title,
+   "Clear filters"); only their case is restated here (a CSS-only lowercase; the words stay the kit's until it takes a labels prop). The
+   sheet title is the DS heading size (24 serif; Cloudscape's token pills are left as they are, see the FRAGILE note above). */
+#hfy-search-v2 .io-search__rowbtn,
+#hfy-search-v2 .io-search__button,
+.io-search-scope .io-search__sheetdone,
+.io-search-scope .io-sheet__title,
+.io-search-scope .io-search__sheet [class*="awsui_remove-all_"] { text-transform: lowercase; }
+.io-sheet.io-search-scope .io-sheet__title { font-size: var(--io-typography-size-xl); }
+.io-search-scope .io-search__sheet [class*="awsui_remove-all_"] { font-weight: var(--io-typography-weight-semibold) !important; }
 /* The kit Sheet opens full-height under 688 (fullHeight) with square corners; the DS Search spec draws a bottom sheet with radius.lg
    top corners. The corners are restated here; the geometry (full height under 688, a 448px right-hand drawer from 688 where the DS
    draws a popover anchored to the token) is a kit layout gap (Sheet side / height props), recorded upstream. */

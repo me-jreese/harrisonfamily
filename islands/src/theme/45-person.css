@@ -435,6 +435,15 @@
   line-height: var(--io-typography-leading-relaxed);
 }
 #person-content .story > :last-child { margin-bottom: 0; }
+/* A story is prose: the DS reading measure (68ch, as the comments under it) instead of the card's full width (about 96 characters a line
+   at 1024), and its Markdown headings sit under the 24px 'stories' section heading instead of at the global h1 size (QA2). */
+.hfy-note { max-inline-size: 68ch; }
+.hfy-note :is(h1, h2) { font-size: var(--io-typography-size-xl); line-height: var(--io-typography-leading-snug); }
+.hfy-note :is(h3, h4, h5, h6) { font-size: var(--io-typography-size-lg); line-height: var(--io-typography-leading-snug); }
+/* Section spacing is the #person-content gap alone: the last story card keeps no trailing margin (.card.mb-3), and the comments
+   section (which adds its own top margin elsewhere, e.g. under a single post) adds none here (QA2: 64 / 88px instead of 24 / 48). */
+.person-profile .notes-panel .card:last-child { margin-bottom: 0; }
+#person-content .hfy-comments { margin-block-start: 0; }
 
 /* ---------------------------------------------------------------- lightbox */
 /* #mediaLightbox .modal-dialog {max-width:min(1100px,100vw)}, from 992 {margin:3rem auto; height:calc(100% - 6rem)}: full screen */
@@ -457,7 +466,8 @@
 #mediaLightbox .modal-header {
   min-height: var(--io-control-h-lg);
   gap: var(--io-space-3);
-  padding: calc(var(--io-space-2) + var(--io-safe-top)) var(--io-space-4) var(--io-space-2);
+  /* the 44px buttons centred in the 56px row: (56 - 44) / 2 above and below (it was 8, a 60px row; QA2) */
+  padding: calc((var(--io-control-h-lg) - var(--io-control-tap-min)) / 2 + var(--io-safe-top)) var(--io-space-4) calc((var(--io-control-h-lg) - var(--io-control-tap-min)) / 2);
   border-bottom: 0;
 }
 .lightbox-counter {
@@ -535,7 +545,11 @@
   font-size: var(--io-typography-size-md);
 }
 .lightbox-meta { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
-/* caption bar: bottom at 375; from 688 centred under the photo, max 600, then 68ch at 1024 */
+/* caption bar: pinned to the bottom of the frame at 375 (the body is the frame's flex column; its padding gives the 16px plus safe.bottom);
+   from 688 centred under the photo, max 600, then 68ch at 1024 */
+@media (max-width: 42.99rem) {
+  #mediaLightbox .modal-body > .mt-3 { margin-top: auto; }
+}
 @media (min-width: 43rem) {
   #mediaLightbox .modal-body > .mt-3 {
     align-self: center;
