@@ -182,6 +182,46 @@ test("authV2 signed out at the edge: /family-login/ goes to /auth/login", async 
   await page.waitForURL((u) => u.pathname === "/auth/login" && u.searchParams.get("returnTo") === "/");
 });
 
+// HFY-TSK-069 (D-11 item 6): login continuity. /family-login/?next=<path> used to land on /auth/login?returnTo=%2F, so the deep link
+// that bounced the visitor (a person page, a search) was lost after sign-in.
+async function signedOutEdge(page) {
+  await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: false } }));
+  await page.route("**/auth/login**", (r) => r.fulfill({ contentType: "text/html", body: "<h1>edge login</h1>" }));
+}
+
+test("authV2 signed out: /family-login/?next= carries the deep link (path, query, hash) into returnTo", async ({ page }) => {
+  await signedOutEdge(page);
+  const next = "/person/?id=I0113&tab=family#timeline";
+  await page.goto("/family-login/?next=" + encodeURIComponent(next) + "&hfy_flags=authV2");
+  await page.waitForURL((u) => u.pathname === "/auth/login");
+  expect(new URL(page.url()).searchParams.get("returnTo")).toBe(next);
+});
+
+test("authV2 signed out: an unsafe next (other origin, protocol-relative, backslash, sign-in page) falls back to returnTo=/", async ({ page }) => {
+  await signedOutEdge(page);
+  for (const next of ["https://evil.example/x", "//evil.example/x", "/\\evil.example", "/auth/link", "/family-login/"]) {
+    await page.goto("/family-login/?next=" + encodeURIComponent(next) + "&hfy_flags=authV2");
+    await page.waitForURL((u) => u.pathname === "/auth/login");
+    expect(new URL(page.url()).searchParams.get("returnTo"), next).toBe("/");
+    await page.goto("about:blank");
+  }
+});
+
+for (const here of ["/person/?id=I0113#timeline", "/search/?query=Harrison"]) {
+  test(`chain: the legacy 8 s token fallback on ${here} -> /family-login/?next= -> /auth/login keeps the original path`, async ({ page }) => {
+    test.setTimeout(45_000);
+    await signedOutEdge(page);
+    await page.route("**/person/*.json", (r) => r.fulfill({ status: 401, json: { error: "unauthorized" } }));
+    await page.goto(here); // authV2 off: person-page.js / search-results.js wait 8 s for a legacy X-HFY-Session token, then redirectToLogin()
+    await page.waitForURL((u) => u.pathname === "/family-login/", { timeout: 20_000 });
+    const bounced = new URL(page.url());
+    expect(bounced.searchParams.get("next")).toBe(here);
+    await page.goto(bounced.pathname + bounced.search + "&hfy_flags=authV2"); // the same visit with authV2 on (after the flip)
+    await page.waitForURL((u) => u.pathname === "/auth/login");
+    expect(new URL(page.url()).searchParams.get("returnTo")).toBe(here);
+  });
+}
+
 test("authV2 already signed in at the edge: /family-login/ does not loop back to /auth/login", async ({ page }) => {
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I0001", grampsId: "I0001", label: "Test" } }));
   let loginHits = 0;

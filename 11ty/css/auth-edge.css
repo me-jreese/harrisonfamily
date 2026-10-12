@@ -1,0 +1,53 @@
+/* Stylesheet for the auth edge pages (/auth/login, /auth/link, /auth/password/*, /auth/verify, the access-denied page).
+   HFY-TSK-069 (D-11). Repo-owned: not an Eleventy output (11ty/README.md), so a promotion must never delete it.
+
+   Why this exists: auth/edge.manifest.json used to point theme.cssUrl at /css/main.css, the dark-hero site stylesheet. The edge pages are
+   a LIGHT theme (@io-kit/auth BASE_CSS plus the manifest's theme.vars: white page, cream cards, brown accent), and main.css colours every
+   h1/h2 #fff, so the login title was white on white (1:1) and the three section headings white on cream (1.07:1).
+
+   Contract (@io-kit/auth pages.js): this <link> comes BEFORE the page's inline <style> (BASE_CSS, then the manifest's `:root{...}` vars).
+   Equal-specificity rules in the inline style therefore win, so every rule below that must override one is prefixed with `html`.
+   The login page CSP is `style-src 'unsafe-inline' https://harrisonfamily.us ...`: this file must stay served from that origin.
+   Keep it small and self-contained: no @import, no web fonts, no images (img-src/font-src are not opened for anything else).
+
+   Site look kept from main.css: the Inter-first sans stack (Inter is not shipped, so the system face renders, as on the site), the
+   ink/navy brand colour (--bs-dark #0a1420), the gold accent (--bs-warning #ffc107, decoration only: never used for text), the 2px gold link
+   underline, and the letter-spaced HARRISON FAMILY wordmark of the site navbar.
+
+   Contrast (WCAG 2.2 AA): ink #0a1420 on white 18.5:1 and on the cream surface 17.2:1; muted text #586069 on cream 5.9:1; accent #7a3b2e links
+   on cream 7.8:1; white on the accent button 8.4:1; error #b42318 on cream 6.1:1; input/card borders #7d838c 3.6:1 on cream (1.4.11). */
+
+html:root {
+  --io-font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --io-border: #7d838c;
+  --auth-ink: #0a1420;
+  --auth-gold: #ffc107;
+}
+
+[hidden] { display: none !important; }
+
+html body { border-top: 6px solid var(--auth-ink); }
+
+/* Wordmark above the title, like the site navbar brand. Decorative: empty alternative text where supported. */
+html body > main::before {
+  content: "HARRISON FAMILY";
+  content: "HARRISON FAMILY" / "";
+  display: block;
+  margin: 0 0 16px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--auth-ink);
+}
+
+/* The fix for the invisible headings: ink on the page (h1) and on the cream cards (h2). */
+html h1,
+html h2 { color: var(--auth-ink); font-weight: 600; }
+html h1 { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--auth-gold); }
+
+html a { text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: rgba(255, 193, 7, 0.65); }
+
+/* A visible focus ring on every control (the inline base style defines none). */
+html a:focus-visible,
+html button:focus-visible,
+html input:focus-visible { outline: 3px solid var(--auth-ink); outline-offset: 2px; }

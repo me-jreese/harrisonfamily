@@ -47,7 +47,9 @@ function Content() {
     });
   }, []);
   return (
-    <main ref={ref} data-io-scroller style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto" }}>
+    // HFY-TSK-069 (D-11 item 5): the shell's scroller overflows with no focusable child on some pages (axe scrollable-region-focusable),
+    // so keyboard users could not scroll it. tabIndex 0 + a name make it a focusable, announced region (focus ring: shell.css).
+    <main ref={ref} data-io-scroller tabIndex={0} aria-label="Page content" style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto" }}>
       <InstallPrompt />
       <div className="hfy-content" ref={slot} />
     </main>

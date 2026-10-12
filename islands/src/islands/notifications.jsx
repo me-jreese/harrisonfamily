@@ -4,6 +4,7 @@ import "./notifications.css";
 import { createFetchNotifyApi } from "@io-kit/notify";
 import { NotificationSettings, PushNudge } from "@io-kit/notify/react";
 import { mountIsland } from "../lib/mount.jsx";
+import { edgeSignedOut, signedOutResponse } from "../lib/api.js";
 
 // Four HFY types. "generic" is level 0 (content-free, the default); "detailed" is level 1 (may name the actor).
 export const CATALOG = {
@@ -18,8 +19,9 @@ export const CATALOG = {
   sample: { actor: "A family member" }
 };
 
-// Same-origin API (/api/notifications/*), signed session cookie.
-export const api = createFetchNotifyApi("/api", (url, init) => fetch(url, { ...init, credentials: "include" }));
+// Same-origin API (/api/notifications/*), signed session cookie. HFY-TSK-069 (D-11): with authV2 and a signed-out edge session the
+// preferences GET can only answer 401 (a console error on every visit), so it is answered locally with that same 401 and not sent.
+export const api = createFetchNotifyApi("/api", async (url, init) => ((await edgeSignedOut()) ? signedOutResponse() : fetch(url, { ...init, credentials: "include" })));
 
 function Notifications() {
   const ios = /iP(hone|ad|od)/.test(navigator.userAgent) && !window.matchMedia("(display-mode: standalone)").matches;

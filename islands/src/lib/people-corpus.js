@@ -17,7 +17,8 @@ async function authInit() {
   while (flags && flags.requireSessionToken && !(token = flags.requireSessionToken()) && Date.now() < end) await sleep(100);
   if (token) return { headers: { "X-HFY-Session": token }, credentials: "include" };
   if (enforce) {
-    const next = window.location.pathname + window.location.search;
+    // path + query + hash, like the legacy pages: under authV2 /family-login/ hands `next` to /auth/login as returnTo (HFY-TSK-069).
+    const next = window.location.pathname + window.location.search + window.location.hash;
     window.location.replace("/family-login/?next=" + encodeURIComponent(next));
     throw new Error("Sign in to search the family records.");
   }

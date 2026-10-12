@@ -53,5 +53,8 @@ function SearchApp() {
   );
 }
 
-const main = document.querySelector("main") || document.body;
+// HFY-TSK-069 (D-11 item 7): with shellV2 the first <main> in the document is the shell's scroller (main[data-io-scroller]), which holds the
+// install hint before the page content; prepending the search host there put the iOS install hint BELOW the search controls. Mount in the
+// page's own <main> (the shell moves it into the scroller, behind the hint, whichever of the two scripts runs first).
+const main = document.querySelector("main:not([data-io-scroller])") || document.body;
 mountAt((h) => main.prepend(h), <SearchApp />, "hfy-search-v2");

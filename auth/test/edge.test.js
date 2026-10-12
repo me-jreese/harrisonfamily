@@ -170,6 +170,14 @@ describe("login page under the /auth mount", () => {
     expect(res.body).not.toMatch(/(href|action)="\/(password|verify|link|login)/);
     expect(res.body).not.toContain("x-amz-content-sha256");
   });
+
+  // @io-kit/auth 2.1.2: no-referrer made Google Identity Services reject the page origin ("origin is not allowed for the given client ID").
+  it("sends Referrer-Policy strict-origin-when-cross-origin (header and meta), never no-referrer, so Google sign-in works", async () => {
+    const res = await edge(get("/auth/login"));
+    expect(res.headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+    expect(res.body).toContain('<meta name="referrer" content="strict-origin-when-cross-origin">');
+    expect(res.body).not.toContain("no-referrer");
+  });
 });
 
 // ---- HFY-R58 review fixes ----
