@@ -179,6 +179,11 @@ document.documentElement.classList.add("io-no-focus-zoom");
 mountAt((h) => document.body.prepend(h), <Shell />, "hfy-shell-root");
 
 // Offline shell only. 068 plugs @io-kit/notify's notify-sw into /sw.js (see the hook there).
+// Registered at /sw.js?v=<sha8 of sw.js> (stamped into feature-flags.js by islands/build.mjs): updateViaCache "none" makes the
+// browser skip its own HTTP cache for the worker script, but Cloudflare's edge may still hold a 4 h old /sw.js; a new ?v is a new
+// URL the edge has never seen, and the worker takes its cache name from it. Without the stamp (an unbuilt checkout) it is /sw.js.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" }).catch(() => {});
+  const versions = (typeof window !== "undefined" && window.HFYFeatureFlags && window.HFYFeatureFlags.assetVersions) || {};
+  const swUrl = versions.sw ? `/sw.js?v=${versions.sw}` : "/sw.js";
+  navigator.serviceWorker.register(swUrl, { scope: "/", updateViaCache: "none" }).catch(() => {});
 }

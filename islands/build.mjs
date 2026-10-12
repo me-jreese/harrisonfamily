@@ -14,14 +14,17 @@
 //   */index.html, offline.html   the hfy-theme head blocks (heads.mjs) and, on the 10 Eleventy pages, the DS Voice copy (copy.mjs:
 //                            home hero, about / family-login headings, page titles, the footer)
 //   manifest.webmanifest     theme_color / background_color = the resolved surface token
+//   sw.js, js/feature-flags.js   their hfy-asset-versions marker block (assets.mjs): the content hashes of the files they load
+//   (every page again)       every same-origin script / stylesheet / manifest reference carries ?v=<sha8 of the file>
+//                            (assets.mjs), so a deploy is picked up although Cloudflare caches static files for 4 h
 import { build } from "esbuild";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
 import { expectedHeads, resolveToken } from "./heads.mjs";
 import { COPY_PAGES, applyCopy } from "./copy.mjs";
+import { htmlPages, sha8, stampSources, versionHtml } from "./assets.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -44,7 +47,6 @@ const themeDir = join(here, "src", "theme");
 const authEdgeSrc = join(here, "src", "auth-edge", "auth-edge.css");
 const TARGET = ["es2020", "safari15"];
 const posix = (p) => p.split(sep).join("/");
-const sha8 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 8);
 
 const entries = readdirSync(join(here, "src", "islands")).filter((f) => /\.jsx?$/.test(f)).map((f) => join(here, "src", "islands", f));
 
@@ -181,6 +183,20 @@ async function buildAll() {
   const heads = expectedHeads(site, { themeColor, cssHref: `/css/hfy-theme.css?v=${sha8(themeCss)}`, preloadHref: preloadHref() });
   // DS Voice copy on the Eleventy pages (copy.mjs): applied after the head blocks, so both are rewritten idempotently together.
   for (const [rel, text] of heads) files.set(rel, COPY_PAGES.includes(rel) ? applyCopy(text, rel) : text);
+
+  // Asset versioning (assets.mjs). Order matters: the stamped sources (sw.js, then feature-flags.js, which carries sw.js's hash)
+  // are final before any page is hashed against them, and the pages come last.
+  const hashOf = (rel) => {
+    if (files.has(rel)) return sha8(asBuffer(files.get(rel)));
+    const abs = join(site, rel);
+    return existsSync(abs) && statSync(abs).isFile() ? sha8(readFileSync(abs)) : null;
+  };
+  const islandNames = entries.map((f) => basename(f).replace(/\.jsx?$/, ""));
+  stampSources({ site, files, islandNames, hashOf });
+  for (const rel of new Set([...htmlPages(site), ...heads.keys()].filter((r) => r.endsWith(".html")))) {
+    const text = files.has(rel) ? files.get(rel) : readFileSync(join(site, rel), "utf8");
+    files.set(rel, versionHtml(text, hashOf, rel));
+  }
   return { files, dirs };
 }
 

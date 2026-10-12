@@ -91,7 +91,7 @@ for (const page of PAGES) {
     const head = html.slice(0, html.search(/<\/head>/i));
     assert.ok(b.index < head.length && a.index < head.length, "both blocks are inside <head>");
 
-    const main = html.match(/<link\b[^>]*href=["']\/css\/main\.css["'][^>]*>/i);
+    const main = html.match(/<link\b[^>]*href=["']\/css\/main\.css(?:\?v=[0-9a-f]{8})?["'][^>]*>/i);
     if (REPO_ONLY.has(page)) {
       assert.equal(main, null, "repo-owned pages do not load main.css");
       const title = html.search(/<\/title>/i);

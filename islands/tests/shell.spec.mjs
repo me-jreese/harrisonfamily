@@ -249,7 +249,7 @@ test("pre-mount (375): the static theme hides the navbar and paints both bar str
   await page.addInitScript(() => { try { localStorage.setItem("hfy:shell-hint", "1"); } catch { /* storage blocked */ } });
   let release;
   const held = new Promise((r) => { release = r; });
-  await page.route("**/js/islands/shell.js", async (r) => { await held; await r.continue(); });
+  await page.route("**/js/islands/shell.js*", async (r) => { await held; await r.continue(); });
   await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
   await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("hfy-shell-v2"))).toBe(true);
   await expect(page.locator("nav.navbar-hf")).toBeHidden();
