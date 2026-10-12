@@ -5,6 +5,8 @@ import { createLocalJWKSet, exportJWK, importPKCS8 } from "jose";
 import { createIdentityService, ddbFromDocumentClient, ddbLinkStore, ddbRefreshStore } from "@io-kit/auth/server";
 import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator } from "@io-kit/auth/edge/deploy";
 import { createAuthEdge, loadManifest } from "./edge.js";
+import { createOAuthServer, ddbOAuthStore } from "./oauth.js";
+import { createMembership } from "./membership.js";
 
 const sdk = (name) => import(name);
 
@@ -31,11 +33,12 @@ async function init() {
 
   const tableName = process.env[m.store.tableEnv ?? "AUTH_TABLE"];
   if (!tableName) throw new Error(`environment variable ${m.store.tableEnv ?? "AUTH_TABLE"} is not set`);
-  const ddb = ddbFromDocumentClient(lib.DynamoDBDocumentClient.from(new DynamoDBClient({})), lib);
+  const doc = lib.DynamoDBDocumentClient.from(new DynamoDBClient({}));
+  const ddb = ddbFromDocumentClient(doc, lib);
   const s3 = new S3Client({});
-  const resolver = buildResolver(m.resolver, {
-    readObject: async (bucket, key) => (await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }))).Body.transformToString(),
-  });
+  const readObject = async (bucket, key) => (await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }))).Body.transformToString();
+  const resolver = buildResolver(m.resolver, { readObject });
+  const privateKey = await importPKCS8(pem, "RS256");
   const cog = { region: m.idp.userPoolId.split("_")[0], clientId: m.idp.clientId };
   const gis = m.providers.find((p) => p.kind === "google" && p.mode === "gis_id_token");
   const identity = createIdentityService({
@@ -44,15 +47,30 @@ async function init() {
     ...(gis ? { google: { clientId: gis.clientId } } : {}),
     sessions: {
       issuer: m.session.issuer, audience: m.session.audience, kid,
-      privateKey: await importPKCS8(pem, "RS256"),
+      privateKey,
       store: ddbRefreshStore({ client: ddb, tableName }),
       accessTtlSeconds: m.session.accessTtlSeconds, defaultProfile: m.session.profile,
     },
     passwordAuth: cognitoPasswordAuthenticator(cog),
     passwords: await cognitoProvisioner(m.idp.userPoolId),
   });
+  // MCP authorization server (HFY-TSK-076). Redirect URIs and resources come from stack parameters; unset => OAuth routes are off.
+  const csv = (v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const redirectUris = csv(process.env.MCP_REDIRECT_URIS);
+  const resources = csv(process.env.MCP_RESOURCES);
+  const oauth = redirectUris.length
+    ? createOAuthServer({
+        issuer: m.session.issuer, redirectUris, resources: resources.length ? resources : ["https://mcp.harrisonfamily.us"],
+        ...(process.env.MCP_CLIENT_ID ? { clientId: process.env.MCP_CLIENT_ID } : {}),
+        store: ddbOAuthStore({ doc, cmds: lib, table: tableName }), signer: { privateKey, kid },
+        groupsFor: createMembership({
+          readAllowlist: () => readObject(m.resolver.bucket, m.resolver.key),
+          readAdmins: () => readObject(m.resolver.bucket, process.env.ADMIN_LIST_KEY ?? "config/admins.json"),
+        }),
+      })
+    : undefined;
   return createAuthEdge({
-    manifest: m, identity, publicJwk, lifecycle: cognitoLifecycle(cog),
+    manifest: m, identity, publicJwk, ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
     verify: { issuers: [m.session.issuer], audiences: [m.session.audience], jwks: createLocalJWKSet({ keys: [publicJwk] }) },
   });
 }

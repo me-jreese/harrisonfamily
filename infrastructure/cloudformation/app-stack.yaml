@@ -22,6 +22,8 @@ Parameters:
   UserPoolName: { Type: String, Default: hfy-users }
   AllowlistKey: { Type: String, Default: config/userGrampsID.json, Description: Email -> gramps_id map the auth edge resolves principals against }
   SigningKeySecretName: { Type: String, Default: harrisonfamily/auth-edge/session-signing-key, Description: Secret created by scripts/infra/create-session-key.sh }
+  McpRedirectUris: { Type: String, Default: "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback", Description: "HFY-TSK-076: comma-separated exact redirect URIs the public MCP client may use (the only allowed list)" }
+  McpResources: { Type: String, Default: "https://mcp.harrisonfamily.us", Description: "HFY-TSK-076: comma-separated resource indicators (token aud); the first is the default" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
 
 Conditions:
@@ -211,7 +213,9 @@ Resources:
               - Sid: Allowlist
                 Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/${AllowlistKey}
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/${AllowlistKey}
+                  - !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/${AdminListKey}
               - Sid: SigningKey
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
@@ -239,6 +243,9 @@ Resources:
           COGNITO_USER_POOL_ID: !Ref UserPool
           COGNITO_CLIENT_ID: !Ref UserPoolClient
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          MCP_REDIRECT_URIS: !Ref McpRedirectUris
+          MCP_RESOURCES: !Ref McpResources
+          ADMIN_LIST_KEY: !Ref AdminListKey
 
   AuthFunctionUrl:
     Type: AWS::Lambda::Url

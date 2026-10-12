@@ -56,19 +56,23 @@ export function patchPostHash(html) {
     .replace("body:JSON.stringify(body)", "body:__s");
 }
 
-export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce }) {
+export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth }) {
   const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
 
-  async function sessionInfo(event) {
+  async function sessionOf(event) {
     const tok = cookiesOf(event).io_id;
-    if (!tok) return json(200, { authenticated: false });
+    if (!tok) return null;
     try {
       const { principal } = await resolveAuth(tok, { ...verify, identity: undefined, tokenUse: "id" });
-      return json(200, { authenticated: true, sub: principal.sub, grampsId: principal.sub, label: principal.displayName ?? principal.sub });
+      return { sub: principal.sub, label: principal.displayName ?? principal.sub };
     } catch {
-      return json(200, { authenticated: false });
+      return null;
     }
+  }
+  async function sessionInfo(event) {
+    const s = await sessionOf(event);
+    return s ? json(200, { authenticated: true, sub: s.sub, grampsId: s.sub, label: s.label }) : json(200, { authenticated: false });
   }
 
   function adapt(res) {
@@ -94,7 +98,15 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
       return { statusCode: 200, headers: { "content-type": "application/json", "cache-control": "public, max-age=300" }, body: jwksBody };
     }
     if (rel === "/session") return method === "GET" ? sessionInfo(event) : json(405, { code: "METHOD_NOT_ALLOWED" });
+    if (oauth) {
+      const r = await oauth.handle(rel, event, () => sessionOf(event));
+      if (r) return r;
+    }
+    let ev = event;
+    const qs = event.queryStringParameters ?? {};
+    // /auth/authorize sends signed-out visitors to /auth/login?next=<authorize url>; the kit page calls that parameter returnTo
+    if (rel === "/login" && !qs.returnTo && typeof qs.next === "string" && qs.next.startsWith(`${MOUNT}/authorize?`)) ev = { ...event, queryStringParameters: { ...qs, returnTo: qs.next } };
     const kitPath = ROOT_ROUTES.has(rel) ? rel : raw;
-    return adapt(await app({ ...event, rawPath: kitPath }));
+    return adapt(await app({ ...ev, rawPath: kitPath }));
   };
 }
