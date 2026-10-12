@@ -43,15 +43,17 @@ test("flag off: old navbar, no shell, nothing injected", async ({ page }) => {
   expect(await page.locator('link[rel=manifest]').count()).toBe(0);
 });
 
-test("override persists in hfy:flags and empty value clears it", async ({ page }) => {
-  await page.goto("/?hfy_flags=shellV2,authV2");
-  expect(await page.evaluate(() => localStorage.getItem("hfy:flags"))).toBe("shellV2,authV2");
+test("HFY-R58: override persists in sessionStorage hfy:flags (never localStorage) and empty value clears it", async ({ page }) => {
+  await page.goto("/?hfy_flags=shellV2");
+  expect(await page.evaluate(() => sessionStorage.getItem("hfy:flags"))).toBe("shellV2");
+  expect(await page.evaluate(() => localStorage.getItem("hfy:flags"))).toBeNull();
   await page.goto("/about/");
   await expect(page.locator("#hfy-shell-root .io-shell")).toBeVisible();
   await page.goto("/?hfy_flags=");
-  expect(await page.evaluate(() => localStorage.getItem("hfy:flags"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("hfy:flags"))).toBeNull();
   await page.waitForTimeout(400);
   await expect(page.locator("nav.navbar-hf")).toBeVisible();
+  await expect(page.locator("[data-hfy-flag-banner]")).toHaveCount(0);
 });
 
 test("AC3: static nav links present without JS", async ({ browser }) => {

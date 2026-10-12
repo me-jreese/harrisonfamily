@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Test double for the aws CLI (scripts/infra/test/run.sh puts this directory first on PATH). It never reaches AWS.
+# State lives in $STUB_DIR: get.json (get-distribution-config reply), stack-<OutputKey> (describe-stacks outputs),
+# secret (secretsmanager value). Every call is appended to calls.log; each update-distribution payload is saved as update-<n>.json.
+set -euo pipefail
+: "${STUB_DIR:?STUB_DIR not set}"
+printf '%s\n' "$*" >> "$STUB_DIR/calls.log"
+case "$1 $2" in
+  "cloudfront get-distribution-config") cat "$STUB_DIR/get.json" ;;
+  "cloudfront update-distribution")
+    cfg=""; etag=""
+    while [ $# -gt 0 ]; do case "$1" in --distribution-config) cfg=${2#file://}; shift;; --if-match) etag=$2; shift;; esac; shift; done
+    n=$(( $(find "$STUB_DIR" -maxdepth 1 -name 'update-*.json' | wc -l) + 1 ))
+    cp "$cfg" "$STUB_DIR/update-$n.json"; printf '%s\n' "$etag" > "$STUB_DIR/update-$n.etag"
+    echo InProgress ;;
+  "cloudformation describe-stacks")
+    key=$(printf '%s\n' "$*" | sed -nE "s/.*OutputKey=='([A-Za-z0-9]+)'.*/\1/p")
+    if [ -f "$STUB_DIR/stack-$key" ]; then cat "$STUB_DIR/stack-$key"; else echo None; fi ;;
+  "secretsmanager get-secret-value")
+    if [ -f "$STUB_DIR/secret" ]; then cat "$STUB_DIR/secret"; else echo "ResourceNotFoundException" >&2; exit 254; fi ;;
+  *) echo "aws stub: unexpected call: $*" >&2; exit 99 ;;
+esac

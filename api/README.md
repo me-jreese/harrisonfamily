@@ -26,10 +26,18 @@ Q-4: authors edit and delete their own posts and comments; admins (gramps_ids in
 | Audit (D-15) | `AUDIT#<record id>` | `<iso at>#<ulid>` | `AUDIT` / same SK |
 
 Post index items carry the full post so lists need no second read. Each create, edit, delete and visibility change is one `TransactWriteItems` containing the data change and its `AUDIT#` item `{op, id, principal, at, before, after}`.
+Writes are optimistic: post update/visibility/delete are conditioned on the stored `post.updated_at` that was read, and comment edit/delete on `comment.edited_at` (absent = never edited). A concurrent change cancels the transaction and the API returns `409 conflict`, so nothing is silently overwritten and every audit `before` is the exact version replaced.
+
+## Posts, threads and uploads
+
+- Post fields are validated on create and PATCH (422): `title` string <= 200, `subject` a record id (`I0044`, `person:<id>`, `post:<ulid>`; `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`), `attachments` an array of <= 10 `{kind: image|file, url, mime, alt?, width?, height?}` whose `url` is a member upload (`$MEDIA_PUBLIC_BASE/uploads/posts/<ulid>/<name>` or that path relative); unknown attachment keys are dropped; the serialized post is capped at 100 KB.
+- A `post:<ulid>` comment thread is exactly as visible as its post: list, create, edit and react are 404 when the viewer cannot see the post (draft, withdrawn, deleted). Deleting your own comment still works. Deleting a post purges its thread (comments and reactions), with a `delete` audit item (reason `post deleted`) per removed comment.
+- Push fan-out and the thread purge run after the write commits and never fail the request; with no VAPID secret configured they do no reads at all.
+- `POST /uploads` presigns a PUT to `s3://$MEDIA_BUCKET/uploads/posts/<ulid>/<safe-name>` (not `media/`, which the ETL sync mirrors with `--delete`). The URL signs `content-type` and `content-length` and carries no checksum parameters (`src/presign.js`), so the browser must PUT with exactly the returned `headers`. CloudFront serves `/uploads/*` with `X-Content-Type-Options: nosniff` and a `sandbox` CSP.
 
 ## Tests and packaging
 
-`npm test` runs the CS and CC kit contract suites plus auth, audit, notification and caps tests against an in-memory DynamoDB fake. Install needs `CODEARTIFACT_AUTH_TOKEN`. `scripts/ci/package-api.sh` builds `dist/hfy-api.zip`.
+`npm test` runs the CS and CC kit contract suites plus auth, audit, notification and caps tests against an in-memory DynamoDB fake. Install needs `CODEARTIFACT_AUTH_TOKEN`. `scripts/ci/package-api.sh` builds `dist/hfy-api.zip` from a clean checkout: it runs the locked `npm ci` in a stage and generates `dist/caps.json` there afterwards.
 
 ## Notes
 

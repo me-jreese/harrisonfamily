@@ -63,6 +63,16 @@ Resources:
                   - arn:aws:s3:::harrisonfamily-frontend
                   - arn:aws:s3:::harrisonfamily-frontend/*
 
+              # HFY-R58 (2): member post photos live under uploads/ in the same bucket and exist nowhere else. The site
+              # sync runs with --delete, so CI must never be able to delete (or overwrite) them, even if an --exclude is missed.
+              - Sid: ProtectMemberUploads
+                Effect: Deny
+                Action:
+                  - s3:DeleteObject
+                  - s3:PutObject
+                Resource:
+                  - arn:aws:s3:::harrisonfamily-frontend/uploads/*
+
               - Sid: CloudFrontInvalidation
                 Effect: Allow
                 Action:

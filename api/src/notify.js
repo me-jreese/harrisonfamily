@@ -21,8 +21,18 @@ export const NOTIFY_TYPES = Object.keys(TEMPLATE_REGISTRY.features);
  */
 export function createNotifier(deps) {
   const log = deps.log ?? console;
+  const enabled = () => Boolean(deps.webpush && deps.vapid);
+  /** Producers run after a committed write: no push configured => no reads at all; any failure is logged and swallowed. */
+  const guarded = (label, fn) => async (...args) => {
+    if (!enabled()) return;
+    try {
+      await fn(...args);
+    } catch (e) {
+      log.error?.(`${label} failed`, e instanceof Error ? e.message : String(e));
+    }
+  };
   async function notify(feature, recipients, { navigate, actorLabel, exclude = [] }) {
-    if (!deps.webpush || !deps.vapid) return { sent: 0 };
+    if (!enabled()) return { sent: 0 };
     const skip = new Set(exclude);
     let sent = 0;
     await Promise.allSettled(
@@ -46,7 +56,7 @@ export function createNotifier(deps) {
   return {
     notify,
     /** After a comment is stored: reply > mention > comment_on_my_record, one notification per recipient. */
-    async onComment(c, { parent }, { postAuthorId, earlierCommenters = [] } = {}) {
+    onComment: guarded("comment notification", async (c, { parent } = {}, { postAuthorId, earlierCommenters = [] } = {}) => {
       const navigate = c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : `/person/?id=${c.threadId.slice(7)}`;
       const base = { navigate, actorLabel: c.author.label };
       const done = new Set([c.author.id]);
@@ -56,11 +66,12 @@ export function createNotifier(deps) {
       await notify("mention", take(mentionsOf(c.body)), base);
       const owner = c.threadId.startsWith("person:") ? c.threadId.slice(7) : postAuthorId;
       if (owner) await notify("comment_on_my_record", take([owner]), base);
-    },
-    async onPublished(post) {
+    }),
+    /** After a post becomes published: everyone subscribed except the author (the principal Scan only runs with push on). */
+    onPublished: guarded("publish notification", async (post) => {
       const everyone = deps.listPrincipals ? await deps.listPrincipals() : [];
       await notify("new_family_post", everyone, { navigate: `/posts/?id=${post.id}`, actorLabel: post.author.label, exclude: [post.author.id] });
-    },
+    }),
   };
 }
 

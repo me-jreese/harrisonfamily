@@ -1,8 +1,8 @@
 (() => {
-  // HFY-TSK-065: retired behind flag searchV2 (runtime override read synchronously; build flag checked before any data load). Deleted at the 069 flip.
-  const hfySearchV2Override = (() => { try { const q = new URLSearchParams(window.location.search); const v = q.has("hfy_flags") ? (q.get("hfy_flags") || "") : (localStorage.getItem("hfy:flags") || ""); const t = v.split(",").map((s) => s.trim()); return t.indexOf("searchV2") !== -1 && t.indexOf("-searchV2") === -1; } catch (e) { return false; } })();
-  if (hfySearchV2Override) { return; }
-  async function hfySearchV2Built() { const f = window.HFYFeatureFlags; if (!f || !f.resolveFlags) return false; try { return (await f.resolveFlags()).searchV2 === true; } catch (e) { return false; } }
+  // HFY-TSK-065 + HFY-R58: retired behind flag searchV2, but only once the shell island's SearchLauncher has actually mounted.
+  // Handlers are always wired; data loading stands down only when HFYFeatureFlags.searchV2Live() resolves true, so a
+  // missing or failed island (404) leaves this legacy search fully working. Deleted at the 069 flip.
+  async function hfySearchV2Live() { const f = await waitForFeatureFlags(); if (!f || typeof f.searchV2Live !== "function") return false; try { return (await f.searchV2Live("launcher")) === true; } catch (e) { return false; } }
   const config = window.HFY_SEARCH_CONFIG || {};
   const loginRedirect = config.loginRedirect || "/family-login/";
   let featureFlags = window.HFYFeatureFlags;
@@ -100,7 +100,7 @@
   }
 
   async function loadData(options = {}) {
-    if (await hfySearchV2Built()) return false;
+    if (await hfySearchV2Live()) return false;
     const { forceReload = false, eager = false } = options;
     if (!forceReload && state.ready) {
       return true;

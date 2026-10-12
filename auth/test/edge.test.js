@@ -130,3 +130,186 @@ describe("login page under the /auth mount", () => {
     expect(res.body).not.toContain("x-amz-content-sha256");
   });
 });
+
+// ---- HFY-R58 review fixes ----
+import { safeReturnTo } from "../src/edge.js";
+import { FORGOT_LIMITS, clientIp, ddbRateLimiter, memoryRateLimiter, rateKey } from "../src/ratelimit.js";
+
+const SITE = "https://harrisonfamily.us";
+const ioReturnOf = (html) => JSON.parse(/var ioReturn=("(?:[^"\\]|\\.)*");/.exec(html)[1]);
+const landsOn = (target) => new URL(target, `${SITE}/auth/login`);
+
+describe("returnTo / next cannot leave the site (login-returnto-tab-open-redirect)", () => {
+  const EVIL = [
+    "/\t/evil.example/phish", "/\n/evil.example", "/\r/evil.example", "\t//evil.example", "/\u0000/evil.example", "/\\evil.example",
+    "//evil.example", "https://evil.example/x", "http://harrisonfamily.us/x", "javascript:alert(1)", "/.//evil.example", "/a/..//evil.example",
+    `${SITE}//evil.example/x`, " //evil.example",
+  ];
+  it("safeReturnTo maps every off-site or protocol-relative shape to /", () => {
+    for (const v of EVIL) {
+      const out = safeReturnTo(v, SITE);
+      expect(out, JSON.stringify(v)).toBe("/");
+    }
+    for (const v of [undefined, null, 7, "", "x".repeat(3000)]) expect(safeReturnTo(v, SITE)).toBe("/");
+  });
+  it("safeReturnTo keeps same-site paths (canonicalized) and allow-listed origins", () => {
+    expect(safeReturnTo("/people/?id=I0111#tree", SITE)).toBe("/people/?id=I0111#tree");
+    expect(safeReturnTo(`${SITE}/posts/?id=1`, SITE)).toBe("/posts/?id=1");
+    expect(safeReturnTo("/a/../b", SITE)).toBe("/b");
+    expect(safeReturnTo("/%09/evil.example", SITE)).toBe("/%09/evil.example"); // encoded tab stays a path segment
+    expect(safeReturnTo("https://other.example/x", SITE, ["https://other.example"])).toBe("https://other.example/x");
+  });
+  it("GET /auth/login?returnTo=/<TAB>/evil.example renders an on-site ioReturn (the reported repro)", async () => {
+    for (const v of EVIL) {
+      const res = await edge(get("/auth/login", { queryStringParameters: { returnTo: v } }));
+      expect(res.statusCode).toBe(200);
+      const target = ioReturnOf(res.body);
+      expect(landsOn(target).origin, JSON.stringify(v)).toBe(SITE);
+      expect(target).toBe("/");
+    }
+  });
+  it("legitimate returnTo values and the /auth/authorize next hop still work", async () => {
+    const ok = await edge(get("/auth/login", { queryStringParameters: { returnTo: "/people/?id=I0111" } }));
+    expect(ioReturnOf(ok.body)).toBe("/people/?id=I0111");
+    const next = "/auth/authorize?client_id=mcp-harrisonfamily&response_type=code&state=s1";
+    const viaNext = await edge(get("/auth/login", { queryStringParameters: { next } }));
+    expect(ioReturnOf(viaNext.body)).toBe(next);
+    for (const bad of ["/auth/authorize?\t//evil.example", "//evil.example/auth/authorize?x", "/people/"]) {
+      const r = await edge(get("/auth/login", { queryStringParameters: { next: bad } }));
+      expect(landsOn(ioReturnOf(r.body)).origin).toBe(SITE);
+      expect(ioReturnOf(r.body)).toBe("/");
+    }
+  });
+});
+
+/** An edge wired with fakes for the password authenticator, the Cognito lifecycle and the rate limiter. */
+async function fakeEdge({ limiter, forgotLimits } = {}) {
+  const s = await generateKeyPair("RS256", { extractable: true });
+  const pub = { ...(await exportJWK(s.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" };
+  const calls = { forgot: [], verify: [], reset: [] };
+  const identity = createIdentityService({
+    resolver: buildResolver(manifest.resolver, { readObject: async () => JSON.stringify(ALLOW) }),
+    links: memoryLinkStore(),
+    passwordAuth: { authenticate: async (email) => ({ email, emailVerified: true, idpIssuer: "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_TEST", idpSub: "cog-1" }) },
+    sessions: { issuer: manifest.session.issuer, audience: manifest.session.audience, kid: "hfy-session-1", privateKey: s.privateKey, store: memoryRefreshStore(), defaultProfile: "installed" },
+  });
+  const lifecycle = {
+    forgot: async (email) => { calls.forgot.push(email); },
+    verify: async (i) => { calls.verify.push(i); },
+    reset: async (i) => { calls.reset.push(i); },
+  };
+  const e = createAuthEdge({
+    manifest, identity, publicJwk: pub, lifecycle, nonce: () => "n0nce", log: { error: () => {} },
+    verify: { issuers: [manifest.session.issuer], audiences: [manifest.session.audience], jwks: createLocalJWKSet({ keys: [pub] }) },
+    ...(limiter ? { limiter } : {}), ...(forgotLimits ? { forgotLimits } : {}),
+  });
+  return { edge: e, calls };
+}
+
+describe("/auth/password response returnTo is re-checked", () => {
+  it("a tab-smuggled returnTo in the sign-in body comes back as /", async () => {
+    const { edge: e } = await fakeEdge();
+    const res = await e(post("/auth/password", { email: "ana@example.com", password: "pw-123456789", returnTo: "/\t/evil.example/phish" }));
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ ok: true, returnTo: "/" });
+    const good = await e(post("/auth/password", { email: "ana@example.com", password: "pw-123456789", returnTo: "/people/" }));
+    expect(JSON.parse(good.body).returnTo).toBe("/people/");
+  });
+});
+
+describe("self-service sign-up confirmation is closed (cognito-self-signup-enabled)", () => {
+  it("POST /auth/verify is 410 and never reaches ConfirmSignUp", async () => {
+    const { edge: e, calls } = await fakeEdge();
+    const res = await e(post("/auth/verify", { email: "ana@example.com", code: "123456" }));
+    expect(res.statusCode).toBe(410);
+    expect(JSON.parse(res.body)).toEqual({ code: "AUTH_FORBIDDEN", detail: "signup_disabled" });
+    expect(calls.verify).toEqual([]);
+  });
+});
+
+describe("forgot-password rate limit (cognito-default-email-quota)", () => {
+  const from = (ip, email, extra = {}) => {
+    const ev = post("/auth/password/forgot", { email });
+    return { ...ev, headers: { ...ev.headers, "cloudfront-viewer-address": `${ip}:51234`, ...extra } };
+  };
+  it("allows 3 per email+IP per hour, then 429 with Retry-After and no Cognito call", async () => {
+    let t = Date.UTC(2026, 9, 12, 10, 0, 0);
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter({ now: () => t }) });
+    for (let i = 0; i < 3; i++) expect((await e(from("203.0.113.5", "ana@example.com"))).statusCode).toBe(200);
+    const res = await e(from("203.0.113.5", " Ana@Example.com "));
+    expect(res.statusCode).toBe(429);
+    expect(JSON.parse(res.body)).toEqual({ code: "AUTH_FORBIDDEN", detail: "rate_limited" });
+    expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
+    expect(calls.forgot).toHaveLength(3);
+    // same email from another IP, and another email from the same IP, are separate email+IP buckets
+    expect((await e(from("198.51.100.7", "ana@example.com"))).statusCode).toBe(200);
+    expect((await e(from("203.0.113.5", "bo@example.com"))).statusCode).toBe(200);
+    // the hourly window rolls over
+    t += 3600 * 1000;
+    expect((await e(from("203.0.113.5", "ana@example.com"))).statusCode).toBe(200);
+  });
+  it("caps one IP cycling through many emails at 10 a day", async () => {
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter() });
+    const codes = [];
+    for (let i = 0; i < 12; i++) codes.push((await e(from("203.0.113.9", `member${i}@example.com`))).statusCode);
+    expect(codes).toEqual([...Array(10).fill(200), 429, 429]);
+    expect(calls.forgot).toHaveLength(10);
+  });
+  it("requests the kit refuses (no X-Requested-With, foreign Origin) are not counted", async () => {
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter() });
+    for (let i = 0; i < 5; i++) {
+      const noHdr = from("203.0.113.5", "ana@example.com"); delete noHdr.headers["x-requested-with"];
+      expect((await e(noHdr)).statusCode).toBe(403);
+      expect((await e(from("203.0.113.5", "ana@example.com", { origin: "https://evil.example" }))).statusCode).toBe(403);
+    }
+    expect((await e(from("203.0.113.5", "ana@example.com"))).statusCode).toBe(200);
+    expect(calls.forgot).toHaveLength(1);
+  });
+  it("fails closed (503, no email) when the counter store is unavailable", async () => {
+    const { edge: e, calls } = await fakeEdge({ limiter: { hit: async () => { throw new Error("ddb down"); } } });
+    const res = await e(from("203.0.113.5", "ana@example.com"));
+    expect(res.statusCode).toBe(503);
+    expect(calls.forgot).toEqual([]);
+  });
+  it("the default limits are the ruled email+IP key plus a per-IP cap", () => {
+    expect(FORGOT_LIMITS.map((r) => r.scope)).toEqual(["email+ip", "ip"]);
+    const a = rateKey("forgot", "email+ip", { email: "ana@example.com", ip: "203.0.113.5" });
+    expect(a).not.toMatch(/ana|203\.0/); // hashed: no email or IP at rest
+    expect(a).not.toBe(rateKey("forgot", "email+ip", { email: "ana@example.com", ip: "203.0.113.6" }));
+    expect(rateKey("forgot", "ip", { email: "a@x", ip: "1.2.3.4" })).toBe(rateKey("forgot", "ip", { email: "b@x", ip: "1.2.3.4" }));
+  });
+  it("clientIp prefers CloudFront-Viewer-Address, else the CloudFront-appended X-Forwarded-For entry", () => {
+    const ev = (headers, sourceIp = "130.176.0.1") => ({ headers, requestContext: { http: { sourceIp } } });
+    expect(clientIp(ev({ "CloudFront-Viewer-Address": "203.0.113.5:443", "x-forwarded-for": "6.6.6.6" }))).toBe("203.0.113.5");
+    expect(clientIp(ev({ "cloudfront-viewer-address": "2001:db8::1:51234" }))).toBe("2001:db8::1");
+    expect(clientIp(ev({ "x-forwarded-for": "6.6.6.6, 203.0.113.5, 130.176.0.1" }))).toBe("203.0.113.5"); // spoofed left entry ignored
+    expect(clientIp(ev({ "x-forwarded-for": "6.6.6.6, 203.0.113.5" }))).toBe("203.0.113.5");
+    expect(clientIp(ev({}))).toBe("130.176.0.1");
+  });
+  it("ddbRateLimiter is one atomic ADD per hit on a TTL'd window item", async () => {
+    const sent = [];
+    const store = new Map();
+    class UpdateCommand { constructor(input) { this.input = input; } }
+    const doc = { send: async (c) => {
+      sent.push(c.input);
+      const k = `${c.input.Key.PK}|${c.input.Key.SK}`;
+      const n = (store.get(k) ?? 0) + c.input.ExpressionAttributeValues[":one"];
+      store.set(k, n);
+      return { Attributes: { n } };
+    } };
+    const t = Date.UTC(2026, 9, 12, 10, 30, 0);
+    const lim = ddbRateLimiter({ doc, cmds: { UpdateCommand }, table: "hfy-app", now: () => t });
+    const rule = { limit: 2, windowSeconds: 3600 };
+    expect((await lim.hit("forgot:ip#k", rule)).allowed).toBe(true);
+    expect((await lim.hit("forgot:ip#k", rule)).allowed).toBe(true);
+    const third = await lim.hit("forgot:ip#k", rule);
+    expect(third).toMatchObject({ allowed: false, count: 3, retryAfter: 1800 });
+    const start = Math.floor(t / 1000) - 1800;
+    expect(sent[0]).toMatchObject({
+      TableName: "hfy-app", Key: { PK: "RATE#forgot:ip#k", SK: `W#3600#${start}` },
+      UpdateExpression: "ADD #n :one SET #ttl = if_not_exists(#ttl, :ttl)",
+      ExpressionAttributeNames: { "#n": "n", "#ttl": "ttl" },
+      ExpressionAttributeValues: { ":one": 1, ":ttl": start + 3600 + 300 },
+    });
+  });
+});

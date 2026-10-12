@@ -67,7 +67,7 @@ export const ROUTES = [
     name: "posts.create", method: "POST", path: "/posts", summary: "Create a post: a draft, or published at once with visibility:\"published\"",
     handler: async (c) => {
       const post = await c.content.createDraft({ type: c.body.type, visibility: c.body.visibility, subject: c.body.subject, title: c.body.title, body: c.body.body, attachments: c.body.attachments });
-      if (post.visibility === "published") await c.notifier.onPublished(post);
+      if (post.visibility === "published") await c.afterPublished(post); // never fails the committed write
       return ok(post, 201);
     },
   },
@@ -80,16 +80,16 @@ export const ROUTES = [
     handler: async (c) => {
       const before = await c.content.get(c.params.id);
       const after = await c.content.setVisibility(c.params.id, c.body.visibility);
-      if (before.visibility !== "published" && after.visibility === "published") await c.notifier.onPublished(after);
+      if (before.visibility !== "published" && after.visibility === "published") await c.afterPublished(after);
       return ok(after);
     },
   },
   {
     name: "posts.delete", method: "DELETE", path: "/posts/:id", summary: "Delete your own post (admins: any)",
-    handler: async (c) => { await c.content.delete(c.params.id); return ok(undefined, 204); },
+    handler: async (c) => { await c.content.delete(c.params.id); await c.afterPostDeleted(c.params.id); return ok(undefined, 204); },
   },
   {
-    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB); returns {uploadUrl, publicUrl}",
+    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB) under uploads/posts/; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
     handler: async (c) => ok(await c.uploads.presign(c.actor, { filename: c.body.filename, contentType: c.body.contentType, size: c.body.size }), 201),
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.

@@ -9,8 +9,8 @@ Parameters:
   CodeBucket: { Type: String, Description: S3 bucket holding the hfy-api.zip package }
   CodeKey: { Type: String, Default: lambda/hfy-api.zip }
   ConfigBucket: { Type: String, Default: harrisonfamily, Description: Bucket with config/admins.json }
-  MediaBucket: { Type: String, Default: harrisonfamily-frontend, Description: "Site bucket the API presigns post-photo uploads into (media/posts/*). Not stack-managed: its CORS is a manual step, see media-bucket-cors.json" }
-  MediaPublicBase: { Type: String, Default: "https://harrisonfamily.us", Description: Origin that serves media/ (CloudFront) }
+  MediaBucket: { Type: String, Default: harrisonfamily-frontend, Description: "Site bucket the API presigns post-photo uploads into (uploads/posts/*, never media/, which the ETL sync mirrors with --delete; HFY-R58). Not stack-managed: its CORS is a manual step, see media-bucket-cors.json" }
+  MediaPublicBase: { Type: String, Default: "https://harrisonfamily.us", Description: "Origin that serves uploads/ (CloudFront /uploads/* behavior with UploadsResponseHeadersPolicy, scripts/infra/add-uploads-behavior.sh)" }
   AdminListKey: { Type: String, Default: config/admins.json }
   VapidSecretName: { Type: String, Default: "", Description: "Optional secret {subject,publicKey,privateKey} for web push; empty disables sending" }
   SessionIssuer: { Type: String, Default: "https://harrisonfamily.us/auth" }
@@ -28,9 +28,13 @@ Parameters:
   McpCorsOrigins: { Type: String, Default: "https://claude.ai,https://claude.com", Description: "Exact browser origins allowed CORS on /auth/token, /register, /revoke (never a wildcard)" }
   OriginVerifySecretName: { Type: String, Default: harrisonfamily/cloudfront/origin-verify, Description: "Secret created by scripts/infra/create-origin-verify.sh; CloudFront sends it as X-Origin-Verify (HFY-R43)" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
+  SesIdentityArn: { Type: String, Default: "", Description: "Optional verified SES identity ARN (for example harrisonfamily.us, same region) for Cognito email. Empty keeps COGNITO_DEFAULT (about 50 emails/day for the account); the edge rate-limits /auth/password/forgot per email+IP either way" }
+  SesFromAddress: { Type: String, Default: "", Description: "Optional From address when SesIdentityArn is set, for example: Harrison Family <no-reply@harrisonfamily.us>" }
 
 Conditions:
   HasVapid: !Not [!Equals [!Ref VapidSecretName, ""]]
+  HasSes: !Not [!Equals [!Ref SesIdentityArn, ""]]
+  HasSesFrom: !And [!Condition HasSes, !Not [!Equals [!Ref SesFromAddress, ""]]]
 
 Resources:
   Table:
@@ -89,10 +93,11 @@ Resources:
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/config/*
+              # HFY-R58 (2): member uploads live under uploads/posts/<ulid>/ only; media/ belongs to the ETL sync (--delete).
               - Sid: PostPhotoUploads
                 Effect: Allow
                 Action: s3:PutObject
-                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/posts/*
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/posts/*
               - !If
                 - HasVapid
                 - Sid: Secrets
@@ -151,6 +156,20 @@ Resources:
       Principal: "*"
       InvokedViaFunctionUrl: true
 
+  # HFY-R58 (2): attached to the CloudFront /uploads/* behavior by scripts/infra/add-uploads-behavior.sh. Member uploads are
+  # served same-origin, so they are forced inert: no MIME sniffing, and a sandboxed CSP that allows nothing but same-origin images.
+  UploadsResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub ${FunctionName}-uploads-sandbox
+        Comment: "harrisonfamily /uploads/*: nosniff + sandboxed CSP for member uploads (HFY-R58)"
+        SecurityHeadersConfig:
+          ContentTypeOptions: { Override: true }
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "sandbox; default-src 'none'; img-src 'self'"
+            Override: true
+
   # ---------------- auth edge (HFY-TSK-062): Cognito pool + hfy-auth-edge at https://harrisonfamily.us/auth/* ----------------
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -161,7 +180,11 @@ Resources:
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
       MfaConfiguration: "OFF"
-      AdminCreateUserConfig: { AllowAdminCreateUserOnly: false }
+      # HFY-R58 (5): no public SignUp. The edge provisions users with AdminCreateUser, and only after the allowlist check,
+      # so a client-id holder cannot pre-register a family member's email with their own password.
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true }
+      # A changed email stays unverified (and the old one stays in effect) until the new address confirms its code.
+      UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: [email] }
       AccountRecoverySetting:
         RecoveryMechanisms: [{ Name: verified_email, Priority: 1 }]
       Policies:
@@ -175,7 +198,13 @@ Resources:
       Schema:
         - { Name: email, AttributeDataType: String, Required: true, Mutable: true }
       VerificationMessageTemplate: { DefaultEmailOption: CONFIRM_WITH_CODE }
-      EmailConfiguration: { EmailSendingAccount: COGNITO_DEFAULT }
+      # COGNITO_DEFAULT caps account-wide email at about 50/day; set SesIdentityArn to send through SES instead (cognito-default-email-quota).
+      EmailConfiguration: !If
+        - HasSes
+        - EmailSendingAccount: DEVELOPER
+          SourceArn: !Ref SesIdentityArn
+          From: !If [HasSesFrom, !Ref SesFromAddress, !Ref "AWS::NoValue"]
+        - EmailSendingAccount: COGNITO_DEFAULT
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -229,9 +258,11 @@ Resources:
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SigningKeySecretName}-*
+              # The pool is AdminCreateUserOnly: auth/src/cognito.js creates users (after the allowlist check) and repairs any
+              # pre-lockdown self-signed-up user (AdminConfirmSignUp, email_verified via AdminUpdateUserAttributes).
               - Sid: CognitoAdminLink
                 Effect: Allow
-                Action: [cognito-idp:AdminGetUser, cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword]
+                Action: [cognito-idp:AdminGetUser, cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword, cognito-idp:AdminConfirmSignUp, cognito-idp:AdminUpdateUserAttributes]
                 Resource: !GetAtt UserPool.Arn
 
   AuthFunction:
@@ -285,6 +316,7 @@ Outputs:
   FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }
   TableName: { Value: !Ref Table }
   FunctionName: { Value: !Ref Function }
+  UploadsResponseHeadersPolicyId: { Description: "Response headers policy for the CloudFront /uploads/* behavior (scripts/infra/add-uploads-behavior.sh)", Value: !Ref UploadsResponseHeadersPolicy }
   AuthFunctionUrl: { Description: Auth edge Function URL (CloudFront origin for /auth/*), Value: !GetAtt AuthFunctionUrl.FunctionUrl }
   AuthFunctionName: { Value: !Ref AuthFunction }
   UserPoolId: { Value: !Ref UserPool }

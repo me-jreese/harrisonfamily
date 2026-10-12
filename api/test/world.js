@@ -25,8 +25,13 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
     .setSubject(sub).setIssuer(iss).setAudience(aud).setIssuedAt().setExpirationTime(exp)
     .sign(privateKey);
 
-export function makeApi({ admins = ["I0099"], withPush = true, audit } = {}) {
-  const ddb = createFakeDdb();
+/**
+ * `intercept(cmd)` runs before every DynamoDB command reaches the fake (throw to simulate a store failure, or await another
+ * request to simulate a race). The returned `ddb` is the raw fake, for assertions.
+ */
+export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept } = {}) {
+  const raw = createFakeDdb();
+  const ddb = intercept ? { send: async (cmd) => { await intercept(cmd); return raw.send(cmd); } } : raw;
   const now = ticker();
   const sent = [];
   const presigned = [];
@@ -53,5 +58,5 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit } = {}) {
     const r = await handler(ev(method, path, opts));
     return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : undefined, headers: r.headers };
   };
-  return { ddb, call, sent, presigned, subscriptions, preferences, now };
+  return { ddb: raw, call, sent, presigned, subscriptions, preferences, now };
 }

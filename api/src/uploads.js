@@ -1,10 +1,13 @@
 // POST /api/uploads: presigned S3 PUT for post photos (HFY-TSK-067). The Lambda never touches the bytes.
-// Key: media/posts/<ulid>/<safe-name> in the frontend bucket; the browser PUTs straight to S3 (CORS: infrastructure/cloudformation/media-bucket-cors.json).
+// Key: uploads/posts/<ulid>/<safe-name> in the frontend bucket; the browser PUTs straight to S3 (CORS: infrastructure/cloudformation/media-bucket-cors.json).
+// Not media/: the ETL data sync mirrors media/ with --delete and would wipe member photos (HFY-R58 (2)). CloudFront serves
+// /uploads/* with a response-headers policy (nosniff + CSP sandbox), and the presigned URL signs content-type (presign.js).
 import { HttpError } from "./http.js";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const IMAGE_TYPES = { "image/jpeg": ["jpg", "jpeg"], "image/png": ["png"], "image/webp": ["webp"], "image/heic": ["heic"] };
 export const UPLOAD_EXPIRES_SECONDS = 300;
+export const UPLOAD_PREFIX = "uploads/posts";
 
 /** Lowercase ascii, [a-z0-9._-] only, no leading dots, extension forced to match the content type. */
 export function safeName(filename, contentType) {
@@ -24,7 +27,7 @@ export function createUploads({ presignPut, uid, bucket = "harrisonfamily-fronte
       if (typeof contentType !== "string" || !Object.hasOwn(IMAGE_TYPES, contentType)) throw new HttpError(400, "validation", "only jpeg, png, webp and heic images are accepted");
       if (!Number.isInteger(size) || size <= 0) throw new HttpError(400, "validation", "size must be a positive integer");
       if (size > MAX_UPLOAD_BYTES) throw new HttpError(400, "validation", "image exceeds 10 MB");
-      const key = `media/posts/${uid()}/${safeName(filename, contentType)}`;
+      const key = `${UPLOAD_PREFIX}/${uid()}/${safeName(filename, contentType)}`;
       const uploadUrl = await presignPut({ bucket, key, contentType, size, expiresIn: UPLOAD_EXPIRES_SECONDS });
       return { uploadUrl, publicUrl: `${publicBase}/${key}`, key, headers: { "Content-Type": contentType }, expiresIn: UPLOAD_EXPIRES_SECONDS };
     },
