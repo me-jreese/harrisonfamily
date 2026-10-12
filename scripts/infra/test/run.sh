@@ -425,6 +425,13 @@ README_EX=$(sed -n '/^rsync -a --delete -n -i/,/_site\//p' "$ROOT/11ty/README.md
 contains "the sync check treats js/person-page.js as repo-owned" "$SYNC_EX" "js/person-page.js"
 contains "the README refresh rsync excludes js/person-page.js" "$README_EX" "js/person-page.js"
 contains "the README repo-owned table lists js/person-page.js" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "js/person-page.js"
+for owned in js/auth.js css/auth-edge.css; do
+  contains "the sync check treats $owned as repo-owned" "$SYNC_EX" "$owned"
+  contains "the README refresh rsync excludes $owned" "$README_EX" "$owned"
+  contains "the README repo-owned table lists $owned" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "$owned"
+done
+check "auth/edge.manifest.json theme.cssUrl is the repo-owned stylesheet, served from the site origin (login CSP style-src)" test "$(jq -r .theme.cssUrl "$ROOT/auth/edge.manifest.json")" = "https://harrisonfamily.us/css/auth-edge.css"
+check "...and that file exists in 11ty/css" test -s "$ROOT/11ty/css/auth-edge.css"
 eq "the README rsync and the sync check exclude the same paths (besides .DS_Store)" "$(printf '%s\n' "$SYNC_EX" | grep -vx '.DS_Store')" "$README_EX"
 if command -v rsync >/dev/null && command -v git >/dev/null; then
   DS="$T/ds"; mkdir -p "$DS/workspace/11ty-dev/_site/js" "$DS/repo/11ty/js"
@@ -435,6 +442,11 @@ if command -v rsync >/dev/null && command -v git >/dev/null; then
   git -C "$DS/repo" add -A
   set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
   eq "a repo-only person-page.js does not fail the pre-commit sync check" "$DS_RC" 0
+  mkdir -p "$DS/workspace/11ty-dev/_site/css" "$DS/repo/11ty/css"; echo '/* site */' > "$DS/workspace/11ty-dev/_site/css/main.css"; cp "$DS/workspace/11ty-dev/_site/css/main.css" "$DS/repo/11ty/css/main.css"
+  echo '/* auth edge */' > "$DS/repo/11ty/css/auth-edge.css"; echo '// authV2 One Tap' > "$DS/repo/11ty/js/auth.js"
+  echo '// legacy One Tap' > "$DS/workspace/11ty-dev/_site/js/auth.js"; git -C "$DS/repo" add -A
+  set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
+  eq "a repo-only css/auth-edge.css and a repo-owned js/auth.js do not fail it either" "$DS_RC" 0
   echo 'drifted' > "$DS/repo/11ty/js/app.js"; git -C "$DS/repo" add -A
   set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
   eq "a drifted workspace-owned file still fails it" "$DS_RC" 1

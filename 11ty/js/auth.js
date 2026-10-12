@@ -288,6 +288,16 @@
     });
   }
 
+  // True when the authV2 flag is on for this page (build flag or ?hfy_flags preview). False without feature-flags.js or on any error.
+  async function authV2Active() {
+    try {
+      const flags = featureFlags && typeof featureFlags.resolveFlags === "function" ? await featureFlags.resolveFlags() : null;
+      return Boolean(flags && flags.authV2 === true);
+    } catch (error) {
+      return false;
+    }
+  }
+
   async function initAuthUI() {
     if (!state.clientId) {
       logDebug("No Google client ID configured; skipping auth initialization.");
@@ -333,7 +343,11 @@
       });
       if (!state.signedIn) {
         renderGoogleButton(googleAccounts);
-        googleAccounts.prompt();
+        // HFY-TSK-069 (D-11): under authV2 sign-in is the edge login (/auth/login), not this legacy Google ID-token flow, and One Tap's bottom
+        // sheet covers the shell's tab bar at 375px. The button stays; the automatic prompt does not.
+        if (!(await authV2Active())) {
+          googleAccounts.prompt();
+        }
       }
     } catch (error) {
       console.error("[HFY_AUTH] Unable to initialize Google Sign-In", error);

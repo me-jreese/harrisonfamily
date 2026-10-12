@@ -19,6 +19,8 @@ Two kinds of files live here:
 | `js/auth-v2.js` | flag-gated two-path sign-in (HFY-TSK-062) |
 | `js/feature-flags.js`, `js/search-navbar.js`, `js/search-results.js` | carry repo-only changes (flag override, island loader, searchV2 hand-off) not yet ported to the workspace |
 | `js/person-page.js` | carries the authV2 data-gate path (`dataFetchInit`/`dataResponse`, HFY-TSK-080) not yet ported to the workspace; the workspace copy still waits for the legacy `X-HFY-Session` token, which breaks person pages once the data gate is attached |
+| `js/auth.js` | carries the authV2 One Tap suppression (HFY-TSK-069, D-11): with `authV2` on the legacy GIS flow still renders its button but no longer auto-prompts (the bottom sheet covered the shell tab bar at 375 px); the workspace copy still prompts |
+| `css/auth-edge.css` | the auth edge's own stylesheet (HFY-TSK-069, D-11): `auth/edge.manifest.json` `theme.cssUrl` points here instead of `/css/main.css`, whose dark-hero heading colours made the `/auth/login` headings white on white. Must stay served from `https://harrisonfamily.us` (the login page CSP `style-src` allows only that origin). Not an Eleventy output, so a refresh would delete it |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | PWA shell (HFY-TSK-064) |
 | `posts/`, `me/` | pages for `postsV2` / `notifyV2` islands (HFY-TSK-067/068) |
 | `*/index.html` `<script src="/js/auth-v2.js" defer>` tags | added in the repo (HFY-TSK-062); the workspace templates do not emit them yet |
@@ -46,6 +48,8 @@ rsync -a --delete -n -i \
   --exclude js/auth-v2.js \
   --exclude js/feature-flags.js --exclude js/search-navbar.js --exclude js/search-results.js \
   --exclude js/person-page.js \
+  --exclude js/auth.js \
+  --exclude css/auth-edge.css \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \
   --exclude 'images/pwa-*.png' \
   --exclude posts/ --exclude me/ --exclude uploads/ \

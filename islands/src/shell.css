@@ -22,3 +22,5 @@ html.hfy-shell-v2, html.hfy-shell-v2 body { padding: 0 !important; margin: 0; he
 html.hfy-shell-v2 input, html.hfy-shell-v2 select, html.hfy-shell-v2 textarea { font-size: 16px; }
 @media (min-width: 689px) { .hfy-bar__links { display: flex; } }
 .hfy-col { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* HFY-TSK-069 (D-11 item 5): the scroller is keyboard-focusable (tabindex=0); show where focus is. Inset so overflow:auto does not clip it. */
+main[data-io-scroller]:focus-visible { outline: 2px solid var(--accent-hover, #7ac8d4); outline-offset: -2px; }

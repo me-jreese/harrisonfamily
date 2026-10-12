@@ -12,8 +12,29 @@ export class ApiError extends Error {
 
 const codeForStatus = (s) => (s === 401 ? "unauthenticated" : s === 403 ? "forbidden" : s === 404 ? "not_found" : s === 400 || s === 422 ? "validation" : "server");
 
-export function createApi({ base = "/api", fetchImpl } = {}) {
+/**
+ * HFY-TSK-069 (D-11): true only when authV2's shared session probe (HFYFeatureFlags.edgeSession -> GET /auth/session, refreshed once if it
+ * lapsed) answered "signed out". authV2 off, no feature-flags.js, an unreachable /auth/session or any error => false, so the request is sent
+ * exactly as before. Used to skip /api calls that can only answer 401 (and log a console error) for a visitor who is not signed in.
+ */
+export async function edgeSignedOut() {
+  const flags = globalThis.HFYFeatureFlags;
+  if (!flags || typeof flags.edgeSession !== "function") return false;
+  try {
+    const s = await flags.edgeSession();
+    return Boolean(s) && s.authenticated === false;
+  } catch {
+    return false;
+  }
+}
+
+/** The 401 body the API itself answers with, for a call that was not sent because the edge session says signed out. */
+export const signedOutResponse = () => new Response(JSON.stringify({ error: "unauthenticated", message: "Sign in to continue." }), { status: 401, headers: { "Content-Type": "application/json" } });
+
+export function createApi({ base = "/api", fetchImpl, skipWhenSignedOut = base === "/api" } = {}) {
   async function request(method, path, { query, body, headers, signal } = {}) {
+    // Every /api route needs the session cookie: with a signed-out edge session the answer is a certain 401, so do not send it.
+    if (skipWhenSignedOut && (await edgeSignedOut())) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
     const qs = query ? new URLSearchParams(Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== "")).toString() : "";
     const url = `${base}${path}${qs ? `?${qs}` : ""}`;
     const init = { method, credentials: "include", ...(signal ? { signal } : {}), headers: { Accept: "application/json", ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers } };

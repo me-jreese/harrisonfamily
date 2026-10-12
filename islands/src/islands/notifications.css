@@ -4,3 +4,35 @@
 .hfy-notify input[type=checkbox], .hfy-notify input[type=radio] { width: 24px; height: 24px; }
 .hfy-notify label { min-height: 44px; display: inline-flex; align-items: center; }
 .hfy-notify__ios { margin: 12px 0; padding: 12px; border: 1px solid rgba(127,127,127,.4); border-radius: 8px; }
+
+/* HFY-TSK-069 (D-11 items 2 and 3): overrides for @io-kit/notify 0.4.0 notify.css (kit root causes noted per block; file upstream, then drop these). */
+
+/* Item 2. Kit root cause: `.iok-notify-row` is a one-line flex row (text | switch | .iok-notify-seg) and `.iok-notify-seg` is
+   `display:inline-flex; overflow:hidden`, so it may shrink below its content: whenever the text block's max-content is wide the radio group
+   was squeezed (95px of 140px at 375px, up to ~600px viewports) and "Show who" was clipped. Let the row wrap, never shrink the group, and
+   stack it full-width under the text on phones (<= 430px). */
+.hfy-notify .iok-notify-row { flex-wrap: wrap; }
+.hfy-notify .iok-notify-row > div:first-child { flex: 1 1 12rem; min-width: 0; }
+.hfy-notify .iok-notify-seg { flex: none; box-sizing: border-box; }
+@media (max-width: 430px) {
+  .hfy-notify .iok-notify-seg { flex: 1 0 100%; display: flex; }
+  .hfy-notify .iok-notify-seg button { flex: 1 1 0; min-width: 0; }
+}
+
+/* Item 3a. Kit root cause: `.iok-notify-desc, .iok-notify-hint, .iok-notify-status` take the already-muted `--fg-muted` (#6b8a94) AND
+   `opacity:.7` (and .45 for `[data-off=true]` rows), which double-dims it to ~3.15:1 on #0a0a0f. At full opacity --fg-muted is 5.35:1 (AA);
+   an off row is still marked by its switch and its disabled radio group. */
+.hfy-notify .iok-notify-desc,
+.hfy-notify .iok-notify-hint,
+.hfy-notify .iok-notify-status,
+.hfy-notify .iok-notify-row[data-off="true"] .iok-notify-desc { opacity: 1; }
+/* The group heading used `opacity:.7` on --fg (8.7:1 for real) but axe cannot see the shell's fixed #0a0a0f behind a translucent node and
+   reports it as #f3f6f9 on #fff (1.08:1). Same dimmed look without opacity: the muted token (5.35:1 on the shell), and plain inherited text
+   where there are no shell tokens (notifyV2 without shellV2 renders on the white legacy page). */
+.hfy-notify .iok-notify-group > h2,
+.hfy-notify .iok-notify-group > h3,
+.hfy-notify .iok-notify-group > h4 { opacity: 1; color: var(--fg-muted, inherit); }
+
+/* Item 3b. Kit root cause: `.iok-notify-seg button[aria-checked=true]` is hard-coded `color:#fff` on `var(--accent)`; with the shell's teal
+   (#3d9ba8) that is 3.25:1. Dark text on the accent (the kit's own --io-search-accent-text convention) is 6.07:1. */
+.hfy-notify .iok-notify-seg button[aria-checked="true"] { color: var(--bg, #0a0a0f); }
