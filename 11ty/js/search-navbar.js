@@ -71,6 +71,19 @@
       .filter(Boolean);
   }
 
+  // HFY-TSK-080: under authV2 the io_id cookie is the credential (edge gate); no X-HFY-Session header is sent. null when authV2 is off.
+  async function edgeSessionInit() {
+    const flags = await waitForFeatureFlags();
+    return flags && typeof flags.dataFetchInit === "function" ? flags.dataFetchInit() : null;
+  }
+
+  // HFY-R66: authV2 off -> exactly fetch(url, init). authV2 on -> lapsed sessions are refreshed and a gate 401 retried once;
+  // only an interactive load that still fails goes to /auth/login.
+  async function dataFetch(url, init, options) {
+    const flags = await waitForFeatureFlags();
+    return flags && typeof flags.dataFetch === "function" ? flags.dataFetch(url, init, options) : fetch(url, init);
+  }
+
   async function buildAuthHeaders() {
     const flags = await waitForFeatureFlags();
     if (!flags) {
@@ -118,7 +131,8 @@
 
     state.loading = true;
     if (!sharedLoadPromise || forceReload) {
-      sharedLoadPromise = fetchAndCacheSearchData();
+      // HFY-R66: only a typed query may send the visitor to the edge sign-in; preloads (eager, focus) fail quietly.
+      sharedLoadPromise = fetchAndCacheSearchData({ interactive: options.interactive === true });
     }
 
     const currentPromise = sharedLoadPromise;
@@ -140,23 +154,24 @@
     }
   }
 
-  async function fetchAndCacheSearchData() {
+  async function fetchAndCacheSearchData({ interactive = false } = {}) {
     const authorized = await requireAuthenticated();
     if (!authorized) {
       throw new Error("User is not authenticated for search.");
     }
 
-    const headers = await buildAuthHeaders();
-    const fetchOptions = Object.keys(headers).length ? { headers, credentials: 'include' } : {};
+    const edgeInit = await edgeSessionInit();
+    const headers = edgeInit ? {} : await buildAuthHeaders();
+    const fetchOptions = edgeInit || (Object.keys(headers).length ? { headers, credentials: 'include' } : {});
     const manifestUrl = config.manifestUrl || '/person/index.json';
     const indexUrl = config.indexUrl || '/person/search-index.json';
 
     const [manifest, index] = await Promise.all([
-      fetch(manifestUrl, fetchOptions).then((res) => {
+      dataFetch(manifestUrl, fetchOptions, { interactive }).then((res) => {
         if (!res.ok) throw new Error('Failed to load manifest');
         return res.json();
       }),
-      fetch(indexUrl, fetchOptions).then((res) => {
+      dataFetch(indexUrl, fetchOptions, { interactive }).then((res) => {
         if (!res.ok) throw new Error('Failed to load search index');
         return res.json();
       }),
@@ -313,7 +328,7 @@
     }
 
     if (!state.ready && !state.loading) {
-      loadData();
+      loadData({ interactive: true });
     }
 
     if (debounceTimer) {
@@ -391,6 +406,9 @@
   }
 
   async function requireAuthenticated() {
+    if (await edgeSessionInit()) {
+      return true; // no legacy token under authV2; dataFetch refreshes on a gate 401 and only then sends the visitor to /auth/login
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 8000,
       label: "[HFY_SEARCH]"
@@ -459,6 +477,17 @@
   }
 
   async function subscribeToAuthChanges() {
+    // HFY-R66: under authV2 the legacy HFY_AUTH state (a release-1 token left in localStorage) says nothing about the edge
+    // session that the data gate checks, so the eager preload follows the edge session instead, and never redirects.
+    if (await edgeSessionInit()) {
+      const flags = await waitForFeatureFlags();
+      const session = flags && typeof flags.edgeSession === "function" ? await flags.edgeSession() : null;
+      if (session && session.authenticated === true) {
+        logSearchDebug("Edge session active; preloading search assets.");
+        loadData({ eager: true });
+      }
+      return;
+    }
     const auth = await waitForAuth();
     if (!auth || typeof auth.onChange !== "function") {
       return;

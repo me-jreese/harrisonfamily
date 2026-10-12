@@ -6,6 +6,7 @@ Kits: `@io-kit/content` (posts, CS suite), `@io-kit/comments` (comments, CC suit
 ## Auth and permissions
 
 Every route needs a session: the auth-edge cookie (`SESSION_COOKIE`, default `io_id`) is an RS256 token verified with `resolveAuth` against the public half of the signing key in Secrets Manager (`SESSION_JWKS_URL`; PEM or JSON `{privateKey, kid}`). `iss` must be `SESSION_ISSUER`, `aud` `SESSION_AUDIENCE`. No or bad cookie is 401. `sub` is the member's gramps_id.
+Author labels (`author.label` on comments and posts, shown to every member) are never an email (HFY-R68, `src/labels.js`): the session's `name` only when it is a usable non-email label, else the person's `displayName` from `s3://$MEDIA_BUCKET/person/<gramps_id>.json` (default bucket `harrisonfamily-frontend`; the role has `s3:GetObject` on `person/*` only; cached per container: 1 h, misses 1 min, failed fetches 5 s), else the gramps_id. The MCP actor (`src/mcp.js`) resolves it the same way.
 Q-4: authors edit and delete their own posts and comments; admins (gramps_ids in `s3://$ADMIN_LIST_BUCKET/$ADMIN_LIST_KEY`, default `harrisonfamily/config/admins.json`, a JSON array or `{"admins": [...]}`, cached 60 s, fail closed) delete any. `can` is computed server-side on every item. POST/PUT/PATCH require `content-type: application/json` (CSRF defence with SameSite cookies).
 
 ## Routes (`/api`)
@@ -38,6 +39,10 @@ Writes are optimistic: post update/visibility/delete are conditioned on the stor
 ## Tests and packaging
 
 `npm test` runs the CS and CC kit contract suites plus auth, audit, notification and caps tests against an in-memory DynamoDB fake. Install needs `CODEARTIFACT_AUTH_TOKEN`. `scripts/ci/package-api.sh` builds `dist/hfy-api.zip` from a clean checkout: it runs the locked `npm ci` in a stage and generates `dist/caps.json` there afterwards.
+
+## MCP (`/mcp`)
+
+Mounted in this Lambda at `https://harrisonfamily.us/mcp` on `@io-kit/mcp` 0.1.0; tools derive from the registry (`mcp` member of a route), authorization from `src/policy.js` + `config/groups.json`. See `docs/mcp.md`. `node scripts/gen-caps.mjs` also writes `dist/policy.json`, `dist/mcp/tools.json` and `dist/mcp/parity-caps.json`.
 
 ## Notes
 

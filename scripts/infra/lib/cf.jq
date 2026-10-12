@@ -91,3 +91,34 @@ def place_pin($pinBeh; $path):
   | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length);
 
 def redact_origin_verify: (.. | objects | select(.HeaderName? == "X-Origin-Verify") | .HeaderValue) = "<redacted>";
+
+# HFY-TSK-080: keep an existing $pat behavior (merged fields and all) ahead of the first OTHER behavior that would also match
+# $path, otherwise CloudFront's first-match rule lets that broader behavior shadow it. A behavior that is already ahead, or
+# absent, is left alone; nothing else is reordered.
+def place_before_shadow($pat; $path):
+  (.CacheBehaviors.Items // []) as $items
+  | ($items | _index_where(.PathPattern == $pat)) as $cur
+  | ($items | _index_where(.PathPattern != $pat and (.PathPattern | pattern_matches($path)))) as $anchor
+  | if $cur == null or $anchor == null or $cur < $anchor then .
+    else
+      [$items[] | select(.PathPattern != $pat)] as $others
+      | ($others | _index_where(.PathPattern | pattern_matches($path))) as $a
+      | .CacheBehaviors.Items = ($others[:$a] + [$items[$cur]] + $others[$a:])
+    end
+  | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length);
+
+# HFY-TSK-080 rollback: drop the behaviors in $pats that carry a Lambda@Edge association of function $fn. A behavior with a
+# listed pattern but no such association is not ours and is kept.
+def remove_gate_behaviors($pats; $fn):
+  .CacheBehaviors.Items = [ (.CacheBehaviors.Items // [])[]
+      | select(((.PathPattern as $p | $pats | index($p)) != null
+                and any((.LambdaFunctionAssociations.Items // [])[]; (.LambdaFunctionARN | test(":function:" + $fn + ":[0-9]+$")))) | not) ]
+  | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length);
+
+# HFY-R65: does the input ResponseHeadersPolicyConfig force Cache-Control to exactly $value on every response? True only when it
+# has a single Cache-Control custom header with that value and Override:true, and does not also list Cache-Control in
+# RemoveHeadersConfig. Header names compare case-insensitively, as HTTP does.
+def rhp_forces_cache_control($value):
+  ([(.CustomHeadersConfig.Items // [])[] | select((.Header // "" | ascii_downcase) == "cache-control")]) as $cc
+  | ($cc | length) == 1 and $cc[0].Value == $value and $cc[0].Override == true
+    and ([(.RemoveHeadersConfig.Items // [])[] | (.Header // "" | ascii_downcase)] | index("cache-control")) == null;

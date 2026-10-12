@@ -1,0 +1,17 @@
+# UI route manifest for the hfy stack (@io-kit/parity routes schema 1.0.0). Handlers name the API routes (route registry names) the page calls;
+# parity/map.yaml maps each MCP tool to the handler a human uses for the same action. Regenerate with the UI route generator when pages change.
+schemaVersion: "1.0.0"
+stack: hfy
+surface: web
+generatedAt: "2026-10-12T00:00:00Z"
+routes:
+  - path: /person/:id
+    component: islands/comments
+    handlers: ["api:comments.list", "api:comments.create", "api:comments.delete"]
+    auth: { groups: [members] }
+    surface: web
+  - path: /posts
+    component: islands/posts
+    handlers: ["api:posts.list", "api:posts.get", "api:posts.create", "api:posts.delete"]
+    auth: { groups: [members] }
+    surface: web

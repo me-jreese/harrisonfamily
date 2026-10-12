@@ -2,15 +2,31 @@
 // Public client only (token_endpoint_auth_method none), PKCE S256 required, one fixed client `mcp-harrisonfamily`.
 // Access tokens are RS256 JWTs signed with the SAME key/kid as the session cookie (Q-MCP-1), published at /auth/.well-known/jwks.json.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { SignJWT } from "jose";
+import { SignJWT, jwtVerify } from "jose";
 
 export const DEFAULT_CLIENT_ID = "mcp-harrisonfamily";
+/** HFY-R59: the MCP server is mounted on the apex at /mcp, so that URL is the default token audience / resource indicator. */
+export const DEFAULT_MCP_RESOURCE = "https://harrisonfamily.us/mcp";
 export const CODE_TTL_S = 120;
 export const ACCESS_TTL_S = 3600;
 export const REFRESH_TTL_S = 30 * 86400;
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const SCOPE_RE = /^[A-Za-z0-9:._\/ -]{1,200}$/;
+const MAX_AGE_RE = /^[0-9]{1,9}$/; // OIDC max_age: a non-negative integer number of seconds
+const NAME_MAX = 200;
+
+/**
+ * The member's display label for the access token's `name` claim (the MCP actor label, api/src/mcp.js). It comes from the io_id session
+ * label, which is the allowlist entry's `label`. The kit falls back to the member's EMAIL when an entry has no label (and principal
+ * displayName falls back to the email claim), and a post or comment author label is shown to the whole family, so an email-shaped label
+ * is never minted; nor is a label that is just the sub, empty, over-long or carrying control characters. No claim = the API uses the sub.
+ */
+export function displayNameOf(label, sub) {
+  const n = typeof label === "string" ? label.trim() : "";
+  if (!n || n === sub || n.length > NAME_MAX || n.includes("@") || /[\u0000-\u001f\u007f]/.test(n)) return undefined;
+  return n;
+}
 
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
@@ -34,7 +50,7 @@ export function memoryOAuthStore() {
   return { put: async (i) => { m.set(i.PK, { SK: "META", ...i }); }, get: async (pk) => m.get(pk), take: async (pk) => { const v = m.get(pk); m.delete(pk); return v; } };
 }
 
-export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
+export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, jwks, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
   if (!redirectUris?.length) throw new Error("redirectUris must not be empty");
   if (!resources?.length) throw new Error("resources must not be empty");
   if (corsOrigins.some((o) => !/^https:\/\/[^/*\s]+$/.test(o))) throw new Error("corsOrigins must be exact https origins (no wildcard)");
@@ -55,6 +71,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     registration_endpoint: `${base}/register`,
     revocation_endpoint: `${base}/revoke`,
     revocation_endpoint_auth_methods_supported: ["none"],
+    userinfo_endpoint: `${base}/userinfo`,
     jwks_uri: `${base}/.well-known/jwks.json`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -76,25 +93,57 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     }
     const resource = q.resource ? resources.find((r) => r === q.resource) : resources[0];
     if (!resource) return back({ error: "invalid_target", error_description: "unknown resource" });
+    // HFY-R64 / RFC 9470: max_age and prompt=login ask for a fresh sign-in (the MCP server's step-up delete needs auth_time within 300 s).
+    let maxAge;
+    if (q.max_age !== undefined) {
+      if (typeof q.max_age !== "string" || !MAX_AGE_RE.test(q.max_age)) return back({ error: "invalid_request", error_description: "max_age must be a non-negative integer" });
+      maxAge = Number(q.max_age);
+    }
+    const promptLogin = typeof q.prompt === "string" && q.prompt.split(/\s+/).includes("login");
     const session = await sessionOf();
-    if (!session) return redirectTo(`${mount}/login?next=${encodeURIComponent(`${mount}/authorize?${new URLSearchParams(q).toString()}`)}`);
+    const authTime = Number.isFinite(session?.authTime) ? session.authTime : 0;
+    if (!session || promptLogin || (maxAge !== undefined && secs() - authTime > maxAge)) {
+      // Back here after the sign-in: `prompt` is dropped (else prompt=login would loop), max_age is kept (a fresh sign-in has authTime ~ now, so it passes).
+      const next = new URLSearchParams(q);
+      next.delete("prompt");
+      return redirectTo(`${mount}/login?next=${encodeURIComponent(`${mount}/authorize?${next.toString()}`)}`);
+    }
     if (!(await groupsFor(session.sub))) return back({ error: "access_denied", error_description: "not on the family access list" });
     const code = b64u(random(32));
+    const name = displayNameOf(session.label, session.sub);
     await store.put({
       PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope: scopeOf(q.scope),
+      ...assuranceOf(session), ...(name ? { name } : {}),
       expiresAt: now() + CODE_TTL_S * 1000, ttl: secs() + CODE_TTL_S + 60,
     });
     return back({ code });
   }
 
-  async function issue({ sub, resource, scope, groups, family }) {
+  /** The sign-in facts an access token carries: email, amr (string[]), authTime (epoch seconds, 0 = unknown). Tolerates records that predate HFY-R64. */
+  function assuranceOf(src) {
+    const out = { authTime: Number.isFinite(src?.authTime) && src.authTime > 0 ? Math.floor(src.authTime) : 0 };
+    if (typeof src?.email === "string" && src.email) out.email = src.email;
+    const amr = Array.isArray(src?.amr) ? src.amr.filter((m) => typeof m === "string" && m) : [];
+    if (amr.length) out.amr = amr;
+    return out;
+  }
+
+  /**
+   * HFY-R64: the access token carries email, amr (only when non-empty) and auth_time (always; 0 when unknown, which the MCP server reads as stale).
+   * auth_time is the original sign-in time: refresh grants pass the stored value through, they never advance it.
+   * `name` (the member's display label, see displayNameOf) is carried the same way: from the session at authorize, preserved on refresh.
+   */
+  async function issue({ sub, resource, scope, groups, family, email, amr, authTime, name }) {
     const iat = secs();
-    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access" })
+    const a = assuranceOf({ email, amr, authTime });
+    const n = displayNameOf(name, sub);
+    if (n) a.name = n;
+    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access", ...(a.email ? { email: a.email } : {}), ...(a.name ? { name: a.name } : {}), ...(a.amr ? { amr: a.amr } : {}), auth_time: a.authTime })
       .setProtectedHeader({ alg: "RS256", kid: signer.kid, typ: "at+jwt" })
       .setSubject(sub).setIssuer(base).setAudience(resource).setIssuedAt(iat).setExpirationTime(iat + ACCESS_TTL_S).setJti(b64u(random(12)))
       .sign(signer.privateKey);
     const refreshToken = `hfyrt_${b64u(random(32))}`;
-    await store.put({ PK: `MCPRT#${keyOf(refreshToken)}`, clientId, sub, resource, scope, family, expiresAt: now() + REFRESH_TTL_S * 1000, ttl: secs() + REFRESH_TTL_S + 3600 });
+    await store.put({ PK: `MCPRT#${keyOf(refreshToken)}`, clientId, sub, resource, scope, family, ...a, expiresAt: now() + REFRESH_TTL_S * 1000, ttl: secs() + REFRESH_TTL_S + 3600 });
     return json(200, { access_token: accessToken, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refreshToken, scope });
   }
 
@@ -110,7 +159,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the authorization request");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)) });
+      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)), email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name });
     }
     if (p.grant_type === "refresh_token") {
       const rt = p.refresh_token;
@@ -127,7 +176,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the grant");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family });
+      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family, email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name }); // never refreshes auth_time
     }
     return err(400, "unsupported_grant_type", "authorization_code and refresh_token are supported");
   }
@@ -160,6 +209,30 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     return { statusCode: 200, headers: { "content-type": "application/json", ...noStore }, body: "{}" };
   }
 
+  /**
+   * HFY-R55: GET /userinfo. Bearer access token (RS256, this issuer, aud = a registered resource, token_use access) -> {sub, groups, email_verified}.
+   * Membership is re-read from the allowlist on every call, so removing a member stops working immediately rather than at token expiry.
+   * email_verified is always true: the allowlist only admits addresses verified by Google or Cognito (HFY-R58).
+   * `jwks` is a jose key getter (createLocalJWKSet / createRemoteJWKSet); a rotated kid is picked up by the getter's own refetch.
+   */
+  async function userinfo(event) {
+    const h = String(headerOf(event, "authorization") ?? "");
+    const m = /^Bearer ([A-Za-z0-9._~+/-]+=*)$/i.exec(h);
+    const bearer = (error, status = 401) => json(status, { error, ...(status === 401 ? {} : {}) }, { "www-authenticate": `Bearer error="${error}"` });
+    if (!m) return json(401, { error: "invalid_token" }, { "www-authenticate": "Bearer" });
+    if (!jwks) return json(503, { error: "server_error" });
+    let payload;
+    try {
+      ({ payload } = await jwtVerify(m[1], jwks, { issuer: base, audience: resources, algorithms: ["RS256"], clockTolerance: 5, currentDate: new Date(now()) }));
+    } catch {
+      return bearer("invalid_token");
+    }
+    if (payload.token_use !== "access" || typeof payload.sub !== "string") return bearer("invalid_token");
+    const groups = await groupsFor(payload.sub);
+    if (!groups) return bearer("invalid_token");
+    return json(200, { sub: payload.sub, groups, email_verified: true });
+  }
+
   const bodyText = (e) => (e.isBase64Encoded && e.body ? Buffer.from(e.body, "base64").toString("utf8") : (e.body ?? ""));
   const ctype = (e) => String(Object.entries(e.headers ?? {}).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "");
   function params(e) {
@@ -167,9 +240,9 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     if (/json/.test(ctype(e))) { try { const v = JSON.parse(t || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; } }
     return Object.fromEntries(new URLSearchParams(t));
   }
-  const ROUTES = { "/.well-known/oauth-authorization-server": "GET", "/authorize": "GET", "/token": "POST", "/register": "POST", "/revoke": "POST" };
+  const ROUTES = { "/.well-known/oauth-authorization-server": "GET", "/authorize": "GET", "/token": "POST", "/register": "POST", "/revoke": "POST", "/userinfo": "GET" };
 
-  const CORS_ROUTES = new Set(["/.well-known/oauth-authorization-server", "/token", "/register", "/revoke"]);
+  const CORS_ROUTES = new Set(["/.well-known/oauth-authorization-server", "/token", "/register", "/revoke", "/userinfo"]);
   const headerOf = (e, name) => { const k = Object.keys(e.headers ?? {}).find((x) => x.toLowerCase() === name); return k ? e.headers[k] : undefined; };
 
   /** rel = path below the mount. Returns an edge result, or undefined when the path is not an OAuth route. */
@@ -192,6 +265,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       else if (rel === "/authorize") r = await authorize(event.queryStringParameters, sessionOf);
       else if (rel === "/token") r = await token(params(event));
       else if (rel === "/revoke") r = await revoke(params(event));
+      else if (rel === "/userinfo") r = await userinfo(event);
       else r = register(params(event));
     } catch (e) {
       console.error(JSON.stringify({ msg: "oauth failure", rel, error: e instanceof Error ? e.message : String(e) }));
@@ -199,5 +273,5 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     }
     return cors(r);
   }
-  return { handle, metadata, authorize, token, register, revoke };
+  return { handle, userinfo, metadata, authorize, token, register, revoke };
 }

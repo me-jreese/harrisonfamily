@@ -15,6 +15,13 @@
     },
     config.defaultState || {}
   );
+  // HFY-R66: {loggedIn, userGrampsID, hasRecord} from an authenticated authV2 edge session (see edgeSession below). It is laid
+  // over the legacy state for [data-feature] visibility only, so the legacy auth.js (which knows nothing of the edge session)
+  // cannot hide the navbar search, My Record or Log out again for an edge-only sign-in.
+  let edgeOverlay = null;
+  function visibilityState() {
+    return edgeOverlay ? Object.assign({}, state, edgeOverlay) : state;
+  }
   const ANY = "any";
   const LOG_PREFIX = "[HFYFeatureFlags]";
   const debugEnabled = (() => {
@@ -73,7 +80,7 @@
     return normalized.map(String).includes(String(candidate));
   }
 
-  function shouldShow(featureKey, contextState = state) {
+  function shouldShow(featureKey, contextState = visibilityState()) {
     const featureConfig = components[featureKey];
     if (!featureConfig || !featureConfig.showWhen) {
       return true;
@@ -222,7 +229,7 @@
       applyFeatureVisibility();
     },
     shouldShow(featureKey, overrides = {}) {
-      const combinedState = Object.assign({}, state, overrides);
+      const combinedState = Object.assign({}, visibilityState(), overrides);
       return shouldShow(featureKey, combinedState);
     },
     refresh() {
@@ -380,6 +387,232 @@
     return flagsPromise;
   }
   featureAPI.resolveFlags = resolveFlags;
+
+  // HFY-TSK-080: the private data paths (/person/*.json, /family|event|note|place|media/*) are gated at the edge by the io_id
+  // session cookie (Lambda@Edge, edge-gate/). With authV2 on, data fetches therefore send that cookie (credentials
+  // "same-origin") and NOT the legacy X-HFY-Session token, which nothing validates any more. With authV2 off this resolves null
+  // and every caller keeps its legacy request exactly as before. NOTE: once the gate is live, authV2-off visitors cannot read
+  // person data, which is why the gate and the authV2 flip ship together (cloudfront/README.md, "Private data gate").
+  let authV2Seen = false;
+  featureAPI.dataFetchInit = function dataFetchInit() {
+    return resolveFlags().then((flags) => {
+      authV2Seen = flags.authV2 === true;
+      return authV2Seen ? { credentials: "same-origin" } : null;
+    });
+  };
+
+  // HFY-R66: authV2 session continuity. io_id (the gate's credential) lives 1 h; the HttpOnly io_rt refresh cookie lives much
+  // longer, and POST /auth/refresh (x-requested-with: io-kit) re-sets io_id from it (200) or answers 401 once it is gone.
+  // - edgeSession(): GET /auth/session once per page (shared by auth-v2.js, the navbar and the data fetches). When it reports
+  //   signed out or near expiry and this browser has held an edge session before, it refreshes once and asks again.
+  // - dataFetch(url, init, {interactive}): before the first data fetch on a page, refresh once if the session is signed out or
+  //   near expiry; on a gate 401, refresh once (single-flight, shared by concurrent fetches) and retry the request once. Only
+  //   when that fails does an interactive load go to /auth/login?returnTo=...; background loads ({interactive:false}) never do.
+  // - No loops: a failed refresh is not repeated on the page, each request is retried at most once, and the sign-in redirect is
+  //   skipped when this tab was already sent there in the last 10 minutes (the caller then shows its own error).
+  // With authV2 off none of this runs: edgeSession() resolves null and dataFetch() is exactly fetch(url, init).
+  const SESSION_URL = "/auth/session";
+  const REFRESH_URL = "/auth/refresh";
+  const LOGIN_URL = "/auth/login";
+  const NEAR_EXPIRY_MS = 120 * 1000;
+  const EDGE_SEEN_KEY = "hfy:edge-session"; // localStorage: this browser has had an edge session (so a refresh may succeed)
+  const BOUNCE_KEY = "hfy:auth-bounce"; // sessionStorage: when this tab was last sent to /auth/login by a failed data fetch
+  const BOUNCE_WINDOW_MS = 10 * 60 * 1000;
+  let edgeSessionPromise = null;
+  let preflightPromise = null;
+  let refreshFlight = null;
+  let refreshGeneration = 0; // bumped by every successful refresh
+  let refreshDead = false; // a refresh failed (or did not cure a 401) on this page: never try again here
+  let refreshAttempted = false;
+  let signInRedirected = false;
+
+  function storageGet(store, key) {
+    try {
+      return window[store].getItem(key);
+    } catch (error) {
+      return undefined; // storage blocked
+    }
+  }
+  function storageSet(store, key, value) {
+    try {
+      if (value === null) window[store].removeItem(key);
+      else window[store].setItem(key, value);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function getSessionJSON() {
+    return fetch(SESSION_URL, { credentials: "same-origin", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => (s && typeof s.authenticated === "boolean" ? s : null))
+      .catch(() => null);
+  }
+
+  function expiresAtMs(session) {
+    const exp = session && Number(session.exp);
+    if (!Number.isFinite(exp) || exp <= 0) return null;
+    return exp > 1e12 ? exp : exp * 1000; // JWT exp is in seconds
+  }
+  function sessionUsable(session) {
+    if (!session || session.authenticated !== true) return false;
+    const at = expiresAtMs(session);
+    return at === null || at - Date.now() > NEAR_EXPIRY_MS;
+  }
+
+  // Single-flight POST /auth/refresh. Resolves true when io_id was re-set. The response body (it carries tokens) is never read.
+  function refreshSession() {
+    if (refreshDead) return Promise.resolve(false);
+    if (!refreshFlight) {
+      refreshAttempted = true;
+      refreshFlight = fetch(REFRESH_URL, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "x-requested-with": "io-kit" }
+      })
+        .then(
+          (r) => {
+            if (r.status === 401 || r.status === 403) storageSet("localStorage", EDGE_SEEN_KEY, null); // the refresh token is gone
+            return r.ok;
+          },
+          () => false
+        )
+        .then((ok) => {
+          refreshFlight = null;
+          if (ok) refreshGeneration += 1;
+          else refreshDead = true;
+          logDebug("edge session refresh", { ok });
+          return ok;
+        });
+    }
+    return refreshFlight;
+  }
+
+  function applyEdgeSession(session) {
+    if (!session || session.authenticated !== true || !session.sub) return;
+    storageSet("localStorage", EDGE_SEEN_KEY, "1");
+    edgeOverlay = { loggedIn: true, userGrampsID: session.sub, hasRecord: true };
+    onReady(applyFeatureVisibility);
+  }
+
+  // Resolves the page's edge session ({authenticated, sub, ...}), or null when authV2 is off or /auth/session is unreachable.
+  function edgeSession() {
+    return resolveFlags().then((flags) => {
+      if (flags.authV2 !== true) return null;
+      if (!edgeSessionPromise) {
+        edgeSessionPromise = getSessionJSON().then((s) => {
+          if (!s || sessionUsable(s)) return s;
+          if (s.authenticated !== true && storageGet("localStorage", EDGE_SEEN_KEY) !== "1") return s; // never signed in here
+          return refreshSession().then((ok) => (ok ? getSessionJSON().then((again) => again || s) : s));
+        }).then((s) => {
+          applyEdgeSession(s);
+          return s;
+        });
+      }
+      return edgeSessionPromise;
+    });
+  }
+  featureAPI.edgeSession = edgeSession;
+  // Sign-out: drop the overlay and the "had an edge session" marker so later pages do not try to refresh.
+  featureAPI.forgetEdgeSession = function forgetEdgeSession() {
+    storageSet("localStorage", EDGE_SEEN_KEY, null);
+    edgeOverlay = null;
+    applyFeatureVisibility();
+  };
+
+  // (a) before the first data fetch on the page: refresh once when the session is signed out or near expiry (unless
+  // edgeSession() already tried on this page). An unreachable /auth/session is left to the gate (and (b)).
+  function preflight() {
+    if (!preflightPromise) {
+      preflightPromise = edgeSession()
+        .then((s) => {
+          if (!s || sessionUsable(s) || refreshAttempted) return null;
+          return refreshSession().then((ok) => {
+            if (!ok) return null;
+            // the page's session view (navigation, preloads) predates the refresh: ask again, without holding up the data fetch
+            edgeSessionPromise = getSessionJSON().then((again) => {
+              const next = again || s;
+              applyEdgeSession(next);
+              return next;
+            });
+            return null;
+          });
+        })
+        .catch(() => null);
+    }
+    return preflightPromise;
+  }
+
+  function recentlySentToSignIn() {
+    const raw = storageGet("sessionStorage", BOUNCE_KEY);
+    if (raw === undefined) return true; // storage blocked: the guard cannot work, so never redirect automatically
+    const at = Number(raw);
+    return Number.isFinite(at) && Date.now() - at < BOUNCE_WINDOW_MS;
+  }
+
+  function signInUrl() {
+    const here = window.location.pathname + window.location.search + window.location.hash;
+    return LOGIN_URL + "?returnTo=" + encodeURIComponent(here);
+  }
+  featureAPI.signInUrl = signInUrl;
+
+  // (c) the session could not be recovered: go to the edge sign-in and back, unless this tab was just there (no loops).
+  function sendToSignIn() {
+    if (signInRedirected) return true;
+    if (recentlySentToSignIn()) {
+      logDebug("not redirecting to sign-in again; the caller shows its error");
+      return false;
+    }
+    storageSet("sessionStorage", BOUNCE_KEY, String(Date.now()));
+    signInRedirected = true;
+    window.location.replace(signInUrl());
+    return true;
+  }
+
+  function gateSucceeded(response) {
+    if (response && response.ok) storageSet("sessionStorage", BOUNCE_KEY, null);
+    return response;
+  }
+
+  // (b) one recovery per request: refresh (or reuse a refresh that finished after this request was sent) and retry once.
+  function edgeAttempt(url, init, interactive) {
+    const generation = refreshGeneration;
+    return fetch(url, init).then((response) => {
+      if (response.status !== 401) return gateSucceeded(response);
+      const recovered = refreshGeneration !== generation ? Promise.resolve(true) : refreshSession();
+      return recovered.then((ok) => {
+        if (!ok) {
+          if (interactive) sendToSignIn();
+          return response;
+        }
+        return fetch(url, init).then((retry) => {
+          if (retry.status !== 401) return gateSucceeded(retry);
+          refreshDead = true; // a fresh io_id did not satisfy the gate; refreshing again will not either
+          if (interactive) sendToSignIn();
+          return retry;
+        });
+      });
+    });
+  }
+
+  featureAPI.dataFetch = function dataFetch(url, init, options) {
+    const interactive = !(options && options.interactive === false);
+    return resolveFlags().then((flags) => {
+      authV2Seen = flags.authV2 === true;
+      if (!authV2Seen) return fetch(url, init); // legacy request, unchanged
+      const edgeInit = Object.assign({}, init, { credentials: "same-origin" });
+      return preflight().then(() => edgeAttempt(url, edgeInit, interactive));
+    });
+  };
+
+  // Deprecated (pre-R66 callers): a 401 seen after the fact cannot be retried, so it only takes the guarded sign-in redirect.
+  featureAPI.dataResponse = function dataResponse(response) {
+    if (authV2Seen && response && response.status === 401) sendToSignIn();
+    else if (authV2Seen) gateSucceeded(response);
+    return response;
+  };
 
   // Island loader pattern: HFYFeatureFlags.loadIsland("name") injects /js/islands/<name>.js (+ .css) once.
   // Every requested island has a settle promise: true once its module graph has loaded and run, false on a 404 or

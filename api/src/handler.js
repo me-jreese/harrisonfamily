@@ -3,7 +3,7 @@ import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
 import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments.js";
 import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
-import { BASE_PATH, matchRoute } from "./routes.js";
+import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { createUploads } from "./uploads.js";
 import { HttpError, errorResponse, json } from "./http.js";
 
@@ -60,7 +60,14 @@ export function createHandler(deps) {
     return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted };
   }
 
-  return async function handler(event) {
+  /** Run a route's own handler for a non-HTTP caller (the MCP tools): same registry, same validation, Q-4 and audit. Returns {status, body}. */
+  async function invoke(actor, routeName, { params = {}, query = {}, body = {} } = {}) {
+    const route = ROUTES.find((r) => r.name === routeName);
+    if (!route) throw new HttpError(404, "not_found", "no such route");
+    return route.handler({ ...build(actor, {}), actor, params, query, body, event: {} });
+  }
+
+  async function handler(event) {
     try {
       const method = (event.requestContext?.http?.method ?? event.httpMethod ?? "GET").toUpperCase();
       let path = (event.rawPath ?? event.path ?? "/").replace(/\/+$/, "") || "/";
@@ -93,5 +100,7 @@ export function createHandler(deps) {
     } catch (e) {
       return errorResponse(e, log);
     }
-  };
+  }
+  handler.invoke = invoke;
+  return handler;
 }

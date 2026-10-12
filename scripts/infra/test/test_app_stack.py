@@ -102,6 +102,17 @@ class AppStack(unittest.TestCase):
         for s in statements(self.r["Role"]):
             self.assertNotIn("media/", str(s.get("Resource", "")) if isinstance(s, dict) else "")
 
+    # HFY-R68: author labels are the person's displayName from the site's own record, never the allowlist email. Read-only, person/* only.
+    def test_api_may_only_read_person_records_for_author_labels(self):
+        st = by_sid(self.r["Role"], "PersonRecords")
+        self.assertEqual(st["Effect"], "Allow")
+        self.assertEqual(st["Action"], "s3:GetObject")
+        self.assertEqual(st["Resource"], {"Fn::Sub": "arn:${AWS::Partition}:s3:::${MediaBucket}/person/*"})
+        self.assertEqual(self.r["Function"]["Properties"]["Environment"]["Variables"]["MEDIA_BUCKET"], {"Ref": "MediaBucket"})
+        for s in statements(self.r["Role"]):  # no other statement mentions person/
+            if isinstance(s, dict) and s.get("Sid") != "PersonRecords":
+                self.assertNotIn("person/", str(s.get("Resource", "")))
+
     def test_uploads_response_headers_policy(self):
         cfg = self.r["UploadsResponseHeadersPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
         sec = cfg["SecurityHeadersConfig"]
