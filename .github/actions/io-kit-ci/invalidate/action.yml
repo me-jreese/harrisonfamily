@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.2 rendered — do not edit; sha256:6c3b71538b31962d2c9f581d7a24b3a68436ad61b35c20024673704babbbc79c
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:6c3b71538b31962d2c9f581d7a24b3a68436ad61b35c20024673704babbbc79c
 name: io-kit invalidate
 description: Create a CloudFront invalidation for each s3_static target with a distribution and wait for it to complete.
 inputs:

@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.2 rendered — do not edit; sha256:38aad792c98659bfac06341fab0f18176f79db86d5804ed0e8349dd8faadc2da
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:38aad792c98659bfac06341fab0f18176f79db86d5804ed0e8349dd8faadc2da
 name: io-kit deploy lambda
 description: Update function code; with an alias also publish a version and point the alias at it. Rollback mode repoints the alias to the previous version, or (no alias) re-uploads the restored zip.
 inputs:
