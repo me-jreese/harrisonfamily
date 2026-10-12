@@ -2,9 +2,11 @@
 // Public client only (token_endpoint_auth_method none), PKCE S256 required, one fixed client `mcp-harrisonfamily`.
 // Access tokens are RS256 JWTs signed with the SAME key/kid as the session cookie (Q-MCP-1), published at /auth/.well-known/jwks.json.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { SignJWT } from "jose";
+import { SignJWT, jwtVerify } from "jose";
 
 export const DEFAULT_CLIENT_ID = "mcp-harrisonfamily";
+/** HFY-R59: the MCP server is mounted on the apex at /mcp, so that URL is the default token audience / resource indicator. */
+export const DEFAULT_MCP_RESOURCE = "https://harrisonfamily.us/mcp";
 export const CODE_TTL_S = 120;
 export const ACCESS_TTL_S = 3600;
 export const REFRESH_TTL_S = 30 * 86400;
@@ -34,7 +36,7 @@ export function memoryOAuthStore() {
   return { put: async (i) => { m.set(i.PK, { SK: "META", ...i }); }, get: async (pk) => m.get(pk), take: async (pk) => { const v = m.get(pk); m.delete(pk); return v; } };
 }
 
-export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
+export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, jwks, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
   if (!redirectUris?.length) throw new Error("redirectUris must not be empty");
   if (!resources?.length) throw new Error("resources must not be empty");
   if (corsOrigins.some((o) => !/^https:\/\/[^/*\s]+$/.test(o))) throw new Error("corsOrigins must be exact https origins (no wildcard)");
@@ -55,6 +57,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     registration_endpoint: `${base}/register`,
     revocation_endpoint: `${base}/revoke`,
     revocation_endpoint_auth_methods_supported: ["none"],
+    userinfo_endpoint: `${base}/userinfo`,
     jwks_uri: `${base}/.well-known/jwks.json`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -160,6 +163,30 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     return { statusCode: 200, headers: { "content-type": "application/json", ...noStore }, body: "{}" };
   }
 
+  /**
+   * HFY-R55: GET /userinfo. Bearer access token (RS256, this issuer, aud = a registered resource, token_use access) -> {sub, groups, email_verified}.
+   * Membership is re-read from the allowlist on every call, so removing a member stops working immediately rather than at token expiry.
+   * email_verified is always true: the allowlist only admits addresses verified by Google or Cognito (HFY-R58).
+   * `jwks` is a jose key getter (createLocalJWKSet / createRemoteJWKSet); a rotated kid is picked up by the getter's own refetch.
+   */
+  async function userinfo(event) {
+    const h = String(headerOf(event, "authorization") ?? "");
+    const m = /^Bearer ([A-Za-z0-9._~+/-]+=*)$/i.exec(h);
+    const bearer = (error, status = 401) => json(status, { error, ...(status === 401 ? {} : {}) }, { "www-authenticate": `Bearer error="${error}"` });
+    if (!m) return json(401, { error: "invalid_token" }, { "www-authenticate": "Bearer" });
+    if (!jwks) return json(503, { error: "server_error" });
+    let payload;
+    try {
+      ({ payload } = await jwtVerify(m[1], jwks, { issuer: base, audience: resources, algorithms: ["RS256"], clockTolerance: 5, currentDate: new Date(now()) }));
+    } catch {
+      return bearer("invalid_token");
+    }
+    if (payload.token_use !== "access" || typeof payload.sub !== "string") return bearer("invalid_token");
+    const groups = await groupsFor(payload.sub);
+    if (!groups) return bearer("invalid_token");
+    return json(200, { sub: payload.sub, groups, email_verified: true });
+  }
+
   const bodyText = (e) => (e.isBase64Encoded && e.body ? Buffer.from(e.body, "base64").toString("utf8") : (e.body ?? ""));
   const ctype = (e) => String(Object.entries(e.headers ?? {}).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "");
   function params(e) {
@@ -167,9 +194,9 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     if (/json/.test(ctype(e))) { try { const v = JSON.parse(t || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; } }
     return Object.fromEntries(new URLSearchParams(t));
   }
-  const ROUTES = { "/.well-known/oauth-authorization-server": "GET", "/authorize": "GET", "/token": "POST", "/register": "POST", "/revoke": "POST" };
+  const ROUTES = { "/.well-known/oauth-authorization-server": "GET", "/authorize": "GET", "/token": "POST", "/register": "POST", "/revoke": "POST", "/userinfo": "GET" };
 
-  const CORS_ROUTES = new Set(["/.well-known/oauth-authorization-server", "/token", "/register", "/revoke"]);
+  const CORS_ROUTES = new Set(["/.well-known/oauth-authorization-server", "/token", "/register", "/revoke", "/userinfo"]);
   const headerOf = (e, name) => { const k = Object.keys(e.headers ?? {}).find((x) => x.toLowerCase() === name); return k ? e.headers[k] : undefined; };
 
   /** rel = path below the mount. Returns an edge result, or undefined when the path is not an OAuth route. */
@@ -192,6 +219,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
       else if (rel === "/authorize") r = await authorize(event.queryStringParameters, sessionOf);
       else if (rel === "/token") r = await token(params(event));
       else if (rel === "/revoke") r = await revoke(params(event));
+      else if (rel === "/userinfo") r = await userinfo(event);
       else r = register(params(event));
     } catch (e) {
       console.error(JSON.stringify({ msg: "oauth failure", rel, error: e instanceof Error ? e.message : String(e) }));
@@ -199,5 +227,5 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     }
     return cors(r);
   }
-  return { handle, metadata, authorize, token, register, revoke };
+  return { handle, userinfo, metadata, authorize, token, register, revoke };
 }

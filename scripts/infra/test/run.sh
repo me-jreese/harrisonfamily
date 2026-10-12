@@ -13,6 +13,7 @@ SECRET_VALUE="hfy-test-origin-verify-$$-must-never-be-printed"
 API_FURL="https://api123example.lambda-url.us-west-2.on.aws/"
 AUTH_FURL="https://auth123example.lambda-url.us-west-2.on.aws/"
 RHP_ID="11111111-2222-3333-4444-555555555555"
+GATE_ARN="arn:aws:lambda:us-east-1:123456789012:function:hfy-edge-gate:7"
 PASS=0; FAILED=0; CURRENT=""
 unset ORIGIN_VERIFY
 
@@ -32,6 +33,7 @@ new_stub() { # [GET_FIXTURE]
   echo "$API_FURL" > "$STUB_DIR/stack-FunctionUrl"
   echo "$AUTH_FURL" > "$STUB_DIR/stack-AuthFunctionUrl"
   echo "$RHP_ID" > "$STUB_DIR/stack-UploadsResponseHeadersPolicyId"
+  echo "$GATE_ARN" > "$STUB_DIR/stack-EdgeGateVersionArn"
   cp "${1:-$FIXTURE}" "$STUB_DIR/get.json"
 }
 run() { # SCRIPT ARGS... -> OUT, RC; the secret must never reach stdout/stderr
@@ -208,12 +210,93 @@ eq "a drifted policy id is put back" "$(jq -r '.CacheBehaviors.Items[] | select(
 eq "in place" "$(patterns "$(last_update)")" '["/person/*","/api/*","/uploads/*"]'
 
 # ---------------------------------------------------------------------------------------------------------------------
+CURRENT="data gate: HFY-TSK-080 behaviors with the Lambda@Edge association"
+new_stub
+run add-data-gate-behaviors.sh
+eq "exit code" "$RC" 0
+eq "one update-distribution call" "$(updates)" 1
+U=$(last_update)
+eq "gated patterns sit ahead of the shadowing legacy /person/*; the rest follow the existing behaviors" "$(patterns "$U")" \
+  '["/person/*.json","/person/*","/api/*","/family/*","/event/*","/note/*","/place/*","/media/*"]'
+for P in /person/I0001.json /person/index.json /person/search-index.json /family/F0001.json /event/E1.json /note/N1.json /place/P1.json /media/a/b.jpg; do
+  eq "$P is gated by the version ARN, viewer-request" "$(cfg -r --arg p "$P" 'include "cf"; ([.CacheBehaviors.Items[] | select(.PathPattern | pattern_matches($p))] | first | .LambdaFunctionAssociations.Items[0] | "\(.LambdaFunctionARN) \(.EventType) \(.IncludeBody)")' "$U")" "$GATE_ARN viewer-request false"
+  eq "$P is never cached across users" "$(cfg -r --arg p "$P" 'include "cf"; [.CacheBehaviors.Items[] | select(.PathPattern | pattern_matches($p))] | first | .CachePolicyId' "$U")" 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+  eq "$P stays on the S3 origin" "$(route "$U" "$P")" s3-frontend
+done
+eq "the person page shell and other site paths are not gated" "$(cfg -r 'include "cf"; [.CacheBehaviors.Items[] | select(.PathPattern | pattern_matches("/person/index.html")) | .LambdaFunctionAssociations.Quantity] | first' "$U")" 0
+eq "api untouched" "$(jq -cS '.CacheBehaviors.Items[] | select(.PathPattern == "/api/*")' "$U")" "$(jq -cS '.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/api/*")' "$FIXTURE")"
+eq "legacy /person/* untouched" "$(jq -cS '.CacheBehaviors.Items[] | select(.PathPattern == "/person/*")' "$U")" "$(jq -cS '.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/person/*")' "$FIXTURE")"
+eq "default behavior untouched" "$(jq -cS '.DefaultCacheBehavior' "$U")" "$(jq -cS '.DistributionConfig.DefaultCacheBehavior' "$FIXTURE")"
+eq "methods are GET/HEAD" "$(jq -c '.CacheBehaviors.Items[] | select(.PathPattern == "/media/*") | .AllowedMethods.Items' "$U")" '["GET","HEAD"]'
+check "Quantity fields match" quantities_ok "$U"
+eq "nothing but cache behaviors changed" "$(jq -c --slurpfile f "$FIXTURE" 'del(.CacheBehaviors) == ($f[0].DistributionConfig | del(.CacheBehaviors))' "$U")" true
+echo_last
+CURRENT="data gate: rerun is a true no-op, dry run and --config-file never update"
+N=$(updates); run add-data-gate-behaviors.sh --version-arn "$GATE_ARN"
+eq "rerun against CloudFront's echo makes no update" "$(updates)" "$N"
+contains "reports no change" "$OUT" "no change"
+new_stub; run add-data-gate-behaviors.sh --dry-run
+eq "dry run exit" "$RC" 0
+eq "dry run never updates" "$(updates)" 0
+contains "dry run shows the diff" "$OUT" "LambdaFunctionARN"
+new_stub; run add-data-gate-behaviors.sh --config-file "$ROOT/cloudfront/distribution.json" --version-arn "$GATE_ARN" --dry-run
+eq "offline dry run against cloudfront/distribution.json" "$RC" 0
+contains "plans the gated behaviors" "$OUT" "/media/* -> s3-origin"
+eq "offline dry run never calls AWS" "$(cat "$STUB_DIR/calls.log" 2>/dev/null | wc -l | tr -d ' ')" 0
+contains "plans every gated pattern" "$OUT" "/person/*.json -> s3-origin"
+run add-data-gate-behaviors.sh --config-file "$ROOT/cloudfront/distribution.json" --version-arn "$GATE_ARN"
+eq "--config-file without --dry-run is refused" "$RC" 2
+for BAD in "arn:aws:lambda:us-east-1:123456789012:function:hfy-edge-gate" "arn:aws:lambda:us-east-1:123456789012:function:hfy-edge-gate:\$LATEST" "arn:aws:lambda:us-west-2:123456789012:function:hfy-edge-gate:3" "arn:aws:lambda:us-east-1:123456789012:function:other:3"; do
+  new_stub; run add-data-gate-behaviors.sh --version-arn "$BAD"
+  eq "refuses version ARN $BAD" "$RC" 2
+  eq "no update for $BAD" "$(updates)" 0
+done
+new_stub; run add-data-gate-behaviors.sh --origin-id missing-origin --version-arn "$GATE_ARN"
+eq "unknown --origin-id is refused" "$RC" 1
+new_stub; rm "$STUB_DIR/stack-EdgeGateVersionArn"; run add-data-gate-behaviors.sh
+eq "missing stack output is refused" "$RC" 1
+eq "no update when the stack has no output" "$(updates)" 0
+new_stub; run add-data-gate-behaviors.sh --version-arn "$GATE_ARN"; echo_last
+OLD=$(cat "$STUB_DIR/get.json")
+printf '%s' "$OLD" > "$T/gated.json"
+new_stub "$T/gated.json"; run add-data-gate-behaviors.sh --version-arn "arn:aws:lambda:us-east-1:123456789012:function:hfy-edge-gate:8"
+eq "a new published version re-points every behavior in place" "$(patterns "$(last_update)")" '["/person/*.json","/person/*","/api/*","/family/*","/event/*","/note/*","/place/*","/media/*"]'
+eq "all six carry version 8" "$(jq -r '[.CacheBehaviors.Items[] | .LambdaFunctionAssociations.Items[]? | .LambdaFunctionARN | endswith(":8")] | all and length == 6' "$(last_update)")" true
+jq '.DistributionConfig.CacheBehaviors.Items |= ([.[] | select(.PathPattern == "/person/*.json")] + [.[] | select(.PathPattern != "/person/*.json")] | .[1:2] + .[0:1] + .[2:])' "$T/gated.json" > "$T/shadowed.json"
+eq "setup: the gated /person/*.json sits behind /person/*" "$(patterns "$T/shadowed.json" | jq -c '.[0:2]')" '["/person/*","/person/*.json"]'
+new_stub "$T/shadowed.json"; run add-data-gate-behaviors.sh --version-arn "$GATE_ARN"
+eq "a shadowed gated behavior is moved ahead of its shadow" "$(patterns "$(last_update)" | jq -c '.[0:2]')" '["/person/*.json","/person/*"]'
+eq "...keeping its merged fields" "$(jq -c '.CacheBehaviors.Items[0] | [.PathPattern, .GrpcConfig.Enabled, .LambdaFunctionAssociations.Items[0].LambdaFunctionARN]' "$(last_update)")" "[\"/person/*.json\",false,\"$GATE_ARN\"]"
+
+CURRENT="data gate: --remove is the rollback"
+new_stub "$T/gated.json"; run add-data-gate-behaviors.sh --remove
+eq "exit code" "$RC" 0
+eq "one update" "$(updates)" 1
+eq "only the six gated behaviors are removed" "$(patterns "$(last_update)")" '["/person/*","/api/*"]'
+eq "the removal restores the original behaviors exactly" "$(cfg -cS 'include "cf"; .CacheBehaviors | norm' "$(last_update)")" "$(cfg -cS 'include "cf"; .DistributionConfig.CacheBehaviors | norm' "$FIXTURE")"
+check "Quantity fields match" quantities_ok "$(last_update)"
+echo_last; N=$(updates); run add-data-gate-behaviors.sh --remove
+eq "a second --remove is a no-op" "$(updates)" "$N"
+new_stub; run add-data-gate-behaviors.sh --remove --dry-run
+eq "--remove on a distribution without the gate is a no-op" "$(updates)" 0
+contains "reports no change" "$OUT" "no change"
+jq '(.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/media/*") | .LambdaFunctionAssociations) = {Quantity:0}' "$T/gated.json" > "$T/foreign.json"
+new_stub "$T/foreign.json"; run add-data-gate-behaviors.sh --remove
+eq "a /media/* behavior without our association is not ours and is kept" "$(patterns "$(last_update)")" '["/person/*","/api/*","/media/*"]'
+new_stub "$T/gated.json"; run add-data-gate-behaviors.sh --remove --dry-run
+eq "--remove --dry-run never updates" "$(updates)" 0
+
+# ---------------------------------------------------------------------------------------------------------------------
 CURRENT="app-stack.yaml"
 if python3 -c 'import yaml' 2>/dev/null; then
   if PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -q "$HERE/test_app_stack.py" 2> "$T/py.out"; then ok; else fail "test_app_stack.py"; cat "$T/py.out" >&2; fi
 else fail "python3 with PyYAML is required for test_app_stack.py"; fi
+CURRENT="edge-gate-stack.yaml"
+if python3 -c 'import yaml' 2>/dev/null; then
+  if (cd "$HERE" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -q test_edge_gate_stack 2> "$T/py2.out"); then ok; else fail "test_edge_gate_stack.py"; cat "$T/py2.out" >&2; fi
+fi
 if command -v cfn-lint >/dev/null; then
-  if cfn-lint "$ROOT/infrastructure/cloudformation/app-stack.yaml" > "$T/lint.out" 2>&1; then ok; else fail "cfn-lint app-stack.yaml"; cat "$T/lint.out" >&2; fi
+  if cfn-lint "$ROOT/infrastructure/cloudformation/app-stack.yaml" "$ROOT/infrastructure/cloudformation/edge-gate-stack.yaml" > "$T/lint.out" 2>&1; then ok; else fail "cfn-lint"; cat "$T/lint.out" >&2; fi
 else echo "  (cfn-lint not installed: skipped)"; fi
 
 CURRENT="shellcheck"

@@ -40,7 +40,7 @@ describe("manifest", () => {
   it("committed manifest validates and carries the HFY-R31/R38 values", () => {
     const m = validateManifest(raw);
     expect(m).toMatchObject({ site: "harrisonfamily.us", authOrigin: "https://harrisonfamily.us", session: { issuer: "https://harrisonfamily.us/auth", audience: "harrisonfamily-web", profile: "installed", signingKeySecretName: "harrisonfamily/auth-edge/session-signing-key" }, resolver: { kind: "s3_allowlist", bucket: "harrisonfamily", key: "config/userGrampsID.json" }, store: { kind: "dynamodb", tableEnv: "AUTH_TABLE" } });
-    expect(m.providers.map((p) => p.kind)).toEqual(["google", "password"]);
+    expect(m.providers.map((p) => p.kind)).toEqual(["google", "password", "passkey"]);
     expect(JSON.stringify(raw)).not.toMatch(/PRIVATE KEY/);
   });
   it("loadManifest injects ids from the environment and fails closed when one is missing", () => {

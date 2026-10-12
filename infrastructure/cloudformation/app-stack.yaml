@@ -24,7 +24,7 @@ Parameters:
   AllowlistKey: { Type: String, Default: config/userGrampsID.json, Description: Email -> gramps_id map the auth edge resolves principals against }
   SigningKeySecretName: { Type: String, Default: harrisonfamily/auth-edge/session-signing-key, Description: Secret created by scripts/infra/create-session-key.sh }
   McpRedirectUris: { Type: String, Default: "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback", Description: "HFY-TSK-076: comma-separated exact redirect URIs the public MCP client may use (the only allowed list)" }
-  McpResources: { Type: String, Default: "https://mcp.harrisonfamily.us", Description: "HFY-TSK-076: comma-separated resource indicators (token aud); the first is the default" }
+  McpResources: { Type: String, Default: "https://harrisonfamily.us/mcp", Description: "HFY-TSK-076: comma-separated resource indicators (token aud); the first is the default" }
   McpCorsOrigins: { Type: String, Default: "https://claude.ai,https://claude.com", Description: "Exact browser origins allowed CORS on /auth/token, /register, /revoke (never a wildcard)" }
   OriginVerifySecretName: { Type: String, Default: harrisonfamily/cloudfront/origin-verify, Description: "Secret created by scripts/infra/create-origin-verify.sh; CloudFront sends it as X-Origin-Verify (HFY-R43)" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }

@@ -1,0 +1,9 @@
+{
+  "name": "hfy-edge-gate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HFY-TSK-080 Lambda@Edge viewer-request gate: verifies the io_id edge session before person/family/event/note/place/media data is served. No dependencies.",
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "engines": { "node": ">=22" }
+}

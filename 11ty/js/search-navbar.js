@@ -71,6 +71,12 @@
       .filter(Boolean);
   }
 
+  // HFY-TSK-080: under authV2 the io_id cookie is the credential (edge gate); no X-HFY-Session header is sent. null when authV2 is off.
+  async function edgeSessionInit() {
+    const flags = await waitForFeatureFlags();
+    return flags && typeof flags.dataFetchInit === "function" ? flags.dataFetchInit() : null;
+  }
+
   async function buildAuthHeaders() {
     const flags = await waitForFeatureFlags();
     if (!flags) {
@@ -146,18 +152,21 @@
       throw new Error("User is not authenticated for search.");
     }
 
-    const headers = await buildAuthHeaders();
-    const fetchOptions = Object.keys(headers).length ? { headers, credentials: 'include' } : {};
+    const edgeInit = await edgeSessionInit();
+    const headers = edgeInit ? {} : await buildAuthHeaders();
+    const fetchOptions = edgeInit || (Object.keys(headers).length ? { headers, credentials: 'include' } : {});
     const manifestUrl = config.manifestUrl || '/person/index.json';
     const indexUrl = config.indexUrl || '/person/search-index.json';
 
     const [manifest, index] = await Promise.all([
       fetch(manifestUrl, fetchOptions).then((res) => {
-        if (!res.ok) throw new Error('Failed to load manifest');
+        if (window.HFYFeatureFlags && window.HFYFeatureFlags.dataResponse) window.HFYFeatureFlags.dataResponse(res);
+            if (!res.ok) throw new Error('Failed to load manifest');
         return res.json();
       }),
       fetch(indexUrl, fetchOptions).then((res) => {
-        if (!res.ok) throw new Error('Failed to load search index');
+        if (window.HFYFeatureFlags && window.HFYFeatureFlags.dataResponse) window.HFYFeatureFlags.dataResponse(res);
+            if (!res.ok) throw new Error('Failed to load search index');
         return res.json();
       }),
     ]);
@@ -391,6 +400,9 @@
   }
 
   async function requireAuthenticated() {
+    if (await edgeSessionInit()) {
+      return true; // no legacy token exists under authV2; a 401 from the gate redirects to /auth/login
+    }
     const { token } = await waitForSessionToken({
       timeoutMs: 8000,
       label: "[HFY_SEARCH]"

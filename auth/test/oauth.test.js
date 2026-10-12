@@ -12,7 +12,7 @@ const raw = JSON.parse(readFileSync(new URL("../edge.manifest.json", import.meta
 const ENV = { COGNITO_USER_POOL_ID: "us-west-2_TEST", COGNITO_CLIENT_ID: "client123", GOOGLE_CLIENT_ID: "gis-client.apps.googleusercontent.com" };
 const CB = "https://claude.ai/api/mcp/auth_callback";
 const CB2 = "https://claude.com/api/mcp/auth_callback";
-const RES = "https://mcp.harrisonfamily.us";
+const RES = "https://harrisonfamily.us/mcp";
 const ISS = "https://harrisonfamily.us/auth";
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const pkce = () => { const verifier = b64u(randomBytes(32)); return { verifier, challenge: b64u(createHash("sha256").update(verifier).digest()) }; };
