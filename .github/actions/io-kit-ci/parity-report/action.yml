@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.1 rendered — do not edit; sha256:0be4bf2a5f7139a30ec49948b5616df87fedad3ded13c64697fa4c43da108f44
+# @io-kit/ci 0.1.2 rendered — do not edit; sha256:0be4bf2a5f7139a30ec49948b5616df87fedad3ded13c64697fa4c43da108f44
 name: io-kit parity report
 description: Always run io-kit-ci check (pipeline_drift to the step summary; fails only in block mode), then the optional @io-kit/parity baseline check. Without a baseline the report notes "no baseline" and passes.
 inputs:

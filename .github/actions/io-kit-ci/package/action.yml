@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.1 rendered — do not edit; sha256:957e781752bfd06ce4f3ad44dfd1ea1c3e2fa968cc777b2cef0673b963a2e71d
+# @io-kit/ci 0.1.2 rendered — do not edit; sha256:957e781752bfd06ce4f3ad44dfd1ea1c3e2fa968cc777b2cef0673b963a2e71d
 name: io-kit package
 description: Upload the release artifact (build output, extra artifacts, release.json) named io-kit-release-<sha>; rollback redeploys it later.
 inputs:

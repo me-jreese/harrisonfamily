@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.1 rendered — do not edit; sha256:b8bda1be8bedb011973b7cc8072f7fbd97a790baf7c156c81e0a9683458db14e
+# @io-kit/ci 0.1.2 rendered — do not edit; sha256:b8bda1be8bedb011973b7cc8072f7fbd97a790baf7c156c81e0a9683458db14e
 name: io-kit deploy static
 description: aws s3 sync the build output to each s3_static target with --delete; excluded globs are never deleted.
 inputs:

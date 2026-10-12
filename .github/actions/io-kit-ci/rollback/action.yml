@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.1 rendered — do not edit; sha256:53e3f8d9f4e5cc2333d64d6f8adf684a6dde19c05fb88c38ad6f713914eb1687
+# @io-kit/ci 0.1.2 rendered — do not edit; sha256:53e3f8d9f4e5cc2333d64d6f8adf684a6dde19c05fb88c38ad6f713914eb1687
 name: io-kit rollback
 description: Redeploy the release artifact of the previous successful deploy run (strategy previous_artifact). Run after a failed smoke.
 inputs:

@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.1 rendered — do not edit; sha256:2af4e62e29f8d89e6397f4fef8a49219515810c6e9c5ab8c9623868d133efa78
+# @io-kit/ci 0.1.2 rendered — do not edit; sha256:2af4e62e29f8d89e6397f4fef8a49219515810c6e9c5ab8c9623868d133efa78
 name: io-kit deploy
 run-name: io-kit deploy ${{ inputs.target_environment || github.ref_name }}
 on:

@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.1 rendered — do not edit; sha256:1492ce9250f7f8455df9282dc32dce9b28a3ca1f725a82aefbb952c92cd40666
+# @io-kit/ci 0.1.2 rendered — do not edit; sha256:1492ce9250f7f8455df9282dc32dce9b28a3ca1f725a82aefbb952c92cd40666
 name: io-kit CI
 on:
   pull_request: null
