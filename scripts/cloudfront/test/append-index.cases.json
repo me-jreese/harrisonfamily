@@ -1,0 +1,303 @@
+{
+ "_comment": "Shared by append-index.test.mjs (node --test) and publish-append-index.sh (aws cloudfront test-function). rewrite: uri -> expected rewritten uri; deny: uris that must get 404 + Cache-Control: private, no-store. awsSamples: the subset publish-append-index.sh runs through aws cloudfront test-function by default (--all-cases runs every case; test-function takes ~0.8 s per call).",
+ "awsSamples": [
+  "/",
+  "/about/",
+  "/about",
+  "/family-login/",
+  "/css/main.css",
+  "/_data/flags.json",
+  "/person/",
+  "/person",
+  "/person/index.html",
+  "/person/I0001.json",
+  "/Person/index.json",
+  "/PERSON/index.json",
+  "/person/I0001.JSON",
+  "/person/I0001.json/",
+  "/person/index.json. ",
+  "/person/index.json%20",
+  "/person/I0001.json;a=b",
+  "/person\\I0001.json",
+  "/person%2FI0001.json",
+  "/person/I0001%252Ejson",
+  "/Person/",
+  "/person/index.html/",
+  "/family/F0001.json",
+  "/Family/F0001.json",
+  "/event/E0001.json",
+  "/note/N0001.json",
+  "/place/P0001.json",
+  "/PLACE/P0001.json",
+  "/media/a/b.jpg",
+  "/Media/a/b.jpg",
+  "/uploads/posts/01J0000000000000000000000/photo.jpg",
+  "/Uploads/posts/01J0000000000000000000000/photo.jpg",
+  "/x/../person/I0001.json",
+  "/media/%zz"
+ ],
+ "rewrite": [
+  {
+   "uri": "/",
+   "expect": "/index.html"
+  },
+  {
+   "uri": "/about/",
+   "expect": "/about/index.html"
+  },
+  {
+   "uri": "/about",
+   "expect": "/about/index.html"
+  },
+  {
+   "uri": "/contact/",
+   "expect": "/contact/index.html"
+  },
+  {
+   "uri": "/family-login/",
+   "expect": "/family-login/index.html"
+  },
+  {
+   "uri": "/family-login",
+   "expect": "/family-login/index.html"
+  },
+  {
+   "uri": "/logged-out/",
+   "expect": "/logged-out/index.html"
+  },
+  {
+   "uri": "/posts/",
+   "expect": "/posts/index.html"
+  },
+  {
+   "uri": "/me/notifications/",
+   "expect": "/me/notifications/index.html"
+  },
+  {
+   "uri": "/search",
+   "expect": "/search/index.html"
+  },
+  {
+   "uri": "/private/",
+   "expect": "/private/index.html"
+  },
+  {
+   "uri": "/privacy/",
+   "expect": "/privacy/index.html"
+  },
+  {
+   "uri": "/media-kit/",
+   "expect": "/media-kit/index.html"
+  },
+  {
+   "uri": "/placeholder/",
+   "expect": "/placeholder/index.html"
+  },
+  {
+   "uri": "/notes/",
+   "expect": "/notes/index.html"
+  },
+  {
+   "uri": "/events",
+   "expect": "/events/index.html"
+  },
+  {
+   "uri": "/index.html",
+   "expect": "/index.html"
+  },
+  {
+   "uri": "/css/main.css",
+   "expect": "/css/main.css"
+  },
+  {
+   "uri": "/js/islands/shell.js",
+   "expect": "/js/islands/shell.js"
+  },
+  {
+   "uri": "/js/islands/chunks/chunk-A54XRXYL.js",
+   "expect": "/js/islands/chunks/chunk-A54XRXYL.js"
+  },
+  {
+   "uri": "/images/pwa-192.png",
+   "expect": "/images/pwa-192.png"
+  },
+  {
+   "uri": "/_data/flags.json",
+   "expect": "/_data/flags.json"
+  },
+  {
+   "uri": "/manifest.webmanifest",
+   "expect": "/manifest.webmanifest"
+  },
+  {
+   "uri": "/sw.js",
+   "expect": "/sw.js"
+  },
+  {
+   "uri": "/offline.html",
+   "expect": "/offline.html"
+  },
+  {
+   "uri": "/person/",
+   "expect": "/person/index.html"
+  },
+  {
+   "uri": "/person",
+   "expect": "/person/index.html"
+  },
+  {
+   "uri": "/person/index.html",
+   "expect": "/person/index.html"
+  },
+  {
+   "uri": "/about%/",
+   "expect": "/about%/index.html"
+  }
+ ],
+ "deny": [
+  "/person/I0001.json",
+  "/person/index.json",
+  "/person/search-index.json",
+  "/family/F0001.json",
+  "/family/",
+  "/family",
+  "/event/E0001.json",
+  "/event/",
+  "/note/N0001.json",
+  "/place/P0001.json",
+  "/media/a/b.jpg",
+  "/media/tree_I0001.svg",
+  "/media/",
+  "/media",
+  "/uploads/posts/01J0000000000000000000000/photo.jpg",
+  "/uploads/",
+  "/uploads",
+  "/Person/index.json",
+  "/PERSON/index.json",
+  "/Person/I0001.json",
+  "/pErSoN/I0001.json",
+  "/person/I0001.JSON",
+  "/person/I0001.Json",
+  "/person/INDEX.JSON",
+  "/Family/F0001.json",
+  "/FAMILY/F0001.json",
+  "/Family/",
+  "/Event/E0001.json",
+  "/EVENT/E0001.json",
+  "/Note/N0001.json",
+  "/NOTE/N0001.json",
+  "/Place/P0001.json",
+  "/PLACE/P0001.json",
+  "/Media/a/b.jpg",
+  "/MEDIA/a/b.JPG",
+  "/Media",
+  "/Uploads/posts/01J0000000000000000000000/photo.jpg",
+  "/UPLOADS/posts/01J0000000000000000000000/photo.jpg",
+  "/Uploads",
+  "/person/I0001.json/",
+  "/person/index.json/",
+  "/person/I0001.json.",
+  "/person/index.json.",
+  "/person/index.json. ",
+  "/person/index.json%20",
+  "/person/index.json%2e",
+  "/person/I0001.json%20",
+  "/person/I0001.json;a=b",
+  "/person/I0001.json;",
+  "/person/I0001.json%3Ba=b",
+  "/person/I0001.json%00",
+  "/person/I0001.json\\",
+  "/person/index.json.JSON",
+  "/person/I0001.json.bak",
+  "/person/I0001.jsonx",
+  "/person/I0001.json.json",
+  "/person/search-index.json/",
+  "/person/search-index.JSON",
+  "/person/search-index.json.",
+  "/person\\I0001.json",
+  "/person\\index.json",
+  "/person%5CI0001.json",
+  "/person%5cindex.json",
+  "/person%2FI0001.json",
+  "/person%2fi0001.JSON",
+  "/%70erson/I0001.json",
+  "/%50erson/I0001.json",
+  "/person/I0001%2Ejson",
+  "/person/I0001.%6Ason",
+  "/person/I0001.%4Ason",
+  "/person/%49%30001.json",
+  "/person/I0001%252Ejson",
+  "/person%252FI0001.json",
+  "/person/I0001%25252Ejson",
+  "/%46amily/F0001.json",
+  "/family%2FF0001.json",
+  "/family%5CF0001.json",
+  "/Media%2Fa.jpg",
+  "/media\\a/b.jpg",
+  "/media%5Ca.jpg",
+  "/%20media/x.jpg",
+  "/%20person/I0001.json",
+  "/%09family/F0001.json",
+  "//person/I0001.json",
+  "/person//I0001.json",
+  "/person//index.json",
+  "///family/F0001.json",
+  "//media/a.jpg",
+  "/./person/I0001.json",
+  "/person/./I0001.json",
+  "/x/../person/I0001.json",
+  "/person/x/../I0001.json",
+  "/about/../family/F0001.json",
+  "/about/../media/a/b.jpg",
+  "/a/b/../../uploads/posts/x/y.jpg",
+  "/media/%2e%2e/media/x.jpg",
+  "/about/%2e%2e/Person/I0001.json",
+  "/css/..%2Ffamily/F0001.json",
+  "/css/..\\family\\F0001.json",
+  "/./media/a.jpg",
+  "/media/./a.jpg",
+  "/family./F0001.json",
+  "/family../F0001.json",
+  "/family%20/F0001.json",
+  "/family;x=1/F0001.json",
+  "/media;a/x.jpg",
+  "/person./I0001.json",
+  "/person%2e/I0001.json",
+  "/person%20/I0001.json",
+  "/person/index.html/",
+  "/person/index.html.",
+  "/person/index.html%20",
+  "/person/index.html;x=1",
+  "/person/index.htm",
+  "/person/I0001.html",
+  "/person/foo",
+  "/person/foo/",
+  "/person//",
+  "//person/",
+  "//person",
+  "/person/./index.html",
+  "/person/../person/index.html",
+  "/person/index.html/index.html",
+  "/Person/",
+  "/Person",
+  "/PERSON/",
+  "/PERSON",
+  "/Person/index.html",
+  "/PERSON/INDEX.HTML",
+  "/person/INDEX.html",
+  "/person/Index.html",
+  "/%70erson/index.html",
+  "/person%2Findex.html",
+  "/person\\index.html",
+  "/person/index%2Ehtml",
+  "/person/index.html%00",
+  "/person/i0001",
+  "/person/I0001/",
+  "/person/robots.txt",
+  "/person/.json",
+  "/person/.well-known/x",
+  "/media/%zz",
+  "/person/%",
+  "/Media/%E0%A4%A"
+ ]
+}

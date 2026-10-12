@@ -161,8 +161,10 @@ Resources:
       Principal: "*"
       InvokedViaFunctionUrl: true
 
-  # HFY-R58 (2): attached to the CloudFront /uploads/* behavior by scripts/infra/add-uploads-behavior.sh. Member uploads are
-  # served same-origin, so they are forced inert: no MIME sniffing, and a sandboxed CSP that allows nothing but same-origin images.
+  # HFY-R58 (2): attached to the CloudFront /uploads/* behavior by scripts/infra/add-uploads-behavior.sh (the public state, and what
+  # add-data-gate-behaviors.sh --remove restores; the gated behavior uses hfy-uploads-private, same headers plus Cache-Control
+  # private, no-store). Member uploads are served same-origin, so they are forced inert: no MIME sniffing, and a sandboxed CSP
+  # that allows nothing but same-origin images.
   UploadsResponseHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
