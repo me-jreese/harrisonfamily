@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyStamp, assetRefs, htmlPages, localFile, readStamp, sha8, stampBlock, stampSources, versionHtml, versionOf, withVersion } from "../assets.mjs";
+import { applyStamp, assetRefs, htmlPages, localFile, readStamp, sha8, stampBlock, stampSources, versionHtml, versionManifestCss, versionOf, withVersion } from "../assets.mjs";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const site = process.env.HFY_SITE ? resolve(process.env.HFY_SITE) : join(islandsDir, "..", "11ty");
@@ -85,6 +85,31 @@ test("versionHtml refuses a same-origin reference to a file that is not in the s
   assert.equal(versionHtml(html, hashOf, "p.html", ["js/missing.js"]), html);
   assert.equal(localFile("../js/a.js", "about/index.html"), "js/a.js", "a page-relative reference resolves against the page");
   assert.equal(localFile("https://example.com/js/a.js"), null);
+});
+
+// ------------------------------------------------------------------------------------- the sign-in stylesheet (edge manifest)
+const MANIFEST = '{\n  "site": "harrisonfamily.us",\n  "theme": {\n    "cssUrl": "https://harrisonfamily.us/css/auth-edge.css",\n    "fontOrigins": [\n      "self"\n    ]\n  },\n  "copy": { "a": "b" }\n}\n';
+const cssHash = (rel) => (rel === "css/auth-edge.css" ? sha8("auth-edge") : null);
+
+test("versionManifestCss: theme.cssUrl gets ?v=<sha8 of auth-edge.css> by a one-line textual edit, idempotently", () => {
+  const once = versionManifestCss(MANIFEST, cssHash);
+  const want = `https://harrisonfamily.us/css/auth-edge.css?v=${sha8("auth-edge")}`;
+  assert.equal(JSON.parse(once).theme.cssUrl, want);
+  assert.equal(once, MANIFEST.replace("css/auth-edge.css\"", `css/auth-edge.css?v=${sha8("auth-edge")}"`), "only the cssUrl value changed: formatting and key order are untouched");
+  const diff = once.split("\n").filter((l, i) => l !== MANIFEST.split("\n")[i]);
+  assert.equal(diff.length, 1, "a one-line diff");
+  assert.equal(versionManifestCss(once, cssHash), once, "applying it twice changes nothing");
+  const changed = versionManifestCss(once, (rel) => (rel === "css/auth-edge.css" ? sha8("auth-edge v2") : null));
+  assert.equal(JSON.parse(changed).theme.cssUrl, `https://harrisonfamily.us/css/auth-edge.css?v=${sha8("auth-edge v2")}`, "the ?v follows the content and is replaced, not appended");
+  assert.throws(() => versionManifestCss(MANIFEST, () => null), /references css\/auth-edge\.css, which is not part of the site/);
+  assert.throws(() => versionManifestCss(MANIFEST.replace("https://harrisonfamily.us", "https://example.com"), cssHash), /is not on https:\/\/harrisonfamily\.us/);
+  assert.throws(() => versionManifestCss('{"theme":{}}', cssHash), /found 0/);
+});
+
+test("auth/edge.manifest.json theme.cssUrl carries the hash of css/auth-edge.css (the repo's own site only)", { skip: process.env.HFY_SITE ? "scratch --site copies do not own the auth manifest" : false }, () => {
+  const raw = readFileSync(join(islandsDir, "..", "auth", "edge.manifest.json"), "utf8");
+  assert.equal(JSON.parse(raw).theme.cssUrl, `https://harrisonfamily.us/css/auth-edge.css?v=${hashOnDisk("css/auth-edge.css")}`);
+  assert.equal(versionManifestCss(raw, hashOnDisk), raw, "a fresh stamp changes nothing");
 });
 
 // ------------------------------------------------------------------------------------------------------- the stamped blocks

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet, jwtVerify } from "jose";
 import { buildResolver, validateManifest } from "@io-kit/auth/edge/deploy";
@@ -290,17 +291,29 @@ describe("sign-in pages: Google button and signed-out /auth/link (kit loginPage 
 });
 
 describe("sign-in pages: manifest theme and copy (design system SignIn + Voice)", () => {
-  it("theme has no vars (the stylesheet themes the page) and keeps the same-origin cssUrl; the manifest validates", () => {
-    expect(raw.theme).toEqual({ cssUrl: "https://harrisonfamily.us/css/auth-edge.css", fontOrigins: ["self"] });
+  it("theme has no vars (the stylesheet themes the page) and keeps the same-origin cssUrl, versioned ?v=<sha8 of css/auth-edge.css>; the manifest validates", () => {
+    // Cloudflare caches static files for 4 h, so the URL carries the content hash (islands/build.mjs stamps it; build.mjs --check verifies it)
+    expect(raw.theme).toEqual({ cssUrl: expect.stringMatching(/^https:\/\/harrisonfamily\.us\/css\/auth-edge\.css\?v=[0-9a-f]{8}$/), fontOrigins: ["self"] });
+    const sha8 = createHash("sha256").update(readFileSync(new URL("../../11ty/css/auth-edge.css", import.meta.url))).digest("hex").slice(0, 8);
+    expect(raw.theme.cssUrl).toBe(`https://harrisonfamily.us/css/auth-edge.css?v=${sha8}`);
     expect(raw.theme.vars).toBeUndefined();
     expect(() => validateManifest(structuredClone(raw))).not.toThrow();
+    expect(validateManifest(structuredClone(raw)).theme.cssUrl).toBe(raw.theme.cssUrl); // the kit accepts the query string as is
+  });
+  it("the login CSP style-src allows the versioned stylesheet (it names the origin, never the path or query)", async () => {
+    const res = await edge(get("/auth/login"));
+    const csp = cspOf(res);
+    expect(csp).toMatch(/(^|; )style-src 'unsafe-inline' https:\/\/harrisonfamily\.us( https:\/\/accounts\.google\.com\/gsi\/style)?(;|$)/);
+    expect(csp).not.toContain("auth-edge.css");
+    expect(new URL(raw.theme.cssUrl).origin).toBe("https://harrisonfamily.us");
   });
   it("the rendered page carries no theme.vars :root block after BASE_CSS", async () => {
     const res = await edge(get("/auth/login"));
     const style = /<style>([\s\S]*?)<\/style>/.exec(res.body)[1];
     expect((style.match(/:root\{/g) ?? []).length).toBeLessThanOrEqual(1); // BASE_CSS's own defaults at most (2.2.0 reads --io-auth-* with fallbacks)
     expect(style).not.toMatch(/--io-accent:\s*#/); // no literal theme.vars block
-    expect(res.body.indexOf('<link rel="stylesheet" href="https://harrisonfamily.us/css/auth-edge.css">')).toBeLessThan(res.body.indexOf("<style>"));
+    expect(res.body.indexOf(`<link rel="stylesheet" href="${raw.theme.cssUrl}">`)).toBeGreaterThan(-1);
+    expect(res.body.indexOf(`<link rel="stylesheet" href="${raw.theme.cssUrl}">`)).toBeLessThan(res.body.indexOf("<style>"));
   });
   it("every kit copy key is set, in the voice: lowercase, no exclamation marks, errors say who to text", () => {
     expect(Object.keys(raw.copy).sort()).toEqual(Object.keys(DEFAULT_COPY).sort());

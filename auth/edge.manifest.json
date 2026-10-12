@@ -49,7 +49,7 @@
     "cacheSeconds": 300
   },
   "theme": {
-    "cssUrl": "https://harrisonfamily.us/css/auth-edge.css",
+    "cssUrl": "https://harrisonfamily.us/css/auth-edge.css?v=6011d512",
     "fontOrigins": [
       "self"
     ]

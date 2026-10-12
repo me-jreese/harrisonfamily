@@ -17,6 +17,8 @@
 //   sw.js, js/feature-flags.js   their hfy-asset-versions marker block (assets.mjs): the content hashes of the files they load
 //   (every page again)       every same-origin script / stylesheet / manifest reference carries ?v=<sha8 of the file>
 //                            (assets.mjs), so a deploy is picked up although Cloudflare caches static files for 4 h
+//   ../auth/edge.manifest.json   theme.cssUrl carries ?v=<sha8 of css/auth-edge.css> (one textual edit, the file is not re-serialised;
+//                            only when the site is the repo's own 11ty/, never for a scratch --site copy)
 import { build } from "esbuild";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -24,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
 import { expectedHeads, resolveToken } from "./heads.mjs";
 import { COPY_PAGES, applyCopy } from "./copy.mjs";
-import { htmlPages, sha8, stampSources, versionHtml } from "./assets.mjs";
+import { htmlPages, sha8, stampSources, versionHtml, versionManifestCss } from "./assets.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -45,6 +47,7 @@ const notifySw = join(here, "node_modules", "@io-kit", "notify", "sw", "notify-s
 const tokensDir = join(here, "node_modules", "@io-kit", "tokens", "dist", "harrisonfamily");
 const themeDir = join(here, "src", "theme");
 const authEdgeSrc = join(here, "src", "auth-edge", "auth-edge.css");
+const authManifest = join(here, "..", "auth", "edge.manifest.json");
 const TARGET = ["es2020", "safari15"];
 const posix = (p) => p.split(sep).join("/");
 
@@ -197,7 +200,12 @@ async function buildAll() {
     const text = files.has(rel) ? files.get(rel) : readFileSync(join(site, rel), "utf8");
     files.set(rel, versionHtml(text, hashOf, rel));
   }
-  return { files, dirs };
+  // Outputs outside the site directory (absolute path -> text): the sign-in stylesheet's version in the auth edge manifest.
+  const external = new Map();
+  if (site === resolve(here, "..", "11ty") && existsSync(authManifest)) {
+    external.set(authManifest, versionManifestCss(readFileSync(authManifest, "utf8"), hashOf));
+  }
+  return { files, dirs, external };
 }
 
 function listFiles(dir) {
@@ -215,7 +223,8 @@ function listFiles(dir) {
 const asBuffer = (v) => (Buffer.isBuffer(v) ? v : Buffer.from(v, "utf8"));
 const ignorable = (rel) => rel.endsWith(".DS_Store");
 
-const { files, dirs } = await buildAll();
+const { files, dirs, external } = await buildAll();
+const repoRel = (abs) => posix(relative(resolve(here, ".."), abs));
 
 if (checkMode) {
   const problems = [];
@@ -230,11 +239,12 @@ if (checkMode) {
       if (!set.has(rel) && !ignorable(rel)) problems.push(`extra ${rel}`);
     }
   }
+  for (const [abs, want] of external) if (!readFileSync(abs).equals(asBuffer(want))) problems.push(`stale ${repoRel(abs)}`);
   if (problems.length) {
     console.error(`${site} is out of date with islands/ (run \`npm run build\` and commit):\n  ${problems.join("\n  ")}`);
     process.exit(1);
   }
-  console.log(`${site} is up to date (${files.size} generated files)`);
+  console.log(`${site} is up to date (${files.size + external.size} generated files)`);
 } else {
   // Directories this build owns outright (js/islands, fonts) hold exactly its outputs: stale chunks and old font hashes are pruned.
   for (const [dir, set] of dirs) {
@@ -249,5 +259,10 @@ if (checkMode) {
     writeFileSync(abs, buf);
     written += 1;
   }
-  console.log(`built ${files.size} files into ${site} (${written} written)`);
+  for (const [abs, want] of external) {
+    if (readFileSync(abs).equals(asBuffer(want))) continue;
+    writeFileSync(abs, asBuffer(want));
+    written += 1;
+  }
+  console.log(`built ${files.size + external.size} files into ${site} (${written} written)`);
 }

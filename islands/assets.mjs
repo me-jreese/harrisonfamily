@@ -137,6 +137,27 @@ export function versionHtml(html, hashOf, page = "index.html", unversioned = [])
   });
 }
 
+// ------------------------------------------------------------------------------------------- the sign-in stylesheet (auth edge)
+/**
+ * auth/edge.manifest.json with theme.cssUrl carrying ?v=<hashOf(the file it points at)>. The value is replaced in the text, so the
+ * rest of the file (formatting, key order) is byte for byte what it was and the diff is the one line. Idempotent.
+ * The sign-in pages are rendered by the auth Lambda, which links this URL: Cloudflare caches the stylesheet for 4 h like any other
+ * static file, so it needs the same content-hash version as the pages (the Lambda picks the new URL up when it is next deployed).
+ */
+export function versionManifestCss(raw, hashOf) {
+  const re = /("cssUrl"\s*:\s*")([^"]*)(")/g;
+  const hits = [...raw.matchAll(re)];
+  if (hits.length !== 1) throw new Error(`edge.manifest.json: expected exactly one theme.cssUrl, found ${hits.length}`);
+  const [hit] = hits;
+  const file = localFile(hit[2]);
+  if (file === null) throw new Error(`edge.manifest.json: theme.cssUrl ${hit[2]} is not on ${SITE_ORIGIN}, so it cannot be versioned`);
+  const v = hashOf(file);
+  if (!v) throw new Error(`edge.manifest.json: theme.cssUrl ${hit[2]} references ${file}, which is not part of the site`);
+  const out = `${raw.slice(0, hit.index)}${hit[1]}${withVersion(hit[2], v)}${hit[3]}${raw.slice(hit.index + hit[0].length)}`;
+  JSON.parse(out); // never write a broken manifest
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------- stamped blocks
 const STAMP = /^([ \t]*)\/\* hfy-asset-versions:start[^\n]*\*\/\r?\n[\s\S]*?^[ \t]*\/\* hfy-asset-versions:end \*\//m;
 
