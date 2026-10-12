@@ -271,3 +271,44 @@ test("auth-v2.js probes the session through the shared HFYFeatureFlags.edgeSessi
   assert.match(AUTH_V2_SRC, /f\.edgeSession\(\)/);
   assert.match(AUTH_V2_SRC, /forgetEdgeSession\(\)/);
 });
+
+// HFY-TSK-069 (D-11 item 6): /family-login/?next=<path> must reach /auth/login as returnTo (it used to be a hard-coded "/").
+async function familyLogin(search, { authenticated = false } = {}) {
+  const { w } = load({
+    pathname: "/family-login/", search,
+    routes: { session: () => res(200, authenticated ? { authenticated: true, sub: "I0001", exp: NOW_S() + 3000 } : { authenticated: false }) },
+  });
+  w.addEventListener = () => {};
+  vm.runInNewContext(AUTH_V2_SRC, w);
+  await new Promise((r) => setTimeout(r, 20));
+  return w.location.replaced;
+}
+const q = (next) => "?next=" + encodeURIComponent(next);
+
+test("D-11 item 6: /family-login/?next= carries a same-origin path (with query and hash) into returnTo", async () => {
+  for (const next of ["/person/?id=I0113", "/search/?query=Harrison&focus=1", "/person/?id=I0113#timeline", "/posts/?id=01JABC", "/me/notifications/"]) {
+    assert.deepEqual(await familyLogin(q(next)), [LOGIN(next)], next);
+  }
+});
+
+test("D-11 item 6: the redirect is exactly what the legacy fallbacks send (URLSearchParams-encoded path+search+hash)", async () => {
+  const path = "/person/?id=I0113&tab=a b#x";
+  const target = new URL("/family-login/", "https://harrisonfamily.us");
+  target.searchParams.set("next", path); // person-page.js / search-*.js redirectToLogin()
+  assert.deepEqual(await familyLogin(target.search), [LOGIN(path)]);
+});
+
+test("D-11 item 6: a missing, empty or unsafe next falls back to /", async () => {
+  const bad = [
+    "", "person/", "//evil.example/x", "///evil.example", "https://evil.example/", "http://harrisonfamily.us/person/", "javascript:alert(1)",
+    "/\\evil.example", "/ok\\path", "/a\tb", "/a\nb", "/a\rb", "/a\u0000b", "/a\u007fb", "\t/x", " /x", "/" + "a".repeat(2100),
+    "/auth/login?returnTo=%2F", "/auth/link", "/family-login/", "/family-login/?next=%2Fperson%2F",
+  ];
+  for (const next of bad) assert.deepEqual(await familyLogin(q(next)), [LOGIN("/")], JSON.stringify(next));
+  assert.deepEqual(await familyLogin(""), [LOGIN("/")], "no next at all");
+  assert.deepEqual(await familyLogin("?next=%E0%A4%A"), [LOGIN("/")], "malformed percent-encoding");
+});
+
+test("D-11 item 6: an already edge-authenticated visitor is not redirected (no loop), whatever next says", async () => {
+  assert.deepEqual(await familyLogin(q("/person/?id=I0113"), { authenticated: true }), []);
+});

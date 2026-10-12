@@ -1,8 +1,17 @@
 import { defineConfig } from "@playwright/test";
+import { resolve } from "node:path";
+
+// HFY design-system pass (F3): the served site and port are overridable so parallel work can test a scratch copy of the site
+// built with `node build.mjs --site <dir>`: HFY_SITE=<dir> PW_PORT=<port> npx playwright test ...
+// Defaults (../11ty on 8089) are the committed site.
+const site = resolve(process.env.HFY_SITE || "../11ty");
+const port = Number(process.env.PW_PORT || 8089);
+const origin = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   reporter: "list",
-  use: { baseURL: "http://127.0.0.1:8089", channel: process.env.PW_CHANNEL || "chrome", viewport: { width: 375, height: 812 } },
-  webServer: { command: "npx http-server ../11ty -p 8089 -a 127.0.0.1 -c-1 --silent", url: "http://127.0.0.1:8089/", reuseExistingServer: true, timeout: 30_000 }
+  use: { baseURL: origin, channel: process.env.PW_CHANNEL || "chrome", viewport: { width: 375, height: 812 } },
+  webServer: { command: `npx http-server "${site}" -p ${port} -a 127.0.0.1 -s -c-1`, url: `${origin}/`, reuseExistingServer: true, timeout: 30_000 }
 });

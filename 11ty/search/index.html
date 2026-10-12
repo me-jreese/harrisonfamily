@@ -19,11 +19,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Search · Harrison Family Heritage</title>
+  <title>search · Harrison Family</title>
   <meta name="description" content="Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data." />
   <link rel="canonical" href="https://harrisonfamily.us/search/" />
 
-  <meta property="og:title" content="Search" />
+  <meta property="og:title" content="search" />
   <meta property="og:description" content="Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data." />
   <meta property="og:url" content="https://harrisonfamily.us/search/" />
   <meta property="og:site_name" content="Harrison Family Heritage" />
@@ -37,13 +37,22 @@
 
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:site" content="@harrisonfamily" />
-  <meta name="twitter:title" content="Search" />
+  <meta name="twitter:title" content="search" />
   <meta name="twitter:description" content="Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data." />
   
   <meta name="twitter:image" content="https://harrisonfamily.us/images/Adell-MinorSr-1901-social.jpg" />
   <meta name="twitter:image:alt" content="Historic family portrait" />
   
-  <link rel="stylesheet" href="/css/main.css" />
+  <!-- hfy-theme:start A -->
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#141210" />
+  <script>try{localStorage.getItem("hfy:shell-hint")==="1"&&document.documentElement.classList.add("hfy-shell-v2")}catch(e){}</script>
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/source-sans-3-latin-wght-normal.7a19a702.woff2" />
+  <!-- hfy-theme:end A -->
+  <link rel="stylesheet" href="/css/main.css?v=6853df92" />
+  <!-- hfy-theme:start B -->
+  <link rel="stylesheet" href="/css/hfy-theme.css?v=b5c5cdf0" />
+  <!-- hfy-theme:end B -->
 </head>
 
   <body>
@@ -54,7 +63,7 @@
 
 <nav class="navbar navbar-expand-md navbar-dark fixed-top navbar-hf">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/">HARRISON FAMILY</a>
+    <a class="navbar-brand" href="/">Harrison Family</a>
     <button
       class="navbar-toggler"
       type="button"
@@ -144,14 +153,14 @@
 </section>
 
 
-  <script src="/js/search-results.js"></script>
+  <script src="/js/search-results.js?v=0081de17"></script>
 
 
     </main>
     <footer class="site-footer bg-dark text-light border-top border-light-subtle mt-auto">
   <div class="container">
     <div class="site-footer__inner d-flex align-items-center justify-content-center">
-      <p class="site-footer__text text-center mb-0 opacity-75">&copy; 2026 Harrison Family Heritage. All rights reserved.</p>
+      <p class="site-footer__text text-center mb-0 opacity-75">harrisonfamily.us · kept by the family, for the family</p>
     </div>
   </div>
 </footer>
@@ -169,8 +178,8 @@
         window.HFY_FEATURE_FLAGS || {}
       );
     </script>
-    <script src="/js/auth-v2.js" defer></script>
-    <script src="/js/feature-flags.js"></script>
+    <script src="/js/auth-v2.js?v=711e9219" defer></script>
+    <script src="/js/feature-flags.js?v=5428a4a8"></script>
     <script>
       window.HFY_AUTH_CONFIG = Object.assign(
         {},
@@ -179,7 +188,7 @@
       );
     </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="/js/auth.js"></script>
+    <script src="/js/auth.js?v=96f33ba9"></script>
     <script>
       window.HFY_SEARCH_CONFIG = Object.assign({
         manifestUrl: "/person/index.json",
@@ -188,8 +197,8 @@
         personUrlBase: "/person/?id="
       }, window.HFY_SEARCH_CONFIG || {});
     </script>
-    <script src="/js/bootstrap.bundle.min.js"></script>
-    <script src="/js/search-navbar.js"></script>
+    <script src="/js/bootstrap.bundle.min.js?v=e4fd4918"></script>
+    <script src="/js/search-navbar.js?v=ec22780b"></script>
     
   </body>
 </html>

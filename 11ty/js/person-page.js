@@ -1,14 +1,66 @@
 (() => {
+  // HFY design-system pass (legacy area, theme partial 45-person.css): the person page renders the DS PersonRecord anatomy.
+  // Hero (portrait, display-serif name, one lifespan line), then the sections in the order life, family, photos, stories;
+  // the personV2 island appends its comments as the last child of #person-content. Copy follows the DS voice: lowercase,
+  // no IDs, never the word "record"; errors are one banner line. The auth and data paths below are unchanged.
+  const VOICE = {
+    loading: "loading…",
+    error: "that didn't work. try again, or text J.",
+    photoError: "that photo didn't load. try again.",
+    noPhoto: "no photo yet.",
+    noPhotos: ["no photos yet.", "a phone photo counts."],
+    noStories: ["no stories yet.", "can you write a chapter?"],
+    noFamily: ["no connections yet.", "add a parent or a spouse to start the tree."],
+    event: "event",
+    dateUnknown: "date unknown",
+    download: "download",
+    living: "living"
+  };
+  // #person-content order (contract with islands/src/islands/person.jsx, which appends #hfy-person-comments last).
+  const SECTION_ORDER = [
+    ["person-hero-section", null],
+    ["person-events-section", "life"],
+    ["person-family-section", "family"],
+    ["person-media-section", "photos"],
+    ["person-stories-section", "stories"]
+  ];
+  const TREE_LEGEND = [
+    ["focus", "this person"],
+    ["parent", "parents"],
+    ["grandparent", "grandparents"],
+    ["sibling", "siblings"],
+    ["spouse", "spouse"],
+    ["child", "children"],
+    ["grandchild", "grandchildren"]
+  ];
+  // Stop-gap until the ETL emits role classes (upstream: scripts/etl/build_family_tree_media.py writes each node's role only as
+  // a fill colour, rewritten to var(--bs-*), with fontcolor var(--bs-white|dark) and Inter 14). The role is read back from the
+  // shape's fill so the bs-bridge `.tree .<role>` rules can drive both the fill and the label ink. The ETL colours spouse with
+  // --bs-info, which equals --bs-primary in main.css, so its colour map rewrites both to var(--bs-primary): the focus node is the
+  // one whose link points at this page, any other --bs-primary node is a spouse.
+  const TREE_FILL_ROLES = {
+    "--bs-secondary": "parent",
+    "--bs-dark": "grandparent",
+    "--bs-warning": "sibling",
+    "--bs-info": "spouse",
+    "--bs-light": "child",
+    "--bs-info-bg-subtle": "grandchild"
+  };
+  const TREE_ZOOM = { min: 0.4, max: 3, step: 1.25 };
+  // DS type floor: the first view only opens in "fit" when every node label stays at least this size (CSS px).
+  const TREE_LABEL_FLOOR = 16;
+  const SWIPE_MIN = 80;
+
+  paintLoadingSkeleton();
+
   window.addEventListener("error", (event) => {
-    const errorContainer = document.getElementById("person-error");
-    const loading = document.getElementById("person-loading");
-    if (errorContainer) {
-      errorContainer.textContent = event.error ? event.error.message : (event.message || "Unexpected error rendering profile.");
-      errorContainer.classList.remove("d-none");
+    // Only while the page is still loading: once the person rendered, a late error elsewhere is not this page's to report.
+    const content = document.getElementById("person-content");
+    if (content && !content.classList.contains("d-none")) {
+      return;
     }
-    if (loading) {
-      loading.classList.add("d-none");
-    }
+    console.error("[HFY_PERSON] Unexpected error while loading:", event.error || event.message);
+    showError(VOICE.error, { loading: document.getElementById("person-loading"), error: document.getElementById("person-error") });
   });
 
   const config = window.HFY_PERSON_CONFIG || {};
@@ -26,11 +78,12 @@
     listenersBound: false,
     keyHandler: null,
     lastTrigger: null,
+    loadToken: 0,
     elements: {}
   };
   let currentFamilyTreeMarkup = "";
-  const FAMILY_TREE_MODAL_ID = "familyTreeModal";
-  const FAMILY_TREE_MODAL_CONTENT_ID = "familyTreeModalContent";
+  let currentPersonName = "";
+  let treeState = null;
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -47,7 +100,8 @@
 
     (async () => {
       if (!personId) {
-        showError("Missing required person id. Use ?id=<GRAMPS_ID> in the URL.", { loading, error });
+        console.error("[HFY_PERSON] Missing required person id (?id=<GRAMPS_ID>).");
+        showError(VOICE.error, { loading, error });
         return;
       }
 
@@ -61,36 +115,59 @@
           try {
             renderPerson(person, personId);
             hideLoading(loading);
+            error.classList.add("d-none");
             content.classList.remove("d-none");
           } catch (err) {
             console.error("[ERROR] Failed to render person profile:", err);
-            showError(err.message || "Unable to render person profile.", { loading, error });
+            showError(VOICE.error, { loading, error });
           }
         })
         .catch((err) => {
-          console.error("[ERROR] Failed to load person record:", err);
+          console.error("[ERROR] Failed to load person:", err);
           if (err && err.signInUrl) {
             showSignIn(err.signInUrl, { loading, error });
             return;
           }
-          showError(err.message || "Unable to load person record.", { loading, error });
+          showError(VOICE.error, { loading, error });
         });
     })();
   });
 
-  document.addEventListener("click", (event) => {
-    const zoomTrigger = event.target.closest("[data-family-tree-zoom]");
-    if (!zoomTrigger) {
-      return;
-    }
-    if (!currentFamilyTreeMarkup) {
-      return;
-    }
-    const modalContent = document.getElementById(FAMILY_TREE_MODAL_CONTENT_ID);
-    if (modalContent) {
-      modalContent.innerHTML = `<div class="family-tree-embed family-tree-embed--modal">${currentFamilyTreeMarkup}</div>`;
+  // Bootstrap dialogs must be direct children of <body>: inside the shell's scroller they sit in its stacking context, under
+  // the backdrop Bootstrap appends to <body>, and the backdrop then swallows every click (close, next) in the dialog.
+  document.addEventListener("show.bs.modal", (event) => {
+    if (event.target && event.target.classList && event.target.classList.contains("modal")) {
+      reparentModal(event.target);
     }
   });
+
+  function reparentModal(modalEl) {
+    if (modalEl && modalEl.parentElement !== document.body) {
+      document.body.appendChild(modalEl);
+    }
+  }
+
+  function paintLoadingSkeleton() {
+    // Runs as soon as this script is parsed (it follows #person-loading), so the first paint is the skeleton, never a spinner.
+    const loading = document.getElementById("person-loading");
+    if (!loading || loading.getAttribute("data-hfy-skeleton")) {
+      return;
+    }
+    loading.setAttribute("data-hfy-skeleton", "1");
+    loading.className = "person-loading";
+    loading.setAttribute("role", "status");
+    loading.innerHTML = `
+      <div class="person-skeleton" aria-hidden="true">
+        <div class="person-skeleton__portrait"></div>
+        <div class="person-skeleton__lines">
+          <div class="person-skeleton__line person-skeleton__line--name"></div>
+          <div class="person-skeleton__line person-skeleton__line--meta"></div>
+        </div>
+      </div>
+      <div class="person-skeleton__block" aria-hidden="true"></div>
+      <p class="person-loading__text">${VOICE.loading}</p>
+    `;
+  }
 
   function hideLoading(loadingEl) {
     if (loadingEl) {
@@ -121,7 +198,7 @@
     link.href = url;
     link.textContent = "Sign in again";
     error.appendChild(link);
-    error.appendChild(document.createTextNode(" to view this record."));
+    error.appendChild(document.createTextNode(" to see this page."));
     error.classList.remove("d-none");
   }
 
@@ -138,7 +215,7 @@
       throw err;
     }
     if (!response.ok) {
-      throw new Error(`Person record ${personId} not found (HTTP ${response.status}).`);
+      throw new Error(`Person ${personId} not found (HTTP ${response.status}).`);
     }
 
     return response.json();
@@ -182,15 +259,47 @@
       throw new Error("No person data returned.");
     }
 
+    currentPersonName = person.displayName || "";
     updateDocumentTitle(person);
     renderHero(person);
-    const hasMedia = renderMediaGallery(person);
+    const hasEvents = renderEvents(person);
     const hasFamilyList = renderFamily(person);
-    const hasFamilyVisualization = renderFamilyVisualization(person);
-    toggleSection("person-media-section", hasMedia);
-    toggleSection("person-family-section", hasFamilyList || hasFamilyVisualization);
-    toggleSection("person-events-section", renderEvents(person));
-    // Debug section removed for production experience.
+    const hasFamilyVisualization = renderFamilyVisualization(person, personId);
+    if (!hasFamilyList && !hasFamilyVisualization) {
+      const familyData = document.getElementById("person-family-data");
+      if (familyData) {
+        familyData.innerHTML = renderEmptyState(VOICE.noFamily);
+      }
+    }
+    renderMediaGallery(person);
+    renderStories(person);
+    toggleSection("person-events-section", hasEvents);
+    toggleSection("person-family-section", true);
+    toggleSection("person-media-section", true);
+    toggleSection("person-stories-section", true);
+    orderSections();
+  }
+
+  // Sections in DS order with their lowercase headings; the Eleventy spacer divs are dropped.
+  function orderSections() {
+    const content = document.getElementById("person-content");
+    if (!content) {
+      return;
+    }
+    const comments = document.getElementById("hfy-person-comments");
+    SECTION_ORDER.forEach(([id, heading]) => {
+      const section = document.getElementById(id);
+      if (!section) {
+        return;
+      }
+      section.classList.add("person-section");
+      section.querySelectorAll(".section-spacer").forEach((spacer) => spacer.remove());
+      const h2 = heading ? section.querySelector("h2") : null;
+      if (h2) {
+        h2.textContent = heading;
+      }
+      content.insertBefore(section, comments && comments.parentElement === content ? comments : null);
+    });
   }
 
   function updateDocumentTitle(person) {
@@ -209,31 +318,50 @@
 
     const photoUrl = resolveMediaPath(person.primaryPhoto);
     const placeholder = person.primaryPhoto && person.primaryPhoto.placeholderImage;
-    const lifespan = buildLifespan(person);
-    const notesMarkup = buildNotesMarkup(person);
 
     container.innerHTML = `
-      <div class="row align-items-start gy-4">
-        <div class="col-lg-4 text-center mb-4 mb-lg-0">
+      <div class="person-hero-grid">
+        <div class="person-portrait">
           ${photoUrl ? renderPhotoTag(photoUrl, person.displayName, placeholder) : renderPhotoPlaceholder()}
         </div>
-        <div class="col-lg-8">
-          <div class="person-details">
-            <h1 class="display-4 mb-3">${escapeHtml(person.displayName || "Unknown Person")}</h1>
-            ${renderLivingBadge(person.isLiving)}
-            <div class="person-metadata">
-              ${lifespan.birth ? `<p class="mb-2"><strong>Born:</strong> ${lifespan.birth}</p>` : ""}
-              ${lifespan.death ? `<p class="mb-2"><strong>Died:</strong> ${lifespan.death}</p>` : ""}
-              ${person.gender ? `<p class="mb-2"><strong>Gender:</strong> ${escapeHtml(capitalize(person.gender))}</p>` : ""}
-              <p class="text-muted small mb-0">ID: ${escapeHtml(person.grampsId || "Unknown")}</p>
-            </div>
-          </div>
-          ${notesMarkup}
+        <div class="person-heading">
+          <h1>${escapeHtml(person.displayName || "name unknown")}</h1>
+          ${renderLifespan(person)}
         </div>
       </div>
     `;
 
     section.classList.remove("d-none");
+  }
+
+  // "1874 – 1951 · Pointe Coupee Parish" in text.dim; living people get the word "living" after it, never a badge.
+  function renderLifespan(person) {
+    const life = person.lifespan || {};
+    const living = person.isLiving === true;
+    const born = yearOf(life.birth);
+    const died = living ? null : yearOf(life.death);
+    let years = "";
+    if (born && died) {
+      years = `${born} – ${died}`;
+    } else if (born) {
+      years = living ? born : `${born} –`;
+    } else if (died) {
+      years = `– ${died}`;
+    }
+    const place = placeOf(life.birth) || placeOf(life.death);
+    const parts = [years, place].filter(Boolean).map(escapeHtml);
+    if (living) {
+      parts.push(`<span class="person-living">${VOICE.living}</span>`);
+    }
+    return parts.length ? `<p class="person-lifespan">${parts.join(" · ")}</p>` : "";
+  }
+
+  function yearOf(moment) {
+    return moment && moment.year ? String(moment.year) : "";
+  }
+
+  function placeOf(moment) {
+    return moment && moment.place && moment.place.displayName ? moment.place.displayName : "";
   }
 
   function waitForFeatureFlags(timeoutMs = 6000) {
@@ -353,90 +481,67 @@
     });
   }
 
+  // The portrait carries no inline styles: 45-person.css sizes it (120 / 160 / 200, radius.lg, 1px border).
   function renderPhotoTag(url, displayName, fallback) {
-    const safeName = escapeHtml(displayName || "Person photo");
+    const safeName = escapeHtml(displayName || "portrait");
     const safeFallback = fallback ? escapeHtml(fallback) : "";
     return `
       <img
-        src="${url}"
+        src="${escapeHtml(url)}"
         alt="${safeName}"
-        class="person-photo img-fluid rounded"
-        style="max-width: 320px; width: 100%;"
+        class="person-photo"
         ${safeFallback ? `onerror="this.src='${safeFallback}'"` : ""}
       >
     `;
   }
 
-  function buildNotesMarkup(person) {
-    const notes = Array.isArray(person.notes) ? person.notes : [];
-    const heading = `<h2 class="h4 mb-3">Notes &amp; Biography</h2>`;
-
-    if (!notes.length) {
-      return `
-        <div class="notes-panel mt-4">
-          ${heading}
-          <p class="text-muted mb-0">No notes available.</p>
-        </div>
-      `;
-    }
-
-    const noteCards = notes.map((note) => {
-      if (note && note.html) {
-        return `<div class="card mb-3"><div class="card-body">${note.html}</div></div>`;
-      }
-      const raw = note && note.raw ? escapeHtml(note.raw) : "Note content unavailable.";
-      return `<div class="card mb-3"><div class="card-body"><p class="mb-0">${raw}</p></div></div>`;
-    }).join("");
-
-    return `
-      <div class="notes-panel mt-4">
-        ${heading}
-        ${noteCards}
-      </div>
-    `;
-  }
-
   function renderPhotoPlaceholder() {
+    return `<div class="person-photo-placeholder"><span>${VOICE.noPhoto}</span></div>`;
+  }
+
+  // One empty-state pattern (DS): a display-serif line and one sentence in text.dim.
+  function renderEmptyState([title, text]) {
     return `
-      <div class="person-photo-placeholder bg-secondary rounded d-flex align-items-center justify-content-center" style="width: 320px; height: 400px;">
-        <span class="text-white">No Photo Available</span>
+      <div class="person-empty">
+        <p class="person-empty__title">${title}</p>
+        <p class="person-empty__text">${text}</p>
       </div>
     `;
   }
 
-  function renderLivingBadge(isLiving) {
-    if (isLiving === true) {
-      return `<span class="badge bg-success mb-3">Living</span>`;
+  // Stories: the notes panel (class kept, the personV2 island swaps its contents for the markdown notes) in its own section.
+  function renderStories(person) {
+    const content = document.getElementById("person-content");
+    if (!content) {
+      return;
     }
-    if (isLiving === false) {
-      return `<span class="badge bg-secondary mb-3">Deceased</span>`;
+    let section = document.getElementById("person-stories-section");
+    if (!section) {
+      section = document.createElement("section");
+      section.id = "person-stories-section";
+      section.className = "person-stories d-none";
+      section.innerHTML = `<div class="container"><div class="notes-panel"><h2>stories</h2></div></div>`;
+      content.appendChild(section);
     }
-    return "";
-  }
-
-  function renderRelationBadge(isLiving) {
-    if (isLiving === true) {
-      return ` <span class="badge bg-success badge-sm">Living</span>`;
-    }
-    if (isLiving === false) {
-      return ` <span class="badge bg-secondary badge-sm">Deceased</span>`;
-    }
-    return "";
-  }
-
-  function buildLifespan(person) {
-    const birth = person.lifespan && person.lifespan.birth ? formatEventMoment(person.lifespan.birth) : null;
-    const death = person.isLiving === true ? null : (person.lifespan && person.lifespan.death ? formatEventMoment(person.lifespan.death) : null);
-    return { birth, death };
-  }
-
-  function formatEventMoment(moment) {
-    if (!moment) return "";
-
-    const year = moment.year ? escapeHtml(String(moment.year)) : null;
-    const place = moment.place && moment.place.displayName ? ` in ${escapeHtml(moment.place.displayName)}` : "";
-
-    return `${year || "Unknown"}${place}`;
+    const panel = section.querySelector(".notes-panel");
+    Array.from(panel.children).forEach((el) => {
+      if (el.tagName !== "H2") {
+        el.remove();
+      }
+    });
+    const notes = Array.isArray(person.notes) ? person.notes : [];
+    const stories = notes
+      .map((note) => {
+        if (note && note.html) {
+          return `<article class="story">${note.html}</article>`;
+        }
+        if (note && note.raw) {
+          return `<article class="story"><p>${escapeHtml(note.raw)}</p></article>`;
+        }
+        return "";
+      })
+      .filter(Boolean);
+    panel.insertAdjacentHTML("beforeend", stories.length ? stories.join("") : renderEmptyState(VOICE.noStories));
   }
 
   function renderMediaGallery(person) {
@@ -447,7 +552,7 @@
 
     const items = Array.isArray(person.mediaGallery) ? person.mediaGallery : [];
     if (!items.length) {
-      grid.innerHTML = `<p class="text-muted mb-0">No media available.</p>`;
+      grid.innerHTML = `<div class="col-12">${renderEmptyState(VOICE.noPhotos)}</div>`;
       return false;
     }
 
@@ -455,32 +560,26 @@
       const url = resolveMediaPath(media);
       const placeholder = media && media.placeholderImage ? escapeHtml(media.placeholderImage) : "";
       const title = media && media.title ? escapeHtml(media.title) : "";
-      const alt = title || "Media item";
-      const hasUrl = Boolean(url);
-      const triggerStart = hasUrl
-        ? `<button type="button" class="media-lightbox-trigger" data-media-index="${index}" aria-label="View ${alt} in lightbox">`
-        : `<div>`;
-      const triggerEnd = hasUrl ? `</button>` : `</div>`;
+      const alt = title || "photo";
+      const picture = url
+        ? `
+          <button type="button" class="media-lightbox-trigger" data-media-index="${index}" aria-label="open ${alt}">
+            <img
+              src="${escapeHtml(url)}"
+              class="gallery-photo"
+              alt="${alt}"
+              loading="lazy"
+              ${placeholder ? `onerror="this.src='${placeholder}'"` : ""}
+            >
+          </button>`
+        : `<div class="gallery-photo gallery-photo--missing"><span>${VOICE.noPhoto}</span></div>`;
 
       return `
-        <div class="col-6 col-md-4 col-lg-2">
-          <div class="card h-100">
-            ${url ? `
-              ${triggerStart}
-                <img
-                  src="${url}"
-                  class="card-img-top"
-                  alt="${alt}"
-                  ${placeholder ? `onerror="this.src='${placeholder}'"` : ""}
-                >
-              ${triggerEnd}
-            ` : `
-              <div class="card-img-top bg-secondary d-flex align-items-center justify-content-center" style="height: 170px;">
-                <span class="text-white small">Media missing</span>
-              </div>
-            `}
-            ${title ? `<div class="card-body"><p class="card-text small mb-0">${title}</p></div>` : ""}
-          </div>
+        <div class="col-12 col-md-6 col-lg-4">
+          <figure class="gallery-item">
+            ${picture}
+            ${title ? `<figcaption class="gallery-caption">${title}</figcaption>` : ""}
+          </figure>
         </div>
       `;
     }).join("");
@@ -523,19 +622,17 @@
     };
 
     parentFamilies.forEach((family) => {
-      addRelative(categories.parents, family.father, "Father");
-      addRelative(categories.parents, family.mother, "Mother");
+      addRelative(categories.parents, family.father, "father");
+      addRelative(categories.parents, family.mother, "mother");
       (Array.isArray(family.children) ? family.children : []).forEach((child) => {
         addRelative(categories.siblings, child);
       });
     });
 
     spouseFamilies.forEach((family) => {
-      const possibleParents = [family.father, family.mother];
-      possibleParents.forEach((relative) => {
+      [family.father, family.mother].forEach((relative) => {
         if (!relative) return;
-        const label = "Spouse";
-        addRelative(categories.spouses, relative, label);
+        addRelative(categories.spouses, relative);
       });
       (Array.isArray(family.children) ? family.children : []).forEach((child) => {
         addRelative(categories.children, child);
@@ -543,13 +640,13 @@
     });
 
     const orderedCategories = [
-      { key: "parents", heading: "Parents" },
-      { key: "siblings", heading: "Siblings" },
-      { key: "spouses", heading: "Spouses" },
-      { key: "children", heading: "Children" }
+      { key: "parents", heading: "parents" },
+      { key: "siblings", heading: "siblings" },
+      { key: "spouses", heading: "spouse" },
+      { key: "children", heading: "children" }
     ];
 
-    const sections = orderedCategories
+    const groups = orderedCategories
       .map(({ key, heading }) => {
         const entries = Array.from(categories[key].values());
         if (!entries.length) {
@@ -559,54 +656,72 @@
           .map(({ relative, label }) => renderFamilyRelative(relative, label))
           .join("");
         return `
-          <li class="mb-3">
-            <strong class="d-block mb-2">${heading}</strong>
-            <ul class="list-unstyled mb-0 ms-3">
-              ${items}
-            </ul>
-          </li>
+          <div class="family-group">
+            <h3 class="family-group__title">${heading}</h3>
+            <ul class="family-list">${items}</ul>
+          </div>
         `;
       })
       .filter(Boolean);
 
-    if (!sections.length) {
-      container.innerHTML = `<p class="text-muted mb-0">No family data available.</p>`;
+    if (!groups.length) {
+      container.innerHTML = "";
       return false;
     }
 
-    container.innerHTML = `
-      <ul class="list-unstyled family-list mb-0">
-        ${sections.join("")}
-      </ul>
-    `;
-
+    container.innerHTML = `<div class="family-groups">${groups.join("")}</div>`;
     return true;
   }
 
-  function renderFamilyVisualization(person) {
+  function renderFamilyRelative(relative, label) {
+    const name = escapeHtml(relative.displayName);
+    const link = relative.grampsId
+      ? `<a href="/person/?id=${encodeURIComponent(relative.grampsId)}" class="family-link">${name}</a>`
+      : `<span class="family-name">${name}</span>`;
+    const meta = [label, relative.isLiving === true ? VOICE.living : ""].filter(Boolean);
+    return `<li class="family-member">${link}${meta.length ? `<span class="family-meta">${meta.join(" · ")}</span>` : ""}</li>`;
+  }
+
+  // FamilyTree (DS): the frame (.family-tree-visualization) holds a 4-button toolbar and the pannable SVG viewport
+  // (.family-tree-embed.tree); the legend follows the frame. The SVG renders at its natural size; "fit" toggles width 100%.
+  function renderFamilyVisualization(person, personId) {
     const container = document.getElementById("person-family-visualization");
     if (!container) {
       return false;
     }
 
     const media = person.familyTreeMedia;
-    if (!media || !media.path) {
-      container.innerHTML = "";
-      container.classList.add("d-none");
-      return false;
-    }
-
-    const svgUrl = resolveMediaAssetPath(media.path);
+    const svgUrl = media && media.path ? resolveMediaAssetPath(media.path) : null;
     if (!svgUrl) {
       container.innerHTML = "";
       container.classList.add("d-none");
+      toggleLegend(container, false);
       return false;
     }
 
-    container.innerHTML = `<div class="text-muted small py-4 text-center">Loading family tree…</div>`;
-    container.classList.remove("d-none");
+    treeState = null;
+    currentFamilyTreeMarkup = "";
+    container.classList.remove("d-none", "is-fit");
+    container.classList.add("is-loading");
+    container.setAttribute("aria-busy", "true");
+    container.innerHTML = `
+      <div class="tree-toolbar" role="toolbar" aria-label="family tree controls">
+        <button type="button" class="tree-btn" data-tree-action="zoom-out" aria-label="zoom out" title="zoom out" disabled><span aria-hidden="true">−</span></button>
+        <button type="button" class="tree-btn" data-tree-action="zoom-in" aria-label="zoom in" title="zoom in" disabled><span aria-hidden="true">+</span></button>
+        <button type="button" class="tree-btn" data-tree-action="fit" aria-label="fit the tree to the frame" title="fit" aria-pressed="false" disabled><span aria-hidden="true">⤢</span></button>
+        <button type="button" class="tree-btn" data-tree-action="download" aria-label="download the family tree" title="download" disabled><span aria-hidden="true">↓</span></button>
+      </div>
+      <div class="family-tree-embed tree" tabindex="0" role="region" aria-label="family tree">
+        <div class="tree-skeleton" aria-hidden="true"></div>
+        <p class="tree-status">${VOICE.loading}</p>
+      </div>
+    `;
+    toggleLegend(container, true);
+    bindTreeControls(container);
+    const viewport = container.querySelector(".family-tree-embed");
+    bindTreePan(viewport);
 
-    // Background load: under authV2 a lapsed session is refreshed and retried, but a failure never redirects (the record shows).
+    // Background load: under authV2 a lapsed session is refreshed and retried, but a failure never redirects (the page shows).
     dataFetch(svgUrl, { credentials: "same-origin" }, { interactive: false })
       .then((response) => {
         if (!response.ok) {
@@ -615,38 +730,346 @@
         return response.text();
       })
       .then((svgMarkup) => {
+        viewport.innerHTML = svgMarkup;
+        const svg = viewport.querySelector("svg");
+        if (!svg) {
+          throw new Error("The family tree file holds no SVG.");
+        }
         currentFamilyTreeMarkup = svgMarkup;
-        const zoomButton = `
-          <div class="text-end mt-5 pt-2">
-            <button type="button"
-                    class="btn btn-outline-light btn-sm"
-                    data-family-tree-zoom
-                    data-bs-toggle="modal"
-                    data-bs-target="#${FAMILY_TREE_MODAL_ID}">
-              Zoom in
-            </button>
-          </div>
-        `;
-        container.innerHTML = `<div class="family-tree-embed">${svgMarkup}</div>${zoomButton}`;
+        tagTreeRoles(svg, personId);
+        treeState = { container, viewport, svg, natural: naturalSize(svg), scale: 1, fit: false };
+        container.classList.remove("is-loading");
+        container.removeAttribute("aria-busy");
+        container.querySelectorAll("[data-tree-action]").forEach((btn) => {
+          btn.disabled = false;
+        });
+        applyTreeZoom();
+        // The first view needs the viewport's size: the SVG often arrives while the person content is still hidden (0 x 0), when
+        // neither the fit decision nor the centring can work, so it runs on the first frame the viewport has a size.
+        treeState.pendingFirstView = true;
+        firstTreeView(treeState);
+        watchTreeViewport(treeState);
       })
       .catch((error) => {
         console.error("[ERROR] Failed to load family tree visualization:", error);
-        container.innerHTML = `<p class="text-muted small mb-0">Unable to load family tree visualization.</p>`;
+        treeState = null;
+        container.classList.remove("is-loading");
+        container.removeAttribute("aria-busy");
+        viewport.innerHTML = `<div class="alert alert-danger tree-error" role="alert">${VOICE.error}</div>`;
       });
 
     return true;
   }
 
-  function renderFamilyRelative(relative, label) {
-    const name = escapeHtml(relative.displayName);
-    const link = relative.grampsId
-      ? `<a href="/person/?id=${encodeURIComponent(relative.grampsId)}" class="link-primary text-decoration-none">${name}</a>`
-      : name;
-    const badge = renderRelationBadge(relative.isLiving);
-    const labelPrefix = label ? `<span class="text-muted small me-2">${escapeHtml(label)}: </span>` : "";
-    return `<li class="mb-1">${labelPrefix}${link}${badge}</li>`;
+  function toggleLegend(container, show) {
+    let legend = document.getElementById("person-family-legend");
+    if (!show) {
+      if (legend) {
+        legend.classList.add("d-none");
+      }
+      return;
+    }
+    if (!legend) {
+      legend = document.createElement("ul");
+      legend.id = "person-family-legend";
+      legend.className = "tree-legend";
+      legend.setAttribute("aria-label", "who is who in the family tree");
+      container.insertAdjacentElement("afterend", legend);
+    }
+    legend.innerHTML = TREE_LEGEND
+      .map(([role, label]) => `<li><span class="tree"><i class="${role}" aria-hidden="true"></i>${label}</span></li>`)
+      .join("");
+    legend.classList.remove("d-none");
   }
 
+  function tagTreeRoles(svg, personId) {
+    svg.querySelectorAll("g.node").forEach((node) => {
+      const shape = node.querySelector("path, polygon, ellipse, rect");
+      const match = shape ? /var\(\s*(--bs-[\w-]+)\s*\)/.exec(shape.getAttribute("fill") || "") : null;
+      if (!match) {
+        return;
+      }
+      let role = TREE_FILL_ROLES[match[1]];
+      if (match[1] === "--bs-primary") {
+        role = nodeLinkId(node) === personId ? "focus" : "spouse";
+      }
+      if (role) {
+        node.classList.add(role);
+        node.setAttribute("data-role", role);
+      }
+    });
+  }
+
+  function nodeLinkId(node) {
+    const link = node.querySelector("a");
+    if (!link) {
+      return null;
+    }
+    const href = link.getAttribute("href") || link.getAttributeNS("http://www.w3.org/1999/xlink", "href") || link.getAttribute("xlink:href");
+    if (!href) {
+      return null;
+    }
+    try {
+      return new URL(href, window.location.origin).searchParams.get("id");
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // Natural size in CSS px: Graphviz writes width/height in pt (1pt = 4/3 px) plus a viewBox in the same units.
+  function naturalSize(svg) {
+    const parse = (value) => {
+      const m = /^\s*([\d.]+)\s*(pt|px)?\s*$/.exec(value || "");
+      return m ? parseFloat(m[1]) * (m[2] === "pt" ? 4 / 3 : 1) : 0;
+    };
+    let w = parse(svg.getAttribute("width"));
+    let h = parse(svg.getAttribute("height"));
+    const box = svg.viewBox && svg.viewBox.baseVal;
+    if ((!w || !h) && box && box.width && box.height) {
+      w = box.width;
+      h = box.height;
+    }
+    if (!svg.getAttribute("viewBox") && w && h) {
+      svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    }
+    return { w: w || 600, h: h || 400 };
+  }
+
+  // "fit" shows the whole drawing: the largest scale at which it fits the viewport both ways (contain), never above natural size x 3.
+  function treeFitScale(t) {
+    const w = t.viewport.clientWidth;
+    const h = t.viewport.clientHeight;
+    if (!w || !h) {
+      return 1;
+    }
+    return Math.min(TREE_ZOOM.max, w / t.natural.w, h / t.natural.h);
+  }
+
+  // The smallest node label at natural size, in CSS px (Graphviz writes font-size in viewBox units).
+  function treeLabelPx(svg, natural) {
+    const box = svg.viewBox && svg.viewBox.baseVal;
+    const unit = box && box.width ? natural.w / box.width : 4 / 3;
+    let min = Infinity;
+    svg.querySelectorAll("g.node text").forEach((text) => {
+      const size = parseFloat(text.getAttribute("font-size") || "");
+      if (size > 0) {
+        min = Math.min(min, size);
+      }
+    });
+    return (Number.isFinite(min) ? min : 14) * unit;
+  }
+
+  // First view: the whole tree ("fit") when it is larger than the viewport and fitting keeps every label at the 16px floor (DS
+  // type floor); otherwise its natural size, scrolled so the focus person is centred (pan and zoom reach the rest).
+  function firstTreeView(t) {
+    if (!t.pendingFirstView || !t.viewport.clientWidth || !t.viewport.clientHeight) {
+      return;
+    }
+    t.pendingFirstView = false;
+    const fitScale = treeFitScale(t);
+    t.fit = fitScale < 1 && treeLabelPx(t.svg, t.natural) * fitScale >= TREE_LABEL_FLOOR;
+    applyTreeZoom();
+    if (!t.fit) {
+      centerTreeOnFocus();
+      keepTreeCentred(t);
+    }
+  }
+
+  // Moving a scroll container in the DOM resets its scroll offset, and shellV2 moves the whole page into its scroller once it
+  // mounts, often after the tree has drawn: until the member pans, zooms or scrolls the tree, put the focus person back in the
+  // centre after such a move.
+  function keepTreeCentred(t) {
+    if (typeof MutationObserver !== "function" || t.keepCentred) {
+      return;
+    }
+    const mo = new MutationObserver(() => {
+      if (treeState !== t || !t.keepCentred) {
+        mo.disconnect();
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (treeState === t && t.keepCentred && !t.fit) {
+          centerTreeOnFocus();
+        }
+      });
+    });
+    const stop = () => {
+      t.keepCentred = false;
+      mo.disconnect();
+      ["pointerdown", "wheel", "keydown", "touchstart"].forEach((type) => t.viewport.removeEventListener(type, stop));
+    };
+    t.keepCentred = true;
+    mo.observe(document.body, { childList: true });
+    ["pointerdown", "wheel", "keydown", "touchstart"].forEach((type) => t.viewport.addEventListener(type, stop, { passive: true }));
+    t.stopCentring = stop;
+  }
+
+  // In "fit", follow the viewport (rotation, window resize, the 688 / 1024 frame heights); run the first view once it has a size.
+  function watchTreeViewport(t) {
+    if (typeof ResizeObserver !== "function") {
+      return;
+    }
+    const ro = new ResizeObserver(() => {
+      if (treeState !== t) {
+        ro.disconnect();
+        return;
+      }
+      if (t.pendingFirstView) {
+        firstTreeView(t);
+      } else if (t.fit) {
+        applyTreeZoom();
+      }
+    });
+    ro.observe(t.viewport);
+  }
+
+  function applyTreeZoom() {
+    const t = treeState;
+    if (!t) {
+      return;
+    }
+    const { svg, natural } = t;
+    svg.style.aspectRatio = `${natural.w} / ${natural.h}`;
+    if (t.fit) {
+      const s = treeFitScale(t);
+      svg.style.width = `${Math.floor(natural.w * s)}px`;
+      svg.style.height = `${Math.floor(natural.h * s)}px`;
+    } else {
+      svg.style.width = `${Math.round(natural.w * t.scale)}px`;
+      svg.style.height = `${Math.round(natural.h * t.scale)}px`;
+    }
+    t.container.classList.toggle("is-fit", t.fit);
+    const button = (action) => t.container.querySelector(`[data-tree-action="${action}"]`);
+    button("fit").setAttribute("aria-pressed", String(t.fit));
+    button("zoom-out").disabled = !t.fit && t.scale <= TREE_ZOOM.min + 0.001;
+    button("zoom-in").disabled = !t.fit && t.scale >= TREE_ZOOM.max - 0.001;
+  }
+
+  function zoomTree(direction) {
+    const t = treeState;
+    if (!t) {
+      return;
+    }
+    const v = t.viewport;
+    const cx = (v.scrollLeft + v.clientWidth / 2) / Math.max(v.scrollWidth, 1);
+    const cy = (v.scrollTop + v.clientHeight / 2) / Math.max(v.scrollHeight, 1);
+    if (t.fit) {
+      t.scale = t.svg.getBoundingClientRect().width / t.natural.w || 1;
+      t.fit = false;
+    }
+    const next = direction > 0 ? t.scale * TREE_ZOOM.step : t.scale / TREE_ZOOM.step;
+    t.scale = Math.min(TREE_ZOOM.max, Math.max(TREE_ZOOM.min, next));
+    applyTreeZoom();
+    v.scrollLeft = cx * v.scrollWidth - v.clientWidth / 2;
+    v.scrollTop = cy * v.scrollHeight - v.clientHeight / 2;
+  }
+
+  function centerTreeOnFocus() {
+    const t = treeState;
+    const focus = t && t.svg.querySelector("g.node.focus");
+    if (!focus) {
+      return;
+    }
+    const frame = t.viewport.getBoundingClientRect();
+    const node = focus.getBoundingClientRect();
+    t.viewport.scrollLeft += node.left + node.width / 2 - (frame.left + frame.width / 2);
+    t.viewport.scrollTop += node.top + node.height / 2 - (frame.top + frame.height / 2);
+  }
+
+  function downloadTree() {
+    if (!currentFamilyTreeMarkup) {
+      return;
+    }
+    const slug = (currentPersonName || "family").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "family";
+    const url = URL.createObjectURL(new Blob([currentFamilyTreeMarkup], { type: "image/svg+xml" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${slug}-family-tree.svg`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function bindTreeControls(container) {
+    if (container.getAttribute("data-tree-bound")) {
+      return;
+    }
+    container.setAttribute("data-tree-bound", "1");
+    container.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-tree-action]");
+      if (!button || button.disabled || !treeState) {
+        return;
+      }
+      treeState.pendingFirstView = false; // the member has taken over the view
+      if (treeState.stopCentring) {
+        treeState.stopCentring();
+      }
+      const action = button.getAttribute("data-tree-action");
+      if (action === "zoom-in") {
+        zoomTree(1);
+      } else if (action === "zoom-out") {
+        zoomTree(-1);
+      } else if (action === "fit") {
+        treeState.fit = !treeState.fit;
+        applyTreeZoom();
+        if (!treeState.fit) {
+          centerTreeOnFocus();
+        }
+      } else if (action === "download") {
+        downloadTree();
+      }
+    });
+  }
+
+  // Mouse drag pans the frame (touch and keyboard pan it natively: overflow auto, tabindex 0). A drag never follows a node link.
+  function bindTreePan(viewport) {
+    let drag = null;
+    let suppressClick = false;
+    viewport.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || event.button !== 0) {
+        return;
+      }
+      drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, moved: false };
+    });
+    viewport.addEventListener("pointermove", (event) => {
+      if (!drag) {
+        return;
+      }
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 6) {
+        return;
+      }
+      if (!drag.moved) {
+        drag.moved = true;
+        viewport.classList.add("is-panning");
+      }
+      viewport.scrollLeft = drag.left - dx;
+      viewport.scrollTop = drag.top - dy;
+    });
+    const end = () => {
+      if (!drag) {
+        return;
+      }
+      suppressClick = drag.moved;
+      drag = null;
+      viewport.classList.remove("is-panning");
+    };
+    viewport.addEventListener("pointerup", end);
+    viewport.addEventListener("pointercancel", end);
+    viewport.addEventListener("pointerleave", end);
+    viewport.addEventListener("dragstart", (event) => event.preventDefault());
+    viewport.addEventListener("click", (event) => {
+      if (suppressClick) {
+        suppressClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, true);
+  }
+
+  // Life (DS timeline): one row per event, date in mono text.dim, the event, the place in text.dim. Dates as the archive has them.
   function renderEvents(person) {
     const container = document.getElementById("person-events");
     if (!container) {
@@ -655,37 +1078,26 @@
 
     const events = Array.isArray(person.events) ? person.events : [];
     if (!events.length) {
-      container.innerHTML = `<p class="text-muted mb-0">No events recorded.</p>`;
+      container.innerHTML = "";
       return false;
     }
 
-    container.innerHTML = events.map((event) => {
-      const title = escapeHtml(event.label || "Event");
-      const description = event.description ? `<p class="card-text">${escapeHtml(event.description)}</p>` : "";
-      const place = event.place && event.place.displayName ? `<p class="card-text"><small class="text-muted"><i class="bi bi-geo-alt"></i> ${escapeHtml(event.place.displayName)}</small></p>` : "";
-      const date = event.date && event.date.text ? escapeHtml(event.date.text) : "Date unknown";
-      const showUnknownBadge = event.label === "Event" ? `<span class="badge bg-warning text-dark">Type Unknown</span>` : "";
-
+    const rows = events.map((event) => {
+      const label = event.label && event.label !== "Event" ? escapeHtml(String(event.label).toLowerCase()) : VOICE.event;
+      const description = event.description ? `<span class="timeline-note">${escapeHtml(event.description)}</span>` : "";
+      const place = event.place && event.place.displayName ? `<span class="timeline-place">${escapeHtml(event.place.displayName)}</span>` : "";
+      const date = event.date && event.date.text ? escapeHtml(event.date.text) : VOICE.dateUnknown;
       return `
-        <div class="timeline-item mb-4">
-          <div class="card">
-            <div class="card-body">
-              <div class="d-flex justify-content-between align-items-start">
-                <div>
-                  <h5 class="card-title">${title} ${showUnknownBadge}</h5>
-                  ${description}
-                  ${place}
-                </div>
-                <div class="text-end">
-                  <span class="badge bg-primary">${date}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <li class="timeline-row">
+          <span class="timeline-date">${date}</span>
+          <span class="timeline-event">${label}</span>
+          ${description}
+          ${place}
+        </li>
       `;
     }).join("");
 
+    container.innerHTML = `<ol class="timeline-rows">${rows}</ol>`;
     return true;
   }
 
@@ -813,15 +1225,6 @@
       .replace(/'/g, "&#39;");
   }
 
-  function capitalize(value) {
-    if (!value) {
-      return "";
-    }
-
-    const str = String(value);
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  }
-
   function initializeLightbox(items) {
     lightboxState.items = items;
     const grid = document.getElementById("person-media-grid");
@@ -842,6 +1245,7 @@
         prevBtn: modalEl.querySelector(".lightbox-prev"),
         nextBtn: modalEl.querySelector(".lightbox-next")
       };
+      arrangeLightboxChrome(modalEl);
     }
 
     if (!lightboxState.listenersBound) {
@@ -849,6 +1253,81 @@
       bindLightboxControls();
       lightboxState.listenersBound = true;
     }
+  }
+
+  // Lightbox (DS): one top row — counter "3 of 12" left, download and close (44 x 44) right — over the photo, then the caption
+  // and "date · place". The Eleventy markup puts the counter and download in a footer; they are moved once, here.
+  function arrangeLightboxChrome(modalEl) {
+    const { counter, download, spinner, meta } = lightboxState.elements;
+    const header = modalEl.querySelector(".modal-header");
+    const close = modalEl.querySelector(".lightbox-close");
+    const title = modalEl.querySelector(".modal-title");
+    if (title) {
+      title.textContent = "photo";
+      title.classList.add("visually-hidden");
+    }
+    if (header) {
+      const actions = document.createElement("div");
+      actions.className = "lightbox-actions";
+      if (download) {
+        download.textContent = VOICE.download;
+        actions.appendChild(download);
+      }
+      if (close) {
+        actions.appendChild(close);
+      }
+      if (counter) {
+        counter.className = "lightbox-counter";
+        header.appendChild(counter);
+      }
+      header.appendChild(actions);
+    }
+    const footer = modalEl.querySelector(".modal-footer");
+    if (footer) {
+      footer.classList.add("d-none");
+      footer.hidden = true;
+    }
+    if (spinner) {
+      const text = spinner.querySelector("p");
+      if (text) {
+        text.textContent = VOICE.loading;
+      }
+    }
+    if (meta) {
+      meta.className = "lightbox-meta";
+    }
+    const body = modalEl.querySelector(".modal-body");
+    if (body && !body.querySelector(".lightbox-error")) {
+      const banner = document.createElement("div");
+      banner.className = "alert alert-danger lightbox-error d-none";
+      banner.setAttribute("role", "alert");
+      banner.textContent = VOICE.photoError;
+      body.insertBefore(banner, body.firstChild);
+      lightboxState.elements.errorBanner = banner;
+    }
+    bindLightboxSwipe(body || modalEl);
+  }
+
+  // Below 688px there are no side arrows: swipe left/right steps, swipe down closes (threshold 80px).
+  function bindLightboxSwipe(surface) {
+    let start = null;
+    surface.addEventListener("touchstart", (event) => {
+      start = event.touches.length === 1 ? { x: event.touches[0].clientX, y: event.touches[0].clientY } : null;
+    }, { passive: true });
+    surface.addEventListener("touchend", (event) => {
+      if (!start || !event.changedTouches.length) {
+        start = null;
+        return;
+      }
+      const dx = event.changedTouches[0].clientX - start.x;
+      const dy = event.changedTouches[0].clientY - start.y;
+      start = null;
+      if (Math.abs(dx) >= SWIPE_MIN && Math.abs(dx) > Math.abs(dy)) {
+        stepLightbox(dx < 0 ? 1 : -1);
+      } else if (dy >= SWIPE_MIN && dy > Math.abs(dx) && lightboxState.modal) {
+        lightboxState.modal.hide();
+      }
+    }, { passive: true });
   }
 
   function handleMediaTriggerClick(event) {
@@ -926,6 +1405,7 @@
 
     renderLightboxContent(items[index]);
     if (!options.reopen) {
+      reparentModal(lightboxState.elements.modalEl);
       modal.show();
     }
   }
@@ -957,28 +1437,28 @@
       spinner,
       download,
       prevBtn,
-      nextBtn
+      nextBtn,
+      errorBanner
     } = lightboxState.elements;
     if (!image || !caption || !meta || !counter || !spinner) {
       return;
     }
 
+    const token = ++lightboxState.loadToken;
     toggleSpinner(true);
     image.classList.add("d-none");
-    caption.textContent = media.title || "Untitled media";
-    meta.innerHTML = buildLightboxMeta(media);
-    counter.textContent = `Media ${lightboxState.currentIndex + 1} of ${lightboxState.items.length}`;
+    if (errorBanner) {
+      errorBanner.classList.add("d-none");
+    }
+    caption.textContent = media.title || "";
+    caption.hidden = !media.title;
+    const metaText = buildLightboxMeta(media);
+    meta.textContent = metaText;
+    meta.hidden = !metaText;
+    counter.textContent = `${lightboxState.currentIndex + 1} of ${lightboxState.items.length}`;
 
     const mediaUrl = resolveMediaPath(media);
-    if (download) {
-      if (mediaUrl) {
-        download.classList.remove("disabled");
-        download.href = mediaUrl;
-      } else {
-        download.classList.add("disabled");
-        download.removeAttribute("href");
-      }
-    }
+    setDownload(download, mediaUrl);
 
     if (prevBtn && nextBtn) {
       prevBtn.classList.toggle("d-none", lightboxState.items.length <= 1);
@@ -989,36 +1469,58 @@
 
     if (!mediaUrl) {
       toggleSpinner(false);
-      caption.textContent = `${caption.textContent} (media unavailable)`;
+      showLightboxError();
       return;
     }
 
     const loader = new Image();
     loader.onload = () => {
+      if (token !== lightboxState.loadToken) {
+        return;
+      }
       image.src = mediaUrl;
-      image.alt = media.title || "Media preview";
+      image.alt = media.title || "photo";
       toggleSpinner(false);
       image.classList.remove("d-none");
     };
     loader.onerror = () => {
+      if (token !== lightboxState.loadToken) {
+        return;
+      }
       toggleSpinner(false);
-      caption.textContent = `${caption.textContent} (failed to load media)`;
+      setDownload(download, null);
+      showLightboxError();
     };
     loader.src = mediaUrl;
   }
 
+  function setDownload(download, url) {
+    if (!download) {
+      return;
+    }
+    if (url) {
+      download.classList.remove("disabled");
+      download.removeAttribute("aria-disabled");
+      download.href = url;
+    } else {
+      download.classList.add("disabled");
+      download.setAttribute("aria-disabled", "true");
+      download.removeAttribute("href");
+    }
+  }
+
+  function showLightboxError() {
+    const { errorBanner } = lightboxState.elements;
+    if (errorBanner) {
+      errorBanner.classList.remove("d-none");
+    }
+  }
+
+  // "date · place" in text.dim, as the archive has them (never relative). Media items carry neither today; the line stays hidden.
   function buildLightboxMeta(media) {
-    const chips = [];
-    if (media.grampsId) {
-      chips.push(`<span class="badge bg-secondary">ID ${escapeHtml(media.grampsId)}</span>`);
-    }
-    if (media.mime) {
-      chips.push(`<span class="badge bg-dark text-uppercase">${escapeHtml(media.mime)}</span>`);
-    }
-    if (media.handle) {
-      chips.push(`<span class="badge bg-dark">${escapeHtml(media.handle)}</span>`);
-    }
-    return chips.join("");
+    const date = media.date && typeof media.date === "object" ? media.date.text : media.date;
+    const place = media.place && typeof media.place === "object" ? media.place.displayName : media.place;
+    return [date, place].filter((part) => typeof part === "string" && part.trim()).join(" · ");
   }
 
   function toggleSpinner(show) {

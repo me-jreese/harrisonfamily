@@ -1,0 +1,75 @@
+/*
+ * 60 shell, static part (ds/components/Shell). Bundled into /css/hfy-theme.css, which every page links render-blocking, so these
+ * rules apply from the first paint: before the shell island's own stylesheet and module load, and before KitShell mounts.
+ * Tokens only (--io-shell-* from kit-bridge, --io-* from theme.css); the island-only rules live in islands/src/shell.css.
+ */
+
+/*
+ * Shell breakpoints. compact (bottom bar) below 43rem (688px); medium (top bar with links) from 43rem; the SearchLauncher palette
+ * Sheet becomes a centred top panel at the same width. The kit's useBreakpoint() reads --io-bp-* on its first snapshot, so they
+ * must be declared before the island runs: here they are, which ends the compact/medium race the island stylesheet had.
+ * @io-kit/tokens 0.4.0 emits no bp tokens yet (DS amendment: bp.medium 43rem, bp.wide 64rem); media queries cannot use var().
+ */
+:root {
+  --io-bp-medium-min: 43rem; /* lint-allow: bp tokens pending */
+  --io-bp-palette-min: 43rem; /* lint-allow: bp tokens pending */
+}
+
+/* The legacy Bootstrap navbar is replaced by KitShell. It stays in the DOM (hidden) so the legacy scripts keep working
+   (auth-v2.js wires its sign-out link, which the shell's account sheet proxies). Static, so html.hfy-shell-v2 set early
+   (localStorage 'hfy:shell-hint') hides it from the first paint instead of after the island loads. */
+html.hfy-shell-v2 nav.navbar-hf { display: none !important; }
+
+/* Pre-mount placeholders: until KitShell has mounted (no .io-shell yet), paint the top strip, and under 688px the bottom-bar strip,
+   where the chrome will appear, so the frame does not pop in late. Same tint, height and hairline as the real bars. */
+html.hfy-shell-v2:not(:has(.io-shell)) body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1030;
+  box-sizing: border-box;
+  height: calc(var(--io-shell-bar-h) + var(--io-shell-safe-top));
+  background: var(--io-shell-nav-tint);
+  -webkit-backdrop-filter: blur(var(--io-shell-space-2));
+  backdrop-filter: blur(var(--io-shell-space-2));
+  border-bottom: 1px solid var(--io-shell-border);
+  pointer-events: none;
+}
+@media (max-width: 42.99rem) {
+  html.hfy-shell-v2:not(:has(.io-shell)) body::after {
+    content: "";
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1030;
+    box-sizing: border-box;
+    height: calc(var(--io-shell-bar-h) + var(--io-shell-safe-bottom));
+    background: var(--io-shell-nav-tint);
+    -webkit-backdrop-filter: blur(var(--io-shell-space-2));
+    backdrop-filter: blur(var(--io-shell-space-2));
+    border-top: 1px solid var(--io-shell-border);
+    pointer-events: none;
+  }
+}
+
+/* Pre-mount page position (QA2): the page's own <main> sits where it will sit once the shell has mounted, so nothing jumps when it does.
+   The bars are overlays until then, and `html.hfy-shell-v2 main { padding-top: 0 }` (40-site) had put the hero at y=0 under the strip
+   (80px higher than after the mount, with the bottom strip over the second button). After the mount the scroller starts under the bar
+   and main has space-6 above and the page gutter beside it, so those are what an unmounted main gets: the bar height and safe area,
+   then space-6 (and under 688 the bottom strip's height under the content); the gutter steps match shell.css (16 / 24 / 64). */
+html.hfy-shell-v2:not(:has(.io-shell)) body > main {
+  padding: calc(var(--io-shell-bar-h) + var(--io-shell-safe-top) + var(--io-space-6)) var(--io-space-4) calc(var(--io-shell-bar-h) + var(--io-shell-safe-bottom) + var(--io-space-7));
+}
+html.hfy-shell-v2:not(:has(.io-shell)) body > main:is(.container, .container-fluid) { --bs-gutter-x: 0; margin: 0; max-width: none; }
+@media (min-width: 43rem) {
+  html.hfy-shell-v2:not(:has(.io-shell)) body > main {
+    padding-inline: var(--io-space-6);
+    padding-bottom: var(--io-space-7);
+  }
+}
+@media (min-width: 64rem) {
+  html.hfy-shell-v2:not(:has(.io-shell)) body > main { padding-inline: var(--io-space-9); }
+}

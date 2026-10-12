@@ -1,24 +1,405 @@
-@import "@io-kit/tokens/tokens.css";
-@import "@io-kit/tokens/harrisonfamily/theme.css";
-@import "@io-kit/tokens/harrisonfamily/bs-bridge.css";
-@import "@io-kit/tokens/harrisonfamily/kit-bridge.css";
+/*
+ * Shell island styles (ds/components/Shell, approved as-is under HFY-R13). The theme itself (self-hosted fonts, @io-kit/tokens
+ * harrisonfamily theme.css, bs-bridge, kit-bridge, the 10-kit-aliases short-variable map) is the static /css/hfy-theme.css layer,
+ * loaded once per page and independent of JS and flags; 60-shell-static.css (the breakpoints, the hidden navbar and the pre-mount
+ * placeholders) is part of it. This file only aliases --io-shell-* (kit-bridge) and --io-* tokens: no literal colour, font, radius
+ * or px spacing (theme-lint no-literal-token-values). Every rule is unlayered, so it beats @layer io-kit.components.
+ */
 @import "@io-kit/shell/io-kit.css";
 
-/* Legacy Bootstrap navbar is replaced by KitShell; it stays in the DOM (hidden) so legacy scripts keep working. */
-html.hfy-shell-v2 nav.navbar-hf { display: none !important; }
-html.hfy-shell-v2, html.hfy-shell-v2 body { padding: 0 !important; margin: 0; height: 100%; overflow: hidden; }
-/* Shell breakpoints: compact (bottom bar) at <= 688px (43rem) */
-:root { --io-bp-medium-min: 43rem; --io-bp-palette-min: 43rem; }
-.hfy-bar { display: flex; align-items: center; gap: .5rem; padding: .25rem .75rem; min-height: 56px;
-  background: var(--bg-surface, #12384f); color: var(--fg, #fff); border-bottom: 1px solid rgba(255,255,255,.12); }
-.hfy-bar__brand { font-weight: 700; letter-spacing: .08em; color: inherit; text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
-.hfy-bar__links { display: none; gap: .25rem; margin-left: 1rem; }
-.hfy-bar__links a { color: inherit; text-decoration: none; min-height: 44px; min-width: 44px; padding: 0 .75rem; display: inline-flex; align-items: center; }
-.hfy-bar__end { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
-.hfy-content { min-height: 100%; }
-.hfy-install { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .75rem; background: var(--bg-surface-alt, #154a6b); color: var(--fg, #fff); }
-.hfy-install button { min-height: 44px; min-width: 44px; padding: 0 1rem; font-size: 16px; }
-.hfy-install p { margin: 0; flex: 1 1 14rem; font-size: 16px; }
-html.hfy-shell-v2 input, html.hfy-shell-v2 select, html.hfy-shell-v2 textarea { font-size: 16px; }
-@media (min-width: 689px) { .hfy-bar__links { display: flex; } }
+/* ---------------------------------------------------------------------------------------------------------------- frame */
+/* The shell owns scrolling: one scroller between the top bar and the bottom bar. main.css's fixed-navbar body padding goes. */
+html.hfy-shell-v2,
+html.hfy-shell-v2 body { padding: 0 !important; margin: 0; height: 100%; overflow: hidden; }
+/* (The 16px input floor is global: theme partial 20-base, max(100%, control.input.min-font).) */
+
+html.hfy-shell-v2 .io-shell {
+  background: var(--io-shell-surface);
+  color: var(--io-shell-text);
+  font-family: var(--io-shell-font-ui);
+  font-size: var(--io-shell-font-size);
+  line-height: var(--io-typography-leading-relaxed);
+  /* Kit root cause (@io-kit/shell 0.6.6): .io-shell sets --io-target: 1.5rem (24px) and raises it to 2.75rem only under
+     (pointer: coarse), so with a mouse (or a touch laptop that reports fine) nav rows, palette rows and .io-btn fall under the DS
+     44px floor (control.tap.min). HFY override until the kit reads --io-shell-tap-min; delete it then. */
+  --io-target: var(--io-shell-tap-min);
+  /* The frame never scrolls (the scroller does): clip, unlike the kit's hidden, cannot be moved by scrollIntoView() or focus(). Browsers
+     without overflow:clip (Safari < 16) keep the kit's hidden; the scroller's own containing block (below) is what stops the escape. */
+  overflow: clip;
+}
+
+/*
+ * Kit resets re-asserted, unlayered and scoped to the shell. @io-kit/shell 0.6.6 ships its component rules in
+ * @layer io-kit.components, so every unlayered rule beats them whatever its specificity: main.css's Bootstrap reboot
+ * (ul padding-left + margin-bottom, a colour + underline, button radius) and the theme's 20-base element rules clobber the
+ * nav lists, nav items and sheet buttons. These restore what the kit intended, in DS tokens.
+ */
+html.hfy-shell-v2 .io-nav__list { padding: 0; margin: 0; }
+html.hfy-shell-v2 .io-nav__item { text-decoration: none; color: var(--io-shell-text-dim); }
+html.hfy-shell-v2 .io-nav__item[aria-current="page"] { color: var(--io-shell-text); }
+/* Zero specificity on purpose: unlayered, it still beats the kit's @layer io-kit.components and main.css's `button {border-radius:0}`
+   (it loads later), but every island rule wins over it, so a notification switch or a comment reaction keeps its pill
+   (at (0,2,2) it had squared every island button inside the shell to 8px). */
+:where(html.hfy-shell-v2) :where(.io-shell, .io-sheet) button { border-radius: var(--io-shell-radius-md); }
+
+/* DS Shell: no rail and no sidebar at any width; from 688px the top bar carries the links. */
+html.hfy-shell-v2 :is(.io-shell__rail, .io-shell__sidebar) { display: none; }
+
 .hfy-col { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------------------------------------------------------- top bar */
+html.hfy-shell-v2 .hfy-bar {
+  flex: none;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--io-shell-space-4);
+  height: calc(var(--io-shell-bar-h) + var(--io-shell-safe-top));
+  /* the page gutter (16 / 24 / 64), so the wordmark lines up with the page's headings and cards; --io-hfy-gutter is declared on the
+     .hfy-col this bar sits in (QA2: the bar kept 16 at every width) */
+  padding: var(--io-shell-safe-top) var(--io-hfy-gutter) 0;
+  background: var(--io-shell-nav-tint);
+  -webkit-backdrop-filter: blur(var(--io-shell-space-2));
+  backdrop-filter: blur(var(--io-shell-space-2));
+  color: var(--io-shell-text);
+  border-bottom: 1px solid var(--io-shell-border);
+}
+html.hfy-shell-v2 .hfy-bar__brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-shell-tap-min);
+  margin-right: auto;
+  color: inherit;
+  font-family: var(--io-shell-font-display);
+  font-size: var(--io-typography-size-lg);
+  font-weight: var(--io-typography-weight-regular);
+  letter-spacing: normal;
+  text-transform: none;
+  text-decoration: none;
+  white-space: nowrap;
+}
+html.hfy-shell-v2 .hfy-bar__brand:hover { color: var(--io-shell-link-hover); }
+
+/* Links: from 688px only (kit data-bp is medium or expanded there; it reads --io-bp-medium-min from the static layer). */
+html.hfy-shell-v2 .hfy-bar__links { display: none; align-items: center; gap: var(--io-shell-space-1); }
+html.hfy-shell-v2 .io-shell:not([data-bp="compact"]) .hfy-bar__links { display: flex; }
+html.hfy-shell-v2 .hfy-bar__links a {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--io-shell-tap-min);
+  min-width: var(--io-shell-tap-min);
+  padding: 0 var(--io-shell-space-2);
+  border-radius: var(--io-shell-radius-sm);
+  color: var(--io-shell-text);
+  font-size: var(--io-shell-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  line-height: var(--io-typography-leading-snug);
+  text-decoration: none;
+  white-space: nowrap;
+}
+html.hfy-shell-v2 .hfy-bar__links a:hover { color: var(--io-shell-link-hover); }
+/* Current page: the gold inset indicator (3px = 0.75 x space-1; nav.indicator token pending, DS amendment) on a `text` label.
+   HFY override of the DS Shell pairing (link on nav.tint): Columbia on the tint composite (#22333b) is 5.79:1, under the guide/05 dark
+   floor of 7:1, and the label is 16/600, not large text; `text` is 12.14:1. The active cue is the gold indicator (8.03:1 on the tint).
+   DS amendment for io: colour the active label `text` (or add nav.link = columbia-300, 7.71:1), and add text / text.dim / link on
+   nav.tint to the guide/05 table. */
+html.hfy-shell-v2 .hfy-bar__links a[aria-current="page"] {
+  color: var(--io-shell-text);
+  box-shadow: inset 0 calc(-0.75 * var(--io-shell-space-1)) 0 var(--io-shell-accent-secondary);
+}
+
+/* Search launcher. Under 688px search is a bottom-bar item, so the top strip hides the launcher (Cmd/Ctrl-K still opens it).
+   From 688px the 44px icon button becomes an inline field with an ellipsised hint. */
+html.hfy-shell-v2 .io-shell[data-bp="compact"] .hfy-bar .io-search-launcher { display: none; }
+html.hfy-shell-v2 .hfy-bar__search-hint { display: none; }
+html.hfy-shell-v2 .io-shell:not([data-bp="compact"]) .hfy-bar .io-search-launcher {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: var(--io-shell-space-2);
+  width: calc(4 * var(--io-space-8));
+  min-width: var(--io-shell-tap-min);
+  max-width: calc(8 * var(--io-space-8));
+  height: var(--io-shell-control-h);
+  padding: 0 var(--io-shell-space-3);
+  background: var(--io-shell-surface-sunken);
+  color: var(--io-shell-text-dim);
+  border: 1px solid var(--io-shell-border-strong);
+  border-radius: var(--io-shell-radius-md);
+  font-size: var(--io-shell-font-size-sm);
+  overflow: hidden;
+}
+html.hfy-shell-v2 .io-shell:not([data-bp="compact"]) .hfy-bar .io-search-launcher:hover { border-color: var(--io-shell-text-dim); }
+html.hfy-shell-v2 .io-search-launcher svg { flex: none; }
+html.hfy-shell-v2 .io-shell:not([data-bp="compact"]) .hfy-bar__search-hint {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Account slot: pill skeleton while /auth/session is pending, then the avatar (signed in) or "sign in" (signed out). */
+html.hfy-shell-v2 .hfy-bar__end { flex: none; display: flex; align-items: center; gap: var(--io-shell-space-2); }
+html.hfy-shell-v2 .hfy-account__skel {
+  display: block;
+  width: calc(2 * var(--io-shell-control-h-sm));
+  height: var(--io-shell-control-h-sm);
+  border-radius: var(--io-shell-radius-pill);
+  background: var(--io-shell-surface-sunken);
+}
+html.hfy-shell-v2 .io-shell .hfy-account__btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--io-shell-tap-min);
+  min-height: var(--io-shell-tap-min);
+  padding: 0;
+  border: 0;
+  border-radius: var(--io-shell-radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+html.hfy-shell-v2 .hfy-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--io-shell-control-h-sm);
+  height: var(--io-shell-control-h-sm);
+  border-radius: var(--io-shell-radius-pill);
+  background: var(--io-shell-accent);
+  color: var(--io-shell-accent-text);
+  font-size: var(--io-shell-font-size-sm);
+  font-weight: var(--io-typography-weight-bold);
+  line-height: 1;
+}
+html.hfy-shell-v2 .hfy-signin {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--io-shell-control-h);
+  min-width: var(--io-shell-tap-min);
+  padding: 0 var(--io-shell-space-4);
+  border: 1px solid var(--io-shell-border-strong);
+  border-radius: var(--io-shell-radius-md);
+  background: var(--io-shell-surface-raised);
+  color: var(--io-shell-text);
+  font-size: var(--io-shell-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+html.hfy-shell-v2 .hfy-signin:hover { color: var(--io-shell-link-hover); border-color: var(--io-shell-link-hover); }
+
+/* Kit Sheet titles (account sheet, search palette): display serif at regular weight like every DS heading (the kit sets 600). */
+html.hfy-shell-v2 .io-sheet__title {
+  font-family: var(--io-shell-font-display);
+  font-size: var(--io-typography-size-lg);
+  font-weight: var(--io-typography-weight-regular);
+}
+
+/* Kit root cause (@io-kit/shell 0.6.6 io-kit.css .io-sheet__close): the close button's border is color-mix(--fg 28%), the Enceladus --fg,
+   2.44:1 on surface.raised (under the 3:1 non-text floor). It takes the DS border.strong (3.78:1 on raised). Record against DVP-TSK-A73. */
+html.hfy-shell-v2 .io-sheet__close { border-color: var(--io-shell-border-strong); }
+/* Kit root cause (@io-kit/shell 0.6.6 SearchLauncher.js): the palette's last row is the hard-coded string "See all results for ..." with
+   no label prop. Voice is lowercase, so the first letter is restated lowercase (CSS only; the words stay the kit's). Upstream: a
+   seeAllLabel prop. */
+html.hfy-shell-v2 .io-search__option--all .io-search__title { display: block; }
+html.hfy-shell-v2 .io-search__option--all .io-search__title::first-letter { text-transform: lowercase; }
+
+/* The sheet body scrolls (overflow-y: auto), which clips the focus ring of full-width controls at its edges: inset the content by
+   ring + offset so the one DS focus rule stays whole. */
+html.hfy-shell-v2 :is(.io-sheet[data-variant="palette"], .hfy-account) .io-sheet__body {
+  padding: calc(var(--io-shell-focus-ring) + var(--io-shell-focus-offset));
+}
+/* SearchLauncher palette: a DS input (sunken, 44px, 16px text) and a list without main.css's reboot indent (kit reset re-asserted). */
+html.hfy-shell-v2 .io-sheet .io-search__input {
+  min-height: var(--io-shell-control-h);
+  padding: 0 var(--io-shell-space-3);
+  background: var(--io-shell-surface-sunken);
+  color: var(--io-shell-text);
+  border: 1px solid var(--io-shell-border-strong);
+  border-radius: var(--io-shell-radius-md);
+  font-size: var(--io-shell-font-size-sm);
+}
+html.hfy-shell-v2 .io-sheet .io-search__input::placeholder { color: var(--io-shell-text-dim); opacity: 1; }
+html.hfy-shell-v2 .io-sheet .io-search__list { margin: 0; padding: 0; list-style: none; }
+html.hfy-shell-v2 .io-sheet .io-search__option { min-height: var(--io-shell-tap-min); padding: var(--io-shell-space-1) var(--io-shell-space-3); border-radius: var(--io-shell-radius-md); color: var(--io-shell-text); }
+html.hfy-shell-v2 .io-sheet .io-search__option[data-active="true"] { background: var(--io-shell-surface); color: var(--io-shell-link-hover); }
+html.hfy-shell-v2 .io-sheet .io-search__subtitle { color: var(--io-shell-text-dim); font-size: var(--io-shell-font-size-sm); opacity: 1; }
+
+/* Account sheet (kit Sheet, portalled to <body>): one 44px row per action. */
+html.hfy-shell-v2 .hfy-account .hfy-account__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 var(--io-shell-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--io-shell-space-1);
+}
+html.hfy-shell-v2 .hfy-account .hfy-account__item {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--io-shell-tap-min);
+  padding: 0 var(--io-shell-space-3);
+  border: 0;
+  border-radius: var(--io-shell-radius-md);
+  background: transparent;
+  color: var(--io-shell-text);
+  font: inherit;
+  font-size: var(--io-shell-font-size);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+html.hfy-shell-v2 .hfy-account .hfy-account__item:hover { background: var(--io-shell-surface); color: var(--io-shell-link-hover); }
+
+/* ------------------------------------------------------------------------------------------------------------ bottom bar */
+/* Under 688px: five 75 x 56 cells, icon over a 16/600 label in text.dim; the active item's label is `text` (see the AAA note at the
+   top-bar links) and its icon gold. */
+html.hfy-shell-v2 .io-shell__bar {
+  padding: 0 0 var(--io-shell-safe-bottom);
+  background: var(--io-shell-nav-tint);
+  -webkit-backdrop-filter: blur(var(--io-shell-space-2));
+  backdrop-filter: blur(var(--io-shell-space-2));
+  border-top: 1px solid var(--io-shell-border);
+}
+html.hfy-shell-v2 .io-nav__list--bar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+html.hfy-shell-v2 .io-nav__list--bar > li { display: flex; min-width: 0; }
+html.hfy-shell-v2 .io-nav__item--bar {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--io-shell-space-1) / 2);
+  min-height: var(--io-shell-bar-h);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--io-shell-text-dim);
+  font-size: var(--io-shell-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  line-height: var(--io-typography-leading-snug);
+}
+html.hfy-shell-v2 .io-nav__item--bar:hover { color: var(--io-shell-text); }
+/* The five cells reach the screen edges, so a ring drawn outside lost its bottom edge on every item and its left / right edge on the
+   first and last (QA2). Drawn inside the cell, the one DS ring stays whole (as on the scroller). */
+html.hfy-shell-v2 .io-nav__item--bar:focus-visible { outline-offset: calc(-1 * (var(--io-shell-focus-ring) + var(--io-shell-focus-offset))); }
+html.hfy-shell-v2 .io-nav__item--bar[aria-current="page"] { color: var(--io-shell-text); background: transparent; }
+
+/* Icons: single-weight 24px line icons drawn in currentColor (a mask over a currentColor fill), gold when active. */
+html.hfy-shell-v2 .io-nav__icon {
+  display: block;
+  flex: none;
+  width: var(--io-shell-space-6);
+  height: var(--io-shell-space-6);
+  overflow: hidden;
+  background: currentColor;
+  -webkit-mask: no-repeat center / contain;
+  mask: no-repeat center / contain;
+}
+html.hfy-shell-v2 .io-nav__item--bar[aria-current="page"] .io-nav__icon { background: var(--io-shell-accent-secondary); }
+html.hfy-shell-v2 [data-io-nav-item="home"] .io-nav__icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 10.5 12 3.5l8.5 7'/%3E%3Cpath d='M5.5 9v11.5h13V9'/%3E%3Cpath d='M10 20.5v-6h4v6'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 10.5 12 3.5l8.5 7'/%3E%3Cpath d='M5.5 9v11.5h13V9'/%3E%3Cpath d='M10 20.5v-6h4v6'/%3E%3C/svg%3E");
+}
+html.hfy-shell-v2 [data-io-nav-item="family"] .io-nav__icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='8' r='3.5'/%3E%3Cpath d='M2.5 20.5a6.5 6.5 0 0 1 13 0'/%3E%3Cpath d='M15.5 4.8a3.5 3.5 0 0 1 0 6.4'/%3E%3Cpath d='M18 14.2a6.5 6.5 0 0 1 3.5 6.3'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='8' r='3.5'/%3E%3Cpath d='M2.5 20.5a6.5 6.5 0 0 1 13 0'/%3E%3Cpath d='M15.5 4.8a3.5 3.5 0 0 1 0 6.4'/%3E%3Cpath d='M18 14.2a6.5 6.5 0 0 1 3.5 6.3'/%3E%3C/svg%3E");
+}
+html.hfy-shell-v2 [data-io-nav-item="search"] .io-nav__icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+}
+html.hfy-shell-v2 [data-io-nav-item="posts"] .io-nav__icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 15.5a1.5 1.5 0 0 1-1.5 1.5H8l-4 3.5v-15A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5z'/%3E%3Cpath d='M8 9h8M8 12.5h5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 15.5a1.5 1.5 0 0 1-1.5 1.5H8l-4 3.5v-15A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5z'/%3E%3Cpath d='M8 9h8M8 12.5h5'/%3E%3C/svg%3E");
+}
+html.hfy-shell-v2 [data-io-nav-item="me"] .io-nav__icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4.5 20.5a7.5 7.5 0 0 1 15 0'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4.5 20.5a7.5 7.5 0 0 1 15 0'/%3E%3C/svg%3E");
+}
+
+/* -------------------------------------------------------------------------------------------------- scroller and content */
+html.hfy-shell-v2 .hfy-scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* HFY-TSK-084 (QA2 major): the scroller is the containing block for everything absolutely positioned inside the page (the composer's
+   visually-hidden label and legend, the legacy search dropdown, the lightbox arrows, Bootstrap's .visually-hidden). Without it the
+   containing block was .io-shell, whose overflow is hidden but still scrollable by script: scrollIntoView() of a lower anchor scrolled
+   the frame (bars off screen, no way back but a reload). Kit root cause: @io-kit/shell 0.6.6 .io-shell uses overflow:hidden. */
+html.hfy-shell-v2 .hfy-scroller { position: relative; }
+/* HFY-TSK-069 (D-11 item 5): keyboard focus on the scroller shows the global ring (colour and width from the theme's one
+   :focus-visible rule), drawn inset so overflow does not clip it. */
+html.hfy-shell-v2 [data-io-scroller]:focus-visible { outline-offset: calc(-1 * var(--io-shell-focus-ring)); }
+
+/* Page gutter (DS layout): 16 at 375, 24 from 688, 64 from 1024. Declared on the column so the install card shares it.
+   Named --io-hfy-* because theme-lint lets app CSS read only --io-* / --bs-* properties; it only ever holds an --io-space-* token. */
+html.hfy-shell-v2 :is(.hfy-col, .hfy-content) { --io-hfy-gutter: var(--io-space-4); }
+@media (min-width: 43rem) { html.hfy-shell-v2 :is(.hfy-col, .hfy-content) { --io-hfy-gutter: var(--io-space-6); } }
+@media (min-width: 64rem) { html.hfy-shell-v2 :is(.hfy-col, .hfy-content) { --io-hfy-gutter: var(--io-space-9); } }
+html.hfy-shell-v2 .hfy-content { min-height: 100%; }
+/* The Eleventy <main> keeps its landmark; the shell sets its padding (main.css's 80px fixed-navbar offset no longer applies).
+   A Bootstrap .container main loses its own gutter and auto margins (the page gutter replaces them) and its max-width
+   (margin 0 would otherwise pin a 960/1140px column to the left); components cap their own measure. */
+html.hfy-shell-v2 .hfy-content > main { padding: var(--io-space-6) var(--io-hfy-gutter) var(--io-space-7); }
+html.hfy-shell-v2 .hfy-content > main:is(.container, .container-fluid) { --bs-gutter-x: 0; margin: 0; max-width: none; }
+/* The Eleventy footer is position:fixed at >=768px (main.css .site-footer, Bootstrap .fixed-bottom). Inside the scroller it would
+   cover the page and, under 688px, sit on the bottom bar; in the shell it ends the scroll instead. (On the home page the footer
+   is inside <main>, so any depth.) */
+html.hfy-shell-v2 .hfy-content footer.site-footer { position: static; }
+
+/* ---------------------------------------------------------------------------------------------------------- offline banner */
+/* DS Shell, degraded state: "you're offline. the pages you already opened still work." on surface.raised with an accent.secondary
+   border, below the bar (shell.jsx Offline; not offline.html's .hfy-offline page; role=status, so it is announced once, politely). */
+html.hfy-shell-v2 .hfy-offline-banner {
+  flex: none;
+  margin: var(--io-shell-space-4) var(--io-hfy-gutter) 0;
+  padding: var(--io-shell-space-3) var(--io-shell-space-4);
+  background: var(--io-shell-surface-raised);
+  color: var(--io-shell-text);
+  border: 1px solid var(--io-shell-accent-secondary);
+  border-radius: var(--io-shell-radius-md);
+  font-size: var(--io-shell-font-size-sm);
+}
+html.hfy-shell-v2 .hfy-offline-banner p { margin: 0; }
+
+/* --------------------------------------------------------------------------------------------------------- install card */
+html.hfy-shell-v2 .hfy-install {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-shell-space-2) var(--io-shell-space-3);
+  margin: var(--io-shell-space-4) var(--io-hfy-gutter) 0;
+  padding: var(--io-shell-space-3) var(--io-shell-space-4);
+  background: var(--io-shell-surface-raised);
+  color: var(--io-shell-text);
+  border: 1px solid var(--io-shell-border);
+  border-radius: var(--io-shell-radius-md);
+  box-shadow: var(--io-shell-elevation-1);
+  font-size: var(--io-shell-font-size-sm);
+}
+html.hfy-shell-v2 .hfy-install p { margin: 0; flex: 1 1 60%; }
+html.hfy-shell-v2 .hfy-install__actions { display: flex; flex-wrap: wrap; gap: var(--io-shell-space-2); }
+html.hfy-shell-v2 .hfy-install button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--io-shell-control-h);
+  min-width: var(--io-shell-tap-min);
+  padding: 0 var(--io-shell-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--io-shell-radius-md);
+  font: inherit;
+  font-size: var(--io-shell-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  cursor: pointer;
+}
+html.hfy-shell-v2 .hfy-install .hfy-install__add { background: var(--io-shell-accent); border-color: var(--io-shell-accent); color: var(--io-shell-accent-text); }
+html.hfy-shell-v2 .hfy-install .hfy-install__dismiss { background: transparent; color: var(--io-shell-link); }
+html.hfy-shell-v2 .hfy-install .hfy-install__dismiss:hover { color: var(--io-shell-link-hover); }

@@ -24,9 +24,9 @@ describe("producers", () => {
     await notifier.onComment(comment({ body: "secret text @I0003" }), { parent: null }, { earlierCommenters: ["I0002", "I0005"] });
     const by = Object.fromEntries(sent.map((s) => [s.to, s.n]));
     expect(Object.keys(by).sort()).toEqual(["I0001", "I0002", "I0003"]);
-    expect(by.I0001).toMatchObject({ body: "Someone commented on your record.", navigate: "/person/?id=I0001" });
-    expect(by.I0002.body).toBe("Someone replied to you.");
-    expect(by.I0003.body).toBe("You were mentioned.");
+    expect(by.I0001).toMatchObject({ body: "someone commented on your page.", navigate: "/person/?id=I0001" });
+    expect(by.I0002.body).toBe("someone replied to you.");
+    expect(by.I0003.body).toBe("you were mentioned.");
     expect(JSON.stringify(sent)).not.toContain("secret text");
     expect(JSON.stringify(sent)).not.toContain("Eve");
   });
@@ -48,6 +48,6 @@ describe("producers", () => {
     const { notifier, sent } = await setup(["I0001", "I0002", "I0005"]);
     await notifier.onPublished({ id: "01HZZZZZZZZZZZZZZZZZZZZZZZ", author: { id: "I0005", label: "Eve" } });
     expect(sent.map((s) => s.to).sort()).toEqual(["I0001", "I0002"]);
-    expect(sent[0].n).toMatchObject({ body: "There is a new family post.", navigate: "/posts/?id=01HZZZZZZZZZZZZZZZZZZZZZZZ" });
+    expect(sent[0].n).toMatchObject({ body: "there's a new family post.", navigate: "/posts/?id=01HZZZZZZZZZZZZZZZZZZZZZZZ" });
   });
 });

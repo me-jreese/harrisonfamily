@@ -4,10 +4,12 @@ import { buildDeclarativePush, sendToPrincipal } from "@io-kit/notify/server";
 /** Level 0 is content-free; level 1 may name the actor. Recipients opt in to level 1 per type. */
 export const TEMPLATE_REGISTRY = {
   features: {
-    comment_on_my_record: { title: "Family tree", level0: "Someone commented on your record.", level1: "{actor} commented on your record." },
-    reply_to_me: { title: "Family tree", level0: "Someone replied to you.", level1: "{actor} replied to you." },
-    new_family_post: { title: "Family news", level0: "There is a new family post.", level1: "{actor} shared a new family post." },
-    mention: { title: "Family tree", level0: "You were mentioned.", level1: "{actor} mentioned you." },
+    // Voice (DS guide/04-voice.md): lowercase sentences, "page" never "record", the site name as the title (a proper noun keeps its case).
+    // The lock-screen preview on /me/notifications/ mirrors these word for word (islands/src/islands/notifications.jsx CATALOG).
+    comment_on_my_record: { title: "Harrison Family", level0: "someone commented on your page.", level1: "{actor} commented on your page." },
+    reply_to_me: { title: "Harrison Family", level0: "someone replied to you.", level1: "{actor} replied to you." },
+    new_family_post: { title: "Harrison Family", level0: "there's a new family post.", level1: "{actor} shared a new family post." },
+    mention: { title: "Harrison Family", level0: "you were mentioned.", level1: "{actor} mentioned you." },
   },
   whitelist: ["actor"],
 };

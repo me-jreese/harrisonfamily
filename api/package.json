@@ -13,7 +13,7 @@
     "@aws-sdk/client-secrets-manager": "3.1000.0",
     "@aws-sdk/lib-dynamodb": "3.1000.0",
     "@aws-sdk/s3-request-presigner": "3.1000.0",
-    "@io-kit/auth": "2.1.1",
+    "@io-kit/auth": "2.2.0",
     "@io-kit/comments": "0.1.0",
     "@io-kit/content": "^0.1.0",
     "@io-kit/feed": "1.1.1",

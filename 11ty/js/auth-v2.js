@@ -36,6 +36,28 @@
     });
   }
 
+  // HFY-TSK-069 (D-11 item 6): login continuity. The pages' legacy fallbacks (person-page.js, search-results.js, search-navbar.js,
+  // islands/src/lib/people-corpus.js) send a signed-out visitor to /family-login/?next=<path+search+hash>. Under authV2 that page
+  // hands over to /auth/login, so `next` must ride along as returnTo or the deep link is lost after sign-in. Same rules as the
+  // edge's returnTo guard (@io-kit/auth safeReturnTo), applied to a same-origin PATH only: exactly one leading "/" (so no "//",
+  // no scheme, no host), no backslash, no tab/CR/LF or other control character. Anything else (and the sign-in pages themselves,
+  // which would loop) falls back to "/".
+  var FALLBACK_RETURN = "/";
+  function safeReturnPath(raw) {
+    if (typeof raw !== "string" || raw === "" || raw.length > 2048) return FALLBACK_RETURN;
+    if (raw.charAt(0) !== "/" || raw.charAt(1) === "/") return FALLBACK_RETURN;
+    if (/[\\\u0000-\u001f\u007f]/.test(raw)) return FALLBACK_RETURN;
+    if (/^\/(auth|family-login)(\/|\?|#|$)/i.test(raw)) return FALLBACK_RETURN;
+    return raw;
+  }
+  function requestedReturnPath() {
+    try {
+      return safeReturnPath(new URLSearchParams(location.search).get("next"));
+    } catch (e) {
+      return FALLBACK_RETURN;
+    }
+  }
+
   function apply(session) {
     var link = document.querySelector("[data-my-record-link]");
     if (link) {
@@ -110,7 +132,7 @@
       }
       if (/^\/family-login\/?$/.test(location.pathname)) {
         if (s.authenticated !== true) {
-          location.replace("/auth/login?returnTo=" + encodeURIComponent("/"));
+          location.replace("/auth/login?returnTo=" + encodeURIComponent(requestedReturnPath()));
           return;
         }
         // Already signed in at the edge: keep the legacy sign-in on this page (see header) rather than looping.

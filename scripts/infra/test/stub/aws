@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Test double for the aws CLI (scripts/infra/test/run.sh puts this directory first on PATH). It never reaches AWS.
 # State lives in $STUB_DIR: get.json (get-distribution-config reply), stack-<OutputKey> (describe-stacks outputs),
-# secret (secretsmanager value), rhp.json (custom response headers policies: [{Id, ETag, Config}], absent = none).
+# secret (secretsmanager value), rhp.json (custom response headers policies: [{Id, ETag, Config}], absent = none),
+# fn-DEVELOPMENT.js / fn-LIVE.js (the code of the CloudFront Function fn-name, default HFYAppendIndex; absent stage = no such
+# function), fn-etag (its DEVELOPMENT ETag, default EFN-1), fn-runtime (default cloudfront-js-1.0).
 # Every call is appended to calls.log; each update-distribution payload is saved as update-<n>.json.
 set -euo pipefail
 : "${STUB_DIR:?STUB_DIR not set}"
@@ -12,6 +14,13 @@ arg() { # NAME ARGS... -> value of --NAME
   local n=$1; shift
   while [ $# -gt 0 ]; do if [ "$1" = "--$n" ]; then printf '%s' "$2"; return 0; fi; shift; done
   return 1
+}
+fn_etag() { if [ -f "$STUB_DIR/fn-etag" ]; then cat "$STUB_DIR/fn-etag"; else echo EFN-1; fi; }
+fn_bump_etag() { printf 'EFN-%s\n' "$(( $(fn_etag | sed 's/^EFN-//') + 1 ))" > "$STUB_DIR/fn-etag"; }
+fn_exists() { [ "$1" = "$(cat "$STUB_DIR/fn-name" 2>/dev/null || echo HFYAppendIndex)" ] && [ -f "$STUB_DIR/fn-$2.js" ]; }
+fn_summary() { # NAME STAGE
+  jq -n --arg n "$1" --arg s "$2" --arg rt "$(cat "$STUB_DIR/fn-runtime" 2>/dev/null || echo cloudfront-js-1.0)" --arg c "$(cat "$STUB_DIR/fn-comment" 2>/dev/null || echo 'Append index.html to directory paths')" \
+    '{Name: $n, Status: "DEPLOYED", FunctionConfig: {Comment: $c, Runtime: $rt}, FunctionMetadata: {FunctionARN: "arn:aws:cloudfront::123456789012:function/\($n)", Stage: $s}}'
 }
 case "$1 $2" in
   "cloudfront get-distribution-config") cat "$STUB_DIR/get.json" ;;
@@ -45,6 +54,42 @@ case "$1 $2" in
     printf '%s\n' "$id" >> "$STUB_DIR/rhp-updates.log"
     rhp_db | jq --arg id "$id" --slurpfile c "$cfg" 'map(if .Id == $id then .Config = $c[0] | .ETag = "E-RHP-\((.ETag | ltrimstr("E-RHP-") | tonumber) + 1)" else . end)' > "$RHP_DB.new" && mv "$RHP_DB.new" "$RHP_DB"
     jq -n --arg id "$id" --slurpfile c "$cfg" '{ResponseHeadersPolicy: {Id: $id, ResponseHeadersPolicyConfig: $c[0]}}' ;;
+  "cloudfront describe-function")
+    name=$(arg name "$@"); stage=$(arg stage "$@" || echo DEVELOPMENT)
+    fn_exists "$name" "$stage" || { echo "An error occurred (NoSuchFunctionExists) when calling the DescribeFunction operation: The specified function does not exist." >&2; exit 254; }
+    fn_summary "$name" "$stage" | jq --arg e "$(fn_etag)" '{ETag: $e, FunctionSummary: .}' ;;
+  "cloudfront get-function")
+    name=$(arg name "$@"); stage=$(arg stage "$@" || echo DEVELOPMENT)
+    fn_exists "$name" "$stage" || { echo "An error occurred (NoSuchFunctionExists) when calling the GetFunction operation: The specified function does not exist." >&2; exit 254; }
+    cp "$STUB_DIR/fn-$stage.js" "${!#}"; jq -n --arg e "$(fn_etag)" '{ETag: $e, ContentType: "application/octet-stream"}' ;;
+  "cloudfront update-function")
+    name=$(arg name "$@"); etag=$(arg if-match "$@"); cfg=$(arg function-config "$@"); code=$(arg function-code "$@"); code=${code#fileb://}
+    fn_exists "$name" DEVELOPMENT || { echo "NoSuchFunctionExists" >&2; exit 254; }
+    [ "$etag" = "$(fn_etag)" ] || { echo "An error occurred (PreconditionFailed) when calling the UpdateFunction operation" >&2; exit 254; }
+    runtime=$(jq -r .Runtime <<<"$cfg"); printf '%s' "$runtime" > "$STUB_DIR/fn-runtime"; jq -r .Comment <<<"$cfg" > "$STUB_DIR/fn-comment"
+    cp "$code" "$STUB_DIR/fn-DEVELOPMENT.js"; fn_bump_etag
+    fn_summary "$name" DEVELOPMENT | jq --arg e "$(fn_etag)" '{ETag: $e, FunctionSummary: .}' ;;
+  "cloudfront test-function")
+    name=$(arg name "$@"); etag=$(arg if-match "$@"); stage=$(arg stage "$@"); ev=$(arg event-object "$@"); ev=${ev#fileb://}
+    fn_exists "$name" "$stage" || { echo "NoSuchFunctionExists" >&2; exit 254; }
+    [ "$etag" = "$(fn_etag)" ] || { echo "An error occurred (PreconditionFailed) when calling the TestFunction operation" >&2; exit 254; }
+    # Stands in for the cloudfront-js-1.0 runtime: runs the stage's code on the event in a bare V8 context.
+    node -e '
+      const vm = require("vm"), fs = require("fs");
+      let out = "", err = "";
+      try {
+        const ctx = vm.createContext({});
+        vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), ctx);
+        const r = vm.runInContext("handler", ctx)(JSON.parse(fs.readFileSync(process.argv[2], "utf8")));
+        out = JSON.stringify(r.statusCode !== undefined ? { response: r } : { request: r });
+      } catch (e) { err = String(e); }
+      console.log(JSON.stringify({ TestResult: { FunctionSummary: {}, ComputeUtilization: "1", FunctionExecutionLogs: [], FunctionErrorMessage: err, FunctionOutput: out } }));
+    ' "$STUB_DIR/fn-$stage.js" "$ev" ;;
+  "cloudfront publish-function")
+    name=$(arg name "$@"); etag=$(arg if-match "$@")
+    fn_exists "$name" DEVELOPMENT || { echo "NoSuchFunctionExists" >&2; exit 254; }
+    [ "$etag" = "$(fn_etag)" ] || { echo "An error occurred (PreconditionFailed) when calling the PublishFunction operation" >&2; exit 254; }
+    cp "$STUB_DIR/fn-DEVELOPMENT.js" "$STUB_DIR/fn-LIVE.js"; echo LIVE ;;
   "cloudformation describe-stacks")
     key=$(printf '%s\n' "$*" | sed -nE "s/.*OutputKey=='([A-Za-z0-9]+)'.*/\1/p")
     if [ -f "$STUB_DIR/stack-$key" ]; then cat "$STUB_DIR/stack-$key"; else echo None; fi ;;

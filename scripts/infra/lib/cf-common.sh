@@ -6,7 +6,7 @@
 #   cf_apply DIST DRY WHAT  compare norm(before) with norm($CF_WORK/after.json); when they are equal print "no change" and
 #                           return WITHOUT calling update-distribution (HFY-R58: true no-op). Otherwise print a redacted diff,
 #                           save a timestamped pre-change backup outside the repo, and update with the fetched ETag.
-#   cf_response_headers_policy NAME WANT_FILE CACHE_CONTROL DRY OFFLINE
+#   cf_response_headers_policy NAME WANT_FILE CACHE_CONTROL DRY OFFLINE [UPLOADS_CSP]
 #                           find-or-create the custom response headers policy NAME (sets CF_RHP_ID); see the function.
 #
 # Secrets: the X-Origin-Verify value is never printed; diffs are redacted. The backup holds it and is written mode 600.
@@ -16,8 +16,18 @@ CACHING_DISABLED=4135ea2d-6df8-44a3-9df3-4b5a84be39ad
 CACHING_OPTIMIZED=658327ea-f89d-4fab-a63d-7e88639e58f6
 ALL_VIEWER_EXCEPT_HOST=b689b0a8-53d0-40ab-baf2-68738e2966ac
 export CACHING_DISABLED CACHING_OPTIMIZED ALL_VIEWER_EXCEPT_HOST
+# The sandboxed CSP of app-stack.yaml's UploadsResponseHeadersPolicy (HFY-R58 (2)); the members-only /uploads/* policy keeps it
+# (test/run.sh pins this string to the template). Member uploads are inert: no MIME sniffing, nothing but same-origin images.
+# shellcheck disable=SC2034 # read by add-data-gate-behaviors.sh, which sources this file
+UPLOADS_CSP="sandbox; default-src 'none'; img-src 'self'"
 
 cf_jq() { jq -L "$CF_LIB_DIR" "$@"; }
+
+# Where pre-change copies go (outside the repo): ${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}. Created if missing.
+cf_backup_dir() {
+  local d="${HFY_CF_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/hfy-infra/cloudfront}"
+  mkdir -p "$d"; printf '%s\n' "$d"
+}
 
 cf_check_args() { # CFG_FILE DRY: an exported config may be stale, so it can only drive a dry run
   if [ -n "$1" ] && [ "$2" != 1 ]; then
@@ -67,8 +77,7 @@ cf_apply() { # DIST DRY WHAT
   if cmp -s "$d/before.red" "$d/after.red"; then echo "(only the X-Origin-Verify header value differs)"; fi
   if [ "$2" = 1 ]; then echo "(dry-run) no changes made"; return 0; fi
   if [ "$CF_ETAG" = offline ]; then echo "refusing to update from --config-file (an exported config may be stale); use --dry-run, or drop --config-file to read the live config" >&2; return 1; fi
-  backup_dir="${HFY_CF_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/hfy-infra/cloudfront}"
-  mkdir -p "$backup_dir"
+  backup_dir=$(cf_backup_dir)
   backup="$backup_dir/$1-$(date -u +%Y%m%dT%H%M%SZ)-before.json"
   (umask 077; cp "$d/before.json" "$backup"); chmod 600 "$backup"
   echo "saved the pre-change DistributionConfig to $backup (mode 600, holds the origin-verify header)"
@@ -76,14 +85,16 @@ cf_apply() { # DIST DRY WHAT
   aws cloudfront update-distribution --id "$1" --if-match "$CF_ETAG" --distribution-config "file://$d/after.json" --query 'Distribution.Status' --output text
 }
 
-# cf_response_headers_policy NAME WANT_FILE CACHE_CONTROL DRY OFFLINE -> sets CF_RHP_ID (HFY-R65). Idempotent find-or-create of the
-# custom response headers policy called NAME (names are unique per account): an existing policy that already forces
-# Cache-Control: CACHE_CONTROL (cf.jq rhp_forces_cache_control) is used as is, with no write; one that does not is put back to
-# WANT_FILE (a ResponseHeadersPolicyConfig) with its ETag; a missing one is created from WANT_FILE. DRY=1 only reads (a missing
-# policy gets a placeholder id and "would create"); OFFLINE=1 (--config-file) makes no AWS call at all.
+# cf_response_headers_policy NAME WANT_FILE CACHE_CONTROL DRY OFFLINE [UPLOADS_CSP] -> sets CF_RHP_ID (HFY-R65). Idempotent
+# find-or-create of the custom response headers policy called NAME (names are unique per account): an existing policy that
+# already forces Cache-Control: CACHE_CONTROL (cf.jq rhp_forces_cache_control) is used as is, with no write; one that does not is
+# put back to WANT_FILE (a ResponseHeadersPolicyConfig) with its ETag; a missing one is created from WANT_FILE. With UPLOADS_CSP
+# the policy must also keep nosniff and that Content-Security-Policy (cf.jq rhp_uploads_private), else it is put back too.
+# DRY=1 only reads (a missing policy gets a placeholder id and "would create"); OFFLINE=1 (--config-file) makes no AWS call at all.
 # shellcheck disable=SC2034 # CF_RHP_ID is the result, read by the caller
 cf_response_headers_policy() {
-  local name=$1 want=$2 value=$3 dry=$4 offline=$5 list id cur etag
+  local name=$1 want=$2 value=$3 dry=$4 offline=$5 csp=${6:-} list id cur etag test='rhp_forces_cache_control($v)' extra=""
+  if [ -n "$csp" ]; then test='rhp_uploads_private($v; $csp)'; extra=" and the nosniff + sandbox CSP security headers"; fi
   CF_RHP_ID=""
   if [ "$offline" = 1 ]; then
     CF_RHP_ID="<$name policy id>"; echo "(dry-run) response headers policy $name not looked up (offline); using a placeholder id"; return 0
@@ -92,22 +103,22 @@ cf_response_headers_policy() {
   id=$(jq -r --arg n "$name" '[.ResponseHeadersPolicyList.Items[]? | .ResponseHeadersPolicy | select(.ResponseHeadersPolicyConfig.Name == $n) | .Id] | first // empty' <<<"$list")
   if [ -z "$id" ]; then
     if [ "$dry" = 1 ]; then
-      CF_RHP_ID="<new $name policy id>"; echo "(dry-run) would create response headers policy $name (Cache-Control: $value, override)"; return 0
+      CF_RHP_ID="<new $name policy id>"; echo "(dry-run) would create response headers policy $name (Cache-Control: $value, override$extra)"; return 0
     fi
     id=$(aws cloudfront create-response-headers-policy --response-headers-policy-config "file://$want" --output json | jq -r '.ResponseHeadersPolicy.Id // empty')
     [ -n "$id" ] || { echo "create-response-headers-policy $name returned no id" >&2; return 1; }
-    echo "created response headers policy $name ($id): Cache-Control: $value, override"
+    echo "created response headers policy $name ($id): Cache-Control: $value, override$extra"
   else
     cur=$(jq -c --arg id "$id" '[.ResponseHeadersPolicyList.Items[]? | .ResponseHeadersPolicy | select(.Id == $id) | .ResponseHeadersPolicyConfig] | first' <<<"$list")
-    if cf_jq -e --arg v "$value" 'include "cf"; rhp_forces_cache_control($v)' <<<"$cur" >/dev/null; then
-      echo "response headers policy $name ($id) already forces Cache-Control: $value"
+    if cf_jq -e --arg v "$value" --arg csp "$csp" "include \"cf\"; $test" <<<"$cur" >/dev/null; then
+      echo "response headers policy $name ($id) already forces Cache-Control: $value$extra"
     elif [ "$dry" = 1 ]; then
-      echo "(dry-run) would put response headers policy $name ($id) back to Cache-Control: $value, override"
+      echo "(dry-run) would put response headers policy $name ($id) back to Cache-Control: $value, override$extra"
     else
       etag=$(aws cloudfront get-response-headers-policy-config --id "$id" --output json | jq -r '.ETag // empty')
       [ -n "$etag" ] || { echo "no ETag for response headers policy $id" >&2; return 1; }
       aws cloudfront update-response-headers-policy --id "$id" --if-match "$etag" --response-headers-policy-config "file://$want" --output json >/dev/null
-      echo "updated response headers policy $name ($id): Cache-Control: $value, override"
+      echo "updated response headers policy $name ($id): Cache-Control: $value, override$extra"
     fi
   fi
   CF_RHP_ID=$id

@@ -1,0 +1,422 @@
+/* 30-bootstrap.css (legacy area): Bootstrap 5.3 component aliases for what bs-bridge.css cannot reach.
+   The Eleventy main.css is never edited. It compiles Bootstrap with literal component values and -rgb triplets, and a
+   hex token cannot alias an rgb triplet, so each component below is re-pointed at the --io-* tokens per class.
+   Every rule loads after main.css with equal or higher specificity. Each comment names the main.css literal it replaces.
+   Aliases only: no hex, rgb, font names, radii or px spacing (theme-lint), apart from the 1px hairline. */
+
+/* ---------------------------------------------------------------- root variables the bridge leaves on main.css literals */
+:root {
+  --bs-secondary-bg: var(--io-color-semantic-surface-raised);        /* #e9ecef (a light grey on the dark ground) */
+  --bs-tertiary-color: var(--io-color-semantic-text-dim);            /* rgba(255,255,255,.5) */
+  --bs-border-color-translucent: var(--io-color-semantic-border);    /* rgba(0,0,0,.175) */
+  --bs-code-color: var(--io-color-semantic-text);                    /* #d63384 */
+  --bs-highlight-color: var(--io-color-semantic-text-inverse);       /* #ffffff */
+  --bs-highlight-bg: var(--io-color-semantic-accent-secondary);      /* rgb(255,242.6,205.4) */
+  --bs-form-valid-color: var(--io-color-semantic-success);           /* #4caf50 */
+  --bs-form-valid-border-color: var(--io-color-semantic-success);    /* #4caf50 */
+  --bs-form-invalid-color: var(--io-color-semantic-danger);          /* #dc3545 */
+  --bs-form-invalid-border-color: var(--io-color-semantic-danger);   /* #dc3545 */
+}
+
+/* ---------------------------------------------------------------- reboot (element defaults compiled into main.css)
+   20-base sets the heading family (display serif, regular), body type, links and the one focus ring. The sizes are per surface:
+   main.css h1 calc(1.375rem + 1.5vw) (2.5rem from 1200) … h4 calc(1.275rem + .3vw), h5 1.25rem, h6 1rem → the type scale. */
+h1 { font-size: var(--io-typography-size-2xl); }
+h2 { font-size: var(--io-typography-size-xl); }
+h3, .h3 { font-size: var(--io-typography-size-lg); }
+h4, h5, h6, .h4, .h5 { font-size: var(--io-typography-size-md); }
+h5, h6 { font-weight: var(--io-typography-weight-semibold); }
+@media (min-width: 43rem) {
+  h1 { font-size: var(--io-typography-size-display-sm); }
+}
+/* small {font-size:.875em} = 15.75px at the 18px body: the 16px floor. */
+small, .small { font-size: var(--io-typography-size-sm); }
+/* hr {border-top:1px solid hsla(0,0%,100%,.12); opacity:.25} */
+hr { border-top-color: var(--io-color-semantic-border); opacity: 1; }
+/* code/pre/kbd .875em (14px at 16) */
+code, pre, kbd { font-size: var(--io-typography-size-sm); }
+
+/* ---------------------------------------------------------------- navbar fallback
+   Painted only when shellV2 is off or the shell failed to mount (shell.css hides nav.navbar-hf under html.hfy-shell-v2).
+   Fixes the bs-bridge mapping bug: the bridge points --bs-navbar-color (link ink) at nav.tint, a translucent fill. */
+.navbar.navbar-hf {
+  --bs-navbar-color: var(--io-color-semantic-text-dim);              /* .navbar-dark #ffffff */
+  --bs-navbar-hover-color: var(--io-color-semantic-link-hover);      /* .navbar-dark #ffc107 */
+  --bs-navbar-active-color: var(--io-color-semantic-link);           /* .navbar-dark #ffc107 */
+  --bs-navbar-disabled-color: var(--io-color-semantic-text-dim);     /* rgba(255,255,255,.25) */
+  --bs-navbar-brand-color: var(--io-color-semantic-text);            /* .navbar-dark #ffc107 */
+  --bs-navbar-brand-hover-color: var(--io-color-semantic-link-hover);/* #ffc107 */
+  --bs-navbar-toggler-border-color: var(--io-color-semantic-border-strong); /* rgba(255,255,255,.25) */
+  --bs-navbar-toggler-focus-width: 0;
+  background-color: var(--io-color-semantic-nav-tint);               /* .navbar-hf rgba(88,182,231,.2) */
+  border-bottom: 1px solid var(--io-color-semantic-border);          /* hsla(0,0%,100%,.12) */
+  -webkit-backdrop-filter: blur(var(--io-space-2));                  /* blur(8px) */
+  backdrop-filter: blur(var(--io-space-2));
+  font-family: var(--io-typography-font-ui);
+}
+/* .navbar-hf .navbar-brand {color:#fff; letter-spacing:.08em; font-size:1.1rem}. The wordmark is the display serif at regular weight
+   (as the shell's), in proper case (copy.mjs): the legacy uppercase Source Sans 600 showed for a moment on a first visit (QA2). */
+.navbar-hf .navbar-brand {
+  color: var(--bs-navbar-brand-color);
+  letter-spacing: normal;
+  text-transform: none;
+  font-family: var(--io-typography-font-display);
+  font-size: var(--io-typography-size-lg);
+  font-weight: var(--io-typography-weight-regular);
+  min-height: var(--io-control-tap-min);
+  display: inline-flex;
+  align-items: center;
+}
+.navbar-hf .navbar-brand:hover, .navbar-hf .navbar-brand:focus { color: var(--bs-navbar-brand-hover-color); }
+/* .navbar-hf .nav-link {color:hsla(0,0%,100%,.85); font-weight:700; letter-spacing:.06em; uppercase} — DS: label 16/600, lowercase */
+.navbar-hf .nav-link {
+  color: var(--bs-navbar-color);
+  font-size: var(--io-typography-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  letter-spacing: normal;
+  text-transform: lowercase;
+  min-height: var(--io-control-tap-min);
+  display: flex;
+  align-items: center;
+  transition: color var(--io-motion-duration-fast) var(--io-motion-easing-standard);
+}
+.navbar-hf .nav-link:hover, .navbar-hf .nav-link:focus { color: var(--bs-navbar-hover-color); }   /* #ffc107 */
+.navbar-hf .nav-link.active { color: var(--bs-navbar-active-color); }                             /* #58b6e7 */
+/* .navbar-hf .navbar-toggler {border-color:hsla(0,0%,100%,.35)}; :focus {box-shadow:0 0 0 .25rem rgba(88,182,231,.25)} */
+.navbar-hf .navbar-toggler {
+  border-color: var(--bs-navbar-toggler-border-color);
+  border-radius: var(--io-radius-md);
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+}
+.navbar-hf .navbar-toggler:focus { box-shadow: none; }
+.navbar-hf .navbar-toggler:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+@media (max-width: 767.98px) {
+  /* .navbar-hf .navbar-nav {background-color:rgba(7,17,28,.98)} */
+  .navbar-hf .navbar-nav {
+    background-color: var(--io-color-semantic-surface-raised);
+    border: 1px solid var(--io-color-semantic-border);
+    border-radius: var(--io-radius-md);
+    padding: var(--io-space-3);
+    margin-top: var(--io-space-2);
+  }
+}
+
+/* ---------------------------------------------------------------- buttons */
+/* .btn {padding .6rem 1.4rem; 1rem/600; radius 999px}; site .btn,.btn-outline-light {color:#fff; border-color:#fff} */
+.btn {
+  --bs-btn-padding-x: var(--io-space-4);
+  --bs-btn-padding-y: var(--io-space-2);
+  --bs-btn-font-family: var(--io-typography-font-ui);
+  --bs-btn-font-size: var(--io-typography-size-sm);
+  --bs-btn-font-weight: var(--io-typography-weight-semibold);
+  --bs-btn-line-height: var(--io-typography-leading-snug);
+  --bs-btn-border-radius: var(--io-radius-md);
+  --bs-btn-color: var(--io-color-semantic-text);
+  --bs-btn-bg: var(--io-color-semantic-surface-raised);
+  --bs-btn-border-color: var(--io-color-semantic-border-strong);
+  --bs-btn-hover-color: var(--io-color-semantic-text);
+  --bs-btn-hover-bg: var(--io-color-semantic-surface-raised);
+  --bs-btn-hover-border-color: var(--io-color-semantic-text-dim);
+  --bs-btn-active-color: var(--io-color-semantic-text);
+  --bs-btn-active-bg: var(--io-color-semantic-surface-raised);
+  --bs-btn-active-border-color: var(--io-color-semantic-text-dim);
+  --bs-btn-disabled-color: var(--io-color-semantic-text-dim);
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: var(--io-color-semantic-border);
+  --bs-btn-disabled-opacity: 0.5;
+  --bs-btn-box-shadow: none;
+  --bs-btn-focus-box-shadow: none;                                   /* 0 0 0 .25rem rgba(var(--bs-btn-focus-shadow-rgb),.5) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--io-space-2);
+  min-height: var(--io-control-h-md);
+  min-width: var(--io-control-tap-min);
+  letter-spacing: normal;
+  color: var(--bs-btn-color);                                        /* #fff */
+  border-color: var(--bs-btn-border-color);                          /* #fff */
+  transition: color var(--io-motion-duration-fast) var(--io-motion-easing-standard),
+    background-color var(--io-motion-duration-fast) var(--io-motion-easing-standard),
+    border-color var(--io-motion-duration-fast) var(--io-motion-easing-standard);
+}
+/* .btn-lg {padding .5rem 1rem; 1.25rem; radius-lg} · .btn-sm {padding .25rem .5rem; .875rem = 14px; radius-sm} */
+.btn-lg {
+  --bs-btn-padding-x: var(--io-space-6);
+  --bs-btn-padding-y: var(--io-space-2);
+  --bs-btn-font-size: var(--io-typography-size-sm);
+  --bs-btn-border-radius: var(--io-radius-md);
+}
+.btn-sm {
+  --bs-btn-padding-x: var(--io-space-3);
+  --bs-btn-padding-y: var(--io-space-2);
+  --bs-btn-font-size: var(--io-typography-size-sm);
+  --bs-btn-border-radius: var(--io-radius-md);
+}
+/* site .btn:hover,.btn:focus,.btn-outline-light:hover,.btn-outline-light:focus {color:#0b1a24; background:#ffc107; border:#ffc107}.
+   A focused button keeps its own colours; the ring below marks focus. Hover follows the variant. */
+.btn:focus {
+  color: var(--bs-btn-color);
+  background-color: var(--bs-btn-bg);
+  border-color: var(--bs-btn-border-color);
+}
+.btn:hover {
+  color: var(--bs-btn-hover-color);
+  background-color: var(--bs-btn-hover-bg);
+  border-color: var(--bs-btn-hover-border-color);
+}
+/* .btn:focus-visible {outline:0; box-shadow:var(--bs-btn-focus-box-shadow)} with the hover gold fill */
+.btn:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+  box-shadow: none;
+}
+/* .btn-primary #58b6e7 on #000 · .btn-warning #ffc107 on #000 (the gold hero CTA). Both become the Columbia accent: gold stays rare. */
+.btn-primary, .btn-warning {
+  --bs-btn-color: var(--io-color-semantic-accent-text);
+  --bs-btn-bg: var(--io-color-semantic-accent);
+  --bs-btn-border-color: var(--io-color-semantic-accent);
+  --bs-btn-hover-color: var(--io-color-semantic-accent-text);
+  --bs-btn-hover-bg: var(--io-color-semantic-accent);
+  --bs-btn-hover-border-color: var(--io-color-semantic-accent);
+  --bs-btn-active-color: var(--io-color-semantic-accent-text);
+  --bs-btn-active-bg: var(--io-color-semantic-accent);
+  --bs-btn-active-border-color: var(--io-color-semantic-accent);
+  --bs-btn-disabled-color: var(--io-color-semantic-accent-text);
+  --bs-btn-disabled-bg: var(--io-color-semantic-accent);
+  --bs-btn-disabled-border-color: var(--io-color-semantic-accent);
+}
+/* rgb(113.05,192.95,234.6) hover: one step lighter, theme-agnostic */
+.btn-primary:hover, .btn-warning:hover { filter: brightness(1.1); }
+/* .btn-outline-light #e8edf3 edge and ink, #e8edf3 hover fill with #000 ink */
+.btn-outline-light {
+  --bs-btn-color: var(--io-color-semantic-text);
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: var(--io-color-semantic-border-strong);
+  --bs-btn-hover-color: var(--io-color-semantic-text);
+  /* hover is visible on a surface.raised card (the home hero): the fill goes to surface.sunken and the edge to text.dim (QA2: the
+     raised fill on the raised hero showed no change at all) */
+  --bs-btn-hover-bg: var(--io-color-semantic-surface-sunken);
+  --bs-btn-hover-border-color: var(--io-color-semantic-text-dim);
+  --bs-btn-active-color: var(--io-color-semantic-text);
+  --bs-btn-active-bg: var(--io-color-semantic-surface-raised);
+  --bs-btn-active-border-color: var(--io-color-semantic-border-strong);
+  --bs-btn-disabled-color: var(--io-color-semantic-text-dim);
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-disabled-border-color: var(--io-color-semantic-border);
+}
+/* .btn-link #58b6e7 / hover #ffc107 / disabled #6c757d */
+.btn-link {
+  --bs-btn-color: var(--io-color-semantic-link);
+  --bs-btn-bg: transparent;
+  --bs-btn-border-color: transparent;
+  --bs-btn-hover-color: var(--io-color-semantic-link-hover);
+  --bs-btn-hover-bg: transparent;
+  --bs-btn-hover-border-color: transparent;
+  --bs-btn-active-color: var(--io-color-semantic-link-hover);
+  --bs-btn-active-bg: transparent;
+  --bs-btn-active-border-color: transparent;
+  --bs-btn-disabled-color: var(--io-color-semantic-text-dim);
+  --bs-btn-disabled-border-color: transparent;
+}
+
+/* ---------------------------------------------------------------- forms */
+/* .form-control/.form-select {color:#fff; background:rgba(12,23,37,.5); border:hsla(0,0%,100%,.2); 38px};
+   :focus {border-color:#58b6e7; outline:0; box-shadow:0 0 0 .2rem rgba(88,182,231,.25)} */
+.form-control, .form-select {
+  color: var(--io-color-semantic-text);
+  background-color: var(--io-color-semantic-surface-sunken);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  min-height: var(--io-control-h-md);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-control-input-min-font);
+  line-height: var(--io-typography-leading-normal);
+  padding: var(--io-space-2) var(--io-space-3);
+}
+.form-control::placeholder { color: var(--io-color-semantic-text-dim); opacity: 1; }
+.form-control:hover, .form-select:hover { border-color: var(--io-color-semantic-border-strong); }
+.form-control:focus, .form-select:focus {
+  color: var(--io-color-semantic-text);
+  background-color: var(--io-color-semantic-surface-sunken);
+  border-color: var(--io-color-semantic-accent);
+  box-shadow: none;
+}
+.form-control:focus-visible, .form-select:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+.form-label { font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
+
+/* ---------------------------------------------------------------- cards */
+/* .card {--bs-card-bg:rgba(255,255,255,.05); --bs-card-border-color:rgba(255,255,255,.1); --bs-card-color:#ffffff; radius .375rem};
+   site .card {backdrop-filter:blur(8px)} */
+.card {
+  --bs-card-bg: var(--io-color-semantic-surface-raised);
+  --bs-card-color: var(--io-color-semantic-text);
+  --bs-card-title-color: var(--io-color-semantic-text);
+  --bs-card-border-color: var(--io-color-semantic-border);
+  --bs-card-border-radius: var(--io-radius-md);
+  --bs-card-inner-border-radius: calc(var(--io-radius-md) - 1px);
+  --bs-card-cap-bg: var(--io-color-semantic-surface-sunken);
+  --bs-card-spacer-x: var(--io-space-4);
+  --bs-card-spacer-y: var(--io-space-4);
+  background-color: var(--bs-card-bg);
+  box-shadow: var(--io-elevation-1);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ---------------------------------------------------------------- badges */
+/* .badge {.75em/700, #ffffff ink, .35em .65em} — token pill, 16px floor */
+.badge {
+  --bs-badge-font-size: var(--io-typography-size-sm);
+  --bs-badge-font-weight: var(--io-typography-weight-semibold);
+  --bs-badge-color: var(--io-color-semantic-token-pill-fg);
+  --bs-badge-border-radius: var(--io-radius-pill);
+  --bs-badge-padding-x: var(--io-space-3);
+  --bs-badge-padding-y: var(--io-space-1);
+  background-color: var(--io-color-semantic-token-pill-bg);
+  line-height: var(--io-typography-leading-snug);
+}
+
+/* ---------------------------------------------------------------- link helpers (Bootstrap sets these !important) */
+/* .link-primary RGBA(var(--bs-primary-rgb)) !important, hover RGBA(121,197,236) · .link-light RGBA(var(--bs-light-rgb)), hover RGBA(237,241,245) */
+.link-primary, .link-light {
+  color: var(--io-color-semantic-link) !important;
+  text-decoration-color: currentColor !important;
+}
+.link-primary:hover, .link-primary:focus, .link-light:hover, .link-light:focus {
+  color: var(--io-color-semantic-link-hover) !important;
+  text-decoration-color: currentColor !important;
+}
+
+/* ---------------------------------------------------------------- tables (not compiled into main.css: utilities/api missing) */
+.table {
+  width: 100%;
+  margin-bottom: var(--io-space-4);
+  color: var(--io-color-semantic-text);
+  background-color: transparent;
+  border-color: var(--io-color-semantic-border);
+  vertical-align: top;
+}
+.table > :not(caption) > * > * {
+  padding: var(--io-space-2) var(--io-space-3);
+  background-color: transparent;
+  border-bottom: 1px solid var(--io-color-semantic-border);
+}
+.table > thead > tr > * { font-weight: var(--io-typography-weight-semibold); }
+.table-bordered > :not(caption) > * > * { border: 1px solid var(--io-color-semantic-border); }
+.table-striped > tbody > tr:nth-of-type(odd) > * { background-color: var(--io-color-semantic-surface-raised); }
+.align-middle { vertical-align: middle; }
+
+/* ---------------------------------------------------------------- alerts (not compiled into main.css): DS banners */
+.alert {
+  position: relative;
+  display: block;
+  padding: var(--io-space-3) var(--io-space-4);
+  margin-bottom: var(--io-space-4);
+  color: var(--io-color-semantic-text);
+  background-color: var(--io-color-semantic-surface-raised);
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  font-size: var(--io-typography-size-sm);
+}
+.alert-danger { color: var(--io-color-semantic-danger); border-color: var(--io-color-semantic-danger); }
+.alert-success { color: var(--io-color-semantic-success); border-color: var(--io-color-semantic-success); }
+.alert-info { border-color: var(--io-color-semantic-accent); }
+.alert-warning { border-color: var(--io-color-semantic-accent-secondary); }
+
+/* ---------------------------------------------------------------- spinner (not compiled into main.css): a quiet ring */
+.spinner-border {
+  display: inline-block;
+  width: var(--io-space-7);
+  height: var(--io-space-7);
+  vertical-align: middle;
+  border: calc(var(--io-space-1) / 2) solid var(--io-color-semantic-border-strong);
+  border-right-color: transparent;
+  border-radius: var(--io-radius-pill);
+  animation: hfy-spinner calc(var(--io-motion-duration-slow) * 3) linear infinite;
+}
+@keyframes hfy-spinner { to { transform: rotate(360deg); } }
+
+/* ---------------------------------------------------------------- modals (shared by both person-page dialogs) */
+/* .modal {--bs-modal-bg:rgba(12,21,32,.95); border rgba(255,255,255,.15); header/footer rgba(255,255,255,.12)} */
+.modal {
+  --bs-modal-color: var(--io-color-semantic-text);
+  --bs-modal-bg: var(--io-color-semantic-surface-raised);
+  --bs-modal-border-color: var(--io-color-semantic-border);
+  --bs-modal-border-radius: var(--io-radius-lg);
+  --bs-modal-inner-border-radius: calc(var(--io-radius-lg) - 1px);
+  --bs-modal-box-shadow: var(--io-elevation-3);
+  --bs-modal-header-border-color: var(--io-color-semantic-border);
+  --bs-modal-footer-border-color: var(--io-color-semantic-border);
+  --bs-modal-padding: var(--io-space-4);
+  --bs-modal-header-padding: var(--io-space-4);
+}
+/* .modal-backdrop {--bs-backdrop-bg:#000; --bs-backdrop-opacity:.5}; site .modal-backdrop.show {opacity:.85} */
+.modal-backdrop {
+  --bs-backdrop-bg: var(--io-color-semantic-scrim);
+  --bs-backdrop-opacity: 1;
+}
+.modal-backdrop.show { opacity: var(--bs-backdrop-opacity); }
+
+/* ---------------------------------------------------------------- utility shim
+   main.css was compiled without utilities/api (upstream for io: workspace main.scss should compile it). Until then, only the
+   utilities actually used in the 11ty HTML pages and js/person-page.js are defined here, token-valued. Display and colour utilities
+   keep Bootstrap's !important (d-none / d-sm-inline must interact the Bootstrap way); layout and spacing ones do not, so the
+   component rules in 40-site / 45-person can win on specificity. Deliberately left out (DS): bg-*, text-light/white/dark,
+   border-*, shadow-*, opacity-75, fw-bold, text-uppercase, letter-spacing-wide, display-*. */
+.d-flex { display: flex !important; }
+.d-grid { display: grid !important; }
+.d-none { display: none !important; }
+@media (min-width: 576px) {
+  .d-sm-inline { display: inline !important; }
+}
+.text-muted { color: var(--io-color-semantic-text-dim) !important; }      /* --bs-secondary-color rgba(255,255,255,.75) */
+.flex-column { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.align-items-center { align-items: center; }
+.justify-content-between { justify-content: space-between; }
+.justify-content-center { justify-content: center; }
+.gap-2 { gap: var(--io-space-2); }
+.gap-3 { gap: var(--io-space-4); }
+.list-unstyled { padding-left: 0; list-style: none; }
+.text-center { text-align: center; }
+.text-decoration-none { text-decoration: none; }
+.rounded { border-radius: var(--io-radius-md); }
+.img-fluid { max-width: 100%; height: auto; }
+.w-100 { width: 100%; }
+.mx-auto { margin-right: auto; margin-left: auto; }
+.mt-auto { margin-top: auto; }
+.position-relative { position: relative; }
+/* Bootstrap spacers 0 / .25rem / .5rem / 1rem / 1.5rem / 3rem → space 1 / 2 / 4 / 6 / 8 */
+.mt-0 { margin-top: 0; }
+.mt-3 { margin-top: var(--io-space-4); }
+.mt-4 { margin-top: var(--io-space-6); }
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: var(--io-space-1); }
+.mb-2 { margin-bottom: var(--io-space-2); }
+.mb-3 { margin-bottom: var(--io-space-4); }
+.mb-4 { margin-bottom: var(--io-space-6); }
+.mb-5 { margin-bottom: var(--io-space-8); }
+.my-4 { margin-top: var(--io-space-6); margin-bottom: var(--io-space-6); }
+.p-0 { padding: 0; }
+.p-4 { padding: var(--io-space-6); }
+.px-3 { padding-right: var(--io-space-4); padding-left: var(--io-space-4); }
+.py-2 { padding-top: var(--io-space-2); padding-bottom: var(--io-space-2); }
+.py-5 { padding-top: var(--io-space-8); padding-bottom: var(--io-space-8); }
+@media (min-width: 576px) {
+  .flex-sm-row { flex-direction: row; }
+}
+@media (min-width: 768px) {
+  .flex-md-row { flex-direction: row; }
+  .mb-md-0 { margin-bottom: 0; }
+  .text-md-start { text-align: left; }
+}
+@media (min-width: 992px) {
+  .mt-lg-4 { margin-top: var(--io-space-6); }
+}

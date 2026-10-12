@@ -49,16 +49,44 @@
     "cacheSeconds": 300
   },
   "theme": {
-    "cssUrl": "https://harrisonfamily.us/css/main.css",
-    "vars": {
-      "--io-accent": "#7a3b2e",
-      "--io-on-accent": "#ffffff",
-      "--io-surface": "#faf6f1"
-    }
+    "cssUrl": "https://harrisonfamily.us/css/auth-edge.css?v=d1da0937",
+    "fontOrigins": [
+      "self"
+    ]
   },
   "copy": {
-    "title": "Sign in to the Harrison family archive",
-    "subtitle": "Family members only. Use Google, your email and password, or a passkey; all reach the same account.",
-    "denied_body": "This email address is not on the family access list. Ask a family administrator to add it."
+    "title": "hi family. sign in to see the private pages.",
+    "subtitle": "tap the google button and pick the email you use for gmail.\nif you don't have one, use your email and password.\nif neither works, text J.",
+    "google_heading": "continue with google",
+    "password_heading": "email and password",
+    "email_label": "email",
+    "password_label": "password",
+    "sign_in": "sign in",
+    "forgot": "forgot password?",
+    "verify_link": "verify your email",
+    "passkey_heading": "sign in with your face or fingerprint",
+    "passkey_button": "sign in with your face or fingerprint",
+    "passkey_failed": "that didn't work. try again, or text J.",
+    "passkey_add_title": "add your face or fingerprint?",
+    "passkey_add_body": "next time, sign in with your face or fingerprint. no password to type.",
+    "passkey_add": "add your face or fingerprint",
+    "passkey_later": "not now",
+    "passkey_manage": "face or fingerprint",
+    "passkey_remove": "remove",
+    "denied_title": "not on the list yet",
+    "denied_body": "that email isn't on the list yet. text J and we'll add you.",
+    "invalid_credentials": "that email and password don't match. try again, or text J.",
+    "unconfirmed": "that email isn't set up yet. text J.",
+    "generic_error": "that didn't work. try again, or text J.",
+    "forgot_title": "forgot your password?",
+    "forgot_done": "check your email. we sent a 6-digit code.",
+    "reset_title": "choose a new password",
+    "verify_title": "verify your email",
+    "link_title": "linked sign-in methods",
+    "link_password": "set a password",
+    "code_label": "6-digit code from the email",
+    "new_password_label": "new password",
+    "submit": "continue",
+    "done": "done. you can now sign in."
   }
 }

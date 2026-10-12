@@ -8,26 +8,30 @@
     "build:islands": "node build.mjs",
     "test": "node --test tests/*.test.mjs && playwright test",
     "test:contract": "node --test tests/*.test.mjs",
-    "check:islands": "node build.mjs --check"
+    "check:islands": "node build.mjs --check",
+    "lint:css": "node --test tests/theme-lint.test.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "@io-kit/notify": "0.4.0",
-    "@io-kit/search": "1.0.1",
-    "@io-kit/search-ui": "1.0.8",
     "@io-kit/comments": "0.1.0",
     "@io-kit/content": "0.1.1",
     "@io-kit/md": "1.2.0",
+    "@io-kit/notify": "0.4.0",
+    "@io-kit/search": "1.0.1",
+    "@io-kit/search-ui": "1.0.10",
     "@io-kit/shell": "0.6.6",
-    "@io-kit/tokens": "0.4.0",
+    "@io-kit/tokens": "0.4.1",
     "@playwright/test": "1.64.0",
     "esbuild": "0.28.2",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@fontsource-variable/source-code-pro": "5.3.0",
+    "@fontsource-variable/source-sans-3": "5.3.0",
+    "@fontsource/libre-caslon-text": "5.3.0",
     "http-server": "14.1.1"
   }
 }

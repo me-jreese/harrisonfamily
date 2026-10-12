@@ -1,6 +1,232 @@
-/* D-11 sizing for the notification settings. */
-.hfy-notify { max-width: 100%; box-sizing: border-box; overflow-x: clip; }
-.hfy-notify button, .hfy-notify select, .hfy-notify input:not([type=checkbox]):not([type=radio]) { min-height: 44px; font-size: 16px; }
-.hfy-notify input[type=checkbox], .hfy-notify input[type=radio] { width: 24px; height: 24px; }
-.hfy-notify label { min-height: 44px; display: inline-flex; align-items: center; }
-.hfy-notify__ios { margin: 12px 0; padding: 12px; border: 1px solid rgba(127,127,127,.4); border-radius: 8px; }
+/* /me/notifications over @io-kit/notify 0.4.0 notify.css (DS components/Notifications). Every value aliases an --io-notify-* contract
+   token or an --io-typography-* token. Kit root causes are noted per block: file upstream, then drop the override.
+   Kit root cause (all blocks): notify.css reads the Enceladus short names (--fg, --fg-muted, --accent, --border, --bg-surface) with
+   literal fallbacks, hard-codes px sizes (a 36x20 switch, 4px/12px paddings), rgba() borders, #fff on the accent and 0.75em/0.875em
+   type (12px/15.75px, under the 16px floor), and dims muted text twice with opacity. */
+.hfy-notify {
+  box-sizing: border-box;
+  max-width: min(100%, 68ch);
+  overflow-x: clip;
+  color: var(--io-notify-text);
+  font-family: var(--io-notify-font-ui);
+  font-size: var(--io-notify-font-size);
+  line-height: var(--io-typography-leading-relaxed);
+}
+.hfy-notify .iok-notify { gap: var(--io-notify-space-4); color: var(--io-notify-text); }
+.hfy-notify a { color: var(--io-notify-link); }
+.hfy-notify a:hover { color: var(--io-notify-link-hover); }
+.hfy-notify button,
+.hfy-notify select,
+.hfy-notify input:not([type=checkbox]):not([type=radio]) { font-family: var(--io-notify-font-ui); font-size: var(--io-notify-font-size-sm); }
+.hfy-notify button:not([role=switch]),
+.hfy-notify select,
+.hfy-notify input:not([type=checkbox]):not([type=radio]) { box-sizing: border-box; min-height: var(--io-notify-tap-min); }
+.hfy-notify input[type=checkbox], .hfy-notify input[type=radio] { width: var(--io-notify-space-6); height: var(--io-notify-space-6); }
+.hfy-notify label { display: inline-flex; align-items: center; min-height: var(--io-notify-tap-min); }
+/* Focus is one rule system-wide (the kit draws a blue --accent ring): solid focus colour, focus-ring width, focus-offset. */
+.hfy-notify button:focus-visible,
+.hfy-notify .iok-notify-switch:focus-visible { outline: var(--io-notify-focus-ring) solid var(--io-notify-focus); outline-offset: var(--io-notify-focus-offset); }
+/* The detail radio group takes the same ring and offset as everything else (DS audit rule 7). Kit root cause: @io-kit/notify 0.4.0
+   src/notify.css sets `.iok-notify-seg { overflow: hidden }`, which clipped an outside ring, so the ring had been inset onto the
+   button, where on the selected (accent) segment gold sat on Columbia at 1.39:1. The group no longer clips (its end segments carry the
+   radius instead, below), and the focused segment is lifted over its neighbour so the ring lands on the page surface (11.46:1). */
+.hfy-notify .iok-notify-seg button:focus-visible { position: relative; z-index: 1; outline-offset: var(--io-notify-focus-offset); }
+
+/* Error banner (danger on surface.raised) when the preferences did not load: the kit then shows defaults. */
+.hfy-notify__banner {
+  margin: 0 0 var(--io-notify-space-4);
+  padding: var(--io-notify-space-3) var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-danger);
+  border-radius: var(--io-notify-radius-md);
+  background: var(--io-notify-surface-raised);
+  color: var(--io-notify-danger);
+  font-size: var(--io-notify-font-size-sm);
+}
+.hfy-notify__banner a { display: inline-flex; align-items: center; min-height: var(--io-notify-tap-min); min-width: var(--io-notify-tap-min); color: var(--io-notify-link); font-weight: var(--io-typography-weight-semibold); }
+
+/* Head: lowercase heading, then the saving/saved ping, then the device switch at the row end (the kit's space-between put the switch
+   mid-row whenever the status was empty). */
+.hfy-notify .iok-notify-head { min-height: var(--io-notify-control-h-lg); gap: var(--io-notify-space-3); justify-content: flex-start; }
+.hfy-notify .iok-notify-head > h3 { flex: 1 1 auto; }
+.hfy-notify .iok-notify-head > .iok-notify-status { order: 1; }
+.hfy-notify .iok-notify-head > .iok-notify-switch { order: 2; }
+.hfy-notify .iok-notify-head > h3 { margin: 0; color: var(--io-notify-text); font-family: var(--io-notify-font-display); font-weight: var(--io-typography-weight-regular); font-size: var(--io-typography-size-xl); line-height: var(--io-typography-leading-snug); }
+
+/* Notes and banners: 16px text on surface.raised; denied / unsupported are danger. */
+.hfy-notify .iok-notify-banner {
+  padding: var(--io-notify-space-3) var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-border-strong);
+  border-radius: var(--io-notify-radius-md);
+  background: var(--io-notify-surface-raised);
+  color: var(--io-notify-text);
+  font-size: var(--io-notify-font-size-sm);
+}
+.hfy-notify .iok-notify-banner[data-testid="notify-denied"],
+.hfy-notify .iok-notify-banner[data-testid="notify-unsupported"] { border-color: var(--io-notify-danger); color: var(--io-notify-danger); }
+
+/* Preview of the lock-screen text: title over body. */
+.hfy-notify .iok-notify-preview {
+  display: grid;
+  gap: var(--io-notify-space-1);
+  margin: 0;
+  padding: var(--io-notify-space-3) var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-border);
+  border-radius: var(--io-notify-radius-md);
+  background: var(--io-notify-surface-raised);
+  font-size: var(--io-notify-font-size-sm);
+}
+
+/* Prompt (PushNudge): surface.raised card, "turn them on" primary, "not now" quiet, never under the tap floor. */
+.hfy-notify .iok-notify-nudge {
+  flex-wrap: wrap;
+  gap: var(--io-notify-space-2) var(--io-notify-space-3);
+  padding: var(--io-notify-space-3) var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-border);
+  border-radius: var(--io-notify-radius-md);
+  background: var(--io-notify-surface-raised);
+  box-shadow: var(--io-notify-elevation-1);
+}
+.hfy-notify .iok-notify-nudge > p { flex: 1 1 100%; margin: 0; font-size: var(--io-notify-font-size-sm); }
+.hfy-notify .iok-notify-nudge button,
+.hfy-notify .iok-notify-banner button {
+  min-width: var(--io-notify-tap-min);
+  min-height: var(--io-notify-tap-min);
+  padding: 0 var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-border-strong);
+  border-radius: var(--io-notify-radius-md);
+  background: transparent;
+  color: var(--io-notify-text);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-notify .iok-notify-nudge [data-testid="push-nudge-on"] { border-color: var(--io-notify-accent); background: var(--io-notify-accent); color: var(--io-notify-accent-text); }
+/* Kit root cause: the dismiss button's visible text is a literal "x" (its aria-label is the dismiss label). DS: a quiet "not now".
+   The glyph is hidden and the label drawn from the same aria-label, so the visible and accessible names match. */
+.hfy-notify .iok-notify-nudge [data-testid="push-nudge-dismiss"] { border-color: transparent; color: var(--io-notify-link); font-size: 0; }
+.hfy-notify .iok-notify-nudge [data-testid="push-nudge-dismiss"]::after { content: attr(aria-label); font-size: var(--io-notify-font-size-sm); }
+/* The one primary CTA on a phone screen is control.h.lg. */
+/* Under 688 it is also full width, with "not now" centred under it (DS Notifications preview; it was a 124px inline button). */
+@media (max-width: 42.99rem) {
+  .hfy-notify .iok-notify-nudge [data-testid="push-nudge-on"] { flex: 1 1 100%; min-height: var(--io-notify-control-h-lg); }
+  .hfy-notify .iok-notify-nudge [data-testid="push-nudge-dismiss"] { flex: 1 1 100%; justify-content: center; }
+}
+
+/* Rows: 56 tall, label sentence (16) over its description (16, text.dim), switch right, hairline between. */
+.hfy-notify .iok-notify-row {
+  min-height: var(--io-notify-control-h-lg);
+  gap: var(--io-notify-space-2) var(--io-notify-space-3);
+  padding: var(--io-notify-space-2) 0;
+  border-bottom: 1px solid var(--io-notify-border);
+}
+.hfy-notify .iok-notify-row:last-child { border-bottom: 0; }
+.hfy-notify .iok-notify-row label,
+.hfy-notify .iok-notify-row strong,
+.hfy-notify .iok-notify-row > div:first-child > span:first-child { font-size: var(--io-notify-font-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-notify .iok-notify-desc { display: block; }
+
+/* Group heading: lowercase stays lowercase (no uppercase, no tracking), 16px text.dim, full opacity (axe cannot see through a translucent
+   node onto the shell surface; D-11 item 3). */
+.hfy-notify .iok-notify-group > h2,
+.hfy-notify .iok-notify-group > h3,
+.hfy-notify .iok-notify-group > h4 { margin: 0 0 var(--io-notify-space-2); opacity: 1; color: var(--io-notify-text-dim); font-family: var(--io-notify-font-ui); font-size: var(--io-notify-font-size-sm); font-weight: var(--io-typography-weight-semibold); letter-spacing: normal; text-transform: none; }
+
+/* D-11 item 3a: description, hint and status took the muted colour AND opacity .7 (.45 on an off row); text.dim at full opacity is AAA.
+   An off row is still marked by its switch and by the missing radio group. */
+.hfy-notify .iok-notify-desc,
+.hfy-notify .iok-notify-hint,
+.hfy-notify .iok-notify-status,
+.hfy-notify .iok-notify-row[data-off="true"] .iok-notify-desc { opacity: 1; color: var(--io-notify-text-dim); font-size: var(--io-notify-font-size-sm); }
+
+/* Switch: 52 x 32 (control.h.sm + space.5), a 24 knob (space.6) inset by space.1, a 44 hit area via ::before. Off = border.strong
+   track, on = accent with an accent.text knob. The kit's ::after knob is kept and restyled. */
+.hfy-notify .iok-notify-switch {
+  position: relative;
+  box-sizing: border-box;
+  width: calc(var(--io-notify-control-h-sm) + var(--io-notify-space-5));
+  min-width: calc(var(--io-notify-control-h-sm) + var(--io-notify-space-5));
+  height: var(--io-notify-control-h-sm);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--io-notify-radius-pill);
+  background: var(--io-notify-border-strong);
+  transition: background-color var(--io-notify-duration-fast) var(--io-notify-easing);
+}
+.hfy-notify .iok-notify-switch::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--io-notify-control-h-sm) - var(--io-notify-tap-min)) / 2);
+}
+.hfy-notify .iok-notify-switch::after {
+  top: var(--io-notify-space-1);
+  left: var(--io-notify-space-1);
+  width: var(--io-notify-space-6);
+  height: var(--io-notify-space-6);
+  border-radius: var(--io-notify-radius-pill);
+  background: var(--io-notify-surface-raised);
+  opacity: 1;
+  transition: transform var(--io-notify-duration-fast) var(--io-notify-easing);
+}
+.hfy-notify .iok-notify-switch[aria-checked="true"] { background: var(--io-notify-accent); }
+.hfy-notify .iok-notify-switch[aria-checked="true"]::after { transform: translateX(var(--io-notify-space-5)); background: var(--io-notify-accent-text); }
+
+/* Detail radio group: hairline-bordered segments, the chosen one on accent with accent.text (the kit hard-codes #fff, 3.25:1).
+   overflow is visible (see the focus rule above), so the end segments round themselves inside the group's border. */
+.hfy-notify .iok-notify-seg { overflow: visible; border: 1px solid var(--io-notify-border-strong); border-radius: var(--io-notify-radius-md); }
+.hfy-notify .iok-notify-seg button { border-radius: 0; }
+.hfy-notify .iok-notify-seg button:first-child { border-radius: calc(var(--io-notify-radius-md) - 1px) 0 0 calc(var(--io-notify-radius-md) - 1px); }
+.hfy-notify .iok-notify-seg button:last-of-type { border-radius: 0 calc(var(--io-notify-radius-md) - 1px) calc(var(--io-notify-radius-md) - 1px) 0; }
+.hfy-notify .iok-notify-seg button { padding: 0 var(--io-notify-space-3); color: var(--io-notify-text); }
+.hfy-notify .iok-notify-seg button + button { border-left: 1px solid var(--io-notify-border-strong); }
+.hfy-notify .iok-notify-seg button[aria-checked="true"] { background: var(--io-notify-accent); color: var(--io-notify-accent-text); font-weight: var(--io-typography-weight-semibold); }
+/* Kit root cause: the level hint is rendered INSIDE the bordered radio group, as a third segment. The same advice is the
+   lock-screen banner (lockScreenHint) above the list, so the in-group copy is hidden. */
+.hfy-notify .iok-notify-seg > .iok-notify-hint { display: none; }
+
+/* Loading: the kit skeleton shimmers in rgba() greys; use the token surfaces. */
+.hfy-notify .iok-notify-skeleton { border-radius: var(--io-notify-radius-md); background: linear-gradient(90deg, var(--io-notify-surface-sunken), var(--io-notify-surface-raised), var(--io-notify-surface-sunken)); background-size: 200% 100%; }
+
+/* D-11 item 2 + QA. Kit root cause: `.iok-notify-row` is a one-line flex row (text | switch | .iok-notify-seg) and the segment group
+   exists only while the type is on, so turning a type on pushed its switch 236px left (688 / 1024) and put "show who" under the
+   pointer: a double tap changed the lock-screen privacy level. At EVERY width the switch is now the last item of the first line
+   (DS: "switch 52x32 right") and the detail group is its own full-width line underneath, so toggling only adds or removes that line. */
+.hfy-notify .iok-notify-row { flex-wrap: wrap; }
+.hfy-notify .iok-notify-row > div:first-child { flex: 1 1 calc(var(--io-notify-space-6) * 8); min-width: 0; }
+.hfy-notify .iok-notify-row > .iok-notify-switch { flex: none; margin-inline-start: auto; }
+.hfy-notify .iok-notify-seg { order: 3; flex: 1 0 100%; display: flex; box-sizing: border-box; }
+.hfy-notify .iok-notify-seg button { flex: 1 1 0; min-width: 0; }
+@media (min-width: 43rem) {
+  .hfy-notify .iok-notify-seg { flex-grow: 0; flex-basis: 100%; max-width: calc(var(--io-notify-space-6) * 16); }
+}
+
+/* Signed out (notifications.jsx SignInGate): neutral, not a danger banner (a sign-in gate is not an error); one line, one 44px
+   primary "sign in" (control.h.md, label 16/600). */
+.hfy-notify__gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-notify-space-3);
+  padding: var(--io-notify-space-3) var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-border);
+  border-radius: var(--io-notify-radius-md);
+  background: var(--io-notify-surface-raised);
+  color: var(--io-notify-text);
+  font-size: var(--io-notify-font-size-sm);
+}
+.hfy-notify__gate > p { flex: 1 1 calc(var(--io-notify-space-6) * 8); margin: 0; }
+.hfy-notify .hfy-notify__signin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--io-notify-control-h);
+  min-width: var(--io-notify-tap-min);
+  padding: 0 var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-accent);
+  border-radius: var(--io-notify-radius-md);
+  background: var(--io-notify-accent);
+  color: var(--io-notify-accent-text);
+  font-size: var(--io-notify-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: none;
+}
+.hfy-notify .hfy-notify__signin:hover { color: var(--io-notify-accent-text); }
