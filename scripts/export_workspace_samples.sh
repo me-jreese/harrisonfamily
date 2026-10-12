@@ -7,7 +7,6 @@ SANITIZED_DIRS=(
   "cloudfront"
   "etl-output"
   "gcloud"
-  "gcloud-config"
   "harrisonfamily-frontend"
 )
 
