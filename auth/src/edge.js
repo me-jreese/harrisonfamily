@@ -1,4 +1,4 @@
-// harrisonfamily auth edge, mounted at https://harrisonfamily.us/auth/* (HFY-R31), on @io-kit/auth 2.0.0's createEdgeApp.
+// harrisonfamily auth edge, mounted at https://harrisonfamily.us/auth/* (HFY-R31), on @io-kit/auth 2.1.0's createEdgeApp.
 // The kit deployable is written for auth.<site> (routes at the root). This wrapper adapts it to a path mount and adds the three
 // things the kit does not ship: GET /auth/.well-known/jwks.json (HFY-R38), GET /auth/session, and host-only cookies (HFY-R31).
 import { createEdgeApp, validateManifest } from "@io-kit/auth/edge/deploy";
@@ -81,8 +81,8 @@ function jsonBodyOf(event) {
  * `limiter` ({hit(key, {limit, windowSeconds})}, see ratelimit.js) rate-limits POST /auth/password/forgot per `forgotLimits`;
  * without one the route is not limited (unit tests). A limiter failure fails closed (503): no email is sent.
  */
-export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, limiter, forgotLimits = FORGOT_LIMITS, log = console }) {
-  const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}) });
+export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, log = console }) {
+  const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}), ...(passkeys ? { passkeys, ...(passkeyClientScript ? { passkeyClientScript } : {}) } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
   const siteOrigin = String(manifest.authOrigin ?? `https://${manifest.site}`).replace(/\/+$/, "");
   const returnOrigins = (manifest.returnOrigins ?? []).map((o) => String(o).replace(/\/+$/, ""));
@@ -164,6 +164,8 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
       if (method !== "GET" && method !== "HEAD") return json(405, { code: "METHOD_NOT_ALLOWED" });
       return { statusCode: 200, headers: { "content-type": "application/json", "cache-control": "public, max-age=300" }, body: jwksBody };
     }
+    // HFY-TSK-078: "Manage passkeys" lives on the kit's account page (lists and removes the caller's own credentials; DELETE /auth/passkey/:id).
+    if (rel === "/passkeys") return method === "GET" || method === "HEAD" ? { statusCode: 302, headers: { location: `${MOUNT}/link`, "cache-control": "no-store" }, body: "" } : json(405, { code: "METHOD_NOT_ALLOWED" });
     if (rel === "/session") return method === "GET" ? sessionInfo(event) : json(405, { code: "METHOD_NOT_ALLOWED" });
     if (oauth) {
       const r = await oauth.handle(rel, event, () => sessionOf(event));
@@ -191,7 +193,7 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     }
     const kitPath = ROOT_ROUTES.has(rel) ? rel : raw;
     const res = adapt(await app({ ...ev, rawPath: kitPath }));
-    if (rel === "/password") return sanitizeReturnBody(res);
+    if (rel === "/password" || rel === "/passkey/login/verify") return sanitizeReturnBody(res); // the kit's own returnTo check lets "/\t/evil.example" through
     if (rel === "/callback" && res.statusCode >= 300 && res.statusCode < 400) return sanitizeLocation(res);
     return res;
   };

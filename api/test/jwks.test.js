@@ -43,3 +43,25 @@ describe("api verifies sessions via the auth edge JWKS", () => {
     expect(await mk()({ headers: {} })).toBeNull();
   });
 });
+
+describe("kid rotation (HFY-R55)", () => {
+  it("validates a token under a rotated kid after the JWKS is refetched, and still refuses unknown kids", async () => {
+    const k1 = await generateKeyPair("RS256", { extractable: true });
+    const k2 = await generateKeyPair("RS256", { extractable: true });
+    let served = [{ ...(await exportJWK(k1.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" }];
+    const srv = http.createServer((req, res) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ keys: served })); });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    try {
+      const jwks = createJwks(`http://127.0.0.1:${srv.address().port}/jwks.json`, { cooldownDuration: 0 }); // production keeps the 30 s cooldown
+      const quiet = { warn() {}, error() {} };
+      const auth = createAuthenticator({ issuer: ISS, audience: AUD, getJwks: async () => jwks, getAdmins: async () => new Set(), log: quiet });
+      expect(await auth(ev(await sign(k1.privateKey, "I0111", "hfy-session-1")))).toMatchObject({ id: "I0111" });
+      expect(await auth(ev(await sign(k2.privateKey, "I0111", "hfy-session-2")))).toBeNull(); // not published yet
+      served = [{ ...(await exportJWK(k2.publicKey)), kid: "hfy-session-2", alg: "RS256", use: "sig" }]; // rotation
+      expect(await auth(ev(await sign(k2.privateKey, "I0111", "hfy-session-2")))).toMatchObject({ id: "I0111" }); // unknown kid forces a refetch
+      expect(await auth(ev(await sign(k1.privateKey, "I0111", "hfy-session-1")))).toBeNull(); // retired key no longer verifies
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  });
+});
