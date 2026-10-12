@@ -1,6 +1,8 @@
 {
   "authV2": false,
   "notifyV2": false,
+  "personV2": false,
+  "postsV2": false,
   "searchV2": false,
   "shellV2": false
 }

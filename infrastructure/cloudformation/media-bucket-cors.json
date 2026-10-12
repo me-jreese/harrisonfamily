@@ -1,0 +1,11 @@
+{
+  "_comment": "MANUAL STEP (HFY-TSK-067): the frontend bucket is not managed by app-stack.yaml. Apply once with: aws s3api put-bucket-cors --bucket harrisonfamily-frontend --cors-configuration file://infrastructure/cloudformation/media-bucket-cors.json (strip this _comment key first). Browsers PUT presigned post photos directly to S3.",
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://harrisonfamily.us"],
+      "AllowedMethods": ["PUT"],
+      "AllowedHeaders": ["Content-Type", "Content-Length"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}

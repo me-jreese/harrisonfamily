@@ -1,0 +1,9 @@
+{
+  "grampsId": "I9001",
+  "displayName": "Test Person (synthetic)",
+  "gender": "female",
+  "isLiving": false,
+  "notes": [
+    { "raw": "# Early life\n\nMarried **Sam Example** (see @I9002). <script>window.__xss=1</script> [bad](javascript:alert(1)) [ok](https://example.com)", "html": "<p>LEGACY NOTE</p>" }
+  ]
+}

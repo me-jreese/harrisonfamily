@@ -105,6 +105,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       const who = requireActor();
       validateBody(input.body);
       if (input.type !== undefined && !POST_TYPES.includes(input.type)) throw new ContentError("validation", "unknown type", { field: "type" });
+      if (input.visibility !== undefined && input.visibility !== "draft" && input.visibility !== "published") throw new ContentError("validation", "visibility must be draft or published", { field: "visibility" });
       const at = new Date(now()).toISOString();
       const post = {
         id: ulid(now()),
@@ -114,7 +115,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
         ...(input.title !== undefined ? { title: input.title } : {}),
         body: input.body,
         attachments: structuredClone(input.attachments ?? []),
-        visibility: "draft",
+        visibility: input.visibility === "published" ? "published" : "draft", // one write, one audit entry (drafts:false hosts)
         created_at: at,
         updated_at: at,
         ...(input.ref !== undefined ? { ref: input.ref } : {}),

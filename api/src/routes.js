@@ -64,8 +64,12 @@ export const ROUTES = [
   },
   { name: "posts.get", method: "GET", path: "/posts/:id", summary: "Get one post", handler: async (c) => ok(await c.content.get(c.params.id)) },
   {
-    name: "posts.create", method: "POST", path: "/posts", summary: "Create a draft post",
-    handler: async (c) => ok(await c.content.createDraft({ type: c.body.type, subject: c.body.subject, title: c.body.title, body: c.body.body, attachments: c.body.attachments }), 201),
+    name: "posts.create", method: "POST", path: "/posts", summary: "Create a post: a draft, or published at once with visibility:\"published\"",
+    handler: async (c) => {
+      const post = await c.content.createDraft({ type: c.body.type, visibility: c.body.visibility, subject: c.body.subject, title: c.body.title, body: c.body.body, attachments: c.body.attachments });
+      if (post.visibility === "published") await c.notifier.onPublished(post);
+      return ok(post, 201);
+    },
   },
   {
     name: "posts.update", method: "PATCH", path: "/posts/:id", summary: "Edit your own post",
@@ -83,6 +87,10 @@ export const ROUTES = [
   {
     name: "posts.delete", method: "DELETE", path: "/posts/:id", summary: "Delete your own post (admins: any)",
     handler: async (c) => { await c.content.delete(c.params.id); return ok(undefined, 204); },
+  },
+  {
+    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB); returns {uploadUrl, publicUrl}",
+    handler: async (c) => ok(await c.uploads.presign(c.actor, { filename: c.body.filename, contentType: c.body.contentType, size: c.body.size }), 201),
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.
   { name: "notifications.vapid-public-key", method: "GET", path: "/notifications/vapid-public-key", summary: "VAPID application server key", handler: (c) => c.notifyHandler() },

@@ -25,10 +25,11 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
     .setSubject(sub).setIssuer(iss).setAudience(aud).setIssuedAt().setExpirationTime(exp)
     .sign(privateKey);
 
-export function makeApi({ admins = ["I0099"], withPush = true } = {}) {
+export function makeApi({ admins = ["I0099"], withPush = true, audit } = {}) {
   const ddb = createFakeDdb();
   const now = ticker();
   const sent = [];
+  const presigned = [];
   const jwks = createLocalJWKSet({ keys: [{ ...createPublicKey(pem).export({ format: "jwk" }), kid: "hfy-session-1", alg: "RS256", use: "sig" }] });
   const authenticate = createAuthenticator({
     issuer: ISSUER, audience: AUDIENCE, getJwks: async () => jwks,
@@ -38,6 +39,8 @@ export function makeApi({ admins = ["I0099"], withPush = true } = {}) {
   const preferences = new DynamoPreferencesStore(ddb, cmds, TABLE);
   const handler = createHandler({
     ddb, cmds, table: TABLE, authenticate, ulid: createUlidFactory(), now, subscriptions, preferences,
+    ...(audit ? { audit } : {}),
+    presignPut: async (a) => { presigned.push(a); return `https://presign.test/${a.bucket}/${a.key}?sig=x`; },
     vapidPublicKey: "vapid-public", log: { warn() {}, error() {} },
     ...(withPush ? { vapid: { subject: "mailto:test@example.test", publicKey: "vapid-public", privateKey: "x" }, webpush: { async sendNotification(sub, payload) { sent.push({ sub, payload: JSON.parse(payload) }); } } } : {}),
   });
@@ -50,5 +53,5 @@ export function makeApi({ admins = ["I0099"], withPush = true } = {}) {
     const r = await handler(ev(method, path, opts));
     return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : undefined, headers: r.headers };
   };
-  return { ddb, call, sent, subscriptions, preferences, now };
+  return { ddb, call, sent, presigned, subscriptions, preferences, now };
 }

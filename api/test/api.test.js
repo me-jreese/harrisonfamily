@@ -146,3 +146,36 @@ describe("caps.json (AC2)", () => {
       expect(caps.actions.map((a) => a.name)).toContain(n);
   });
 });
+
+describe("uploads.presign (HFY-TSK-067)", () => {
+  const ok = { filename: "Grandma's Garden (1).JPG", contentType: "image/jpeg", size: 2048 };
+  it("401 without a session; 201 returns uploadUrl + publicUrl under media/posts/<ulid>/<safe-name>", async () => {
+    expect((await w.call("POST", "/api/uploads", { body: ok })).status).toBe(401);
+    const r = await w.call("POST", "/api/uploads", { token: ann, body: ok });
+    expect(r.status).toBe(201);
+    expect(r.body.publicUrl).toMatch(/^https:\/\/harrisonfamily\.us\/media\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/grandma-s-garden-1\.jpg$/);
+    expect(r.body.uploadUrl).toContain(`https://presign.test/harrisonfamily-frontend/${r.body.key}`);
+    expect(w.presigned.at(-1)).toMatchObject({ bucket: "harrisonfamily-frontend", contentType: "image/jpeg", size: 2048 });
+  });
+  it("400 for non-images, oversize, bad size or missing filename", async () => {
+    for (const body of [{ ...ok, contentType: "application/pdf" }, { ...ok, contentType: "image/svg+xml" }, { ...ok, size: 10 * 1024 * 1024 + 1 }, { ...ok, size: 0 }, { ...ok, size: "9" }, { ...ok, filename: "" }]) {
+      expect((await w.call("POST", "/api/uploads", { token: ann, body })).status).toBe(400);
+    }
+    expect((await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, size: 10 * 1024 * 1024, contentType: "image/heic" } })).status).toBe(201);
+  });
+  it("path traversal in the filename cannot escape the key prefix", async () => {
+    const r = await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, filename: "../../../etc/passwd.png" } });
+    expect(r.body.key).toMatch(/^media\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/passwd\.jpg$/);
+  });
+});
+
+describe("posts.create visibility:published (HFY-TSK-067)", () => {
+  it("publishes in one write (created_at === updated_at); rejects other visibilities", async () => {
+    const r = await w.call("POST", "/api/posts", { token: ann, body: { body: "hi", visibility: "published" } });
+    expect(r.status).toBe(201);
+    expect(r.body.visibility).toBe("published");
+    expect(r.body.created_at).toBe(r.body.updated_at);
+    expect((await w.call("POST", "/api/posts", { token: ann, body: { body: "hi", visibility: "withdrawn" } })).status).toBe(422);
+    expect((await w.call("POST", "/api/posts", { token: ann, body: { body: "hi" } })).body.visibility).toBe("draft");
+  });
+});
