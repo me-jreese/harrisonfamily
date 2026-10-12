@@ -28,3 +28,8 @@ __pycache__/
 # api (HFY-TSK-063)
 node_modules/
 api/dist/
+
+# islands (HFY-TSK-064)
+islands/node_modules/
+11ty/js/islands/
+islands/test-results/

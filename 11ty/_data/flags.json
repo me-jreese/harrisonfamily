@@ -1,3 +1,6 @@
 {
-  "authV2": false
+  "authV2": false,
+  "notifyV2": false,
+  "searchV2": false,
+  "shellV2": false
 }

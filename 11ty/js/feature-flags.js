@@ -252,6 +252,111 @@
 
   window.HFYFeatureFlags = featureAPI;
 
+  // HFY-TSK-064 (R42): build-time flags (/_data/flags.json) plus a runtime override.
+  // ?hfy_flags=shellV2,authV2 persists in localStorage "hfy:flags"; "-name" forces off; ?hfy_flags= (empty) clears it.
+  // With shellV2 off nothing below changes the page. With it on, the island bundle (islands/ build) is injected.
+  const FLAGS_URL = "/_data/flags.json";
+  const OVERRIDE_KEY = "hfy:flags";
+  const overrideFlags = (function readOverride() {
+    let raw = "";
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.has("hfy_flags")) {
+        const v = (q.get("hfy_flags") || "").trim();
+        if (v === "") {
+          localStorage.removeItem(OVERRIDE_KEY);
+        } else {
+          localStorage.setItem(OVERRIDE_KEY, v);
+        }
+      }
+      raw = localStorage.getItem(OVERRIDE_KEY) || "";
+    } catch (error) {
+      logDebug("flag override unavailable", error);
+    }
+    const out = {};
+    raw.split(",").forEach((token) => {
+      const t = token.trim();
+      if (!t) return;
+      if (t.charAt(0) === "-") out[t.slice(1)] = false;
+      else out[t] = true;
+    });
+    return out;
+  })();
+  let flagsPromise = null;
+  function resolveFlags() {
+    if (!flagsPromise) {
+      flagsPromise = fetch(FLAGS_URL, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}))
+        .then((build) => {
+          const merged = Object.assign({}, build, overrideFlags);
+          // HFY-R48: the search island's launcher lives in the shell, so searchV2 implies shellV2 (unless explicitly forced off).
+          if (merged.searchV2 === true && overrideFlags.shellV2 !== false) merged.shellV2 = true;
+          return merged;
+        });
+    }
+    return flagsPromise;
+  }
+  featureAPI.resolveFlags = resolveFlags;
+
+  // Island loader pattern: HFYFeatureFlags.loadIsland("name") injects /js/islands/<name>.js (+ .css) once.
+  const loadedIslands = {};
+  function loadIsland(name, { onError } = {}) {
+    if (loadedIslands[name]) return loadedIslands[name];
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "/js/islands/" + name + ".css";
+    document.head.appendChild(css);
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = "/js/islands/" + name + ".js";
+    script.onerror = function () { if (onError) onError(); };
+    document.head.appendChild(script);
+    loadedIslands[name] = script;
+    return script;
+  }
+  featureAPI.loadIsland = loadIsland;
+
+  resolveFlags().then((flags) => {
+    if (flags.shellV2 !== true) return;
+    const root = document.documentElement;
+    root.classList.add("hfy-shell-v2");
+    const head = document.head;
+    const manifest = document.createElement("link");
+    manifest.rel = "manifest";
+    manifest.href = "/manifest.webmanifest";
+    head.appendChild(manifest);
+    const theme = document.createElement("meta");
+    theme.name = "theme-color";
+    theme.content = "#12384f";
+    head.appendChild(theme);
+    loadIsland("shell", {
+      onError() { root.classList.remove("hfy-shell-v2"); }
+    });
+  });
+
+  // HFY-TSK-065 (D-09): searchV2 swaps the Lunr search page for the @io-kit/search island (local tier only).
+  // The legacy page section is hidden, and search-results.js / search-navbar.js bail out on the same flag.
+  resolveFlags().then((flags) => {
+    if (flags.searchV2 !== true) return;
+    document.documentElement.classList.add("hfy-search-v2");
+    const style = document.createElement("style");
+    style.textContent = ".hfy-search-v2 [data-search-page]{display:none!important}";
+    document.head.appendChild(style);
+    if (!/^\/search\/?$/.test(window.location.pathname)) return;
+    onReady(() => {
+      const legacy = document.querySelector("[data-search-page]");
+      if (legacy) legacy.setAttribute("hidden", "");
+      loadIsland("search", { onError() { if (legacy) legacy.removeAttribute("hidden"); document.documentElement.classList.remove("hfy-search-v2"); } });
+    });
+  });
+
+  // HFY-TSK-068 (D-08): notifyV2 mounts the notifications island on the static /me/notifications/ page.
+  resolveFlags().then((flags) => {
+    if (flags.notifyV2 !== true || !/^\/me\/notifications\/?$/.test(window.location.pathname)) return;
+    loadIsland("notifications", { onError() { /* the page keeps its "not enabled" text */ } });
+  });
+
   onReady(applyFeatureVisibility);
 
   function hydrateSessionState() {

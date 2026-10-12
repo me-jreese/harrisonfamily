@@ -1,0 +1,15 @@
+/* HFY-TSK-065: D-11 sizing for the search island. */
+.hfy-search { max-width: 100%; padding: 12px 16px; box-sizing: border-box; overflow-x: clip; }
+.hfy-search__title { font-size: 1.5rem; margin: 0 0 12px; }
+.hfy-search__row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 4px; text-decoration: none; color: inherit; }
+.hfy-search__photo { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex: none; background: rgba(127,127,127,.25); }
+.hfy-search__body { display: flex; flex-direction: column; min-width: 0; }
+.hfy-search__name { font-weight: 600; overflow-wrap: anywhere; }
+.hfy-search__meta { font-size: .875rem; opacity: .75; }
+.hfy-search__skeleton { display: grid; gap: 8px; margin: 8px 0; }
+.hfy-search__skel-row { height: 44px; border-radius: 8px; background: linear-gradient(90deg, rgba(127,127,127,.15), rgba(127,127,127,.3), rgba(127,127,127,.15)); background-size: 200% 100%; animation: hfy-skel 1.2s linear infinite; }
+@keyframes hfy-skel { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .hfy-search__skel-row { animation: none; } }
+.hfy-search input, .hfy-search select, .hfy-search textarea { font-size: 16px !important; }
+.hfy-search a, .hfy-search button { min-height: 44px; }
+.hfy-search input:not([type=checkbox]):not([type=radio]), .hfy-search select { min-height: 44px; box-sizing: border-box; }
