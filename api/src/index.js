@@ -1,7 +1,8 @@
 // Lambda entry point: wires real AWS clients. Handler is `src/index.handler`.
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
@@ -58,6 +59,10 @@ export const handler = async (event) => {
       ddb, cmds, table, authenticate, ulid: createUlidFactory(),
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
+      presignPut: ({ bucket, key, contentType, size, expiresIn }) =>
+        getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: size }), { expiresIn }),
+      mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
+      mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
       ...p,
     });
   }

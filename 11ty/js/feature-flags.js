@@ -317,6 +317,13 @@
     if (flags.personV2 === true && /^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
       loadIsland("person");
     }
+    // HFY-TSK-067: postsV2 adds own-page posting, the homepage timeline and the /posts/ page.
+    if (flags.postsV2 === true) {
+      const path = window.location.pathname;
+      if (/^\/person\/?$/.test(path) && new URLSearchParams(window.location.search).has("id")) loadIsland("my-posts");
+      else if (/^\/(index\.html)?$/.test(path)) loadIsland("timeline");
+      else if (/^\/posts\/?(index\.html)?$/.test(path)) loadIsland("posts");
+    }
     if (flags.shellV2 !== true) return;
     const root = document.documentElement;
     root.classList.add("hfy-shell-v2");

@@ -9,6 +9,8 @@ Parameters:
   CodeBucket: { Type: String, Description: S3 bucket holding the hfy-api.zip package }
   CodeKey: { Type: String, Default: lambda/hfy-api.zip }
   ConfigBucket: { Type: String, Default: harrisonfamily, Description: Bucket with config/admins.json }
+  MediaBucket: { Type: String, Default: harrisonfamily-frontend, Description: "Site bucket the API presigns post-photo uploads into (media/posts/*). Not stack-managed: its CORS is a manual step, see media-bucket-cors.json" }
+  MediaPublicBase: { Type: String, Default: "https://harrisonfamily.us", Description: Origin that serves media/ (CloudFront) }
   AdminListKey: { Type: String, Default: config/admins.json }
   VapidSecretName: { Type: String, Default: "", Description: "Optional secret {subject,publicKey,privateKey} for web push; empty disables sending" }
   SessionIssuer: { Type: String, Default: "https://harrisonfamily.us/auth" }
@@ -84,6 +86,10 @@ Resources:
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${ConfigBucket}/config/*
+              - Sid: PostPhotoUploads
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/posts/*
               - !If
                 - HasVapid
                 - Sid: Secrets
@@ -113,6 +119,8 @@ Resources:
           SESSION_COOKIE: !Ref SessionCookie
           ADMIN_LIST_BUCKET: !Ref ConfigBucket
           ADMIN_LIST_KEY: !Ref AdminListKey
+          MEDIA_BUCKET: !Ref MediaBucket
+          MEDIA_PUBLIC_BASE: !Ref MediaPublicBase
           VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
 
   FunctionUrl:

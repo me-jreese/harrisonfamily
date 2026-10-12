@@ -13,10 +13,10 @@ export class ApiError extends Error {
 const codeForStatus = (s) => (s === 401 ? "unauthenticated" : s === 403 ? "forbidden" : s === 404 ? "not_found" : s === 400 || s === 422 ? "validation" : "server");
 
 export function createApi({ base = "/api", fetchImpl } = {}) {
-  async function request(method, path, { query, body, headers } = {}) {
+  async function request(method, path, { query, body, headers, signal } = {}) {
     const qs = query ? new URLSearchParams(Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== "")).toString() : "";
     const url = `${base}${path}${qs ? `?${qs}` : ""}`;
-    const init = { method, credentials: "include", headers: { Accept: "application/json", ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers } };
+    const init = { method, credentials: "include", ...(signal ? { signal } : {}), headers: { Accept: "application/json", ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers } };
     if (body !== undefined) init.body = JSON.stringify(body);
     let res;
     try {

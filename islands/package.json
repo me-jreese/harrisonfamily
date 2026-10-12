@@ -6,14 +6,15 @@
   "scripts": {
     "build": "node build.mjs",
     "build:islands": "node build.mjs",
-    "test": "node --test tests/contract.test.mjs && playwright test",
-    "test:contract": "node --test tests/contract.test.mjs"
+    "test": "node --test tests/*.test.mjs && playwright test",
+    "test:contract": "node --test tests/*.test.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
     "@io-kit/comments": "^0.1.0",
+    "@io-kit/content": "^0.1.1",
     "@io-kit/md": "^1.2.0",
     "@io-kit/shell": "0.6.6",
     "@io-kit/tokens": "0.4.0",

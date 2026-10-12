@@ -4,6 +4,7 @@ import { createContentSource } from "./content.js";
 import { createCommentSource, toCommentPrincipal } from "./comments.js";
 import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
 import { BASE_PATH, matchRoute } from "./routes.js";
+import { createUploads } from "./uploads.js";
 import { HttpError, errorResponse, json } from "./http.js";
 
 export function createHandler(deps) {
@@ -27,7 +28,8 @@ export function createHandler(deps) {
     });
     const notifyHandler = () =>
       createNotifyHandler({ vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id })(event);
-    return { content, comments, notifier, notifyHandler };
+    const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, bucket: deps.mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
+    return { content, comments, notifier, notifyHandler, uploads };
   }
 
   return async function handler(event) {
