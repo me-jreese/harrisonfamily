@@ -252,6 +252,84 @@
 
   window.HFYFeatureFlags = featureAPI;
 
+  // HFY-TSK-064 (R42): build-time flags (/_data/flags.json) plus a runtime override.
+  // ?hfy_flags=shellV2,authV2 persists in localStorage "hfy:flags"; "-name" forces off; ?hfy_flags= (empty) clears it.
+  // With shellV2 off nothing below changes the page. With it on, the island bundle (islands/ build) is injected.
+  const FLAGS_URL = "/_data/flags.json";
+  const OVERRIDE_KEY = "hfy:flags";
+  const overrideFlags = (function readOverride() {
+    let raw = "";
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.has("hfy_flags")) {
+        const v = (q.get("hfy_flags") || "").trim();
+        if (v === "") {
+          localStorage.removeItem(OVERRIDE_KEY);
+        } else {
+          localStorage.setItem(OVERRIDE_KEY, v);
+        }
+      }
+      raw = localStorage.getItem(OVERRIDE_KEY) || "";
+    } catch (error) {
+      logDebug("flag override unavailable", error);
+    }
+    const out = {};
+    raw.split(",").forEach((token) => {
+      const t = token.trim();
+      if (!t) return;
+      if (t.charAt(0) === "-") out[t.slice(1)] = false;
+      else out[t] = true;
+    });
+    return out;
+  })();
+  let flagsPromise = null;
+  function resolveFlags() {
+    if (!flagsPromise) {
+      flagsPromise = fetch(FLAGS_URL, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}))
+        .then((build) => Object.assign({}, build, overrideFlags));
+    }
+    return flagsPromise;
+  }
+  featureAPI.resolveFlags = resolveFlags;
+
+  // Island loader pattern: HFYFeatureFlags.loadIsland("name") injects /js/islands/<name>.js (+ .css) once.
+  const loadedIslands = {};
+  function loadIsland(name, { onError } = {}) {
+    if (loadedIslands[name]) return loadedIslands[name];
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "/js/islands/" + name + ".css";
+    document.head.appendChild(css);
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = "/js/islands/" + name + ".js";
+    script.onerror = function () { if (onError) onError(); };
+    document.head.appendChild(script);
+    loadedIslands[name] = script;
+    return script;
+  }
+  featureAPI.loadIsland = loadIsland;
+
+  resolveFlags().then((flags) => {
+    if (flags.shellV2 !== true) return;
+    const root = document.documentElement;
+    root.classList.add("hfy-shell-v2");
+    const head = document.head;
+    const manifest = document.createElement("link");
+    manifest.rel = "manifest";
+    manifest.href = "/manifest.webmanifest";
+    head.appendChild(manifest);
+    const theme = document.createElement("meta");
+    theme.name = "theme-color";
+    theme.content = "#12384f";
+    head.appendChild(theme);
+    loadIsland("shell", {
+      onError() { root.classList.remove("hfy-shell-v2"); }
+    });
+  });
+
   onReady(applyFeatureVisibility);
 
   function hydrateSessionState() {

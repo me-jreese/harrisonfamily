@@ -40,7 +40,11 @@
     }, true);
   }
 
-  getJSON("/_data/flags.json", { cache: "no-store" }).then(function (flags) {
+  // HFY-TSK-064: honour the ?hfy_flags runtime override via feature-flags.js when available
+  var flagsReady = (window.HFYFeatureFlags && window.HFYFeatureFlags.resolveFlags)
+    ? window.HFYFeatureFlags.resolveFlags()
+    : getJSON("/_data/flags.json", { cache: "no-store" });
+  flagsReady.then(function (flags) {
     if (!flags || flags.authV2 !== true) return;
     if (/^\/family-login\/?$/.test(location.pathname)) {
       location.replace("/auth/login?returnTo=" + encodeURIComponent("/"));

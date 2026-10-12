@@ -1,0 +1,24 @@
+@import "@io-kit/tokens/tokens.css";
+@import "@io-kit/tokens/harrisonfamily/theme.css";
+@import "@io-kit/tokens/harrisonfamily/bs-bridge.css";
+@import "@io-kit/tokens/harrisonfamily/kit-bridge.css";
+@import "@io-kit/shell/io-kit.css";
+
+/* Legacy Bootstrap navbar is replaced by KitShell; it stays in the DOM (hidden) so legacy scripts keep working. */
+html.hfy-shell-v2 nav.navbar-hf { display: none !important; }
+html.hfy-shell-v2, html.hfy-shell-v2 body { padding: 0 !important; margin: 0; height: 100%; overflow: hidden; }
+/* Shell breakpoints: compact (bottom bar) at <= 688px (43rem) */
+:root { --io-bp-medium-min: 43rem; --io-bp-palette-min: 43rem; }
+.hfy-bar { display: flex; align-items: center; gap: .5rem; padding: .25rem .75rem; min-height: 56px;
+  background: var(--bg-surface, #12384f); color: var(--fg, #fff); border-bottom: 1px solid rgba(255,255,255,.12); }
+.hfy-bar__brand { font-weight: 700; letter-spacing: .08em; color: inherit; text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+.hfy-bar__links { display: none; gap: .25rem; margin-left: 1rem; }
+.hfy-bar__links a { color: inherit; text-decoration: none; min-height: 44px; min-width: 44px; padding: 0 .75rem; display: inline-flex; align-items: center; }
+.hfy-bar__end { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
+.hfy-content { min-height: 100%; }
+.hfy-install { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .75rem; background: var(--bg-surface-alt, #154a6b); color: var(--fg, #fff); }
+.hfy-install button { min-height: 44px; min-width: 44px; padding: 0 1rem; font-size: 16px; }
+.hfy-install p { margin: 0; flex: 1 1 14rem; font-size: 16px; }
+html.hfy-shell-v2 input, html.hfy-shell-v2 select, html.hfy-shell-v2 textarea { font-size: 16px; }
+@media (min-width: 689px) { .hfy-bar__links { display: flex; } }
+.hfy-col { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
