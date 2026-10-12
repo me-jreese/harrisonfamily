@@ -48,6 +48,7 @@ The refresh does not touch the synthetic samples in the repository. If the shape
   - Rename media files whose names reveal an address or a phone number.
   - Plan to read the exported `person/index.json` before you sync, and stop if it lists anyone you did not expect.
 - **Working directory.** Run every command from `<project>`. Relative paths are resolved from the current directory. That includes `--output`, `HFY_PERSON_DIR` and any relative media paths stored in Gramps.
+- **io's go-ahead, if you are an agent.** Get it in the session, or in the dispatch or plan that authorizes the refresh, before any real (non-dry-run) sync in step 4. `sync_to_s3.py` runs `aws s3 sync --delete` outside CI, and the single-call form also syncs `media` without `--no-delete`. A Cloudflare purge needs the go-ahead too. [`AGENTS.md`](../../AGENTS.md) lists these operations.
 
 Record how many member photos are in the bucket now. You compare against this count in [Verify](#verify).
 
@@ -121,7 +122,7 @@ The script reads every person file in the directory. It writes `person/search-in
 
 Both search surfaces read these two files:
 
-- The legacy search page and navbar: [`11ty/js/search-results.js`](../../11ty/js/search-results.js) and [`11ty/js/search-navbar.js`](../../11ty/js/search-navbar.js).
+- The legacy search page and navbar: [`11ty/js/search-results.js`](../../11ty/js/search-results.js) and [`11ty/js/search-navbar.js`](../../11ty/js/search-navbar.js). They still ship with the site. When `searchV2` is on, they stop loading data only once the island has mounted, so they keep working if it fails to mount.
 - The `searchV2` island: [`islands/src/lib/people-corpus.js`](../../islands/src/lib/people-corpus.js).
 
 Nothing else rebuilds them from the real data. The Eleventy source's `npm run build` runs this same script without `HFY_PERSON_DIR`, so it rebuilds the sanitized samples instead.
@@ -168,14 +169,16 @@ Check that no `(dryrun) delete:` line names a key under `media/posts/`. Only the
 
 ### 5. Invalidate the CloudFront cache
 
-Whether this step matters depends on the private data gate. Check whether it is attached, from a shell with no cookies:
+Whether this step matters depends on the private data gate. Check whether it answers for the data paths, from a shell with no cookies:
 
 ```sh
 curl -s -o /dev/null -w '%{http_code}\n' https://<site>/person/index.json
 ```
 
-- **`401`: the gate is attached.** Its six behaviors, `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`, use the CachingDisabled cache policy ([`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh)). CloudFront keeps no copy of the data, and the next request reads the new files from the bucket, so the invalidation does not matter for them. You can skip it. Running it is harmless.
-- **`200`: the gate is not attached.** The default behavior serves the data paths and caches them, so invalidate them:
+The production cutover attached the gate on 2026-10-12 (HFY-TSK-069, HFY-R67), so expect `401` from production unless the gate has been removed since.
+
+- **`401`: the gate is attached.** Its behaviors for the six data prefixes, `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`, use the CachingDisabled cache policy ([`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh)). CloudFront keeps no copy of the data, and the next request reads the new files from the bucket, so the invalidation does not matter for them. You can skip it. Running it is harmless.
+- **`200`: the gate is not attached,** for example in a new environment or after a rollback with `add-data-gate-behaviors.sh --remove`. The default behavior serves the data paths to anyone and caches them, so invalidate them:
 
   ```sh
   aws cloudfront create-invalidation --distribution-id <distribution-id> \
@@ -184,8 +187,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<site>/person/index.json
   ```
 
   `<invalidation-id>` is the `Invalidation.Id` in the output of the first command. `/person/*` also covers the `person/index.html` shell, which is never gated. The next request fetches the shell from the bucket again, which is harmless.
+- **`404`: the gate is not attached, and `HFYAppendIndex` runs its default-deny code.** That CloudFront Function, on the default behavior, refuses the data paths to everyone, members included, so nobody can read the refreshed data. The refresh did not cause this. Run the invalidation above anyway: if the fix is to roll the function back rather than attach the gate, the default behavior serves the data again, from its cache. Then follow [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point).
 
-Neither case reaches Cloudflare, which proxies `<site>` in front of CloudFront and caches images, SVG and PDF files by extension. Cloudflare may still hold copies of `/media/` files, such as family-tree diagrams and photos, that it cached before the gate was attached, and it serves them until their TTL ends. Once the gate is attached, every gated response carries `Cache-Control: private, no-store`, so Cloudflare stores no new copies. If a changed tree or photo still shows the old version, purge the data prefixes in Cloudflare as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare).
+The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in front of CloudFront and caches images, SVG and PDF files by extension. Every response from the gate's behaviors carries `Cache-Control: private, no-store`, so Cloudflare stores no copy of them. A stale copy can come only from a time when the gate was not attached: Cloudflare then caches `/media/` files, such as family-tree diagrams and photos, and serves them until their TTL ends. If a changed tree or photo still shows the old version, purge the data prefixes in Cloudflare, with io's go-ahead, as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare).
 
 ## Verify
 
@@ -205,7 +209,15 @@ Neither case reaches Cloudflare, which proxies `<site>` in front of CloudFront a
 
    The count is at least the one you recorded before you started. Members may have uploaded more in the meantime. `sync_to_s3.py` cannot reach `uploads/`, so a lower count means something else deleted photos, such as a root-level `aws s3 sync --delete`. Stop and find it. Those photos cannot be rebuilt from any local source. If you recorded a non-zero `media/posts/` count, count that prefix again too. It must not have dropped.
 3. **The trees are in the bucket.** `aws s3 ls s3://<site-bucket>/media/tree_<gramps-id>.svg` lists a person you changed.
-4. **The site shows the change.** Sign in at `https://<site>/auth/login`, the sign-in page under `authV2`. While `authV2` is still off and the gate is not attached, the legacy client signs in at `https://<site>/family-login/` instead. Open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. Both search surfaces read the same files. To check the island as well, preview it with `?hfy_flags=searchV2` ([Toggle a feature flag](toggle-a-feature-flag.md)).
+4. **The site shows the change.** First check which sign-in and which search page the site serves:
+
+   ```sh
+   curl -s https://<site>/_data/flags.json | jq '{authV2, searchV2}'
+   ```
+
+   If `authV2` is `true`, sign in at `https://<site>/auth/login`, in a window with no preview override, such as a private window. If it is `false`, the site runs the legacy client, and you sign in with Google at `https://<site>/family-login/` instead. If `authV2` is `false` while step 5 printed `401`, members are locked out of the family data: go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point).
+
+   Open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. Both search surfaces read the same two files. If `searchV2` is `true`, `/search/` shows the island. To check the legacy page as well, open `https://<site>/search/?hfy_flags=-searchV2` ([Force a flag off in one tab](toggle-a-feature-flag.md#force-a-flag-off-in-one-tab)). If it is `false`, preview the island with `?hfy_flags=searchV2` instead ([Turn a flag on in one browser tab](toggle-a-feature-flag.md#turn-a-flag-on-in-one-browser-tab)). Either way, clear the override afterwards with `?hfy_flags=`.
 
    With the gate attached, a refused data request is a `401 {"error":"unauthenticated"}` from the gate, or a `302` to `/auth/login?returnTo=<path>` for a page navigation. The client refreshes the session and retries once before it sends you to sign in. If you are refused while signed in, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md) and the table in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#if-something-fails).
 5. **The checkout is clean.** `git status` in your checkout shows no changes from this procedure. Any change there means a script wrote into the repository. Find out why before you commit anything.
@@ -221,7 +233,7 @@ Neither case reaches Cloudflare, which proxies `<site>` in front of CloudFront a
 | `[ERROR] No person files found in <dir>` | `--person-dir` names the wrong directory | Point it at `workspace-local/harrisonfamily-frontend/person` |
 | A person page shows no tree | Step 1 ran after step 2, or step 2 ran without `--attach` or with the default directories | Repeat step 2, then steps 4 and 5 |
 | A new person is missing from search | Step 3 was skipped or ran against the default directory, or, without the gate, the invalidation has not finished | Repeat step 3, then steps 4 and 5 |
-| A changed tree or photo still shows the old version | Cloudflare serves a copy of the `/media/` file that it cached before the gate was attached. The CloudFront invalidation does not reach Cloudflare | Purge the data prefixes in Cloudflare, as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) |
+| A changed tree or photo still shows the old version | Cloudflare serves a copy of the `/media/` file that it cached while the gate was not attached. Neither the gate nor the CloudFront invalidation removes it | With io's go-ahead, purge the data prefixes in Cloudflare, as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) |
 | New posts or comments still carry a member's old name | Each API container caches a found label for 1 h. Or the member's allowlist entry carries its own usable label, which the API prefers to `displayName`. Older posts and comments keep the label they were stored with | Wait an hour for new posts and comments. If the entry carries a label, use the plain string form that [Manage family access](manage-family-access.md#1-edit-the-source-files) asks for. Stored labels do not change |
 
 ## Related pages
@@ -231,7 +243,7 @@ Neither case reaches Cloudflare, which proxies `<site>` in front of CloudFront a
 - [Private data and secrets](../reference/private-data-and-secrets.md): where the real data lives and what never goes in the repository.
 - [Codebase map](../reference/codebase-map.md): the scripts outside the repository and the sanitized sample directories.
 - [Front end](../reference/front-end.md): the person page and both search surfaces.
-- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): attaching the gate, and purging Cloudflare's copies of the data paths.
+- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): checking whether the gate is attached, rolling it back, and purging Cloudflare's copies of the data paths.
 - [API reference](../reference/api.md#author-label): how the author label is chosen and how long it is cached.
 - [Refresh the sanitized samples](refresh-the-sanitized-samples.md): update the synthetic samples in the repository when the shape of the data changes.
 - [Deploy a change to the static site](deploy-a-site-change.md), [Toggle a feature flag](toggle-a-feature-flag.md), [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).

@@ -48,7 +48,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `@io-kit/content` | 0.1.0 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
 | `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
-| `@io-kit/auth` (`/server`) | 2.1.1 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
+| `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
 | `@io-kit/feed` | 1.1.1 | `createUlidFactory`: monotonic ULIDs for record ids and audit sort keys |
 | `jose` | 6.2.12 | `createRemoteJWKSet` for the session keys |
@@ -56,6 +56,8 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `@aws-sdk/*` | 3.1000.0 | DynamoDB document client, S3 and the S3 request presigner, Secrets Manager |
 
 [`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version except `@io-kit/content` (`^0.1.0`) and `@io-kit/notify` (`^0.4.0`), which the lockfile holds at the versions above.
+
+`@io-kit/auth` is pinned to the same version here and in [`auth/package.json`](../../auth/package.json). The moves from 2.1.1 to 2.1.2 and then 2.2.0 changed only the kit's edge code, which renders the auth edge's pages: the referrer policy, the theme's font origins and the page styling ([Identity services](identity-services.md)). The `/server` code that the API imports is unchanged, so [Session verification](#session-verification) behaves as it did under 2.1.1.
 
 Development dependencies, which `package-api.sh` leaves out of the zip (`npm ci --omit=dev`):
 
@@ -371,10 +373,12 @@ Comments removed with their post are audited too, each in the same transaction a
 
 | Type | Title | Level 0 body | Level 1 body |
 | --- | --- | --- | --- |
-| `comment_on_my_record` | Family tree | Someone commented on your record. | {actor} commented on your record. |
-| `reply_to_me` | Family tree | Someone replied to you. | {actor} replied to you. |
-| `new_family_post` | Family news | There is a new family post. | {actor} shared a new family post. |
-| `mention` | Family tree | You were mentioned. | {actor} mentioned you. |
+| `comment_on_my_record` | Harrison Family | someone commented on your page. | {actor} commented on your page. |
+| `reply_to_me` | Harrison Family | someone replied to you. | {actor} replied to you. |
+| `new_family_post` | Harrison Family | there's a new family post. | {actor} shared a new family post. |
+| `mention` | Harrison Family | you were mentioned. | {actor} mentioned you. |
+
+The text is `TEMPLATE_REGISTRY` in [`notify.js`](../../api/src/notify.js), written in the design system's family voice: every title is the site name, and the bodies are lowercase and say "page", never "record". The lock-screen preview on `/me/notifications/` (the `CATALOG` in [`islands/src/islands/notifications.jsx`](../../islands/src/islands/notifications.jsx)) repeats the same strings word for word. No code or test ties the two together; they are kept equal by hand. [`api.test.js`](../../api/test/api.test.js) and [`producers.test.js`](../../api/test/producers.test.js) check the API's bodies. Pushes carry the text that the deployed `hfy-api` holds, so a change to it reaches members only after an `hfy-api` redeploy ([Packaging and deploy](#packaging-and-deploy)).
 
 Level 0 carries no content. Level 1 adds the actor's display label, the `author.label` of the comment or post, which is never an email address ([Session verification](#session-verification)). The kit cleans it and cuts it to 80 characters. Each recipient chooses per type in their preferences. A type with no stored preference is enabled at level 0. If a level-1 message cannot be rendered, level 0 is sent.
 
@@ -480,13 +484,38 @@ For example, `../Beach Day.JPEG` sent as `image/jpeg` becomes `beach-day.jpg`.
 
 The presigner signs `content-type` and `content-length` into the URL (`signableHeaders`), so S3 rejects a PUT whose `Content-Type` differs from the validated image type or whose body is not exactly `size` bytes. Send the returned `headers` exactly. The URL carries no checksum parameters: the S3 client is built with `requestChecksumCalculation: "WHEN_REQUIRED"`, because the SDK default would sign a checksum of an empty body and every real upload would fail with `400 BadDigest`. The API records nothing about the upload. The client puts `publicUrl` into the post's `attachments`. Nothing removes objects that no post references.
 
+`uploadUrl` points at the bucket's own S3 endpoint (`https://<site-bucket>.s3.<region>.amazonaws.com/...`, in the function's region), never at `<site>`, so the PUT goes straight to S3 and never passes through CloudFront or the private data gate. [`presign.test.js`](../../api/test/presign.test.js) checks the host. `publicUrl` is on `<site>`, and reading it back goes through CloudFront ([Reading photos back](#reading-photos-back)).
+
 ### When uploads fail
 
 - The handler returns `503 unavailable` ("uploads are not configured") only when it was built without a presigner. `index.js` always supplies one, and `MEDIA_BUCKET` and `MEDIA_PUBLIC_BASE` have defaults, so the deployed function never returns `503` for missing `MEDIA_*` settings. A wrong bucket shows up later, as a failed PUT.
 - The browser's PUT goes straight to S3 on another origin, so it needs the bucket CORS rule in [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json): `PUT` from the site origin, with the `Content-Type` and `Content-Length` headers. The site bucket is not managed by `app-stack.yaml`, so that rule is applied by hand. Without it the browser blocks the PUT.
 - The Lambda role may put objects only under `uploads/posts/*` in the media bucket (`PostPhotoUploads` in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)).
 - The site deploy's sync excludes `uploads/*` (the `exclude` list in [`ci.manifest.yaml`](../../ci.manifest.yaml)), and the deploy role is denied `s3:PutObject` and `s3:DeleteObject` under `uploads/*` ([Repository operations](repository-operations.md#deploy-role-github-rolesyaml)), so uploaded photos survive site deploys.
-- Photos are read back through the CloudFront `/uploads/*` behavior, which adds `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` ([System architecture](architecture.md#request-routing)). Without that behavior, `/uploads/*` falls to the default behavior and is served without those headers.
+- The private data gate does not affect uploading, because the PUT goes to S3 directly. A failed upload is never a `401` from the gate.
+
+### Reading photos back
+
+Photos are read back at `publicUrl`, through the CloudFront `/uploads/*` behavior. The API takes no part. That behavior is one behavior in two states ([System architecture: Request routing](architecture.md#request-routing)):
+
+| | Public state | Members-only state |
+| --- | --- | --- |
+| Set by | [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh); also what `add-data-gate-behaviors.sh --remove` restores | [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh), which updates the existing behavior in place, keeping its position and origin |
+| Who can read a photo | Anyone who holds the URL | A signed-in member. The `hfy-edge-gate` viewer-request function checks the `io_id` session cookie. |
+| Signed-out request | `200` with the photo | `401` from the gate, or a `302` to `/auth/login?returnTo=<path>` for a top-level navigation, both with `Cache-Control: private, no-store` |
+| Cache policy | CachingOptimized | CachingDisabled |
+| Response headers policy | The app stack's `UploadsResponseHeadersPolicy` (stack output `UploadsResponseHeadersPolicyId`) | `hfy-uploads-private`, which the gate script finds, creates or repairs by name |
+| Headers on every photo | `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` | The same two, plus `Cache-Control: private, no-store`, all with override |
+| Kept by caches | Cloudflare, which proxies `<site>` in front of CloudFront, caches the image responses | Neither Cloudflare nor browsers keep them |
+
+- **Both policies carry the same CSP.** `UPLOADS_CSP` in [`scripts/infra/lib/cf-common.sh`](../../scripts/infra/lib/cf-common.sh) holds the string for `hfy-uploads-private`. [`test_app_stack.py`](../../scripts/infra/test/test_app_stack.py) checks that the stack's policy uses the same string. `rhp_uploads_private` in [`cf.jq`](../../scripts/infra/lib/cf.jq) checks that a found `hfy-uploads-private` still sets all three headers.
+- **The headers make an upload inert.** A photo is served from the site's own origin, so a file that claims to be an image but holds HTML or script can never run there: the browser may not sniff another type, and the sandbox CSP allows nothing but same-origin images.
+- **How members' browsers load photos.** The posts islands render each image attachment as a plain same-origin `<img src>`, so the browser sends the `io_id` cookie and the gate lets it through ([`islands/tests/uploads-gate.test.mjs`](../../islands/tests/uploads-gate.test.mjs)). A script that fetches a photo must send the cookie too: `credentials: "same-origin"`, the `fetch` default, or `"include"`. With `credentials: "omit"`, the members-only state answers `401`.
+- **Which state is live.** The repository does not record it. [System architecture: Request routing](architecture.md#request-routing) gives the checks, and [How to cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md) gives the steps that gate `/uploads/*` along with the family data.
+- **Without the behavior.** A request that no `/uploads/*` behavior matches, such as `/Uploads/...`, falls to the default behavior. Under the default-deny code of `HFYAppendIndex`, the default behavior's CloudFront Function, it answers `404` with `Cache-Control: private, no-store` and never reaches S3 ([System architecture: HFYAppendIndex](architecture.md#hfyappendindex)).
+- **Rolling the gate back.** `add-data-gate-behaviors.sh --remove` puts `/uploads/*` back in the public state, with the policy ID that it reads from the stack named by `--app-stack` (default `hfy-app`) or takes from `--restore-uploads-policy-id`. The live app stack is `<app-stack>`, so a production `--remove` passes `--app-stack <app-stack>` or `--restore-uploads-policy-id` (the **Gate rollback** notes in [System architecture: Request routing](architecture.md#request-routing)). Afterwards anyone who holds a photo URL can read the photo again.
+
+For why member photos sit behind the gate, see [The privacy model for family data](../explanation/family-data-privacy.md).
 
 ## Environment
 
@@ -547,7 +576,7 @@ The API never holds the signing key. It sees only the public keys that the auth 
 The actor's `label` is stored as `author.label` on posts and comments, their index items and their audit items, and names the actor in level-1 notifications. Every member sees it, so it is never an email address (HFY-R68). `resolveLabel`, built by `createLabelResolver` in [`labels.js`](../../api/src/labels.js) and passed to the authenticator by `index.js`, returns the first of these that is usable:
 
 1. **The session's own name**, if `cleanLabel` accepts it. The name is the principal's `displayName`, which `@io-kit/auth` takes from the token's `name` claim, else `email`, else the username claims. `cleanLabel` trims it and rejects it when it is empty, equals the `sub`, is longer than 200 characters, contains `@`, or contains a control character (U+0000 to U+001F or U+007F). With a plain-string allowlist entry, the session's name is the member's email, which this step rejects.
-2. **The person's `displayName`** from `s3://<site-bucket>/person/<gramps-id>.json` (`MEDIA_BUCKET`, key `PERSON_KEY` in `labels.js`), if `cleanLabel` accepts it. The record is looked up only when the `sub` matches `^[A-Za-z0-9_-]{1,64}$`. Any other `sub` goes straight to step 3, so no other value is ever turned into an S3 key.
+2. **The person's `displayName`** from `s3://<site-bucket>/person/<gramps-id>.json` (`MEDIA_BUCKET`, key `PERSON_KEY` in `labels.js`), if `cleanLabel` accepts it. The record is looked up only when the `sub` matches `^[A-Za-z0-9_-]{1,64}$`. Any other `sub` goes straight to step 3, so no other value is ever turned into an S3 key. The lookup is an S3 `GetObject` by the function's role, not a request through CloudFront, so the private data gate on `/person/*.json` does not apply to it.
 3. **The gramps id** (the `sub`), trimmed, unless it is empty or contains `@` or a control character.
 4. **`family member`.**
 
@@ -609,7 +638,7 @@ The person-record lookups are cached in memory, per container:
 
 The zip is rolled out by the CloudFormation stack built from [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml):
 
-- **Stack name.** No script in the repository creates or names the stack. The live stack is `<app-stack>`. Its name differs from the `--stack hfy-app` default that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) and [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) use to read its outputs. Runs of those scripts against the live stack need `--stack <app-stack>`.
+- **Stack name.** No script in the repository creates or names the stack. The live stack is `<app-stack>`. Its name differs from the `--stack hfy-app` default that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) and [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) use to read its outputs. Runs of those scripts against the live stack need `--stack <app-stack>`. [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh) names the app stack with `--app-stack` instead, which only its `--remove` reads ([Reading photos back](#reading-photos-back)).
 - **Code.** The stack reads the code from `<code-bucket>` at `CodeKey`. The template's default is `lambda/hfy-api.zip`. A release uploads the zip under a commit-named key, `<code-bucket>/lambda/hfy-api-<sha>.zip`, and sets `CodeKey` to it through a CloudFormation change set on `<app-stack>` that is reviewed before it is executed. In that change set the `FunctionUrl` resource shows `Conditional` replacement, because its target, `Function.Arn`, is not known until deploy time (`AuthFunctionUrl` shows the same when the auth edge ships in the same change set). After execution the stack's `FunctionUrl` and `AuthFunctionUrl` outputs must be unchanged, since CloudFront's origins point at those hosts.
 - **CloudFront.** The `/api/*` behavior is added by `add-api-behavior.sh`. The `/mcp*` and `/.well-known/oauth-protected-resource*` behaviors are added by `add-mcp-behavior.sh`, which also needs the published version of the `hfy-mcp-edge401` Lambda@Edge function: the `Edge401FunctionVersionArn` output of the us-east-1 stack `hfy-mcp-edge401`, built from [`mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml), or `--edge401-arn` ([How to deploy the Lambda@Edge functions](../how-to/deploy-the-edge-functions.md)).
 - **Pipeline.** No workflow builds or deploys hfy-api. The GitHub deploy role's `LambdaDeploy` statement names the function, but `ci.manifest.yaml` has no target for it (see [Why releases ship through a pipeline and feature flags](../explanation/release-model.md)). For the steps, see [How to deploy the app stack and its CloudFront behaviors](../how-to/deploy-the-app-stack.md).
@@ -632,3 +661,5 @@ The zip is rolled out by the CloudFormation stack built from [`app-stack.yaml`](
 - [How to deploy and update the Lambda@Edge functions in us-east-1](../how-to/deploy-the-edge-functions.md): the `hfy-mcp-edge401` function the MCP behaviors need.
 - [How to connect an MCP client and run an admin delete](../how-to/connect-an-mcp-client.md): using the MCP server as a member.
 - [How to turn on push notifications](../how-to/turn-on-push-notifications.md): the VAPID secret.
+- [How to cut over to authV2 and the private data gate, and roll back](../how-to/cut-over-to-the-private-data-gate.md): gating the family data and `/uploads/*`, and taking the gate off again.
+- [The privacy model for family data](../explanation/family-data-privacy.md): why member photos are served only to members.

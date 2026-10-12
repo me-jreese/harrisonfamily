@@ -29,7 +29,7 @@ For why an AI assistant signs in as a member, see [The identity model: Agents as
 ### Routing in `index.js`
 
 1. **Origin check.** The `X-Origin-Verify` check runs first, for every path (HFY-R43). Failure is `403 {"error":"forbidden"}`. The kit edge's own origin check is not configured, because this one already ran.
-2. **API handler.** On the first verified request in a container, `index.js` loads the VAPID keys and builds the API handler. The tools call its `invoke` ([Execution](#execution)).
+2. **API handler.** On the first verified request in a container, `index.js` loads the VAPID keys, when `VAPID_SECRET` names a secret, and builds the API handler. The tools call its `invoke` ([Execution](#execution)).
 3. **MCP paths.** `isMcpPath` in `mcp.js` matches `rawPath` against `/mcp`, `/mcp/*`, `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/*`. A match goes to the mount, which `createMcpMount` builds on the first such request and keeps for the life of the container. The [configuration](#configuration) is read at that moment.
 4. **Everything else** goes to the API pipeline ([API: Request pipeline](api.md#request-pipeline)).
 
@@ -131,7 +131,7 @@ Every `401` has `content-type: application/json; charset=utf-8` and `cache-contr
 | A failed edge check (steps 2 to 7) | `{"error":"invalid_token","error_description":"<text>"}` | The same, followed by `, error="invalid_token", error_description="<text>"` |
 | `aud` is not the resource (step 8) | `{"error":"invalid_token","error_description":"token not issued for this resource"}` | The same, with that description |
 
-The edge's `<text>` values: `malformed token`, `unsupported signing algorithm`, `signing key not found`, `signature verification failed`, `issuer mismatch`, `token expired or not yet valid`, `unsupported token use` and `token not issued to this client`. If the JWKS cannot be fetched and no keys are cached, the response is `503 {"error":"temporarily_unavailable"}` with `Retry-After: 5`.
+The edge's `<text>` values: `malformed token`, `unsupported signing algorithm`, `signing key not found`, `signature verification failed`, `issuer mismatch`, `token expired or not yet valid`, `unsupported token use` and `token not issued to this client`. If the edge has to fetch the JWKS and the fetch fails, the response is `503 {"error":"temporarily_unavailable"}` with `Retry-After: 5`. That happens when no keys are cached, or when the token's `kid` is not among the cached keys. A failed scheduled refresh alone does not cause it: a token whose `kid` is cached still verifies against the previous keys.
 
 **Through CloudFront.** A Lambda Function URL renames a `WWW-Authenticate` response header to `x-amzn-remapped-www-authenticate`, and a CloudFront Function cannot run on a `4xx` response. The `hfy-mcp-edge401` function, attached on `origin-response` to both MCP behaviors, copies the first `x-amzn-remapped-www-authenticate` value back as `WWW-Authenticate` on a `401` when the response has no `WWW-Authenticate`. It leaves every other status alone and does not remove the remapped header.
 

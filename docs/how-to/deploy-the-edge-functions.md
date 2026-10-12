@@ -3,22 +3,22 @@
 Use this page to deploy or update the two CloudFormation stacks in `us-east-1` that hold the site's Lambda@Edge functions:
 
 - `hfy-mcp-edge401`, from [`mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml). Its origin-response function restores the `WWW-Authenticate` header on the MCP server's `401` answers, which a Lambda Function URL renames to `x-amzn-remapped-www-authenticate`. Deploy it before `/mcp` is routed, because [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh) will not add the MCP behaviors without its version.
-- `hfy-edge-gate`, from [`edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml). Its viewer-request function, built from [`edge-gate/`](../../edge-gate/), is the private data gate: it checks the `io_id` session cookie before CloudFront serves person, family, event, note, place or media data. This page deploys the gate and tests it. It does not attach it.
+- `hfy-edge-gate`, from [`edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml). Its viewer-request function, built from [`edge-gate/`](../../edge-gate/), is the private data gate: it checks the `io_id` session cookie before CloudFront serves person, family, event, note, place or media data, or a member's post photo under `/uploads/`. This page deploys the gate and tests it. It does not attach it.
 
-Deploying either stack attaches nothing and has no visitor impact. A Lambda@Edge function runs only once a CloudFront behavior names one of its numbered versions, and no stack here touches the distribution. The functions are attached elsewhere: the MCP function by the `/mcp*` behaviors in [Deploy the app stack](deploy-the-app-stack.md), and the gate in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md). The one exception on this page is the behavior rerun at the end of each "Ship a change" section, which moves live traffic to a new version of a function that is already attached. For why these two functions run as Lambda@Edge while everything else runs at the origin, see [Edge and origin design](../explanation/edge-and-origin-design.md).
+Deploying either stack attaches nothing and has no visitor impact. A Lambda@Edge function runs only once a CloudFront behavior names one of its numbered versions, and no stack here touches the distribution. The functions are attached elsewhere: the MCP function by the `/mcp*` behaviors in [Deploy the app stack](deploy-the-app-stack.md), and the gate in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md). The one exception on this page is the behavior rerun at the end of each "Ship a change" section, which moves live traffic to a new version of a function that is already attached. In production both functions are attached: `/mcp` is routed, and the gate has guarded the data paths since the 2026-10-12 cutover (HFY-R67). So a new version of either reaches visitors only through that rerun. For why these two functions run as Lambda@Edge while everything else runs at the origin, see [Edge and origin design](../explanation/edge-and-origin-design.md).
 
 > **Operator credentials only.** No workflow builds or deploys either function. The GitHub deploy role in [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) has no CloudFormation permissions, and its Lambda permissions cover three functions in `us-west-2` only.
 
-Values in angle brackets are placeholders. `<edge-code-bucket>` is the private S3 bucket in `us-east-1` that holds the gate's code zips. `<app-stack>` is the name of the live app stack, which is not `hfy-app`, the `--stack` default of `add-mcp-behavior.sh` and the other app behavior scripts. `<distribution-id>` and `<aws-account-id>` are listed with the other forms in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). The stack names `hfy-mcp-edge401` and `hfy-edge-gate` are the real names.
+Values in angle brackets are placeholders. `<edge-code-bucket>` is the private S3 bucket in `us-east-1` that holds the gate's code zips. `<app-stack>` is the name of the live app stack, which is not `hfy-app`, the `--stack` default of `add-mcp-behavior.sh` and the other app behavior scripts, and the `--app-stack` default of `add-data-gate-behaviors.sh`. `<site>`, `<distribution-id>` and `<aws-account-id>` are listed with the other forms in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). In a photo path, `/uploads/posts/<ulid>/<name>`, `<ulid>` is the ID the API gave that upload and `<name>` its file name. The stack names `hfy-mcp-edge401` and `hfy-edge-gate` are the real names.
 
 ## Before you start
 
-- **io's go-ahead.** Deploys of the `us-east-1` stacks need it ([`AGENTS.md`](../../AGENTS.md)).
+- **Approvals** ([`AGENTS.md`](../../AGENTS.md)). Deploys of the `us-east-1` stacks need io's go-ahead, and so does a real run of `add-mcp-behavior.sh`. A real run of `add-data-gate-behaviors.sh` without `--remove`, such as the behavior reruns in [Ship a change to the gate](#ship-a-change-to-the-gate) and [Roll back](#roll-back), needs io's G-prod approval: `AGENTS.md` counts every such run as attaching the data gate, and a go-ahead in the session is not enough.
 - **Operator AWS credentials in `us-east-1`.** They must be able to:
   - deploy CloudFormation with `CAPABILITY_NAMED_IAM` for `hfy-edge-gate`, whose role is named `hfy-edge-gate-role`, and with `CAPABILITY_IAM` for `hfy-mcp-edge401`, whose role is unnamed. That covers creating IAM roles and Lambda functions and publishing Lambda versions.
   - read, list and write `<edge-code-bucket>`: `s3:PutObject` for the upload, `s3:GetObject` because Lambda fetches the code with the deploying identity's permissions, and `s3:ListBucket`, without which a lookup of a missing key answers `403 Forbidden` instead of `404 Not Found`.
   - call `lambda:InvokeFunction` on the gate's published versions, for step 5, and `lambda:GetFunctionConfiguration` and `lambda:ListVersionsByFunction`, for [Verify](#verify) and [Roll back](#roll-back).
-  - for the behavior reruns in the "Ship a change" sections and in [Roll back](#roll-back) only: read and update the CloudFront distribution and list its response headers policies. `add-mcp-behavior.sh` also reads the outputs of `<app-stack>` and the origin-verify secret in `us-west-2`.
+  - for the behavior reruns in the "Ship a change" sections and in [Roll back](#roll-back) only: read and update the CloudFront distribution, list its response headers policies, and update `hfy-private-no-store` or `hfy-uploads-private` if one has drifted. Associating a Lambda@Edge version also takes `lambda:GetFunction` and `lambda:EnableReplication*` on the function. `add-mcp-behavior.sh` also reads the outputs of `<app-stack>` and the origin-verify secret in `us-west-2`.
 - **`<edge-code-bucket>`, a private S3 bucket in `us-east-1`.** Lambda loads code only from a bucket in the function's own Region, so `<code-bucket>`, which is in `us-west-2`, cannot hold the gate's zips. Keep Block Public Access on. `hfy-mcp-edge401` needs no bucket: its code is inline in the template.
 - **Regions.** Every command on this page that touches the edge stacks passes `--region us-east-1`. Leave the shell's default Region at `us-west-2`, as [Deploy the app stack](deploy-the-app-stack.md) sets it, because `add-mcp-behavior.sh` reads `<app-stack>` and the origin-verify secret in the default Region:
 
@@ -175,42 +175,60 @@ navigate: {"status":"302","location":"/auth/login?returnTo=%2Fperson%2Findex.jso
 - **`Sec-Fetch-Mode: navigate` and no cookie:** `302` to `/auth/login?returnTo=%2Fperson%2Findex.json`, the answer a top-level page load gets.
 - **Every response** carries `cache-control: private, no-store`, so neither Cloudflare nor a browser stores a gate answer (HFY-R65).
 
+The gate reads the path only to build `returnTo`, so these three events also stand for the other gated paths, `/uploads/` photos included. A photo that a page loads with `<img>` is not a navigation, so a signed-out request for one gets the `401`.
+
 These direct invocations leave no log you can read: the function's role may write only to the `/aws/lambda/us-east-1.hfy-edge-gate` log groups that CloudFront's copies use. The result lines are the evidence. Delete the event files when you are done:
 
 ```sh
 rm -rf "$EV"
 ```
 
-The gate is now deployed and tested, and still attached to nothing. To attach it, follow [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md).
+After a first deploy, the gate is deployed and tested, and still attached to nothing. To attach it, follow [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md). If you came here from [Ship a change to the gate](#ship-a-change-to-the-gate), go on to its step 4.
 
 ## Ship a change to the gate
 
 1. **Test.** Run `(cd edge-gate && npm test)`. If you changed the template or `package-edge-gate.sh`, also run `bash scripts/infra/test/run.sh`, which ends with `scripts/infra tests: <n> passed, 0 failed`.
 2. **Rebuild, upload to the new key, and redeploy.** Run [steps 2 to 4](#2-build-the-gate). A code or configuration change gives the zip a new `CodeKey` and a new `CodeSha256`. CloudFormation then updates the function's code from the new key and replaces the version resource, which publishes a new numbered version and a new `EdgeGateVersionArn`. The old version is kept and keeps serving wherever it is attached.
 3. **Validate the new version** as in [step 5](#5-validate-the-published-version-before-anything-attaches-it), with `GATE_ARN` set to the new output.
-4. **If the gate is attached, move the behaviors to the new version.** This step changes what visitors get, and both runs need io's go-ahead. Check whether the gate is attached:
+4. **If the gate is attached, move the behaviors to the new version.** In production it is. This step changes what visitors get. The real run needs io's G-prod approval ([Before you start](#before-you-start)); the dry run needs no approval. Check which behaviors carry the gate:
 
    ```sh
    aws cloudfront get-distribution-config --id <distribution-id> \
      --query 'DistributionConfig.CacheBehaviors.Items[].[PathPattern, LambdaFunctionAssociations.Items[0].LambdaFunctionARN]' --output text
    ```
 
-   If no row ends in `:function:hfy-edge-gate:<n>`, the gate is not attached and you are done. Otherwise:
+   Each row shows a path pattern and the first Lambda@Edge association of its behavior. A row that ends in `:function:hfy-edge-gate:<n>` is gated. After a complete cutover there are seven, all with the same `<n>`: `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` and `/uploads/*`.
+
+   - If no row ends that way, the gate is not attached and you are done. The new version waits for [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md).
+   - If the six data patterns are gated but `/uploads/*` is not, or has no row, the rerun below also makes member photos members-only. That is the `/uploads/*` part of the cutover: review it as in that page's [step 3](cut-over-to-the-private-data-gate.md#3-attach-the-gate), and afterwards purge Cloudflare's copies under `<site>/uploads/` as in its [step 4](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare).
+
+   Then do a dry run:
 
    ```sh
    scripts/infra/add-data-gate-behaviors.sh --distribution <distribution-id> --dry-run
    ```
 
-   The dry run reads the new version ARN from the stack output. It prints `response headers policy hfy-private-no-store (<policy-id>) already forces Cache-Control: private, no-store`, then `gating ... on origin <origin-id> with <new EdgeGateVersionArn> ...`, and a diff that changes only the version number at the end of each of the six behaviors' `LambdaFunctionARN`. `already has the data-gate behaviors ...: no change` means the behaviors already name that version. Do not pass `--stack <app-stack>` to this script: its `--stack` names the gate's stack in `us-east-1`, and its default, `hfy-edge-gate`, is right.
+   Do not pass `--stack <app-stack>` to this script: its `--stack` names the gate's stack in `us-east-1`, and its default, `hfy-edge-gate`, is right. The script names the app stack with `--app-stack <app-stack>` instead, and only `--remove` reads it, so this run does not need it.
 
-   If the diff is as described, apply it and wait:
+   The dry run reads the new version ARN from the stack output. Review what it prints:
+
+   - **The policies.** One line for each:
+     - `response headers policy hfy-private-no-store (<policy-id>) already forces Cache-Control: private, no-store`
+     - `response headers policy hfy-uploads-private (<uploads-policy-id>) already forces Cache-Control: private, no-store and the nosniff + sandbox CSP security headers`
+
+     A line that starts `(dry-run) would put response headers policy <name> (<id>) back` means someone changed that policy, and the real run will restore it. `(dry-run) would create response headers policy hfy-uploads-private ...` goes with an ungated `/uploads/*`, the case above.
+   - **The plan line.** `gating /person/*.json /family/* /event/* /note/* /place/* /media/* /uploads/* on origin <origin-id> with arn:aws:lambda:us-east-1:<aws-account-id>:function:hfy-edge-gate:<n> (CachingDisabled, response headers policy <policy-id>: Cache-Control: private, no-store; /uploads/* keeps its origin and gets policy <uploads-policy-id>)`. `<n>` must be the version you validated in step 3.
+   - **The diff.** It changes only the version number at the end of seven `LambdaFunctionARN` values, one for each gated behavior. If `/uploads/*` was not gated, it changes six and gates `/uploads/*` in place instead, as the cutover's step 3 describes: an association, CachingDisabled and `hfy-uploads-private`, with the same position and origin. With no `/uploads/*` behavior at all, it adds one, already gated. The one other change the script can make is to move a gated behavior that sits behind a broader one matching the same paths, such as a legacy `/person/*`, to just ahead of it. Stop if the diff does anything else.
+   - **No change.** `distribution <distribution-id> already has the data-gate behaviors (/person/*.json /family/* /event/* /note/* /place/* /media/* /uploads/*) on <version ARN> with response headers policies <policy-id> and <uploads-policy-id>: no change` means the behaviors already name that version.
+
+   If the output is as described, apply it and wait:
 
    ```sh
    scripts/infra/add-data-gate-behaviors.sh --distribution <distribution-id>
    aws cloudfront wait distribution-deployed --id <distribution-id>
    ```
 
-   The real run saves the pre-change distribution configuration under `${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}`, mode 600, and prints a rollback command. Moving a Lambda@Edge association takes minutes. The `wait` command returns with no output when it is done; if it times out, run it again. Then follow the Verify section of [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md).
+   The real run reads the live configuration again, so its diff should match the dry run's. It saves the pre-change distribution configuration under `${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}`, mode 600, prints a rollback command, and then prints the distribution status, `InProgress`. Moving a Lambda@Edge association takes minutes. The `wait` command returns with no output when it is done; if it times out, run it again. Then run [Verify](#verify) step 4 on this page and the Verify section of [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#verify).
 
 Two mistakes fail the stack update, and both leave visitors untouched:
 
@@ -274,7 +292,8 @@ CloudFormation publishes a new Lambda version only when the version resource its
 
    The first value equals `$CODE_SHA`. The description reads `code <CodeSha256> (s3 <CodeKey>)` with this build's values.
 3. **The published gate answers as expected.** All three result lines in [step 5](#5-validate-the-published-version-before-anything-attaches-it) match.
-4. **After attachment**, follow the Verify sections of [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md) for the gate and of [Deploy the app stack](deploy-the-app-stack.md) for the MCP function.
+4. **After a behavior rerun, the behaviors name the version you meant.** Run the listing from [Ship a change to the gate](#ship-a-change-to-the-gate), step 4, again. Every row that ends in `:function:hfy-edge-gate:<n>` shows the same `<n>`, the version you validated or, after [Roll back](#roll-back), the previous one. With `/uploads/*` gated there are seven such rows. After a rerun of `add-mcp-behavior.sh`, the `/mcp*` and `/.well-known/oauth-protected-resource*` rows end in `:function:hfy-mcp-edge401:<n>` with the new version.
+5. **After attachment**, follow the Verify sections of [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#verify) for the gate and of [Deploy the app stack](deploy-the-app-stack.md) for the MCP function. The gate's checks there include a signed-out request for an `/uploads/posts/<ulid>/<name>` photo, which must answer `401` with `cache-control: private, no-store` and a `cf-cache-status` that is never `HIT`.
 
 **Logs.** When CloudFront runs a version, the function logs to `/aws/lambda/us-east-1.hfy-edge-gate` or `/aws/lambda/us-east-1.hfy-mcp-edge401` in the Region of the edge location that served the request, not in `us-east-1`. To find the Regions that have them:
 
@@ -316,16 +335,19 @@ scripts/infra/add-mcp-behavior.sh --stack <app-stack> --distribution <distributi
 aws cloudfront wait distribution-deployed --id <distribution-id>
 ```
 
+Review each dry run as in the matching "Ship a change" section: the diff changes only the version number at the end of each attached behavior's `LambdaFunctionARN`, back to the previous version. For the gate that is seven behaviors once `/uploads/*` is gated. A gate run on a distribution where `/uploads/*` is not gated gates it too, as described in [Ship a change to the gate](#ship-a-change-to-the-gate), step 4. The real gate run needs io's G-prod approval, and the real MCP run needs io's go-ahead.
+
 Set `OV_NAME` as in [Ship a change to the MCP 401-restore function](#ship-a-change-to-the-mcp-401-restore-function). A version ARN must be qualified, `arn:aws:lambda:us-east-1:<aws-account-id>:function:hfy-edge-gate:<n>` or the same form for `hfy-mcp-edge401`. An unqualified or `$LATEST` ARN makes either script exit with status `2` before it changes anything.
 
 The stacks' outputs still name the newer version, so a later run of either script without the explicit ARN moves the behaviors forward again. Pass the previous ARN on every run until a fixed build ships through the matching "Ship a change" section.
 
-To take the gate off the data paths altogether, which makes the data public again, use the rollback in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md), not this page.
+To take the gate off altogether, use the rollback in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#roll-back), not this page. Its `add-data-gate-behaviors.sh --remove` deletes the six data behaviors and puts `/uploads/*` back to its ungated state. Every member photo then becomes readable by anyone who holds its URL. The family data becomes public again too, unless `HFYAppendIndex` runs its default-deny code, which then refuses that data to everyone, members included; that page explains both cases. While `/uploads/*` is gated, every production `--remove`, including `--remove --dry-run`, must pass `--app-stack <app-stack>` with the shell's Region at `us-west-2`, or name the policy with `--restore-uploads-policy-id <id>`. Without either it exits `1` and changes nothing.
 
 ## Related pages
 
 - [Deploy the app stack](deploy-the-app-stack.md): attaches the MCP function through the `/mcp*` and protected-resource metadata behaviors.
-- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): attaches the gate, in order after `authV2`, and removes it again.
+- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): attaches the gate, in order after `authV2`, gates `/uploads/*`, and removes the gate again.
+- [The privacy model for family data](../explanation/family-data-privacy.md): what the gate protects, member photos included, and why at the edge.
 - [Edge and origin design](../explanation/edge-and-origin-design.md): why these two functions run as Lambda@Edge.
 - [Architecture](../reference/architecture.md#cloudformation-stacks): the stacks, their resources and outputs, and the [compute](../reference/architecture.md#compute) they hold.
 - [Repository operations](../reference/repository-operations.md): `package-edge-gate.sh` among the build scripts, and the [CloudFront behavior scripts](../reference/repository-operations.md#cloudfront-behavior-scripts).

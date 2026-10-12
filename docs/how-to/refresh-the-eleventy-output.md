@@ -1,8 +1,13 @@
 # How to refresh `11ty/` from the Eleventy source without losing E5 files
 
-Never refresh `11ty/` with a plain `rsync -a --delete` from the source. If the source has not been mirrored, that command deletes 10 E5 files, deletes or replaces the committed island bundles, reverts 4 scripts and removes the `auth-v2.js` tag from every rendered page it overwrites. One of the 4 scripts is `js/person-page.js`, which carries the `authV2` data path. The source's copy lacks that path and still waits for the legacy `X-HFY-Session` token, so reverting it breaks person pages once the [private data gate is attached](cut-over-to-the-private-data-gate.md). [Why React islands on a generated Eleventy site](../explanation/islands-on-eleventy.md) explains how `11ty/` ended up with two sources of truth.
+Never refresh `11ty/` with a plain `rsync -a --delete` from the source. That command deletes every repo-owned file that the source output lacks, or replaces it with the source's older copy: the 10 E5-only files, the committed island bundles, and the islands build's theme layer, sign-in stylesheet and fonts. It reverts 5 edited scripts. It also strips the family-voice copy and the `?v=` asset versions from every page it overwrites, and the `auth-v2.js` tag too while the source's layout lacks it. Two of the reverted scripts do the most harm:
 
-This page rebuilds the site from `<eleventy-source>` and promotes the result into `11ty/` with the E5 files intact. The [codebase map](../reference/codebase-map.md#what-in-11ty-is-generated) lists which files in `11ty/` are generated, E5-edited or E5-only.
+- `js/person-page.js` loses the `authV2` data path and waits for the legacy `X-HFY-Session` token, which an edge sign-in never mints. That breaks person pages while the [private data gate](cut-over-to-the-private-data-gate.md) is attached, and production attached it on 2026-10-12.
+- `js/auth.js` goes back to opening Google One Tap, whose bottom sheet covers the shell's tab bar on a phone.
+
+[Why React islands on a generated Eleventy site](../explanation/islands-on-eleventy.md#the-consequence-two-sources-of-truth) explains how `11ty/` ended up with two sources of truth.
+
+This page rebuilds the site from `<eleventy-source>` and promotes the result into `11ty/` with the repo-owned files intact. It then runs the islands build over the refreshed pages, which writes the head blocks, the family-voice copy and the `?v=` versions back into them. The [codebase map](../reference/codebase-map.md#what-in-11ty-is-generated) sorts the files in `11ty/` into generated, repo-edited, repo-only and build output. [Theme and asset build](../reference/theme-and-asset-build.md) lists everything the islands build writes.
 
 Placeholders used on this page:
 
@@ -13,11 +18,12 @@ Placeholders used on this page:
 
 ## Before you start
 
-- **Node 22 or later.** The Eleventy build needs Node 18 or later (Eleventy 3), and the island build and tests in [Verify](#verify) need Node 22 or later ([`islands/package.json`](../../islands/package.json)). Node 22 covers both.
+- **Node 22 or later.** The Eleventy build needs Node 18 or later (Eleventy 3). The islands build in [step 6](#6-rebuild-the-islands-over-the-refreshed-pages) and the tests in [Verify](#verify) need Node 22 or later ([`islands/package.json`](../../islands/package.json)). Node 22 covers both.
 - **`npm ci` has been run in `<eleventy-source>`.**
-- **The private inputs are present.** `npm run build` starts with `build:search`, which runs `<project>/scripts/search/build_search_index.js` on the person records in `<project>/workspace/harrisonfamily-frontend/person/`. It rewrites `index.json` and `search-index.json` in that directory. Neither file reaches `11ty/`.
+- **You can get a CodeArtifact token.** Step 6 installs the island dependencies, which come from a private registry. [Build and preview the islands](build-and-preview-the-islands.md#1-get-a-codeartifact-token) shows how to export `CODEARTIFACT_AUTH_TOKEN`.
+- **The search inputs are present.** `npm run build` starts with `build:search`, which runs `<project>/scripts/search/build_search_index.js` without `HFY_PERSON_DIR`, so it reads the sanitized person records in `<project>/workspace/harrisonfamily-frontend/person/`. It rewrites `index.json` and `search-index.json` in that directory. Neither file reaches `11ty/`. The real person and media data, which the source's data files and config read, is a separate private tree under `<project>/workspace-local/`. The excludes in [steps 3 and 4](#3-dry-run) keep it out of `11ty/`.
 - **`<project>/content/homepage.txt` is present.** The homepage text comes from this file. If it is missing, the build logs `[HFY] Missing homepage content file`, keeps going and renders the homepage with that text empty.
-- **`git status --short 11ty/` prints nothing**, so the diff afterwards shows only the refresh.
+- **`git status --short 11ty/ islands/ auth/edge.manifest.json` prints nothing**, so the diff afterwards shows only the refresh and the islands build's outputs come out as committed.
 - **The source is mirrored.** [Check whether the mirror is done](#check-whether-the-mirror-is-done) tells you which parts, if any, are missing.
 
 Set the source path for the commands that follow:
@@ -26,17 +32,24 @@ Set the source path for the commands that follow:
 SRC=<eleventy-source>
 ```
 
-## One-time mirror into the source
+## Mirror the repository's files into the source
 
-The build can only reproduce an E5 file that exists in the source. Each one is copied into `public/`, which Eleventy passes through to the site root unchanged, and the base layout gets the `auth-v2.js` tag.
+The build can only reproduce a repository file that exists in the source. Each one is copied into `public/`, which Eleventy passes through to the site root unchanged, and the base layout gets the `auth-v2.js` tag.
 
-The refresh in [step 3](#3-dry-run) excludes all 14 mirrored files, so it keeps the repository's copies even where the source's copies are older. It does not exclude the rendered pages, so the layout edit is required: without it, the refresh strips the tag from every page it overwrites. Mirroring the files as well keeps the two copies in step, and the check below shows when they drift apart.
+The refresh in [step 3](#3-dry-run) excludes all 15 mirrored files, so it keeps the repository's copies even where the source's copies are older. It does not exclude the rendered pages, so the layout edit is required. Without it, the refresh strips the tag from every page it overwrites, and the islands build does not put it back. Mirroring the files as well keeps the two copies in step, and the check below shows when they drift apart.
+
+The rest of what the repository adds to the pages needs no mirroring:
+
+- `src/_includes/partials/head.njk` already emits head blocks A and B. Their `hfy-theme.css?v=` value and UI font file name are hard-coded, so they go stale with the next theme or font change. Leave them as they are. The islands build rewrites both blocks in `11ty/` on every run, so its values are the ones that ship.
+- The family-voice copy and the `?v=` versions of the other scripts and stylesheets are not in the source. The islands build writes them in [step 6](#6-rebuild-the-islands-over-the-refreshed-pages). [The design system theme layer](../explanation/design-system-theme-layer.md) explains why the build rewrites the copy until the source is ported.
+
+Never mirror `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` or `fonts/`. They are the output of [`islands/build.mjs`](../../islands/build.mjs), whose source is `islands/` in this repository. A copy in the Eleventy source would be stale after the next islands build ([Build and preview the islands](build-and-preview-the-islands.md)).
 
 ### Check whether the mirror is done
 
 ```sh
 for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/search-navbar.js js/search-results.js \
-         js/person-page.js sw.js manifest.webmanifest offline.html \
+         js/person-page.js js/auth.js sw.js manifest.webmanifest offline.html \
          images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
          posts/index.html me/notifications/index.html; do
   cmp -s "11ty/$f" "$SRC/public/$f" && echo "mirrored: $f" || echo "missing or different: $f"
@@ -45,39 +58,49 @@ grep -c 'src="/js/auth-v2.js"' "$SRC/src/_includes/layouts/base.njk"
 test ! -e "$SRC/public/js/islands" || echo "remove $SRC/public/js/islands"
 ```
 
-The mirror is done when the loop prints `mirrored` for all 14 files, the `grep` prints `1`, and the last line prints nothing. Otherwise, do only the parts that are missing:
+The mirror is done when the loop prints `mirrored` for all 15 files, the `grep` prints `1`, and the last line prints nothing. Otherwise, do only the parts that are missing:
 
-- A file reported as `missing or different`: steps 1 and 2 below.
-- A `grep` count of `0`: step 3.
-- A `remove` line: step 4.
+- A file reported as `missing or different`: mirror steps 1 and 2 below.
+- A `grep` count of `0`: mirror step 3.
+- A `remove` line: mirror step 4.
+
+The islands build rewrites six of the mirrored files whenever a file they reference changes, so they drift from the source's copies:
+
+- `js/feature-flags.js` and `sw.js`, through their `hfy-asset-versions` blocks;
+- `manifest.webmanifest`, through its colours;
+- `offline.html`, `posts/index.html` and `me/notifications/index.html`, through their head blocks and `?v=` versions.
+
+For these, `missing or different` usually means only that a build has changed them since the last copy. Copy them again with mirror steps 1 and 2.
 
 ### Mirror the missing parts
 
 | Repository file | Source path | Notes |
 |---|---|---|
 | `11ty/_data/flags.json` | `public/_data/flags.json` | Published at `/_data/flags.json`. This is not Eleventy's data directory, which is `src/_data/`. |
-| `11ty/js/auth-v2.js` | `public/js/auth-v2.js` | New in the source. |
-| `11ty/js/feature-flags.js` | `public/js/feature-flags.js` | Replaces the source copy. |
+| `11ty/js/auth-v2.js` | `public/js/auth-v2.js` | Replaces the source copy, or is new in the source. |
+| `11ty/js/feature-flags.js` | `public/js/feature-flags.js` | Replaces the source copy. The islands build rewrites its stamp block. |
 | `11ty/js/search-navbar.js` | `public/js/search-navbar.js` | Replaces the source copy. |
 | `11ty/js/search-results.js` | `public/js/search-results.js` | Replaces the source copy. |
-| `11ty/js/person-page.js` | `public/js/person-page.js` | Replaces the source copy, which lacks the `authV2` data path. |
-| `11ty/sw.js` | `public/sw.js` | New in the source. |
-| `11ty/manifest.webmanifest` | `public/manifest.webmanifest` | New in the source. |
-| `11ty/offline.html` | `public/offline.html` | New in the source. |
-| `11ty/images/pwa-192.png`, `pwa-512.png`, `pwa-maskable-512.png` | `public/images/`, same names | New in the source. |
+| `11ty/js/person-page.js` | `public/js/person-page.js` | Replaces the source copy, which lacks the `authV2` data path and the design-system layout. |
+| `11ty/js/auth.js` | `public/js/auth.js` | Replaces the source copy, which still opens One Tap when `authV2` is on. |
+| `11ty/sw.js` | `public/sw.js` | The islands build rewrites its stamp block. |
+| `11ty/manifest.webmanifest` | `public/manifest.webmanifest` | The islands build writes its colours. |
+| `11ty/offline.html` | `public/offline.html` | A standalone page. The islands build writes its head blocks and versions. |
+| `11ty/images/pwa-192.png`, `pwa-512.png`, `pwa-maskable-512.png` | `public/images/`, same names | |
 | `11ty/me/notifications/index.html` | `public/me/notifications/index.html` | A standalone page that does not use the base layout, so it can pass through as a file. |
 | `11ty/posts/index.html` | `public/posts/index.html` | Standalone, like the notifications page. |
 
-Never mirror `11ty/js/islands/`. Those bundles are the committed build output of [`islands/build.mjs`](../../islands/build.mjs), whose source is `islands/` in this repository, and a copy in the Eleventy source would be stale after the next island build ([Build and preview the islands](build-and-preview-the-islands.md)).
+These are mirror steps 1 to 4, numbered separately from the refresh's [steps](#steps). Do only those the check pointed you to.
 
-1. Check that each of the four scripts in the source is already mirrored, still the version E5 started from, or a copy of a version the repository committed later. The loop compares each script with its baseline, a commit that holds the pre-E5 version:
+1. Check that each of the five scripts in the source is already mirrored, still the version the repository started from, or a copy of a version the repository committed later. The loop compares each script with its baseline, a commit that holds the version from before the repository changed it:
 
    - `1044451^` for `feature-flags.js`, `search-navbar.js` and `search-results.js`. `1044451` is HFY-TSK-064, the first E5 commit to change any of the three.
    - `30c883d^` for `person-page.js`. `30c883d` is HFY-TSK-080, the private data gate, and the first E5 commit to change it.
+   - `7f238ac^` for `auth.js`. `7f238ac` is HFY-TSK-069's D-11 fixes, the commit that added the One Tap guard.
 
    ```sh
-   for f in feature-flags.js search-navbar.js search-results.js person-page.js; do
-     case "$f" in person-page.js) base='30c883d^' ;; *) base='1044451^' ;; esac
+   for f in feature-flags.js search-navbar.js search-results.js person-page.js auth.js; do
+     case "$f" in person-page.js) base='30c883d^' ;; auth.js) base='7f238ac^' ;; *) base='1044451^' ;; esac
      if cmp -s "11ty/js/$f" "$SRC/public/js/$f"; then echo "$f: already mirrored"; continue; fi
      state="source has changed"
      for c in "$base" $(git log --format=%h "$base..HEAD" -- "11ty/js/$f"); do
@@ -89,11 +112,11 @@ Never mirror `11ty/js/islands/`. Those bundles are the committed build output of
 
    Each line should end in `already mirrored` or `safe to replace`. The commit in parentheses is the version the source holds: the baseline, or a later commit when an earlier mirror was not kept up to date. A script that reports `source has changed` matches no committed version, so it has work in the source that the repository lacks. Merge that script by hand instead of copying it.
 
-2. Copy the files. Copying a file that is already mirrored changes nothing. Leave out any script that step 1 reported as `source has changed`:
+2. Copy the files. Copying a file that is already mirrored changes nothing. If mirror step 1 reported a script as `source has changed`, remove that script's path from the list in the loop before you run it, and merge the script by hand:
 
    ```sh
    for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/search-navbar.js js/search-results.js \
-            js/person-page.js sw.js manifest.webmanifest offline.html \
+            js/person-page.js js/auth.js sw.js manifest.webmanifest offline.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
             posts/index.html me/notifications/index.html; do
      mkdir -p "$SRC/public/$(dirname "$f")"
@@ -108,7 +131,7 @@ Never mirror `11ty/js/islands/`. Those bundles are the committed build output of
        <script src="/js/feature-flags.js"></script>
    ```
 
-   All ten rendered pages use this layout, so each one gets the tag where the committed pages have it.
+   All ten rendered pages use this layout, so each one gets the tag where the committed pages have it. The tag stays unversioned in the source. The islands build adds its `?v=` in `11ty/`.
 
 4. Remove the island bundles from the source:
 
@@ -116,9 +139,9 @@ Never mirror `11ty/js/islands/`. Those bundles are the committed build output of
    rm -r "$SRC/public/js/islands"
    ```
 
-Run [the check](#check-whether-the-mirror-is-done) again. It now prints 14 `mirrored` lines, `1`, and nothing else.
+Run [the check](#check-whether-the-mirror-is-done) again. It now prints 15 `mirrored` lines, `1`, and nothing else.
 
-After the mirror, make every change to these files in both `11ty/` and the source. The refresh excludes them, so a change made only in the source never reaches `11ty/`, and a change made only in `11ty/` leaves the source's copy behind, which the check then reports as `missing or different`.
+After the mirror, make every hand change to these files in `11ty/` and copy it to the source. The refresh excludes them, so a change made only in the source never reaches `11ty/`. A change made only in `11ty/`, by hand or by an islands build, leaves the source's copy behind, and the check then reports it as `missing or different`.
 
 ## Steps
 
@@ -158,7 +181,7 @@ grep -c 'src="/js/auth-v2.js"' "$SRC/_site/index.html"
 grep -l REPLACE_WITH_GOOGLE_CLIENT_ID "$SRC/_site/index.html" "$SRC/_site"/*/index.html | wc -l
 ```
 
-The first command prints `"enforceAssets":true`. The second prints `1`, which confirms the layout edit. The third prints `10`: every rendered page still carries the client ID placeholder. A lower count means `HFY_GOOGLE_CLIENT_ID` reached the build. Rebuild with it unset before you go on.
+The first command prints `"enforceAssets":true`. The second prints `1`, which confirms the layout edit. The source does not version the tag, so this match includes the closing quote. The third prints `10`: every rendered page still carries the client ID placeholder. A lower count means `HFY_GOOGLE_CLIENT_ID` reached the build. Rebuild with it unset before you go on.
 
 [`scripts/validate_build.sh`](../../scripts/validate_build.sh) runs the same `enforceAssets` check and adds client ID checks. It looks for the build at `<repo>/../workspace/11ty-dev/_site`, so it works only when the checkout's parent directory is `<project>`, as at `<project>/repo`. Anywhere else it stops with `Build directory not found`. When it finds the placeholder it warns `Remember to run the manual GIS patch after deployment`. That warning is expected. Ignore it, because the deploy replaces the placeholder.
 
@@ -171,7 +194,8 @@ rsync -ainc --delete --omit-dir-times \
   --exclude 'README.md' --exclude '.DS_Store' --exclude 'uploads/' \
   --exclude '_data/flags.json' --exclude 'js/islands/' --exclude 'js/auth-v2.js' \
   --exclude 'js/feature-flags.js' --exclude 'js/search-navbar.js' --exclude 'js/search-results.js' \
-  --exclude 'js/person-page.js' \
+  --exclude 'js/person-page.js' --exclude 'js/auth.js' \
+  --exclude 'css/auth-edge.css' --exclude 'css/hfy-theme.css' --exclude 'fonts/' \
   --exclude 'sw.js' --exclude 'manifest.webmanifest' --exclude 'offline.html' \
   --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' \
   "$SRC/_site/" 11ty/
@@ -182,9 +206,9 @@ These are the excludes that [`scripts/check-deployment-sync.sh`](../../scripts/c
 - The data directories and `private/` hold private records in the source output. Without `place/`, for example, the private place records would be copied into `11ty/`.
 - `uploads/` is the prefix for member photo uploads. The site deploy excludes it too.
 - `README.md` exists only in the repository.
-- The rest are the files the repository owns: the E5-only files, `js/islands/` and the four E5-edited scripts, `js/person-page.js` among them. The refresh neither deletes nor overwrites them, whatever the source holds. The `js/islands/` exclude also protects any island bundles you have built locally.
+- The rest are the files the repository owns. These are the repo-only files, the five repo-edited scripts (`js/person-page.js` and `js/auth.js` among them), and the islands build's outputs: `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` and `fonts/`. The refresh neither deletes nor overwrites them, whatever the source holds. The `js/islands/` exclude also protects any island bundles you have built locally.
 
-[`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) fails when the sync check and the `11ty/README.md` command exclude different paths, `.DS_Store` aside. It checks only the README copy, not this page. When the list changes, change all three together.
+[`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) fails when the sync check and the `11ty/README.md` command exclude different paths, `.DS_Store` aside. It also fails when either of them, or the README's repo-owned table, leaves out `js/person-page.js`, `js/auth.js`, `css/auth-edge.css`, `css/hfy-theme.css` or `fonts/`. It checks only the README copy of the command, not this page. When the list changes, change all three together.
 
 The `-c` flag compares file contents, so a file that differs only in timestamp is not reported as a content change.
 
@@ -193,9 +217,9 @@ Read the output against this table. The number of trailing characters in each co
 | Line starts with | Meaning | Expect |
 |---|---|---|
 | `*deleting` | The file would be removed from `11ty/`. | None. The excludes cover every file the repository owns, so a deletion means the source output no longer has a generated file. Apply only if you removed it from the source on purpose. |
-| `>fc`, as in `>fcst....` | The content would change. | Only files that changed in the source since the last refresh. The footer year comes from `site.currentYear`, so in a new year every page changes. |
+| `>fc`, as in `>fcst....` | The content would change. | Always the eight rendered pages the refresh compares: `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `privacy/`, `search/` and `terms/`. The committed copies carry the islands build's edits, and the source output does not: the family-voice copy instead of the old footer, titles and hero, the `?v=` versions, and the current theme-block values. Step 6 puts those back, so judge these pages by their `git diff` after step 6. Any other file should appear only if it changed in the source since the last refresh. |
 | `.f..t` | Same content, different timestamp. | Any number. Git sees no change. |
-| `>f+++` or `cd+++` | A new file or directory. | Only what you added to the source. |
+| `>f+++` or `cd+++` | A new file or directory. | Only what you added to the source. A new page needs registering with the islands build ([If something fails](#if-something-fails)). |
 
 If rsync warns that it cannot delete `_data` because the directory is not empty, the source output has no `_data/flags.json`. Either the mirror of that file is missing or the build is older than the mirror. Finish the mirror and build again.
 
@@ -210,7 +234,8 @@ If rsync warns that it cannot delete `_data` because the directory is not empty,
      --exclude 'README.md' --exclude '.DS_Store' --exclude 'uploads/' \
      --exclude '_data/flags.json' --exclude 'js/islands/' --exclude 'js/auth-v2.js' \
      --exclude 'js/feature-flags.js' --exclude 'js/search-navbar.js' --exclude 'js/search-results.js' \
-     --exclude 'js/person-page.js' \
+     --exclude 'js/person-page.js' --exclude 'js/auth.js' \
+     --exclude 'css/auth-edge.css' --exclude 'css/hfy-theme.css' --exclude 'fonts/' \
      --exclude 'sw.js' --exclude 'manifest.webmanifest' --exclude 'offline.html' \
      --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' \
      "$SRC/_site/" 11ty/
@@ -222,11 +247,46 @@ If rsync warns that it cannot delete `_data` because the directory is not empty,
    cp "$SRC/_site/person/index.html" 11ty/person/index.html
    ```
 
-   Copy only `index.html`. Everything else in `_site/person/` is private person JSON, which the source's config copies there for local preview.
+   Copy only `index.html`. Everything else in `_site/person/` is private person JSON, which the source's config copies into `_site/` on every build.
 
-3. Leave `11ty/private/index.html` as it is. The source's private page renders the whole person directory from the private data, including names, living status, birth years and record IDs, so `_site/private/index.html` must never reach the repository. The committed copy is a sanitized placeholder. If the base layout or `src/private/index.njk` has changed, make the same change in `11ty/private/index.html` by hand. [Family data privacy](../explanation/family-data-privacy.md) explains why the data stays out of `11ty/`.
+3. Leave `11ty/private/index.html` as it is. The source's private page renders the whole person directory from the private data, including names, living status, birth years and record IDs, so `_site/private/index.html` must never reach the repository. The committed copy is a sanitized placeholder. If the base layout or `src/private/index.njk` has changed, make the same change in `11ty/private/index.html` by hand, and let step 6 rewrite its head blocks, copy and versions. [Family data privacy](../explanation/family-data-privacy.md) explains why the data stays out of `11ty/`.
 
-**Alternative to sections 3 and 4.** [`scripts/promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh) promotes the files listed in a session log. Run it with `--dry-run` first, and list files, not directories, because it syncs a directory entry with `--delete`. It has no exclude list, so never list a file the repository owns, such as `11ty/js/person-page.js`: the script overwrites it with the source's copy. It needs the checkout's parent directory to be `<project>`. [Repository operations](../reference/repository-operations.md) describes its log format and behavior.
+#### Alternative to steps 3 to 5 (dry run, apply, check)
+
+Instead of the rsync commands, [`scripts/promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh) promotes the files listed in a session log. Run it with `--dry-run` first, and list files, not directories, because it syncs a directory entry with `--delete`. A listed `11ty/js/` would delete `js/islands/`, which mirror step 4 removes from the source, or replace it with any stale bundles left in `_site/js/`. It would also overwrite the five edited scripts with the source's copies. A listed `11ty/css/` would delete `css/hfy-theme.css` and `css/auth-edge.css`. It has no exclude list, so never list a file the repository owns, such as `11ty/js/person-page.js` or `11ty/js/auth.js`: the script overwrites it with the source's copy. It needs the checkout's parent directory to be `<project>`. [Repository operations](../reference/repository-operations.md#workspace-helper-scripts) describes its log format and behavior. Step 6 is still required after it.
+
+### 5. Check the copy against the build
+
+Run the [step 3](#3-dry-run) dry-run command again, before step 6. It prints nothing, or only `.f..t` lines, so `11ty/` now holds exactly the source output outside the excludes.
+
+After step 6, the same command always reports the eight rendered pages as `>fc` again, because the islands build has rewritten them.
+
+### 6. Rebuild the islands over the refreshed pages
+
+The refreshed pages now have the source's old copy, the source's stale head-block values (among them the hard-coded `hfy-theme.css?v=` in block B), and unversioned URLs for every other script and stylesheet. The islands build puts all three right, on `person/index.html` and `private/index.html` too.
+
+1. Export `CODEARTIFACT_AUTH_TOKEN` in this shell ([Build and preview the islands](build-and-preview-the-islands.md#1-get-a-codeartifact-token)).
+2. Install the island dependencies and build:
+
+   ```sh
+   (cd islands && npm ci && npm run build)
+   ```
+
+   It prints `built <n> files into <repo>/11ty (<m> written)`. Keep the dev dependencies in the install: do not pass `--omit=dev` or set `NODE_ENV=production`, because the build copies the brand fonts from them. [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh) is the scripted equivalent.
+
+3. Check the result:
+
+   ```sh
+   (cd islands && npm run check:islands)
+   git status --short 11ty/js/islands 11ty/js/feature-flags.js 11ty/sw.js 11ty/manifest.webmanifest \
+     11ty/css/hfy-theme.css 11ty/css/auth-edge.css 11ty/fonts auth/edge.manifest.json
+   ```
+
+   `check:islands` prints `<repo>/11ty is up to date (<n> generated files)` and exits `0`. The `git status` prints nothing. A refresh changes none of the build's inputs, so the build's own files come out exactly as committed.
+
+Never skip this step. A page committed without it keeps the old copy and names its scripts and stylesheets by unversioned URLs. Cloudflare caches those for 4 hours, and CloudFront invalidations do not purge it, so visitors can get a mix of old and new files after the deploy ([Why one CloudFront distribution fronts everything](../explanation/edge-and-origin-design.md#static-files-and-versioned-urls-hfy-tsk-086)).
+
+Never edit the head blocks, the family-voice copy, a `?v=` or an `hfy-asset-versions` block by hand. The next build overwrites them, and `check:islands` reports the difference until it does. To change the theme or the fonts themselves, follow [Change the theme or brand fonts](change-the-theme-or-brand-fonts.md).
 
 ## Leave the client ID placeholder
 
@@ -236,13 +296,12 @@ The committed pages and `js/auth.js` keep the string `REPLACE_WITH_GOOGLE_CLIENT
 grep -rl REPLACE_WITH_GOOGLE_CLIENT_ID 11ty | wc -l
 ```
 
-This prints `11`: the ten rendered pages and `js/auth.js`. A lower count means a page lost the placeholder, usually because `HFY_GOOGLE_CLIENT_ID` was set during the build. Do not commit. Rebuild with the variable unset, then apply again.
+This prints `11`: the ten rendered pages and `js/auth.js`. A lower count means a page lost the placeholder, usually because `HFY_GOOGLE_CLIENT_ID` was set during the build. Do not commit. Rebuild with the variable unset, then apply again and repeat step 6.
 
 ## Verify
 
-1. **Only the changes you meant.** `git status --short 11ty/` and `git diff --stat -- 11ty/` list only intended changes. Nothing is deleted, nothing under `11ty/private/` changes, and the data directories (`person/`, `media/`, `family/`, `event/`, `note/`, `place/`) show nothing except `person/index.html`.
-2. **`11ty/` matches the build.** Run the [step 3](#3-dry-run) dry-run command again. It prints nothing, or only `.f..t` lines.
-3. **Every E5 file still exists.** This prints nothing:
+1. **Only the changes you meant.** `git status --short 11ty/` and `git diff --stat -- 11ty/` list only intended changes. Step 6 restored the islands build's edits, so the diff of each rendered page shows only what changed in the source. A changed `css/main.css` or `js/bootstrap.bundle.min.js` also changes the `?v=` with which every Eleventy page links it. Nothing is deleted. Nothing under `11ty/private/` changes, except a `?v=` that follows a changed `main.css` or bootstrap script, unless you edited it in step 4. The data directories (`person/`, `media/`, `family/`, `event/`, `note/`, `place/`) show nothing except `person/index.html`.
+2. **Every repo-only file still exists.** This prints nothing:
 
    ```sh
    for f in _data/flags.json js/auth-v2.js sw.js manifest.webmanifest offline.html \
@@ -252,54 +311,65 @@ This prints `11`: the ten rendered pages and `js/auth.js`. A lower count means a
    done
    ```
 
-4. **The E5 edits survived.**
+3. **The repository's edits survived.**
 
    ```sh
-   grep -c 'src="/js/auth-v2.js"' 11ty/index.html                         # 1
-   grep -l 'src="/js/auth-v2.js"' 11ty/index.html 11ty/*/index.html | wc -l  # 10
-   grep -c hfy_flags 11ty/js/feature-flags.js                              # not 0
-   grep -c searchV2 11ty/js/search-navbar.js 11ty/js/search-results.js     # not 0 for either
-   grep -c 'featureFlags.dataFetch' 11ty/js/person-page.js                 # not 0
+   grep -c 'src="/js/auth-v2.js?v=' 11ty/index.html                            # 1
+   grep -l 'src="/js/auth-v2.js?v=' 11ty/index.html 11ty/*/index.html | wc -l   # 10
+   grep -c hfy_flags 11ty/js/feature-flags.js                                   # not 0
+   grep -c searchV2 11ty/js/search-navbar.js 11ty/js/search-results.js          # not 0 for either
+   grep -c 'featureFlags.dataFetch' 11ty/js/person-page.js                      # not 0
+   grep -c authV2Active 11ty/js/auth.js                                         # not 0
    ```
 
-   `hfy_flags` is the preview override in the island loader. The `searchV2` lines are the stand-down guards in the two search scripts. `featureFlags.dataFetch` is the `authV2` data path in the person page. The source's pre-E5 copy prints `0`.
+   The islands build versions the `auth-v2.js` tag, so in `11ty/` it reads `src="/js/auth-v2.js?v=<sha8>"`. A pattern that ends in the closing quote, `src="/js/auth-v2.js"`, matches nothing there. It matches only in the source, as in [step 2](#2-validate-the-build) and the mirror check. `hfy_flags` is the preview override in the island loader. The `searchV2` lines are the stand-down guards in the two search scripts. `featureFlags.dataFetch` is the `authV2` data path in the person page, and `authV2Active` is the One Tap guard in `auth.js`. The source's unmirrored copies of those two scripts print `0`.
 
-   The client tests check the `authV2` data path in `person-page.js` and the two search scripts more thoroughly. They need no install:
+   The client tests check the `authV2` data path and the sign-in hand-over more thoroughly. They need no install:
 
    ```sh
    node --test tests/client/*.test.mjs
    ```
 
-5. **The flags did not change.** `git diff --quiet -- 11ty/_data/flags.json && echo unchanged` prints `unchanged`.
-6. **The islands still mount on the refreshed pages.** The committed bundles are unchanged by a refresh, so check them, then run the island tests, which serve `11ty/` on `127.0.0.1:8089`:
+4. **The flags did not change.** `git diff --quiet -- 11ty/_data/flags.json && echo unchanged` prints `unchanged`.
+5. **The site passes the island tests.** They check the head blocks, the family-voice copy and the `?v=` versions on every page, and then run the browser specs against `11ty/` on `127.0.0.1:8089`:
 
    ```sh
-   (cd islands && npm ci && npm run check:islands && npm test)    # npm ci needs CODEARTIFACT_AUTH_TOKEN
-   git status --short 11ty/js/islands                               # prints nothing
+   (cd api && npm ci)      # content-contract.test.mjs imports the API; needs CODEARTIFACT_AUTH_TOKEN
+   (cd islands && npm test)
    ```
 
-   [Build and preview the islands](build-and-preview-the-islands.md) shows how to get the token. [Run the tests](run-the-tests.md) covers the contract tests' `api/` dependencies and the Chrome requirement.
+   [Run the tests](run-the-tests.md) covers the `api/` dependency and the Chrome requirement of the browser specs.
 
-## Commit from a worktree
+## If something fails
 
-The pre-commit hook, [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit), runs only after `git config core.hooksPath scripts/git-hooks`. When `11ty/` files are staged, it runs `check-deployment-sync.sh`, which compares `<repo>/../workspace/11ty-dev/_site` with `11ty/`. It uses the same excludes as the [dry run](#3-dry-run), so it skips the data directories and every file the repository owns ([Repository operations](../reference/repository-operations.md#workspace-helper-scripts)), but it compares the rendered pages, `auth-v2.js` tag and all.
+- **The islands build in step 6 stops with `Error: <page>: <ref> references <file>, which is not part of the site (cannot version it)`.** A refreshed page names a script or stylesheet that `11ty/` lacks. Copy the file from the source output, or remove the reference in the source and refresh again.
+- **`theme-delivery` fails with `pages without a head-block registration (add them to heads.mjs PAGES)`.** The refresh brought a new page. Add it to `PAGES` in [`islands/heads.mjs`](../../islands/heads.mjs). If it uses the base layout, also add it to `COPY_PAGES` and `TITLES` in [`islands/copy.mjs`](../../islands/copy.mjs). Then repeat step 6. [Theme and asset build](../reference/theme-and-asset-build.md) describes both lists.
+- **`copy` fails because a page still carries old copy or has the wrong title.** `copy.mjs` matches the old copy by exact string, so a rewording in the source slips past it. Update the matching entry in `copy.mjs`, or port the family-voice copy into the source, then repeat step 6.
 
-- Where the checkout's parent directory is `<project>`, as at `<project>/repo`, and the [mirror](#one-time-mirror-into-the-source) is done, the check passes after a refresh. If it reports the pages as out of sync, the source's base layout lacks the `auth-v2.js` tag: finish the mirror.
+## Commit
+
+The pre-commit hook, [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit), runs only after `git config core.hooksPath scripts/git-hooks`. When `11ty/` files are staged, it runs `check-deployment-sync.sh`, which compares `<repo>/../workspace/11ty-dev/_site` with `11ty/` by size and modification time. It uses the same excludes as the [dry run](#3-dry-run), so it skips the data directories and every file the repository owns ([Repository operations](../reference/repository-operations.md#workspace-helper-scripts)). It compares the eight rendered pages whole, so it fails for every refresh:
+
+- Where the checkout's parent directory is `<project>`, as at `<project>/repo`, it prints `[ERROR] Eleventy build (workspace/11ty-dev/_site -> repo/11ty) is out of sync with its workspace source.` and lists those pages. Step 6 wrote the family-voice copy, the `?v=` versions and the current theme blocks into them, and the source output has none of those. The check can pass again only once the source emits all of them.
 - In a worktree outside `<project>`, the build path does not exist, so the check fails with `[ERROR] Eleventy build (workspace/11ty-dev/_site -> repo/11ty) source directory missing: ...`.
 
-If the check fails only because you are in a worktree, and the dry-run re-run in [Verify](#verify) item 2 printed nothing or only `.f..t` lines, skip the check for this commit:
+When the step 5 re-run printed nothing or only `.f..t` lines and step 6's `check:islands` passed, skip the check for this commit:
 
 ```sh
 SKIP_DEPLOYMENT_SYNC_CHECK=1 git commit -m "HFY-TSK-<n>: refresh 11ty/ from the Eleventy source"
 ```
 
-The variable skips only the sync check. The `trufflehog` secret scan still runs. Record in the HFY task's worklog that you skipped the check, why, and what the dry-run re-run showed. Then ship the change with [Deploy a site change](deploy-a-site-change.md).
+The variable skips only the sync check. The `trufflehog` secret scan still runs. Record in the HFY task's worklog that you skipped the check, why, and what the step 5 re-run and `check:islands` showed. Then ship the change with [Deploy a site change](deploy-a-site-change.md).
 
 ## Related
 
 - [Why React islands on a generated Eleventy site](../explanation/islands-on-eleventy.md): why `11ty/` has two sources of truth and the two ways back to one.
+- [The design system theme layer](../explanation/design-system-theme-layer.md): why the islands build writes the head blocks and the family-voice copy into the pages.
+- [Why one CloudFront distribution fronts everything](../explanation/edge-and-origin-design.md#static-files-and-versioned-urls-hfy-tsk-086): why every page needs its `?v=` versions.
 - [Front end](../reference/front-end.md): what each file in `11ty/` is and where it came from.
-- [Codebase map](../reference/codebase-map.md#what-in-11ty-is-generated): generated, E5-edited and E5-only files.
+- [Theme and asset build](../reference/theme-and-asset-build.md): everything the islands build writes into `11ty/`.
+- [Codebase map](../reference/codebase-map.md#what-in-11ty-is-generated): generated, repo-edited, repo-only and build-output files.
 - [Repository operations](../reference/repository-operations.md): the hook, the sync check and the workspace helper scripts.
+- [Build and preview the islands](build-and-preview-the-islands.md) and [Change the theme or brand fonts](change-the-theme-or-brand-fonts.md): the islands build, and changes to the theme and fonts it writes.
 - [Toggle a feature flag](toggle-a-feature-flag.md): keep `flags.json` identical in both places after a flag change.
 - [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): the cut-over that depends on the `authV2` data path in `js/person-page.js`.

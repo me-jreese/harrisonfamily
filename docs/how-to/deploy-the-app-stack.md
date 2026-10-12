@@ -1,10 +1,10 @@
 # How to deploy the app stack and its CloudFront behaviors
 
-Use this page to create or update the app stack, `<app-stack>`, and to put it behind CloudFront: `/auth/*` and `/api/*`, the MCP server at `/mcp*` with its protected-resource metadata (PRM) under `/.well-known/oauth-protected-resource*`, member photos under `/uploads/*`, and the CORS rule that lets browsers upload them. Follow it for a first deploy and for every change to `api/` or `auth/`. Changes to `11ty/` ship another way: see [Deploy a site change](deploy-a-site-change.md).
+Use this page to create or update the app stack, `<app-stack>`, and to put it behind CloudFront: `/auth/*` and `/api/*`, the MCP server at `/mcp*` with its protected-resource metadata (PRM) under `/.well-known/oauth-protected-resource*`, member photos under `/uploads/*`, and the CORS rule that lets browsers upload them. Follow it for a first deploy and for every change to `api/` or `auth/`. That includes [`auth/edge.manifest.json`](../../auth/edge.manifest.json), which holds the sign-in pages' text and, in `theme.cssUrl`, the `?v=` stamp that the islands build writes whenever the sign-in stylesheet changes. Changes to `11ty/` ship another way: see [Deploy a site change](deploy-a-site-change.md).
 
 The stack, built from [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml), holds the DynamoDB table `hfy-app`, the Cognito user pool `hfy-users`, and two Lambda functions behind Function URLs. `hfy-api` serves the member API and, at `/mcp`, the MCP server. `hfy-auth-edge` handles sign-in with Google, a password or a passkey, the sessions, and the OAuth authorization server that MCP clients use. The secrets, the code packages, the access configuration, the CloudFront behaviors and the bucket CORS rule all live outside the stack, so a first deploy takes eight steps instead of one. [Architecture](../reference/architecture.md#app-stack) lists every resource, parameter and output.
 
-The private data gate is not part of this page. [Deploy the edge functions](deploy-the-edge-functions.md) deploys it, and [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md) attaches it once this page's behaviors are live.
+The private data gate is not part of this page. [Deploy the edge functions](deploy-the-edge-functions.md) deploys it. [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md) attaches it to the six family-data paths and, in place, to the `/uploads/*` behavior that step 6 creates. That page also shows how to check whether a distribution is gated. The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67). Step 6 and [Verify](#verify) cover `/uploads/*` both before and after it is gated.
 
 > **Operator credentials only.** The GitHub deploy role cannot run any of this. Its policy in [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) allows a sync to the site bucket, CloudFront invalidations, and code, version and alias updates on three named functions, but no CloudFormation, IAM, Cognito or distribution change. No workflow builds or deploys `hfy-api` or `hfy-auth-edge`. [The release model](../explanation/release-model.md#why-the-deploy-role-is-narrow) explains why.
 
@@ -14,14 +14,14 @@ Values in angle brackets, such as `<site>`, `<app-stack>`, `<code-bucket>`, `<co
 
 ## Before you start
 
-- **io's go-ahead.** CloudFormation deploys of `<app-stack>` need it, because the table and the user pool hold members' data ([`AGENTS.md`](../../AGENTS.md)).
+- **io's go-ahead.** CloudFormation deploys of `<app-stack>` need it, because the table and the user pool hold members' data. So does every real run of a behavior script in steps 5, 6 and 8 ([`AGENTS.md`](../../AGENTS.md)).
 - **Operator AWS credentials.** They must be able to:
   - deploy CloudFormation through a change set (create, describe, execute and delete change sets) with named IAM roles, covering IAM, Lambda, DynamoDB, Cognito, CloudWatch Logs and CloudFront response headers policies. CloudFormation acts with these credentials, so they also need `s3:GetObject` on the packages in `<code-bucket>`, because Lambda fetches the code with the caller's permissions. They also need `secretsmanager:GetSecretValue` on the origin-verify secret, which the stack resolves at deploy time.
   - create and read Secrets Manager secrets.
   - write to `<code-bucket>`. The bucket must be in `us-west-2`, the functions' region, because Lambda loads code only from a bucket in its own region.
   - get a CodeArtifact token, which takes `codeartifact:GetAuthorizationToken` and `sts:GetServiceBearerToken`.
   - read the configuration of `hfy-api` and `hfy-auth-edge` (`lambda:GetFunctionConfiguration`), for the secret check in step 5.
-  - read and update the CloudFront distribution.
+  - read and update the CloudFront distribution, and list the account's custom response headers policies (`cloudfront:ListResponseHeadersPolicies`) for check 11.
   - for step 8: read the `hfy-mcp-edge401` stack in `us-east-1` (`cloudformation:DescribeStacks`), and associate a Lambda@Edge version with the distribution, which AWS allows only with `lambda:GetFunction` and `lambda:EnableReplication*` on `hfy-mcp-edge401` and, the first time, `iam:CreateServiceLinkedRole`.
   - read and put the CORS configuration of `<site-bucket>`.
   - read object metadata under `config/` in `<config-bucket>`, for the check below.
@@ -33,7 +33,7 @@ Values in angle brackets, such as `<site>`, `<app-stack>`, `<code-bucket>`, `<co
   ```
 
   The secret scripts default to `us-west-2`. The behavior scripts take no region. They read the stack outputs and the origin-verify secret from the shell's default region. `add-mcp-behavior.sh` also reads the `hfy-mcp-edge401` stack, and it asks `us-east-1` for that one itself.
-- **Tools.** The AWS CLI version 2, `jq`, `openssl`, `zip`, `unzip`, `curl`, and Node.js 22 with npm. Check 12 in [Verify](#verify) also needs a browser with DevTools and a member account that can sign in.
+- **Tools.** The AWS CLI version 2, `jq`, `openssl`, `zip`, `unzip`, `curl`, and Node.js 22 with npm. Check 13 in [Verify](#verify) also needs a browser with DevTools and a member account that can sign in.
 - **Somewhere outside the repository for distribution backups.** Before each real update, the behavior scripts save the distribution configuration, origin-verify value included, to `${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}`, mode 600. Keep that directory private.
 - **A CodeArtifact token in the shell.** The `@io-kit/*` packages come from a private registry, and both package scripts stop if `CODEARTIFACT_AUTH_TOKEN` is unset:
 
@@ -56,7 +56,15 @@ Values in angle brackets, such as `<site>`, `<app-stack>`, `<code-bucket>`, `<co
   - `config/groups.json` holds the MCP groups, `mcp-authors` and `hfy-admin`, in the shape documented at the top of [`api/src/policy.js`](../../api/src/policy.js) and in [MCP server: Groups](../reference/mcp-server.md#groups). Without it the MCP server fails closed: every caller gets an empty tool list and no tool runs. You can deploy without it, but publish it before anyone connects an MCP client. Step 8 says when.
   - `config/admins.json` may be missing. That means there are no moderators: nobody is a site admin, and no MCP token carries the `admins` group. It is not an error. `hfy-api` then logs `admin list unavailable (failing closed)` and the auth edge `admin list unavailable (nobody is admin)`, and both are expected. To add a moderator, follow [Manage family access](manage-family-access.md).
 - **`<google-web-client-id>`.** This is the Google OAuth web client ID, the same value as the `HFY_GOOGLE_CLIENT_ID` repository secret. The stack requires it as `GoogleClientId` and has no default.
-- **A clean checkout of the commit to deploy.** Step 3 names the uploads after the commit, so `git status --short` must print nothing. The `api/` and `auth/` suites should pass ([Run the tests](run-the-tests.md)).
+- **A clean checkout of the commit to deploy.** Step 3 names the uploads after the commit, so `git status --short` must print nothing. The `api/` and `auth/` suites should pass ([Run the tests](run-the-tests.md)). If the commit changes the sign-in pages' look, `(cd islands && npm run check:islands)` must pass too, because it fails while the `?v=` in `theme.cssUrl` does not match the committed stylesheet. For such a change, `npm run e2e:theme` in `auth/` can also check those pages in Chrome under their real Content-Security-Policy, against a scratch build of the site ([Identity services: Page theme and HFY overrides](../reference/identity-services.md#page-theme-and-hfy-overrides)).
+- **The commit's site deploy, when the sign-in stylesheet changed.** Compare the stylesheet URL that the commit names with the one the live sign-in page links:
+
+  ```sh
+  jq -r .theme.cssUrl auth/edge.manifest.json
+  curl -s https://<site>/auth/login | grep -o '<link rel="stylesheet" href="[^"]*">'
+  ```
+
+  If the two URLs differ, this deploy changes the stylesheet that the sign-in pages load, [`11ty/css/auth-edge.css`](../../11ty/css/auth-edge.css). The `io-kit-deploy.yml` run for this commit on `main` must then have finished its `invalidate` job before you execute the change set in step 4 ([Deploy a site change: Watch the runs](deploy-a-site-change.md#3-watch-the-runs)). The redeployed `hfy-auth-edge` links the new URL at once. A request for that URL that arrives before the new file is in `<site-bucket>` gets the old file, and Cloudflare then keeps those old bytes under the new URL for up to 4 hours ([Edge and origin design](../explanation/edge-and-origin-design.md#static-files-and-versioned-urls-hfy-tsk-086)). For the same reason, do not fetch the new URL yourself before that run has finished.
 
 Run every command on this page from the repository root, in one shell. Steps 3, 4 and 5 set shell variables that later steps and [Verify](#verify) use.
 
@@ -64,7 +72,7 @@ Run every command on this page from the repository root, in one shell. Steps 3, 
 
 Every step is safe to re-run. The secret scripts report `no change` when the secret exists. Repeating step 4 with the same keys changes nothing: the deploy stops with `No changes to deploy` and leaves no change set to execute. The behavior scripts print `no change` and make no update when the distribution already matches. Re-applying the same CORS file leaves the same rule.
 
-On a code-only update, run steps 2 to 4, then [Verify](#verify). Run steps 5 and 6 on a first deploy, and again only when a function's URL or the uploads policy changes. Run step 7 only when the CORS file changes. Run step 8 on a first deploy, once on a distribution that has no `/mcp*` behavior yet, and again when the `hfy-api` Function URL changes. Step 8 depends on step 5, not on steps 6 or 7.
+On a code-only update, run steps 2 to 4, then [Verify](#verify). A change to `auth/edge.manifest.json` alone, such as new sign-in text or a new `theme.cssUrl` stamp, is a code-only update, because the manifest ships inside `hfy-auth-edge.zip`. Run step 5 on a first deploy, and again only when a function's URL changes. Run step 6 on a first deploy, and again only when the stack's uploads policy changes. While `/uploads/*` is members-only, step 6 changes nothing. Run step 7 only when the CORS file changes. Run step 8 on a first deploy, once on a distribution that has no `/mcp*` behavior yet, and again when the `hfy-api` Function URL changes. Step 8 depends on step 5, not on steps 6 or 7.
 
 ### 1. Create the secrets
 
@@ -282,7 +290,7 @@ On a first deploy, the dry-run diff only adds `hfy-auth-origin` and its two beha
 
 #### Add the API behavior and the legacy pin
 
-While `authV2` is off, every visitor signs in through the legacy page, which posts to `/api/check-allowed` on the `hfy-check-allowed` API Gateway. `add-api-behavior.sh` keeps that path there: before it points `/api/*` at `hfy-api`, it clones whichever behavior serves `/api/check-allowed` under the pattern `/api/check-allowed*` and orders it ahead of `/api/*` (HFY-R58). [Edge and origin design](../explanation/edge-and-origin-design.md#one-origin-for-the-browser) explains why the path needs its own behavior.
+The legacy sign-in is still deployed, and every push to `main` still ships its Lambda, `hfy-check-allowed` ([Deploy a site change](deploy-a-site-change.md)). Its page, `/family-login/`, posts a Google sign-in to `/api/check-allowed` on the `hfy-check-allowed` API Gateway, but only while `authV2` is off. With `authV2` on, `/family-login/` sends a signed-out visitor to `/auth/login` instead. `add-api-behavior.sh` keeps the legacy path where it is, so the legacy sign-in still works if `authV2` is turned off again. Before it points `/api/*` at `hfy-api`, it clones whichever behavior serves `/api/check-allowed` under the pattern `/api/check-allowed*`, and orders the clone ahead of `/api/*` (HFY-R58). [Edge and origin design](../explanation/edge-and-origin-design.md#one-origin-for-the-browser) explains why the path needs its own behavior.
 
 ```sh
 scripts/infra/add-api-behavior.sh --stack <app-stack> --distribution <distribution-id> --secret-name "$OV_NAME" --dry-run
@@ -290,7 +298,7 @@ scripts/infra/add-api-behavior.sh --stack <app-stack> --distribution <distributi
 
 Read the dry run:
 
-- A line `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`. `<origin-id>` must be the legacy API Gateway origin, never `hfy-api-origin`.
+- A line `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`. `<origin-id>` must be the legacy API Gateway origin, never `hfy-api-origin`. The line's wording names HFY-TSK-069, the cutover task, but the cutover left the legacy Lambda and this pin in place, so keep the pin.
 - Two `cache behaviors ... (in evaluation order)` lines. In the `after` line, `/api/check-allowed* -> <origin-id>` comes before `/api/* -> hfy-api-origin`.
 - A diff that touches only `hfy-api-origin`, `/api/*` and, on the first run, the new pin.
 
@@ -322,7 +330,9 @@ To undo a behavior change, run the rollback command the script printed, with the
 
 ### 6. Serve member photos under `/uploads/*`
 
-Member photos are uploaded to `uploads/posts/` in `<site-bucket>`. [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) serves that prefix from the bucket's S3 origin with the stack's `UploadsResponseHeadersPolicy`, which adds `X-Content-Type-Options: nosniff` and a sandboxing Content-Security-Policy (HFY-R58). It reads the policy ID from the output `UploadsResponseHeadersPolicyId` of the stack named by `--stack`, and uses the default behavior's origin unless you pass `--origin-id`.
+Member photos are uploaded to `uploads/posts/` in `<site-bucket>`. [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) creates the `/uploads/*` behavior in its public state. In that state the behavior serves the prefix from the bucket's S3 origin to anyone who holds a photo's URL, with `CachingOptimized` and the stack's `UploadsResponseHeadersPolicy`, which adds `X-Content-Type-Options: nosniff` and a sandboxing Content-Security-Policy (HFY-R58). The script reads the policy ID from the output `UploadsResponseHeadersPolicyId` of the stack named by `--stack`, and uses the default behavior's origin unless you pass `--origin-id`.
+
+The private data gate later makes the same behavior members-only, in place. [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh) adds the `hfy-edge-gate` viewer-request association, `CachingDisabled` and the response headers policy `hfy-uploads-private`, which sends the same two headers and adds `Cache-Control: private, no-store`. `add-uploads-behavior.sh` never undoes that.
 
 ```sh
 scripts/infra/add-uploads-behavior.sh --stack <app-stack> --distribution <distribution-id> --dry-run
@@ -330,11 +340,21 @@ scripts/infra/add-uploads-behavior.sh --stack <app-stack> --distribution <distri
 aws cloudfront wait distribution-deployed --id <distribution-id>
 ```
 
-The dry run prints `serving /uploads/* from origin <origin-id> with response headers policy <policy-id>`, and its diff adds only the `/uploads/*` behavior. `origin '<id>' is not in distribution ...` means the default behavior's origin was not found: pass the S3 origin's ID with `--origin-id`.
+The dry run prints one of three results:
+
+- **No `/uploads/*` behavior yet, or a public one that differs.** It prints `serving /uploads/* from origin <origin-id> with response headers policy <policy-id>`, and its diff adds or changes only the `/uploads/*` behavior.
+- **A public behavior that already matches.** It prints the same `serving` line, then `distribution <distribution-id> already has the /uploads/* behavior with response headers policy <policy-id>: no change`.
+- **A members-only behavior**, one that carries the `hfy-edge-gate` association. It prints `/uploads/* is members-only (hfy-edge-gate association, add-data-gate-behaviors.sh): left as it is. add-data-gate-behaviors.sh --remove ungates it.`, then `distribution <distribution-id> already has the members-only /uploads/* behavior: no change`. The real run changes nothing either. If the gate function has another name on your distribution, pass it with `--gate-function-name`.
+
+`origin '<id>' is not in distribution ...` means the default behavior's origin was not found: pass the S3 origin's ID with `--origin-id`.
+
+If the family-data paths are gated but `/uploads/*` is not, photos are still served to anyone with the URL. `curl -s -o /dev/null -w '%{http_code}\n' https://<site>/person/index.json` prints `401` when the data paths are gated, and the same request for `https://<site>/uploads/x` prints `401` when `/uploads/*` is. To gate `/uploads/*` in place, follow [step 3 of the cutover](cut-over-to-the-private-data-gate.md#3-attach-the-gate), which needs io's G-prod approval, then purge `/uploads/` from Cloudflare as its [step 4](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) describes.
+
+The members-only policy keeps the Content-Security-Policy of the stack's policy, which is held in `UPLOADS_CSP` in [`scripts/infra/lib/cf-common.sh`](../../scripts/infra/lib/cf-common.sh). If you change that header in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml), change `UPLOADS_CSP` with it. `scripts/infra/test/run.sh` fails while the two differ.
 
 ### 7. Apply the photo-upload CORS rule
 
-Browsers upload post photos straight to `<site-bucket>`, using presigned `PUT` URLs that `hfy-api` issues, so the bucket needs a CORS rule. No stack manages the bucket. The rule is in [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json). That file also carries a `_comment` key, which the AWS CLI rejects as an unknown parameter, so strip it before you apply the rule.
+Browsers upload post photos straight to `<site-bucket>`, using presigned `PUT` URLs that `hfy-api` issues, so the bucket needs a CORS rule. The upload does not pass through CloudFront, so the private data gate does not affect it. No stack manages the bucket. The rule is in [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json). That file also carries a `_comment` key, which the AWS CLI rejects as an unknown parameter, so strip it before you apply the rule.
 
 `put-bucket-cors` replaces the bucket's whole CORS configuration. Look at the current configuration first:
 
@@ -351,7 +371,7 @@ aws s3api put-bucket-cors --bucket <site-bucket> --cors-configuration "file://$C
 rm -f "$CORS"
 ```
 
-The `postsV2` flag depends on this rule ([Toggle a feature flag](toggle-a-feature-flag.md)). Apply it once, and again only when the file changes.
+Photo uploads from the `postsV2` composer depend on this rule ([Toggle a feature flag](toggle-a-feature-flag.md)). Apply it once, and again only when the file changes.
 
 ### 8. Route `/mcp` and the protected-resource metadata
 
@@ -389,7 +409,7 @@ Then, if the check in [Before you start](#before-you-start) found `config/groups
 
 ## Verify
 
-Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None prints a secret.
+Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None prints a secret.
 
 1. **The stack is complete, runs this build, and kept its Function URLs.**
 
@@ -422,14 +442,33 @@ Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None p
    ```
 
    The command prints `https://<site>/auth` and `https://<site>/auth/userinfo`, which also proves the `/.well-known/oauth-authorization-server*` behavior. `null` twice means the edge answered `404 {"code":"NOT_FOUND"}`, which it does when `McpRedirectUris` is empty and MCP OAuth is off.
-4. **The sign-in page offers passkeys.**
+4. **The sign-in page comes from this build.** The page's passkey button text and stylesheet URL come from the manifest in the package, and its headers come from the kit version and `auth/src/edge.js`:
 
    ```sh
-   curl -s https://<site>/auth/login | grep -o '<button type="button" id="pk-btn">[^<]*</button>'
+   LOGIN_PAGE="$(mktemp)"; LOGIN_HEADERS="$(mktemp)"
+   curl -s -D "$LOGIN_HEADERS" -o "$LOGIN_PAGE" https://<site>/auth/login
+   jq -r '.copy.passkey_button, .theme.cssUrl' auth/edge.manifest.json
+   grep -o '<button type="button" id="pk-btn">[^<]*</button>' "$LOGIN_PAGE"
+   grep -o '<link rel="stylesheet" href="[^"]*">' "$LOGIN_PAGE"
+   grep -i '^referrer-policy:' "$LOGIN_HEADERS"
+   grep -i '^content-security-policy:' "$LOGIN_HEADERS" | grep -o -E "(style|font)-src [^;]*"
+   rm -f "$LOGIN_PAGE" "$LOGIN_HEADERS"
    ```
 
-   The command prints `<button type="button" id="pk-btn">Sign in with a passkey</button>`. No output means the page has no passkey path, so `hfy-auth-edge` does not run this build.
-5. **The API answers through CloudFront.**
+   - `jq` prints the manifest's `passkey_button` text, then its `theme.cssUrl`, `https://<site>/css/auth-edge.css?v=<sha8>`.
+   - The button line carries the same `passkey_button` text, and the stylesheet line the same URL. Different text or a different URL means `hfy-auth-edge` runs another package: compare its `AuthCodeKey` in check 1. No button line means the page has no passkey path at all.
+   - `referrer-policy: strict-origin-when-cross-origin`. `no-referrer` means the function was built with `@io-kit/auth` older than `2.1.2`, and Google refuses sign-in on `/auth/login`.
+   - `style-src 'unsafe-inline' https://<site> https://accounts.google.com/gsi/style` and `font-src 'self'`. The stylesheet and the fonts are allowed only from the site itself ([Identity services: Page theme and HFY overrides](../reference/identity-services.md#page-theme-and-hfy-overrides)).
+5. **The sign-in stylesheet matches its version.**
+
+   ```sh
+   CSS_URL="$(jq -r .theme.cssUrl auth/edge.manifest.json)"
+   curl -s -o /dev/null -w '%{http_code}\n' "$CSS_URL"
+   echo "named ${CSS_URL##*v=}, served $(curl -s "$CSS_URL" | openssl dgst -sha256 | awk '{print substr($NF, 1, 8)}')"
+   ```
+
+   The first command prints `200`, and the second line shows the same eight hex digits twice. The `?v=` value is the start of the stylesheet's SHA-256, so two different values mean visitors get a different file from the one this build names. Either the commit's site deploy has not finished, or a request reached the new URL before it finished, and Cloudflare now keeps the old bytes under that URL for up to 4 hours. See the site-deploy prerequisite in [Before you start](#before-you-start). Clearing that one URL from Cloudflare sooner is a purge, which needs io's go-ahead.
+6. **The API answers through CloudFront.**
 
    ```sh
    curl -s -w '\n%{http_code}\n' https://<site>/api/posts
@@ -441,7 +480,7 @@ Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None p
    - A body with only a `message` key, such as `{"message":"Not Found"}` or `{"message":"Missing Authentication Token"}`: API Gateway answered, so `/api/*` still targets the legacy origin. Run [Add the API behavior](#add-the-api-behavior-and-the-legacy-pin), or wait for the distribution to finish deploying.
    - An error page from the site bucket: no `/api/*` behavior exists.
    - A `5xx` status: CloudFront reached `hfy-api`, but the function failed, for example because a module is missing from the package. Read its log with `aws logs tail /aws/lambda/hfy-api --since 15m`, then rebuild and redeploy from step 2.
-6. **The MCP server challenges a request without a token.**
+7. **The MCP server challenges a request without a token.**
 
    ```sh
    curl -s -D - -o /dev/null -X POST -H 'content-type: application/json' \
@@ -454,14 +493,14 @@ Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None p
    - `x-amzn-remapped-www-authenticate:` with no `www-authenticate:` line: the `/mcp*` behavior has no 401-restore association, or the distribution has not finished deploying. Run the dry run of step 8 again.
    - `403` with no challenge: the header the distribution sends does not match `hfy-api`'s `ORIGIN_VERIFY`.
    - Any other status: the `/mcp*` behavior is missing. Run step 8.
-7. **The protected-resource metadata is served.**
+8. **The protected-resource metadata is served.**
 
    ```sh
    curl -s https://<site>/.well-known/oauth-protected-resource/mcp | jq -r '.resource, .authorization_servers[0]'
    ```
 
    The command prints `https://<site>/mcp` and `https://<site>/auth`. A `jq` parse error means the site bucket answered, so the `/.well-known/oauth-protected-resource*` behavior is missing. Run step 8.
-8. **The Function URLs refuse direct calls.**
+9. **The Function URLs refuse direct calls.**
 
    ```sh
    API_URL="$(aws cloudformation describe-stacks --stack-name <app-stack> \
@@ -473,25 +512,35 @@ Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None p
    ```
 
    Both lines print `{"error":"forbidden"} 403`. The Function URLs use AuthType `NONE`, so this header check is the only thing that stops callers from bypassing CloudFront.
-9. **The legacy sign-in route survived.**
+10. **The legacy sign-in route survived.** The legacy sign-in, used whenever `authV2` is off, reaches its Lambda through the pin.
 
-   ```sh
-   curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}' \
-     https://<site>/api/check-allowed
-   ```
+    ```sh
+    curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}' \
+      https://<site>/api/check-allowed
+    ```
 
-   The command prints `{"allowed":false,"error":"missing id_token"} 400`. That is the legacy Lambda refusing the empty request ([`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs)). `{"error":"not_found","message":"no such route"} 404` comes from `hfy-api` and means the request never reached the legacy Lambda. Go back to [Add the API behavior and the legacy pin](#add-the-api-behavior-and-the-legacy-pin).
-10. **The behaviors are in order, and uploads carry their policy.**
+    The command prints `{"allowed":false,"error":"missing id_token"} 400`. That is the legacy Lambda refusing the empty request ([`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs)). `{"error":"not_found","message":"no such route"} 404` comes from `hfy-api` and means the request never reached the legacy Lambda. Go back to [Add the API behavior and the legacy pin](#add-the-api-behavior-and-the-legacy-pin).
+11. **The behaviors are in order, and uploads carry the policy for their state.**
 
     ```sh
     aws cloudfront get-distribution-config --id <distribution-id> \
-      --query 'DistributionConfig.CacheBehaviors.Items[].[PathPattern,TargetOriginId,ResponseHeadersPolicyId]' --output text
+      --query 'DistributionConfig.CacheBehaviors.Items[].[PathPattern, TargetOriginId, ResponseHeadersPolicyId, LambdaFunctionAssociations.Items[0].EventType]' --output text
     aws cloudformation describe-stacks --stack-name <app-stack> \
       --query "Stacks[0].Outputs[?OutputKey=='UploadsResponseHeadersPolicyId'].OutputValue" --output text
+    aws cloudfront list-response-headers-policies --type custom \
+      --query "ResponseHeadersPolicyList.Items[?ResponseHeadersPolicy.ResponseHeadersPolicyConfig.Name=='hfy-uploads-private'].ResponseHeadersPolicy.Id" --output text
+    curl -s -o /dev/null -w '%{http_code}\n' https://<site>/uploads/x
     ```
 
-    `/api/check-allowed*` is listed before `/api/*`, the `/uploads/*` row carries the policy ID that the second command prints, and the `/mcp*` and `/.well-known/oauth-protected-resource*` rows target `hfy-api-origin`. Once the private data gate is attached, its six data-path rows are listed too.
-11. **The CORS rule is in place.**
+    The first command lists one row per behavior, in evaluation order. Its last column is the event type of the behavior's Lambda@Edge association, or `None` when it has none.
+
+    - `/api/check-allowed*` is listed before `/api/*`.
+    - The `/mcp*` and `/.well-known/oauth-protected-resource*` rows target `hfy-api-origin` and end in `origin-response`.
+    - The `/uploads/*` row matches the `curl` result:
+      - When `curl` prints anything other than `401`, `/uploads/*` is public. The row ends in `None` and carries the stack's policy ID, which the second command prints. This is the state after a first deploy, before the gate is attached.
+      - When `curl` prints `401`, `/uploads/*` is members-only. The row ends in `viewer-request` and carries the `hfy-uploads-private` ID, which the third command prints.
+    - Once the private data gate is attached, the six family-data rows (`/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`) also end in `viewer-request`, so seven rows do in all. If those six do and `/uploads/*` does not, gate it as described at the end of [step 6](#6-serve-member-photos-under-uploads).
+12. **The CORS rule is in place.**
 
     ```sh
     aws s3api get-bucket-cors --bucket <site-bucket> \
@@ -499,7 +548,7 @@ Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None p
     ```
 
     One line reads `{"AllowedMethods":["PUT"],"AllowedOrigins":["https://<site>"],"AllowedHeaders":["Content-Type","Content-Length"],"MaxAgeSeconds":3000}`. Any other lines are rules you kept from the earlier configuration.
-12. **A signed-in session reports when it expires.** Sign in at `https://<site>/auth/login` in a browser, open DevTools on any page of `https://<site>`, and run this in the console. It logs no identity, only whether you are signed in and how long the session has left:
+13. **A signed-in session reports when it expires.** Sign in at `https://<site>/auth/login` in a browser, open DevTools on any page of `https://<site>`, and run this in the console. It logs no identity, only whether you are signed in and how long the session has left:
 
     ```js
     fetch("/auth/session").then((r) => r.json()).then((s) => console.log(s.authenticated, typeof s.exp, Math.round(s.exp - Date.now() / 1000)))
@@ -507,7 +556,7 @@ Checks 1 to 11 need no session. Check 12 uses your own signed-in browser. None p
 
     It logs `true number <seconds>`, where `<seconds>` is above `0` and at most `3600`, the session's lifetime. Pages use `exp` to refresh the session silently through `/auth/refresh` before it lapses. `true undefined NaN` means `hfy-auth-edge` does not run this build. `false` means the browser is not signed in.
 
-To try the new surfaces in one browser before anyone else sees them, see [Toggle a feature flag](toggle-a-feature-flag.md). If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md), and for MCP clients, [An MCP client cannot connect](diagnose-sign-in-and-api-failures.md#an-mcp-client-cannot-connect).
+If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md), and for MCP clients, [An MCP client cannot connect](diagnose-sign-in-and-api-failures.md#an-mcp-client-cannot-connect).
 
 ## If the deploy fails
 
@@ -556,16 +605,26 @@ aws cloudformation describe-stack-events --stack-name <app-stack> --max-items 25
 
 Because each build has its own keys, the previous build is still in `<code-bucket>`. To return to it, check out the earlier commit, set `SHA` to that commit with the `git rev-parse` command from step 3, and repeat step 4 from that checkout, review included, so that the template and the code match. Steps 2 and 3 are needed only if that commit's zips are no longer in the bucket. The table and the user pool keep their data through a rollback, and the stack keeps its current `McpResources`. A rollback does not change the Function URLs, which the output check in step 4 confirms, so steps 5, 6 and 8 are not needed.
 
-To undo a CloudFront change from step 5, 6 or 8, use the rollback command that the script printed for its backup, as described at the end of [step 5](#add-the-api-behavior-and-the-legacy-pin).
+Before step 4, check in the earlier commit's checkout which kit version it pins, and whether `authV2` is on:
 
-Then run every check in [Verify](#verify). Check 1 shows both keys ending in the earlier commit's `SHA`. Checks of features that the earlier commit lacks fail as expected.
+```sh
+jq -r '.dependencies["@io-kit/auth"]' auth/package.json
+curl -s https://<site>/_data/flags.json | jq .authV2
+```
+
+If the first command prints a version older than `2.1.2`, that build sends `Referrer-Policy: no-referrer`, and Google refuses sign-in on `/auth/login` as an origin that is not allowed for the client ID. If the second command prints `true`, `/auth/login` is where every member signs in. In that case do not roll back that far: fix forward instead. An earlier build also shows its own manifest's sign-in text and links its own stylesheet URL.
+
+To undo a CloudFront change from step 5, 6 or 8, use the rollback command that the script printed for its backup, as described at the end of [step 5](#add-the-api-behavior-and-the-legacy-pin). The backup holds the whole distribution configuration as it was before that run. Restoring it also undoes every later change to the distribution, the private data gate's included. Restore only the backup of the run you are undoing, before anything else changes the distribution, and run check 11 afterwards.
+
+Then run every check in [Verify](#verify). Check 1 shows both keys ending in the earlier commit's `SHA`. Checks of features that the earlier commit lacks fail as expected. Check 4 shows the earlier manifest's text and stylesheet URL. Check 5 can show two different values once the site serves a newer `auth-edge.css` than the earlier build names.
 
 ## Related pages
 
 - [Architecture](../reference/architecture.md#app-stack): the stack's resources, parameters and outputs, the CloudFront behaviors and the secrets.
 - [MCP server](../reference/mcp-server.md): what `/mcp` and the protected-resource metadata serve, the groups config, and the `401` challenge.
 - [Deploy the edge functions](deploy-the-edge-functions.md): the `us-east-1` stacks `hfy-mcp-edge401`, which step 8 attaches, and `hfy-edge-gate`.
-- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): attaches the private data gate after this page's behaviors are live.
+- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): how to tell whether a distribution is gated, how to attach the gate to the family-data paths and to `/uploads/*`, and how to roll it back.
+- [Identity services: Page theme and HFY overrides](../reference/identity-services.md#page-theme-and-hfy-overrides) and [Theme and asset build](../reference/theme-and-asset-build.md): what the sign-in pages load, the HTML overrides in `auth/src/edge.js`, and how the `theme.cssUrl` stamp is made.
 - [Connect an MCP client](connect-an-mcp-client.md): connecting a client to `/mcp` and running an admin delete.
 - [Edge and origin design](../explanation/edge-and-origin-design.md): why one distribution fronts everything, why the Function URLs are gated by a shared header, and why MCP lives at a path on `hfy-api`.
 - [The identity model](../explanation/identity-model.md) and [Identity services](../reference/identity-services.md): what the auth edge does and how sessions work.
