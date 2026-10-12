@@ -57,7 +57,7 @@ beforeAll(async () => {
   });
   const oauth = createOAuthServer({
     issuer: ISS, redirectUris: [CB, CB2], resources: [RES, "https://mcp2.harrisonfamily.us"], store: memoryOAuthStore(),
-    signer: { privateKey: s.privateKey, kid: "hfy-session-1" }, groupsFor: async (sub) => members[sub] ?? null, now: () => clock,
+    signer: { privateKey: s.privateKey, kid: "hfy-session-1" }, corsOrigins: ["https://claude.ai", "https://claude.com"], groupsFor: async (sub) => members[sub] ?? null, now: () => clock,
   });
   edge = createAuthEdge({ manifest, identity, publicJwk: pub, oauth, verify: { issuers: [ISS], audiences: [manifest.session.audience], jwks: createLocalJWKSet({ keys: [pub] }) }, nonce: () => "n" });
   cookieAna = await signIn("ana@example.com", gToken);
@@ -206,5 +206,72 @@ describe("membership (allowlist + admins.json)", () => {
     expect(await g("I9")).toBeNull();
     const broken = createMembership({ readAllowlist: async () => { throw new Error("s3 down"); }, readAdmins: async () => "{}", log: { error() {} } });
     await expect(broken("I1")).rejects.toThrow();
+  });
+});
+
+const withOrigin = (ev, origin) => ({ ...ev, headers: { ...ev.headers, origin } });
+const preflight = (path, origin) => ({ rawPath: path, requestContext: { http: { method: "OPTIONS" } }, headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type,authorization" } });
+const bodyFor = { "/auth/token": { grant_type: "password" }, "/auth/register": {}, "/auth/revoke": { token: "nope" } };
+
+describe("CORS on /auth/token, /auth/register, /auth/revoke (HFY addendum)", () => {
+  for (const origin of ["https://claude.ai", "https://claude.com"]) {
+    for (const path of Object.keys(bodyFor)) {
+      it(`${origin} ${path}: preflight 204 and the response carries the exact origin, without credentials`, async () => {
+        const pre = await edge(preflight(path, origin));
+        expect(pre.statusCode).toBe(204);
+        expect(pre.headers["access-control-allow-origin"]).toBe(origin);
+        expect(pre.headers["access-control-allow-headers"]).toMatch(/Content-Type/);
+        expect(pre.headers["access-control-allow-headers"]).toMatch(/Authorization/);
+        expect(pre.headers["access-control-allow-methods"]).toMatch(/POST/);
+        expect(pre.headers["access-control-allow-credentials"]).toBeUndefined();
+        expect(pre.headers.vary).toBe("Origin");
+        const r = await edge(withOrigin(evPost(path, bodyFor[path], path !== "/auth/register"), origin));
+        expect(r.headers["access-control-allow-origin"]).toBe(origin);
+        expect(r.headers["access-control-allow-credentials"]).toBeUndefined();
+      });
+    }
+  }
+  it("a disallowed origin gets a 403 preflight and no CORS headers on the response", async () => {
+    for (const origin of ["https://evil.example", "https://claude.ai.evil.example", "http://claude.ai"]) {
+      for (const path of Object.keys(bodyFor)) {
+        const pre = await edge(preflight(path, origin));
+        expect(pre.statusCode).toBe(403);
+        expect(pre.headers["access-control-allow-origin"]).toBeUndefined();
+        const r = await edge(withOrigin(evPost(path, bodyFor[path], path !== "/auth/register"), origin));
+        expect(r.headers["access-control-allow-origin"]).toBeUndefined();
+      }
+    }
+  });
+  it("requests without an Origin carry no allow-origin header; a wildcard allow-list is refused at construction", () => {
+    expect(() => createOAuthServer({ issuer: ISS, redirectUris: [CB], resources: [RES], store: memoryOAuthStore(), signer: {}, groupsFor: async () => null, corsOrigins: ["*"] })).toThrow(/wildcard/);
+  });
+  it("metadata is readable cross-origin from an allowed origin", async () => {
+    const r = await edge(withOrigin(evGet("/auth/.well-known/oauth-authorization-server"), "https://claude.ai"));
+    expect(r.headers["access-control-allow-origin"]).toBe("https://claude.ai");
+    expect(JSON.parse(r.body).revocation_endpoint).toBe(`${ISS}/revoke`);
+  });
+});
+
+describe("/auth/revoke (RFC 7009)", () => {
+  it("revokes a refresh token and its family; unknown tokens still get 200", async () => {
+    const p = pkce();
+    const first = (await token({ grant_type: "authorization_code", code: await getCode(cookieAna, p), redirect_uri: CB, client_id: "mcp-harrisonfamily", code_verifier: p.verifier })).body;
+    const rotated = (await token({ grant_type: "refresh_token", refresh_token: first.refresh_token })).body;
+    const rev = await edge(evPost("/auth/revoke", { token: rotated.refresh_token, token_type_hint: "refresh_token", client_id: "mcp-harrisonfamily" }));
+    expect(rev.statusCode).toBe(200);
+    expect((await token({ grant_type: "refresh_token", refresh_token: rotated.refresh_token })).body.error).toBe("invalid_grant");
+    expect((await edge(evPost("/auth/revoke", { token: "hfyrt_unknown" }))).statusCode).toBe(200);
+    expect((await edge(evPost("/auth/revoke", { token: "a.b.c" }))).statusCode).toBe(200);
+    expect((await edge(evPost("/auth/revoke", { token: "x", client_id: "other" }))).statusCode).toBe(401);
+  });
+});
+
+describe("RFC 8414 root discovery (HFY-R44)", () => {
+  it("serves the same document at /.well-known/oauth-authorization-server/auth and under /auth", async () => {
+    const root = await edge(evGet("/.well-known/oauth-authorization-server/auth"));
+    const under = await edge(evGet("/auth/.well-known/oauth-authorization-server"));
+    expect(root.statusCode).toBe(200);
+    expect(JSON.parse(root.body)).toEqual(JSON.parse(under.body));
+    expect((await edge(evGet("/.well-known/oauth-authorization-server"))).statusCode).toBe(404);
   });
 });

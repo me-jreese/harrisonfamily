@@ -33,4 +33,4 @@ Post index items carry the full post so lists need no second read. Each create, 
 
 ## Notes
 
-CloudFront Lambda OAC requires clients sending a request body (POST, PUT, PATCH) to include an `x-amz-content-sha256` header with the body's SHA-256 hex digest. Web push needs the optional VAPID secret `{subject, publicKey, privateKey}`.
+The Function URL is AuthType NONE behind CloudFront (HFY-R43): every request must carry the secret `X-Origin-Verify` header that CloudFront injects (`ORIGIN_VERIFY`, from Secrets Manager `harrisonfamily/cloudfront/origin-verify`); anything else is 403 before routing.

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   harrisonfamily app backend (HFY-TSK-063, R32): DynamoDB table hfy-app, Lambda hfy-api behind an IAM-auth
-  Function URL that only the site's CloudFront distribution (Lambda OAC) may invoke.
+  Function URL (AuthType NONE) used as a plain CloudFront custom origin, gated by the secret X-Origin-Verify header (HFY-R43).
 
 Parameters:
   TableName: { Type: String, Default: hfy-app }
@@ -15,7 +15,6 @@ Parameters:
   SessionAudience: { Type: String, Default: harrisonfamily-web }
   SessionJwksUrl: { Type: String, Default: "https://harrisonfamily.us/auth/.well-known/jwks.json", Description: Auth-edge JWKS the API verifies sessions with (HFY-R38; the API never holds the signing key) }
   SessionCookie: { Type: String, Default: io_id }
-  DistributionId: { Type: String, Default: E2JCDK3QLQNNYB, Description: CloudFront distribution allowed to invoke the Function URLs }
   # --- auth edge (HFY-TSK-062) ---
   AuthFunctionName: { Type: String, Default: hfy-auth-edge }
   AuthCodeKey: { Type: String, Default: lambda/hfy-auth-edge.zip, Description: Key of hfy-auth-edge.zip in CodeBucket }
@@ -24,6 +23,8 @@ Parameters:
   SigningKeySecretName: { Type: String, Default: harrisonfamily/auth-edge/session-signing-key, Description: Secret created by scripts/infra/create-session-key.sh }
   McpRedirectUris: { Type: String, Default: "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback", Description: "HFY-TSK-076: comma-separated exact redirect URIs the public MCP client may use (the only allowed list)" }
   McpResources: { Type: String, Default: "https://mcp.harrisonfamily.us", Description: "HFY-TSK-076: comma-separated resource indicators (token aud); the first is the default" }
+  McpCorsOrigins: { Type: String, Default: "https://claude.ai,https://claude.com", Description: "Exact browser origins allowed CORS on /auth/token, /register, /revoke (never a wildcard)" }
+  OriginVerifySecretName: { Type: String, Default: harrisonfamily/cloudfront/origin-verify, Description: "Secret created by scripts/infra/create-origin-verify.sh; CloudFront sends it as X-Origin-Verify (HFY-R43)" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
 
 Conditions:
@@ -110,6 +111,7 @@ Resources:
         Variables:
           TABLE_NAME: !Ref TableName
           SESSION_JWKS_URL: !Ref SessionJwksUrl
+          ORIGIN_VERIFY: !Sub "{{resolve:secretsmanager:${OriginVerifySecretName}:SecretString}}"
           SESSION_ISSUER: !Ref SessionIssuer
           SESSION_AUDIENCE: !Ref SessionAudience
           SESSION_COOKIE: !Ref SessionCookie
@@ -121,26 +123,25 @@ Resources:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !GetAtt Function.Arn
-      AuthType: AWS_IAM
+      AuthType: NONE
       InvokeMode: BUFFERED
 
-  # CloudFront OAC signs requests as cloudfront.amazonaws.com; scope both grants to the one distribution.
+  # AuthType NONE: the URL is publicly invokable, so each Lambda rejects any request without the X-Origin-Verify secret (HFY-R43).
   InvokeUrlPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref Function
       Action: lambda:InvokeFunctionUrl
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
-      FunctionUrlAuthType: AWS_IAM
+      Principal: "*"
+      FunctionUrlAuthType: NONE
 
   InvokeFunctionPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref Function
       Action: lambda:InvokeFunction
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
+      Principal: "*"
+      InvokedViaFunctionUrl: true
 
   # ---------------- auth edge (HFY-TSK-062): Cognito pool + hfy-auth-edge at https://harrisonfamily.us/auth/* ----------------
   UserPool:
@@ -245,13 +246,15 @@ Resources:
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           MCP_REDIRECT_URIS: !Ref McpRedirectUris
           MCP_RESOURCES: !Ref McpResources
+          MCP_CORS_ORIGINS: !Ref McpCorsOrigins
+          ORIGIN_VERIFY: !Sub "{{resolve:secretsmanager:${OriginVerifySecretName}:SecretString}}"
           ADMIN_LIST_KEY: !Ref AdminListKey
 
   AuthFunctionUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !GetAtt AuthFunction.Arn
-      AuthType: AWS_IAM
+      AuthType: NONE
       InvokeMode: BUFFERED
 
   AuthInvokeUrlPermission:
@@ -259,17 +262,16 @@ Resources:
     Properties:
       FunctionName: !Ref AuthFunction
       Action: lambda:InvokeFunctionUrl
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
-      FunctionUrlAuthType: AWS_IAM
+      Principal: "*"
+      FunctionUrlAuthType: NONE
 
   AuthInvokeFunctionPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref AuthFunction
       Action: lambda:InvokeFunction
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}
+      Principal: "*"
+      InvokedViaFunctionUrl: true
 
 Outputs:
   FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }

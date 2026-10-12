@@ -40,22 +40,6 @@ function cookiesOf(event) {
   return out;
 }
 
-/**
- * The kit's login page posts with fetch() and no payload hash. CloudFront OAC -> Lambda Function URL requires
- * x-amz-content-sha256 on POST/PUT, so the page is patched to send the SHA-256 of the body. Returns the page unchanged if the kit's
- * script no longer matches (the unit test pins the kit literal).
- */
-export function patchPostHash(html) {
-  const sig = "async function ioPost(url,body){";
-  if (!html.includes(sig) || !html.includes("body:JSON.stringify(body)")) return html;
-  const hash =
-    "var __s=JSON.stringify(body);var __h=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(__s)))).map(function(b){return b.toString(16).padStart(2,'0')}).join('');";
-  return html
-    .replace(sig, sig + hash)
-    .replace("headers:{'content-type':'application/json',", "headers:{'x-amz-content-sha256':__h,'content-type':'application/json',")
-    .replace("body:JSON.stringify(body)", "body:__s");
-}
-
 export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth }) {
   const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
@@ -84,13 +68,17 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
       if (k.toLowerCase() === "location" && typeof v === "string") out.headers[k] = v.replace(/^\/(login|verify|link|password\/forgot|password\/reset)(?=$|[?#])/, `${MOUNT}/$1`);
     }
     const ct = Object.entries(out.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
-    if (/text\/html/.test(ct) && typeof out.body === "string") out.body = patchPostHash(out.body.replace(ABS_LINK, `$1${MOUNT}/$2`));
+    if (/text\/html/.test(ct) && typeof out.body === "string") out.body = out.body.replace(ABS_LINK, `$1${MOUNT}/$2`);
     return out;
   }
 
   return async function handler(event) {
     const method = (event.requestContext?.http?.method ?? event.httpMethod ?? "GET").toUpperCase();
     const raw = ((event.rawPath ?? event.requestContext?.http?.path ?? "/").replace(/\/+$/, "")) || "/";
+    if (raw === `/.well-known/oauth-authorization-server${MOUNT}`) {
+      // RFC 8414 root discovery for the issuer https://<site>/auth (HFY-R44); the same document is served at /auth/.well-known/oauth-authorization-server
+      return (oauth && (await oauth.handle("/.well-known/oauth-authorization-server", event, async () => null))) ?? json(404, { code: "NOT_FOUND" });
+    }
     if (raw !== MOUNT && !raw.startsWith(`${MOUNT}/`)) return json(404, { code: "NOT_FOUND" });
     const rel = raw.slice(MOUNT.length) || "/";
     if (rel === "/.well-known/jwks.json") {

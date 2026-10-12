@@ -7,6 +7,7 @@ import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/
 import { createUlidFactory } from "@io-kit/feed";
 import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
+import { forbidden, originVerified } from "./origin.js";
 
 const env = process.env;
 const cmds = { GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand, TransactWriteCommand };
@@ -52,6 +53,7 @@ const authenticate = createAuthenticator({
 
 let inner;
 export const handler = async (event) => {
+  if (!originVerified(event, env.ORIGIN_VERIFY)) return forbidden(); // HFY-R43, before any routing
   if (!inner) {
     const p = await loadPush();
     inner = createHandler({

@@ -7,6 +7,7 @@ import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator } from "@
 import { createAuthEdge, loadManifest } from "./edge.js";
 import { createOAuthServer, ddbOAuthStore } from "./oauth.js";
 import { createMembership } from "./membership.js";
+import { forbidden, originVerified } from "./origin.js";
 
 const sdk = (name) => import(name);
 
@@ -61,6 +62,7 @@ async function init() {
   const oauth = redirectUris.length
     ? createOAuthServer({
         issuer: m.session.issuer, redirectUris, resources: resources.length ? resources : ["https://mcp.harrisonfamily.us"],
+        corsOrigins: csv(process.env.MCP_CORS_ORIGINS),
         ...(process.env.MCP_CLIENT_ID ? { clientId: process.env.MCP_CLIENT_ID } : {}),
         store: ddbOAuthStore({ doc, cmds: lib, table: tableName }), signer: { privateKey, kid },
         groupsFor: createMembership({
@@ -95,6 +97,7 @@ async function cognitoProvisioner(userPoolId) {
 
 let app;
 export const handler = async (event) => {
+  if (!originVerified(event, process.env.ORIGIN_VERIFY)) return forbidden(); // HFY-R43, before any routing
   app ??= init();
   try {
     return await (await app)(event);

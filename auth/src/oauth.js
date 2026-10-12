@@ -34,9 +34,10 @@ export function memoryOAuthStore() {
   return { put: async (i) => { m.set(i.PK, { SK: "META", ...i }); }, get: async (pk) => m.get(pk), take: async (pk) => { const v = m.get(pk); m.delete(pk); return v; } };
 }
 
-export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, now = () => Date.now(), random = (n) => randomBytes(n) }) {
+export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
   if (!redirectUris?.length) throw new Error("redirectUris must not be empty");
   if (!resources?.length) throw new Error("resources must not be empty");
+  if (corsOrigins.some((o) => !/^https:\/\/[^/*\s]+$/.test(o))) throw new Error("corsOrigins must be exact https origins (no wildcard)");
   const base = issuer.replace(/\/+$/, "");
   const mount = new URL(base).pathname.replace(/\/+$/, "") || "";
   const secs = () => Math.floor(now() / 1000);
@@ -52,6 +53,8 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     authorization_endpoint: `${base}/authorize`,
     token_endpoint: `${base}/token`,
     registration_endpoint: `${base}/register`,
+    revocation_endpoint: `${base}/revoke`,
+    revocation_endpoint_auth_methods_supported: ["none"],
     jwks_uri: `${base}/.well-known/jwks.json`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -146,6 +149,17 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     });
   }
 
+  /** RFC 7009: revokes a refresh token (and its rotation family). Always 200 for unknown tokens; access tokens simply expire (1h). */
+  async function revoke(p) {
+    if (p.client_id && p.client_id !== clientId) return err(401, "invalid_client", "unknown client_id");
+    const t = p.token;
+    if (typeof t === "string" && t.startsWith("hfyrt_")) {
+      const rec = (await store.take(`MCPRT#${keyOf(t)}`)) ?? (await store.get(`MCPRTUSED#${keyOf(t)}`));
+      if (rec?.family) await store.put({ PK: `MCPFAM#${rec.family}`, revoked: true, ttl: secs() + REFRESH_TTL_S + 3600 });
+    }
+    return { statusCode: 200, headers: { "content-type": "application/json", ...noStore }, body: "{}" };
+  }
+
   const bodyText = (e) => (e.isBase64Encoded && e.body ? Buffer.from(e.body, "base64").toString("utf8") : (e.body ?? ""));
   const ctype = (e) => String(Object.entries(e.headers ?? {}).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "");
   function params(e) {
@@ -153,23 +167,37 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     if (/json/.test(ctype(e))) { try { const v = JSON.parse(t || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; } }
     return Object.fromEntries(new URLSearchParams(t));
   }
-  const ROUTES = { "/.well-known/oauth-authorization-server": "GET", "/authorize": "GET", "/token": "POST", "/register": "POST" };
+  const ROUTES = { "/.well-known/oauth-authorization-server": "GET", "/authorize": "GET", "/token": "POST", "/register": "POST", "/revoke": "POST" };
+
+  const CORS_ROUTES = new Set(["/.well-known/oauth-authorization-server", "/token", "/register", "/revoke"]);
+  const headerOf = (e, name) => { const k = Object.keys(e.headers ?? {}).find((x) => x.toLowerCase() === name); return k ? e.headers[k] : undefined; };
 
   /** rel = path below the mount. Returns an edge result, or undefined when the path is not an OAuth route. */
   async function handle(rel, event, sessionOf) {
     const want = ROUTES[rel];
     if (!want) return undefined;
     const method = (event.requestContext?.http?.method ?? event.httpMethod ?? "GET").toUpperCase();
-    if (method !== want && !(want === "GET" && method === "HEAD")) return json(405, { error: "invalid_request", error_description: `use ${want}` }, { allow: want });
+    // CORS: exact-origin allow list, no credentials, no wildcard. Requests without an Origin (server-to-server) are unaffected.
+    const origin = headerOf(event, "origin");
+    const allowed = typeof origin === "string" && corsOrigins.includes(origin);
+    const cors = (r) => (CORS_ROUTES.has(rel) ? { ...r, headers: { ...r.headers, vary: "Origin", ...(allowed ? { "access-control-allow-origin": origin } : {}) } } : r);
+    if (method === "OPTIONS" && CORS_ROUTES.has(rel)) {
+      if (!allowed) return json(403, { error: "invalid_request", error_description: "origin not allowed" }, { vary: "Origin" });
+      return { statusCode: 204, headers: { "access-control-allow-origin": origin, "access-control-allow-methods": `${want}, OPTIONS`, "access-control-allow-headers": "Content-Type, Authorization", "access-control-max-age": "600", vary: "Origin" }, body: "" };
+    }
+    if (method !== want && !(want === "GET" && method === "HEAD")) return cors(json(405, { error: "invalid_request", error_description: `use ${want}` }, { allow: want }));
+    let r;
     try {
-      if (rel === "/.well-known/oauth-authorization-server") return metadata();
-      if (rel === "/authorize") return await authorize(event.queryStringParameters, sessionOf);
-      if (rel === "/token") return await token(params(event));
-      return register(params(event));
+      if (rel === "/.well-known/oauth-authorization-server") r = metadata();
+      else if (rel === "/authorize") r = await authorize(event.queryStringParameters, sessionOf);
+      else if (rel === "/token") r = await token(params(event));
+      else if (rel === "/revoke") r = await revoke(params(event));
+      else r = register(params(event));
     } catch (e) {
       console.error(JSON.stringify({ msg: "oauth failure", rel, error: e instanceof Error ? e.message : String(e) }));
-      return json(503, { error: "server_error" });
+      r = json(503, { error: "server_error" });
     }
+    return cors(r);
   }
-  return { handle, metadata, authorize, token, register };
+  return { handle, metadata, authorize, token, register, revoke };
 }

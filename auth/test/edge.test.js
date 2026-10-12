@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet, jwtVerify } from "jose";
 import { buildResolver, validateManifest } from "@io-kit/auth/edge/deploy";
 import { createIdentityService, memoryLinkStore, memoryRefreshStore } from "@io-kit/auth/server";
-import { createAuthEdge, loadManifest, patchPostHash } from "../src/edge.js";
+import { createAuthEdge, loadManifest } from "../src/edge.js";
 import { parseSigningSecret } from "../src/index.js";
 
 const raw = JSON.parse(readFileSync(new URL("../edge.manifest.json", import.meta.url), "utf8"));
@@ -119,7 +119,7 @@ describe("session + JWKS endpoints", () => {
 });
 
 describe("login page under the /auth mount", () => {
-  it("serves both paths, rewrites root-relative links to /auth/*, and sends the OAC payload hash", async () => {
+  it("serves both paths, rewrites root-relative links to /auth/*, with no payload-hash workaround", async () => {
     const res = await edge(get("/auth/login"));
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-security-policy"]).toMatch(/accounts\.google\.com/);
@@ -127,10 +127,6 @@ describe("login page under the /auth mount", () => {
     expect(res.body).toContain("/auth/password");
     expect(res.body).toMatch(/href="\/auth\/password\/forgot"/);
     expect(res.body).not.toMatch(/(href|action)="\/(password|verify|link|login)/);
-    expect(res.body).toContain("x-amz-content-sha256");
-    expect(res.body).toContain("body:__s");
-  });
-  it("patchPostHash is a no-op when the kit script changes shape", () => {
-    expect(patchPostHash("<p>nothing</p>")).toBe("<p>nothing</p>");
+    expect(res.body).not.toContain("x-amz-content-sha256");
   });
 });

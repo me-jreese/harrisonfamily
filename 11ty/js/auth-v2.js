@@ -5,11 +5,6 @@
   function getJSON(url, init) {
     return fetch(url, init).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
   }
-  function sha256Hex(text) {
-    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)).then(function (buf) {
-      return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
-    });
-  }
   function show(el) { if (el) { el.classList.remove("d-none"); el.hidden = false; } }
   function hide(el) { if (el) { el.classList.add("d-none"); el.hidden = true; } }
 
@@ -30,13 +25,8 @@
     out.addEventListener("click", function (ev) {
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      var body = "{}";
-      sha256Hex(body).then(function (h) {
-        return fetch("/auth/logout", {
-          method: "POST", credentials: "same-origin",
-          headers: { "content-type": "application/json", "x-requested-with": "io-kit", "x-amz-content-sha256": h }, body: body
-        });
-      }).catch(function () {}).then(function () { location.assign("/logged-out/"); });
+      fetch("/auth/logout", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "x-requested-with": "io-kit" }, body: "{}" })
+        .catch(function () {}).then(function () { location.assign("/logged-out/"); });
     }, true);
   }
 
