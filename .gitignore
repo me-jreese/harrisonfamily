@@ -24,3 +24,4 @@ __pycache__/
 # Ensure external references stay out of the repo
 ../agent-reference/
 ../reports/
+!.github/actions/io-kit-ci/build/

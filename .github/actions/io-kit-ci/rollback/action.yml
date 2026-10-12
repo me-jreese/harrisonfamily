@@ -1,0 +1,38 @@
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:53e3f8d9f4e5cc2333d64d6f8adf684a6dde19c05fb88c38ad6f713914eb1687
+name: io-kit rollback
+description: Redeploy the release artifact of the previous successful deploy run (strategy previous_artifact). Run after a failed smoke.
+inputs:
+  out:
+    description: Build output directory (build.out); cleared before the previous artifact is restored.
+    default: 11ty
+  workflow:
+    description: Deploy workflow file whose previous successful run is restored.
+    default: io-kit-deploy.yml
+  token:
+    description: Token for gh (needs actions read).
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Restore previous release artifact
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        OUT: ${{ inputs.out }}
+        WORKFLOW: ${{ inputs.workflow }}
+      run: |
+        set -euo pipefail
+        prev=$(gh run list --workflow "$WORKFLOW" --branch "$GITHUB_REF_NAME" --status success --limit 1 --json databaseId,headSha --jq '.[0] | select(. != null) | "\(.databaseId) \(.headSha)"')
+        [ -n "$prev" ] || { echo "::error::rollback: no previous successful run of $WORKFLOW on $GITHUB_REF_NAME"; exit 1; }
+        read -r run_id sha <<<"$prev"
+        echo "rolling back to run $run_id ($sha)"
+        rm -rf "$OUT"
+        gh run download "$run_id" --name "io-kit-release-$sha" --dir .
+    - id: rb_static
+      uses: ./.github/actions/io-kit-ci/deploy-static
+    - id: rb_lambda
+      uses: ./.github/actions/io-kit-ci/deploy-lambda
+      with:
+        rollback: "true"
+    - id: rb_invalidate
+      uses: ./.github/actions/io-kit-ci/invalidate
