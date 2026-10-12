@@ -29,7 +29,10 @@ function InstallPrompt() {
   const [dismissed, setDismissed] = useState(() => { try { return localStorage.getItem("hfy:install-dismissed") === "1"; } catch { return false; } });
   const ios = detectPlatform() === "ios";
   const standalone = installed || mode === "standalone";
-  if (dismissed || standalone || !(canInstall || ios)) return null;
+  // On iPhone the notification settings page carries its own add-to-home-screen card (the kit PushNudge's iosHint, which is the
+  // reason push needs the install). Two stacked cards said the same thing twice with a "not now" each (QA2): that page shows one.
+  const notifyCard = ios && /^\/me\/notifications\/?$/.test(window.location.pathname);
+  if (dismissed || standalone || notifyCard || !(canInstall || ios)) return null;
   const dismiss = () => { try { localStorage.setItem("hfy:install-dismissed", "1"); } catch { /* ignore */ } setDismissed(true); };
   return (
     <div className="hfy-install" role="region" aria-label="add to home screen" data-hfy-install>
@@ -40,6 +43,21 @@ function InstallPrompt() {
       </div>
     </div>
   );
+}
+
+// DS Shell, degraded state: going offline says so, below the bar, until the connection comes back. navigator.onLine is the browser's
+// own signal (the service worker keeps the opened pages working, which is what the line promises).
+function Offline() {
+  const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine !== false));
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+  if (online) return null;
+  return <div className="hfy-offline-banner" role="status" data-hfy-offline-banner><p>you're offline. the pages you already opened still work.</p></div>;
 }
 
 function Content() {
@@ -169,6 +187,7 @@ function Shell() {
           />
           <div className="hfy-bar__end"><Account notifyV2={notifyV2} /></div>
         </ScrollTopZone>
+        <Offline />
         <Content />
       </div>
     </KitShell>

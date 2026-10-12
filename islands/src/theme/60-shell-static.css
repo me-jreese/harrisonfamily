@@ -54,3 +54,22 @@ html.hfy-shell-v2:not(:has(.io-shell)) body::before {
     pointer-events: none;
   }
 }
+
+/* Pre-mount page position (QA2): the page's own <main> sits where it will sit once the shell has mounted, so nothing jumps when it does.
+   The bars are overlays until then, and `html.hfy-shell-v2 main { padding-top: 0 }` (40-site) had put the hero at y=0 under the strip
+   (80px higher than after the mount, with the bottom strip over the second button). After the mount the scroller starts under the bar
+   and main has space-6 above and the page gutter beside it, so those are what an unmounted main gets: the bar height and safe area,
+   then space-6 (and under 688 the bottom strip's height under the content); the gutter steps match shell.css (16 / 24 / 64). */
+html.hfy-shell-v2:not(:has(.io-shell)) body > main {
+  padding: calc(var(--io-shell-bar-h) + var(--io-shell-safe-top) + var(--io-space-6)) var(--io-space-4) calc(var(--io-shell-bar-h) + var(--io-shell-safe-bottom) + var(--io-space-7));
+}
+html.hfy-shell-v2:not(:has(.io-shell)) body > main:is(.container, .container-fluid) { --bs-gutter-x: 0; margin: 0; max-width: none; }
+@media (min-width: 43rem) {
+  html.hfy-shell-v2:not(:has(.io-shell)) body > main {
+    padding-inline: var(--io-space-6);
+    padding-bottom: var(--io-space-7);
+  }
+}
+@media (min-width: 64rem) {
+  html.hfy-shell-v2:not(:has(.io-shell)) body > main { padding-inline: var(--io-space-9); }
+}

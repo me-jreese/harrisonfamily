@@ -13,10 +13,10 @@ import { edgeSignedOut, signedOutResponse } from "../lib/api.js";
 export const CATALOG = {
   groups: [{ id: "family", label: "family" }],
   types: {
-    comment_on_my_record: { group: "family", label: "someone comments on my page", desc: "a comment on your page in the family tree.", title: "Family tree", generic: "Someone commented on your record.", detailed: "{actor} commented on your record." },
-    reply_to_me: { group: "family", label: "someone replies to me", desc: "a reply where you commented.", title: "Family tree", generic: "Someone replied to you.", detailed: "{actor} replied to you." },
-    new_family_post: { group: "family", label: "family posts something new", desc: "a new post on the family timeline.", title: "Family news", generic: "There is a new family post.", detailed: "{actor} shared a new family post." },
-    mention: { group: "family", label: "someone mentions me", desc: "someone writes @ and your name in a comment.", title: "Family tree", generic: "You were mentioned.", detailed: "{actor} mentioned you." }
+    comment_on_my_record: { group: "family", label: "someone comments on my page", desc: "a comment on your page in the family tree.", title: "Harrison Family", generic: "someone commented on your page.", detailed: "{actor} commented on your page." },
+    reply_to_me: { group: "family", label: "someone replies to me", desc: "a reply where you commented.", title: "Harrison Family", generic: "someone replied to you.", detailed: "{actor} replied to you." },
+    new_family_post: { group: "family", label: "family posts something new", desc: "a new post on the family timeline.", title: "Harrison Family", generic: "there's a new family post.", detailed: "{actor} shared a new family post." },
+    mention: { group: "family", label: "someone mentions me", desc: "someone writes @ and your name in a comment.", title: "Harrison Family", generic: "you were mentioned.", detailed: "{actor} mentioned you." }
   },
   levels: { generic: "hide the details", detailed: "show who", hint: "hidden details keep names off your lock screen." },
   sample: { actor: "A family member" }

@@ -183,7 +183,8 @@ describe("login page under the /auth mount", () => {
 
 // ---- design system: sign-in pages (components/SignIn; HFY overrides of @io-kit/auth 2.1.2 in adapt()) ----
 import { DEFAULT_COPY } from "@io-kit/auth/edge/deploy";
-import { FONT_SRC, GIS_FOCUS_SCRIPT, cspWithFontSrc, gisButtonDark, gisFocusRing } from "../src/edge.js";
+import { ALLOWLIST_NOTICE_SCRIPT, BACK_LINK, FONT_SRC, GIS_FOCUS_SCRIPT, KIT_STRINGS, allowlistNotice, backToSite, cspWithFontSrc, deniedNotice, gisButtonDark, gisFocusRing, kitVoice } from "../src/edge.js";
+import vm from "node:vm";
 
 const cspOf = (res) => Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === "content-security-policy")?.[1];
 const fontSrcCount = (csp) => (String(csp).match(/(^|;)\s*font-src\s/g) ?? []).length;
@@ -207,7 +208,7 @@ describe("sign-in pages: self-hosted fonts are allowed by the CSP (kit cspFor em
       denied: await deniedHtml(),
     };
     expect(pages.denied.statusCode).toBe(403);
-    expect(pages.denied.body).toContain("<h1>not on the list yet</h1><p>that email isn&#39;t on the list yet. text J and we&#39;ll add you.</p>");
+    expect(pages.denied.body).toContain('<h1>not on the list yet</h1><p data-state="not_allowlisted">that email isn&#39;t on the list yet. text J and we&#39;ll add you.</p>');
     expect(pages["/auth/link (signed in)"].statusCode).toBe(200);
     for (const [name, res] of Object.entries(pages)) {
       expect(res.headers["content-type"], name).toMatch(/text\/html/);
@@ -287,6 +288,167 @@ describe("sign-in pages: Google button and signed-out /auth/link (kit loginPage 
     expect(res.headers.location).toBe("/auth/login?returnTo=%2Fauth%2Flink");
     const login = await edge(get("/auth/login", { queryStringParameters: { returnTo: decodeURIComponent(res.headers.location.split("returnTo=")[1]) } }));
     expect(ioReturnOf(login.body)).toBe("/auth/link");
+  });
+});
+
+const inlineScripts = (html) => [...html.matchAll(/<script nonce="[^"]+"([^>]*)>([\s\S]*?)<\/script>/g)].map((m) => ({ attrs: m[1], code: m[2] })).filter((x) => x.code);
+
+describe("sign-in pages: the allowlist state is a neutral banner with a copy button (HFY-TSK-084, QA2 major)", () => {
+
+  it("the login page carries the allowlist script once, under the page's own script nonce, after the kit script", async () => {
+    const res = await edge(get("/auth/login"));
+    const nonce = /<script nonce="([^"]+)" data-hfy-allowlist>/.exec(res.body)?.[1];
+    expect(nonce).toBe("n0nce");
+    expect(cspOf(res)).toContain(`'nonce-${nonce}'`);
+    expect(res.body.split("data-hfy-allowlist").length - 1).toBe(1);
+    expect(res.body).toContain(ALLOWLIST_NOTICE_SCRIPT);
+    expect(res.body.indexOf("function ioFail(")).toBeLessThan(res.body.indexOf("data-hfy-allowlist")); // it wraps the kit's function, so it runs after it
+    expect(res.body.indexOf("data-hfy-allowlist")).toBeLessThan(res.body.lastIndexOf("</body>"));
+    expect(allowlistNotice(res.body)).toBe(res.body); // idempotent
+  });
+
+  it("pages without the kit's ioFail (forgot, reset, link), without a nonce, or not strings are left alone", async () => {
+    for (const path of ["/auth/password/forgot", "/auth/password/reset"]) expect((await edge(get(path))).body, path).not.toContain("data-hfy-allowlist");
+    const bare = "<html><body><script>function ioFail(){}</script></body></html>";
+    expect(allowlistNotice(bare)).toBe(bare);
+    for (const v of [undefined, "", 7]) expect(allowlistNotice(v)).toBe(v);
+  });
+
+  // The real kit script and ours run in a vm against a minimal DOM, so the wrapping is tested against the kit's actual ioMsg/ioFail.
+  function loginPageRuntime(html, { email = "stranger@example.com", clipboard = "ok" } = {}) {
+    const timers = [];
+    const writes = [];
+    const el = (id) => {
+      const e = { id, attrs: {}, children: [], className: "", value: "", focused: false, selected: false, listeners: {} };
+      let text = "";
+      Object.defineProperty(e, "textContent", { get: () => text, set: (v) => { text = String(v); e.children = []; } }); // like the DOM: setting text drops the children
+      Object.assign(e, {
+        setAttribute: (k, v) => { e.attrs[k] = String(v); },
+        removeAttribute: (k) => { delete e.attrs[k]; },
+        appendChild: (c) => { e.children.push(c); return c; },
+        addEventListener: (t, f) => { e.listeners[t] = f; },
+        focus: () => { e.focused = true; },
+        select: () => { e.selected = true; },
+      });
+      return e;
+    };
+    const els = { "msg-pw": el("msg-pw"), "msg-google": el("msg-google"), email: el("email") };
+    els.email.value = email;
+    const navigator = clipboard === "none" ? {} : { clipboard: { writeText: (t) => { writes.push(t); return clipboard === "ok" ? Promise.resolve() : Promise.reject(new Error("denied")); } } };
+    const ctx = { document: { getElementById: (id) => els[id] ?? null, createElement: () => el("new") }, navigator, setTimeout: (f) => timers.push(f), location: { assign() {} } };
+    ctx.window = ctx;
+    vm.createContext(ctx);
+    for (const { attrs, code } of inlineScripts(html)) if (!attrs.includes("data-hfy-gis-focus")) vm.runInContext(code, ctx); // the kit script first, then ours
+    return { ctx, els, writes, timers };
+  }
+
+  it("a not_allowlisted failure marks the message and adds 'copy my email'; the button copies the typed address and says copied", async () => {
+    const page = (await edge(get("/auth/login"))).body;
+    const { ctx, els, writes, timers } = loginPageRuntime(page, { email: "  stranger@example.com " });
+    ctx.ioFail("msg-pw", { ok: false, status: 403, body: { code: "AUTH_FORBIDDEN", detail: "not_allowlisted" } });
+    const msg = els["msg-pw"];
+    expect(msg.textContent).toBe("that email isn't on the list yet. text J and we'll add you."); // the kit's copy, untouched
+    expect(msg.className).toBe("msg show");
+    expect(msg.attrs["data-detail"]).toBe("not_allowlisted");
+    expect(msg.attrs["aria-atomic"]).toBe("false"); // the alert is not re-read whole when the button changes to "copied"
+    expect(msg.children).toHaveLength(1);
+    const btn = msg.children[0];
+    expect(btn.textContent).toBe("copy my email");
+    expect(btn.type).toBe("button");
+    expect("data-copy-email" in btn.attrs).toBe(true);
+    btn.listeners.click();
+    expect(writes).toEqual(["stranger@example.com"]); // trimmed
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(btn.textContent).toBe("copied");
+    timers.forEach((f) => f());
+    expect(btn.textContent).toBe("copy my email");
+  });
+
+  it("every other failure is the kit's red banner: no mark, no button, and a later message clears an earlier mark", async () => {
+    const page = (await edge(get("/auth/login"))).body;
+    const { ctx, els } = loginPageRuntime(page);
+    ctx.ioFail("msg-pw", { body: { detail: "not_allowlisted" } });
+    expect(els["msg-pw"].attrs["data-detail"]).toBe("not_allowlisted");
+    ctx.ioFail("msg-pw", { body: { detail: "invalid_credentials" } });
+    expect(els["msg-pw"].textContent).toBe("that email and password don't match. try again, or text J.");
+    expect(els["msg-pw"].attrs["data-detail"]).toBeUndefined();
+    expect(els["msg-pw"].attrs["aria-atomic"]).toBeUndefined();
+    expect(els["msg-pw"].children).toHaveLength(0);
+    ctx.ioFail("msg-pw", { body: { detail: "not_allowlisted" } });
+    ctx.ioMsg("msg-pw", "that didn't work. try again, or text J."); // a direct kit message (passkey failures go through ioMsg)
+    expect(els["msg-pw"].attrs["data-detail"]).toBeUndefined();
+    expect(els["msg-pw"].attrs["aria-atomic"]).toBeUndefined();
+    ctx.ioFail("msg-pw", { body: {} });
+    expect(els["msg-pw"].attrs["data-detail"]).toBeUndefined();
+    expect(els["msg-pw"].className).toBe("msg show");
+  });
+
+  it("no typed address (the Google path): the banner is neutral but there is nothing to copy, so no button", async () => {
+    const page = (await edge(get("/auth/login"))).body;
+    const { ctx, els } = loginPageRuntime(page, { email: "   " });
+    ctx.ioFail("msg-google", { body: { detail: "not_allowlisted" } });
+    expect(els["msg-google"].attrs["data-detail"]).toBe("not_allowlisted");
+    expect(els["msg-google"].children).toHaveLength(0);
+  });
+
+  it("where the clipboard is refused or missing, the button selects the email field instead", async () => {
+    const page = (await edge(get("/auth/login"))).body;
+    for (const clipboard of ["denied", "none"]) {
+      const { ctx, els } = loginPageRuntime(page, { clipboard });
+      ctx.ioFail("msg-pw", { body: { detail: "not_allowlisted" } });
+      els["msg-pw"].children[0].listeners.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(els.email.focused && els.email.selected, clipboard).toBe(true);
+    }
+  });
+
+  it("the denied page (403 HTML) marks its one sentence; nothing else gets the mark", async () => {
+    const ev = post("/auth/google", { credential: await gToken("stranger@example.com") });
+    const denied = await edge({ ...ev, headers: { ...ev.headers, accept: "text/html" } });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.body).toContain('<h1>not on the list yet</h1><p data-state="not_allowlisted">');
+    expect(denied.body).not.toContain("data-hfy-allowlist"); // no form, no address to copy
+    const bare = await edge(get("/auth"));
+    expect(bare.statusCode).toBe(404);
+    expect(bare.body).not.toContain("data-state");
+    const login = await edge(get("/auth/login"));
+    expect(login.body).not.toContain("data-state");
+    expect(deniedNotice('<main><h1>x</h1><p>y</p></main>', 404)).toBe('<main><h1>x</h1><p>y</p></main>');
+    expect(deniedNotice('<main><h1>x</h1><p>y</p></main>', 403)).toBe('<main><h1>x</h1><p data-state="not_allowlisted">y</p></main>');
+    for (const v of [undefined, 7]) expect(deniedNotice(v, 403)).toBe(v);
+  });
+});
+
+describe("sign-in pages: copy the kit hard-codes, and the way back from /auth/link (HFY-TSK-084 minors)", () => {
+  it("the form-page error strings are in the house voice (the kit literals are gone, the replacements are valid script strings)", async () => {
+    for (const path of ["/auth/password/reset", "/auth/verify"]) {
+      const res = await edge(get(path));
+      const code = inlineScripts(res.body).map((x) => x.code).join("\n");
+      expect(code, path).not.toContain("The code is not valid");
+      expect(code, path).not.toContain("Choose a stronger password");
+      expect(code, path).toContain('"that code didn\'t work. check your email for the newest one, or text J."');
+      expect(code, path).toContain('"pick a stronger password. try again, or text J."');
+      expect(() => new vm.Script(code), path).not.toThrow();
+    }
+    expect(kitVoice("x")).toBe("x");
+    for (const [from] of KIT_STRINGS) expect(kitVoice(`a ${from} b`)).not.toContain(from);
+    expect(kitVoice(kitVoice(`a ${KIT_STRINGS[0][0]}`))).toBe(kitVoice(`a ${KIT_STRINGS[0][0]}`));
+    for (const v of [undefined, 7]) expect(kitVoice(v)).toBe(v);
+  });
+
+  it("the signed-in /auth/link ends with a way back to the site; the signed-out redirect and other pages do not get one", async () => {
+    const login = await edge(post("/auth/google", { credential: await gToken("ana@example.com") }));
+    const cookie = (login.cookies ?? []).map((c) => c.split(";")[0]).join("; ");
+    const link = await edge(get("/auth/link", { headers: { accept: "text/html", cookie } }));
+    expect(link.statusCode).toBe(200);
+    expect(link.body).toContain(`${BACK_LINK}</main>`);
+    expect(link.body.split("data-hfy-back").length - 1).toBe(1);
+    expect(backToSite(link.body)).toBe(link.body); // idempotent
+    for (const path of ["/auth/login", "/auth/password/forgot"]) expect((await edge(get(path))).body, path).not.toContain("data-hfy-back");
+    expect(backToSite("<main>x</main>")).toBe("<main>x</main>");
+    for (const v of [undefined, 7]) expect(backToSite(v)).toBe(v);
   });
 });
 

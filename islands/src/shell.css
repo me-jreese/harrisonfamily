@@ -23,6 +23,9 @@ html.hfy-shell-v2 .io-shell {
      (pointer: coarse), so with a mouse (or a touch laptop that reports fine) nav rows, palette rows and .io-btn fall under the DS
      44px floor (control.tap.min). HFY override until the kit reads --io-shell-tap-min; delete it then. */
   --io-target: var(--io-shell-tap-min);
+  /* The frame never scrolls (the scroller does): clip, unlike the kit's hidden, cannot be moved by scrollIntoView() or focus(). Browsers
+     without overflow:clip (Safari < 16) keep the kit's hidden; the scroller's own containing block (below) is what stops the escape. */
+  overflow: clip;
 }
 
 /*
@@ -52,7 +55,9 @@ html.hfy-shell-v2 .hfy-bar {
   align-items: center;
   gap: var(--io-shell-space-4);
   height: calc(var(--io-shell-bar-h) + var(--io-shell-safe-top));
-  padding: var(--io-shell-safe-top) var(--io-shell-space-4) 0;
+  /* the page gutter (16 / 24 / 64), so the wordmark lines up with the page's headings and cards; --io-hfy-gutter is declared on the
+     .hfy-col this bar sits in (QA2: the bar kept 16 at every width) */
+  padding: var(--io-shell-safe-top) var(--io-hfy-gutter) 0;
   background: var(--io-shell-nav-tint);
   -webkit-backdrop-filter: blur(var(--io-shell-space-2));
   backdrop-filter: blur(var(--io-shell-space-2));
@@ -198,6 +203,15 @@ html.hfy-shell-v2 .io-sheet__title {
   font-weight: var(--io-typography-weight-regular);
 }
 
+/* Kit root cause (@io-kit/shell 0.6.6 io-kit.css .io-sheet__close): the close button's border is color-mix(--fg 28%), the Enceladus --fg,
+   2.44:1 on surface.raised (under the 3:1 non-text floor). It takes the DS border.strong (3.78:1 on raised). Record against DVP-TSK-A73. */
+html.hfy-shell-v2 .io-sheet__close { border-color: var(--io-shell-border-strong); }
+/* Kit root cause (@io-kit/shell 0.6.6 SearchLauncher.js): the palette's last row is the hard-coded string "See all results for ..." with
+   no label prop. Voice is lowercase, so the first letter is restated lowercase (CSS only; the words stay the kit's). Upstream: a
+   seeAllLabel prop. */
+html.hfy-shell-v2 .io-search__option--all .io-search__title { display: block; }
+html.hfy-shell-v2 .io-search__option--all .io-search__title::first-letter { text-transform: lowercase; }
+
 /* The sheet body scrolls (overflow-y: auto), which clips the focus ring of full-width controls at its edges: inset the content by
    ring + offset so the one DS focus rule stays whole. */
 html.hfy-shell-v2 :is(.io-sheet[data-variant="palette"], .hfy-account) .io-sheet__body {
@@ -274,6 +288,9 @@ html.hfy-shell-v2 .io-nav__item--bar {
   line-height: var(--io-typography-leading-snug);
 }
 html.hfy-shell-v2 .io-nav__item--bar:hover { color: var(--io-shell-text); }
+/* The five cells reach the screen edges, so a ring drawn outside lost its bottom edge on every item and its left / right edge on the
+   first and last (QA2). Drawn inside the cell, the one DS ring stays whole (as on the scroller). */
+html.hfy-shell-v2 .io-nav__item--bar:focus-visible { outline-offset: calc(-1 * (var(--io-shell-focus-ring) + var(--io-shell-focus-offset))); }
 html.hfy-shell-v2 .io-nav__item--bar[aria-current="page"] { color: var(--io-shell-text); background: transparent; }
 
 /* Icons: single-weight 24px line icons drawn in currentColor (a mask over a currentColor fill), gold when active. */
@@ -311,6 +328,11 @@ html.hfy-shell-v2 [data-io-nav-item="me"] .io-nav__icon {
 
 /* -------------------------------------------------------------------------------------------------- scroller and content */
 html.hfy-shell-v2 .hfy-scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* HFY-TSK-084 (QA2 major): the scroller is the containing block for everything absolutely positioned inside the page (the composer's
+   visually-hidden label and legend, the legacy search dropdown, the lightbox arrows, Bootstrap's .visually-hidden). Without it the
+   containing block was .io-shell, whose overflow is hidden but still scrollable by script: scrollIntoView() of a lower anchor scrolled
+   the frame (bars off screen, no way back but a reload). Kit root cause: @io-kit/shell 0.6.6 .io-shell uses overflow:hidden. */
+html.hfy-shell-v2 .hfy-scroller { position: relative; }
 /* HFY-TSK-069 (D-11 item 5): keyboard focus on the scroller shows the global ring (colour and width from the theme's one
    :focus-visible rule), drawn inset so overflow does not clip it. */
 html.hfy-shell-v2 [data-io-scroller]:focus-visible { outline-offset: calc(-1 * var(--io-shell-focus-ring)); }
@@ -330,6 +352,21 @@ html.hfy-shell-v2 .hfy-content > main:is(.container, .container-fluid) { --bs-gu
    cover the page and, under 688px, sit on the bottom bar; in the shell it ends the scroll instead. (On the home page the footer
    is inside <main>, so any depth.) */
 html.hfy-shell-v2 .hfy-content footer.site-footer { position: static; }
+
+/* ---------------------------------------------------------------------------------------------------------- offline banner */
+/* DS Shell, degraded state: "you're offline. the pages you already opened still work." on surface.raised with an accent.secondary
+   border, below the bar (shell.jsx Offline; not offline.html's .hfy-offline page; role=status, so it is announced once, politely). */
+html.hfy-shell-v2 .hfy-offline-banner {
+  flex: none;
+  margin: var(--io-shell-space-4) var(--io-hfy-gutter) 0;
+  padding: var(--io-shell-space-3) var(--io-shell-space-4);
+  background: var(--io-shell-surface-raised);
+  color: var(--io-shell-text);
+  border: 1px solid var(--io-shell-accent-secondary);
+  border-radius: var(--io-shell-radius-md);
+  font-size: var(--io-shell-font-size-sm);
+}
+html.hfy-shell-v2 .hfy-offline-banner p { margin: 0; }
 
 /* --------------------------------------------------------------------------------------------------------- install card */
 html.hfy-shell-v2 .hfy-install {

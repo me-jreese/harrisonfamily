@@ -103,6 +103,9 @@
 .hfy-comments .io-comments-body > :last-child { margin-block-end: 0; }
 .hfy-comments .io-comments-actions > .io-comments-control { padding-inline: var(--io-comments-space-2); border-color: transparent; background: transparent; color: var(--io-comments-link); }
 .hfy-comments .io-comments-actions > .io-comments-control:hover { color: var(--io-comments-link-hover); }
+/* ...except delete, which the DS binds to --io-comments-danger (comments-ui watchDeleteButtons tags it: the kit gives it no hook). */
+.hfy-comments .io-comments-actions > .io-comments-control[data-hfy-danger],
+.hfy-comments .io-comments-actions > .io-comments-control[data-hfy-danger]:hover { color: var(--io-comments-danger); }
 .hfy-comments .io-comments-moderation > summary { display: flex; align-items: center; min-block-size: var(--io-comments-tap-min); color: var(--io-comments-link); font-size: var(--io-comments-font-size-sm); }
 
 /* Composer: one row, one height. The input and Post are both control.h.md (44): a 24px line box, padding to 44 inside a 1px

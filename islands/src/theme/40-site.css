@@ -50,6 +50,9 @@ html.hfy-shell-v2 .site-footer {
   letter-spacing: normal;
   opacity: 1;
 }
+/* The footer line keeps the page gutter (DS 16) wherever it is: on the island pages (posts, notifications) there is no Bootstrap
+   .container around it to supply one, and one line wraps at 375. */
+.site-footer__inner { padding-inline: var(--io-space-4); }
 .site-footer a {
   display: inline-flex;
   align-items: center;
@@ -73,7 +76,9 @@ html.hfy-shell-v2 .site-footer {
 .home-hero {
   background: var(--io-color-semantic-surface-raised);
   border: 1px solid var(--io-color-semantic-border);
-  border-radius: var(--io-radius-lg);
+  /* DS: a surface.raised card with a border and elevation.1 is radius.md (lg is for sheets, dialogs, the lightbox frame and the hero
+     portrait, .home-hero__image below), so the hero matches the timeline cards under it (QA2). */
+  border-radius: var(--io-radius-md);
   box-shadow: var(--io-elevation-1);
   padding: var(--io-space-4);
   text-align: start;
@@ -98,8 +103,8 @@ html.hfy-shell-v2 .site-footer {
 }
 /* index.html closes the title with <h1> instead of </h1>: the parser leaves an empty second h1. */
 .home-hero h1:empty { display: none; }
-/* the hero sub-line is an <h3> in the template: body copy, not a heading look */
-.home-hero__copy h3 {
+/* the hero sub-line: a lede paragraph (copy.mjs rewrites the template's <h3>, which skipped a heading level under the h1) */
+.home-hero__copy .home-hero__lede {
   font-family: var(--io-typography-font-ui);
   font-weight: var(--io-typography-weight-regular);
   font-size: var(--io-typography-size-lg);
@@ -108,8 +113,14 @@ html.hfy-shell-v2 .site-footer {
   max-width: 68ch;
   margin-bottom: var(--io-space-6);
 }
-/* .home-hero__image {width:100%; max-height:420px; object-fit:cover} + .shadow-lg .rounded */
+/* .home-hero__image {width:100%; max-height:420px; object-fit:cover} + .shadow-lg .rounded.
+   The box hugs the photograph (width auto, centred, capped by main.css's max-height) so the radius rounds the photo itself; a
+   width:100% box with object-fit:contain left a letterboxed mat of surface on both sides of a tall portrait (QA2). */
 .home-hero__image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  margin-inline: auto;
   border-radius: var(--io-radius-lg);
   object-fit: contain;
   height: auto;
@@ -117,6 +128,11 @@ html.hfy-shell-v2 .site-footer {
 }
 /* .home-hero .btn {font-weight:600; letter-spacing:.05em} */
 .home-hero .btn { letter-spacing: normal; }
+/* The CTA row turns into a row at the DS 688 breakpoint, not at Bootstrap's 768 (.flex-md-row): from 688 to 767 it was a phone column
+   of 574px-wide buttons (QA2). */
+@media (min-width: 43rem) {
+  .home-hero .flex-md-row { flex-direction: row; align-items: flex-start; }
+}
 /* phone: the one primary CTA is full width at control-h-lg */
 @media (max-width: 42.99rem) {
   .home-hero .btn {
@@ -124,15 +140,13 @@ html.hfy-shell-v2 .site-footer {
     min-height: var(--io-control-h-lg);
   }
 }
-/* about: a long title and four paragraphs of history */
+/* about: a long title and four paragraphs of history. The title is a page title on the DS display scale (display-sm 36 under 688,
+   display 48 from 688), tight leading; size-2xl is not a DS type style (QA2). */
 .about-hero h1 {
-  font-size: var(--io-typography-size-2xl);
-  line-height: var(--io-typography-leading-snug);
+  font-size: var(--io-typography-size-display-sm);
+  line-height: var(--io-typography-leading-tight);
 }
 @media (min-width: 43rem) {
-  .about-hero h1 { font-size: var(--io-typography-size-display-sm); }
-}
-@media (min-width: 64rem) {
   .about-hero h1 { font-size: var(--io-typography-size-display); }
 }
 /* the template's .align-items-center would float the portrait mid-way down four paragraphs */

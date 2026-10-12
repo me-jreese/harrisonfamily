@@ -249,6 +249,52 @@ try {
         });
         check(`${tag}: a bad password shows the danger banner above the email field`, banner.text === "that email and password don't match. try again, or text J." && banner.bottom <= banner.labelTop && banner.color === DANGER && banner.border === `1px ${DANGER}` && banner.bg === RAISED, banner);
         if (SHOTS) await page.screenshot({ path: join(SHOTS, `${pg.key}-error-${w}.png`), fullPage: true });
+        // HFY-TSK-084 (QA2 major): an email that is not on the list is a neutral banner (accent.secondary edge, text colour) with a
+        // "copy my email" button, not the red error banner; the next failure goes back to the red banner and drops the button.
+        await page.fill("#email", "stranger@example.com");
+        await page.fill("#password", PASSWORD);
+        await page.click('#pw button[type="submit"]');
+        await page.waitForFunction(() => document.querySelector("#msg-pw")?.dataset.detail === "not_allowlisted");
+        const allow = await page.evaluate(() => {
+          const b = document.querySelector("#msg-pw");
+          const c = getComputedStyle(b);
+          const btn = b.querySelector("button");
+          const probe = document.createElement("i");
+          probe.style.color = "var(--io-auth-accent-secondary)";
+          document.body.append(probe);
+          const secondary = getComputedStyle(probe).color;
+          probe.remove();
+          const bc = btn && getComputedStyle(btn);
+          return { text: b.firstChild?.textContent, color: c.color, border: `${c.borderTopWidth} ${c.borderTopColor}`, bg: c.backgroundColor, secondary, bottom: b.getBoundingClientRect().bottom, labelTop: document.querySelector('label[for="email"]').getBoundingClientRect().top, btn: btn && { text: btn.textContent, h: Math.round(btn.getBoundingClientRect().height), w: Math.round(btn.getBoundingClientRect().width), bg: bc.backgroundColor, border: bc.borderTopColor }, scrollW: document.documentElement.scrollWidth, innerW: innerWidth };
+        });
+        check(`${tag}: an email not on the list is a neutral banner (accent.secondary edge, text colour) above the field, not the danger banner`, allow.text === "that email isn't on the list yet. text J and we'll add you." && allow.color === "rgb(250, 246, 238)" && allow.border === `1px ${allow.secondary}` && allow.secondary !== DANGER && allow.bg === RAISED && allow.bottom <= allow.labelTop && allow.scrollW <= allow.innerW, allow);
+        check(`${tag}: "copy my email" is a 44 tall secondary button in the banner`, allow.btn?.text === "copy my email" && allow.btn.h === 44 && allow.btn.bg === RAISED && allow.btn.border === "rgb(133, 118, 102)" && allow.btn.w < 343, allow.btn);
+        if (SHOTS) await page.screenshot({ path: join(SHOTS, `${pg.key}-allowlist-${w}.png`), fullPage: true });
+        await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: ORIGIN });
+        await page.click("#msg-pw button");
+        await page.waitForFunction(() => document.querySelector("#msg-pw button")?.textContent === "copied");
+        check(`${tag}: "copy my email" copies the typed address`, (await page.evaluate(() => navigator.clipboard.readText())) === "stranger@example.com");
+        await page.keyboard.press("Tab"); // keyboard reachable: the focus ring is the one rule
+        await page.fill("#email", "ana@example.com");
+        await page.fill("#password", "not-the-password");
+        await page.click('#pw button[type="submit"]');
+        await page.waitForFunction(() => document.querySelector("#msg-pw")?.textContent.startsWith("that email and password"));
+        const back = await page.evaluate(() => { const b = document.querySelector("#msg-pw"); return { detail: b.dataset.detail, buttons: b.querySelectorAll("button").length, color: getComputedStyle(b).color }; });
+        check(`${tag}: the next failure is the danger banner again, without the button`, back.detail === undefined && back.buttons === 0 && back.color === DANGER, back);
+      }
+      if (pg.key === "denied") {
+        // the kit's 403 page: its one sentence is the same neutral banner (no address to copy there)
+        const d = await page.evaluate(() => {
+          const p = document.querySelector("main > p");
+          const c = getComputedStyle(p);
+          const probe = document.createElement("i");
+          probe.style.color = "var(--io-auth-accent-secondary)";
+          document.body.append(probe);
+          const secondary = getComputedStyle(probe).color;
+          probe.remove();
+          return { state: p.dataset.state, color: c.color, border: `${c.borderTopWidth} ${c.borderTopColor}`, secondary, bg: c.backgroundColor, buttons: document.querySelectorAll("main button").length };
+        });
+        check(`${tag}: the denied page shows the sentence as the neutral banner`, d.state === "not_allowlisted" && d.color === "rgb(250, 246, 238)" && d.border === `1px ${d.secondary}` && d.bg === RAISED && d.buttons === 0, d);
       }
       if (pg.key === "forgot") {
         await page.fill("#email", "ana@example.com");
@@ -326,6 +372,8 @@ try {
           return { paths, h2: { font: c("#pk-prompt > h2").fontFamily, w: Math.round(r("#pk-prompt > h2").width) }, add: { h: Math.round(r("#pk-add").height), bg: c("#pk-add").backgroundColor }, later: { h: Math.round(r("#pk-later").height), bg: c("#pk-later").backgroundColor, border: c("#pk-later").borderTopColor, gap: Math.round(r("#pk-later").top - r("#pk-add").bottom) } };
         });
         check(`${tag}: the add-a-passkey prompt replaces the paths, its heading visible in the display serif`, p.paths.every(Boolean) && /^"Libre Caslon Text"/.test(p.h2.font) && p.h2.w > 1, p);
+        const stale = await page.evaluate(() => { const h = document.querySelector("main > h1"); const r = h.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), text: h.textContent }; });
+        check(`${tag}: the stale sign-in greeting is visually hidden while the prompt shows (still in the DOM for screen readers)`, stale.w <= 1 && stale.h <= 1 && stale.text.length > 0, stale);
         check(`${tag}: "add" is the 56 primary, "not now" the 56 secondary (kit inline style overridden), 12 apart`, p.add.h === 56 && p.add.bg === ACCENT && p.later.h === 56 && p.later.bg === RAISED && p.later.border === "rgb(133, 118, 102)" && p.later.gap === 12, p);
         if (SHOTS) await page.screenshot({ path: join(SHOTS, `passkey-prompt-${w}.png`), fullPage: true });
         await page.click("#pk-later");

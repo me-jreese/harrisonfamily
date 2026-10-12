@@ -73,7 +73,7 @@ describe("posts: Q-4 permissions and D-15 audit", () => {
     const { body } = await w.call("POST", "/api/posts", { token: ann, body: { body: "news" } });
     await w.call("POST", `/api/posts/${body.id}/visibility`, { token: ann, body: { visibility: "published" } });
     expect(w.sent).toHaveLength(1);
-    expect(w.sent[0].payload.notification).toMatchObject({ title: "Family news", body: "There is a new family post.", navigate: `/posts/?id=${body.id}` });
+    expect(w.sent[0].payload.notification).toMatchObject({ title: "Harrison Family", body: "there's a new family post.", navigate: `/posts/?id=${body.id}` });
   });
 });
 
@@ -83,11 +83,11 @@ describe("comments", () => {
     await w.subscriptions.put("I0001", sub);
     const c1 = await w.call("POST", "/api/comments", { token: olive, body: { subject, body: "Great photo" } });
     expect(c1.status).toBe(201);
-    expect(w.sent.map((s) => s.payload.notification.body)).toEqual(["Someone commented on your record."]); // comment_on_my_record
+    expect(w.sent.map((s) => s.payload.notification.body)).toEqual(["someone commented on your page."]); // comment_on_my_record
     await w.subscriptions.put("I0002", { ...sub, endpoint: "https://push.example.test/s2" });
     const reply = await w.call("POST", "/api/comments", { token: ann, body: { subject, body: "Thanks @I0003", parentId: c1.body.id } });
     expect(reply.body.parentId).toBe(c1.body.id);
-    expect(w.sent.at(-1).payload.notification.body).toBe("Someone replied to you."); // reply_to_me
+    expect(w.sent.at(-1).payload.notification.body).toBe("someone replied to you."); // reply_to_me
     expect((await w.call("POST", `/api/comments/${c1.body.id}/react`, { token: ann, body: { subject, emoji: "❤️" } })).body.removed).toBe(false);
     expect((await w.call("POST", `/api/comments/${c1.body.id}/react`, { token: olive, body: { subject, emoji: "❤️" } })).status).toBe(403); // self_react
     const list = await w.call("GET", "/api/comments", { token: third, query: { subject } });

@@ -67,6 +67,11 @@ export const CLOUDSCAPE_TOKENS = {
   colorTextFormLabel: dark("text"),
   colorTextLabel: dark("text"),
   colorTextGroupLabel: dark("text-dim"),
+  // Cloudscape chains --color-text-dropdown-footer (not themeable itself: the generator ignores it) through --color-text-form-secondary
+  // to its cool grey #a4a4ad, so the dropdown's "End of suggestions" footer measured 6.71:1 on surface.raised, under the 7:1 dark floor,
+  // and the grey is not from the archive palette (QA2 major). Theming the two themeable ends of the chain recolours it.
+  colorTextFormSecondary: dark("text-dim"),
+  colorTextEmpty: dark("text-dim"),
   colorTextInputPlaceholder: dark("text-dim"),
   colorTextDropdownItemDefault: dark("text"),
   colorTextDropdownItemHighlighted: dark("text"),
