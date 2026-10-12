@@ -2,7 +2,7 @@
 // The kit deployable is written for auth.<site> (routes at the root). This wrapper adapts it to a path mount and adds the three
 // things the kit does not ship: GET /auth/.well-known/jwks.json (HFY-R38), GET /auth/session, and host-only cookies (HFY-R31).
 import { createEdgeApp, validateManifest } from "@io-kit/auth/edge/deploy";
-import { resolveAuth } from "@io-kit/auth/server";
+import { COGNITO_GROUP_CLAIM, claimsToPrincipal, resolveAuth } from "@io-kit/auth/server";
 import { FORGOT_LIMITS, clientIp, rateKey } from "./ratelimit.js";
 
 export const MOUNT = "/auth";
@@ -123,12 +123,31 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     return k && typeof res.headers[k] === "string" ? { ...res, headers: { ...res.headers, [k]: safe(res.headers[k]) } } : res;
   }
 
+  /**
+   * The signed-in member behind the io_id cookie: {sub, label, email, amr, authTime}. Everything comes from the VERIFIED token
+   * (signature, issuer, audience, expiry, token_use=id). resolveAuth maps claims to a principal that has no `email`, so the adapter hook
+   * below reads it from the same verified claims object (no second, unverified decode). authTime is epoch seconds: the token's auth_time
+   * claim, else its iat (the kit's claimsToPrincipal rule); amr is [] when the token has none.
+   */
   async function sessionOf(event) {
     const tok = cookiesOf(event).io_id;
     if (!tok) return null;
+    let email;
+    const adapter = {
+      toPrincipal: (claims) => {
+        if (typeof claims.email === "string" && claims.email) email = claims.email;
+        return claimsToPrincipal(claims, COGNITO_GROUP_CLAIM);
+      },
+    };
     try {
-      const { principal } = await resolveAuth(tok, { ...verify, identity: undefined, tokenUse: "id" });
-      return { sub: principal.sub, label: principal.displayName ?? principal.sub };
+      const { principal } = await resolveAuth(tok, { ...verify, identity: undefined, tokenUse: "id", adapter });
+      return {
+        sub: principal.sub,
+        label: principal.displayName ?? principal.sub,
+        email,
+        amr: Array.isArray(principal.amr) ? principal.amr : [],
+        authTime: Number.isFinite(principal.authTime) ? Math.floor(principal.authTime) : 0,
+      };
     } catch {
       return null;
     }
