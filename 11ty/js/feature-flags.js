@@ -313,6 +313,10 @@
   featureAPI.loadIsland = loadIsland;
 
   resolveFlags().then((flags) => {
+    // HFY-TSK-066: personV2 swaps person notes to @io-kit/md and adds the kit comments thread (person page only).
+    if (flags.personV2 === true && /^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("person");
+    }
     if (flags.shellV2 !== true) return;
     const root = document.documentElement;
     root.classList.add("hfy-shell-v2");
