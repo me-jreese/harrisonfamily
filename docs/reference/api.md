@@ -2,6 +2,8 @@
 
 Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
 
+The same Lambda function also serves the MCP server at `/mcp` and the protected-resource metadata at `/.well-known/oauth-protected-resource*`. Those paths authenticate with a bearer access token, not the session cookie, and are described in [MCP server](mcp-server.md). This page covers them only where they share code or configuration with `/api/*`.
+
 For the reasoning behind these rules, see [How member content stays accountable](../explanation/member-content-design.md). For why the API sits behind CloudFront with a shared-secret header, see [Why one CloudFront distribution fronts everything](../explanation/edge-and-origin-design.md).
 
 ## Runtime
@@ -13,19 +15,24 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | Handler | `src/index.handler` | [`api/src/index.js`](../../api/src/index.js) |
 | Memory and timeout | 256 MB, 15 s | `app-stack.yaml` |
 | Invocation | Lambda Function URL, `AuthType: NONE`, `InvokeMode: BUFFERED`, payload format 2.0 | `app-stack.yaml`, [`api/src/handler.js`](../../api/src/handler.js) |
-| Public path | `/api/*` on the site's CloudFront distribution, with caching disabled and all viewer headers except `Host` forwarded | [`scripts/infra/add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) |
+| Public path, API | `/api/*` on the site's CloudFront distribution, with caching disabled and all viewer headers except `Host` forwarded | [`scripts/infra/add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) |
+| Public paths, MCP | `/mcp*` and `/.well-known/oauth-protected-resource*`, on the same origin (`hfy-api-origin`) with the same cache and origin request policies, plus the `hfy-mcp-edge401` Lambda@Edge function on `origin-response` ([MCP server: Mount](mcp-server.md#mount)) | [`scripts/infra/add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh) |
 | Table | DynamoDB `hfy-app`: one table, index `GSI1`, TTL attribute `ttl` | `app-stack.yaml` |
 
 ### Source files
 
 | File | Role |
 | --- | --- |
-| [`index.js`](../../api/src/index.js) | Lambda entry. Creates the AWS clients, runs the origin check, and builds the handler on the first verified request. |
-| [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, notification and upload services for each request. |
-| [`routes.js`](../../api/src/routes.js) | The route registry `ROUTES`, `matchRoute`, and `buildCaps` for `caps.json`. |
+| [`index.js`](../../api/src/index.js) | Lambda entry. Creates the AWS clients and the admin-list, label and groups resolvers, runs the origin check, builds the handler on the first verified request, and sends MCP paths to the MCP mount. |
+| [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, notification and upload services for each request. Also exposes `handler.invoke(actor, routeName, {params, query, body})`, which runs a route's own handler without the HTTP steps, for the MCP tools. |
+| [`routes.js`](../../api/src/routes.js) | The route registry `ROUTES` (including each MCP tool's definition), `matchRoute`, `MCP_RESOURCE`, and `buildCaps` for `caps.json`. |
 | [`http.js`](../../api/src/http.js) | JSON responses, `HttpError`, error mapping, cookie parsing. |
 | [`origin.js`](../../api/src/origin.js) | The `X-Origin-Verify` check. |
-| [`auth.js`](../../api/src/auth.js) | Remote JWKS, session authenticator, admin list. |
+| [`auth.js`](../../api/src/auth.js) | Remote JWKS, session authenticator (which resolves the actor's label), admin list. |
+| [`labels.js`](../../api/src/labels.js) | Author labels: `cleanLabel`, `fallbackLabel` and the cached person-record resolver `createLabelResolver` (see [Author label](#author-label)). Used by the cookie path and the MCP path. |
+| [`mcp.js`](../../api/src/mcp.js) | The MCP mount: `isMcpPath`, `loadMcpConfig`, the bearer edge, the tool registry built from `ROUTES`, and the actor a tool runs as. See [MCP server](mcp-server.md). |
+| [`mcp-caps.js`](../../api/src/mcp-caps.js) | Build-time views of the MCP surface for `gen-caps`: the `tools/list` result and the `@io-kit/parity` caps document. |
+| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json`, whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `TransactWriteItems` helper, `GSI1` paging. |
@@ -41,11 +48,22 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `@io-kit/content` | 0.1.0 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
 | `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
-| `@io-kit/auth` (`/server`) | 2.0.0 | `resolveAuth`: JWT verification and claim mapping |
+| `@io-kit/auth` (`/server`) | 2.1.1 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
+| `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
 | `@io-kit/feed` | 1.1.1 | `createUlidFactory`: monotonic ULIDs for record ids and audit sort keys |
 | `jose` | 6.2.12 | `createRemoteJWKSet` for the session keys |
 | `web-push` | 3.6.7 | Push delivery. Imported only when the VAPID keys load. |
 | `@aws-sdk/*` | 3.1000.0 | DynamoDB document client, S3 and the S3 request presigner, Secrets Manager |
+
+[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version except `@io-kit/content` (`^0.1.0`) and `@io-kit/notify` (`^0.4.0`), which the lockfile holds at the versions above.
+
+Development dependencies, which `package-api.sh` leaves out of the zip (`npm ci --omit=dev`):
+
+| Package | Version | Used for |
+| --- | --- | --- |
+| `@io-kit/ci` | 0.1.3 | The `io-kit-ci render` command that renders the CI workflows and actions from `ci.manifest.yaml` ([Repository operations](repository-operations.md#kit-manifest-cimanifestyaml)) |
+| `@io-kit/parity` | 0.3.0 | The `io-kit parity diff` check in [`scripts/ci/mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh), against [`api/parity/`](../../api/parity/) and the generated `dist/mcp/` files |
+| `vitest` | 3.2.4 | The test suites |
 
 The `@io-kit/*` packages are private. They come from the io CodeArtifact npm registry that [`api/.npmrc`](../../api/.npmrc) configures for the `@io-kit` scope. `npm ci` reads the registry token from `CODEARTIFACT_AUTH_TOKEN` (`aws codeartifact get-authorization-token --domain io`).
 
@@ -53,17 +71,20 @@ The `@io-kit/*` packages are private. They come from the io CodeArtifact npm reg
 
 Every request goes through these steps in order. The first step that fails decides the response.
 
-1. **Origin check** ([`origin.js`](../../api/src/origin.js), called from `index.js`). The `x-origin-verify` header, matched in any case, must equal `ORIGIN_VERIFY`. The two values are compared as SHA-256 digests with a constant-time comparison. If `ORIGIN_VERIFY` is unset or empty, every request fails. Failure: `403` with the body `{"error":"forbidden"}`. This step runs before routing and before the handler is built.
-2. **Prefix check.** Trailing slashes are removed from `rawPath`. A path outside `/api/`, including `/api` itself, is `404 not_found`.
-3. **Route match.** `/api` is removed and the rest is matched against `ROUTES`. Path parameters are URL-decoded with `decodeURIComponent`. A path parameter with malformed percent-encoding (for example `%E0%A4%A`) makes it throw, which is `500 internal`, before the session is checked. No path match is `404 not_found`. A path that matches with a different method is `405 method_not_allowed`. That includes `OPTIONS` and `HEAD`: the API does no CORS handling.
-4. **Session.** The session cookie must verify (see [Session verification](#session-verification)). Otherwise `401 unauthenticated`. Every route requires a session, reads included.
-5. **Content type**, for `POST`, `PUT` and `PATCH` only. `content-type` must start with `application/json`, ignoring case. Otherwise `415 unsupported_media_type`.
-6. **Body**, for `POST`, `PUT` and `PATCH` only. A base64-encoded body is decoded. An empty body counts as `{}`. A body that does not parse is `400 validation` ("invalid JSON body"). A body that parses to anything other than an object (an array, `null`, a string or a number) is `400 validation` ("body must be a JSON object"). `DELETE` bodies are not read here.
-7. **Route handler.**
+1. **Origin check** ([`origin.js`](../../api/src/origin.js), called from `index.js`). The `x-origin-verify` header, matched in any case, must equal `ORIGIN_VERIFY`. The two values are compared as SHA-256 digests with a constant-time comparison. If `ORIGIN_VERIFY` is unset or empty, every request fails. Failure: `403` with the body `{"error":"forbidden"}`. This step runs for every path, MCP paths included, before routing and before the handler is built.
+2. **MCP paths** (`index.js`). When `isMcpPath` in [`mcp.js`](../../api/src/mcp.js) matches `rawPath` (`/mcp`, `/mcp/...`, `/.well-known/oauth-protected-resource` or `/.well-known/oauth-protected-resource/...`), the request goes to the MCP mount, which `createMcpMount` builds on the first such request in the container. The mount authenticates with a bearer access token and never reads the session cookie. These requests never reach the steps below. See [MCP server: Routing in `index.js`](mcp-server.md#routing-in-indexjs).
+3. **Prefix check.** Trailing slashes are removed from `rawPath`. Any other path outside `/api/`, including `/api` itself, is `404 not_found`.
+4. **Route match.** `/api` is removed and the rest is matched against `ROUTES`. Path parameters are URL-decoded with `decodeURIComponent`. A path parameter with malformed percent-encoding (for example `%E0%A4%A`) makes it throw, which is `500 internal`, before the session is checked. No path match is `404 not_found`. A path that matches with a different method is `405 method_not_allowed`. That includes `OPTIONS` and `HEAD`: the API does no CORS handling.
+5. **Session.** The session cookie must verify (see [Session verification](#session-verification)). Otherwise `401 unauthenticated`. Every route requires a session, reads included.
+6. **Content type**, for `POST`, `PUT` and `PATCH` only. `content-type` must start with `application/json`, ignoring case. Otherwise `415 unsupported_media_type`.
+7. **Body**, for `POST`, `PUT` and `PATCH` only. A base64-encoded body is decoded. An empty body counts as `{}`. A body that does not parse is `400 validation` ("invalid JSON body"). A body that parses to anything other than an object (an array, `null`, a string or a number) is `400 validation` ("body must be a JSON object"). `DELETE` bodies are not read here.
+8. **Route handler.**
 
-Because the session is checked at step 4, a request without a session to an unknown path gets `404`, and one with the wrong method gets `405`, not `401`.
+Because the session is checked at step 5, a request without a session to an unknown path gets `404`, and one with the wrong method gets `405`, not `401`.
 
-On the first request in a container that passes step 1, `index.js` loads the VAPID keys (if configured) and builds the handler. Both are kept for the life of the container.
+On the first request in a container that passes step 1, whatever its path, `index.js` loads the VAPID keys (if configured) and builds the handler. Both are kept for the life of the container. The MCP mount reuses that handler's `invoke`, so a tool call runs the same route handler as the HTTP route but skips steps 3 to 7.
+
+The rest of this page describes the `/api/*` responses. The MCP mount's responses are in [MCP server: What the mount answers](mcp-server.md#what-the-mount-answers).
 
 ### Response headers
 
@@ -127,6 +148,8 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools).
+
 ## Subjects
 
 A subject names a comment thread ([`comments.js`](../../api/src/comments.js), `SUBJECT_RE`).
@@ -153,7 +176,7 @@ Posts are implemented in [`content.js`](../../api/src/content.js) against the `@
 | --- | --- | --- |
 | `id` | ULID | Assigned at create |
 | `type` | `post`, `article` or `document` | Default `post`. Any other value is `422`. |
-| `author` | `{id, label}` | The caller's member id (gramps id) and display label |
+| `author` | `{id, label}` | The caller's member id (gramps id) and display label. The label is never an email address ([Session verification](#session-verification)). |
 | `subject` | string, optional | A record id the post is about: a bare Gramps ID, `person:<gramps-id>`, `post:<ulid>` or another plain identifier. It must match `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`, otherwise `422` with `details.field` `subject`. Indexes the post under `SUBJECT#<subject>`. |
 | `title` | string, optional | At most 200 characters, otherwise `422` with `details.field` `title`. |
 | `body` | string | Required and not blank. At most 20,000 characters (JavaScript string length). Stored as sent, not trimmed. Otherwise `422`. |
@@ -223,6 +246,7 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 
 - `body` is trimmed, must not be empty, and may be at most 1000 characters after trimming. Otherwise `422`. The trimmed text is stored.
 - `threadId` is the subject.
+- `author.label` is the caller's display label, never an email address ([Session verification](#session-verification)).
 
 ### Listing
 
@@ -287,8 +311,10 @@ On a `post:<ulid>` thread, every comment action except delete also requires that
 
 - The admin list is a JSON object in S3 at `ADMIN_LIST_BUCKET` / `ADMIN_LIST_KEY` (defaults `<config-bucket>` and `config/admins.json`). It holds member ids (gramps ids), either as an array or as `{"admins": [...]}`. Entries that are not strings are ignored. Any other shape means nobody is an admin.
 - It is read after the session verifies and cached in the container for 60 s.
-- If it cannot be read or parsed, the API logs "admin list unavailable (failing closed)", treats nobody as an admin, and tries again after 5 s.
+- If it cannot be read or parsed, the API logs "admin list unavailable (failing closed)" with the error message, treats nobody as an admin, and tries again after 5 s.
+- The file may be absent. An absent `config/admins.json` means there are no admins. The read then fails every time, so each container logs "admin list unavailable (failing closed)" and retries at most once every 5 s, whenever a request with a valid session arrives.
 - The Lambda role may read only `config/*` in the config bucket, so `ADMIN_LIST_KEY` must stay under `config/`.
+- The admin list applies to the cookie path only. On the MCP path, admin comes from the `hfy-admin` group in `config/groups.json`, and `config/admins.json` plays no part ([MCP server: Groups](mcp-server.md#groups)).
 
 ### Recording a reason
 
@@ -350,7 +376,7 @@ Comments removed with their post are audited too, each in the same transaction a
 | `new_family_post` | Family news | There is a new family post. | {actor} shared a new family post. |
 | `mention` | Family tree | You were mentioned. | {actor} mentioned you. |
 
-Level 0 carries no content. Level 1 adds the actor's display label, which the kit cleans and cuts to 80 characters. Each recipient chooses per type in their preferences. A type with no stored preference is enabled at level 0. If a level-1 message cannot be rendered, level 0 is sent.
+Level 0 carries no content. Level 1 adds the actor's display label, the `author.label` of the comment or post, which is never an email address ([Session verification](#session-verification)). The kit cleans it and cuts it to 80 characters. Each recipient chooses per type in their preferences. A type with no stored preference is enabled at level 0. If a level-1 message cannot be rendered, level 0 is sent.
 
 ### Recipients of a new comment
 
@@ -380,8 +406,11 @@ The payload is a Declarative Web Push message, `{"web_push": 8030, "notification
 `VAPID_SECRET` names a Secrets Manager secret whose value is JSON:
 
 ```json
-{ "subject": "<mailto-or-https-contact>", "publicKey": "<vapid-public-key>", "privateKey": "<vapid-private-key>" }
+{ "subject": "<https-url>", "publicKey": "<vapid-public-key>", "privateKey": "<vapid-private-key>" }
 ```
+
+- The deployed secret is `harrisonfamily/api/vapid`. The stack's `VapidSecretName` parameter carries that name into `VAPID_SECRET`.
+- `subject` must be an `https://` URL, so no email address is sent to the push services. `index.js` passes `subject` to `web-push` as given and does not check it.
 
 It is read once per container. If `VAPID_SECRET` is unset, or the secret cannot be read or parsed (logged as "push disabled"), nothing is sent. The routes still store subscriptions and preferences, and `GET /notifications/vapid-public-key` returns `{"public_key": ""}`. The Lambda role may read the secret only when the stack's `VapidSecretName` parameter is set.
 
@@ -461,21 +490,38 @@ The presigner signs `content-type` and `content-length` into the URL (`signableH
 
 ## Environment
 
-Read in [`index.js`](../../api/src/index.js). The stack sets each one from a parameter of [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml).
+Read in [`index.js`](../../api/src/index.js) and, for the `MCP_*` variables, in `loadMcpConfig` in [`mcp.js`](../../api/src/mcp.js). A default in code applies only when the variable is absent. [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) sets the variables in the first table, each from a stack parameter.
 
 | Variable | Default in code | Stack parameter | Purpose |
 | --- | --- | --- | --- |
 | `ORIGIN_VERIFY` | none: **required** | `OriginVerifySecretName` | Expected `X-Origin-Verify` value. Unset or empty means every request is `403`. |
 | `TABLE_NAME` | `hfy-app` | `TableName` | DynamoDB table |
-| `SESSION_JWKS_URL` | `https://harrisonfamily.us/auth/.well-known/jwks.json` | `SessionJwksUrl` | Auth edge's public keys |
-| `SESSION_ISSUER` | `https://harrisonfamily.us/auth` | `SessionIssuer` | Required `iss` |
+| `SESSION_JWKS_URL` | `https://<site>/auth/.well-known/jwks.json` | `SessionJwksUrl` | Auth edge's public keys, for the session cookie and for MCP access tokens |
+| `SESSION_ISSUER` | `https://<site>/auth` | `SessionIssuer` | Required `iss`. Also the MCP token issuer while `MCP_TOKEN_ISSUER` is unset. |
 | `SESSION_AUDIENCE` | `harrisonfamily-web` | `SessionAudience` | Required audience |
 | `SESSION_COOKIE` | `io_id` | `SessionCookie` | Session cookie name |
 | `ADMIN_LIST_BUCKET` | `<config-bucket>` | `ConfigBucket` | Bucket holding the admin list |
 | `ADMIN_LIST_KEY` | `config/admins.json` | `AdminListKey` | Admin list key |
-| `MEDIA_BUCKET` | `<site-bucket>` | `MediaBucket` | Bucket that uploads are presigned into |
-| `MEDIA_PUBLIC_BASE` | `https://harrisonfamily.us` | `MediaPublicBase` | Origin that serves `uploads/`. Upload `publicUrl`s start with it, and attachment URLs must. |
+| `MEDIA_BUCKET` | `<site-bucket>` | `MediaBucket` | Bucket that uploads are presigned into, and that person records (`person/<gramps-id>.json`) are read from for [author labels](#author-label) |
+| `MEDIA_PUBLIC_BASE` | `https://<site>` | `MediaPublicBase` | Origin that serves `uploads/`. Upload `publicUrl`s start with it, and attachment URLs must. |
 | `VAPID_SECRET` | unset: push is not sent | `VapidSecretName` (left out when empty) | Secret holding the VAPID keys |
+
+The stack does not set these. Their defaults in code apply on the deployed function:
+
+| Variable | Default in code | Purpose |
+| --- | --- | --- |
+| `GROUPS_BUCKET` | `<config-bucket>` | Bucket holding the MCP groups config |
+| `GROUPS_KEY` | `config/groups.json` | MCP groups config key. Its shape is documented in [`policy.js`](../../api/src/policy.js) and in [MCP server: Groups](mcp-server.md#groups). |
+| `MCP_RESOURCE_URL` | `https://<site>/mcp` (`MCP_RESOURCE` in `routes.js`) | The MCP resource URL |
+| `MCP_AUDIENCE` | `MCP_RESOURCE_URL`, else `MCP_RESOURCE` | The `aud` every MCP access token must carry |
+| `MCP_TOKEN_ISSUER` | `SESSION_ISSUER`, else `https://<site>/auth` | The `iss` every MCP access token must carry |
+| `MCP_CLIENT_IDS` | `mcp-harrisonfamily` | Comma-separated `client_id` values an MCP access token may carry |
+| `MCP_SCOPES` | `openid email profile` | Scopes advertised in the metadata and the `401` challenge |
+
+What each MCP variable does is in [MCP server: Configuration](mcp-server.md#configuration).
+
+- The role may read only `config/*` in the stack's `ConfigBucket` (the `AdminList` statement), so `ADMIN_LIST_KEY` and `GROUPS_KEY` must stay under `config/`. Because the stack does not set `GROUPS_BUCKET`, the groups config is always read from the default bucket. With any other `ConfigBucket`, the role grants no read on that default bucket, so the groups read fails closed and no MCP caller gets a group.
+- The role may read only `person/*` in `MediaBucket` (the `PersonRecords` statement) and may put objects only under `uploads/posts/*` (`PostPhotoUploads`).
 
 The stack sets `ORIGIN_VERIFY` with a Secrets Manager dynamic reference to the secret named by `OriginVerifySecretName` (default `harrisonfamily/cloudfront/origin-verify`). CloudFormation resolves it when the stack is created or updated, so a new secret value reaches the function only after a stack update. See [How to rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md).
 
@@ -492,17 +538,44 @@ The stack sets `ORIGIN_VERIFY` with a Secrets Manager dynamic reference to the s
   - `token_use` is not checked, but a token whose `typ` claim is `ID` is rejected.
 - **JWKS.** `createRemoteJWKSet` from `jose`, with a 30 s cooldown between refetches, a 600 s maximum cache age and a 5 s fetch timeout. It is created once per container.
 - **Failure.** The request gets `401 unauthenticated`. A missing cookie is not logged. Any token failure is logged as `session rejected AUTH_EXPIRED`: `@io-kit/auth` raises every verification failure with that code and puts the specific reason in the error's `detail` field, which `auth.js` does not log. The log therefore does not separate expiry from a bad signature, a wrong `iss` or audience, a malformed token, an ID token (`typ` `ID`) or a JWKS fetch failure.
-- **Actor.** `{id, label, admin}`. `id` is the token's `sub`, the member's gramps id. `label` is the display name the kit maps from the token (the `name` claim, then `email`, then the username claims), or `sub` if there is none. `admin` is whether `id` is on the admin list.
+- **Actor.** `{id, label, admin}`. `id` is the token's `sub`, the member's gramps id. `label` is described under [Author label](#author-label). `admin` is whether `id` is on the [admin list](#admins).
 
 The API never holds the signing key. It sees only the public keys that the auth edge publishes, and its role has no access to the signing-key secret. See [Identity services](identity-services.md) and [How to rotate the session signing key](../how-to/rotate-the-session-signing-key.md).
+
+### Author label
+
+The actor's `label` is stored as `author.label` on posts and comments, their index items and their audit items, and names the actor in level-1 notifications. Every member sees it, so it is never an email address (HFY-R68). `resolveLabel`, built by `createLabelResolver` in [`labels.js`](../../api/src/labels.js) and passed to the authenticator by `index.js`, returns the first of these that is usable:
+
+1. **The session's own name**, if `cleanLabel` accepts it. The name is the principal's `displayName`, which `@io-kit/auth` takes from the token's `name` claim, else `email`, else the username claims. `cleanLabel` trims it and rejects it when it is empty, equals the `sub`, is longer than 200 characters, contains `@`, or contains a control character (U+0000 to U+001F or U+007F). With a plain-string allowlist entry, the session's name is the member's email, which this step rejects.
+2. **The person's `displayName`** from `s3://<site-bucket>/person/<gramps-id>.json` (`MEDIA_BUCKET`, key `PERSON_KEY` in `labels.js`), if `cleanLabel` accepts it. The record is looked up only when the `sub` matches `^[A-Za-z0-9_-]{1,64}$`. Any other `sub` goes straight to step 3, so no other value is ever turned into an S3 key.
+3. **The gramps id** (the `sub`), trimmed, unless it is empty or contains `@` or a control character.
+4. **`family member`.**
+
+The email is never used, at any step.
+
+The person-record lookups are cached in memory, per container:
+
+| Lookup result | Cached for |
+| --- | --- |
+| A usable `displayName` | 1 h |
+| A definite miss: no such record (`NoSuchKey` or `404`), an `AccessDenied` or `403` (which S3 returns for a missing key when the caller cannot list the bucket), a record that is not valid JSON, or a record without a usable `displayName` | 1 min |
+| Any other failure, including the 3 s fetch timeout | 5 s |
+
+- The cache holds at most 1,000 entries. Adding a new id to a full cache clears it first.
+- When a refresh fails after a good label was cached, the last good label keeps being served.
+- Concurrent lookups for the same id share one fetch.
+- Every failed fetch except an absent record (`NoSuchKey` or `404`) is logged as `author label unavailable (using the gramps_id)` with the gramps id and the error message. The role cannot list the bucket, so a missing record usually arrives as `403` and is logged.
+- A label failure never ends a valid session. If `resolveLabel` throws, `auth.js` uses step 3 or 4.
+- The label is resolved on every request with a valid session, reads included. The cache limits that to one S3 read per member per container each hour when the record has a usable `displayName`, and each minute when it does not.
+- The MCP path uses the same resolver instance, and so the same cache, with the access token's `name` claim in step 1 ([MCP server: Actor and label](mcp-server.md#actor-and-label)).
 
 ## caps.json
 
 `caps.json` is a machine-readable description of the API, built by `buildCaps` in [`routes.js`](../../api/src/routes.js).
 
-- `npm run gen-caps` in `api/` runs [`scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs) and writes `api/dist/caps.json`.
-- `api/dist/` is gitignored, so the file is not in the repository. The package script regenerates it and ships it in the zip as `dist/caps.json`. No route serves it.
-- The handler dispatches from `ROUTES` and `buildCaps` lists `ROUTES`, so the action list and the routes are generated from the same source and cannot drift.
+- `npm run gen-caps` in `api/` runs [`scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs). It writes `api/dist/caps.json`, and with it `api/dist/policy.json`, `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json`, which are described in [MCP server: Generated documents](mcp-server.md#generated-documents). It makes no AWS or network call.
+- `api/dist/` is gitignored, so the files are not in the repository. The package script regenerates them and ships them in the zip under `dist/`. No route serves any of them.
+- The handler dispatches from `ROUTES`, the MCP tools are built from `ROUTES`, and `buildCaps` lists `ROUTES`, so the action list, the tool list and the routes come from the same source and cannot drift.
 
 | Field | Value |
 | --- | --- |
@@ -514,10 +587,11 @@ The API never holds the signing key. It sees only the public keys that the auth 
 | `actions` | One per route: `{name, method, path, auth: "session", write, summary}`. `write` is true for every method except GET. |
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
+| `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
 | `notifications` | `{types: <the four types>, default_level: 0}` |
 | `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility"]}` |
 
-Only `actions` is derived from the routes. The other fields are written by hand in `buildCaps` and differ from the code in two places:
+`actions` and `mcp.tools` are derived from `ROUTES`. The other fields are written by hand in `buildCaps` and differ from the code in two places:
 
 - `audit.ops` leaves out the comment op `edit`, and `audit.fields` leaves out `reason`.
 - `comments.subject_param` says the subject may be given in the query or the body on PATCH, DELETE and react. DELETE reads it from the query only.
@@ -529,18 +603,24 @@ Only `actions` is derived from the routes. The other fields are written by hand 
 1. Exits unless `CODEARTIFACT_AUTH_TOKEN` is set.
 2. Copies `api/src`, `api/scripts`, `package.json`, `package-lock.json` and `.npmrc` to a temporary directory.
 3. Runs `npm ci --omit=dev --ignore-scripts` there, then removes `.npmrc` and the lockfile.
-4. Runs `gen-caps` inside the stage, against the packages just installed, then removes `scripts/`. Exits 1 if `dist/caps.json` is missing or empty.
-5. Copies `caps.json` to `api/dist/caps.json`, so the local copy matches the zip.
-6. Zips the result with `-X`. The zip root holds `src/`, `node_modules/`, `package.json` and `dist/caps.json`, which matches the handler `src/index.handler`.
+4. Runs `gen-caps` inside the stage, against the packages just installed, then removes `scripts/`. Exits 1 if `dist/caps.json` is missing or empty. The other three generated files are not checked.
+5. Copies `caps.json`, and only `caps.json`, to `api/dist/caps.json`, so the local copy matches the zip.
+6. Zips the result with `-X`. The zip root holds `src/`, `node_modules/`, `package.json` and `dist/` with `caps.json`, `policy.json`, `mcp/tools.json` and `mcp/parity-caps.json`, which matches the handler `src/index.handler`.
 
-The zip is rolled out by the CloudFormation stack built from [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml). No script in the repository creates or names the stack. The CloudFront scripts in [`scripts/infra/`](../../scripts/infra/) default to `--stack hfy-app` when they read its outputs. The stack reads the code from `<code-bucket>` at `CodeKey` (default `lambda/hfy-api.zip`). The `/api/*` CloudFront behavior is added separately by [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh). No workflow builds or deploys hfy-api. The GitHub deploy role's `LambdaDeploy` statement names the function, but `ci.manifest.yaml` has no target for it (see [Why releases ship through a pipeline and feature flags](../explanation/release-model.md)). For the steps, see [How to deploy the app stack and its CloudFront behaviors](../how-to/deploy-the-app-stack.md).
+The zip is rolled out by the CloudFormation stack built from [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml):
 
-`npm test` in `api/` runs the Vitest suites against an in-memory DynamoDB fake. CI does not run them. See [How to run the test suites](../how-to/run-the-tests.md).
+- **Stack name.** No script in the repository creates or names the stack. The live stack is `<app-stack>`. Its name differs from the `--stack hfy-app` default that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) and [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) use to read its outputs. Runs of those scripts against the live stack need `--stack <app-stack>`.
+- **Code.** The stack reads the code from `<code-bucket>` at `CodeKey`. The template's default is `lambda/hfy-api.zip`. A release uploads the zip under a commit-named key, `<code-bucket>/lambda/hfy-api-<sha>.zip`, and sets `CodeKey` to it through a CloudFormation change set on `<app-stack>` that is reviewed before it is executed. In that change set the `FunctionUrl` resource shows `Conditional` replacement, because its target, `Function.Arn`, is not known until deploy time (`AuthFunctionUrl` shows the same when the auth edge ships in the same change set). After execution the stack's `FunctionUrl` and `AuthFunctionUrl` outputs must be unchanged, since CloudFront's origins point at those hosts.
+- **CloudFront.** The `/api/*` behavior is added by `add-api-behavior.sh`. The `/mcp*` and `/.well-known/oauth-protected-resource*` behaviors are added by `add-mcp-behavior.sh`, which also needs the published version of the `hfy-mcp-edge401` Lambda@Edge function: the `Edge401FunctionVersionArn` output of the us-east-1 stack `hfy-mcp-edge401`, built from [`mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml), or `--edge401-arn` ([How to deploy the Lambda@Edge functions](../how-to/deploy-the-edge-functions.md)).
+- **Pipeline.** No workflow builds or deploys hfy-api. The GitHub deploy role's `LambdaDeploy` statement names the function, but `ci.manifest.yaml` has no target for it (see [Why releases ship through a pipeline and feature flags](../explanation/release-model.md)). For the steps, see [How to deploy the app stack and its CloudFront behaviors](../how-to/deploy-the-app-stack.md).
+
+`npm test` in `api/` runs the Vitest suites against an in-memory DynamoDB fake. [`scripts/ci/mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh) runs `gen-caps`, the MCP suites and `io-kit parity diff`. CI runs neither. See [How to run the test suites](../how-to/run-the-tests.md).
 
 ## Related pages
 
 - [System architecture](architecture.md): the table definition, the stack, IAM and buckets.
-- [Identity services](identity-services.md): the auth edge that issues the session cookie and publishes the JWKS.
+- [MCP server](mcp-server.md): the `/mcp` surface that the same function serves, its tools, policy and groups.
+- [Identity services](identity-services.md): the auth edge that issues the session cookie and the MCP access tokens, and publishes the JWKS.
 - [Front end](front-end.md): the islands that call this API.
 - [Private data and secrets inventory](private-data-and-secrets.md): where secrets and private family data are kept.
 - [Codebase map](codebase-map.md): where each capability lives.
@@ -548,3 +628,7 @@ The zip is rolled out by the CloudFormation stack built from [`app-stack.yaml`](
 - [The identity model: one edge, one allowlist](../explanation/identity-model.md): how a sign-in becomes a member id.
 - [How to diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md): working from a status code back to its cause.
 - [How to add or remove a family member's access](../how-to/manage-family-access.md): who can sign in.
+- [How to deploy the app stack and its CloudFront behaviors](../how-to/deploy-the-app-stack.md): shipping a new `hfy-api` build.
+- [How to deploy and update the Lambda@Edge functions in us-east-1](../how-to/deploy-the-edge-functions.md): the `hfy-mcp-edge401` function the MCP behaviors need.
+- [How to connect an MCP client and run an admin delete](../how-to/connect-an-mcp-client.md): using the MCP server as a member.
+- [How to turn on push notifications](../how-to/turn-on-push-notifications.md): the VAPID secret.

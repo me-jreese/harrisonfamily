@@ -4,14 +4,19 @@ Use this page once per environment to set up the static hosting edge, the CI dep
 
 A full environment is built in this order:
 
-1. This page.
-2. [Deploy the app stack](deploy-the-app-stack.md): `hfy-api`, `hfy-auth-edge`, the `/api/*`, `/auth/*` and `/uploads/*` behaviors, and the upload CORS rule.
-3. [Manage family access](manage-family-access.md): the allowlist and the admin list.
-4. [Refresh the family data](refresh-the-family-data.md): the private Gramps data under the bucket's data prefixes.
-5. [Deploy a site change](deploy-a-site-change.md): how changes to `11ty/` ship. The [Verify](#verify) section below uses it for the first deploy.
-6. Optional: [Turn on push notifications](turn-on-push-notifications.md).
+1. This page. Its [Verify](#verify) section runs the first site deploy.
+2. [Deploy the edge functions](deploy-the-edge-functions.md): `hfy-mcp-edge401` and `hfy-edge-gate` in `us-east-1`. You test the gate's published version by invoking it with synthetic viewer-request events. Nothing is attached yet. The app stack page needs `hfy-mcp-edge401` before it can route `/mcp`, and the gate's checks pass before the auth edge exists.
+3. [Manage family access](manage-family-access.md): publish the allowlist, `config/userGrampsID.json`, which the app stack page checks for before it deploys, and the MCP groups, `config/groups.json`. `config/admins.json` may stay absent, which means there are no moderators. That page's sign-in checks work only once the app stack is deployed.
+4. [Deploy the app stack](deploy-the-app-stack.md): `hfy-api`, `hfy-auth-edge`, the `/auth/*`, `/api/*` and `/uploads/*` behaviors, the upload CORS rule, and the MCP routing: `/mcp*` and the protected-resource metadata, with `hfy-mcp-edge401` on origin-response.
+5. [Refresh the family data](refresh-the-family-data.md): the private Gramps data under the bucket's six data prefixes.
+6. [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): flip `authV2` and deploy the site first, then attach the gate, then purge Cloudflare's copies of the data paths.
+7. Optional: [Turn on push notifications](turn-on-push-notifications.md), and [Connect an MCP client](connect-an-mcp-client.md).
 
-Values in angle brackets, such as `<site>`, `<site-bucket>`, `<distribution-id>`, `<aws-account-id>`, `<github-owner>`, `<github-repo>` and `<google-web-client-id>`, are placeholders. Their forms are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). Never commit the real values: keep filled-in copies of the samples outside the repository.
+Every change to `11ty/` ships through [Deploy a site change](deploy-a-site-change.md). That includes the first deploy in [Verify](#verify) and the `authV2` flip in the cutover.
+
+> **Warning: the family data is public until the cutover attaches the gate.** Until then, the distribution's default behavior serves the six data paths, `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`, from `<site-bucket>` to anyone, with no session check. Cloudflare may also store the `/media/` files it serves. The site deploy never writes to those paths, so they hold nothing until you refresh the family data. Deploy and test the edge functions before that refresh, run the cutover straight after it, and purge Cloudflare as part of the cutover.
+
+Values in angle brackets, such as `<site>`, `<site-bucket>`, `<config-bucket>`, `<app-stack>`, `<distribution-id>`, `<aws-account-id>`, `<github-owner>`, `<github-repo>` and `<google-web-client-id>`, are placeholders. Their forms are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). Never commit the real values: keep filled-in copies of the samples outside the repository.
 
 ## Before you start
 
@@ -23,7 +28,7 @@ Values in angle brackets, such as `<site>`, `<site-bucket>`, `<distribution-id>`
 
 ### If you are adapting the repo for another family
 
-Several files carry this environment's names, so a copy for another family needs edits before its first deploy. The distribution ID is known only after step 3. Edit your working copy before [step 6](#6-create-the-deploy-role-and-its-secret), then ship the edits with [Deploy a site change](deploy-a-site-change.md). The run from that merge is the first deploy in [Verify](#verify).
+Several files carry this environment's names, so a copy for another family needs edits before its first deploy. The distribution ID is known only after step 3. Edit your working copy before [step 6](#6-create-the-deploy-role-and-its-secret), and commit the edits. Edits to `11ty/`, `ci.manifest.yaml` and the workflows ship with [Deploy a site change](deploy-a-site-change.md). The run from that merge is the first deploy in [Verify](#verify). Edits under `api/`, `auth/` and `edge-gate/` reach AWS only in the packages that [Deploy the app stack](deploy-the-app-stack.md) and [Deploy the edge functions](deploy-the-edge-functions.md) build from a clean checkout.
 
 | File | Values | Change to |
 | --- | --- | --- |
@@ -31,12 +36,18 @@ Several files carry this environment's names, so a copy for another family needs
 | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) | `GCP_PROJECT_ID`, `GCF_REGION`, `GCF_FUNCTION`, `GCF_ENV_VARS` | Your legacy names, or delete the workflow (see [Legacy pieces](#legacy-pieces)). It is hand-maintained. |
 | [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) | Defaults of `GitHubOrg`, `GitHubRepo` and `OIDCProviderArn` | Pass your own values as `--parameter-overrides` in step 6, or edit the defaults |
 | [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) | Bucket ARNs in `S3SiteSync` and `ProtectMemberUploads`; the distribution in `CloudFrontInvalidation`; the function ARNs in `LambdaDeploy` | `<site-bucket>`, `<distribution-id>`, and your function names and region |
-| [`auth/edge.manifest.json`](../../auth/edge.manifest.json) | `site`, `authOrigin`, `cookieDomain`, `returnOrigins`, `idp.domain`, `session.issuer`, `session.audience`, `session.signingKeySecretName`, `resolver.bucket`, `theme.cssUrl`, and the sign-in page text in `copy` | Your host name, issuer, audience, secret name, `<config-bucket>` and family name. Keep them in step with the `app-stack.yaml` parameters below. |
+| [`auth/edge.manifest.json`](../../auth/edge.manifest.json) | `site`, `authOrigin`, `cookieDomain`, `returnOrigins`, `idp.domain`, `session.issuer`, `session.audience`, `session.signingKeySecretName`, `resolver.bucket`, `theme.cssUrl`, the sign-in page text in `copy`, and the passkey provider's `rpId`, `rpName` and `origins` | Your host name, issuer, audience, secret name, `<config-bucket>` and family name. For passkeys, set `rpId` to `<site>`, `rpName` to the family name a member's device shows when it saves a passkey, and `origins` to `https://<site>`. Set them before any member enrols a passkey, because a passkey works only for the `rpId` it was created under. Keep the session values in step with the `app-stack.yaml` parameters and `gate.config.json` below. |
+| [`edge-gate/gate.config.json`](../../edge-gate/gate.config.json) | `issuer`, `audience`, `jwksUrl` | `session.issuer` and `session.audience` from `auth/edge.manifest.json`, and `<session.issuer>/.well-known/jwks.json`. The build bakes this file into the gate's zip, because Lambda@Edge has no environment variables, so a later change ships only as a new gate version ([Deploy the edge functions](deploy-the-edge-functions.md#ship-a-change-to-the-gate)). [`gate.test.mjs`](../../edge-gate/test/gate.test.mjs) fails while the two files disagree. |
 | [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) parameters | `ConfigBucket`, `MediaBucket`, `MediaPublicBase`, `SessionIssuer`, `SessionAudience`, `SessionJwksUrl`, `McpResources`, `SigningKeySecretName`, `OriginVerifySecretName` | Pass your values as `--parameter-overrides` in [Deploy the app stack](deploy-the-app-stack.md#4-deploy-the-stack), or edit the defaults |
+| [`api/src/index.js`](../../api/src/index.js) defaults | `SESSION_JWKS_URL`, `SESSION_ISSUER` and `MEDIA_PUBLIC_BASE`; `GROUPS_BUCKET` and `ADMIN_LIST_BUCKET`; `MEDIA_BUCKET` | The `https://<site>/...` forms; `<config-bucket>`; `<site-bucket>`. The stack sets each of these as an environment variable except `GROUPS_BUCKET`. The API therefore reads `config/groups.json` from the `GROUPS_BUCKET` default, and its role may read only `<config-bucket>/config/*`. A wrong default leaves every MCP caller with an empty tool list. The other defaults are fallbacks, but keep them in step. |
+| [`api/src/routes.js`](../../api/src/routes.js) and [`auth/src/oauth.js`](../../auth/src/oauth.js) | `MCP_RESOURCE` and `DEFAULT_MCP_RESOURCE` | `https://<site>/mcp`. `MCP_RESOURCE` is the resource the MCP server advertises and the token audience it accepts. The stack does not override it, so it must also be listed in `McpResources`, normally first: the auth edge refuses any other resource with `invalid_target`. `DEFAULT_MCP_RESOURCE` applies only when `McpResources` is empty. The client ID `mcp-harrisonfamily` can stay. To rename it, change `DEFAULT_CLIENT_ID` in `oauth.js` and the `MCP_CLIENT_IDS` default in [`api/src/mcp.js`](../../api/src/mcp.js) together. |
+| `config/userGrampsID.json`, `config/groups.json` and `config/admins.json` in `<config-bucket>`, outside the repository | Your members' `<email>` and `<gramps-id>` values | Your own files, published with [Manage family access](manage-family-access.md). Never start from another environment's copies. `groups.json` takes the shape documented at the top of [`api/src/policy.js`](../../api/src/policy.js). Without it the MCP server fails closed and nobody gets MCP tools. `admins.json` may be absent, which means there are no moderators. |
 | [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json) | `AllowedOrigins` | `https://<site>` |
 | [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) | The production host name in the `isProductionHost` check | `<site>`. Without it, the production host does not force `enforceAssets`, the guard described in [Family data privacy](../explanation/family-data-privacy.md#gating-the-json). |
 | [`11ty/manifest.webmanifest`](../../11ty/manifest.webmanifest) | `name`, `short_name` | Your family's names for the installed app |
-| The `scripts/infra/` scripts | The `--distribution` default, and the secret-name defaults | Pass `--distribution <distribution-id>` and `--secret-name` every time, as [Deploy the app stack](deploy-the-app-stack.md) does |
+| The `scripts/infra/` scripts | The `--distribution` default; the `--stack` default, `hfy-app`, of `add-auth-behavior.sh`, `add-api-behavior.sh`, `add-uploads-behavior.sh` and `add-mcp-behavior.sh`; the secret-name defaults, `--secret-name` in the auth, API and MCP behavior scripts and `--name` in `create-session-key.sh` and `create-origin-verify.sh` | Pass `--distribution <distribution-id>`, `--stack <app-stack>` and `--secret-name` every time, as [Deploy the app stack](deploy-the-app-stack.md) does. A run without `--stack` reads the outputs of a stack named `hfy-app`. If your `SigningKeySecretName` or `OriginVerifySecretName` differs from the template default, also pass it as `--name` to the matching `create-*.sh` script. The `--stack` of `add-data-gate-behaviors.sh` names the `us-east-1` gate stack instead, and its default, `hfy-edge-gate`, is the name [Deploy the edge functions](deploy-the-edge-functions.md) gives it, as is `hfy-mcp-edge401`, the `--edge-stack` default of `add-mcp-behavior.sh`. Keep those two names, and never pass `--stack <app-stack>` to `add-data-gate-behaviors.sh`. |
+
+The test suites pin several of these values. Examples are `gate.test.mjs`, the auth edge's manifest and passkey tests, and the OAuth tests' resource. Update them with the source and run the suites ([Run the tests](run-the-tests.md)). To find a value the table misses, search the checkout for the current host and bucket names. [Private data and secrets](../reference/private-data-and-secrets.md#placeholders) lists the files that carry `<site>`, `<site-bucket>` and `<config-bucket>`.
 
 `11ty/` also carries the family's own pages and text, rendered from `<eleventy-source>`. Rebuild them from your own source with [Refresh the Eleventy output](refresh-the-eleventy-output.md).
 
@@ -59,7 +70,7 @@ If you will not run the legacy path:
 - In `ci.manifest.yaml`, remove the `lambda` target, the `artifacts` entry and `&& bash scripts/ci/package-lambda.sh` from `build.cmd`, then re-render ([Change the CI pipeline](change-the-ci-pipeline.md)).
 - Delete `deploy-gcf-legacy.yml`, and remove `hfy-check-allowed` from the `LambdaDeploy` statement in `github-roles.yaml`.
 - `add-api-behavior.sh` refuses to run until it knows where `/api/check-allowed` should go. Pass `--legacy-origin` with the ID of the site's S3 origin. The pin then sends that path to the bucket, which answers `403`, and nothing else changes.
-- Members cannot sign in until `authV2` is on ([Toggle a feature flag](toggle-a-feature-flag.md)).
+- Members cannot sign in until `authV2` is on, which happens in the cutover ([Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md)).
 
 ## Steps
 
@@ -246,7 +257,11 @@ Point the apex and `www` at the distribution's `cloudfront.net` domain.
 - **Route 53.** Create an alias `A` record for each name. Its target is the distribution domain, with hosted zone ID `Z2FDTNDATAQYW2`, the fixed zone for CloudFront aliases.
 - **Another provider.** Create a CNAME for `www`. For the apex, use the record type your provider offers for pointing an apex at a hostname: ALIAS, ANAME or a flattened CNAME.
 
-If Cloudflare proxies the records, set its SSL/TLS mode to Full (strict). Cloudflare then caches in front of CloudFront, and the deploy's CloudFront invalidation does not purge Cloudflare's copies.
+If Cloudflare proxies the records, set its SSL/TLS mode to Full (strict). Cloudflare then caches in front of CloudFront, and the deploy's CloudFront invalidation does not purge Cloudflare's copies. Cloudflare decides what to store by file extension, so it caches the images, SVG and PDF files under `/media/` whatever CloudFront's cache policy says. With Cloudflare in front, three points apply to the gated paths, `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`:
+
+- **Once the gate is attached, they answer `Cache-Control: private, no-store`.** That covers the gate's own `401` and `302` and every response it lets through, and Cloudflare does not store such responses. [Edge and origin design](../explanation/edge-and-origin-design.md#cloudflare-in-front-of-cloudfront-hfy-r65) explains why.
+- **No Cloudflare Cache Rule may override the edge TTL on them.** The protection works only while Cloudflare honors the origin's `Cache-Control`. A rule that overrides it would let Cloudflare store a member's response and serve it to visitors who never reach the gate. A Cache Rule that bypasses the cache for these paths is optional extra protection.
+- **Purge them right after you attach the gate.** Copies Cloudflare stored before then are served until their TTL ends, and those requests never reach the gate. [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) gives the purge.
 
 ### 6. Create the deploy role and its secret
 
@@ -348,8 +363,11 @@ The bucket is empty until the first deploy, so run that first.
 
 ## Related pages
 
-- [Edge and origin design](../explanation/edge-and-origin-design.md): why one distribution fronts everything and the bucket is reachable only through it.
-- [Architecture](../reference/architecture.md): the distribution, the buckets, the deploy role and the secrets, as built.
+- [Edge and origin design](../explanation/edge-and-origin-design.md): why one distribution fronts everything, the bucket is reachable only through it, and the data paths are gated at the edge.
+- [The privacy model for family data](../explanation/family-data-privacy.md): what the gate protects and why.
+- [Architecture](../reference/architecture.md): the distribution, the buckets, the stacks, the deploy role and the secrets, as built.
+- [Identity services](../reference/identity-services.md): the auth edge's manifest, passkeys, and the gate's configuration.
+- [MCP server](../reference/mcp-server.md): the `/mcp` mount, its resource, and the groups in `config/groups.json`.
 - [Private data and secrets](../reference/private-data-and-secrets.md): placeholders, and where real values may live.
-- [Repository operations](../reference/repository-operations.md): the deploy workflow and the repo's guards.
-- [Deploy the app stack](deploy-the-app-stack.md), [Manage family access](manage-family-access.md), [Refresh the family data](refresh-the-family-data.md), [Deploy a site change](deploy-a-site-change.md), [Rotate the Google sign-in client](rotate-the-google-client.md), [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
+- [Repository operations](../reference/repository-operations.md): the deploy workflow, the behavior scripts and the repo's guards.
+- [Deploy the edge functions](deploy-the-edge-functions.md), [Manage family access](manage-family-access.md), [Deploy the app stack](deploy-the-app-stack.md), [Refresh the family data](refresh-the-family-data.md), [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md), [Deploy a site change](deploy-a-site-change.md), [Rotate the Google sign-in client](rotate-the-google-client.md), [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).

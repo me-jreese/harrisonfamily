@@ -18,7 +18,9 @@ All local output goes to `<project>/workspace-local/harrisonfamily-frontend/`. T
 | 2. Trees | `scripts/etl/build_family_tree_media.py` | `media/tree_<gramps-id>.svg`. With `--attach`, also a `familyTreeMedia` field in each person file |
 | 3. Search | `scripts/search/build_search_index.js` | `person/search-index.json`, and a new `person/index.json` in the form `{count, generatedAt, people}` |
 | 4. Sync | `scripts/etl/sync_to_s3.py` | The `person/`, `event/`, `family/`, `note/`, `place/` and `media/` prefixes of `<site-bucket>`. Never `uploads/` |
-| 5. Invalidate | AWS CLI | CloudFront cache entries for those prefixes |
+| 5. Invalidate | AWS CLI | CloudFront cache entries for those prefixes. They matter only while the private data gate is not attached |
+
+The sync can also change how members are named on new posts and comments. For a member whose allowlist entry is a plain string, as [Manage family access](manage-family-access.md) recommends, the API takes the author label from the `displayName` in their person record, `person/<gramps-id>.json`. It reads that record straight from `<site-bucket>`, not through CloudFront or the gate. Each API container caches a label it found for 1 h, so a changed `displayName` reaches the author label of new posts and comments within an hour of the sync. Stored labels stay: posts and comments written before the change keep the label they were stored with, and nothing rewrites them ([API reference](../reference/api.md#author-label)).
 
 The refresh does not touch the synthetic samples in the repository. If the shape of the data has changed and collaborators need new samples, see [Refresh the sanitized samples](refresh-the-sanitized-samples.md).
 
@@ -39,7 +41,7 @@ The refresh does not touch the synthetic samples in the repository. If the shape
 
 - **Graphviz.** `dot -V` prints a version.
 - **Node.** `node --version` prints a version. The search script uses only Node's built-in modules.
-- **AWS CLI credentials.** The credentials must be able to list `<site-bucket>`, put and delete objects under the six data prefixes, create invalidations on `<distribution-id>`, and read invalidation status (`cloudfront:GetInvalidation`) for the wait in step 5. The GitHub deploy role does not work here, because its trust policy accepts only `main` ([Architecture](../reference/architecture.md#harrisonfamily-github-roles)). If you use a named profile, add `--profile <aws-profile>` to each `sync_to_s3.py` and `aws` command.
+- **AWS CLI credentials.** The credentials must be able to list `<site-bucket>`, put and delete objects under the six data prefixes, create invalidations on `<distribution-id>`, and read invalidation status (`cloudfront:GetInvalidation`) for the wait in step 5. The two CloudFront permissions are needed only while the gate is not attached. The GitHub deploy role does not work here, because its trust policy accepts only `main` ([Architecture](../reference/architecture.md#harrisonfamily-github-roles)). If you use a named profile, add `--profile <aws-profile>` to each `sync_to_s3.py` and `aws` command.
 - **Reviewed data.** The export treats anyone without a death event as living. It copies notes and media exactly as they are in Gramps, and it ignores Gramps's per-record private flag. Before you export, remove from Gramps anything that signed-in members must not see:
   - Confirm that no living person has a death event recorded. The export treats anyone with one as not living.
   - Remove identifiers, account numbers, medical details and anything else members should not read from notes.
@@ -166,13 +168,24 @@ Check that no `(dryrun) delete:` line names a key under `media/posts/`. Only the
 
 ### 5. Invalidate the CloudFront cache
 
+Whether this step matters depends on the private data gate. Check whether it is attached, from a shell with no cookies:
+
 ```sh
-aws cloudfront create-invalidation --distribution-id <distribution-id> \
-  --paths "/person/*" "/media/*" "/family/*" "/event/*" "/note/*" "/place/*"
-aws cloudfront wait invalidation-completed --distribution-id <distribution-id> --id <invalidation-id>
+curl -s -o /dev/null -w '%{http_code}\n' https://<site>/person/index.json
 ```
 
-`<invalidation-id>` is the `Invalidation.Id` in the output of the first command. `/person/*` also covers the `person/index.html` shell. The next request fetches the shell from the bucket again, which is harmless.
+- **`401`: the gate is attached.** Its six behaviors, `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`, use the CachingDisabled cache policy ([`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh)). CloudFront keeps no copy of the data, and the next request reads the new files from the bucket, so the invalidation does not matter for them. You can skip it. Running it is harmless.
+- **`200`: the gate is not attached.** The default behavior serves the data paths and caches them, so invalidate them:
+
+  ```sh
+  aws cloudfront create-invalidation --distribution-id <distribution-id> \
+    --paths "/person/*" "/media/*" "/family/*" "/event/*" "/note/*" "/place/*"
+  aws cloudfront wait invalidation-completed --distribution-id <distribution-id> --id <invalidation-id>
+  ```
+
+  `<invalidation-id>` is the `Invalidation.Id` in the output of the first command. `/person/*` also covers the `person/index.html` shell, which is never gated. The next request fetches the shell from the bucket again, which is harmless.
+
+Neither case reaches Cloudflare, which proxies `<site>` in front of CloudFront and caches images, SVG and PDF files by extension. Cloudflare may still hold copies of `/media/` files, such as family-tree diagrams and photos, that it cached before the gate was attached, and it serves them until their TTL ends. Once the gate is attached, every gated response carries `Cache-Control: private, no-store`, so Cloudflare stores no new copies. If a changed tree or photo still shows the old version, purge the data prefixes in Cloudflare as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare).
 
 ## Verify
 
@@ -192,7 +205,9 @@ aws cloudfront wait invalidation-completed --distribution-id <distribution-id> -
 
    The count is at least the one you recorded before you started. Members may have uploaded more in the meantime. `sync_to_s3.py` cannot reach `uploads/`, so a lower count means something else deleted photos, such as a root-level `aws s3 sync --delete`. Stop and find it. Those photos cannot be rebuilt from any local source. If you recorded a non-zero `media/posts/` count, count that prefix again too. It must not have dropped.
 3. **The trees are in the bucket.** `aws s3 ls s3://<site-bucket>/media/tree_<gramps-id>.svg` lists a person you changed.
-4. **The site shows the change.** Sign in at `https://<site>/family-login/` and open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. Both search surfaces read the same files. To check the island as well, preview it with `?hfy_flags=searchV2` ([Toggle a feature flag](toggle-a-feature-flag.md)). If the data requests fail with 403, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
+4. **The site shows the change.** Sign in at `https://<site>/auth/login`, the sign-in page under `authV2`. While `authV2` is still off and the gate is not attached, the legacy client signs in at `https://<site>/family-login/` instead. Open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. Both search surfaces read the same files. To check the island as well, preview it with `?hfy_flags=searchV2` ([Toggle a feature flag](toggle-a-feature-flag.md)).
+
+   With the gate attached, a refused data request is a `401 {"error":"unauthenticated"}` from the gate, or a `302` to `/auth/login?returnTo=<path>` for a page navigation. The client refreshes the session and retries once before it sends you to sign in. If you are refused while signed in, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md) and the table in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#if-something-fails).
 5. **The checkout is clean.** `git status` in your checkout shows no changes from this procedure. Any change there means a script wrote into the repository. Find out why before you commit anything.
 
 ## Troubleshooting
@@ -205,7 +220,9 @@ aws cloudfront wait invalidation-completed --distribution-id <distribution-id> -
 | Many `Media binary missing` warnings | Gramps stores relative media paths, which are resolved from the current directory | Convert the paths to absolute in Gramps (**Tools > Utilities > Media Manager**). Or run step 1 from the directory they are relative to, with the script and `--output` both given as absolute paths: `python3 <project>/scripts/etl/export_person_data.py --output <project>/workspace-local/harrisonfamily-frontend`. Then return to `<project>` for steps 2 to 5 |
 | `[ERROR] No person files found in <dir>` | `--person-dir` names the wrong directory | Point it at `workspace-local/harrisonfamily-frontend/person` |
 | A person page shows no tree | Step 1 ran after step 2, or step 2 ran without `--attach` or with the default directories | Repeat step 2, then steps 4 and 5 |
-| A new person is missing from search | Step 3 was skipped or ran against the default directory, or the invalidation has not finished | Repeat step 3, then steps 4 and 5 |
+| A new person is missing from search | Step 3 was skipped or ran against the default directory, or, without the gate, the invalidation has not finished | Repeat step 3, then steps 4 and 5 |
+| A changed tree or photo still shows the old version | Cloudflare serves a copy of the `/media/` file that it cached before the gate was attached. The CloudFront invalidation does not reach Cloudflare | Purge the data prefixes in Cloudflare, as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) |
+| New posts or comments still carry a member's old name | Each API container caches a found label for 1 h. Or the member's allowlist entry carries its own usable label, which the API prefers to `displayName`. Older posts and comments keep the label they were stored with | Wait an hour for new posts and comments. If the entry carries a label, use the plain string form that [Manage family access](manage-family-access.md#1-edit-the-source-files) asks for. Stored labels do not change |
 
 ## Related pages
 
@@ -214,5 +231,7 @@ aws cloudfront wait invalidation-completed --distribution-id <distribution-id> -
 - [Private data and secrets](../reference/private-data-and-secrets.md): where the real data lives and what never goes in the repository.
 - [Codebase map](../reference/codebase-map.md): the scripts outside the repository and the sanitized sample directories.
 - [Front end](../reference/front-end.md): the person page and both search surfaces.
+- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): attaching the gate, and purging Cloudflare's copies of the data paths.
+- [API reference](../reference/api.md#author-label): how the author label is chosen and how long it is cached.
 - [Refresh the sanitized samples](refresh-the-sanitized-samples.md): update the synthetic samples in the repository when the shape of the data changes.
 - [Deploy a change to the static site](deploy-a-site-change.md), [Toggle a feature flag](toggle-a-feature-flag.md), [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).

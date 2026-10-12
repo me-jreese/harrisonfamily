@@ -2,7 +2,14 @@
 
 Use this page to ship a change to `11ty/` (the pages, the committed island bundles and [`flags.json`](../../11ty/_data/flags.json)), to the legacy `hfy-check-allowed` Lambda or to the legacy `getAllowlist` Cloud Function, and to confirm that it is live.
 
-Changes to `api/` or `auth/` do not ship this way: use [Deploy the app stack](deploy-the-app-stack.md). To change the pipeline itself, use [Change the CI pipeline](change-the-ci-pipeline.md). For why a deploy and a feature flag are separate switches, see [the release model](../explanation/release-model.md).
+Some changes do not ship this way:
+
+- `api/` or `auth/`: use [Deploy the app stack](deploy-the-app-stack.md).
+- `edge-gate/`, the private data gate, or the MCP 401-restore function in [`mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml): use [Deploy the edge functions](deploy-the-edge-functions.md).
+- Attaching or removing the data gate on the distribution: use [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md).
+- The pipeline itself: use [Change the CI pipeline](change-the-ci-pipeline.md).
+
+For why a deploy and a feature flag are separate switches, see [the release model](../explanation/release-model.md).
 
 Values in angle brackets, such as `<site>`, `<pr-number>` and `<run-id>`, are placeholders. The forms are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders).
 
@@ -13,7 +20,7 @@ A push to `main` starts two independent workflow runs, whatever the change touch
 - **[`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml)**, the kit pipeline. It builds a release from the commit, syncs `11ty/` to `<site-bucket>` with `--delete`, updates the code of `hfy-check-allowed`, invalidates `/*` on CloudFront and waits for the invalidation, then requests `https://<site>/` and `https://<site>/family-login/`. If either smoke request fails, it redeploys the release of the previous successful run.
 - **[`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml)**, which deploys `getAllowlist`. Nothing rolls it back.
 
-The sync never writes or deletes the family data prefixes or member uploads: it excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`. The island bundles ship exactly as committed in `11ty/js/islands/`, because no workflow builds them. `hfy-api`, `hfy-auth-edge`, the app stack and CloudFront configuration changes do not ship. [Repository operations](../reference/repository-operations.md#workflows) lists every job and step.
+The sync never writes or deletes the family data prefixes or member uploads: it excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`. The island bundles ship exactly as committed in `11ty/js/islands/`, because no workflow builds them. `hfy-api`, `hfy-auth-edge`, the app stack, the Lambda@Edge functions `hfy-edge-gate` and `hfy-mcp-edge401`, and CloudFront configuration changes, including the data gate's behaviors, do not ship. [Repository operations](../reference/repository-operations.md#workflows) lists every job and step.
 
 ## Before you start
 
@@ -28,7 +35,7 @@ The sync never writes or deletes the family data prefixes or member uploads: it 
 
 - `REPLACE_WITH_GOOGLE_CLIENT_ID` is left as is in the committed files. The pipeline substitutes the real client ID on the runner, so the repository never carries it. `grep -rl REPLACE_WITH_GOOGLE_CLIENT_ID 11ty | wc -l` prints `11`: the ten rendered pages and `js/auth.js`.
 - The suites that cover your change pass locally ([Run the tests](run-the-tests.md)). No workflow runs them.
-- If the change sets a flag to `true` in `flags.json`, read [Toggle a feature flag](toggle-a-feature-flag.md) first.
+- If the change sets a flag to `true` in `flags.json`, read [Toggle a feature flag](toggle-a-feature-flag.md) first. Turning `authV2` on for everyone is step 1 of [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md), so follow that page. Never set `authV2` to `false` while the gate is attached ([Toggle a feature flag](toggle-a-feature-flag.md#roll-back)).
 
 ## Steps
 
@@ -79,8 +86,25 @@ If a `run list` prints nothing, the run has not started yet. Run it again after 
 | `deploy`, at the sync | Possibly part of the new `11ty/`. Nothing rolls back. | Fix the cause and `gh run rerun <run-id> --failed`, or [roll back](roll-back-a-site-deploy.md#when-nothing-rolled-back). |
 | `deploy`, at the Lambda update | The new static site with the old `hfy-check-allowed`. | As above. |
 | `invalidate` | The new files and Lambda, but CloudFront can serve cached copies. No smoke check runs. | `gh run rerun <run-id> --failed`. |
-| `smoke` | `rollback_on_smoke_fail` redeployed the previous release. `main` still holds your change. | Follow [Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback). |
+| `smoke` | `rollback_on_smoke_fail` redeployed the previous release, `flags.json` included. `main` still holds your change. | First run the `authV2` check in the warning below. Then follow [Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback). |
 | `rollback_on_smoke_fail` | The new release, which failed its smoke check. | Follow [Roll back a site deploy](roll-back-a-site-deploy.md#if-the-automatic-rollback-fails). |
+
+> **Warning: once the data gate is attached, an automatic rollback can turn `authV2` off (HFY-R67).** `rollback_on_smoke_fail` redeploys the previous release's `11ty/`, and with it that release's `_data/flags.json`. For the first deploys after the `authV2` flip, that file may still say `"authV2": false`. The legacy client does not send the `io_id` cookie, so the gate refuses its data requests, and person pages, search and photos fail for every visitor. After every automatic rollback, check both:
+>
+> ```sh
+> curl -s https://<site>/_data/flags.json | jq .authV2
+> curl -s -o /dev/null -w '%{http_code}\n' https://<site>/person/index.json
+> ```
+>
+> The second command prints `401` while the gate is attached. If it does, and the first does not print `true`, remove the gate at once with operator AWS credentials. The GitHub deploy role cannot change the distribution:
+>
+> ```sh
+> scripts/infra/add-data-gate-behaviors.sh --remove --dry-run --distribution <distribution-id>
+> scripts/infra/add-data-gate-behaviors.sh --remove --distribution <distribution-id>
+> aws cloudfront wait distribution-deployed --id <distribution-id>
+> ```
+>
+> The dry run must remove only the six gated behaviors. Do not pass `--stack <app-stack>`: this script's `--stack` names the `us-east-1` gate stack, and `--remove` does not read it. Once the distribution is deployed, the family data is public again, as it was before the release. Then make the rollback last ([Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback)), and attach the gate again only after a deploy with `authV2` set to `true` has finished green ([Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#3-attach-the-gate)).
 
 Then watch the `deploy-gcf-legacy.yml` run. If it fails, the previous revision of `getAllowlist` keeps serving. Fix the cause and rerun it. Nothing in any sign-in path calls the function.
 
@@ -120,7 +144,15 @@ Then watch the `deploy-gcf-legacy.yml` run. If it fails, the previous revision o
    ```
 
    The first command prints a `clientId` that is neither empty nor the placeholder. The second prints `0`.
-6. **Legacy sign-in still works.** Open `https://<site>/family-login/` in a private window, so that no preview override applies, and sign in with an allowlisted Google account. The navigation switches to the signed-in state: **LOG OUT**, plus **MY RECORD** for an account mapped to a record. If it does not, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
+6. **Sign-in still works.** Which check applies depends on the published `authV2` value, which `curl -s https://<site>/_data/flags.json | jq .authV2` prints. Use a private window, so that no preview override applies. If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
+   - **`false`, before the cutover: legacy sign-in.** Open `https://<site>/family-login/` and sign in with an allowlisted Google account. The navigation switches to the signed-in state: **LOG OUT**, plus **MY RECORD** for an account mapped to a record. This check applies only while `authV2` is off. With it on, `/family-login/` sends a signed-out visitor to `/auth/login`.
+   - **`true`, after the cutover: the `io_id` session and the gate.** Sign in at `https://<site>/auth/login`, then open a person page, `https://<site>/person/?id=<gramps-id>`. In DevTools > Network, the `/person/<gramps-id>.json` request carries a `Cookie` header that includes `io_id`, and no `X-HFY-Session` header. Do not copy the cookie value anywhere. Then, signed out, from a shell with no cookies:
+
+     ```sh
+     curl -sS -o /dev/null -D - https://<site>/person/index.json | grep -iE '^(HTTP|cache-control)'
+     ```
+
+     The status is `401`, with `cache-control: private, no-store`. Partway through the cutover, with `authV2` on but the gate not attached yet, only the `io_id` check applies.
 
 If you changed the Lambda or the Cloud Function, confirm the update with operator credentials:
 
@@ -135,10 +167,12 @@ The Lambda shows a `LastModified` time after the run started and `Successful`. T
 
 ## If the change has to come out
 
-Follow [Roll back a site deploy](roll-back-a-site-deploy.md). It covers the automatic rollback, a durable rollback by revert, and the cases nothing rolls back.
+Follow [Roll back a site deploy](roll-back-a-site-deploy.md). It covers the automatic rollback, a durable rollback by revert, and the cases nothing rolls back. If the gate is attached and the release you roll back to has `"authV2": false`, remove the gate first, as in the warning under [Watch the runs](#3-watch-the-runs).
 
 ## Related pages
 
 - [Release model](../explanation/release-model.md): why deploys and flags are separate, and why the pipeline is shaped as it is.
-- [Repository operations](../reference/repository-operations.md): the workflows, the kit manifest, the deploy role and the pre-commit hook.
+- [Repository operations](../reference/repository-operations.md): the workflows, the kit manifest, the deploy role, the [CloudFront behavior scripts](../reference/repository-operations.md#cloudfront-behavior-scripts) and the pre-commit hook.
+- [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): the `authV2` flip, the gate, and their rollback order.
+- [Deploy the edge functions](deploy-the-edge-functions.md): `hfy-edge-gate` and `hfy-mcp-edge401`, which this pipeline does not ship.
 - [Roll back a site deploy](roll-back-a-site-deploy.md), [Change the CI pipeline](change-the-ci-pipeline.md), [Toggle a feature flag](toggle-a-feature-flag.md), [Run the tests](run-the-tests.md), [Deploy the app stack](deploy-the-app-stack.md).

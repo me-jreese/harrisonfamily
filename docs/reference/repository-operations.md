@@ -2,7 +2,7 @@
 
 Reference for the workflows, deploy role, scripts, hooks and test suites that build, check and ship this repository.
 
-Paths are relative to the repository root and link to the code. For why a release is split into a deploy and a flag flip, see [the release model](../explanation/release-model.md). For step-by-step tasks, see [deploy a site change](../how-to/deploy-a-site-change.md), [roll back a site deploy](../how-to/roll-back-a-site-deploy.md), [change the CI pipeline](../how-to/change-the-ci-pipeline.md) and [run the tests](../how-to/run-the-tests.md).
+Paths are relative to the repository root and link to the code. For why a release is split into a deploy and a flag flip, see [the release model](../explanation/release-model.md). For step-by-step tasks, see [deploy a site change](../how-to/deploy-a-site-change.md), [roll back a site deploy](../how-to/roll-back-a-site-deploy.md), [deploy the app stack](../how-to/deploy-the-app-stack.md), [deploy the edge functions](../how-to/deploy-the-edge-functions.md), [cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md), [change the CI pipeline](../how-to/change-the-ci-pipeline.md) and [run the tests](../how-to/run-the-tests.md).
 
 ## Placeholders
 
@@ -13,6 +13,10 @@ Identifiers that belong to the live environment are written as placeholders. The
 | `<site>` | The site's public hostname. |
 | `<site-bucket>` | The S3 bucket that holds the static site, the private data prefixes and member uploads. |
 | `<distribution-id>` | The CloudFront distribution in front of the bucket, the API and the auth edge. |
+| `<app-stack>` | The deployed app stack, built from [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml). Its name is not `hfy-app`, the `--stack` default of the behavior scripts. |
+| `<code-bucket>` | The S3 bucket that holds the app Lambda packages, under commit-named keys `lambda/hfy-api-<sha>.zip` and `lambda/hfy-auth-edge-<sha>.zip`. |
+| `<edge-code-bucket>` | The private `us-east-1` bucket that holds the gate's packages under content-addressed keys. |
+| `<config-bucket>` | The S3 bucket that holds the access configuration under `config/`, including `config/groups.json`. |
 | `<github-owner>` | The GitHub user or organization that owns the repository (the `GitHubOrg` parameter of `github-roles.yaml`). |
 | `<github-repo>` | The GitHub repository name (the `GitHubRepo` parameter of `github-roles.yaml`). |
 | `<gcp-project>` | The Google Cloud project of the legacy allowlist function. |
@@ -164,7 +168,7 @@ Trust: `sts:AssumeRoleWithWebIdentity` from the account's GitHub OIDC provider, 
 
 `ProtectMemberUploads` (HFY-R58) backs up the `uploads/*` sync exclude: an explicit Deny wins over the Allow, so the role cannot write or delete any object under `uploads/`, even if a sync tried to. `GetFunctionConfiguration` and `GetInvalidation` are what the `wait` commands in `deploy-lambda` and `invalidate` poll, and the version and alias actions cover `deploy-lambda`'s aliased and rollback paths (HFY-R60).
 
-The role has no CloudFormation, IAM, Secrets Manager or CloudFront distribution-update permissions. [`scripts/infra/test/test_app_stack.py`](../../scripts/infra/test/test_app_stack.py) checks the `ProtectMemberUploads` statement.
+The role has no CloudFormation, IAM, Secrets Manager or CloudFront distribution-update permissions, and no Lambda grant in `us-east-1`, where the two Lambda@Edge functions live. [`scripts/infra/test/test_app_stack.py`](../../scripts/infra/test/test_app_stack.py) checks the `ProtectMemberUploads` statement.
 
 ## GitHub secrets
 
@@ -174,18 +178,22 @@ The role has no CloudFormation, IAM, Secrets Manager or CloudFront distribution-
 | `HFY_GOOGLE_CLIENT_ID` | The `build` job of `io-kit-ci.yml` and `io-kit-deploy.yml`, and the `parity` job of `io-kit-ci.yml` | The Google OAuth web client ID that replaces `REPLACE_WITH_GOOGLE_CLIENT_ID`. It appears in the served pages once deployed. |
 | `GCP_SERVICE_ACCOUNT_KEY` | `deploy-gcf-legacy.yml` | A Google service-account JSON key, used only for the legacy Cloud Function. |
 
-No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the build scripts. The rollback uses the automatic `github.token` with `actions: read`, not a repository secret. Where each value comes from, and who can read it, is in [private data and secrets](private-data-and-secrets.md).
+No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the build scripts and the MCP conformance gate. The rollback uses the automatic `github.token` with `actions: read`, not a repository secret. Where each value comes from, and who can read it, is in [private data and secrets](private-data-and-secrets.md).
 
 ## What no workflow ships or runs
 
 | Item | Built or run by | How it reaches production |
 |---|---|---|
 | Island bundles in `11ty/js/islands/` | [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh), or `npm run build` in `islands/`, by hand | They are committed build output (HFY-R58, see [`.gitignore`](../../.gitignore)) and ship with the `11ty/` sync. No workflow builds them or checks them against `islands/src/`. See [build and preview the islands](../how-to/build-and-preview-the-islands.md). |
-| Lambda `hfy-api` | [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) builds `dist/hfy-api.zip` | By hand. The manifest's only Lambda target is `hfy-check-allowed`, although the deploy role's `LambdaDeploy` statement also covers this function. See [deploy the app stack](../how-to/deploy-the-app-stack.md). |
-| Lambda `hfy-auth-edge` | [`scripts/ci/package-auth.sh`](../../scripts/ci/package-auth.sh) builds `dist/hfy-auth-edge.zip` | Same as `hfy-api`. |
-| App stack ([`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)) and deploy-role stack | `aws cloudformation deploy`, by hand | The deploy role has no CloudFormation or IAM permissions. |
-| Distribution changes and secrets | [`scripts/infra/`](#infrastructure-scripts-scriptsinfra), [`append-index.js`](#cloudfront-function-scriptscloudfrontappend-indexjs) | Applied by hand. |
-| Every test suite | By hand | No workflow runs any [test suite](#test-suites). |
+| Lambda `hfy-api` | [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) builds `dist/hfy-api.zip` | By hand. The zip is uploaded to `<code-bucket>` as `lambda/hfy-api-<sha>.zip` and reaches `<app-stack>` through a CloudFormation change set. The manifest's only Lambda target is `hfy-check-allowed`, although the deploy role's `LambdaDeploy` statement also covers this function. See [deploy the app stack](../how-to/deploy-the-app-stack.md). |
+| Lambda `hfy-auth-edge` | [`scripts/ci/package-auth.sh`](../../scripts/ci/package-auth.sh) builds `dist/hfy-auth-edge.zip` | Same as `hfy-api`, under the key `lambda/hfy-auth-edge-<sha>.zip`. |
+| App stack ([`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)) and deploy-role stack | CloudFormation, by hand | The deploy role has no CloudFormation or IAM permissions. |
+| Lambda@Edge `hfy-edge-gate` | [`scripts/ci/package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh) builds `dist/hfy-edge-gate.zip` and `dist/hfy-edge-gate.params` | By hand, in `us-east-1`. The zip is uploaded to its content-addressed `CodeKey` in `<edge-code-bucket>`, and stack `hfy-edge-gate` ([`edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml)) is deployed with that `CodeKey` and its `CodeSha256`, which publishes a numbered version. The version is invoked with synthetic viewer-request events before [`add-data-gate-behaviors.sh`](#cloudfront-behavior-scripts) attaches it. See [deploy the edge functions](../how-to/deploy-the-edge-functions.md) and [cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md). |
+| Lambda@Edge `hfy-mcp-edge401` | Nothing to build: the code is inline in [`mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml) | By hand. Stack `hfy-mcp-edge401` is deployed in `us-east-1`, then [`add-mcp-behavior.sh`](#cloudfront-behavior-scripts) attaches its version to the MCP behaviors. |
+| Distribution changes | The five `add-*` scripts in [`scripts/infra/`](#infrastructure-scripts-scriptsinfra), including `add-mcp-behavior.sh` and `add-data-gate-behaviors.sh`; [`append-index.js`](#cloudfront-function-scriptscloudfrontappend-indexjs) | Applied by hand. The deploy role cannot change the distribution's configuration. |
+| Secrets | [`create-session-key.sh`](#create-session-keysh-and-create-origin-verifysh), [`create-origin-verify.sh`](#create-session-keysh-and-create-origin-verifysh); the web push secret `harrisonfamily/api/vapid` has no script | Created by hand. See [turn on push notifications](../how-to/turn-on-push-notifications.md) for the VAPID secret. |
+| `config/groups.json` | Written by hand. Its shape is documented in [`api/src/policy.js`](../../api/src/policy.js). | Uploaded by hand to `<config-bucket>`. `hfy-api` reads it, read-only, for the MCP groups and grants no group when it is missing or unreadable. The repository holds no copy. See [manage family access](../how-to/manage-family-access.md). |
+| Every test suite, and the MCP conformance gate | By hand | No workflow runs any [test suite](#test-suites), including the `edge-gate/` and `tests/client/` suites, the passkey end-to-end run, or [`mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh). |
 
 ## Build scripts: `scripts/ci/`
 
@@ -194,22 +202,24 @@ No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the
 | [`patch-client-id.sh`](../../scripts/ci/patch-client-id.sh) | `build.cmd` | `HFY_GOOGLE_CLIENT_ID`; every `*.html` and `*.js` file under `11ty/` | The same files, edited in place | Exits at once if `HFY_GOOGLE_CLIENT_ID` is unset or empty. Replaces `REPLACE_WITH_GOOGLE_CLIENT_ID` with the client ID in each file that contains it. It uses the GNU form of `sed -i`, as on the Linux runner. Run in a working checkout, it leaves the committed files modified. |
 | [`package-lambda.sh`](../../scripts/ci/package-lambda.sh) | `build.cmd` | `lambda/hfy-check-allowed/` | `dist/hfy-check-allowed.zip` | Runs `npm ci` in `lambda/hfy-check-allowed`, then `zip -r` of `index.mjs`, `package.json`, `package-lock.json` and `node_modules`. |
 | [`build-islands.sh`](../../scripts/ci/build-islands.sh) | Hand | `islands/package.json`, `islands/package-lock.json`, `islands/src/` | `11ty/js/islands/` (committed) | Runs `npm ci --ignore-scripts` (output suppressed) and `npm run build:islands`, then requires `11ty/js/islands/shell.js` and `shell.css` to be non-empty. |
-| [`package-api.sh`](../../scripts/ci/package-api.sh) | Hand | `api/src/`, `api/scripts/`, `api/package.json`, `api/package-lock.json`, `api/.npmrc` | `dist/hfy-api.zip` (handler `src/index.handler`); `api/dist/caps.json` | Copies the inputs to a temporary stage and runs `npm ci --omit=dev --ignore-scripts` there. It removes `.npmrc` and the lockfile from the stage, then runs [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs) inside the stage, against the packages just installed, and removes `scripts/`. It exits 1 if `dist/caps.json` is missing or empty. It copies `caps.json` to `api/dist/`, zips the stage with `-X`, and prints the zip path and size. It does not use `api/node_modules/`. |
+| [`package-api.sh`](../../scripts/ci/package-api.sh) | Hand | `api/src/`, `api/scripts/`, `api/package.json`, `api/package-lock.json`, `api/.npmrc` | `dist/hfy-api.zip` (handler `src/index.handler`); `api/dist/caps.json` | Copies the inputs to a temporary stage and runs `npm ci --omit=dev --ignore-scripts` there. It removes `.npmrc` and the lockfile from the stage, then runs [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs) inside the stage, against the packages just installed, and removes `scripts/`. `gen-caps.mjs` writes `dist/caps.json`, `dist/policy.json` (the permission table, from [`api/src/policy.js`](../../api/src/policy.js)), `dist/mcp/tools.json` and `dist/mcp/parity-caps.json` into the stage, so all four are in the zip. The script exits 1 if `dist/caps.json` is missing or empty. It copies only `caps.json` to `api/dist/`, zips the stage with `-X`, and prints the zip path and size. It does not use `api/node_modules/`. |
 | [`package-auth.sh`](../../scripts/ci/package-auth.sh) | Hand | `auth/src/`, `auth/edge.manifest.json`, `auth/package.json`, `auth/package-lock.json`, `auth/.npmrc` | `dist/hfy-auth-edge.zip` (handler `src/index.handler`) | Same staging and install as `package-api.sh`, with no capabilities step. |
+| [`package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh) | Hand | `edge-gate/src/index.mjs`, `edge-gate/src/gate.mjs`, `edge-gate/gate.config.json` | `dist/hfy-edge-gate.zip` (handler `index.handler`); `dist/hfy-edge-gate.params` | Copies the two sources and the config, renamed `config.json`, to a temporary stage, and fails if the config lacks `issuer`, `audience` or `jwksUrl`. It installs nothing: the gate has no dependencies, and Lambda@Edge has no environment variables, so the config is baked in. It sets fixed file times and zips with `-X`, so the same sources always give the same bytes. It exits 1 if the zip is 1 MB or larger, the Lambda@Edge viewer-trigger limit. It computes `CodeSha256`, the base64 SHA-256 of the zip, and `CodeKey`, the content-addressed key `lambda/hfy-edge-gate-<first 16 hex of the SHA-256>.zip`, writes both as `KEY=VALUE` lines to `dist/hfy-edge-gate.params`, and prints them with an `aws s3 cp` upload command and an `aws cloudformation deploy` command for stack `hfy-edge-gate`, the bucket left as a placeholder for `<edge-code-bucket>`. |
+| [`mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh) | Hand | `api/`; one optional argument, `report-only` or `blocking` (default `blocking`) | `api/dist/caps.json`, `api/dist/policy.json`, `api/dist/mcp/tools.json`, `api/dist/mcp/parity-caps.json`; console | The MCP conformance gate (HFY-TSK-077, HFY-TSK-073). Works in `api/`. Runs `npm ci --ignore-scripts` only when `api/node_modules` is missing, so an existing install is used as it is. Runs `gen-caps.mjs`, then Vitest on `test/mcp-conformance.test.js`, `test/mcp.test.js` and `test/mcp-infra.test.js`, then `npx io-kit parity diff --mode <argument> --stack hfy --caps dist/mcp/parity-caps.json --routes parity/routes.yaml --mapping parity/map.yaml --mcp-tools dist/mcp/tools.json`. `io-kit` comes from `@io-kit/parity` 0.3.0, a dev dependency of `api/`. The first failing step ends the script. |
 
-`patch-client-id.sh` and `package-lambda.sh` resolve paths from the current directory, which is the checkout root when the `build` action runs them. The other three resolve the repository root from their own location, so they run from any directory. Those three need `CODEARTIFACT_AUTH_TOKEN` for the `@io-kit/*` packages: the `.npmrc` in each package reads it from the environment. Get it with `aws codeartifact get-authorization-token --domain io`. Each exits at once if it is unset and never prints it. `package-lambda.sh` installs from the public registry and needs no token. Outputs under `dist/` and `api/dist/` are gitignored.
+`patch-client-id.sh` and `package-lambda.sh` resolve paths from the current directory, which is the checkout root when the `build` action runs them. The other five resolve the repository root from their own location, so they run from any directory. `build-islands.sh`, `package-api.sh`, `package-auth.sh` and `mcp-conformance.sh` need `CODEARTIFACT_AUTH_TOKEN` for the `@io-kit/*` packages: the `.npmrc` in each package reads it from the environment. Get it with `aws codeartifact get-authorization-token --domain io`. Each exits at once if it is unset and never prints it. `package-lambda.sh` installs from the public registry, and `package-edge-gate.sh` installs nothing, so neither needs a token. `package-edge-gate.sh` needs `node`, `zip` and `openssl`. Outputs under `dist/` and `api/dist/` are gitignored.
 
 ## Infrastructure scripts: `scripts/infra/`
 
-All five scripts are idempotent, accept `--dry-run`, exit 2 on an unknown argument, and never print a secret value. They run under `umask 077`, and their temporary files are deleted on exit.
+All seven scripts are idempotent, accept `--dry-run`, exit 2 on an unknown argument, and never print a secret value. They run under `umask 077`, and their temporary files are deleted on exit.
 
 | Script | Needs |
 |---|---|
 | [`create-session-key.sh`](../../scripts/infra/create-session-key.sh) | AWS CLI, `openssl`, `jq` |
 | [`create-origin-verify.sh`](../../scripts/infra/create-origin-verify.sh) | AWS CLI, `openssl` |
-| [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh), [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh) | AWS CLI, `jq`, and the shared helpers in [`scripts/infra/lib/`](../../scripts/infra/lib/) |
+| [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh), [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh), [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh) | AWS CLI, `jq`, and the shared helpers in [`scripts/infra/lib/`](../../scripts/infra/lib/) |
 
-The offline tests for these scripts are in [`scripts/infra/test/`](../../scripts/infra/test/). See [test suites](#test-suites).
+The offline tests for these scripts are in [`scripts/infra/test/`](../../scripts/infra/test/), except for `add-mcp-behavior.sh`, which the API suite's `mcp-infra` test covers. See [test suites](#test-suites).
 
 ### `create-session-key.sh` and `create-origin-verify.sh`
 
@@ -231,51 +241,58 @@ Neither script rotates an existing secret. See [rotate the session signing key](
 
 ### CloudFront behavior scripts
 
-The three `add-*-behavior.sh` scripts add cache behaviors, and for the API and the auth edge an origin, to the distribution.
+The five `add-*` scripts add cache behaviors to the distribution, and the API, auth and MCP scripts also add or update an origin.
 
-| | `add-api-behavior.sh` | `add-auth-behavior.sh` | `add-uploads-behavior.sh` |
-|---|---|---|---|
-| Path patterns | `/api/*`, plus the legacy pin `/api/check-allowed*` | `/auth/*`, `/.well-known/oauth-authorization-server*` (HFY-R44) | `/uploads/*` (HFY-R58) |
-| Origin | `hfy-api-origin` (added or updated) | `hfy-auth-origin` (added or updated) | The default behavior's origin (the bucket's S3 origin), or `--origin-id`. No origin is added. |
-| `--distribution` | `<distribution-id>` | `<distribution-id>` | `<distribution-id>` |
-| `--stack` | `hfy-app` | `hfy-app` | `hfy-app` |
-| Value read from the stack | `--function-url`, else output `FunctionUrl` | `--function-url`, else output `AuthFunctionUrl` | `--response-headers-policy-id`, else output `UploadsResponseHeadersPolicyId` |
-| `--secret-name` | `harrisonfamily/cloudfront/origin-verify` | `harrisonfamily/cloudfront/origin-verify` | (no such option) |
-| `ORIGIN_VERIFY` (environment) | If set, used instead of Secrets Manager | If set, used instead of Secrets Manager | Not used |
-| Other options | `--legacy-origin ORIGIN_ID` | | `--origin-id ORIGIN_ID` |
-| `--config-file FILE` | Dry runs only | Dry runs only | Dry runs only |
+| | `add-api-behavior.sh` | `add-auth-behavior.sh` | `add-uploads-behavior.sh` | `add-mcp-behavior.sh` | `add-data-gate-behaviors.sh` |
+|---|---|---|---|---|---|
+| Path patterns | `/api/*`, plus the legacy pin `/api/check-allowed*` | `/auth/*`, `/.well-known/oauth-authorization-server*` (HFY-R44) | `/uploads/*` (HFY-R58) | `/mcp*`, `/.well-known/oauth-protected-resource*` | `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` (HFY-TSK-080, HFY-R63) |
+| Origin | `hfy-api-origin` (added or updated) | `hfy-auth-origin` (added or updated) | The default behavior's origin (the bucket's S3 origin), or `--origin-id`. No origin is added. | `hfy-api-origin` (added or updated), the same origin as `/api/*`, because the MCP server runs inside `hfy-api` | The default behavior's origin, or `--origin-id`. No origin is added. |
+| `--dry-run` | Prints the diff and changes nothing | Same | Same | Same | Same. It never creates or changes the response headers policy. |
+| `--distribution` | `<distribution-id>` | `<distribution-id>` | `<distribution-id>` | `<distribution-id>` | `<distribution-id>` |
+| `--stack` | `hfy-app` | `hfy-app` | `hfy-app` | `hfy-app` | `hfy-edge-gate`, read in `us-east-1` |
+| Value read from the stack | `--function-url`, else output `FunctionUrl` | `--function-url`, else output `AuthFunctionUrl` | `--response-headers-policy-id`, else output `UploadsResponseHeadersPolicyId` | `--function-url`, else output `FunctionUrl` | `--version-arn`, else output `EdgeGateVersionArn` |
+| Lambda@Edge version | None | None | None | `--edge401-arn`, else `EDGE401_ARN` (environment), else output `Edge401FunctionVersionArn` of `--edge-stack` (default `hfy-mcp-edge401`), read in `us-east-1` | The version ARN above, a version of `--function-name` (default `hfy-edge-gate`) |
+| `--secret-name` | `harrisonfamily/cloudfront/origin-verify` | `harrisonfamily/cloudfront/origin-verify` | (no such option) | `harrisonfamily/cloudfront/origin-verify` | (no such option) |
+| `ORIGIN_VERIFY` (environment) | If set, used instead of Secrets Manager | If set, used instead of Secrets Manager | Not used | If set, used instead of Secrets Manager | Not used |
+| Other options | `--legacy-origin ORIGIN_ID` | | `--origin-id ORIGIN_ID` | `--write-after FILE` (dry runs only) | `--remove`, `--origin-id ORIGIN_ID`, `--response-headers-policy-id ID`, `--response-headers-policy-name NAME` (default `hfy-private-no-store`) |
+| `--config-file FILE` | Dry runs only | Dry runs only | Dry runs only | Dry runs only | Dry runs only |
+
+The deployed app stack is named `<app-stack>`, not `hfy-app`. A real run of the four scripts that read the app stack, every script except `add-data-gate-behaviors.sh`, therefore passes `--stack <app-stack>`, or gives the value itself with `--function-url` or `--response-headers-policy-id`. The `--stack` of `add-data-gate-behaviors.sh` names the `us-east-1` gate stack, and its default, `hfy-edge-gate`, is the deployed name.
 
 #### Origin and behavior settings
 
-The API and auth origins are plain HTTPS custom origins at the Function URL host. Each has no Origin Access Control, injects `X-Origin-Verify`, and uses `https-only`, TLSv1.2, a 30 s read timeout and a 5 s keep-alive.
+`hfy-api-origin`, which serves `/api/*` and the MCP paths, and `hfy-auth-origin` are plain HTTPS custom origins at the Function URL host. Each has no Origin Access Control, injects `X-Origin-Verify`, and uses `https-only`, TLSv1.2, a 30 s read timeout and a 5 s keep-alive.
 
-| Setting | `/api/*`, `/auth/*`, `/.well-known/oauth-authorization-server*` | `/uploads/*` |
-|---|---|---|
-| Viewer protocol | Redirect HTTP to HTTPS | Redirect HTTP to HTTPS |
-| Compression | On | On |
-| Allowed methods | All seven | `GET`, `HEAD` |
-| Cached methods | `GET`, `HEAD` | `GET`, `HEAD` |
-| Cache policy | Managed `CachingDisabled` | Managed `CachingOptimized` (each upload key is unique) |
-| Origin request policy | Managed `AllViewerExceptHostHeader` | None |
-| Response headers policy | None | The stack's `UploadsResponseHeadersPolicy`: `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` |
-| Function associations | None | None, so `HFYAppendIndex` does not run for `/uploads/*` |
+| Setting | `/api/*`, `/auth/*`, `/.well-known/oauth-authorization-server*` | `/mcp*`, `/.well-known/oauth-protected-resource*` | `/uploads/*` | The six gated data patterns |
+|---|---|---|---|---|
+| Viewer protocol | Redirect HTTP to HTTPS | Redirect HTTP to HTTPS | Redirect HTTP to HTTPS | Redirect HTTP to HTTPS |
+| Compression | On | On | On | On |
+| Allowed methods | All seven | All seven | `GET`, `HEAD` | `GET`, `HEAD` |
+| Cached methods | `GET`, `HEAD` | `GET`, `HEAD` | `GET`, `HEAD` | `GET`, `HEAD` |
+| Cache policy | Managed `CachingDisabled` | Managed `CachingDisabled` | Managed `CachingOptimized` (each upload key is unique) | Managed `CachingDisabled` (no response is shared between users) |
+| Origin request policy | Managed `AllViewerExceptHostHeader` | Managed `AllViewerExceptHostHeader` | None | None |
+| Response headers policy | None | None | The stack's `UploadsResponseHeadersPolicy`: `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` | `hfy-private-no-store`: `Cache-Control: private, no-store`, with override on (HFY-R65) |
+| Function associations | None | None | None, so `HFYAppendIndex` does not run for `/uploads/*` | None |
+| Lambda@Edge associations | None | The `hfy-mcp-edge401` version, `origin-response`, body not included | None | The `hfy-edge-gate` version, `viewer-request`, body not included |
 
 #### What a run does
 
-1. Refuse `--config-file` without `--dry-run`: print `refusing to update from --config-file (an exported config may be stale); use --dry-run, or drop --config-file to read the live config` and exit 2.
-2. Resolve the stack value (the Function URL, or the response headers policy ID). If the stack has no such output, print `stack <stack> has no output <key>` and exit 1.
-3. API and auth only: resolve the `X-Origin-Verify` value from `ORIGIN_VERIFY`, or from Secrets Manager unless `--config-file` is given. If neither works, a dry run prints `(dry-run) origin-verify secret not read; using a placeholder` and uses the literal `<origin-verify-secret>`, and a real run prints `cannot read secret <name> (run scripts/infra/create-origin-verify.sh)` and exits 1.
+1. Refuse `--config-file` without `--dry-run`: print `refusing to update from --config-file (an exported config may be stale); use --dry-run, or drop --config-file to read the live config` and exit 2. `add-mcp-behavior.sh` also refuses `--write-after` without `--dry-run`: it prints `--write-after is only for --dry-run` and exits 2.
+2. Resolve the stack value (the Function URL, the response headers policy ID, or the gate's version ARN). If the stack has no such output, print `stack <stack> has no output <key>` and exit 1. `add-mcp-behavior.sh` then resolves and checks its Lambda@Edge version ARN, and `add-data-gate-behaviors.sh` checks its version ARN ([MCP behaviors](#mcp-behaviors), [data gate behaviors](#data-gate-behaviors)).
+3. API, auth and MCP only: resolve the `X-Origin-Verify` value from `ORIGIN_VERIFY`, or from Secrets Manager unless `--config-file` is given. If neither works, a dry run prints `(dry-run) origin-verify secret not read; using a placeholder` and uses the literal `<origin-verify-secret>`, and a real run prints `cannot read secret <name> (run scripts/infra/create-origin-verify.sh)` and exits 1.
 4. Read the config from `--config-file` (ETag `offline`), or with `get-distribution-config`, keeping its ETag.
-5. Uploads only: check that the target origin exists in the distribution. If not, print `origin '<id>' is not in distribution <distribution-id> (pass --origin-id)` and exit 1.
-6. Build the new config. An origin with the same ID, or a behavior with the same path pattern, is updated in place: it keeps its position in the list and every field the script does not manage. A missing one is appended at the end of its list. `add-api-behavior.sh` also places the legacy pin (below).
+5. Uploads and data gate only: check that the target origin exists in the distribution. If not, print `origin '<id>' is not in distribution <distribution-id> (pass --origin-id)` and exit 1. The data gate script then resolves its response headers policy.
+6. Build the new config. An origin with the same ID, or a behavior with the same path pattern, is updated in place: it keeps its position in the list and every field the script does not manage. A missing one is appended at the end of its list. `add-api-behavior.sh` also places the legacy pin (below), `add-mcp-behavior.sh` refuses a behavior that would shadow its own, and `add-data-gate-behaviors.sh` moves a gated behavior ahead of a broader one that would shadow it.
 7. Compare the before and after configs in a normalized form. If they are equal, print `distribution <distribution-id> already has <what>: no change` and exit 0 without calling `update-distribution`.
 8. Print the cache behaviors before and after, in evaluation order, and a unified diff with every `X-Origin-Verify` value replaced by `<redacted>`. If the redacted copies are equal, print `(only the X-Origin-Verify header value differs)`, which is what a secret rotation looks like.
 9. With `--dry-run`, print `(dry-run) no changes made` and exit 0.
 10. Save the pre-change config as a backup (below), print its path and a rollback command, then run `aws cloudfront update-distribution --if-match <ETag>` and print the distribution status.
 
-The normalized form sorts string lists such as methods and TLS protocols, drops empty `Items` lists, and treats an empty string as absent for optional IDs such as `OriginRequestPolicyId` and `OriginAccessControlId`. It is used only for the comparison. The update sends the merged config as built.
+`add-data-gate-behaviors.sh` reads the config (step 4) before it resolves its version ARN (step 2), so a real run reads the live config even when it then refuses the ARN. With `--remove`, it skips steps 2, 3 and 5 ([remove mode](#remove-mode)).
 
-The `If-Match` ETag means the update applies only if the distribution has not changed since step 4. Otherwise CloudFront rejects it, the AWS CLI's error ends the script, and nothing changes. A fully offline dry run needs `--config-file` together with `--function-url`, or with `--response-headers-policy-id` for the uploads script, and makes no AWS call.
+The normalized form sorts string lists such as methods and TLS protocols, drops empty `Items` lists, and treats an empty string as absent for optional IDs such as `OriginRequestPolicyId`, `ResponseHeadersPolicyId` and `OriginAccessControlId`. It is used only for the comparison. The update sends the merged config as built.
+
+The `If-Match` ETag means the update applies only if the distribution has not changed since step 4. Otherwise CloudFront rejects it, the AWS CLI's error ends the script, and nothing changes. A fully offline dry run makes no AWS call. It needs `--config-file` together with `--function-url` for the API, auth and MCP scripts, `--response-headers-policy-id` for the uploads script, and `--version-arn` for the data gate script (whose `--remove` needs only `--config-file`).
 
 #### Pre-change backup
 
@@ -294,22 +311,57 @@ The legacy sign-in still posts to `/api/check-allowed` on the origin that serves
 
 The pin is placed immediately before the first other behavior that matches `/api/check-allowed`, unless it already comes before it. The script never removes or retargets the pin; HFY-TSK-069 retires it. Each run that resolves the pin prints `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`, and notes when `--legacy-origin` was given but not used. A refusal prints a message that starts with `refusing:`.
 
+#### MCP behaviors
+
+`add-mcp-behavior.sh` (HFY-R59) points `/mcp*` and `/.well-known/oauth-protected-resource*` at `hfy-api-origin`. The second pattern serves the protected-resource metadata both bare and with the `/mcp` suffix. The authorization-server metadata stays on the auth edge's `/.well-known/oauth-authorization-server*` behavior. Each MCP behavior carries the `hfy-mcp-edge401` version as an `origin-response` association, which restores `WWW-Authenticate` on a 401: a Function URL renames that header, and a CloudFront Function cannot run on a 4xx response. See the [MCP server](mcp-server.md) reference.
+
+- **Version ARN.** `--edge401-arn` wins over `EDGE401_ARN`, which wins over the `Edge401FunctionVersionArn` output of `--edge-stack`, read in `us-east-1` only when `--config-file` is not given. When no ARN is found, a dry run uses a placeholder and prints `(dry-run) Lambda@Edge version ARN not resolved; using a placeholder`, and a real run prints `no Lambda@Edge version ARN: deploy infrastructure/mcp-edge401.us-east-1.yaml (us-east-1) and pass --edge401-arn` and exits 1. An ARN that is not a numbered version of a `us-east-1` function, such as `$LATEST` or an unqualified ARN, is refused with `--edge401-arn must be a us-east-1 versioned (not $LATEST) function ARN` and exit 2. The function name is not checked.
+- **Shadow check.** After the merge, the first behavior that matches `/mcp`, and the first that matches `/.well-known/oauth-protected-resource`, must be the MCP behavior itself. Otherwise the script prints `refusing: <pattern> is ordered before the MCP behavior for <path> and would shadow it` and exits 3, and nothing changes. Unlike the legacy pin and the data gate, it does not reorder behaviors.
+- **`--write-after FILE`.** In a dry run, writes the merged config to `FILE`. The API suite's `mcp-infra` test uses it to check that a rerun on the result is a no-op.
+
+After a new `hfy-mcp-edge401` version is published, a rerun of `add-mcp-behavior.sh` points both behaviors at it.
+
+#### Data gate behaviors
+
+`add-data-gate-behaviors.sh` attaches the private data gate (HFY-TSK-080, HFY-R63) to the six data patterns. The person pattern is `/person/*.json`, not `/person/*`, because `/person/` itself is the public person-page shell, which the default behavior's `HFYAppendIndex` resolves to `index.html`. For what the gate checks, see [edge and origin design](../explanation/edge-and-origin-design.md).
+
+- **Version ARN.** `--version-arn`, else the `EdgeGateVersionArn` output of `--stack`, read in `us-east-1`. The ARN must be a qualified `us-east-1` ARN of `--function-name` that ends in a numeric version. Anything else, such as `$LATEST`, an unqualified ARN, another Region or another function, is refused with exit 2 and a message that starts with `version ARN must`. CloudFront accepts only a published version for Lambda@Edge.
+- **Origin.** `--origin-id`, else the default behavior's origin. One that is not in the distribution is refused with exit 1.
+- **Response headers policy (HFY-R65).** Cloudflare proxies the site in front of CloudFront and caches some file types whatever CloudFront's cache policy says, so every gated behavior also gets a policy that forces `Cache-Control: private, no-store`. `--response-headers-policy-id ID` is used as given, with no lookup. Otherwise the script looks up the custom policy named by `--response-headers-policy-name`, shown below with its default name, `hfy-private-no-store`:
+
+  | Policy | Real run | `--dry-run` | Offline dry run (`--config-file`) |
+  |---|---|---|---|
+  | Missing | Created with one custom header, `Cache-Control: private, no-store`, override on | Not created. Prints `(dry-run) would create response headers policy hfy-private-no-store (Cache-Control: private, no-store, override)`, and the diff uses `<new hfy-private-no-store policy id>`. | Not looked up. Prints `(dry-run) response headers policy hfy-private-no-store not looked up (offline); using a placeholder id`, and the diff uses `<hfy-private-no-store policy id>`. |
+  | Present, and it forces the header | Used as it is, with no write | Used as it is | Not looked up, as above |
+  | Present, but it does not force the header | Put back to the wanted config with `update-response-headers-policy --if-match <ETag>`, keeping its ID | Not changed. Prints `(dry-run) would put response headers policy hfy-private-no-store (<id>) back to Cache-Control: private, no-store, override`. | Not looked up, as above |
+
+  A policy forces the header only when it has exactly one `Cache-Control` custom header, with the value `private, no-store` and override on, and does not also remove `Cache-Control`. Header names are compared without regard to case. The policy is resolved only after the version ARN and the origin pass their checks, so a refused run creates nothing.
+- **Order.** A new gated behavior is appended after the existing behaviors. When an earlier, broader behavior would also match a gated pattern, as a legacy `/person/*` matches `/person/*.json`, the gated behavior is moved to just before it. The test path for each pattern is the pattern with every `*` replaced by `x`. Nothing else is reordered.
+
+Before the diff, the script prints `gating <patterns> on origin <origin-id> with <version ARN> (CachingDisabled, response headers policy <id>: Cache-Control: private, no-store)`. A new published gate version is attached by running the script again: every gated behavior is repointed in place.
+
+#### Remove mode
+
+`add-data-gate-behaviors.sh --remove` is the gate's rollback. After reading the config, it deletes each behavior whose path pattern is one of the six gated patterns and that carries a Lambda@Edge association with a numbered version of `--function-name`. A behavior with a gated pattern but no such association is not the script's, and is kept. It then runs steps 7 to 10 above, so `--remove --dry-run` prints the diff only, and a real run saves a backup before it updates. The `<what>` in its no-change message is `no hfy-edge-gate-gated data behaviors (<patterns>)`.
+
+It resolves no version ARN, checks no origin, reads no secret, and never reads, creates or changes the response headers policy. The policy stays in the account, unused, for the next attach. A second `--remove`, or one on a distribution without the gate, changes nothing and exits 0. After a removal, the data paths fall back to the default behavior and are public again. [Cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md) gives the order in which to remove the gate and turn the `authV2` flag off.
+
 #### Exit status
 
 | Status | Meaning |
 |---|---|
-| 0 | Updated, dry run finished, or no change needed. |
-| 1 | A stack output is missing, the origin-verify secret cannot be read on a real run, or the uploads target origin is not in the distribution. |
-| 2 | Unknown argument, or `--config-file` without `--dry-run`. |
-| 3 | `add-api-behavior.sh` only: the legacy pin cannot be resolved. |
+| 0 | Updated, dry run finished, or no change needed. This includes a `--remove` run. |
+| 1 | A stack output is missing; the origin-verify secret cannot be read on a real run; the uploads or data gate target origin is not in the distribution; `add-mcp-behavior.sh` has no Lambda@Edge version ARN on a real run; or `add-data-gate-behaviors.sh` gets no ID or ETag back for the response headers policy. |
+| 2 | Unknown argument, or `--config-file` without `--dry-run`. `add-mcp-behavior.sh`: `--write-after` without `--dry-run`, or an ARN that is not a numbered version of a `us-east-1` function. `add-data-gate-behaviors.sh`: an invalid or unqualified gate version ARN. |
+| 3 | `add-api-behavior.sh`: the legacy pin cannot be resolved. `add-mcp-behavior.sh`: an earlier behavior matches an MCP path and would shadow it. |
 | Other non-zero | An AWS CLI call failed, for example `update-distribution` rejected because the ETag no longer matches. |
 
 ### Shared helpers: `scripts/infra/lib/`
 
 | File | Contents |
 |---|---|
-| [`cf-common.sh`](../../scripts/infra/lib/cf-common.sh) | Sourced by the three `add-*-behavior.sh` scripts, not run on its own. It defines the managed policy IDs and the functions for argument checks, stack outputs, the origin-verify value, loading the config, and the compare, diff, backup and update step. |
-| [`cf.jq`](../../scripts/infra/lib/cf.jq) | Pure `jq` functions over a `DistributionConfig`, loaded with `jq -L scripts/infra/lib 'include "cf"; …'`: `norm`, CloudFront path-pattern matching (`pattern_matches`), in-place `upsert_origin` and `upsert_behavior`, `resolve_pin` and `place_pin` for the legacy pin, and `redact_origin_verify`. |
+| [`cf-common.sh`](../../scripts/infra/lib/cf-common.sh) | Sourced by the five `add-*` scripts, not run on its own. It defines the managed policy IDs (`CachingDisabled`, `CachingOptimized`, `AllViewerExceptHostHeader`) and the functions for argument checks (`cf_check_args`), stack outputs (`cf_stack_output`), the origin-verify value (`cf_origin_verify`), loading the config (`cf_load`), and the compare, diff, backup and update step (`cf_apply`). `cf_response_headers_policy` is the find-or-create of a custom response headers policy by name that the data gate script uses. |
+| [`cf.jq`](../../scripts/infra/lib/cf.jq) | Pure `jq` functions over a `DistributionConfig`, loaded with `jq -L scripts/infra/lib 'include "cf"; …'`: `norm`, CloudFront path-pattern matching (`pattern_matches`), in-place `upsert_origin` and `upsert_behavior`, `resolve_pin` and `place_pin` for the legacy pin, `place_before_shadow` for the gated behaviors' order, `remove_gate_behaviors` for `--remove`, `rhp_forces_cache_control` for the response headers policy check, and `redact_origin_verify`. |
 
 ## Other scripts
 
@@ -335,9 +387,9 @@ MCP_TOKEN=<access-token> scripts/mcp/token-smoke.sh [--base URL] [--audience URL
 
 | Argument | Default |
 |---|---|
-| `MCP_TOKEN` (environment, required) | None. Get one through the authorization-code + PKCE flow against `/auth/authorize` and `/auth/token`. |
+| `MCP_TOKEN` (environment, required) | None. Get one through the authorization-code + PKCE flow against `/auth/authorize` and `/auth/token`. See [connect an MCP client](../how-to/connect-an-mcp-client.md). |
 | `--base` | `https://<site>/auth` |
-| `--audience` | `https://mcp.<site>` |
+| `--audience` | `https://<site>/mcp` |
 
 It needs `npm ci` in `auth/` first, because it uses `jose` from `auth/node_modules`. Without it, the script prints `run npm ci in auth/ first (needs jose)` and exits 1. An unknown argument exits 2, and an unset `MCP_TOKEN` stops the script before any check.
 
@@ -388,9 +440,9 @@ These scripts predate the E5 release. They assume the checkout sits at `<project
 Behavior details:
 
 - **`check-deployment-sync.sh`** needs `rsync`, and exits 1 without it even when nothing relevant is staged. It compares with `rsync -ain --delete --omit-dir-times` and fails on any itemized line. It compares the working tree, not the staged content. `rsync` matches on size and modification time, so files with the same content but different timestamps, as in a fresh clone, also count as differences. A missing source or destination directory is an error. It names `<project>/docs/deployment.md` in its messages but does not read it.
-- **The `11ty/` comparison excludes** the data directories (`person/`, `family/`, `event/`, `note/`, `media/`, `place/`), `private/`, `uploads/`, `README.md` and `.DS_Store`, and the repository-owned E5 files that `<eleventy-source>` does not produce: `_data/flags.json`, `js/islands/`, `js/auth-v2.js`, `js/feature-flags.js`, `js/search-navbar.js`, `js/search-results.js`, `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png`, `posts/` and `me/`. It does not exclude the E5-edited `index.html` pages outside `person/` and `private/`. Each carries an `auth-v2.js` script tag that `<eleventy-source>` does not emit, so while the source lacks that tag those pages count as differences and a commit that stages any `11ty/` file fails the check (see the [codebase map](codebase-map.md)).
+- **The `11ty/` comparison excludes** the data directories (`person/`, `family/`, `event/`, `note/`, `media/`, `place/`), `private/`, `uploads/`, `README.md` and `.DS_Store`, and the repository-owned files that `<eleventy-source>` does not produce or produces only in an older form: `_data/flags.json`, `js/islands/`, `js/auth-v2.js`, `js/feature-flags.js`, `js/search-navbar.js`, `js/search-results.js`, `js/person-page.js` (which carries the `authV2` data-gate path, HFY-TSK-080), `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png`, `posts/` and `me/`. This list must equal the exclude list of the refresh rsync in [`11ty/README.md`](../../11ty/README.md), apart from `.DS_Store`, and `scripts/infra/test/run.sh` fails when they differ. It does not exclude the E5-edited `index.html` pages outside `person/` and `private/`. Each carries an `auth-v2.js` script tag that `<eleventy-source>` does not emit, so while the source lacks that tag those pages count as differences and a commit that stages any `11ty/` file fails the check (see the [codebase map](codebase-map.md)).
 - **`validate_build.sh`** fails if `index.html` lacks `"enforceAssets":true` or contains `"clientId":""`. It warns if `REPLACE_WITH_GOOGLE_CLIENT_ID` is present. It validates the Eleventy build in the workspace, not `11ty/` in this checkout.
-- **`promote_workspace_assets.sh`** needs `python3`, which parses the session log, and `rsync`. It copies a file entry with `rsync -a`. It mirrors a directory entry with `rsync -a --delete`, which removes files in the destination directory that the source lacks, `README.md` files included. A missing workspace path prints a warning and is skipped.
+- **`promote_workspace_assets.sh`** needs `python3`, which parses the session log, and `rsync`. It copies a file entry with `rsync -a`. It mirrors a directory entry with `rsync -a --delete`, which removes files in the destination directory that the source lacks, `README.md` files included. It has no exclude list. A directory entry that mirrors the Eleventy output into `11ty/` would delete the repository-owned files the workspace does not produce, such as `js/islands/`, and overwrite those it holds an older copy of, such as `js/person-page.js`. A missing workspace path prints a warning and is skipped. An unknown argument prints the usage and exits 1.
 - **`export_workspace_samples.sh`** deletes each destination directory, including the READMEs in it, before copying the workspace directory in. Whatever the workspace holds replaces what the repository holds. It also replaces `tests/login-flow/`, its `.gitignore` included, and `coming-soon-index.html`. It writes to `<project>/repo` by name, not to the checkout that runs it.
 - **`sync_sanitized_assets.py`** reports each private file with no sanitized counterpart, and with `--sync` it writes a placeholder for it. Placeholders are a JSON list of two `example.com` addresses for the allowlist, a `{"placeholder": true, …}` JSON for CloudFront files, and an HTML comment for the coming-soon page. It never copies real data, never overwrites an existing file and never writes into the checkout. It always exits 0. Run with no arguments, it reports.
 
@@ -410,11 +462,15 @@ No workflow runs any of these. For the order to run them in, see [run the tests]
 
 | Suite | Runner | Command | Target | Needs | Artifacts |
 |---|---|---|---|---|---|
-| API | Vitest 3.2.4 | `cd api && npm ci && npm test` | In-process: [`api/test/`](../../api/test/) (`api`, `contracts`, `hardening`, `jwks`, `origin`, `package-api`, `presign`, `producers`) against an in-memory DynamoDB fake ([`api/test/fake-ddb.js`](../../api/test/fake-ddb.js)) and locally generated keys. `package-api` runs the real `scripts/ci/package-api.sh` on a temporary copy with `npm` and `zip` replaced by shims. `presign` runs the AWS SDK presigner offline with fake credentials. | Node 22+; `CODEARTIFACT_AUTH_TOKEN`; `bash` | Console only |
-| Auth edge | Vitest 3.2.4 | `cd auth && npm ci && npm test` | In-process: [`auth/test/`](../../auth/test/) (`cognito`, `edge`, `linkstore`, `oauth`, `origin`). `linkstore` reads the table's key schema from `app-stack.yaml`. | Node 22+; `CODEARTIFACT_AUTH_TOKEN` | Console only |
+| API | Vitest 3.2.4 | `cd api && npm ci && npm test` | In-process: [`api/test/`](../../api/test/) (`api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers`) against an in-memory DynamoDB fake ([`api/test/fake-ddb.js`](../../api/test/fake-ddb.js)) and locally generated keys. `package-api` runs the real `scripts/ci/package-api.sh` on a temporary copy with `npm` and `zip` replaced by shims. `presign` runs the AWS SDK presigner offline with fake credentials. `labels` checks that author labels come from the person record's `displayName`, never an email (HFY-R68). `mcp` drives the mounted MCP server through the group config, the permission policy and the API's own route handlers. `mcp-conformance` runs the `@io-kit/mcp` conformance corpus, MCP-C01 to MCP-C12, against this repository's MCP edge and core. `mcp-infra` runs `add-mcp-behavior.sh` as an offline dry run against the infra fixture config, runs the inline code of `mcp-edge401.us-east-1.yaml` and compares it with the packaged `edge-401-header.mjs`, and checks that `tools/list` matches the capabilities. | Node 22+; `CODEARTIFACT_AUTH_TOKEN`; `bash` and `jq`; `shellcheck` is used when installed | Console only |
+| MCP conformance gate | bash, Vitest 3.2.4 and `io-kit parity` | `scripts/ci/mcp-conformance.sh [report-only\|blocking]` | In-process: the `mcp-conformance`, `mcp` and `mcp-infra` files of the API suite, then `io-kit parity diff` of the MCP tools against [`api/parity/routes.yaml`](../../api/parity/routes.yaml) and [`api/parity/map.yaml`](../../api/parity/map.yaml). See [build scripts](#build-scripts-scriptsci). | Node 22+; `CODEARTIFACT_AUTH_TOKEN`; `bash` and `jq` | The generated files in `api/dist/` (gitignored); console |
+| Auth edge | Vitest 3.2.4 | `cd auth && npm ci && npm test` | In-process: [`auth/test/`](../../auth/test/) (`cognito`, `edge`, `linkstore`, `oauth`, `origin`, `passkey`, `passkeystore`, `userinfo`). `linkstore` and `passkeystore` read the table's key schema from `app-stack.yaml`. `passkeystore` runs the repository's passkey store on a fake table that applies DynamoDB's sparse-index rule. | Node 22+; `CODEARTIFACT_AUTH_TOKEN` | Console only |
+| Passkey end to end | Node script driving Playwright 1.55.0's Chromium | `cd auth && npm ci && npx playwright install chromium && npm run e2e` | `http://localhost:<E2E_PORT>` (default 4173; the server binds `127.0.0.1`), served in-process by the real auth edge app with test-only wiring: relying party `localhost`, a stub password provider, in-memory stores and a synthetic allowlist. Chromium uses a CDP virtual authenticator with user verification. [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs) covers the login page's passkey option, password sign-in, passkey enrolment and listing, sign-out, usernameless passkey sign-in with `amr` including `passkey` and `mfa`, refusal (403) after removal from the allowlist and recovery after re-adding, and refusal (401) of a deleted credential. | Node 22+; `CODEARTIFACT_AUTH_TOKEN`; Playwright's Chromium; the port free | Console only: a `PASS` or `FAIL` line per scenario and a `<passed>/<total> scenarios passed` line. Exits 1 if any scenario failed. |
+| Edge gate | `node --test` | `cd edge-gate && npm test` | Offline: [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs) runs `src/gate.mjs` with locally generated RSA keys, a stubbed JWKS fetch and a fixed clock. It covers the allow and deny responses, the signature, issuer, audience and expiry checks, JWKS refetch, backoff and outage behavior, `Cache-Control: private, no-store` on every gate response, and `gate.config.json` against `auth/edge.manifest.json`. | Node 22+; no install (the gate has no dependencies) | Console only |
+| Client scripts | `node --test` | `node --test tests/client/*.test.mjs`, from the repository root | Offline: [`tests/client/`](../../tests/client/) loads the real `11ty/js/feature-flags.js`, and `auth-v2.js`, into a `vm` sandbox with stubbed `fetch`, storage and location. `data-fetch` checks the `authV2` data-fetch path (HFY-TSK-080). `auth-continuity` checks session continuity (HFY-R66): the session check, the silent `POST /auth/refresh` before a data fetch or after a gate 401, and the single retry. | Node 22+; no install | Console only |
 | Island contracts | `node --test` | `cd islands && npm run test:contract` | In-process. `contract.test.mjs` runs the kit CommentSource contract over an in-memory store. `content-contract.test.mjs` runs the kit ContentSource contract through the real API handler, and imports [`api/test/world.js`](../../api/test/world.js) and `api/src/content.js`. `bundle.test.mjs` checks that the entry bundles in `11ty/js/islands/` are non-empty, that the directory is not gitignored, and that `node build.mjs --check` finds them up to date with `islands/src/`. | Node 22+; `CODEARTIFACT_AUTH_TOKEN`; `npm ci` in both `islands/` and `api/`; a Git checkout (for `git check-ignore`) | Console only |
-| Island Playwright | Playwright 1.64.0 | `cd islands && npx playwright test` (`npm test` runs the contracts first, then this) | `11ty/` served by `http-server` at `http://127.0.0.1:8089` with caching off; viewport 375×812; browser channel `PW_CHANNEL` (default `chrome`, an installed Google Chrome). Specs: `flags-fallback`, `notifications`, `person`, `posts`, `search`, `shell`, `sw`. Network calls are mocked with `page.route` and [synthetic fixtures](../../islands/tests/fixtures/). | `npm ci` in `islands/`; the committed bundles, rebuilt after any `islands/src/` change; port 8089 free, or already serving `11ty/` (the server is reused) | `list` reporter to the console; `islands/test-results/` on failure (gitignored) |
-| Infra scripts | bash, Python `unittest` | `scripts/infra/test/run.sh` | Offline. Runs the three `add-*-behavior.sh` scripts against a fixture distribution config with a stub `aws` first on `PATH`, so no call reaches AWS. Covers the `cf.jq` helpers, the legacy pin and its refusals, no-op reruns, dry runs, backups and secret redaction. [`test_app_stack.py`](../../scripts/infra/test/test_app_stack.py) checks `app-stack.yaml` and `github-roles.yaml`. `cfn-lint` and `shellcheck` run when installed and are skipped otherwise. The `create-*` scripts are not covered. | `bash`, `jq`, `python3` with PyYAML | Console only. Prints `scripts/infra tests: <n> passed, <m> failed` and exits non-zero if any check failed. |
+| Island Playwright | Playwright 1.64.0 | `cd islands && npx playwright test` (`npm test` runs the contracts first, then this) | `11ty/` served by `http-server` at `http://127.0.0.1:8089` with caching off; viewport 375×812; browser channel `PW_CHANNEL` (default `chrome`, an installed Google Chrome). Specs: `auth-continuity`, `flags-fallback`, `notifications`, `person`, `posts`, `search`, `shell`, `sw`. Network calls, including `/auth/*` and the gated data paths, are mocked with `page.route` and [synthetic fixtures](../../islands/tests/fixtures/). | `npm ci` in `islands/`; the committed bundles, rebuilt after any `islands/src/` change; port 8089 free, or already serving `11ty/` (the server is reused) | `list` reporter to the console; `islands/test-results/` on failure (gitignored) |
+| Infra scripts | bash, Python `unittest` | `scripts/infra/test/run.sh` | Offline. Runs `add-api-behavior.sh`, `add-auth-behavior.sh`, `add-uploads-behavior.sh` and `add-data-gate-behaviors.sh` against a fixture distribution config with a stub `aws` first on `PATH`, so no call reaches AWS. Covers the `cf.jq` helpers, the legacy pin and its refusals, the gated behaviors and their order, version ARN refusals, the response headers policy lookup, creation and repair, `--remove`, no-op reruns, dry runs, backups and secret redaction. [`test_app_stack.py`](../../scripts/infra/test/test_app_stack.py) checks `app-stack.yaml` and `github-roles.yaml`. [`test_edge_gate_stack.py`](../../scripts/infra/test/test_edge_gate_stack.py) and [`test_mcp_edge401_stack.py`](../../scripts/infra/test/test_mcp_edge401_stack.py) check the two `us-east-1` templates; the second fails when the inline code and the hash in its version description disagree. It runs `package-edge-gate.sh` on a scratch copy (content-addressed `CodeKey`, reproducible build, new key after a code or config change), checks that the `11ty/` excludes of `check-deployment-sync.sh` match the refresh rsync in `11ty/README.md`, and runs `check-deployment-sync.sh` in a scratch Git repository. `cfn-lint` (on the three templates) and `shellcheck` run when installed and are skipped otherwise. `add-mcp-behavior.sh` is covered by the API suite instead, and the `create-*` scripts are not covered. | `bash`, `jq`, `python3` with PyYAML; `node`, `zip` and `openssl` for the `package-edge-gate.sh` checks and `rsync` and `git` for the sync-check run, each skipped when missing | Console only. Prints `scripts/infra tests: <n> passed, <m> failed` and exits non-zero if any check failed. |
 | Login flow | Playwright `^1.48.0` | `cd tests/login-flow && npm install && npx playwright install chromium webkit && npm test` | **Live production by default** (`HFY_SITE_BASE`, default `https://<site>`). Projects `chromium` (Desktop Chrome) and `webkit` (Desktop Safari). | The environment below; a test identity on the allowlist | `logs/console-<ts>.log`, `logs/requests-<ts>.log`, `playwright-report/`, failure videos in `test-results/` |
 | MCP token smoke | bash + Node (`jose`) | `MCP_TOKEN=<access-token> scripts/mcp/token-smoke.sh` | Live auth edge | `npm ci` in `auth/`; a valid access token | Console only |
 
@@ -445,13 +501,15 @@ About the artifacts:
 
 ## Known limitations
 
-- No workflow runs a test suite. Nothing in CI checks the committed island bundles against `islands/src/`, the infra scripts, or the API and auth edge code.
-- No workflow deploys `hfy-api`, `hfy-auth-edge`, the app stack, the deploy-role stack, distribution changes or `HFYAppendIndex`. See [what no workflow ships or runs](#what-no-workflow-ships-or-runs).
+- No workflow runs a test suite or the MCP conformance gate. Nothing in CI checks the committed island bundles against `islands/src/`, the infra scripts, the edge gate, the client scripts, or the API and auth edge code.
+- No workflow deploys `hfy-api`, `hfy-auth-edge`, the app stack, the deploy-role stack, distribution changes or `HFYAppendIndex`. The two `us-east-1` edge stacks, `hfy-edge-gate` and `hfy-mcp-edge401`, the gate's package in `<edge-code-bucket>`, and the MCP and data gate behaviors are shipped by hand as well, and so is `config/groups.json`. See [what no workflow ships or runs](#what-no-workflow-ships-or-runs).
 - Rollback starts only after a failed smoke job. A failure in `deploy` or `invalidate` leaves whatever was already synced or updated. Rollback needs an earlier successful run whose artifact is still within the 90-day retention, and it restores `11ty/` and `hfy-check-allowed` only.
+- A rollback restores the earlier artifact's `11ty/_data/flags.json` too. If that artifact still has `authV2` off while the data gate is attached, the restored client cannot read gated data. Such a rollback is paired with `add-data-gate-behaviors.sh --remove` ([cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md)).
 - `hfy-check-allowed` has no alias, so a deploy updates `$LATEST` and a rollback re-uploads the earlier zip.
-- The repository has no root `package.json`, so nothing installs `@io-kit/parity`, and `npx --no-install io-kit-parity` has nothing to run. That step runs only when `parity.baseline` is set, and none is set.
+- The repository has no root `package.json`. `@io-kit/parity` is a dev dependency of `api/` only, and the `parity-report` action runs at the checkout root, where nothing installs it, so `npx --no-install io-kit-parity` has nothing to run there. That step runs only when `parity.baseline` is set, and none is set.
 - `deploy-gcf-legacy.yml` authenticates with a long-lived service-account JSON key.
 - The drift check and the secret scan run on pull requests and manual runs of `io-kit-ci.yml` only. A push straight to `main` deploys without them.
+- The `@io-kit/mcp` conformance corpus embeds `$fixture:` references inside header values, such as `Bearer $fixture:<path>`, but the packaged `resolveRefs` replaces only a reference that is the whole string. [`api/test/mcp-conformance.test.js`](../../api/test/mcp-conformance.test.js) expands the references in header values itself. A harness that relies on `resolveRefs` alone would send the literal reference.
 
 ## Known code issues
 
@@ -465,8 +523,9 @@ About the artifacts:
 
 - [Codebase map](codebase-map.md): where each of these files sits among the rest of the code.
 - [Architecture](architecture.md): the components these pipelines deploy.
+- [MCP server](mcp-server.md): the MCP mount that `add-mcp-behavior.sh` routes to, and the conformance gate's subject.
 - [Private data and secrets](private-data-and-secrets.md): secret names, storage and placeholders.
-- [The release model](../explanation/release-model.md): why deploys and flag flips are separate, and why the deploy role is narrow.
+- [The release model](../explanation/release-model.md): why deploys and flag flips are separate, why the deploy role is narrow, and why the edge functions ship by hand.
 - [Why React islands on a generated Eleventy site](../explanation/islands-on-eleventy.md): why `11ty/` is output and the islands are built separately.
-- [Edge and origin design](../explanation/edge-and-origin-design.md): the distribution these scripts configure.
-- How-to: [deploy a site change](../how-to/deploy-a-site-change.md), [roll back a site deploy](../how-to/roll-back-a-site-deploy.md), [change the CI pipeline](../how-to/change-the-ci-pipeline.md), [build and preview the islands](../how-to/build-and-preview-the-islands.md), [deploy the app stack](../how-to/deploy-the-app-stack.md), [run the tests](../how-to/run-the-tests.md), [refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md), [stand up the static site](../how-to/stand-up-the-static-site.md).
+- [Edge and origin design](../explanation/edge-and-origin-design.md): the distribution these scripts configure, and the two Lambda@Edge functions.
+- How-to: [deploy a site change](../how-to/deploy-a-site-change.md), [roll back a site deploy](../how-to/roll-back-a-site-deploy.md), [change the CI pipeline](../how-to/change-the-ci-pipeline.md), [build and preview the islands](../how-to/build-and-preview-the-islands.md), [deploy the app stack](../how-to/deploy-the-app-stack.md), [deploy the edge functions](../how-to/deploy-the-edge-functions.md), [cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md), [connect an MCP client](../how-to/connect-an-mcp-client.md), [run the tests](../how-to/run-the-tests.md), [refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md), [stand up the static site](../how-to/stand-up-the-static-site.md).
