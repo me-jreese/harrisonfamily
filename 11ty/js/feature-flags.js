@@ -1,4 +1,18 @@
 (function () {
+  // HFY design-system pass: the theme layer (/css/hfy-theme.css: fonts, tokens, bridges, base) is linked render-blocking from every
+  // page's <head> by islands/heads.mjs (block B, right after main.css). A page that lost the link (an Eleventy refresh promoted
+  // without `cd islands && npm run build`) still gets the theme here, appended after main.css, so the cascade order holds.
+  try {
+    if (!document.querySelector('link[href^="/css/hfy-theme.css"]')) {
+      const theme = document.createElement("link");
+      theme.rel = "stylesheet";
+      theme.href = "/css/hfy-theme.css";
+      theme.setAttribute("data-hfy-theme-fallback", "");
+      document.head.appendChild(theme);
+    }
+  } catch (error) {
+    /* no <head> to add to: nothing else to do */
+  }
   const config = window.HFY_FEATURE_FLAGS || {};
   const components = config.components || {};
   const gatewayConfig = config.gateway || {};
@@ -261,12 +275,13 @@
 
   // HFY-TSK-064 (R42) + HFY-R58: build-time flags (/_data/flags.json) plus a runtime preview override.
   // ?hfy_flags=shellV2,authV2 persists in sessionStorage "hfy:flags" (this tab only, gone when it closes); "-name" forces off;
-  // ?hfy_flags= (empty) clears it. While an override is active a small fixed "Preview flags on — turn off" banner is shown,
+  // ?hfy_flags= (empty) clears it. While an override is active a small fixed "preview flags on — turn off" banner is shown,
   // and the override is cleared automatically when a flagged dependency is unavailable (island bundle 404, /auth/session
   // unreachable) so the page falls back to the legacy behaviour.
   // With shellV2 off nothing below changes the page. With it on, the island bundle (islands/ build) is injected.
   const FLAGS_URL = "/_data/flags.json";
   const OVERRIDE_KEY = "hfy:flags";
+  const SHELL_HINT_KEY = "hfy:shell-hint"; // localStorage, read by the inline head script (islands/heads.mjs HINT_KEY)
   const BANNER_ATTR = "data-hfy-flag-banner";
   // Pre-R58 builds kept the override in localStorage with no expiry; purge it so a crafted link cannot stick.
   try {
@@ -337,29 +352,21 @@
     if (overrideActive) clearOverride(`${what} unavailable`);
   }
 
+  // Styled by the theme layer (.hfy-flag-banner in islands/src/theme/80-pages.css): tokens only, above the shell's bottom bar.
   function renderOverrideBanner() {
     if (!overrideActive || document.querySelector("[" + BANNER_ATTR + "]")) return;
-    const style = document.createElement("style");
-    style.setAttribute(BANNER_ATTR, "");
-    style.textContent =
-      "[data-hfy-flag-banner]{position:fixed;left:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));z-index:2147483000;" +
-      "display:flex;align-items:center;gap:4px;max-width:calc(100vw - 16px);box-sizing:border-box;margin:0;padding:0 4px 0 12px;" +
-      "border-radius:22px;background:#12384f;color:#fff;font:600 13px/1.2 system-ui,-apple-system,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3)}" +
-      "html.hfy-shell-v2 [data-hfy-flag-banner]{bottom:calc(72px + env(safe-area-inset-bottom,0px))}" +
-      "[data-hfy-flag-banner] button{min-height:44px;min-width:44px;margin:0;padding:0 10px;border:0;background:transparent;color:#ffd54f;" +
-      "font:inherit;text-decoration:underline;cursor:pointer}";
-    document.head.appendChild(style);
     const bar = document.createElement("div");
+    bar.className = "hfy-flag-banner";
     bar.setAttribute(BANNER_ATTR, "");
     bar.setAttribute("data-hfy-keep", ""); // the shell island leaves it in <body> instead of moving it into the scroller
     bar.setAttribute("role", "region");
-    bar.setAttribute("aria-label", "Preview flags");
+    bar.setAttribute("aria-label", "preview flags");
     const label = document.createElement("span");
-    label.textContent = "Preview flags on —";
+    label.textContent = "preview flags on —";
     const off = document.createElement("button");
     off.type = "button";
     off.textContent = "turn off";
-    off.setAttribute("aria-label", "Turn off preview flags");
+    off.setAttribute("aria-label", "turn off preview flags");
     off.addEventListener("click", turnOffOverride);
     bar.appendChild(label);
     bar.appendChild(off);
@@ -634,7 +641,6 @@
     const css = document.createElement("link");
     css.rel = "stylesheet";
     css.href = "/js/islands/" + name + ".css";
-    document.head.appendChild(css);
     const script = document.createElement("script");
     script.type = "module";
     script.src = "/js/islands/" + name + ".js";
@@ -648,8 +654,18 @@
       flagUnavailable(`island "${name}"`);
       if (onError) onError();
     };
-    document.head.appendChild(script);
     entry.script = script;
+    // CSS first: the module is appended only once the island stylesheet has applied (load) or failed (error), so an island never
+    // mounts unstyled and never paints before its rules land.
+    let appended = false;
+    const appendScript = function () {
+      if (appended) return;
+      appended = true;
+      document.head.appendChild(script);
+    };
+    css.onload = appendScript;
+    css.onerror = appendScript;
+    document.head.appendChild(css);
     return script;
   }
   featureAPI.loadIsland = loadIsland;
@@ -676,24 +692,29 @@
       else if (/^\/(index\.html)?$/.test(path)) loadIsland("timeline");
       else if (/^\/posts\/?(index\.html)?$/.test(path)) loadIsland("posts");
     }
-    if (flags.shellV2 !== true) return;
     const root = document.documentElement;
+    // Early hint (islands/heads.mjs block A): html.hfy-shell-v2 is set before first paint when localStorage "hfy:shell-hint" is
+    // "1", so the shell's static frame (theme partial 60) paints at once instead of after this fetch. The hint is "1" only after the
+    // shell actually loaded, and "0" (class removed) whenever the flag is off or the island fails, so a wrong guess lasts one page.
+    if (flags.shellV2 !== true) {
+      root.classList.remove("hfy-shell-v2");
+      storageSet("localStorage", SHELL_HINT_KEY, "0");
+      return;
+    }
     root.classList.add("hfy-shell-v2");
     loadIsland("shell", {
-      // HFY-R58: the manifest and theme colour belong to the shell, so they are applied only once it has mounted.
+      // HFY-R58: the manifest belongs to the shell, so it is linked only once the shell has mounted. The theme-color meta is
+      // static (head block A, the surface token).
       onLoad() {
-        const head = document.head;
         const manifest = document.createElement("link");
         manifest.rel = "manifest";
         manifest.href = "/manifest.webmanifest";
-        head.appendChild(manifest);
-        const theme = document.createElement("meta");
-        theme.name = "theme-color";
-        theme.content = "#12384f";
-        head.appendChild(theme);
+        document.head.appendChild(manifest);
+        storageSet("localStorage", SHELL_HINT_KEY, "1");
       },
       onError() {
         root.classList.remove("hfy-shell-v2");
+        storageSet("localStorage", SHELL_HINT_KEY, "0");
       }
     });
   });

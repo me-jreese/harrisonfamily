@@ -6,6 +6,14 @@ const MANIFEST_URL = "/person/index.json";
 const INDEX_URL = "/person/search-index.json";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// DS Voice: errors say what happened and who to text. The search island shows the corpus error in its banner as-is, so the message
+// is the family-facing line; the technical detail rides on `cause` for the console.
+export const SEARCH_COPY = {
+  failed: "that didn't work. try again, or text J.",
+  signedOut: "this page is family-only. sign in to see it.",
+};
+const fail = (message, cause) => Object.assign(new Error(message), { cause });
+
 /** Same credentials path as search-results.js: X-HFY-Session header + credentials:include once the session token exists. */
 async function authInit() {
   const flags = window.HFYFeatureFlags;
@@ -20,7 +28,7 @@ async function authInit() {
     // path + query + hash, like the legacy pages: under authV2 /family-login/ hands `next` to /auth/login as returnTo (HFY-TSK-069).
     const next = window.location.pathname + window.location.search + window.location.hash;
     window.location.replace("/family-login/?next=" + encodeURIComponent(next));
-    throw new Error("Sign in to search the family records.");
+    throw fail(SEARCH_COPY.signedOut, new Error("no session token after 8 s; sent to /family-login/"));
   }
   return {};
 }
@@ -28,9 +36,17 @@ async function authInit() {
 /** HFY-R66: authV2 refreshes a lapsed edge session and retries a gate 401 once before sending the visitor to sign in. */
 async function getJson(url, init) {
   const flags = window.HFYFeatureFlags;
-  const res = await (flags && flags.dataFetch ? flags.dataFetch(url, init) : fetch(url, init));
-  if (!res.ok) throw new Error("Could not load " + url + " (" + res.status + ")");
-  return res.json();
+  let res;
+  try {
+    res = await (flags && flags.dataFetch ? flags.dataFetch(url, init) : fetch(url, init));
+  } catch (e) {
+    if (e && e.name === "AbortError") throw e;
+    throw fail(SEARCH_COPY.failed, e);
+  }
+  const why = new Error("Could not load " + url + " (" + res.status + ")");
+  if (res.status === 401 || res.status === 403) throw fail(SEARCH_COPY.signedOut, why);
+  if (!res.ok) throw fail(SEARCH_COPY.failed, why);
+  try { return await res.json(); } catch (e) { throw fail(SEARCH_COPY.failed, e); }
 }
 
 const year = (s) => { const m = /(\d{4})/g; const out = []; let x; while ((x = m.exec(s || ""))) out.push(Number(x[1])); return out; };
@@ -79,13 +95,14 @@ export const peopleSource = {
   mapRow: mapPerson
 };
 
+// Filter labels in the house style (lowercase; the filter pills and the filter sheet show them).
 export const peopleProperties = [
-  { key: "surname", label: "Surname", type: "string" },
-  { key: "given", label: "Given name", type: "string" },
-  { key: "birth_year", label: "Birth year", type: "number" },
-  { key: "death_year", label: "Death year", type: "number" },
-  { key: "living", label: "Living", type: "bool" },
-  { key: "has_photo", label: "Has photo", type: "bool" }
+  { key: "surname", label: "last name", type: "string" },
+  { key: "given", label: "first name", type: "string" },
+  { key: "birth_year", label: "born", type: "number" },
+  { key: "death_year", label: "died", type: "number" },
+  { key: "living", label: "living", type: "bool" },
+  { key: "has_photo", label: "has a photo", type: "bool" }
 ];
 
 let enginePromise = null;

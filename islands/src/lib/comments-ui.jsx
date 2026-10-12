@@ -1,28 +1,151 @@
 // Kit comments thread over /api/comments for any subject (person:<id> | post:<ulid>); shared by the person and posts islands.
+// DS components/Comments: lowercase labels, the one time format, a 3 s "posted" ping, one sign-in line when signed out.
 import "@io-kit/comments/comments.css";
-import { useEffect, useMemo, useState } from "react";
+import "../posts.css"; // the island primitives (.hfy-h, .hfy-btn, .hfy-skeleton, .hfy-ping)
+import "../comments.css"; // after the kit sheet: remaps its :where(.io-comments) defaults onto the contract (see the file)
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Thread } from "@io-kit/comments/react";
 import { api, getSession } from "./api.js";
 import { createHfyCommentSource } from "./comment-source.js";
+import { formatTime, watchTimeTitles } from "./time.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable.
 export const linkify = { pattern: /\bI\d{4,}\b/, href: (id) => `/person/?id=${encodeURIComponent(id)}` };
 
+export const LABELS = {
+  addComment: "add a comment",
+  commentLabel: "say something",
+  post: "post",
+  posting: "posting…",
+  save: "save",
+  cancel: "cancel",
+  edit: "edit",
+  delete: "delete",
+  edited: "(edited)",
+  react: "react",
+  more: "more",
+  moderate: "moderate",
+  moderateDelete: "delete as moderator",
+  reason: "reason",
+  loadMore: "show older comments",
+  empty: "no comments yet.",
+  loading: "loading comments",
+  dontNotify: "don't notify anyone",
+  readOnly: "read only",
+};
+
+// @io-kit/comments 0.1.0 Composer takes no placeholder prop (kit follow-up); DS Comments: the input reads "say something".
+function watchPlaceholders(root) {
+  if (!root || typeof MutationObserver === "undefined") return () => {};
+  const apply = () => root.querySelectorAll(".io-comments-composer .io-comments-input:not([placeholder])").forEach((el) => el.setAttribute("placeholder", "say something"));
+  apply();
+  const mo = new MutationObserver(apply);
+  mo.observe(root, { subtree: true, childList: true });
+  return () => mo.disconnect();
+}
+
+/**
+ * DS Comments / Voice: ask a scoped question before deleting — `delete this comment?` -> delete / keep, inline, no dialog.
+ * Kit root cause (@io-kit/comments 0.1.0, dist/src/react.js Comment): the own-comment delete button calls props.onDelete directly;
+ * there is no confirm state and no deleteConfirm / keep label. Upstream: a confirm step in Comment (labels deleteConfirm, keep); then
+ * delete this guard. HFY override: a capture-phase click listener on the section stops the first click on an own comment's delete
+ * (before React's root listener sees it), hides that comment's actions row and shows the inline prompt in its place. "delete"
+ * re-dispatches the original click (let through once); "keep" (or Escape) restores the row and returns focus to the delete button.
+ * The moderator path (summary "moderate" -> reason -> "delete as moderator") is already two steps and is left alone.
+ */
+export function guardCommentDeletes(root, labels = LABELS) {
+  if (!root) return () => {};
+  let allow = null;
+  let open = null; // { item, prompt, button }
+  const close = (refocus) => {
+    if (!open) return;
+    const { item, prompt, button } = open;
+    open = null;
+    prompt.remove();
+    item.removeAttribute("data-hfy-confirming");
+    if (refocus && button.isConnected) button.focus();
+  };
+  const ask = (button) => {
+    close(false);
+    const item = button.closest(".io-comments-list > li") || button.closest(".io-comments-comment");
+    const prompt = document.createElement("div");
+    const id = `hfy-del-${Math.random().toString(36).slice(2, 10)}`;
+    prompt.className = "hfy-confirm hfy-comments__confirm";
+    prompt.setAttribute("role", "group");
+    prompt.setAttribute("aria-labelledby", id);
+    prompt.setAttribute("data-hfy-confirm", "");
+    const q = document.createElement("p");
+    q.id = id;
+    q.textContent = "delete this comment?";
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "hfy-btn hfy-btn--danger";
+    yes.textContent = labels.delete;
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "hfy-btn";
+    no.textContent = "keep";
+    prompt.append(q, yes, no);
+    yes.addEventListener("click", () => {
+      close(false);
+      if (!button.isConnected) return;
+      allow = button;
+      button.click();
+    });
+    no.addEventListener("click", () => close(true));
+    prompt.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); close(true); } });
+    item.setAttribute("data-hfy-confirming", "");
+    item.append(prompt);
+    open = { item, prompt, button };
+    no.focus(); // the safe answer, as on posts
+  };
+  const onClick = (e) => {
+    const button = e.target instanceof Element ? e.target.closest(".io-comments-actions > .io-comments-control") : null;
+    if (!button || button.textContent.trim() !== labels.delete) return;
+    if (allow === button) { allow = null; return; }
+    e.stopPropagation();
+    e.preventDefault();
+    ask(button);
+  };
+  root.addEventListener("click", onClick, true);
+  return () => { root.removeEventListener("click", onClick, true); close(false); };
+}
+
 export function Comments({ subject }) {
   const [session, setSession] = useState(undefined);
   const [admin, setAdmin] = useState(false);
+  const [ping, setPing] = useState("");
+  const timer = useRef(null);
+  const root = useRef(null);
   useEffect(() => { getSession().then(setSession); }, []);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => watchTimeTitles(root.current), []);
+  useEffect(() => watchPlaceholders(root.current), []);
+  useEffect(() => guardCommentDeletes(root.current), []);
   const sid = session?.authenticated ? session.sub : null;
   // The API does not expose roles; a moderator is whoever can delete someone else's comment (server-computed can.delete).
-  const source = useMemo(() => createHfyCommentSource(api, { onList: (cs) => { if (sid && cs.some((c) => c.author.id !== sid && c.can.delete)) setAdmin(true); } }), [sid]);
+  const source = useMemo(() => createHfyCommentSource(api, {
+    onList: (cs) => { if (sid && cs.some((c) => c.author.id !== sid && c.can.delete)) setAdmin(true); },
+    onAdded: () => { clearTimeout(timer.current); setPing("posted"); timer.current = setTimeout(() => setPing(""), 3000); },
+  }), [sid]);
   const viewer = sid ? { id: sid, label: session.label, ...(admin ? { roles: ["admin"] } : {}) } : null;
-  if (session === undefined) return null;
   const returnTo = encodeURIComponent(location.pathname + location.search);
   return (
-    <section className="hfy-comments" aria-label="Comments" data-hfy-comments>
-      <h2 className="h4 mb-3">Comments</h2>
-      {!viewer && <p className="hfy-signin" data-hfy-signin><a className="btn btn-primary" href={`/auth/login?returnTo=${returnTo}`}>Sign in to comment</a></p>}
-      <Thread threadId={subject} source={source} viewer={viewer} readOnly={!viewer} linkify={linkify} adminIds={[]} />
+    <section className="hfy-comments" aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
+      <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>
+      {session === undefined && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
+      {session !== undefined && !viewer && (
+        <div className="hfy-comments__signin" data-hfy-signin>
+          <p>sign in to leave a comment.</p>
+          <a className="hfy-btn hfy-btn--primary" href={`/auth/login?returnTo=${returnTo}`}>sign in</a>
+        </div>
+      )}
+      {viewer && (
+        <>
+          <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} adminIds={[]} composerRows={1} formatTime={formatTime} labels={LABELS} />
+          <p className="hfy-ping" role="status" aria-live="polite">{ping}</p>
+        </>
+      )}
     </section>
   );
 }

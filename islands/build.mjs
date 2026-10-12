@@ -1,64 +1,237 @@
-// HFY-TSK-064: islands build. Every src/islands/*.jsx is an entry -> ../11ty/js/islands/<name>.js (+ <name>.css).
-// Shared code (react, @io-kit/*) is split into chunks. Output is COMMITTED (HFY-R58): the deploy syncs 11ty/ as-is,
-// so rebuild (scripts/ci/build-islands.sh or `npm run build`) and commit 11ty/js/islands/ with every islands/ change.
-// `node build.mjs --check` rebuilds in memory and exits 1 if the committed output differs from the source (stale bundle).
+// HFY-TSK-064 + design-system pass: the islands/ build. Every output is COMMITTED (HFY-R58): the deploy syncs 11ty/ as-is and never
+// builds, so rebuild (`npm run build`, or scripts/ci/build-islands.sh) and commit the outputs with every islands/ change.
+//
+//   node build.mjs [--site <dir>]           write every output into <dir> (default ../11ty)
+//   node build.mjs [--site <dir>] --check   build in memory and exit 1 if <dir> differs (missing, stale or extra outputs)
+//
+// Outputs, all inside the site directory:
+//   js/islands/**            every src/islands/*.jsx entry (+ its .css), shared chunks, and @io-kit/notify's notify-sw.js
+//   css/hfy-theme.css        the static theme layer, in cascade order: @font-face (`hfy:fonts`), @io-kit/tokens harrisonfamily
+//                            theme.css, bs-bridge.css, kit-bridge.css, every src/theme/NN-*.css partial (ascending NN), and a
+//                            generated `@media print` block that puts :root in the daylight theme (no JS needed)
+//   css/auth-edge.css        the auth edge's stylesheet, from src/auth-edge/auth-edge.css (skipped with a warning until it exists)
+//   fonts/*                  the self-hosted brand faces (content-hashed woff2) and their OFL licences (fonts.mjs)
+//   */index.html, offline.html   the hfy-theme head blocks (heads.mjs) and, on the 10 Eleventy pages, the DS Voice copy (copy.mjs:
+//                            home hero, about / family-login headings, page titles, the footer)
+//   manifest.webmanifest     theme_color / background_color = the resolved surface token
 import { build } from "esbuild";
-import { copyFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
+import { expectedHeads, resolveToken } from "./heads.mjs";
+import { COPY_PAGES, applyCopy } from "./copy.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const out = join(here, "..", "11ty", "js", "islands");
+const argv = process.argv.slice(2);
+const checkMode = argv.includes("--check");
+const siteIdx = argv.indexOf("--site");
+if (siteIdx !== -1 && !argv[siteIdx + 1]) {
+  console.error("usage: node build.mjs [--site <dir>] [--check]");
+  process.exit(2);
+}
+const site = siteIdx !== -1 ? resolve(process.cwd(), argv[siteIdx + 1]) : resolve(here, "..", "11ty");
+if (!existsSync(join(site, "index.html"))) {
+  console.error(`--site ${site}: not a site directory (no index.html)`);
+  process.exit(2);
+}
+
+const islandsOut = join(site, "js", "islands");
 const notifySw = join(here, "node_modules", "@io-kit", "notify", "sw", "notify-sw.js");
+const tokensDir = join(here, "node_modules", "@io-kit", "tokens", "dist", "harrisonfamily");
+const themeDir = join(here, "src", "theme");
+const authEdgeSrc = join(here, "src", "auth-edge", "auth-edge.css");
+const TARGET = ["es2020", "safari15"];
+const posix = (p) => p.split(sep).join("/");
+const sha8 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 8);
+
 const entries = readdirSync(join(here, "src", "islands")).filter((f) => /\.jsx?$/.test(f)).map((f) => join(here, "src", "islands", f));
-const options = {
+
+// `@import "hfy:cloudscape-theme"` (src/islands/search.css): Cloudscape's half of the search theme, generated here from
+// src/lib/cloudscape-theme.js with Cloudscape's own generateThemeStylesheet (values are var(--io-search-*) aliases), so the island
+// ships a static stylesheet instead of the theming runtime and its token preset. See that module for the kit root cause.
+async function cloudscapeThemeCss() {
+  const gen = await build({
+    stdin: {
+      contents: 'import { generateThemeStylesheet } from "@cloudscape-design/components/theming";\nimport { CLOUDSCAPE_TOKENS } from "./src/lib/cloudscape-theme.js";\nexport default generateThemeStylesheet({ theme: { tokens: CLOUDSCAPE_TOKENS } });\n',
+      resolveDir: here,
+      loader: "js"
+    },
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    write: false,
+    logLevel: "silent"
+  });
+  const mod = await import(`data:text/javascript;base64,${Buffer.from(gen.outputFiles[0].contents).toString("base64")}`);
+  return `/* hfy:cloudscape-theme: generated by islands/build.mjs from src/lib/cloudscape-theme.js; do not edit */\n${mod.default}`;
+}
+let cloudscapeCss = null;
+const hfyCloudscape = {
+  name: "hfy-cloudscape-theme",
+  setup(b) {
+    b.onResolve({ filter: /^hfy:cloudscape-theme$/ }, () => ({ path: "hfy:cloudscape-theme", namespace: "hfy-cloudscape" }));
+    b.onLoad({ filter: /.*/, namespace: "hfy-cloudscape" }, async () => ({ contents: (cloudscapeCss ??= await cloudscapeThemeCss()), loader: "css", resolveDir: here }));
+  }
+};
+const islandOptions = {
   entryPoints: entries,
-  outdir: out,
+  outdir: islandsOut,
   bundle: true,
   splitting: true,
   format: "esm",
-  target: ["es2020", "safari15"],
+  target: TARGET,
   jsx: "automatic",
   minify: true,
   sourcemap: false,
   chunkNames: "chunks/[name]-[hash]",
   define: { "process.env.NODE_ENV": '"production"' },
   loader: { ".css": "css" },
-  logLevel: "info"
+  plugins: [hfyCloudscape],
+  write: false,
+  logLevel: "silent"
 };
 
+// `@import "hfy:fonts"` (any CSS entry may use it): the @font-face rules generated by fonts.mjs. The /fonts/* urls stay external.
+const hfyFonts = {
+  name: "hfy-fonts",
+  setup(b) {
+    b.onResolve({ filter: /^hfy:fonts$/ }, () => ({ path: "hfy:fonts", namespace: "hfy-fonts" }));
+    b.onLoad({ filter: /.*/, namespace: "hfy-fonts" }, () => ({ contents: fontFaceCss(), loader: "css", resolveDir: here }));
+  }
+};
+const cssOptions = (banner) => ({
+  bundle: true,
+  minify: true,
+  target: TARGET,
+  external: ["/fonts/*"],
+  plugins: [hfyFonts],
+  banner: { css: `/* ${banner}; generated, do not edit */` },
+  write: false,
+  // CSS warnings are printed: a syntax slip in a partial (e.g. a comment closed early) silently drops the rules after it.
+  logLevel: "warning"
+});
+
+// The daylight theme for print, copied from theme.css's [data-theme="light"] declarations onto :root.
+function printBlock(themeCss) {
+  const css = themeCss.replace(/\/\*[\s\S]*?\*\//g, "");
+  const light = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) => m[1].split(",").some((s) => s.trim() === '[data-theme="light"]'));
+  if (!light) throw new Error('theme.css: no [data-theme="light"] block');
+  const decls = light[2].split(";").map((d) => d.trim()).filter(Boolean).filter((d) => !/^color-scheme\s*:/.test(d));
+  return `@media print{:root{color-scheme:light;${decls.join(";")}}}`;
+}
+
+function themeEntry() {
+  const partials = existsSync(themeDir) ? readdirSync(themeDir).filter((f) => /^[0-9][0-9]-[^/]*\.css$/.test(f)).sort() : [];
+  return [
+    '@import "hfy:fonts";',
+    '@import "@io-kit/tokens/harrisonfamily/theme.css";',
+    '@import "@io-kit/tokens/harrisonfamily/bs-bridge.css";',
+    '@import "@io-kit/tokens/harrisonfamily/kit-bridge.css";',
+    ...partials.map((f) => `@import "./${f}";`),
+    printBlock(readFileSync(join(tokensDir, "theme.css"), "utf8")),
+    ""
+  ].join("\n");
+}
+
+async function buildAll() {
+  const files = new Map(); // site-relative path -> Buffer | string
+  const dirs = new Map(); // site-relative directory that must hold exactly these files -> Set(site-relative paths)
+
+  const islands = await build(islandOptions);
+  const islandSet = new Set();
+  for (const f of islands.outputFiles) {
+    const rel = posix(relative(site, f.path));
+    files.set(rel, Buffer.from(f.contents));
+    islandSet.add(rel);
+  }
+  // HFY-TSK-068: the kit service-worker module that /sw.js importScripts (push + notificationclick deep links).
+  files.set("js/islands/notify-sw.js", readFileSync(notifySw));
+  islandSet.add("js/islands/notify-sw.js");
+  dirs.set("js/islands", islandSet);
+
+  const theme = await build({
+    ...cssOptions("hfy-theme.css: islands/build.mjs from islands/src/theme/ and @io-kit/tokens harrisonfamily"),
+    stdin: { contents: themeEntry(), resolveDir: themeDir, sourcefile: "hfy-theme.entry.css", loader: "css" },
+    outfile: join(site, "css", "hfy-theme.css")
+  });
+  const themeCss = Buffer.from(theme.outputFiles.find((f) => f.path.endsWith(".css")).contents);
+  files.set("css/hfy-theme.css", themeCss);
+
+  if (existsSync(authEdgeSrc)) {
+    const auth = await build({
+      ...cssOptions("auth-edge.css: islands/build.mjs from islands/src/auth-edge/auth-edge.css"),
+      entryPoints: [authEdgeSrc],
+      outfile: join(site, "css", "auth-edge.css")
+    });
+    files.set("css/auth-edge.css", Buffer.from(auth.outputFiles.find((f) => f.path.endsWith(".css")).contents));
+  } else {
+    console.warn("warning: islands/src/auth-edge/auth-edge.css does not exist yet; css/auth-edge.css is left as it is");
+  }
+
+  const fontSet = new Set();
+  for (const [name, buf] of fontFiles()) {
+    files.set(`fonts/${name}`, buf);
+    fontSet.add(`fonts/${name}`);
+  }
+  dirs.set("fonts", fontSet);
+
+  const themeColor = resolveToken(readFileSync(join(tokensDir, "theme.css"), "utf8"), "--io-color-semantic-surface");
+  const heads = expectedHeads(site, { themeColor, cssHref: `/css/hfy-theme.css?v=${sha8(themeCss)}`, preloadHref: preloadHref() });
+  // DS Voice copy on the Eleventy pages (copy.mjs): applied after the head blocks, so both are rewritten idempotently together.
+  for (const [rel, text] of heads) files.set(rel, COPY_PAGES.includes(rel) ? applyCopy(text, rel) : text);
+  return { files, dirs };
+}
+
 function listFiles(dir) {
-  let files = [];
+  let out = [];
   try {
     for (const d of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, d.name);
-      files = files.concat(d.isDirectory() ? listFiles(p) : [p]);
+      out = out.concat(d.isDirectory() ? listFiles(p) : [p]);
     }
   } catch (e) {
     if (e.code !== "ENOENT") throw e;
   }
-  return files;
+  return out;
 }
+const asBuffer = (v) => (Buffer.isBuffer(v) ? v : Buffer.from(v, "utf8"));
+const ignorable = (rel) => rel.endsWith(".DS_Store");
 
-if (process.argv.includes("--check")) {
-  const res = await build({ ...options, write: false, logLevel: "silent" });
-  const expected = new Map(res.outputFiles.map((f) => [relative(out, f.path).split(sep).join("/"), Buffer.from(f.contents)]));
-  expected.set("notify-sw.js", readFileSync(notifySw));
-  const actual = new Map(listFiles(out).map((p) => [relative(out, p).split(sep).join("/"), p]));
+const { files, dirs } = await buildAll();
+
+if (checkMode) {
   const problems = [];
-  for (const [name, buf] of expected) {
-    if (!actual.has(name)) problems.push(`missing ${name}`);
-    else if (!readFileSync(actual.get(name)).equals(buf)) problems.push(`stale ${name}`);
+  for (const [rel, want] of files) {
+    const abs = join(site, rel);
+    if (!existsSync(abs)) problems.push(`missing ${rel}`);
+    else if (!readFileSync(abs).equals(asBuffer(want))) problems.push(`stale ${rel}`);
   }
-  for (const name of actual.keys()) if (!expected.has(name) && !name.endsWith(".DS_Store")) problems.push(`extra ${name}`);
+  for (const [dir, set] of dirs) {
+    for (const abs of listFiles(join(site, dir))) {
+      const rel = posix(relative(site, abs));
+      if (!set.has(rel) && !ignorable(rel)) problems.push(`extra ${rel}`);
+    }
+  }
   if (problems.length) {
-    console.error(`11ty/js/islands is out of date with islands/src (run \`npm run build\` and commit):\n  ${problems.join("\n  ")}`);
+    console.error(`${site} is out of date with islands/ (run \`npm run build\` and commit):\n  ${problems.join("\n  ")}`);
     process.exit(1);
   }
-  console.log(`11ty/js/islands is up to date (${expected.size} files)`);
+  console.log(`${site} is up to date (${files.size} generated files)`);
 } else {
-  rmSync(out, { recursive: true, force: true });
-  await build(options);
-  // HFY-TSK-068: the kit service-worker module that /sw.js importScripts (push + notificationclick deep links).
-  copyFileSync(notifySw, join(out, "notify-sw.js"));
+  // Directories this build owns outright (js/islands, fonts) hold exactly its outputs: stale chunks and old font hashes are pruned.
+  for (const [dir, set] of dirs) {
+    for (const abs of listFiles(join(site, dir))) if (!set.has(posix(relative(site, abs)))) rmSync(abs);
+  }
+  let written = 0;
+  for (const [rel, want] of files) {
+    const abs = join(site, rel);
+    const buf = asBuffer(want);
+    if (existsSync(abs) && readFileSync(abs).equals(buf)) continue;
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, buf);
+    written += 1;
+  }
+  console.log(`built ${files.size} files into ${site} (${written} written)`);
 }

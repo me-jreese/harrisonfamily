@@ -58,6 +58,10 @@ test("flag on: md notes, comment list, post, react; 16px inputs, 44px targets, n
 
   const comments = page.locator("[data-hfy-comments]");
   await expect(comments.getByText("Hello")).toBeVisible();
+  await expect(comments.getByRole("heading", { name: "comments" })).toBeVisible();
+  // Interface contract (f): the comments host is the LAST child of #person-content (after life, family, photos, stories).
+  expect(await page.evaluate(() => document.getElementById("person-content").lastElementChild?.id)).toBe("hfy-person-comments");
+  await expect(comments.locator("time").first()).toHaveAttribute("title", /^[a-z]+ \d{1,2}, \d{4}, \d{1,2}:\d{2} (am|pm)$/);
   await expect(comments.getByRole("link", { name: "I0044" })).toHaveAttribute("href", "/person/?id=I0044");
   await expect(page.locator("[data-hfy-signin]")).toHaveCount(0);
 
@@ -71,6 +75,8 @@ test("flag on: md notes, comment list, post, react; 16px inputs, 44px targets, n
   await post.click();
   await expect(comments.getByRole("list").getByText("A new synthetic comment")).toBeVisible();
   expect(state.posts).toBe(1);
+  await expect(comments.getByRole("status").filter({ hasText: /^posted$/ })).toBeVisible();
+  await expect(comments.getByRole("status").filter({ hasText: /^posted$/ })).toHaveCount(0, { timeout: 5000 }); // 3 s, then gone
 
   const react = comments.getByRole("button", { name: /react/i }).first();
   await react.click();
@@ -82,12 +88,18 @@ test("flag on: md notes, comment list, post, react; 16px inputs, 44px targets, n
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test("flag on, signed out: sign-in prompt, no composer", async ({ page }) => {
+test("flag on, signed out: one sign-in line and one button, no thread mounted", async ({ page }) => {
   await stub(page, { signedIn: false });
+  const asked = [];
+  page.on("request", (q) => { if (q.url().includes("/api/comments")) asked.push(q.url()); });
   await page.goto("/person/?id=I9001&hfy_flags=personV2", { waitUntil: "domcontentloaded" });
   const comments = page.locator("[data-hfy-comments]");
-  await expect(comments.getByRole("link", { name: /sign in/i })).toHaveAttribute("href", /^\/auth\/login\?returnTo=/);
+  await expect(comments.getByText("sign in to leave a comment.")).toBeVisible();
+  await expect(comments.getByRole("link")).toHaveCount(1);
+  await expect(comments.getByRole("link", { name: "sign in" })).toHaveAttribute("href", /^\/auth\/login\?returnTo=/);
   await expect(comments.getByRole("textbox")).toHaveCount(0);
+  await expect(comments.locator(".io-comments")).toHaveCount(0);
+  expect(asked).toEqual([]);
 });
 
 test("flag off: page unchanged, no island loaded", async ({ page }) => {

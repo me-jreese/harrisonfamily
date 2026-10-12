@@ -2,21 +2,28 @@
 import { useEffect, useState } from "react";
 import { ArticleView, PostCard } from "@io-kit/content/react";
 import { mountIsland } from "../lib/mount.jsx";
-import { Banner, PostList, Skeletons, source, usePosts } from "../lib/posts-ui.jsx";
+import { Banner, CARD_LABELS, COPY, PostList, Skeletons, formatTime, friendlyError, source, usePosts, useTimeTitles } from "../lib/posts-ui.jsx";
 import { Comments } from "../lib/comments-ui.jsx";
 
 function One({ id }) {
   const [s, setS] = useState({ status: "loading" });
-  useEffect(() => { source.get(id).then((post) => setS({ status: "ready", post }), (e) => setS({ status: "error", error: e.code === "not_found" ? "That post was not found." : e.message })); }, [id]);
-  if (s.status === "loading") return <Skeletons n={1} />;
-  if (s.status === "error") return <><Banner>{s.error}</Banner><a className="hfy-posts__open" href="/posts/">All posts</a></>;
-  const { post } = s;
+  const ref = useTimeTitles();
+  useEffect(() => { source.get(id).then((post) => setS({ status: "ready", post }), (e) => setS({ status: "error", error: e.code === "not_found" ? COPY.notFound : friendlyError(e) })); }, [id]);
+  const back = <a className="hfy-posts__open" href="/posts/">all posts</a>;
   return (
-    <article data-hfy-post>
-      <a className="hfy-posts__open" href="/posts/">All posts</a>
-      {post.type === "post" ? <PostCard post={post} /> : <ArticleView post={post} />}
-      <Comments subject={`post:${post.id}`} />
-    </article>
+    <div ref={ref}>
+      {s.status === "loading" && <Skeletons n={1} />}
+      {s.status === "error" && <><Banner>{s.error}</Banner>{back}</>}
+      {s.status === "ready" && (
+        <article data-hfy-post>
+          {back}
+          <div className="hfy-posts__item">
+            {s.post.type === "post" ? <PostCard post={s.post} labels={CARD_LABELS} formatTime={formatTime} /> : <ArticleView post={s.post} labels={CARD_LABELS} formatTime={formatTime} />}
+          </div>
+          <Comments subject={`post:${s.post.id}`} />
+        </article>
+      )}
+    </div>
   );
 }
 
@@ -27,7 +34,7 @@ function List() {
 
 export function Posts() {
   const id = new URLSearchParams(location.search).get("id");
-  return <div className="hfy-posts" data-hfy-posts>{id ? <One id={id} /> : <><h1 className="h3 my-3">Posts</h1><List /></>}</div>;
+  return <div className="hfy-posts" data-hfy-posts>{id ? <One id={id} /> : <><h1 className="hfy-h">posts</h1><List /></>}</div>;
 }
 
 const run = () => mountIsland("posts", Posts);

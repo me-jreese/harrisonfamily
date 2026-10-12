@@ -1,6 +1,9 @@
 // HFY-R66: authV2 session continuity against the real static pages. /auth/*, /api and the gated data paths are stubbed by
 // route interception; data is synthetic. The gate is modelled as "401 until /auth/refresh has answered 200" (io_id lapsed,
 // io_rt still valid), which is what a member sees an hour after signing in.
+// The build flags (/_data/flags.json) are pinned to all-off here, as in flags-fallback.spec.mjs: production turned every flag on
+// (HFY-TSK-069, 12:40Z), and each test names the flags it exercises with ?hfy_flags= on top of a flags-off build ("flag off
+// (parity)" relies on authV2 being off; the desktop-navbar tests need the legacy navbar, which shellV2 replaces).
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
@@ -21,6 +24,7 @@ async function edge(page, { session = () => ({ authenticated: true, sub: "I9001"
   const log = { session: 0, refresh: [], login: 0, data: [] };
   let refreshed = false;
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: {} }));
   await page.route("**/api/**", (r) => r.fulfill({ status: 403, json: { allowed: false } }));
   await page.route("**/auth/session", (r) => { log.session += 1; return r.fulfill({ json: session(log.session) }); });
   await page.route("**/auth/refresh", (r) => {

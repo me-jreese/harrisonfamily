@@ -1,0 +1,47 @@
+{
+  "grampsId": "I9001",
+  "handle": "hI9001",
+  "displayName": "Test Person (synthetic)",
+  "gender": "female",
+  "isLiving": false,
+  "lifespan": {
+    "birth": { "year": 1900, "place": { "displayName": "Example Parish, Louisiana" } },
+    "death": { "year": 1975, "place": { "displayName": "Baton Rouge, Louisiana" } },
+    "summary": "1900 – 1975"
+  },
+  "primaryPhoto": { "handle": "MPHOTO1", "mime": "image/jpeg", "title": "Portrait, 1920", "grampsId": "O9001" },
+  "notes": [
+    { "raw": "# Early life\n\nA synthetic note.", "html": "<p>LEGACY NOTE: grew up near the river; a synthetic paragraph long enough to wrap onto a second line on a phone screen.</p>" }
+  ],
+  "mediaGallery": [
+    { "handle": "MPHOTO1", "mime": "image/jpeg", "title": "Portrait, 1920", "grampsId": "O9001" },
+    { "handle": "MPHOTO2", "mime": "image/jpeg", "title": "Family, 1901", "grampsId": "O9002" },
+    { "handle": "MPHOTO3", "mime": "image/jpeg", "title": "Reunion", "grampsId": "O9003" },
+    { "handle": "MPHOTO4", "mime": "image/jpeg", "title": "", "grampsId": "O9004" }
+  ],
+  "familyTree": {
+    "parentFamilies": [
+      {
+        "father": { "handle": "h12", "grampsId": "I9012", "displayName": "Father Example", "isLiving": false },
+        "mother": { "handle": "h13", "grampsId": "I9013", "displayName": "Mother Example", "isLiving": false },
+        "children": [
+          { "handle": "hI9001", "displayName": "Test Person (synthetic)" },
+          { "handle": "h14", "grampsId": "I9014", "displayName": "Sibling Example", "isLiving": false }
+        ]
+      }
+    ],
+    "spouseFamilies": [
+      {
+        "father": { "handle": "h02", "grampsId": "I9002", "displayName": "Spouse Example", "isLiving": false },
+        "mother": { "handle": "hI9001", "displayName": "Test Person (synthetic)" },
+        "children": [{ "handle": "h15", "grampsId": "I9015", "displayName": "Child Example", "isLiving": true }]
+      }
+    ]
+  },
+  "familyTreeMedia": { "path": "tree_I9001.svg" },
+  "events": [
+    { "label": "Birth", "date": { "text": "1900-03-02", "year": 1900 }, "place": { "displayName": "Example Parish, Louisiana" } },
+    { "label": "Event", "description": "A synthetic event with unknown type.", "date": null },
+    { "label": "Death", "date": { "text": "1975", "year": 1975 }, "place": { "displayName": "Baton Rouge, Louisiana" } }
+  ]
+}

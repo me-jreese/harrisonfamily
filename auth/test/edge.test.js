@@ -180,6 +180,142 @@ describe("login page under the /auth mount", () => {
   });
 });
 
+// ---- design system: sign-in pages (components/SignIn; HFY overrides of @io-kit/auth 2.1.2 in adapt()) ----
+import { DEFAULT_COPY } from "@io-kit/auth/edge/deploy";
+import { FONT_SRC, GIS_FOCUS_SCRIPT, cspWithFontSrc, gisButtonDark, gisFocusRing } from "../src/edge.js";
+
+const cspOf = (res) => Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === "content-security-policy")?.[1];
+const fontSrcCount = (csp) => (String(csp).match(/(^|;)\s*font-src\s/g) ?? []).length;
+
+describe("sign-in pages: self-hosted fonts are allowed by the CSP (kit cspFor emits no font-src)", () => {
+  const signedInCookie = async () => {
+    const res = await edge(post("/auth/google", { credential: await gToken("ana@example.com") }));
+    return (res.cookies ?? []).map((c) => c.split(";")[0]).join("; ");
+  };
+  const deniedHtml = async () => {
+    const ev = post("/auth/google", { credential: await gToken("stranger@example.com") });
+    return edge({ ...ev, headers: { ...ev.headers, accept: "text/html" } });
+  };
+
+  it("font-src 'self' appears exactly once on /auth/login, the password pages, /auth/link and the denied page", async () => {
+    const pages = {
+      "/auth/login": await edge(get("/auth/login")),
+      "/auth/password/forgot": await edge(get("/auth/password/forgot")),
+      "/auth/password/reset": await edge(get("/auth/password/reset")),
+      "/auth/link (signed in)": await edge(get("/auth/link", { headers: { accept: "text/html", cookie: await signedInCookie() } })),
+      denied: await deniedHtml(),
+    };
+    expect(pages.denied.statusCode).toBe(403);
+    expect(pages.denied.body).toContain("<h1>not on the list yet</h1><p>that email isn&#39;t on the list yet. text J and we&#39;ll add you.</p>");
+    expect(pages["/auth/link (signed in)"].statusCode).toBe(200);
+    for (const [name, res] of Object.entries(pages)) {
+      expect(res.headers["content-type"], name).toMatch(/text\/html/);
+      const csp = cspOf(res);
+      expect(fontSrcCount(csp), `${name}: ${csp}`).toBe(1);
+      expect(csp, name).toMatch(/(^|; )font-src 'self'(;|$)/); // @io-kit/auth >= 2.2.0 emits it from theme.fontOrigins
+      expect(csp, name).toMatch(/^default-src 'none'; /); // the kit policy is kept, only extended
+      expect(csp, name).toContain("style-src 'unsafe-inline' https://harrisonfamily.us");
+    }
+  });
+
+  it("JSON responses are untouched: no CSP is added and the body is the kit's", async () => {
+    const jsonRes = [
+      await edge(get("/auth/session")),
+      await edge(get("/auth/.well-known/jwks.json")),
+      await edge(post("/auth/google", { credential: await gToken("ana@example.com") })),
+      await edge(post("/auth/google", { credential: await gToken("stranger@example.com") })),
+    ];
+    for (const res of jsonRes) {
+      expect(res.headers["content-type"]).toMatch(/application\/json/);
+      expect(cspOf(res)).toBeUndefined();
+      expect(() => JSON.parse(res.body)).not.toThrow();
+      expect(res.body).not.toContain("filled_black");
+    }
+  });
+
+  it("cspWithFontSrc appends font-src only when the policy has none (a kit font-src wins; idempotent)", () => {
+    expect(FONT_SRC).toBe("font-src 'self'");
+    expect(cspWithFontSrc("default-src 'none'; img-src https:")).toBe("default-src 'none'; img-src https:; font-src 'self'");
+    expect(cspWithFontSrc("default-src 'none'; ")).toBe("default-src 'none'; font-src 'self'");
+    const kit = "default-src 'none'; font-src https://fonts.example";
+    expect(cspWithFontSrc(kit)).toBe(kit);
+    expect(cspWithFontSrc(cspWithFontSrc("default-src 'none'"))).toBe("default-src 'none'; font-src 'self'");
+    for (const v of [undefined, "", 7]) expect(cspWithFontSrc(v)).toBe(v);
+  });
+});
+
+describe("sign-in pages: Google button and signed-out /auth/link (kit loginPage / link redirect)", () => {
+  it("the GIS button is drawn dark (filled_black) at the 343px sign-in width; the One Tap config is left alone", async () => {
+    const res = await edge(get("/auth/login"));
+    const tag = /<div class="g_id_signin"[^>]*>/.exec(res.body)?.[0];
+    expect(tag).toBeTruthy();
+    expect(tag).toContain('data-theme="filled_black"');
+    expect(tag).toContain('data-width="343"');
+    expect(res.body).not.toContain('data-theme="outline"');
+    expect(res.body).not.toContain('data-width="280"');
+    expect(res.body).toMatch(/<div id="g_id_onload" data-client_id="gis-client\.apps\.googleusercontent\.com"/);
+    const other = '<div class="x" data-theme="outline" data-width="280"></div>';
+    expect(gisButtonDark(other)).toBe(other);
+  });
+
+  it("the login page carries the GIS keyboard-focus script under the page's own script nonce, once", async () => {
+    const res = await edge(get("/auth/login"));
+    const nonces = [...res.body.matchAll(/<script\b[^>]*\bnonce="([^"]+)"/g)].map((m) => m[1]);
+    expect(nonces.length).toBeGreaterThan(1);
+    expect(new Set(nonces).size).toBe(1); // the injected tag reuses the kit's nonce, so script-src 'nonce-…' allows it
+    expect(cspOf(res)).toContain(`'nonce-${nonces[0]}'`);
+    expect(res.body.split("data-hfy-gis-focus").length - 1).toBe(1);
+    expect(res.body).toContain(GIS_FOCUS_SCRIPT);
+    expect(res.body.indexOf("data-hfy-gis-focus")).toBeLessThan(res.body.lastIndexOf("</body>"));
+    expect(gisFocusRing(res.body)).toBe(res.body); // idempotent
+  });
+
+  it("gisFocusRing leaves pages without a Google row, or without a nonce, alone", async () => {
+    const forgot = await edge(get("/auth/password/forgot"));
+    expect(forgot.body).not.toContain("data-hfy-gis-focus");
+    const noNonce = '<html><body><div class="gsi"></div><script>x</script></body></html>';
+    expect(gisFocusRing(noNonce)).toBe(noNonce);
+    for (const v of [undefined, "", 7]) expect(gisFocusRing(v)).toBe(v);
+    const ok = gisFocusRing('<html><body><div class="gsi"></div><script nonce="n1">x</script></body></html>');
+    expect(ok).toContain(`<script nonce="n1" data-hfy-gis-focus>${GIS_FOCUS_SCRIPT}</script></body>`);
+  });
+
+  it("GET /auth/link signed out is a 302 to /auth/login?returnTo=%2Fauth%2Flink, which comes back to /auth/link after sign-in", async () => {
+    const res = await edge(get("/auth/link"));
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe("/auth/login?returnTo=%2Fauth%2Flink");
+    const login = await edge(get("/auth/login", { queryStringParameters: { returnTo: decodeURIComponent(res.headers.location.split("returnTo=")[1]) } }));
+    expect(ioReturnOf(login.body)).toBe("/auth/link");
+  });
+});
+
+describe("sign-in pages: manifest theme and copy (design system SignIn + Voice)", () => {
+  it("theme has no vars (the stylesheet themes the page) and keeps the same-origin cssUrl; the manifest validates", () => {
+    expect(raw.theme).toEqual({ cssUrl: "https://harrisonfamily.us/css/auth-edge.css", fontOrigins: ["self"] });
+    expect(raw.theme.vars).toBeUndefined();
+    expect(() => validateManifest(structuredClone(raw))).not.toThrow();
+  });
+  it("the rendered page carries no theme.vars :root block after BASE_CSS", async () => {
+    const res = await edge(get("/auth/login"));
+    const style = /<style>([\s\S]*?)<\/style>/.exec(res.body)[1];
+    expect((style.match(/:root\{/g) ?? []).length).toBeLessThanOrEqual(1); // BASE_CSS's own defaults at most (2.2.0 reads --io-auth-* with fallbacks)
+    expect(style).not.toMatch(/--io-accent:\s*#/); // no literal theme.vars block
+    expect(res.body.indexOf('<link rel="stylesheet" href="https://harrisonfamily.us/css/auth-edge.css">')).toBeLessThan(res.body.indexOf("<style>"));
+  });
+  it("every kit copy key is set, in the voice: lowercase, no exclamation marks, errors say who to text", () => {
+    expect(Object.keys(raw.copy).sort()).toEqual(Object.keys(DEFAULT_COPY).sort());
+    for (const [k, v] of Object.entries(raw.copy)) {
+      expect(v, k).toBe(v.replace(/\bJ\b/g, "j").toLowerCase().replace(/\bj\b/g, "J")); // lowercase except "J"
+      expect(v, k).not.toMatch(/!/);
+    }
+    expect(raw.copy.title).toBe("hi family. sign in to see the private pages.");
+    expect(raw.copy.subtitle.split("\n").length).toBeGreaterThan(1);
+    expect(raw.copy.subtitle.endsWith("if neither works, text J.")).toBe(true);
+    expect(raw.copy.subtitle).not.toMatch(/family password/); // accounts are per member: the open help line is io's call
+    for (const k of ["invalid_credentials", "denied_body", "generic_error"]) expect(raw.copy[k], k).toMatch(/text J/);
+  });
+});
+
 // ---- HFY-R58 review fixes ----
 import { safeReturnTo } from "../src/edge.js";
 import { FORGOT_LIMITS, clientIp, ddbRateLimiter, memoryRateLimiter, rateKey } from "../src/ratelimit.js";

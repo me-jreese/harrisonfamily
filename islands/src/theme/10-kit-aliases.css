@@ -1,0 +1,43 @@
+/*
+ * 10 kit aliases (foundation). KIT ROOT CAUSE, DVP-TSK-A73: @io-kit/shell 0.6.6 (dist/io-kit.css), @io-kit/content 0.1.1
+ * (src/content.css) and @io-kit/notify 0.4.0 (src/notify.css) read the Enceladus short variables of @io-kit/tokens/tokens.css
+ * (--bg, --fg, --bg-surface, --accent, --space-2, --radius-md, ...) instead of their --io-<prefix>-* skinning contracts, so on
+ * harrisonfamily they ignored the theme (the shell ground stayed #0a0a0f). tokens.css is no longer loaded anywhere; this block
+ * maps every short variable those three packages read to a harrisonfamily semantic token instead.
+ * html:root has specificity (0,1,1), so it beats any :root declaration of the same names. HFY app CSS never reads these names
+ * (theme-lint enforces it; this file is the one exemption).
+ * DELETE this file once the kit packages read only --io-* contract variables (DVP-TSK-A73 shipped and the versions above bumped).
+ * tests/kit-aliases.test.mjs re-derives the read set from node_modules and fails on any name that is not mapped here.
+ */
+html:root {
+  /* colour */
+  --bg: var(--io-color-semantic-surface);
+  --bg-surface: var(--io-color-semantic-surface-raised);
+  --bg-surface-alt: var(--io-color-semantic-surface-raised); /* the shell's update toast */
+  --fg: var(--io-color-semantic-text);
+  --fg-muted: var(--io-color-semantic-text-dim);
+  --accent: var(--io-color-semantic-accent);
+  --accent-hover: var(--io-color-semantic-link-hover);
+  --border: var(--io-color-semantic-border);
+  --danger: var(--io-color-semantic-danger);
+  /* type faces */
+  --font-body: var(--io-typography-font-ui);
+  --font-heading: var(--io-typography-font-display);
+  --font-display: var(--io-typography-font-display);
+  --font-mono: var(--io-typography-font-mono);
+  /* shape and spacing */
+  --radius-sm: var(--io-radius-sm);
+  --radius-md: var(--io-radius-md);
+  --radius-lg: var(--io-radius-lg);
+  --space-1: var(--io-space-1);
+  --space-2: var(--io-space-2);
+  --space-3: var(--io-space-3);
+  --space-12: var(--io-space-8);
+  /* type sizes: nothing under the 16px floor (size-sm) */
+  --text-xs: var(--io-typography-size-sm);
+  --text-sm: var(--io-typography-size-sm);
+  --text-base: var(--io-typography-size-md);
+  /* motion (the reduced-motion block in theme.css zeroes the duration) */
+  --dur-base: var(--io-motion-duration-base);
+  --ease-orbit: var(--io-motion-easing-standard);
+}

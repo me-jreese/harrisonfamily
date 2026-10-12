@@ -7,7 +7,13 @@ export const CAPABILITIES = { drafts: false, edit: true, subject: true, getById:
 const MAP = { not_found: "not_found", forbidden: "forbidden", validation: "validation", conflict: "conflict", cursor_invalid: "cursor_invalid", unavailable: "unavailable", unauthenticated: "forbidden" };
 const wrap = async (p) => {
   try { return await p; } catch (e) {
-    if (e instanceof ApiError) throw new ContentError(MAP[e.code] || "unavailable", e.message, e.field ? { field: e.field } : undefined);
+    if (e instanceof ApiError) {
+      const err = new ContentError(MAP[e.code] || "unavailable", e.message, e.field ? { field: e.field } : undefined);
+      // The contract has no "unauthenticated" code (it maps to forbidden); the islands still need to tell signed out from
+      // not allowed, to say "this page is family-only. sign in to see it." instead of the generic line.
+      if (e.status === 401 || e.code === "unauthenticated") err.signedOut = true;
+      throw err;
+    }
     throw e instanceof ContentError ? e : new ContentError("unavailable", e?.message || "request failed");
   }
 };
