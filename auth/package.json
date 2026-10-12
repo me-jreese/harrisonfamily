@@ -9,7 +9,7 @@
     "e2e:theme": "node e2e/signin-theme.e2e.mjs"
   },
   "dependencies": {
-    "@io-kit/auth": "2.2.0",
+    "@io-kit/auth": "2.2.1",
     "jose": "6.2.12"
   },
   "devDependencies": {
