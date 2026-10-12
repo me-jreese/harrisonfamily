@@ -70,7 +70,7 @@ Function Associations:
   - Viewer Request: HFYAppendIndex (CloudFront Function)
 ```
 
-#### API Behavior (/api/*)
+#### API Behavior (/api/*), legacy
 ```
 Path Pattern: /api/*
 Origin: API Gateway origin
@@ -79,6 +79,32 @@ Allowed HTTP Methods: GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE
 Cache Policy: CachingDisabled (managed policy)
 Origin Request Policy: AllViewer (managed policy)
 ```
+This is the pre-app layout (and what `distribution.json` still shows). `scripts/infra/add-api-behavior.sh` moves `/api/*` to hfy-api and
+keeps `/api/check-allowed` on this origin; see the next section.
+
+#### App behaviors (scripts/infra, HFY-R58)
+
+CloudFront uses the first behavior whose path pattern matches, so order matters. After the three scripts have run, the behaviors are:
+
+| Order | Path pattern | Origin | Notes |
+| --- | --- | --- | --- |
+| (existing) | e.g. `/person/*` | S3 | untouched, positions kept |
+| before `/api/*` | `/api/check-allowed*` | whatever served `/api/check-allowed` before (the hfy-check-allowed API Gateway) | Legacy Google sign-in still POSTs here. Cloned from the old `/api/*` behavior, kept as is on every rerun, retired by HFY-TSK-069 |
+| | `/api/*` | `hfy-api-origin` (Function URL + `X-Origin-Verify`) | CachingDisabled, AllViewerExceptHostHeader |
+| | `/auth/*`, `/.well-known/oauth-authorization-server*` | `hfy-auth-origin` (Function URL + `X-Origin-Verify`) | CachingDisabled, AllViewerExceptHostHeader |
+| | `/uploads/*` | the S3 origin of the default behavior | GET/HEAD, CachingOptimized, response headers policy `UploadsResponseHeadersPolicyId` from app-stack: `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` |
+
+Scripts (each takes `--dry-run`, and `--config-file FILE` for an offline dry run against an export):
+
+- `add-api-behavior.sh`: refuses (exit 3) if it cannot find a non-hfy-api origin serving `/api/check-allowed` and no
+  `/api/check-allowed*` pin exists; `--legacy-origin ORIGIN_ID` then names the origin to pin it to.
+- `add-auth-behavior.sh`: auth edge origin and behaviors.
+- `add-uploads-behavior.sh`: `/uploads/*` with the response headers policy (`--response-headers-policy-id` overrides the stack output).
+
+All three merge in place: an existing origin or behavior keeps its position and every field the script does not manage. When the
+result equals the live config (ignoring how CloudFront orders string sets and fills in defaults) they print `no change` and do not
+call `update-distribution`. Before a real update they save the pre-change config (mode 600, it holds the origin-verify header) under
+`${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}` and print the rollback command. Offline tests: `scripts/infra/test/run.sh`.
 
 ### CloudFront Functions
 

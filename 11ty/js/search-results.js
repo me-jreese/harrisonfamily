@@ -1,4 +1,8 @@
 (() => {
+  // HFY-TSK-065 + HFY-R58: retired behind flag searchV2, but only once the /search/ island has actually mounted.
+  // Handlers are always wired; data loading stands down only when HFYFeatureFlags.searchV2Live() resolves true, so a
+  // missing or failed island (404) leaves this legacy search fully working. Deleted at the 069 flip.
+  async function hfySearchV2Live() { const f = await waitForFeatureFlags(); if (!f || typeof f.searchV2Live !== "function") return false; try { return (await f.searchV2Live("page")) === true; } catch (e) { return false; } }
   const config = window.HFY_SEARCH_CONFIG || {};
   let featureFlags = window.HFYFeatureFlags;
   const pageSection = document.querySelector('[data-search-page]');
@@ -167,6 +171,7 @@
 
   async function loadData() {
     if (state.ready) return;
+    if (await hfySearchV2Live()) return;
     if (loadDataPromise) return loadDataPromise;
 
     state.loading = true;
@@ -382,6 +387,10 @@
   bootstrap();
 
   async function bootstrap() {
+    // searchV2: the island owns /search/ once it has mounted; if it failed, fall through to the legacy page.
+    if (await hfySearchV2Live()) {
+      return;
+    }
     const authorized = await requireAuthenticated();
     if (!authorized) {
       return;

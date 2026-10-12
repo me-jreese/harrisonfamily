@@ -25,6 +25,7 @@ deploy:
         - "event/*"
         - "note/*"
         - "place/*"
+        - "uploads/*"
       invalidate: ["/*"]
     - kind: lambda
       name: hfy-check-allowed

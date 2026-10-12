@@ -24,4 +24,15 @@ __pycache__/
 # Ensure external references stay out of the repo
 ../agent-reference/
 ../reports/
+
+# api (HFY-TSK-063)
+node_modules/
+api/dist/
+
+# islands (HFY-TSK-064)
+# 11ty/js/islands/ is COMMITTED build output (HFY-R58): the deploy syncs 11ty/ with --delete and does not build it.
+# Rebuild with scripts/ci/build-islands.sh (or `cd islands && npm run build`) and commit the result with the source change.
+islands/node_modules/
+islands/test-results/
+islands/playwright-report/
 !.github/actions/io-kit-ci/build/

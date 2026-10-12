@@ -1,0 +1,11 @@
+/* HFY-TSK-067: skeletons, banners and layout glue around @io-kit/content. Tokens with fallbacks; no new colours. */
+.hfy-posts { max-width: 40rem; margin: 0 auto; padding: 0 1rem; box-sizing: border-box; overflow-wrap: anywhere; }
+.hfy-posts img { max-width: 100%; height: auto; }
+.hfy-posts__list { display: grid; gap: 1rem; list-style: none; margin: 1rem 0; padding: 0; }
+.hfy-banner { padding: .75rem 1rem; border: 1px solid currentColor; border-radius: .5rem; margin: 1rem 0; }
+.hfy-skeleton { display: block; height: 7rem; border-radius: .5rem; background: linear-gradient(90deg, rgba(128,128,128,.15), rgba(128,128,128,.3), rgba(128,128,128,.15)); background-size: 200% 100%; animation: hfy-shimmer 1.2s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .hfy-skeleton { animation: none; } }
+@keyframes hfy-shimmer { to { background-position: -200% 0; } }
+.hfy-posts__open, .hfy-posts__more { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 1rem; box-sizing: border-box; font-size: 1rem; }
+.hfy-posts__composer input, .hfy-posts__composer textarea, .hfy-posts__composer select { font-size: 16px; }
+.hfy-posts__composer button, .hfy-posts__composer input[type=file] { min-height: 44px; }
