@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { defineNavRegistry } from "@io-kit/shell";
 import { KitShell, ScrollTopZone, SearchLauncher, useShellScroll, usePwaInstall, useDisplayMode, detectPlatform } from "@io-kit/shell/react";
 import { mountAt } from "../lib/mount.jsx";
+import { suggestPeople } from "../lib/people-corpus.js";
 
 // Nav registry (R8): the four top-level destinations.
 export const NAV = [
@@ -53,7 +54,15 @@ function Content() {
   );
 }
 
+// searchV2 (HFY-TSK-065): SearchLauncher gets local-corpus suggestions; with the flag off it only routes to /search/?q=.
+function useSearchV2() {
+  const [on, setOn] = useState(false);
+  useEffect(() => { window.HFYFeatureFlags?.resolveFlags?.().then((f) => setOn(f.searchV2 === true)); }, []);
+  return on;
+}
+
 function Shell() {
+  const searchV2 = useSearchV2();
   return (
     <KitShell frame="bare" registry={registry} user={{ groups: [] }} router={router} stack="enceladus" title="Harrison Family" palette={false}>
       <div className="hfy-col">
@@ -62,7 +71,7 @@ function Shell() {
         <nav className="hfy-bar__links" aria-label="Primary">
           {NAV.map((i) => <a key={i.id} href={i.route} aria-current={router.pathname === i.route ? "page" : undefined}>{i.label}</a>)}
         </nav>
-        <div className="hfy-bar__end"><SearchLauncher to="/search/" label="Search" placeholder="Search the family" /></div>
+        <div className="hfy-bar__end"><SearchLauncher to="/search/" label="Search" placeholder="Search the family" suggest={searchV2 ? suggestPeople : undefined} /></div>
       </ScrollTopZone>
       <Content />
       </div>

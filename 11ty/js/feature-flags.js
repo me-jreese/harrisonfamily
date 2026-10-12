@@ -330,6 +330,22 @@
     });
   });
 
+  // HFY-TSK-065 (D-09): searchV2 swaps the Lunr search page for the @io-kit/search island (local tier only).
+  // The legacy page section is hidden, and search-results.js / search-navbar.js bail out on the same flag.
+  resolveFlags().then((flags) => {
+    if (flags.searchV2 !== true) return;
+    document.documentElement.classList.add("hfy-search-v2");
+    const style = document.createElement("style");
+    style.textContent = ".hfy-search-v2 [data-search-page]{display:none!important}";
+    document.head.appendChild(style);
+    if (!/^\/search\/?$/.test(window.location.pathname)) return;
+    onReady(() => {
+      const legacy = document.querySelector("[data-search-page]");
+      if (legacy) legacy.setAttribute("hidden", "");
+      loadIsland("search", { onError() { if (legacy) legacy.removeAttribute("hidden"); document.documentElement.classList.remove("hfy-search-v2"); } });
+    });
+  });
+
   onReady(applyFeatureVisibility);
 
   function hydrateSessionState() {
