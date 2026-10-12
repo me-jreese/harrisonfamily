@@ -9,7 +9,7 @@ Parameters:
   CodeBucket: { Type: String, Description: S3 bucket holding the hfy-api.zip package }
   CodeKey: { Type: String, Default: lambda/hfy-api.zip }
   ConfigBucket: { Type: String, Default: harrisonfamily, Description: Bucket with config/admins.json }
-  MediaBucket: { Type: String, Default: harrisonfamily-frontend, Description: "Site bucket the API presigns post-photo uploads into (uploads/posts/*, never media/, which the ETL sync mirrors with --delete; HFY-R58). Not stack-managed: its CORS is a manual step, see media-bucket-cors.json" }
+  MediaBucket: { Type: String, Default: harrisonfamily-frontend, Description: "Site bucket the API presigns post-photo uploads into (uploads/posts/*, never media/, which the ETL sync mirrors with --delete; HFY-R58) and reads person/<gramps_id>.json from for author display labels (read-only, HFY-R68). Not stack-managed: its CORS is a manual step, see media-bucket-cors.json" }
   MediaPublicBase: { Type: String, Default: "https://harrisonfamily.us", Description: "Origin that serves uploads/ (CloudFront /uploads/* behavior with UploadsResponseHeadersPolicy, scripts/infra/add-uploads-behavior.sh)" }
   AdminListKey: { Type: String, Default: config/admins.json }
   VapidSecretName: { Type: String, Default: "", Description: "Optional secret {subject,publicKey,privateKey} for web push; empty disables sending" }
@@ -98,6 +98,11 @@ Resources:
                 Effect: Allow
                 Action: s3:PutObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/posts/*
+              # HFY-R68: author labels are the person's displayName from the site's own record (never the allowlist email). Read-only, person/* only.
+              - Sid: PersonRecords
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*
               - !If
                 - HasVapid
                 - Sid: Secrets

@@ -18,7 +18,8 @@ const b64u = (b) => Buffer.from(b).toString("base64url");
 const pkce = () => { const verifier = b64u(randomBytes(32)); return { verifier, challenge: b64u(createHash("sha256").update(verifier).digest()) }; };
 const members = { I0111: ["members", "admins"] }; // I0222 (Bo) is deliberately not a member for the access_denied case
 let clock = Date.now();
-let edge, cookieAna, cookieBo, jwks, sessionKey, oauthStore, oauthFor;
+let edge, cookieAna, cookieBo, jwks, sessionKey, oauthStore, oauthFor, mintGoogle;
+let identityOnFakeClock = false; // HFY-R68 test only: the identity service (sign-in, refresh) then follows `clock`; every other test signs in on the real clock
 
 const evGet = (rawPath, queryStringParameters, headers = {}) => ({ rawPath, queryStringParameters, requestContext: { http: { method: "GET" } }, headers: { accept: "text/html", ...headers } });
 const evPost = (rawPath, body, form = true) => ({
@@ -46,7 +47,8 @@ beforeAll(async () => {
   const manifest = loadManifest(raw, ENV);
   const g = await generateKeyPair("RS256", { extractable: true });
   const s = await generateKeyPair("RS256", { extractable: true });
-  const gToken = (email) => new SignJWT({ email, email_verified: true }).setProtectedHeader({ alg: "RS256", kid: "g1" }).setSubject("gs").setIssuer("https://accounts.google.com").setAudience(ENV.GOOGLE_CLIENT_ID).setIssuedAt().setExpirationTime("10m").sign(g.privateKey);
+  mintGoogle = (email, at = Math.floor(Date.now() / 1000)) => new SignJWT({ email, email_verified: true }).setProtectedHeader({ alg: "RS256", kid: "g1" }).setSubject("gs").setIssuer("https://accounts.google.com").setAudience(ENV.GOOGLE_CLIENT_ID).setIssuedAt(at).setExpirationTime(at + 600).sign(g.privateKey);
+  const gToken = (email) => mintGoogle(email);
   const pub = { ...(await exportJWK(s.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" };
   const allow = JSON.stringify({ "ana@example.com": "I0111", "bo@example.com": "I0222" });
   const identity = createIdentityService({
@@ -54,6 +56,7 @@ beforeAll(async () => {
     links: memoryLinkStore(),
     google: { clientId: ENV.GOOGLE_CLIENT_ID, jwks: createLocalJWKSet({ keys: [{ ...(await exportJWK(g.publicKey)), kid: "g1", alg: "RS256", use: "sig" }] }) },
     sessions: { issuer: manifest.session.issuer, audience: manifest.session.audience, kid: "hfy-session-1", privateKey: s.privateKey, store: memoryRefreshStore(), defaultProfile: "installed" },
+    now: () => (identityOnFakeClock ? clock : Date.now()),
   });
   sessionKey = s.privateKey;
   oauthStore = memoryOAuthStore();
@@ -454,5 +457,67 @@ describe("/auth/authorize max_age and prompt=login (HFY-R64, RFC 9470)", () => {
     const legacy = async () => ({ sub: "I0111", label: "Ana" });
     expect((await unit.authorize({ ...q, max_age: "300" }, legacy)).headers.location.startsWith("/auth/login?next=")).toBe(true);
     expect(new URL((await unit.authorize(q, legacy)).headers.location).searchParams.has("code")).toBe(true);
+  });
+});
+
+// HFY-R68 (@io-kit/auth 2.1.1, DVP-TSK-A64): the kit's session refresh used to stamp auth_time = now on the new io_id, so a member who signed in days ago
+// looked freshly authenticated after one silent POST /auth/refresh and the MCP step-up (authorize max_age=300) was skipped. 2.1.1 keeps the ORIGINAL
+// sign-in time on the refresh record and re-emits it on every io_id it mints; this pins that end to end, on a fake clock shared with the identity service.
+describe("auth_time survives POST /auth/refresh (HFY-R68, @io-kit/auth 2.1.1)", () => {
+  const DAY_MS = 86_400_000;
+  const refreshReq = (cookie) => ({
+    rawPath: "/auth/refresh", requestContext: { http: { method: "POST" } },
+    headers: { "x-requested-with": "io-kit", origin: "https://harrisonfamily.us", "content-type": "application/json", accept: "application/json", cookie }, body: "{}",
+  });
+  const cookieOf = (res, name) => (res.cookies ?? []).map((c) => c.split(";")[0]).find((c) => c.startsWith(`${name}=`));
+  const { challenge } = pkce();
+  const good = { code_challenge: challenge, code_challenge_method: "S256" };
+  const isLogin = (r) => r.statusCode === 302 && loc(r).pathname === "/auth/login" && !loc(r).searchParams.has("code");
+  const isCode = (r) => r.statusCode === 302 && loc(r).searchParams.has("code") && loc(r).pathname === new URL(CB).pathname;
+  const googleAt = (email) => signIn(email, (e) => mintGoogle(e, nowS()));
+  /** The MCP access token this browser session yields (authorize without max_age, then the code grant). */
+  const mcpToken = async (cookie) => access((await grantFor(cookie)));
+
+  it("a refresh two days after sign-in keeps auth_time = t0: max_age=300 still sends the member to the login page; a fresh sign-in still gets auth_time = now", async () => {
+    const savedClock = clock;
+    identityOnFakeClock = true;
+    try {
+      clock = Math.max(clock, Date.now());
+      const t0 = nowS();
+      const signedIn = await googleAt("ana@example.com");
+      expect(decodeJwt(signedIn.match(/io_id=([^;]+)/)[1])).toMatchObject({ auth_time: t0, iat: t0 });
+      expect(isCode(await authz(signedIn, { ...good, max_age: "300" }))).toBe(true); // fresh at t0
+
+      clock += 2 * DAY_MS; // the 1 h io_id is long gone; only the io_rt cookie is left
+      const r = await edge(refreshReq(signedIn.match(/io_rt=[^;]+/)[0]));
+      expect(r.statusCode).toBe(200);
+      const refreshed = cookieOf(r, "io_id");
+      expect(refreshed).toBeTruthy();
+      expect(decodeJwt(refreshed.slice("io_id=".length))).toMatchObject({ auth_time: t0, iat: nowS(), sub: "I0111", amr: ["fed"] }); // new token, original sign-in time
+
+      // the session-derived authTime is t0: max_age=300 must NOT be satisfied, and without max_age the access token carries t0
+      const stale = await authz(refreshed, { ...good, max_age: "300" });
+      expect(isLogin(stale)).toBe(true);
+      expect(loc(stale).searchParams.get("next")).toMatch(/^\/auth\/authorize\?/);
+      expect(await mcpToken(refreshed)).toMatchObject({ sub: "I0111", auth_time: t0, amr: ["fed"] });
+      expect(JSON.parse((await edge(evGet("/auth/session", undefined, { cookie: refreshed }))).body)).toMatchObject({ authenticated: true, sub: "I0111" });
+
+      // a refresh of the refresh (rotation) still reports t0
+      const again = await edge(refreshReq(cookieOf(r, "io_rt")));
+      expect(again.statusCode).toBe(200);
+      expect(decodeJwt(cookieOf(again, "io_id").slice("io_id=".length)).auth_time).toBe(t0);
+
+      // ... whereas a genuinely fresh sign-in is fresh: max_age=300 passes and the token exchange yields auth_time = now
+      const fresh = await googleAt("ana@example.com");
+      const p = pkce();
+      const back = await authz(fresh, { ...good, code_challenge: p.challenge, max_age: "300" });
+      expect(isCode(back)).toBe(true);
+      const { body } = await token(codeGrant(loc(back).searchParams.get("code"), p.verifier));
+      expect((await access(body)).auth_time).toBe(nowS());
+      expect(nowS() - t0).toBeGreaterThanOrEqual(2 * 86_400);
+    } finally {
+      identityOnFakeClock = false;
+      clock = savedClock;
+    }
   });
 });

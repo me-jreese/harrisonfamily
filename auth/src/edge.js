@@ -1,4 +1,4 @@
-// harrisonfamily auth edge, mounted at https://harrisonfamily.us/auth/* (HFY-R31), on @io-kit/auth 2.1.0's createEdgeApp.
+// harrisonfamily auth edge, mounted at https://harrisonfamily.us/auth/* (HFY-R31), on @io-kit/auth 2.1.1's createEdgeApp.
 // The kit deployable is written for auth.<site> (routes at the root). This wrapper adapts it to a path mount and adds the three
 // things the kit does not ship: GET /auth/.well-known/jwks.json (HFY-R38), GET /auth/session, and host-only cookies (HFY-R31).
 import { createEdgeApp, validateManifest } from "@io-kit/auth/edge/deploy";

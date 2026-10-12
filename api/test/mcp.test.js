@@ -6,6 +6,7 @@ import jwks from "@io-kit/mcp/fixtures/jwks/hfy-auth-edge.jwks.json" with { type
 import { actorFor, buildMcpRegistry, createMcpMount, tokenLabel } from "../src/mcp.js";
 import { createGroupResolver, parseGroupsConfig, policyDocument, POLICY_ROWS, STRONG_AMR } from "../src/policy.js";
 import { buildCaps } from "../src/routes.js";
+import { createLabelResolver } from "../src/labels.js";
 import { makeApi, signToken } from "./world.js";
 
 const RESOURCE = "https://harrisonfamily.us/mcp";
@@ -17,10 +18,10 @@ const token = (sub, { aud = RESOURCE, amr, authTime, extra = {} } = {}) =>
   new SignJWT({ client_id: "mcp-harrisonfamily", token_use: "access", scope: "openid", ...(amr ? { amr } : {}), ...(authTime ? { auth_time: authTime } : {}), ...extra })
     .setProtectedHeader({ alg: "RS256", kid: priv.kid ?? "hfy-auth-edge-key-1" }).setSubject(sub).setIssuer(ISS).setAudience(aud).setIssuedAt().setExpirationTime("10m").sign(key);
 
-function setup(groups = GROUPS) {
-  const api = makeApi();
+function setup(groups = GROUPS, { resolveLabel } = {}) {
+  const api = makeApi({ ...(resolveLabel ? { resolveLabel } : {}) });
   const config = { resourceUrl: RESOURCE, audience: RESOURCE, issuer: ISS, jwksUri: `${ISS}/.well-known/jwks.json`, clientIds: ["mcp-harrisonfamily"], scopes: ["openid", "email", "profile"] };
-  const mount = createMcpMount({ config, invoke: api.handler.invoke, resolveGroups: createGroupResolver({ load: async () => groups, log: { error() {} } }), fetch: async () => ({ ok: true, status: 200, json: async () => jwks }), log: { info() {}, error() {} } });
+  const mount = createMcpMount({ config, invoke: api.handler.invoke, resolveGroups: createGroupResolver({ load: async () => groups, log: { error() {} } }), ...(resolveLabel ? { resolveLabel } : {}), fetch: async () => ({ ok: true, status: 200, json: async () => jwks }), log: { info() {}, error() {} } });
   const http = async (method, path, { tok, body } = {}) => {
     const r = await mount.handle({ rawPath: path, headers: { "content-type": "application/json", ...(tok ? { authorization: `Bearer ${tok}` } : {}) }, requestContext: { http: { method } }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: r.statusCode, headers: r.headers, body: r.body ? JSON.parse(r.body) : undefined };
@@ -181,11 +182,39 @@ describe("actor display label (mcp-actor-label-is-gramps-id)", () => {
       expect(c.author, JSON.stringify(extra)).toEqual({ id: "I0044", label: "I0044" });
     }
   });
-  it("tokenLabel/actorFor unit rules", () => {
+  it("HFY-R68: a token without a usable name takes the person's displayName from the site's own record; the email is never a label", async () => {
+    const loaded = [];
+    const resolveLabel = createLabelResolver({ load: async (id) => { loaded.push(id); if (id !== "I0044") throw Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" }); return { grampsId: id, displayName: "Jane Harrison" }; }, log: { warn() {}, error() {} } });
+    const { rpc, api } = setup(GROUPS, { resolveLabel });
+    expect((await rpc(await token("I0044"), "tools/list")).result.tools.length).toBeGreaterThan(0);
+    expect(loaded).toEqual([]); // discovery never reads a person record
+    for (const extra of [{}, { name: "jane@example.test", email: "jane@example.test" }, { name: "I0044" }]) {
+      const c = (await rpc(await token("I0044", { extra }), "tools/call", { name: "hfy_comments_create", arguments: { subject: "person:I0113", body: "hi" } })).result.structuredContent;
+      expect(c.author, JSON.stringify(extra)).toEqual({ id: "I0044", label: "Jane Harrison" });
+    }
+    const post = (await rpc(await token("I0044", { extra: { name: "jane@example.test" } }), "tools/call", { name: "hfy_posts_create", arguments: { body: "From Claude" } })).result.structuredContent;
+    expect(post.author).toMatchObject({ id: "I0044", label: "Jane Harrison" });
+    expect(loaded).toEqual(["I0044"]); // cached after the first lookup
+    expect(JSON.stringify(api.ddb.all())).not.toContain("jane@example.test");
+    // a member with no person record falls back to the sub, never the email
+    const other = (await rpc(await token("I0113", { extra: { name: "io@example.test", email: "io@example.test" } }), "tools/call", { name: "hfy_comments_create", arguments: { subject: "person:I0113", body: "x" } })).result.structuredContent;
+    expect(other.author).toEqual({ id: "I0113", label: "I0113" });
+    expect(JSON.stringify(api.ddb.all())).not.toContain("io@example.test");
+  });
+  it("HFY-R68: an explicit non-email name claim wins over the person record (no lookup)", async () => {
+    const resolveLabel = createLabelResolver({ load: async () => { throw new Error("must not be called"); }, log: { warn() {}, error() {} } });
+    const { rpc } = setup(GROUPS, { resolveLabel });
+    const c = (await rpc(await token("I0044", { extra: { name: "Jane H." } }), "tools/call", { name: "hfy_comments_create", arguments: { subject: "person:I0113", body: "x" } })).result.structuredContent;
+    expect(c.author).toEqual({ id: "I0044", label: "Jane H." });
+  });
+  it("tokenLabel/actorFor unit rules", async () => {
     expect(tokenLabel({ name: "  Jane Harrison " })).toBe("Jane Harrison");
-    expect([tokenLabel({}), tokenLabel(undefined), tokenLabel({ name: "" }), tokenLabel({ email: "a@b.test" })]).toEqual([undefined, undefined, undefined, undefined]);
-    expect(actorFor({ sub: "I0113", label: "Io", groups: ["hfy-admin"] })).toEqual({ id: "I0113", label: "Io", admin: true });
-    expect(actorFor({ sub: "I0044", groups: ["mcp-authors"] })).toEqual({ id: "I0044", label: "I0044", admin: false });
+    expect([tokenLabel({}), tokenLabel(undefined), tokenLabel({ name: "" }), tokenLabel({ email: "a@b.test" }), tokenLabel({ name: "jane@example.test" })]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(await actorFor({ sub: "I0113", label: "Io", groups: ["hfy-admin"] })).toEqual({ id: "I0113", label: "Io", admin: true });
+    expect(await actorFor({ sub: "I0044", groups: ["mcp-authors"] })).toEqual({ id: "I0044", label: "I0044", admin: false });
+    expect(await actorFor({ sub: "I0044", groups: [] }, async () => "Jane Harrison")).toEqual({ id: "I0044", label: "Jane Harrison", admin: false });
+    expect((await actorFor({ sub: "I0044", groups: [] }, async () => { throw new Error("boom"); })).label).toBe("I0044");
+    expect((await actorFor({ sub: "I0044", groups: [] }, async () => "jane@example.test")).label).toBe("I0044"); // even a resolver cannot publish an email
   });
 });
 

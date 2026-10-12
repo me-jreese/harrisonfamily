@@ -10,6 +10,7 @@ import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
 import { createPresignPut } from "./presign.js";
 import { createGroupResolver } from "./policy.js";
+import { createLabelResolver, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
 
 const env = process.env;
@@ -46,12 +47,22 @@ async function loadPush() {
   return push;
 }
 
+// HFY-R68: author labels come from the site's own person records (s3://$MEDIA_BUCKET/person/<gramps_id>.json, field displayName), never from the
+// allowlist (whose label is the member's email). Read-only on person/* (the Role's PersonRecords statement); cached per container; falls back to the gramps_id.
+const resolveLabel = createLabelResolver({
+  load: async (grampsId) => {
+    const o = await s3.send(new GetObjectCommand({ Bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", Key: PERSON_KEY(grampsId) }));
+    return JSON.parse(await o.Body.transformToString());
+  },
+});
+
 const authenticate = createAuthenticator({
   issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth",
   audience: env.SESSION_AUDIENCE ?? "harrisonfamily-web",
   cookieName: env.SESSION_COOKIE ?? "io_id",
   getJwks,
   getAdmins,
+  resolveLabel,
 });
 
 // HFY-TSK-073: MCP groups (mcp-authors, hfy-admin) from s3://$GROUPS_BUCKET/$GROUPS_KEY; read-only, fail closed. Shape documented in src/policy.js.
@@ -80,7 +91,7 @@ export const handler = async (event) => {
   }
   const path = event.rawPath ?? event.path ?? "/";
   if (isMcpPath(path)) {
-    mcp ??= createMcpMount({ invoke: inner.invoke, resolveGroups: getGroups });
+    mcp ??= createMcpMount({ invoke: inner.invoke, resolveGroups: getGroups, resolveLabel });
     return mcp.handle(event); // bearer-gated by @io-kit/mcp/edge; the API's cookie auth is never consulted here
   }
   return inner(event);

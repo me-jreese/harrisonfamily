@@ -5,6 +5,7 @@ import { createEdge, lambdaAdapter, buildWwwAuthenticate } from "@io-kit/mcp/edg
 import { createMcpServer } from "@io-kit/mcp/core";
 import { ROUTES, MCP_RESOURCE } from "./routes.js";
 import { ADMIN_GROUP, POLICY, STEP_UP_MAX_AGE_SECONDS, STRONG_AMR } from "./policy.js";
+import { cleanLabel, fallbackLabel, ownLabelOnly } from "./labels.js";
 
 export const MCP_PATH = "/mcp";
 const PRM_PREFIX = "/.well-known/oauth-protected-resource";
@@ -67,19 +68,30 @@ export function createMcpCore({ registry, policy = POLICY, now, logger }) {
 
 /**
  * The member's display label from the VERIFIED access token: the auth edge mints the io_id session label as `name` (preserved on refresh).
- * Only `name` counts: never the `email` claim (it would publish an address as a comment/post author), and no claim means the sub (gramps_id).
+ * Only `name` counts, and only when it is a usable non-email label (src/labels.js): never the `email` claim (it would publish an address as
+ * a comment/post author). No usable claim = undefined, and actorFor then looks the person up (HFY-R68).
  */
-export const tokenLabel = (claims) => {
-  const n = typeof claims?.name === "string" ? claims.name.trim() : "";
-  return n === "" ? undefined : n;
+export const tokenLabel = (claims) => cleanLabel(claims?.name);
+/**
+ * The API actor an MCP call runs as: the same {id, label, admin} shape the HTTP path builds from the io_id session (src/auth.js).
+ * label = the token's name when usable (principal.label, set from tokenLabel), else `resolveLabel` (the person's displayName from
+ * the site's own record), else the sub. Never an email, never throws.
+ */
+export const actorFor = async (principal, resolveLabel = ownLabelOnly) => {
+  let label;
+  try {
+    label = await resolveLabel({ sub: principal.sub, name: principal.label });
+  } catch {
+    label = undefined;
+  }
+  return { id: principal.sub, label: cleanLabel(label) ?? fallbackLabel(principal.sub), admin: principal.groups.includes(ADMIN_GROUP) };
 };
-/** The API actor an MCP call runs as: the same {id, label, admin} shape the HTTP path builds from the io_id session (src/auth.js). */
-export const actorFor = (principal) => ({ id: principal.sub, label: principal.label ?? principal.sub, admin: principal.groups.includes(ADMIN_GROUP) });
 const audOk = (aud, want) => (Array.isArray(aud) ? aud.includes(want) : aud === want);
 
-export function createMcpMount({ config = loadMcpConfig(), invoke, resolveGroups, log = console, now, fetch }) {
+export function createMcpMount({ config = loadMcpConfig(), invoke, resolveGroups, resolveLabel = ownLabelOnly, log = console, now, fetch }) {
   const edge = createMcpEdge(config, { logger: { info: (m, f) => log.info?.(m, f) }, ...(now ? { now } : {}), ...(fetch ? { fetch } : {}) });
-  const registry = buildMcpRegistry((principal, name, parts) => invoke(actorFor(principal), name, parts));
+  // The label is resolved when a tool actually runs (not on initialize / tools/list), so a person-record fetch happens at most once per member per hour.
+  const registry = buildMcpRegistry(async (principal, name, parts) => invoke(await actorFor(principal, resolveLabel), name, parts));
   const server = createMcpCore({
     registry, now,
     logger: { audit: (r) => log.info?.("mcp.audit", { ...r, principal: { type: r.principal.type, sub: r.principal.sub, groups: r.principal.groups } }), error: (m, d) => log.error?.(m, d instanceof Error ? d.message : d) },

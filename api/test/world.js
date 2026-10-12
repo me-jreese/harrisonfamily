@@ -29,7 +29,7 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
  * `intercept(cmd)` runs before every DynamoDB command reaches the fake (throw to simulate a store failure, or await another
  * request to simulate a race). The returned `ddb` is the raw fake, for assertions.
  */
-export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept } = {}) {
+export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel } = {}) {
   const raw = createFakeDdb();
   const ddb = intercept ? { send: async (cmd) => { await intercept(cmd); return raw.send(cmd); } } : raw;
   const now = ticker();
@@ -39,6 +39,7 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept 
   const authenticate = createAuthenticator({
     issuer: ISSUER, audience: AUDIENCE, getJwks: async () => jwks,
     getAdmins: createAdminList({ load: async () => ({ admins }) }), log: { warn() {}, error() {} },
+    ...(resolveLabel ? { resolveLabel } : {}),
   });
   const subscriptions = new DynamoSubscriptionStore(ddb, cmds, TABLE);
   const preferences = new DynamoPreferencesStore(ddb, cmds, TABLE);
