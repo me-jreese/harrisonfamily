@@ -281,18 +281,9 @@ The Eleventy build artifacts in `11ty/` are safe to commit because they only inc
    - Re-package and deploy the AWS Lambda + GCP Cloud Function
 
 ### CloudFront Function
-- `scripts/cloudfront/append-index.js` ensures clean URLs (`/about/`, `/contact/`) resolve by appending `index.html` before CloudFront hits the S3 origin.
-- After editing the file, update/publish the function:
-  ```bash
-  aws cloudfront update-function --name HFYAppendIndex \
-    --if-match "$(aws cloudfront describe-function --name HFYAppendIndex --query 'ETag' --output text)" \
-    --function-code fileb://scripts/cloudfront/append-index.js \
-    --function-config Comment='Append index.html to directory paths',Runtime=cloudfront-js-1.0
-
-  aws cloudfront publish-function --name HFYAppendIndex \
-    --if-match "$(aws cloudfront describe-function --name HFYAppendIndex --query 'ETag' --output text)"
-  ```
-- The distribution already associates this function on the viewer-request event; re-run `aws cloudfront update-distribution` only if you rename/replace the function ARN.
+- `scripts/cloudfront/append-index.js` ensures clean URLs (`/about/`, `/contact/`) resolve by appending `index.html` before CloudFront hits the S3 origin, and answers `404` (`Cache-Control: private, no-store`) for case/suffix/encoding variants of the private data prefixes (`/Person/...`, `/Media/...`, `/uploads/...`) that miss the gated cache behaviors; see `cloudfront/README.md`.
+- After editing the file (and `node --test scripts/cloudfront/test/*.test.mjs`), publish it with `scripts/infra/publish-append-index.sh` (`--dry-run` first): it saves the previous code, updates the function, runs `aws cloudfront test-function` on sample events, then publishes.
+- The distribution already associates this function on the default behavior's viewer-request event; re-run `aws cloudfront update-distribution` only if you rename/replace the function ARN.
 
 ### Manual Steps Outside Git
 - Run the ETL (`scripts/etl/export_person_data.py`) and upload JSON/media to S3

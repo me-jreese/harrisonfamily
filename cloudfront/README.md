@@ -13,7 +13,7 @@ The genealogy site uses a **single CloudFront distribution** that serves:
 
 **Key design decisions:**
 - No Lambda@Edge or CloudFront Functions for data processing (keeps costs low). One exception: the private data gate below (HFY-TSK-080) is a single Lambda@Edge viewer-request function on the data paths only
-- CloudFront Function for clean URL rewrites (`/about/` → `/about/index.html`)
+- CloudFront Function for clean URL rewrites (`/about/` → `/about/index.html`), which is also the default-deny for case/suffix variants of the private data prefixes (see "Default-deny at the default behavior")
 - Origin Access Control (OAC) instead of legacy Origin Access Identity (OAI)
 - PriceClass_100 (North America + Europe only) to minimize costs
 
@@ -92,8 +92,9 @@ CloudFront uses the first behavior whose path pattern matches, so order matters.
 | before `/api/*` | `/api/check-allowed*` | whatever served `/api/check-allowed` before (the hfy-check-allowed API Gateway) | Legacy Google sign-in still POSTs here. Cloned from the old `/api/*` behavior, kept as is on every rerun, retired by HFY-TSK-069 |
 | | `/api/*` | `hfy-api-origin` (Function URL + `X-Origin-Verify`) | CachingDisabled, AllViewerExceptHostHeader |
 | | `/auth/*`, `/.well-known/oauth-authorization-server*` | `hfy-auth-origin` (Function URL + `X-Origin-Verify`) | CachingDisabled, AllViewerExceptHostHeader |
-| | `/uploads/*` | the S3 origin of the default behavior | GET/HEAD, CachingOptimized, response headers policy `UploadsResponseHeadersPolicyId` from app-stack: `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'` |
+| | `/uploads/*` | the S3 origin of the default behavior | Created by `add-uploads-behavior.sh` as GET/HEAD, CachingOptimized, response headers policy `UploadsResponseHeadersPolicyId` from app-stack: `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'`. **Members only once the data gate is attached**: `add-data-gate-behaviors.sh` updates it in place (below) |
 | ahead of any shadowing behavior, else appended | `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` | the S3 origin of the default behavior | private data gate (below): GET/HEAD, CachingDisabled, Lambda@Edge `hfy-edge-gate` (viewer-request), response headers policy `hfy-private-no-store` (`Cache-Control: private, no-store`) |
+| in place (position and origin kept) | `/uploads/*` | unchanged | the same gate association and CachingDisabled; response headers policy `hfy-uploads-private`: the sandbox security headers above plus `Cache-Control: private, no-store` |
 
 Scripts (each takes `--dry-run`, and `--config-file FILE` for an offline dry run against an export):
 
@@ -101,7 +102,9 @@ Scripts (each takes `--dry-run`, and `--config-file FILE` for an offline dry run
   `/api/check-allowed*` pin exists; `--legacy-origin ORIGIN_ID` then names the origin to pin it to.
 - `add-auth-behavior.sh`: auth edge origin and behaviors.
 - `add-uploads-behavior.sh`: `/uploads/*` with the response headers policy (`--response-headers-policy-id` overrides the stack output).
-- `add-data-gate-behaviors.sh`: the private data gate (next section); `--remove` rolls it back.
+  It never undoes the gate: when `/uploads/*` already carries the `hfy-edge-gate` association it prints `no change`.
+- `add-data-gate-behaviors.sh`: the private data gate (next section), including `/uploads/*`; `--remove` rolls it back.
+- `publish-append-index.sh`: diffs and publishes the `HFYAppendIndex` CloudFront Function (last section); `--dry-run` reads only.
 
 All of them merge in place: an existing origin or behavior keeps its position and every field the script does not manage. When the
 result equals the live config (ignoring how CloudFront orders string sets and fills in defaults) they print `no change` and do not
@@ -122,20 +125,43 @@ Allowed requests pass unchanged. Denied ones get `401 {"error":"unauthenticated"
 `302 /auth/login?returnTo=<path>` for top-level navigations, both with `Cache-Control: private, no-store`.
 
 `scripts/infra/add-data-gate-behaviors.sh` attaches it with `CachingDisabled` (no response is ever shared between users) to
-`/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` on the site's S3 origin. It is `/person/*.json`, not
+`/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` on the site's S3 origin, and to `/uploads/*` (next paragraph). It is `/person/*.json`, not
 `/person/*`, because `/person/` is the public person-page shell that the default behavior's HFYAppendIndex function resolves to
 `index.html`. New behaviors are appended after the existing ones (api, auth, uploads); a gated pattern is only moved when an
 existing broader behavior such as the legacy `/person/*` would shadow it. Nothing else changes. It merges in place, so reruns are a true no-op.
 
+**Members-only uploads.** Member post photos (`uploads/posts/<ulid>/<name>`) used to be readable by anyone holding the URL, and
+Cloudflare cached them. `add-data-gate-behaviors.sh` now treats `/uploads/*` as a seventh gated pattern, but updates the behavior
+that `add-uploads-behavior.sh` created in place: same position and origin, plus the `hfy-edge-gate` association, `CachingDisabled`,
+and the response headers policy `hfy-uploads-private`, which keeps the nosniff and sandbox CSP headers of the app stack's
+`UploadsResponseHeadersPolicy` and adds `Cache-Control: private, no-store`. The script looks the policy up by name and creates or
+repairs it (nosniff, CSP and Cache-Control all checked), like `hfy-private-no-store`. Members see their photos unchanged: the posts
+islands render them as same-origin `<img src>`, so the browser sends the `io_id` cookie; a signed-out request gets the gate's `401`
+(`302` to login for a navigation). Presigned S3 PUT uploads go straight to the bucket, not through CloudFront, so they are
+unaffected (`islands/tests/uploads-gate.test.mjs`, `api/test/presign.test.js`). Any script that fetches a photo must use
+`credentials: "same-origin"`. With no `/uploads/*` behavior at all the script creates it, already gated.
+`--remove` puts it back to the previous public state in place (no association, CachingOptimized, and the app stack's
+`UploadsResponseHeadersPolicyId`, or `--restore-uploads-policy-id`); it is never deleted.
+
+**Default-deny at the default behavior.** CloudFront path patterns are case-sensitive and `/person/*.json` is suffix-anchored, so
+`/Person/index.json`, `/FAMILY/F1.json`, `/person/I0001.JSON`, `/person/I0001.json/`, `/person/index.json. `, `;params`, `%20`,
+`%2F`, backslash and dot-segment variants match none of the gated behaviors and fall to the default behavior, which has no gate and
+reaches S3. They are safe today only because every S3 key is lowercase. So the default behavior's `HFYAppendIndex` viewer-request
+function (last section) answers `404` with `Cache-Control: private, no-store` for them, without touching S3: any URI whose
+first path segment (case-folded, percent-decoded, dot segments and `;params` removed) is `family`, `event`, `note`, `place`,
+`media` or `uploads`; and anything under `/person/` except the public shell (`/person/`, `/person` and `/person/index.html`),
+with `.json` denied under `/person/` regardless. Real requests for gated data always match their exact pattern first and never
+reach it.
+
 **Cloudflare (HFY-R65).** `harrisonfamily.us` is proxied by Cloudflare in front of CloudFront, and Cloudflare caches by file
 extension (images, SVG, PDF: everything under `/media/`) whatever CloudFront's cache policy says. Left alone, a member's `/media/`
 response would be stored at Cloudflare and served to the next stranger without ever reaching the gate. So every gated behavior
-also carries the response headers policy `hfy-private-no-store`, which overrides `Cache-Control` with `private, no-store` on every
+also carries a response headers policy (`hfy-private-no-store`; `hfy-uploads-private` on `/uploads/*`) that overrides `Cache-Control` with `private, no-store` on every
 response (Cloudflare does not store `private`/`no-store` responses, and browsers do not keep them after sign-out). The script looks
 the policy up by name and creates it when it is missing, or puts it back when it no longer forces that header; `--dry-run` only
 reads, and `--config-file` dry runs use a placeholder id. This depends on Cloudflare honoring the origin's `Cache-Control` (its
 default). Do not add a Cloudflare Cache Rule that overrides the edge TTL for these paths. A Cache Rule that sets "Bypass cache" for the
-six prefixes is optional extra protection; it is configured in the Cloudflare dashboard, outside this repo.
+seven prefixes (`/uploads/` included) is optional extra protection; it is configured in the Cloudflare dashboard, outside this repo.
 
 **Cutover order (HFY-R67): flip `authV2` and deploy the site FIRST, confirm it, THEN attach the gate.** Without the gate,
 `authV2` changes nothing about who can read data (it stays exactly as public as today). It only moves the client to the `io_id`
@@ -169,13 +195,15 @@ Cutover:
    ```bash
    curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
      -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" \
-     --data '{"prefixes":["harrisonfamily.us/person/","harrisonfamily.us/family/","harrisonfamily.us/event/","harrisonfamily.us/note/","harrisonfamily.us/place/","harrisonfamily.us/media/"]}'
+     --data '{"prefixes":["harrisonfamily.us/person/","harrisonfamily.us/family/","harrisonfamily.us/event/","harrisonfamily.us/note/","harrisonfamily.us/place/","harrisonfamily.us/media/","harrisonfamily.us/uploads/"]}'
    ```
    (Add the `www.` host too if it serves the site.) If the plan has no prefix purge, "Purge Everything" works too: the static
    site refills from CloudFront.
 5. **Verify.** Signed out: `curl -sS -o /dev/null -D - https://harrisonfamily.us/person/index.json` returns `401` with
-   `cache-control: private, no-store`. Do the same twice for a `/media/` URL taken from a person page: both answers are `401`,
-   and `cf-cache-status` is never `HIT`. Signed in: data and photos load, a `/media/` response shows
+   `cache-control: private, no-store`. Do the same twice for a `/media/` URL taken from a person page, and once for a
+   `/uploads/posts/<ulid>/<name>` photo URL: all answers are `401`, and `cf-cache-status` is never `HIT`. The case variants
+   (`/Person/index.json`, `/PERSON/index.json`, `/person/index.json/`, `/Media/<file>`, `/Uploads/<path>`) answer `404` with the same
+   `cache-control` (the default-deny function). Signed in: data and photos load, a `/media/` or `/uploads/` response shows
    `cache-control: private, no-store`, and `cf-cache-status` is `DYNAMIC` or `BYPASS`. `io_id` lives 1 h. Under `authV2` the
    client refreshes it with `POST /auth/refresh` (before the first data fetch when the session is near expiry, and once on a gate
    401, then it retries the request once). It sends the visitor to `/auth/login?returnTo=...` only when that refresh fails, so a
@@ -184,8 +212,9 @@ Cutover:
 Rollback, in reverse order:
 
 1. `scripts/infra/add-data-gate-behaviors.sh --remove`, then `aws cloudfront wait distribution-deployed --id E2JCDK3QLQNNYB`. It
-   deletes exactly the six gated behaviors, and only ones carrying the hfy-edge-gate association. Data is public again, as before the
-   release. The `hfy-private-no-store` policy is kept, unused. The pre-change config is also saved under
+   deletes exactly the six gated data behaviors, and only ones carrying the hfy-edge-gate association. Data is public again, as before the
+   release. `/uploads/*` is not deleted: it goes back in place to its previous public state (no association, CachingOptimized, the app
+   stack's uploads policy). The `hfy-private-no-store` and `hfy-uploads-private` policies are kept, unused. The pre-change config is also saved under
    `${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}`; restore it with `aws cloudfront update-distribution --if-match <ETag>`.
 2. Only after that, and only if the `authV2` client itself is at fault, set `authV2` back to `false` and deploy. Never turn
    `authV2` off while the gate is attached: the legacy client cannot read gated data.
@@ -198,60 +227,44 @@ The Lambda stack can stay: replicas of a retained version are deleted by CloudFr
 Shipping a gate fix (cfn-code-never-updates): run `cd edge-gate && npm test`, rebuild with `scripts/ci/package-edge-gate.sh`, and
 upload to the NEW `CodeKey` it prints. Then redeploy the stack with the new `CodeKey` and `CodeSha256`: CloudFormation updates the
 function code, then publishes a new numbered version (a new `EdgeGateVersionArn`). Finally rerun
-`scripts/infra/add-data-gate-behaviors.sh`, which moves all six behaviors to the new version in place, and wait for the deployment.
+`scripts/infra/add-data-gate-behaviors.sh`, which moves all seven behaviors to the new version in place, and wait for the deployment.
 Never put a different zip under a key that is already deployed: the stack would see no code change, and the new `CodeSha256`
 would fail `PublishVersion`. A zip that does not match `CodeSha256` fails the stack update, which rolls back while the attached
 version keeps serving. The MCP
 401-restore function (`infrastructure/mcp-edge401.us-east-1.yaml`, inline code) follows the same rule through the
 `code sha256` in its version's Description; `scripts/infra/test/run.sh` prints the value to set after a code edit.
 
-Tests: `cd edge-gate && npm test`, `node --test tests/client/*.test.mjs` and `bash scripts/infra/test/run.sh`.
+Tests: `cd edge-gate && npm test`, `node --test tests/client/*.test.mjs`, `node --test scripts/cloudfront/test/*.test.mjs` and
+`bash scripts/infra/test/run.sh` (which also runs the function tests and covers the scripts offline against a stub `aws`).
 
 ### CloudFront Functions
 
-#### HFYAppendIndex (Viewer Request)
-Rewrites directory URLs to append `index.html` before hitting S3 origin.
+#### HFYAppendIndex (Viewer Request, default behavior only)
+Source: `scripts/cloudfront/append-index.js` (runtime `cloudfront-js-1.0`, ES5.1). It does two things before the request reaches S3:
 
-**Source:** See `workspace/cloudfront/functions/append-index.js`
+1. **Clean URLs.** A path ending in `/` gets `index.html` appended, an extensionless path gets `/index.html` (S3 serves `about/index.html`
+   but not `about/`; without the rewrite clean URLs return 403 AccessDenied XML).
+2. **Default-deny of private-prefix variants** (see "Default-deny at the default behavior" above): `404` with
+   `Cache-Control: private, no-store` for `family`, `event`, `note`, `place`, `media`, `uploads` and everything under `person` except
+   the public shell. The public shell list (`PUBLIC_PERSON_FILES`) is exactly the files of `11ty/person/` and the gated prefixes
+   (`DENY_FIRST_SEGMENTS`) are exactly those of `add-data-gate-behaviors.sh`; a test pins both. If you add a public file under
+   `11ty/person/`, add it to `PUBLIC_PERSON_FILES`.
 
-```javascript
-function handler(event) {
-  var request = event.request;
-  var uri = request.uri;
+The function may only be associated with the default behavior (it would 404 the gated data itself on any other one), and
+`publish-append-index.sh` refuses otherwise.
 
-  // Append index.html to directory paths
-  if (uri.endsWith('/')) {
-    request.uri += 'index.html';
-  }
-  // Handle extensionless paths as directories
-  else if (!uri.includes('.')) {
-    request.uri += '/index.html';
-  }
-
-  return request;
-}
-```
-
-**Why this is needed:**
-- S3 serves `about/index.html` but not `about/`
-- Without rewrite, clean URLs return 403 AccessDenied XML
-- CloudFront Functions run at edge (faster + cheaper than Lambda@Edge)
-
-**Deploy this function:**
+**Publish** (after editing the file; the distribution already references the function, so no `update-distribution`):
 ```bash
-# Create function
-aws cloudfront create-function \
-  --name HFYAppendIndex \
-  --function-config Comment="Append index.html to directory paths",Runtime=cloudfront-js-1.0 \
-  --function-code fileb://workspace/cloudfront/functions/append-index.js
-
-# Publish function
-aws cloudfront publish-function \
-  --name HFYAppendIndex \
-  --if-match ETAG_FROM_CREATE_RESPONSE
-
-# Associate with distribution (update distribution config to reference function ARN)
+node --test scripts/cloudfront/test/*.test.mjs        # also run by publish-append-index.sh
+scripts/infra/publish-append-index.sh --dry-run       # read-only: LIVE and DEVELOPMENT diffs vs the repo file, and the plan
+scripts/infra/publish-append-index.sh                 # save previous code, update-function, test-function, publish-function
 ```
+The script saves the previous LIVE code under `${HFY_CF_BACKUP_DIR:-~/.local/state/hfy-infra/cloudfront}` (mode 600) and prints the
+rollback commands. It runs the local unit tests, then `aws cloudfront test-function` on the DEVELOPMENT stage with the sample
+events of `scripts/cloudfront/test/append-index.cases.json` (`--all-cases` runs every case, about 0.8 s each) and publishes only when
+all pass. A rerun with LIVE already equal to the repo file prints `no change`. It never creates the function; to create one from
+scratch: `aws cloudfront create-function --name HFYAppendIndex --function-config Comment="...",Runtime=cloudfront-js-1.0 --function-code fileb://scripts/cloudfront/append-index.js`,
+then `publish-function`, then reference its ARN as the default behavior's viewer-request function association.
 
 ### SSL/TLS Certificate
 
@@ -484,7 +497,7 @@ aws cloudwatch put-metric-alarm \
 ### AccessDenied Errors on Directory URLs
 - Symptom: `/about/` returns S3 XML error instead of HTML
 - Cause: CloudFront Function not attached or not handling path correctly
-- Fix: Verify HFYAppendIndex function is associated with viewer-request event
+- Fix: Verify HFYAppendIndex function is associated with the default behavior's viewer-request event
 
 ### Certificate Not Trusted
 - Symptom: Browser shows SSL warning

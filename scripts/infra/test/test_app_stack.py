@@ -120,6 +120,15 @@ class AppStack(unittest.TestCase):
         self.assertEqual(sec["ContentSecurityPolicy"], {"ContentSecurityPolicy": "sandbox; default-src 'none'; img-src 'self'", "Override": True})
         self.assertEqual(self.t["Outputs"]["UploadsResponseHeadersPolicyId"]["Value"], {"Ref": "UploadsResponseHeadersPolicy"})
 
+    def test_members_only_uploads_policy_keeps_this_templates_security_headers(self):
+        # HFY members-only /uploads/*: add-data-gate-behaviors.sh creates hfy-uploads-private with the SAME nosniff + sandbox CSP.
+        csp = self.r["UploadsResponseHeadersPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]["ContentSecurityPolicy"]["ContentSecurityPolicy"]
+        common = (ROOT / "scripts" / "infra" / "lib" / "cf-common.sh").read_text()
+        self.assertIn('UPLOADS_CSP="%s"' % csp, common)
+        gate = (ROOT / "scripts" / "infra" / "add-data-gate-behaviors.sh").read_text()
+        self.assertIn("ContentSecurityPolicy:{ContentSecurityPolicy:$csp, Override:true}", gate)
+        self.assertIn("ContentTypeOptions:{Override:true}", gate)
+
     def test_add_uploads_behavior_reads_the_output_this_stack_exports(self):
         script = (ROOT / "scripts" / "infra" / "add-uploads-behavior.sh").read_text()
         self.assertIn("OUTPUT_KEY=UploadsResponseHeadersPolicyId", script)

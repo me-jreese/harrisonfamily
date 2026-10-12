@@ -122,3 +122,28 @@ def rhp_forces_cache_control($value):
   ([(.CustomHeadersConfig.Items // [])[] | select((.Header // "" | ascii_downcase) == "cache-control")]) as $cc
   | ($cc | length) == 1 and $cc[0].Value == $value and $cc[0].Override == true
     and ([(.RemoveHeadersConfig.Items // [])[] | (.Header // "" | ascii_downcase)] | index("cache-control")) == null;
+
+# Does the behavior $pat carry a Lambda@Edge association of function $fn (any published version)? Input: a DistributionConfig.
+def behavior_gated($pat; $fn):
+  any((.CacheBehaviors.Items // [])[]; .PathPattern == $pat
+      and any((.LambdaFunctionAssociations.Items // [])[]; .LambdaFunctionARN | test(":function:" + $fn + ":[0-9]+$")));
+
+# HFY members-only /uploads/*: the gate's rollback. Put the behavior $pat back to its previous ungated state IN PLACE (never
+# deleted): no Lambda@Edge association, cache policy $cp and response headers policy $rhp. Only a behavior that carries the
+# $fn association is touched; origin and every other field are kept.
+def ungate_behavior($pat; $fn; $cp; $rhp):
+  if behavior_gated($pat; $fn) | not then .
+  else .CacheBehaviors.Items |= map(
+      if .PathPattern == $pat
+      then . + {LambdaFunctionAssociations: {Quantity: 0}, CachePolicyId: $cp, ResponseHeadersPolicyId: $rhp}
+      else . end)
+  end;
+
+# HFY members-only /uploads/*: is the input ResponseHeadersPolicyConfig whole? It must force Cache-Control: $value
+# (rhp_forces_cache_control) AND keep the inert-upload security headers of the app stack's UploadsResponseHeadersPolicy:
+# X-Content-Type-Options: nosniff and Content-Security-Policy: $csp, both with Override.
+def rhp_uploads_private($value; $csp):
+  rhp_forces_cache_control($value)
+  and ((.SecurityHeadersConfig.ContentTypeOptions.Override // false) == true)
+  and ((.SecurityHeadersConfig.ContentSecurityPolicy.Override // false) == true)
+  and ((.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy // "") == $csp);

@@ -1,7 +1,9 @@
 // POST /api/uploads: presigned S3 PUT for post photos (HFY-TSK-067). The Lambda never touches the bytes.
 // Key: uploads/posts/<ulid>/<safe-name> in the frontend bucket; the browser PUTs straight to S3 (CORS: infrastructure/cloudformation/media-bucket-cors.json).
 // Not media/: the ETL data sync mirrors media/ with --delete and would wipe member photos (HFY-R58 (2)). CloudFront serves
-// /uploads/* with a response-headers policy (nosniff + CSP sandbox), and the presigned URL signs content-type (presign.js).
+// /uploads/* with a response-headers policy (nosniff + CSP sandbox) and, once the data gate is attached, only to members: the
+// hfy-edge-gate viewer-request needs the io_id cookie, so photos are loaded as same-origin <img> and answered "private, no-store"
+// (cloudfront/README.md). The PUT itself goes to S3, not CloudFront. The presigned URL signs content-type (presign.js).
 import { HttpError } from "./http.js";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;

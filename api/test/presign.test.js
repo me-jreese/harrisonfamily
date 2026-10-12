@@ -29,6 +29,13 @@ describe("presigned upload PUT (real SDK presigner)", () => {
     expect(PRESIGN_CLIENT_OPTIONS.requestChecksumCalculation).toBe("WHEN_REQUIRED");
   });
 
+  it("PUTs straight to the bucket's S3 endpoint, never to the site (CloudFront) host, so the members-only /uploads/* gate never sees an upload", async () => {
+    const u = await sign();
+    expect(u.hostname).toBe("harrisonfamily-frontend.s3.us-west-2.amazonaws.com");
+    expect(u.hostname).not.toBe("harrisonfamily.us");
+    expect(u.protocol).toBe("https:");
+  });
+
   it("targets the uploads/posts key with the short expiry", async () => {
     const u = await sign();
     expect(decodeURIComponent(u.pathname)).toMatch(new RegExp(`/${key}$`));
