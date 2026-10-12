@@ -39,6 +39,10 @@ Writes are optimistic: post update/visibility/delete are conditioned on the stor
 
 `npm test` runs the CS and CC kit contract suites plus auth, audit, notification and caps tests against an in-memory DynamoDB fake. Install needs `CODEARTIFACT_AUTH_TOKEN`. `scripts/ci/package-api.sh` builds `dist/hfy-api.zip` from a clean checkout: it runs the locked `npm ci` in a stage and generates `dist/caps.json` there afterwards.
 
+## MCP (`/mcp`)
+
+Mounted in this Lambda at `https://harrisonfamily.us/mcp` on `@io-kit/mcp` 0.1.0; tools derive from the registry (`mcp` member of a route), authorization from `src/policy.js` + `config/groups.json`. See `docs/mcp.md`. `node scripts/gen-caps.mjs` also writes `dist/policy.json`, `dist/mcp/tools.json` and `dist/mcp/parity-caps.json`.
+
 ## Notes
 
 The Function URL is AuthType NONE behind CloudFront (HFY-R43): every request must carry the secret `X-Origin-Verify` header that CloudFront injects (`ORIGIN_VERIFY`, from Secrets Manager `harrisonfamily/cloudfront/origin-verify`); anything else is 403 before routing.
