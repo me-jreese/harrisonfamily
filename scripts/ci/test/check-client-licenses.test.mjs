@@ -6,12 +6,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { checkLock, evalExpression, loadOverrides } from '../check-client-licenses.mjs';
+import { checkLock, evalExpression, fromRegistry, loadOverrides } from '../check-client-licenses.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, '..', 'check-client-licenses.mjs');
 const FIX = (n) => resolve(HERE, 'fixtures', 'license-gate', n, 'package-lock.json');
-const none = { overrides: [], shippedDevDependencies: [] };
+const none = { overrides: [], shippedDevDependencies: [], firstPartyScopes: [] };
 const lock = (deps, extra = {}) => ({ lockfileVersion: 3, packages: { '': { dependencies: Object.fromEntries(Object.keys(deps).map((k) => [k, '*'])) }, ...Object.fromEntries(Object.entries(deps).map(([k, v]) => [`node_modules/${k}`, v])), ...extra } });
 const run = (...a) => spawnSync(process.execPath, [SCRIPT, ...a], { encoding: 'utf8' });
 
@@ -93,9 +93,9 @@ test('production closure only: a dev-flagged and an unreachable package are skip
   assert.deepEqual(res.violations.map((v) => `${v.name}@${v.version}`), ['b@2.0.0']);
 });
 
-test('an UNLICENSED package passes only with an exact-version override, whatever its scope', () => {
+test('without a first-party scope, an UNLICENSED package passes only with an exact-version override', () => {
   const ov = { package: '@kit/x', version: '1.0.0', license: 'UNLICENSED', licenseFile: 'package.json' };
-  const cfg = { overrides: [ov], shippedDevDependencies: [] };
+  const cfg = { overrides: [ov], shippedDevDependencies: [], firstPartyScopes: [] };
   assert.equal(checkLock(lock({ '@kit/x': { version: '1.0.0', license: 'UNLICENSED' } }), cfg).violations.length, 0);
   assert.equal(checkLock(lock({ '@kit/x': { version: '1.0.1', license: 'UNLICENSED' } }), cfg).violations.length, 1);
   assert.equal(checkLock(lock({ '@io-kit/y': { version: '1.0.0', license: 'UNLICENSED' } }), cfg).violations.length, 1);
@@ -157,4 +157,130 @@ test('shippedDevDependencies are gated with their closure; other dev packages ar
 
 test('the committed overrides file loads', () => {
   assert.ok(Array.isArray(loadOverrides().overrides));
+});
+
+// First-party scopes (architect ruling P2-R29).
+const CA = 'https://io-356364570033.d.codeartifact.us-west-2.amazonaws.com/npm/io-kit/';
+const caUrl = (name, v) => `${CA}${name}/-/${name.split('/').pop()}-${v}.tgz`;
+const npmUrl = (name, v) => `https://registry.npmjs.org/${name}/-/${name.split('/').pop()}-${v}.tgz`;
+const ioKit = { scope: '@io-kit/', license: 'UNLICENSED', registry: CA };
+const fp = { overrides: [], shippedDevDependencies: [], firstPartyScopes: [ioKit] };
+
+test('first-party: an @io-kit package from CodeArtifact passes at any version', () => {
+  for (const v of ['0.1.0', '1.0.10', '9.9.9']) {
+    const l = lock({ '@io-kit/shell': { version: v, license: 'UNLICENSED', resolved: caUrl('@io-kit/shell', v) } });
+    assert.deepEqual(checkLock(l, fp).violations, [], v);
+  }
+});
+
+test('first-party: an @io-kit package from registry.npmjs.org fails with a clear message, whatever its licence', () => {
+  for (const license of ['UNLICENSED', 'MIT']) {
+    const l = lock({ '@io-kit/shell': { version: '0.6.6', license, resolved: npmUrl('@io-kit/shell', '0.6.6') } });
+    const v = checkLock(l, fp).violations;
+    assert.equal(v.length, 1, license);
+    assert.match(v[0].reason, /first-party @io-kit\/\* package resolved from https:\/\/registry\.npmjs\.org\//);
+    assert.match(v[0].reason, /not from https:\/\/io-356364570033\.d\.codeartifact/);
+  }
+});
+
+test('first-party: an @io-kit package with no resolved URL fails with a clear message', () => {
+  const v = checkLock(lock({ '@io-kit/md': { version: '1.2.0', license: 'UNLICENSED' } }), fp).violations;
+  assert.equal(v.length, 1);
+  assert.match(v[0].reason, /first-party @io-kit\/\* package with no resolved URL/);
+});
+
+test('first-party: a non-@io-kit UNLICENSED package still fails, even from CodeArtifact', () => {
+  for (const name of ['left-pad', '@io-kitx/a', '@io-kit-evil/a', '@other/io-kit']) {
+    const l = lock({ [name]: { version: '1.0.0', license: 'UNLICENSED', resolved: caUrl(name, '1.0.0') } });
+    const v = checkLock(l, fp).violations;
+    assert.equal(v.length, 1, name);
+    assert.match(v[0].reason, /not on the allow list/, name);
+  }
+});
+
+test('first-party: every lockfile copy must come from CodeArtifact', () => {
+  const l = lock(
+    { '@io-kit/shell': { version: '0.6.6', license: 'UNLICENSED', resolved: caUrl('@io-kit/shell', '0.6.6'), dependencies: { '@io-kit/tokens': '*' } } },
+    { 'node_modules/@io-kit/shell/node_modules/@io-kit/tokens': { version: '0.4.0', license: 'UNLICENSED', resolved: npmUrl('@io-kit/tokens', '0.4.0') } },
+  );
+  const v = checkLock(l, fp).violations;
+  assert.deepEqual(v.map((x) => `${x.name}@${x.version}`), ['@io-kit/tokens@0.4.0']);
+  assert.match(v[0].reason, /node_modules\/@io-kit\/shell\/node_modules\/@io-kit\/tokens/);
+});
+
+test('first-party: an exact-version override cannot rescue an @io-kit package from the wrong registry', () => {
+  const ov = { package: '@io-kit/md', version: '1.2.0', license: 'UNLICENSED', licenseFile: 'package.json' };
+  const l = lock({ '@io-kit/md': { version: '1.2.0', license: 'UNLICENSED', resolved: npmUrl('@io-kit/md', '1.2.0') } });
+  assert.equal(checkLock(l, { ...fp, overrides: [ov] }).violations.length, 1);
+});
+
+test('first-party: the scope rescues only its licence; a denied or other licence from CodeArtifact is judged as usual', () => {
+  const at = (license) => lock({ '@io-kit/x': { version: '1.0.0', license, resolved: caUrl('@io-kit/x', '1.0.0') } });
+  assert.equal(checkLock(at('MIT'), fp).violations.length, 0);
+  assert.match(checkLock(at('AGPL-3.0'), fp).violations[0].reason, /denied/);
+  assert.match(checkLock(at('MPL-2.0'), fp).violations[0].reason, /not on the allow list/);
+  assert.match(checkLock(lock({ '@io-kit/x': { version: '1.0.0', resolved: caUrl('@io-kit/x', '1.0.0') } }), fp).violations[0].reason, /no license field/);
+});
+
+test('first-party: a URL that only looks like the prefix, or climbs out of it, fails', () => {
+  assert.equal(fromRegistry(caUrl('@io-kit/x', '1.0.0'), CA), true);
+  for (const u of [
+    `${CA}../evil/@io-kit/x/-/x-1.0.0.tgz`,
+    `${CA}%2e%2e/evil/@io-kit/x/-/x-1.0.0.tgz`,
+    'https://io-356364570033.d.codeartifact.us-west-2.amazonaws.com/npm/io-kitx/@io-kit/x/-/x-1.0.0.tgz',
+    'https://io-356364570033.d.codeartifact.us-west-2.amazonaws.com.evil.example/npm/io-kit/@io-kit/x/-/x-1.0.0.tgz',
+    'http://io-356364570033.d.codeartifact.us-west-2.amazonaws.com/npm/io-kit/@io-kit/x/-/x-1.0.0.tgz',
+    'file:../io-kit/x',
+    '',
+  ]) {
+    assert.equal(fromRegistry(u, CA), false, u);
+    const l = lock({ '@io-kit/x': { version: '1.0.0', license: 'UNLICENSED', ...(u ? { resolved: u } : {}) } });
+    assert.equal(checkLock(l, fp).violations.length, 1, u);
+  }
+});
+
+test('first-party: a malformed firstPartyScopes entry is rejected', () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'lic-'));
+  try {
+    const f = resolve(dir, 'o.json');
+    const bad = [
+      [{ license: 'UNLICENSED', registry: CA }, /missing "scope"/],
+      [{ scope: '@io-kit/', registry: CA }, /missing "license"/],
+      [{ scope: '@io-kit/', license: 'UNLICENSED' }, /missing "registry"/],
+      [{ ...ioKit, scope: '@io-kit' }, /trailing slash/],
+      [{ ...ioKit, scope: 'io-kit/' }, /npm scope/],
+      [{ ...ioKit, license: 'GPL-3.0-only' }, /denied licence/],
+      [{ ...ioKit, registry: CA.replace('https:', 'http:') }, /https registry URL prefix/],
+      [{ ...ioKit, registry: CA.slice(0, -1) }, /ending in "\/"/],
+    ];
+    for (const [s, re] of bad) {
+      writeFileSync(f, JSON.stringify({ firstPartyScopes: [s], overrides: [] }));
+      assert.throws(() => loadOverrides(f), re, JSON.stringify(s));
+    }
+    writeFileSync(f, JSON.stringify({ firstPartyScopes: ioKit, overrides: [] }));
+    assert.throws(() => loadOverrides(f), /must be an array/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the committed overrides file holds @io-kit by scope (CodeArtifact), not per version', () => {
+  const cfg = loadOverrides();
+  assert.deepEqual(cfg.firstPartyScopes, [ioKit]);
+  assert.deepEqual(cfg.overrides.filter((o) => o.package.startsWith('@io-kit/')), []);
+  assert.ok(cfg.shippedDevDependencies.length > 0);
+  const l = lock({ '@io-kit/brand-new': { version: '0.0.1', license: 'UNLICENSED', resolved: caUrl('@io-kit/brand-new', '0.0.1') } });
+  assert.equal(checkLock(l, cfg).violations.length, 0);
+});
+
+test('CLI: an @io-kit package from registry.npmjs.org fails the committed config with exit 1', () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'lic-'));
+  try {
+    const f = resolve(dir, 'package-lock.json');
+    writeFileSync(f, JSON.stringify(lock({ '@io-kit/shell': { version: '0.6.6', license: 'UNLICENSED', resolved: npmUrl('@io-kit/shell', '0.6.6') } })));
+    const bad = run('--lock', f);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /@io-kit\/shell@0\.6\.6 {2}UNLICENSED {2}first-party @io-kit\/\* package resolved from https:\/\/registry\.npmjs\.org\//);
+    writeFileSync(f, JSON.stringify(lock({ '@io-kit/shell': { version: '0.6.6', license: 'UNLICENSED', resolved: caUrl('@io-kit/shell', '0.6.6') } })));
+    const good = run('--lock', f);
+    assert.equal(good.status, 0, good.stderr);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

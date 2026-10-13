@@ -93,7 +93,7 @@ Change `ci.manifest.yaml`. Common changes:
 | Deploy another Lambda | A new `kind: lambda` entry in `deploy.targets`, for a function in `us-west-2` whose zip `build.cmd` can produce without the private registry. List the zip in `artifacts` too: the `deploy` job does not build, it deploys from the release artifact. Add an `alias` if a rollback should repoint an alias rather than re-upload the previous zip. The app Lambdas and the Lambda@Edge functions cannot be added this way ([What the manifest cannot add](#what-the-manifest-cannot-add)). |
 | Publish `HFYAppendIndex` | Not a manifest change. See [The CloudFront Function](#the-cloudfront-function). |
 
-A `tests` entry that checks client licences reads [`scripts/ci/license-overrides.json`](../../scripts/ci/license-overrides.json). Moving to a newer `@io-kit/*` version, or adopting a package with no `license` field, needs a new exact-version entry there in the same pull request.
+A `tests` entry that checks client licences reads [`scripts/ci/license-overrides.json`](../../scripts/ci/license-overrides.json). Adopting a third-party package with no `license` field, or with a licence off the allow list, needs a new exact-version entry in its `overrides` in the same pull request. Moving to a newer `@io-kit/*` version needs no entry: the `firstPartyScopes` entry passes any `@io-kit/*` version whose lockfile licence is `UNLICENSED`, but only when its lockfile `resolved` URL starts with `https://io-356364570033.d.codeartifact.us-west-2.amazonaws.com/npm/io-kit/`. An `@io-kit/*` package resolved from anywhere else, such as `registry.npmjs.org`, or with no resolved URL, fails the gate, so install `@io-kit/*` packages with the `.npmrc` that points at CodeArtifact.
 
 ### 2. Get a CodeArtifact token
 

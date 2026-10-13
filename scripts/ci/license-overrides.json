@@ -1,71 +1,18 @@
 {
-  "$comment": "Reviewed licence exceptions for scripts/ci/check-client-licenses.mjs. An override names one package at one exact version; a new version needs a new review, including every @io-kit/* bump. licenseFile is the evidence the reviewer read (advisory; the gate does not open it). An override never rescues a GPL, AGPL, LGPL, EPL or SSPL licence. shippedDevDependencies lists devDependencies that are copied into the build output; they and their closure are checked like production packages. When data-navigator@3.0.0 (an MIT LICENSE file, no license field) is adopted, add its entry here in the same PR.",
+  "$comment": "Reviewed licence exceptions for scripts/ci/check-client-licenses.mjs. An override names one third-party package at one exact version; a new version needs a new review. licenseFile is the evidence the reviewer read (advisory; the gate does not open it). An override or a first-party scope never rescues a GPL, AGPL, LGPL, EPL or SSPL licence. firstPartyScopes (architect ruling P2-R29): a package in the scope passes with the scope's licence at any version, but only when its lockfile 'resolved' URL starts with the registry prefix; a package in the scope resolved from anywhere else, or with no resolved URL, fails whatever its licence. @io-kit/* version bumps need no entry here. shippedDevDependencies lists devDependencies that are copied into the build output; they and their closure are checked like production packages. When data-navigator@3.0.0 (an MIT LICENSE file, no license field) is adopted, add its entry here in the same PR.",
+  "firstPartyScopes": [
+    {
+      "scope": "@io-kit/",
+      "license": "UNLICENSED",
+      "registry": "https://io-356364570033.d.codeartifact.us-west-2.amazonaws.com/npm/io-kit/"
+    }
+  ],
   "shippedDevDependencies": [
     "@fontsource-variable/source-code-pro",
     "@fontsource-variable/source-sans-3",
     "@fontsource/libre-caslon-text"
   ],
   "overrides": [
-    {
-      "package": "@io-kit/comments",
-      "version": "0.1.0",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/content",
-      "version": "0.1.1",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/feed",
-      "version": "1.1.1",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/md",
-      "version": "1.2.0",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/notify",
-      "version": "0.4.0",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/search",
-      "version": "1.0.1",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/search-ui",
-      "version": "1.0.10",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/shell",
-      "version": "0.6.6",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/tokens",
-      "version": "0.4.0",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
-    {
-      "package": "@io-kit/tokens",
-      "version": "0.4.1",
-      "license": "UNLICENSED",
-      "licenseFile": "package.json license field (first-party, private io-kit registry)"
-    },
     {
       "package": "@fontsource-variable/source-code-pro",
       "version": "5.3.0",

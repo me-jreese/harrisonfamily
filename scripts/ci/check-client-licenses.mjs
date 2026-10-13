@@ -8,7 +8,15 @@
 //   pass : MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, 0BSD, CC0-1.0
 //   fail : any GPL, AGPL, LGPL, EPL or SSPL licence; a missing licence; any other licence
 //          unless scripts/ci/license-overrides.json holds a reviewed override for that exact
-//          package AND version.
+//          package AND version, or the package is first-party (below).
+//
+// First-party scopes (architect ruling P2-R29): the overrides file's "firstPartyScopes" names a
+// package scope (such as "@io-kit/"), the licence its packages carry (UNLICENSED) and the registry
+// URL prefix they must come from. A package in that scope passes with that licence, at any version,
+// only when its lockfile entry's "resolved" URL starts with the registry prefix. Every package in the
+// scope is held to the registry, whatever its licence: one resolved from anywhere else, or with no
+// resolved URL, fails. Each copy in the lockfile is checked on its own. The same licence on a
+// package outside the scope still needs an exact-version override.
 //
 // SPDX expressions use real precedence (WITH, then AND, then OR; parentheses group): "A OR B"
 // passes when one alternative passes, "A AND B" needs every part, and a malformed expression fails.
@@ -17,7 +25,7 @@
 // "shippedDevDependencies" (devDependencies copied into the build output, such as the font
 // packages) and their own closure. Any other devDependency is not checked. A library that is
 // bundled into the output must stay in "dependencies" or be listed in "shippedDevDependencies".
-// An override never rescues a GPL, AGPL, LGPL, EPL or SSPL licence.
+// An override or a first-party scope never rescues a GPL, AGPL, LGPL, EPL or SSPL licence.
 //
 // Usage: node scripts/ci/check-client-licenses.mjs [--lock <package-lock.json>]... [--overrides <file>]
 import { existsSync, readFileSync } from 'node:fs';
@@ -155,13 +163,52 @@ export function productionClosure(lock, extraRoots = []) {
     .filter((p) => p !== '')
     .map((p) => {
       const e = pkgs[p];
-      return { path: p, name: nameFromPath(p, e), version: e.version || '', license: normaliseLicense(e), link: !!e.link };
+      return {
+        path: p,
+        name: nameFromPath(p, e),
+        version: e.version || '',
+        license: normaliseLicense(e),
+        resolved: typeof e.resolved === 'string' ? e.resolved : '',
+        link: !!e.link,
+      };
     })
     .filter((r) => !r.link);
 }
 
+// True when `resolved` is under `registry`: the raw string starts with the prefix, and so does the
+// URL once parsed (which folds "..", "%2e%2e" and the like), so a dot segment cannot climb out.
+export function fromRegistry(resolved, registry) {
+  if (typeof resolved !== 'string' || !resolved.startsWith(registry)) return false;
+  try {
+    return new URL(resolved).href.startsWith(registry);
+  } catch {
+    return false;
+  }
+}
+
+export function firstPartyScopeFor(name, scopes = []) {
+  return scopes.find((s) => name.startsWith(s.scope)) || null;
+}
+
+function validateScopes(scopes) {
+  if (!Array.isArray(scopes)) throw new Error('"firstPartyScopes" must be an array');
+  for (const s of scopes) {
+    for (const k of ['scope', 'license', 'registry']) {
+      if (!s || typeof s[k] !== 'string' || !s[k]) throw new Error(`first-party scope ${JSON.stringify(s)} is missing "${k}"`);
+    }
+    if (!/^@[a-z0-9][a-z0-9._~-]*\/$/.test(s.scope)) throw new Error(`first-party scope "${s.scope}" must be an npm scope with its trailing slash, such as "@io-kit/"`);
+    if (isDenied(s.license)) throw new Error(`first-party scope ${s.scope} names a denied licence (${s.license})`);
+    let u;
+    try { u = new URL(s.registry); } catch { u = null; }
+    if (!u || u.protocol !== 'https:' || !s.registry.endsWith('/') || u.href !== s.registry || u.search || u.hash) {
+      throw new Error(`first-party scope ${s.scope} needs an https registry URL prefix ending in "/" (got ${s.registry})`);
+    }
+  }
+  return scopes;
+}
+
 export function loadOverrides(file = DEFAULT_OVERRIDES) {
-  if (!existsSync(file)) return { overrides: [], shippedDevDependencies: [] };
+  if (!existsSync(file)) return { overrides: [], shippedDevDependencies: [], firstPartyScopes: [] };
   const raw = JSON.parse(readFileSync(file, 'utf8'));
   const overrides = raw.overrides || [];
   for (const o of overrides) {
@@ -172,19 +219,31 @@ export function loadOverrides(file = DEFAULT_OVERRIDES) {
     }
     if (isDenied(o.license)) throw new Error(`license override for ${o.package}@${o.version} names a denied licence (${o.license})`);
   }
-  return { overrides, shippedDevDependencies: raw.shippedDevDependencies || [] };
+  return { overrides, shippedDevDependencies: raw.shippedDevDependencies || [], firstPartyScopes: validateScopes(raw.firstPartyScopes || []) };
 }
 
 // Returns { checked, violations: [{ name, version, license, reason }] }.
-export function checkLock(lock, cfg = { overrides: [], shippedDevDependencies: [] }) {
+export function checkLock(lock, cfg = { overrides: [], shippedDevDependencies: [], firstPartyScopes: [] }) {
   const rows = productionClosure(lock, cfg.shippedDevDependencies || []);
+  const overrides = cfg.overrides || [];
   const violations = [];
   for (const r of rows) {
     const tag = (reason) => violations.push({ name: r.name, version: r.version, license: r.license || '(none)', reason });
+    // A first-party scope is held to its registry before anything else, whatever the licence and
+    // whatever the overrides say: a scoped package from anywhere else is not the first-party package.
+    const scope = firstPartyScopeFor(r.name, cfg.firstPartyScopes || []);
+    if (scope && !r.resolved) {
+      tag(`first-party ${scope.scope}* package with no resolved URL in the lockfile (${r.path}); it must resolve from ${scope.registry}`);
+      continue;
+    }
+    if (scope && !fromRegistry(r.resolved, scope.registry)) {
+      tag(`first-party ${scope.scope}* package resolved from ${r.resolved}, not from ${scope.registry} (${r.path})`);
+      continue;
+    }
     if (!r.license) {
-      const o = cfg.overrides.find((x) => x.package === r.name && x.version === r.version);
+      const o = overrides.find((x) => x.package === r.name && x.version === r.version);
       if (o) continue;
-      const stale = cfg.overrides.find((x) => x.package === r.name);
+      const stale = overrides.find((x) => x.package === r.name);
       tag(stale ? `no license field; the reviewed override is for ${stale.version}, not ${r.version}` : 'no license field and no reviewed override');
       continue;
     }
@@ -194,9 +253,10 @@ export function checkLock(lock, cfg = { overrides: [], shippedDevDependencies: [
       tag('denied licence (GPL, AGPL, LGPL, EPL or SSPL)');
       continue;
     }
-    const o = cfg.overrides.find((x) => x.package === r.name && x.version === r.version);
+    if (scope && r.license === scope.license) continue; // first-party, from its registry (checked above)
+    const o = overrides.find((x) => x.package === r.name && x.version === r.version);
     if (o) continue;
-    const stale = cfg.overrides.find((x) => x.package === r.name);
+    const stale = overrides.find((x) => x.package === r.name);
     tag(stale ? `licence not on the allow list; the reviewed override is for ${stale.version}, not ${r.version}` : 'licence not on the allow list and no reviewed override');
   }
   return { checked: rows.length, violations };
