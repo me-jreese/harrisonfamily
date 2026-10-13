@@ -13,6 +13,7 @@ import { parseArgs } from 'node:util';
 import { GraphError, EXIT } from './errors.mjs';
 import { collect, fileSource, grampsCopySource, stdinSource } from './source.mjs';
 import { buildFamilyGraph } from './build.mjs';
+import { defaultGazetteerDir, loadGazetteer } from './gazetteer.mjs';
 import { assertSizeBudget, assertVerified, GZIP_BUDGET_BYTES, loadSharedGuard } from './verify.mjs';
 import { stringify } from './canonical.mjs';
 import { writeAtomic } from './write.mjs';
@@ -20,10 +21,12 @@ import { writeAtomic } from './write.mjs';
 const USAGE = `usage:
   build-graph (<file> | - | --input <file|-> | --snapshot <file|-> | --from-gramps-copy <sqlite.db|dir>)
               [--out <staging>] [--report <path>] [--verify-against <staging>/person]
-              [--generated-at <iso>] [--max-gzip-bytes <n>] [--quiet]
+              [--gazetteer <dir>] [--generated-at <iso>] [--max-gzip-bytes <n>] [--quiet]
   build-graph --verify <graph.json> [--verify-against <staging>/person]
 
   --out writes <staging>/person/graph.json (temp file, then rename). Without --out nothing is written.
+  --gazetteer reads the cache fetch-gazetteer filled (default $HFY_GAZETTEER_DIR, else ~/Library/Caches/hfy-gazetteer);
+              without it the build keeps Gramps coordinates only (GAZETTEER_MISSING). A build never uses the network.
   Exit codes: 0 ok, 2 input missing, 3 size budget, 4 privacy violation, 5 living mismatch,
               6 Gramps open, 7 snapshot shape, 8 gazetteer checksum.`;
 
@@ -88,7 +91,8 @@ function parseGraphFile(path) {
 
 /**
  * @param {string[]} argv
- * @param {{ stdin?: NodeJS.ReadableStream, stdout?: {write: Function}, stderr?: {write: Function}, now?: Date, guard?: Function|null }} [io]
+ * @param {{ stdin?: NodeJS.ReadableStream, stdout?: {write: Function}, stderr?: {write: Function}, now?: Date, guard?: Function|null,
+ *   env?: object, gazetteerLock?: string }} [io]  env and gazetteerLock (a lock file path) are for tests
  * @returns {Promise<number>} the process exit code
  */
 export async function main(argv, io = {}) {
@@ -111,6 +115,7 @@ export async function main(argv, io = {}) {
           'verify-against': { type: 'string' },
           'generated-at': { type: 'string' },
           'max-gzip-bytes': { type: 'string' },
+          gazetteer: { type: 'string' },
           quiet: { type: 'boolean' },
           help: { type: 'boolean', short: 'h' },
         },
@@ -156,7 +161,9 @@ export async function main(argv, io = {}) {
       if (o.snapshot !== undefined) sourceKind = 'snapshot';
     }
     const objects = await collect(source);
-    const { graph, report } = buildFamilyGraph(objects, { generatedAt: o['generated-at'], now, sourceKind });
+    const gazetteerDir = o.gazetteer !== undefined ? resolve(o.gazetteer) : defaultGazetteerDir(io.env ?? process.env);
+    const gazetteer = loadGazetteer(gazetteerDir, io.gazetteerLock ? { lockPath: io.gazetteerLock } : {});
+    const { graph, report } = buildFamilyGraph(objects, { generatedAt: o['generated-at'], now, sourceKind, gazetteer });
     // A shape error wins over this check. An empty input must never replace a good graph.
     if (!objects.some((x) => x._class === 'Person')) throw new GraphError('INPUT_MISSING', 'the input holds no Person objects');
     assertVerified(graph, { now, guard });

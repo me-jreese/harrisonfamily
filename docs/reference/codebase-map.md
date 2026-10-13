@@ -324,6 +324,7 @@ Paths:
 - [`graph/bin/build-graph.mjs`](../../graph/bin/build-graph.mjs): the command line. [`graph/src/cli.mjs`](../../graph/src/cli.mjs) holds the argument handling, the exit codes and `--verify` / `--verify-against`.
 - [`graph/src/source.mjs`](../../graph/src/source.mjs): the record sources: a file of JSON lines, stdin, or `sqlite3 -readonly` on a copy of the Gramps tree.
 - [`graph/src/project.mjs`](../../graph/src/project.mjs): the allowlist projection. [`graph/src/generations.mjs`](../../graph/src/generations.mjs) is the generation index (components, generations, levels). [`graph/src/build.mjs`](../../graph/src/build.mjs) assembles the graph, [`graph/src/verify.mjs`](../../graph/src/verify.mjs) is `verify()`, and [`graph/src/write.mjs`](../../graph/src/write.mjs) is the atomic writer.
+- [`graph/src/geocode.mjs`](../../graph/src/geocode.mjs): offline geocoding of place names. [`graph/src/gazetteer.mjs`](../../graph/src/gazetteer.mjs) reads the pinned GeoNames and Natural Earth cache, and [`graph/bin/fetch-gazetteer.mjs`](../../graph/bin/fetch-gazetteer.mjs), the only network path, fills it and pins [`graph/gazetteer.lock.json`](../../graph/gazetteer.lock.json).
 - [`graph/schema/family-graph.v1.schema.json`](../../graph/schema/family-graph.v1.schema.json): the schema of `person/graph.json`.
 - [`graph/test/`](../../graph/test/): the `node:test` suites and their synthetic fixtures. See [Tests](#tests).
 

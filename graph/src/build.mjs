@@ -6,12 +6,13 @@ import { readFileSync } from 'node:fs';
 import { Warnings, projectRecords } from './project.mjs';
 import { canonicalize } from './canonical.mjs';
 import { GraphError } from './errors.mjs';
+import { geocodePlaces } from './geocode.mjs';
 import { computeGenerations } from './generations.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const BUILDER = `hfy-graph@${pkg.version}`;
 export const SCHEMA_VERSION = 1;
-export const MINOR = 0;
+export const MINOR = 1; // 1: places[].geo may be "naturalearth" (state, province and country centroids)
 export const PROJECTION = 1;
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -47,13 +48,14 @@ function isoSeconds(d) {
 
 /**
  * @param {object[]} objects  _class-tagged Gramps JSON objects (any order)
- * @param {{ generatedAt?: string, now?: Date|number, sourceKind?: string, keepLivingResidence?: boolean }} [opts]
+ * @param {{ generatedAt?: string, now?: Date|number, sourceKind?: string, keepLivingResidence?: boolean, gazetteer?: object|null }} [opts]
+ *   gazetteer: parseGazetteer() output (gazetteer.mjs); null or absent means GAZETTEER_MISSING (Gramps coordinates only)
  */
 export function buildFamilyGraph(objects, opts = {}) {
   const now = resolveNow(opts.now);
   const generatedAt = opts.generatedAt ?? isoSeconds(now);
   const warnings = new Warnings();
-  const { people, unions, places, events } = projectRecords(objects, {
+  const { people, unions, places: projected, events } = projectRecords(objects, {
     maxYear: now.getUTCFullYear(),
     warnings,
     keepLivingResidence: opts.keepLivingResidence === true,
@@ -65,6 +67,9 @@ export function buildFamilyGraph(objects, opts = {}) {
     p.generation = generation.get(p.id);
   }
   for (const id of cycle) warnings.add('GRAPH_CYCLE', id); // local report only (viz.md 5.4)
+  const used = new Set([...events.map((e) => e.place), ...people.flatMap((p) => [p.birthPlace, p.deathPlace])].filter(Boolean));
+  const geo = geocodePlaces(projected, opts.gazetteer ?? null, { warnings, used });
+  const places = geo.places;
 
   const body = {
     people,
@@ -74,7 +79,7 @@ export function buildFamilyGraph(objects, opts = {}) {
     events,
     components,
     generations,
-    attribution: { geonames: false },
+    attribution: { geonames: geo.geonames }, // any GeoNames coordinate needs the credit (GEONAMES_CREDIT)
   };
   // The snapshot id is a digest of the projected content, so it is the same for any input order and
   // never touches the unredacted input.
@@ -95,6 +100,7 @@ export function buildFamilyGraph(objects, opts = {}) {
     },
     ...body,
   };
-  const report = { builder: BUILDER, generatedAt, counts: graph.counts, warnings: warnings.toList() };
+  // geocode: per place, the source, the coordinates, and for a GeoNames match its geonameId, population and runner-up (local only)
+  const report = { builder: BUILDER, generatedAt, counts: graph.counts, warnings: warnings.toList(), geocode: geo.entries };
   return { graph, faceJobs: [], report };
 }

@@ -33,7 +33,8 @@ export function run(args, { input, env = {}, cwd } = {}) {
   const r = spawnSync(process.execPath, [BIN, ...args], {
     input,
     cwd,
-    env: { ...process.env, ...env },
+    // hermetic by default: a developer's own gazetteer cache must not change the build a test expects
+    env: { ...process.env, HFY_GAZETTEER_DIR: join(HERE, 'no-such-gazetteer'), ...env },
     encoding: 'utf8',
   });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
