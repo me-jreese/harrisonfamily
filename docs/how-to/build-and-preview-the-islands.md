@@ -105,11 +105,11 @@ This is the root, address and port that the Playwright config uses. `http-server
 
 Open <http://127.0.0.1:8089/>.
 
-The preview starts from the committed [`11ty/_data/flags.json`](../../11ty/_data/flags.json), which the server answers at `/_data/flags.json`. Read your copy with `cat 11ty/_data/flags.json`. The authV2 flip on 2026-10-12 (HFY-TSK-069) set all six flags to `true` in that file, so with it every island is on without an override. The local server has no `/auth`, `/api` or person data and answers every such request with `404`. The pages and islands treat a `404` from `/auth/session` as an unreachable auth edge, not as a signed-out visitor. With every flag on, you see this:
+The preview starts from the committed [`11ty/_data/flags.json`](../../11ty/_data/flags.json), which the server answers at `/_data/flags.json`. Read your copy with `cat 11ty/_data/flags.json`. The authV2 flip on 2026-10-12 (HFY-TSK-069) set the six flags it had then to `true` in that file, so with it those islands are on without an override. `navMe` (HFY-TSK-091) shipped `false`: preview it with `?hfy_flags=navMe`. The local server has no `/auth`, `/api` or person data and answers every such request with `404`. The pages and islands treat a `404` from `/auth/session` as an unreachable auth edge, not as a signed-out visitor. With every flag on, you see this:
 
 | Page | What you see locally |
 |---|---|
-| Any page except `offline.html`, which never loads `feature-flags.js` | The kit shell, with five lowercase items: home, family, search, posts and me. Under 688 px (for example Chrome DevTools device mode at 375 × 812, the size the specs use) they form a bottom bar. From 688 px they sit in a top bar with the brand and an inline search field. The account control shows a **sign in** link to `/family-login/?next=<path, query and hash>`, because `/auth/session` does not answer. **me** goes to `/me/notifications/` while `notifyV2` is on, and to `/family-login/` otherwise. |
+| Any page except `offline.html`, which never loads `feature-flags.js` | The kit shell, with five lowercase items: home, family, search, posts and me. Under 688 px (for example Chrome DevTools device mode at 375 × 812, the size the specs use) they form a bottom bar. From 688 px they sit in a top bar with the brand and an inline search field. The account control shows a **sign in** link to `/family-login/?next=<path, query and hash>`, because `/auth/session` does not answer. **me** goes to `/me/notifications/` while `notifyV2` is on, and to `/family-login/` otherwise. With `?hfy_flags=navMe` the bar has four items, home, search, posts and me, and **me** goes to `/private/`, because no session names you. |
 | `/` | The hero, then the `timeline` island's "latest from the family" heading with a one-line error (`COPY.failed` in [`posts-ui.jsx`](../../islands/src/lib/posts-ui.jsx)), because `/api/posts` answers `404`. On the deployed site, a signed-out visitor sees no timeline at all. |
 | `/search/` | The `search` island in the page's own `<main>`, with no matches and a one-line error (`SEARCH_COPY.failed` in [`people-corpus.js`](../../islands/src/lib/people-corpus.js)), because `/person/index.json` answers `404`. |
 | `/person/?id=<gramps-id>` | A one-line error (`VOICE.error` in [`person-page.js`](../../11ty/js/person-page.js)) at once. The record never loads, so the `person` and `my-posts` islands never mount. |
@@ -164,7 +164,7 @@ In a second terminal, from the repository root:
    (cd islands && npm run check:islands)
    ```
 
-   Expect the seven island `.js` files, the seven `.css` files, `chunks/` and `notify-sw.js`; then, in `fonts/`, `.woff2` files with a hash in each name and three `LICENSE-*.txt` files; then `<repo>/11ty is up to date (<n> generated files)`.
+   Expect the eight island `.js` files, the eight `.css` files, `chunks/` and `notify-sw.js`; then, in `fonts/`, `.woff2` files with a hash in each name and three `LICENSE-*.txt` files; then `<repo>/11ty is up to date (<n> generated files)`.
 
 2. The build-output tests pass:
 

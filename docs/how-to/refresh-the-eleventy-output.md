@@ -1,6 +1,6 @@
 # How to refresh `11ty/` from the Eleventy source without losing E5 files
 
-Never refresh `11ty/` with a plain `rsync -a --delete` from the source. That command deletes every repo-owned file that the source output lacks, or replaces it with the source's older copy: the 10 E5-only files, the committed island bundles, and the islands build's theme layer, sign-in stylesheet and fonts. It reverts 5 edited scripts. It also strips the family-voice copy and the `?v=` asset versions from every page it overwrites, and the `auth-v2.js` tag too while the source's layout lacks it. Two of the reverted scripts do the most harm:
+Never refresh `11ty/` with a plain `rsync -a --delete` from the source. That command deletes every repo-owned file that the source output lacks, or replaces it with the source's older copy: the 11 E5-only files, the committed island bundles, and the islands build's theme layer, sign-in stylesheet and fonts. It reverts 5 edited scripts. It also strips the family-voice copy and the `?v=` asset versions from every page it overwrites, and the `auth-v2.js` tag too while the source's layout lacks it. Two of the reverted scripts do the most harm:
 
 - `js/person-page.js` loses the `authV2` data path and waits for the legacy `X-HFY-Session` token, which an edge sign-in never mints. That breaks person pages while the [private data gate](cut-over-to-the-private-data-gate.md) is attached, and production attached it on 2026-10-12.
 - `js/auth.js` goes back to opening Google One Tap, whose bottom sheet covers the shell's tab bar on a phone.
@@ -36,7 +36,7 @@ SRC=<eleventy-source>
 
 The build can only reproduce a repository file that exists in the source. Each one is copied into `public/`, which Eleventy passes through to the site root unchanged, and the base layout gets the `auth-v2.js` tag.
 
-The refresh in [step 3](#3-dry-run) excludes all 15 mirrored files, so it keeps the repository's copies even where the source's copies are older. It does not exclude the rendered pages, so the layout edit is required. Without it, the refresh strips the tag from every page it overwrites, and the islands build does not put it back. Mirroring the files as well keeps the two copies in step, and the check below shows when they drift apart.
+The refresh in [step 3](#3-dry-run) excludes all 16 mirrored files, so it keeps the repository's copies even where the source's copies are older. It does not exclude the rendered pages, so the layout edit is required. Without it, the refresh strips the tag from every page it overwrites, and the islands build does not put it back. Mirroring the files as well keeps the two copies in step, and the check below shows when they drift apart.
 
 The rest of what the repository adds to the pages needs no mirroring:
 
@@ -51,14 +51,14 @@ Never mirror `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` or `fonts/`
 for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/search-navbar.js js/search-results.js \
          js/person-page.js js/auth.js sw.js manifest.webmanifest offline.html \
          images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-         posts/index.html me/notifications/index.html; do
+         posts/index.html me/index.html me/notifications/index.html; do
   cmp -s "11ty/$f" "$SRC/public/$f" && echo "mirrored: $f" || echo "missing or different: $f"
 done
 grep -c 'src="/js/auth-v2.js"' "$SRC/src/_includes/layouts/base.njk"
 test ! -e "$SRC/public/js/islands" || echo "remove $SRC/public/js/islands"
 ```
 
-The mirror is done when the loop prints `mirrored` for all 15 files, the `grep` prints `1`, and the last line prints nothing. Otherwise, do only the parts that are missing:
+The mirror is done when the loop prints `mirrored` for all 16 files, the `grep` prints `1`, and the last line prints nothing. Otherwise, do only the parts that are missing:
 
 - A file reported as `missing or different`: mirror steps 1 and 2 below.
 - A `grep` count of `0`: mirror step 3.
@@ -68,7 +68,7 @@ The islands build rewrites six of the mirrored files whenever a file they refere
 
 - `js/feature-flags.js` and `sw.js`, through their `hfy-asset-versions` blocks;
 - `manifest.webmanifest`, through its colours;
-- `offline.html`, `posts/index.html` and `me/notifications/index.html`, through their head blocks and `?v=` versions.
+- `offline.html`, `posts/index.html`, `me/index.html` and `me/notifications/index.html`, through their head blocks and `?v=` versions.
 
 For these, `missing or different` usually means only that a build has changed them since the last copy. Copy them again with mirror steps 1 and 2.
 
@@ -89,6 +89,7 @@ For these, `missing or different` usually means only that a build has changed th
 | `11ty/images/pwa-192.png`, `pwa-512.png`, `pwa-maskable-512.png` | `public/images/`, same names | |
 | `11ty/me/notifications/index.html` | `public/me/notifications/index.html` | A standalone page that does not use the base layout, so it can pass through as a file. |
 | `11ty/posts/index.html` | `public/posts/index.html` | Standalone, like the notifications page. |
+| `11ty/me/index.html` | `public/me/index.html` | The settings hub (`navMe`, HFY-TSK-091). Standalone, like the notifications page. |
 
 These are mirror steps 1 to 4, numbered separately from the refresh's [steps](#steps). Do only those the check pointed you to.
 
@@ -118,7 +119,7 @@ These are mirror steps 1 to 4, numbered separately from the refresh's [steps](#s
    for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/search-navbar.js js/search-results.js \
             js/person-page.js js/auth.js sw.js manifest.webmanifest offline.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/notifications/index.html; do
+            posts/index.html me/index.html me/notifications/index.html; do
      mkdir -p "$SRC/public/$(dirname "$f")"
      cp "11ty/$f" "$SRC/public/$f"
    done
@@ -139,7 +140,7 @@ These are mirror steps 1 to 4, numbered separately from the refresh's [steps](#s
    rm -r "$SRC/public/js/islands"
    ```
 
-Run [the check](#check-whether-the-mirror-is-done) again. It now prints 15 `mirrored` lines, `1`, and nothing else.
+Run [the check](#check-whether-the-mirror-is-done) again. It now prints 16 `mirrored` lines, `1`, and nothing else.
 
 After the mirror, make every hand change to these files in `11ty/` and copy it to the source. The refresh excludes them, so a change made only in the source never reaches `11ty/`. A change made only in `11ty/`, by hand or by an islands build, leaves the source's copy behind, and the check then reports it as `missing or different`.
 
@@ -306,7 +307,7 @@ This prints `11`: the ten rendered pages and `js/auth.js`. A lower count means a
    ```sh
    for f in _data/flags.json js/auth-v2.js sw.js manifest.webmanifest offline.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/notifications/index.html; do
+            posts/index.html me/index.html me/notifications/index.html; do
      test -f "11ty/$f" || echo "missing: $f"
    done
    ```
