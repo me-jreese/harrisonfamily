@@ -464,3 +464,33 @@ test("the shell's button reset never squares an island's pill (notification swit
   });
   expect(sheetClose).toBe("8px");
 });
+
+// ------------------------------------------------------------------------------------------- the ordered bar slots (HFY-TSK-138)
+// .hfy-bar__end is bell, chat, gear, account (lib/bar-slots.js). The bell and chat slots stay empty until their islands fill them; these
+// stub fillers stand in for hfy-inbox-ui and hfy-chat-island, and are registered in the opposite order to prove the shell owns the order.
+const slotOrder = (page) => page.locator("#hfy-shell-root .hfy-bar__end > [data-slot]").evaluateAll((els) => els.map((e) => e.getAttribute("data-slot")));
+const stub = (name) => `(window.__unfill ||= []).push(window.HFYBarSlots.fill(${JSON.stringify(name)}, (host) => { const b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-label", "stub ${name}"); b.style.width = "44px"; b.style.height = "44px"; host.append(b); return () => b.remove(); }));`;
+
+for (const navMe of [true, false]) {
+  test(`375 slots, navMe ${navMe ? "on" : "off"}: empty bell and chat render nothing; stub fillers land in the order bell, chat, gear, account; the bar does not overflow`, async ({ page }) => {
+    await hermetic(page, { signedIn: true });
+    await page.goto(`/about/?hfy_flags=shellV2${navMe ? ",navMe" : ""}`, { waitUntil: "domcontentloaded" });
+    await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+    if (navMe) await expect(gearOf(page)).toBeVisible();
+    const own = navMe ? ["gear", "account"] : ["account"];
+    expect(await slotOrder(page)).toEqual(own); // empty slots: no element at all
+    const emptyW = await page.locator("#hfy-shell-root .hfy-bar__end").evaluate((e) => e.getBoundingClientRect().width);
+    await page.evaluate(stub("chat"));
+    await page.evaluate(stub("bell"));
+    await expect(page.locator('#hfy-shell-root [data-slot="bell"] button')).toBeVisible();
+    expect(await slotOrder(page)).toEqual(["bell", "chat", ...own]);
+    const a = await audit(page);
+    expect(a.small, "targets < 44px").toEqual([]);
+    expect(a.scrollW).toBeLessThanOrEqual(a.innerW);
+    const filledW = await page.locator("#hfy-shell-root .hfy-bar__end").evaluate((e) => e.getBoundingClientRect().width);
+    expect(filledW).toBeGreaterThan(emptyW);
+    // withdrawing the fills restores today's bar: no host element is left behind
+    await page.evaluate(() => { (window.__unfill || []).forEach((f) => f()); });
+    expect(await slotOrder(page)).toEqual(own);
+  });
+}

@@ -3,7 +3,7 @@
 // Columbia top bar with links and an inline search field from 688 px up, no kit rail or sidebar. The theme (fonts, tokens,
 // bridges) is the static /css/hfy-theme.css layer; shell.css only aliases --io-shell-* / --io-* tokens.
 import "../shell.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { defineNavRegistry } from "@io-kit/shell";
 import { KitShell, ScrollTopZone, SearchLauncher, Sheet, useBreakpoint, useShellScroll, usePwaInstall, useDisplayMode, detectPlatform } from "@io-kit/shell/react";
 import { mountAt } from "../lib/mount.jsx";
@@ -11,6 +11,7 @@ import { suggestPeople } from "../lib/people-corpus.js";
 import { navPathname, ownRoute } from "../lib/family-route.js";
 import { SETTINGS_ROUTE, navItems, onSettings } from "../lib/nav.js";
 import { signOut } from "../lib/sign-out.js";
+import { SLOT_ORDER, barSlots } from "../lib/bar-slots.js";
 // The page's edge session (HFYFeatureFlags.edgeSession, one GET /auth/session per page) and the "signed in" rule, shared with the
 // settings hub: undefined while pending, null when authV2 is off or /auth/session is unreachable, else {authenticated, sub, label}.
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
@@ -102,17 +103,17 @@ function Account({ notifyV2, navMe }) {
   const session = useEdgeSession();
   const bp = useBreakpoint();
   const [open, setOpen] = useState(false);
-  if (session === undefined) return <span className="hfy-account__skel" aria-hidden="true" data-hfy-account="loading" />;
+  if (session === undefined) return <span className="hfy-account__skel" aria-hidden="true" data-hfy-account="loading" data-slot="account" />;
   if (!memberSub(session)) {
     // authV2 signed out: the edge sign-in. authV2 off / edge unreachable: the legacy entry, which hands `next` to the edge when authV2 is on.
     const href = session ? `/auth/login?returnTo=${encodeURIComponent(here())}` : `/family-login/?next=${encodeURIComponent(here())}`;
-    return <a className="hfy-signin" href={href} data-hfy-account="signed-out">sign in</a>;
+    return <a className="hfy-signin" href={href} data-hfy-account="signed-out" data-slot="account">sign in</a>;
   }
   const label = String(session.label || session.sub);
   const initial = label.trim().charAt(0).toUpperCase() || "?";
   return (
     <>
-      <button type="button" className="hfy-account__btn" aria-label={`you're signed in as ${label}`} aria-haspopup="dialog" data-hfy-account="signed-in" onClick={() => setOpen(true)}>
+      <button type="button" className="hfy-account__btn" aria-label={`you're signed in as ${label}`} aria-haspopup="dialog" data-hfy-account="signed-in" data-slot="account" onClick={() => setOpen(true)}>
         <span className="hfy-avatar" aria-hidden="true">{initial}</span>
       </button>
       <Sheet open={open} onClose={() => setOpen(false)} side={bp === "compact" ? "bottom" : "right"} title={label} closeLabel="close" className="hfy-account">
@@ -140,9 +141,37 @@ function MagnifierIcon() {
 function Gear() {
   const current = onSettings(window.location.pathname);
   return (
-    <a className="hfy-gear" href={SETTINGS_ROUTE} aria-label="settings" aria-current={current ? "page" : undefined} data-hfy-gear>
+    <a className="hfy-gear" href={SETTINGS_ROUTE} aria-label="settings" aria-current={current ? "page" : undefined} data-hfy-gear data-slot="gear">
       <span className="hfy-gear__icon" aria-hidden="true" />
     </a>
+  );
+}
+
+// A filled bell/chat slot: a display:contents host the filling island mounts into (lib/bar-slots.js); withdrawn, it unmounts.
+function SlotHost({ name, entry }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cleanup = entry.mount(ref.current);
+    return () => { if (typeof cleanup === "function") cleanup(); };
+  }, [entry]);
+  return <span ref={ref} className="hfy-bar__slot" data-slot={name} />;
+}
+
+// .hfy-bar__end: the four ordered slots (HFY-TSK-138, review DL-13): bell, chat, gear, account. The gear (navMe, signed in) and the
+// account control are the shell's own; the bell and the chat entry render only once their island has filled them, and render nothing
+// (no element, no space) before.
+function BarEnd({ navMe, notifyV2, sub }) {
+  const reg = barSlots();
+  useSyncExternalStore(reg.subscribe, reg.snapshot, reg.snapshot);
+  return (
+    <div className="hfy-bar__end">
+      {SLOT_ORDER.map((name) => {
+        if (name === "gear") return navMe && sub ? <Gear key={name} /> : null;
+        if (name === "account") return <Account key={name} notifyV2={notifyV2} navMe={navMe} />;
+        const entry = reg.get(name);
+        return entry ? <SlotHost key={name} name={name} entry={entry} /> : null;
+      })}
+    </div>
   );
 }
 
@@ -179,7 +208,7 @@ function Shell({ flags }) {
             suggest={searchV2 ? suggestPeople : undefined}
             icon={<><MagnifierIcon /><span className="hfy-bar__search-hint" aria-hidden="true">search the family</span></>}
           />
-          <div className="hfy-bar__end">{navMe && sub && <Gear />}<Account notifyV2={notifyV2} navMe={navMe} /></div>
+          <BarEnd navMe={navMe} notifyV2={notifyV2} sub={sub} />
         </ScrollTopZone>
         <Offline />
         <Content />
@@ -189,6 +218,8 @@ function Shell({ flags }) {
 }
 
 document.documentElement.classList.add("io-no-focus-zoom");
+// The slot registry exists from the first script tick, so an island that loads before the shell can already fill its slot.
+barSlots();
 // The loader injects this island only after resolveFlags() settled, so this awaits an already settled promise, not a fetch: the shell
 // mounts with the flags that decide the bar's shape (navMe, familyViz) already known.
 Promise.resolve(window.HFYFeatureFlags?.resolveFlags?.())
