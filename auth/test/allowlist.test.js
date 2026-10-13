@@ -53,6 +53,10 @@ describe("composite resolver precedence", () => {
     const r = resolverFor(fakeDoc([allow("ana@example.com", "I0999")]));
     expect((await r("ana@example.com")).sub).toBe("I0999");
   });
+  it("pinned: an active item replaces the whole S3 entry, so the file's extra roles and label are not merged in", async () => {
+    const r = resolverFor(fakeDoc([allow("bo@example.com", "I0222")]));
+    expect(await r("bo@example.com")).toEqual({ sub: "I0222", label: "bo@example.com", roles: ["member"], claims: {} });
+  });
   it("DDB revoked gives null even when the email is in the S3 file", async () => {
     const r = resolverFor(fakeDoc([allow("ana@example.com", "I0111", "revoked")]));
     expect(await r("ana@example.com")).toBeNull();
@@ -162,6 +166,14 @@ describe("membership (MCP groups) over the composite allowlist", () => {
   it("a revoked item beside an active one for the same sub keeps the sub a member", async () => {
     const g = mk(fakeDoc([allow("ana@example.com", "I0111", "revoked"), allow("ana-new@example.com", "I0111")]));
     expect(await g("I0111")).toEqual(["members"]);
+  });
+  it("pinned: an active item for an S3 email overrides that entry, so the file's extra roles do not reach the groups", async () => {
+    expect(await mk(fakeDoc([allow("bo@example.com", "I0222")]))("I0222")).toEqual(["members", "admins"]);
+  });
+  it("pinned gap: a revoked item whose sub differs from the file's does not remove the file's sub from the groups (same-sub assumption)", async () => {
+    const doc = fakeDoc([allow("ana@example.com", "I0999", "revoked")]);
+    expect(await resolverFor(doc)("ana@example.com")).toBeNull(); // sign-in is denied
+    expect(await mk(doc)("I0111")).toEqual(["members"]); // the groups look items up by the caller's sub and never see this one
   });
   it("a DDB error falls back to the file: a hit stays a member, a miss is null", async () => {
     const g = mk(fakeDoc([], { fail: "InternalServerError" }));

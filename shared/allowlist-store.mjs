@@ -63,6 +63,16 @@ export async function listAllowBySub(ddb, cmds, table, sub) {
  * for `ttlMs`; if a refresh fails the last good copy is served and retried in 5 s, and with no copy at all the call rejects (fail closed)
  * unless an active ALLOW# item already decides it. Each sub's items are cached for `ttlMs` too. A DynamoDB failure falls back to the S3
  * file alone (a hit stays a member, a miss is null) and is not cached. Omit `ddb` for an S3-only reader.
+ *
+ * Known limits, kept on purpose (docs/how-to/manage-family-access.md, "Allowlist grants in DynamoDB"):
+ *   - Same-sub assumption. Items are found by the caller's sub through GSI1, so a revoked item whose sub differs from the sub the file lists
+ *     for that email is invisible here: sign-in for the email is denied, but the file's sub keeps its groups. Grants and revokes
+ *     are written with the member's own Gramps ID, so the subs match in practice.
+ *   - An active item replaces the file's entry for its email outright: the file's extra roles (and label) are not merged, here or in the
+ *     sign-in resolver, which builds the principal with the member role only.
+ *   - GSI1 reads are eventually consistent and cached for `ttlMs`, so a grant or revoke reaches the groups after up to ~60 s plus index lag.
+ *     Sign-in uses a strongly consistent GetItem and sees it at once.
+ *   - On a DynamoDB failure the file alone decides, so a revoked email still listed in the file is a member again until the table recovers.
  */
 export function createCompositeMemberReader({ readEntries, ddb, cmds, table, ttlMs = 60_000, now = () => Date.now(), log = console, maxSubs = 2000 }) {
   let file = { at: -Infinity, bySub: new Map() };

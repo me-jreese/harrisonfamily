@@ -253,8 +253,10 @@ What follows from it:
 - **A revoked item outlives the file.** Adding the email back to the file does not restore access while a `revoked` item exists. Grant the email again through the API (a grant over a revoked item is allowed), or have io delete the revoked item.
 - **Revocation by DynamoDB works on an email that is still in the file.** That is how an approved request is withdrawn without touching io's files.
 - **The legacy path ignores grants.** `hfy-check-allowed` reads only the digest list and the mapping, so a DynamoDB grant never admits a legacy sign-in, and a revoke never denies one. The legacy path is retired after the authV2 release (HFY-R4).
-- **Timing.** The edge reads the item on every lookup with a strongly consistent `GetItem` and does not cache it, so the next sign-in, passkey sign-in, password set or refresh sees a grant or a revoke at once. The S3 file keeps its 300 s cache. The MCP groups cache each Gramps ID's items for 60 s. A session already issued keeps working until its `io_id` expires, up to 1 h, and its next refresh is refused.
-- **A DynamoDB outage does not lock members out, and does not honor a revoke.** While the table cannot be read, the file decides, so an email that is revoked in DynamoDB and still listed in the file signs in until the table is readable again.
+- **Timing.** The edge reads the item on every lookup with a strongly consistent `GetItem` and does not cache it, so the next sign-in, passkey sign-in, password set or refresh sees a grant or a revoke at once. The S3 file keeps its 300 s cache. The MCP groups find items through the `GSI1` index, which cannot be read consistently, and cache each Gramps ID's items for 60 s. A grant or revoke therefore reaches the groups up to about a minute (plus index lag) after it reaches sign-in. That gap is accepted. A session already issued keeps working until its `io_id` expires, up to 1 h, and its next refresh is refused.
+- **A DynamoDB outage does not lock members out, and does not honor a revoke.** While the table cannot be read, the file decides, so an email that is revoked in DynamoDB and still listed in the file signs in, and joins its MCP groups, until the table is readable again. To close the gap for a revoked member, also remove their email from the file ([Remove a member](#remove-a-member)). The edge logs `allowlist table unavailable (the S3 file decides)` for each fallback, with the error name and no address, so an outage is visible in the logs.
+- **An active item replaces the file's entry for its email.** The principal is built from the item alone: the member role, no extra roles and no label from the file. If the file lists the same email with another Gramps ID or extra roles (`editors`, for example), they are not merged, and the item's Gramps ID is the one used for sign-in and for the MCP groups. Before you grant an email that the file already lists, check that the Gramps IDs match and that no extra role is needed. The roles the groups take from the file are lost for that email.
+- **Assumption: an item carries the same Gramps ID as the file.** The MCP groups look items up by the caller's Gramps ID, so a `revoked` item whose Gramps ID differs from the one the file lists for that email denies sign-in for the email but does not remove the file's Gramps ID from the MCP groups. The grant and revoke transactions write the member's own Gramps ID, so the two agree unless someone edits the file's mapping afterwards. If you change the mapping for an email that has an item, revoke and grant the email again, so that item and file agree.
 
 **Check one email.** This reads the item and prints nothing when there is none. It needs `dynamodb:GetItem` on the table and `cloudformation:DescribeStacks` on `<app-stack>`, and it changes nothing:
 
@@ -267,6 +269,12 @@ aws dynamodb get-item --table-name "$TABLE" --region us-west-2 --consistent-read
 ```
 
 `state` is `active` or `revoked`, `source` is `access-request`, `admin` or `import`. Do not write or delete an `ALLOW#` item by hand without io's go-ahead: a hand write skips the condition and the audit item that the API's transaction adds (`AUDIT#allow:<hash>`, which holds the Gramps ID and a hash of the address, never the address).
+
+**Check the first deploy against the real table.** The unit tests run against a fake table, which does not model the real `GSI1` key schema or the grant condition `attribute_not_exists(PK) OR #state = :revoked`. When the release that carries the allowlist (RG-3) executes, io checks both on the deployed table and records the result in the task's worklog:
+
+1. An existing member still signs in with no `ALLOW#` item in the table (the zero-item case above).
+2. Querying `GSI1` with `GSI1PK = ALLOWSUB#<id>` returns an item written through the grant transaction. This needs a test grant, which only io writes, and is removed afterwards with a revoke.
+3. A second grant of an active email is refused, and a grant over a revoked one is accepted.
 
 ## Remove a member
 
