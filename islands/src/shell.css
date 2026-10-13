@@ -142,6 +142,8 @@ html.hfy-shell-v2 .io-shell:not([data-bp="compact"]) .hfy-bar__search-hint {
 
 /* Account slot: pill skeleton while /auth/session is pending, then the avatar (signed in) or "sign in" (signed out). */
 html.hfy-shell-v2 .hfy-bar__end { flex: none; display: flex; align-items: center; gap: var(--io-shell-space-2); }
+/* A filled bell/chat slot (lib/bar-slots.js) is a transparent host: the filling island sizes its own control. Empty slots are not rendered. */
+html.hfy-shell-v2 .hfy-bar__slot { display: contents; }
 html.hfy-shell-v2 .hfy-account__skel {
   display: block;
   width: calc(2 * var(--io-shell-control-h-sm));

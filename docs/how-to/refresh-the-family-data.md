@@ -104,7 +104,7 @@ python3 scripts/etl/build_family_tree_media.py \
   --attach
 ```
 
-Always pass both directories. Their defaults point at `<project>/workspace/harrisonfamily-frontend`, the sanitized samples. With the defaults, the script reads relationships from the real database and writes the diagrams into the sanitized workspace, which `export_workspace_samples.sh` copies into the repository.
+Always pass both directories. Their defaults point at `<project>/workspace/harrisonfamily-frontend`, the sanitized samples. With the defaults, the script reads relationships from the real database and writes diagrams drawn from real family data into the sanitized workspace.
 
 - The script reads the same database as step 1. Pass the same `--db`, or rely on `HFY_GRAMPS_DB`.
 - `--attach` adds `familyTreeMedia` to each person file. The person page shows a tree only when that field is present ([`11ty/js/person-page.js`](../../11ty/js/person-page.js)).

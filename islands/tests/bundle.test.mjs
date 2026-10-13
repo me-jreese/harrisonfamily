@@ -37,3 +37,11 @@ test("committed outputs match a fresh build of islands/ (node build.mjs --check)
   const r = spawnSync(process.execPath, args, { cwd: islandsDir, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
+
+test("an island imports repo-root shared/ and the build bundles it (shared/validate.mjs -> js/islands)", () => {
+  assert.match(readFileSync(join(islandsDir, "src", "lib", "people-corpus.js"), "utf8"), /from "\.\.\/\.\.\/\.\.\/shared\/validate\.mjs"/);
+  // cleanText is inlined or chunked into the output of the island that loads people-corpus.js (search); its body is a stable marker.
+  const bundles = readdirSync(out, { recursive: true }).filter((f) => String(f).endsWith(".js"));
+  const hit = bundles.some((f) => /typeof \w+ ?== ?"string" ?\? ?\w+\.trim\(\) ?: ?""/.test(readFileSync(join(out, String(f)), "utf8")));
+  assert.ok(hit, "no bundle carries shared/validate.mjs cleanText");
+});

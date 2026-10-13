@@ -15,7 +15,7 @@ const photo = (name) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="gray"/></svg>`;
 };
 
-async function stub(page, { shell = true, personV2 = false, hold = null, status = 200 } = {}) {
+async function stub(page, { shell = true, personV2 = false, hold = null, status = 200, body = PERSON } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9002", grampsId: "I9002", label: "Sam Example" } }));
@@ -25,8 +25,9 @@ async function stub(page, { shell = true, personV2 = false, hold = null, status 
   await page.route("**/person/search-index.json", (r) => r.fulfill({ json: { documents: [] } }));
   await page.route("**/person/I9001.json", async (r) => {
     if (hold) await hold;
-    return status === 200 ? r.fulfill({ json: PERSON }) : r.fulfill({ status, json: { error: "x" } });
+    return status === 200 ? r.fulfill({ json: body }) : r.fulfill({ status, json: { error: "x" } });
   });
+  await page.route("**/person/I9003.json", (r) => r.fulfill({ json: { ...PERSON, displayName: "Merged Target (synthetic)" } }));
   await page.route("**/media/tree_I9001.svg", (r) => r.fulfill({ contentType: "image/svg+xml", body: TREE }));
   await page.route(/\/media\/MPHOTO\d\.jpg/, (r) => r.fulfill({ contentType: "image/svg+xml", body: photo(r.request().url().match(/MPHOTO\d/)[0]) }));
 }
@@ -83,12 +84,98 @@ test("hero, section order, voice: lifespan line, lowercase headings, no IDs and 
   for (const link of await page.locator("#person-family-data a").all()) expect((await link.boundingBox()).height).toBeGreaterThanOrEqual(44);
 });
 
-test("personV2: the comments host is the last child of #person-content, after the four sections", async ({ page }) => {
+test("personV2: the comments host follows the four sections, and #hfy-person-social stays the last child", async ({ page }) => {
   await openPerson(page, { personV2: true });
   await expect(page.locator("#hfy-person-comments")).toBeAttached();
-  const last = await page.evaluate(() => document.getElementById("person-content").lastElementChild.id);
-  expect(last).toBe("hfy-person-comments");
+  const ids = await page.evaluate(() => [...document.getElementById("person-content").children].map((el) => el.id));
+  expect(ids.slice(-2)).toEqual(["hfy-person-comments", "hfy-person-social"]);
   await expect(page.locator("#person-stories-section .notes-panel h2")).toHaveText("stories");
+});
+
+// Mount points (HFY-TSK-137): the only person-page extension surface. With no island loaded the page is as before.
+test("mount points: hero and heading slots in order, tree-link after the tree, social last and hidden; all empty and invisible", async ({ page }) => {
+  await openPerson(page);
+  const slots = (sel) => page.locator(sel).evaluate((el) => [...el.children].map((c) => c.getAttribute("data-slot")));
+  expect(await slots('[data-slot="hero-actions"]')).toEqual(["edit", "follow", "presence"]);
+  expect(await slots('[data-slot="heading-chips"]')).toEqual(["contributions", "links"]);
+  expect((await page.locator("#person-hero .person-heading > *").evaluateAll((els) => els.map((e) => e.getAttribute("data-slot") || e.tagName))).slice(-2)).toEqual(["heading-chips", "hero-actions"]);
+  // tree-link: one host, directly after the tree container, inside the family section
+  expect(await page.locator('[data-slot="tree-link"]').count()).toBe(1);
+  expect(await page.locator('[data-slot="tree-link"]').evaluate((el) => el.previousElementSibling.id + "|" + el.closest("section").id)).toBe("person-family-visualization|person-family-section");
+  // social: last child of #person-content, hidden until filled
+  const social = page.locator("#hfy-person-social");
+  expect(await page.evaluate(() => document.getElementById("person-content").lastElementChild.id)).toBe("hfy-person-social");
+  await expect(social).toBeHidden();
+  expect(await social.evaluate((el) => el.hidden && el.childElementCount === 0)).toBe(true);
+  // every host is empty and takes no space (the default page is unchanged)
+  const boxes = await page.evaluate(() => [...document.querySelectorAll('[data-slot], .person-chips, .person-actions')].filter((el) => !el.closest(".hfy-bar")).map((el) => el.getBoundingClientRect().height + "|" + el.textContent + "|" + getComputedStyle(el).display));
+  for (const b of boxes) expect(b.startsWith("0||")).toBe(true);
+  // an island that fills a slot makes it visible; the next render rebuilds the hero slots and the event lets it refill
+  await page.evaluate(() => { document.querySelector('[data-slot="follow"]').textContent = "x"; });
+  await expect(page.locator('[data-slot="hero-actions"]')).toBeVisible();
+  // the social host survives and stays last when filled
+  await page.evaluate(() => { const s = document.getElementById("hfy-person-social"); s.textContent = "y"; s.hidden = false; });
+  await expect(social).toBeVisible();
+});
+
+test("events: hfy:person-rendered carries the person id and sections; hfy:lightbox-media the media and image box", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__ev = [];
+    document.addEventListener("hfy:person-rendered", (e) => window.__ev.push({ t: "r", id: e.detail.personId, name: e.detail.person.displayName, sections: e.detail.sections, hosts: !!document.querySelector('[data-slot="follow"]') && !!document.getElementById("hfy-person-social") }));
+    document.addEventListener("hfy:lightbox-media", (e) => window.__ev.push({ t: "l", index: e.detail.index, title: e.detail.media.title, same: e.detail.img === document.getElementById("mediaLightboxImage"), box: e.detail.box === e.detail.img.parentElement }));
+  });
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await openPerson(page);
+  const rendered = await page.evaluate(() => window.__ev.filter((e) => e.t === "r"));
+  expect(rendered).toHaveLength(1);
+  expect(rendered[0]).toMatchObject({ id: "I9001", name: "Test Person (synthetic)", hosts: true });
+  expect(rendered[0].sections).toEqual(["person-hero-section", "person-events-section", "person-family-section", "person-media-section", "person-stories-section"]);
+  await page.locator(".media-lightbox-trigger").first().click();
+  await expect(page.locator("#mediaLightboxImage")).toBeVisible();
+  await page.locator("#mediaLightbox .lightbox-next").click();
+  await expect(page.locator("#mediaLightboxCounter")).toHaveText("2 of 4");
+  await expect.poll(() => page.evaluate(() => window.__ev.filter((e) => e.t === "l").length)).toBe(2);
+  const lb = await page.evaluate(() => window.__ev.filter((e) => e.t === "l"));
+  expect(lb.map((e) => e.index)).toEqual([0, 1]);
+  expect(lb.every((e) => e.same && e.box)).toBe(true);
+  expect(lb[1].title).toBe("Family, 1901");
+});
+
+test("mergedInto: a stub person JSON redirects to the new id and renders nothing", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "I9003" } });
+  await page.goto(URL_PATH, { waitUntil: "domcontentloaded" });
+  await page.waitForURL(/id=I9003/);
+  await expect(page.locator("#person-hero h1")).toHaveText("Merged Target (synthetic)");
+  expect(page.url()).not.toContain("I9001");
+});
+
+test("mergedInto: a self-pointing stub is not followed (no redirect loop)", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "I9001" } });
+  await page.goto(URL_PATH, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#person-hero h1")).toHaveText("name unknown");
+  expect(page.url()).toContain("id=I9001");
+});
+
+test("mergedInto: other query parameters and the hash survive the redirect", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "I9003" } });
+  await page.goto("/person/?id=I9001&x=1#h", { waitUntil: "domcontentloaded" });
+  await page.waitForURL(/id=I9003/);
+  expect(page.url()).toContain("x=1");
+  expect(page.url()).toContain("#h");
+});
+
+test("mergedInto: a malformed id is not followed", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "../x" } });
+  await page.goto(URL_PATH, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#person-hero h1")).toHaveText("name unknown");
+  expect(page.url()).toContain("id=I9001");
+});
+
+test("mergedInto: the hop limit stops a redirect cycle and shows the error line", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "I9003" } });
+  await page.goto("/person/?id=I9001&merged=2", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#person-error")).toBeVisible();
+  expect(page.url()).toContain("id=I9001");
 });
 
 test("timeline: rows at least 56px, date in the mono face, text.dim", async ({ page }) => {

@@ -1,5 +1,6 @@
 // Notification registry (four HFY types, level 0 by default) and best-effort fan-out.
 import { buildDeclarativePush, sendToPrincipal } from "@io-kit/notify/server";
+import { logSafeError } from "./http.js";
 
 /** Level 0 is content-free; level 1 may name the actor. Recipients opt in to level 1 per type. */
 export const TEMPLATE_REGISTRY = {
@@ -30,7 +31,7 @@ export function createNotifier(deps) {
     try {
       await fn(...args);
     } catch (e) {
-      log.error?.(`${label} failed`, e instanceof Error ? e.message : String(e));
+      log.error?.(`${label} failed`, logSafeError(e));
     }
   };
   async function notify(feature, recipients, { navigate, actorLabel, exclude = [] }) {
@@ -48,7 +49,7 @@ export function createNotifier(deps) {
             const r = await sendToPrincipal({ store: deps.subscriptions, webpush: deps.webpush, vapid: deps.vapid, principal, payload });
             sent += r.sent;
           } catch (e) {
-            log.error?.("notify failed", feature, e instanceof Error ? e.message : String(e));
+            log.error?.("notify failed", feature, logSafeError(e));
           }
         }),
     );

@@ -1,7 +1,7 @@
 // Principal from the auth-edge session cookie (@io-kit/auth/server) + S3-driven admin list (Q-4).
 import { createRemoteJWKSet } from "jose";
 import { resolveAuth } from "@io-kit/auth/server";
-import { parseCookies } from "./http.js";
+import { logSafeError, parseCookies } from "./http.js";
 import { fallbackLabel, ownLabelOnly } from "./labels.js";
 
 /** Remote JWKS published by the auth edge (HFY-R38). The edge alone holds the signing key; the API only ever sees public keys. */
@@ -18,7 +18,7 @@ export function createAdminList({ load, ttlMs = 60_000, now = () => Date.now(), 
       const list = Array.isArray(raw) ? raw : Array.isArray(raw?.admins) ? raw.admins : [];
       cache = { at: now(), ids: new Set(list.filter((x) => typeof x === "string")) };
     } catch (e) {
-      log.error?.("admin list unavailable (failing closed)", e instanceof Error ? e.message : String(e));
+      log.error?.("admin list unavailable (failing closed)", logSafeError(e));
       cache = { at: now() - ttlMs + 5_000, ids: new Set() }; // retry in 5s, nobody is admin meanwhile
     }
     return cache.ids;
@@ -47,7 +47,7 @@ export function createAuthenticator({ issuer, audience, cookieName = "io_id", ge
       const label = await Promise.resolve(resolveLabel({ sub: principal.sub, name: principal.displayName })).catch(() => fallbackLabel(principal.sub));
       return { id: principal.sub, label, admin: admins.has(principal.sub) };
     } catch (e) {
-      log.warn?.("session rejected", e?.code ?? (e instanceof Error ? e.message : String(e)));
+      log.warn?.("session rejected", logSafeError(e));
       return null;
     }
   };

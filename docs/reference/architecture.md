@@ -276,9 +276,11 @@ A private S3 bucket in `us-east-1` that holds the gate's code. `<code-bucket>` c
 | Role | Statement | Actions | Resource |
 | --- | --- | --- | --- |
 | `hfy-api-role` | `Logs` | `logs:CreateLogStream`, `logs:PutLogEvents` | Its own log group |
-| | `Table` | `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem` | `hfy-app` and `hfy-app/index/*` |
+| | `Table` | `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem`, `ConditionCheckItem` | `hfy-app` and `hfy-app/index/*` |
 | | `AdminList` | `s3:GetObject` | `<config-bucket>/config/*`, which covers `admins.json` and `groups.json` |
 | | `PostPhotoUploads` | `s3:PutObject` | `<site-bucket>/uploads/posts/*` only |
+| | `CommentPhotoUploads` | `s3:PutObject` | `<site-bucket>/uploads/comments/*` only (HFY-TSK-236) |
+| | `UploadReads` | `s3:GetObject` | `<site-bucket>/uploads/comments/*` and `<site-bucket>/uploads/posts/*`, for HEAD and copy-source reads (HFY-TSK-236). No grant on `media/*` or `config/*` is added. |
 | | `PersonRecords` | `s3:GetObject` | `<site-bucket>/person/*`, for author labels (HFY-R68) |
 | | `Secrets` (only when `HasVapid`) | `secretsmanager:GetSecretValue` | The VAPID secret |
 | `hfy-auth-edge-role` | `Logs` | `logs:CreateLogStream`, `logs:PutLogEvents` | Its own log group |
@@ -404,7 +406,7 @@ Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/
 | `CodeBucket` | None (required) | `<code-bucket>` |
 | `CodeKey` | `lambda/hfy-api.zip` | API package key. Deploys pass `lambda/hfy-api-<sha>.zip` ([`<code-bucket>`](#code-bucket)) |
 | `ConfigBucket` | `<config-bucket>` | `ADMIN_LIST_BUCKET`; S3 grants for both roles. Not `GROUPS_BUCKET` ([Discrepancies](#discrepancies-in-the-code)) |
-| `MediaBucket` | `<site-bucket>` | `MEDIA_BUCKET`; the API's `PostPhotoUploads` grant on `uploads/posts/*` and `PersonRecords` grant on `person/*` |
+| `MediaBucket` | `<site-bucket>` | `MEDIA_BUCKET`; the API's `PostPhotoUploads` grant on `uploads/posts/*`, `CommentPhotoUploads` on `uploads/comments/*`, `UploadReads` on both upload prefixes, and `PersonRecords` grant on `person/*` |
 | `MediaPublicBase` | `https://<site>` | `MEDIA_PUBLIC_BASE`, the origin that serves `uploads/` |
 | `AdminListKey` | `config/admins.json` | `ADMIN_LIST_KEY` for both functions; edge S3 grant |
 | `VapidSecretName` | Empty | `VAPID_SECRET`; drives `HasVapid` |

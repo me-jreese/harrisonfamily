@@ -35,7 +35,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json`, whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
-| [`txn.js`](../../api/src/txn.js) | Audit item builder, `TransactWriteItems` helper, `GSI1` paging. |
+| [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out. |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation and the object key. |
@@ -104,7 +104,7 @@ A `204` response has an empty body.
 { "error": "<code>", "message": "<text>", "details": { } }
 ```
 
-`details` appears only on kit errors that carry it. Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the stack is logged. The origin-check `403` and the notification routes use shorter bodies, described in their sections.
+`details` appears only on kit errors that carry it. Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
 
 Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input) return `400 validation`. Checks on post and comment content return `422 validation`.
 
@@ -117,12 +117,13 @@ Two statuses exist for validation. Checks on the request itself (body parsing, a
 | 403 | `self_react` | Reacting to your own comment |
 | 404 | `not_found` | Unknown route; post missing or not visible to the caller; comment missing; malformed subject or comment id |
 | 405 | `method_not_allowed` | Known path, other method |
-| 409 | `conflict` | A post or comment write's transaction was cancelled, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)) |
+| 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)) |
 | 415 | `unsupported_media_type` | A write without a JSON content type |
 | 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji |
 | 500 | `server` | A comment create, edit or delete failed for a reason other than a cancelled transaction |
 | 500 | `internal` | Anything else |
-| 503 | `unavailable` | A post write failed for a reason other than cancellation; uploads with no presigner |
+| 503 | `busy` | A post or comment write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
+| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; uploads with no presigner |
 
 ## Routes
 
@@ -223,7 +224,7 @@ On create, a `title` or `subject` of `null` means "not set". On `PATCH`, `null` 
 
 - Every single-post read and write first loads the post and checks that the caller may see it. A post the caller may not see is `404 not_found`, for writes too.
 - `PATCH` replaces `body` and `attachments` when given, sets `title` and `subject` when given, and removes them when they are `null`. It always refreshes `updated_at` and writes an audit item, even when nothing else changed. Removing `subject` also deletes the post's `IDX#SUBJECT` item.
-- A cancelled transaction is `409 conflict` ("record changed concurrently"). See [Concurrent writes](#concurrent-writes). Any other store failure is `503 unavailable`.
+- A transaction cancelled by a failed condition is `409 conflict` ("record changed concurrently"); one that stays cancelled by `TransactionConflict` after its retries is `503 busy`. See [Concurrent writes](#concurrent-writes). Any other store failure is `503 unavailable`.
 - **Delete takes the thread with it.** After the post's items and audit item are committed, the handler removes the `post:<ulid>` thread: every comment and reaction in it, with one `delete` audit item per comment (`reason` `post deleted`, `principal` the member who deleted the post), at most 100 items per transaction. This runs after the response's write has committed and never fails the request. A failure is logged as `post thread purge failed (write already committed)` and leaves the remaining thread items in place.
 
 ### Concurrent writes
@@ -238,6 +239,16 @@ Every write that changes an existing record is conditioned on the version that w
 | Comment edit, delete | The item exists and its stored `comment.edited_at` equals the value read, or is still absent for a never-edited comment |
 
 A failed condition cancels the whole transaction, audit item included, and the API returns `409 conflict`. A client recovers by reading the record again before it retries.
+
+#### `transact()` v2
+
+`transact(ddb, cmds, table, spec, opts)` in [`txn.js`](../../api/src/txn.js) is the one writer every later feature builds on (HFY-TSK-235). `spec` holds `puts`, `deletes`, `updates` (`{key, update, condition?, names?, values?}`), `checks` (`{key, condition, ...}`, a `ConditionCheck` on an item the call does not write) and `clientRequestToken`. They go out as one `TransactWriteItems` call in that order, at most 100 items (`assertTxnSize`), and each item may carry a `tag` that comes back in a failure. The Lambda's command bag includes `UpdateCommand`.
+
+- **Token.** `clientRequestToken` is 1 to 36 characters, or a fresh UUID. It is set once and reused on every retry, so a retry after a lost response is applied once.
+- **Conflict retry.** A cancellation whose reasons are only `TransactionConflict` is retried up to 3 times (waits of about 20, 60 and 150 ms, each jittered) with the same token. `ConditionalCheckFailed` is never retried, nor is a mix of the two.
+- **Failure.** A cancellation that ends the call throws `TxnCancelled`, whose `reasons` are DynamoDB codes by item index, `failures` are `{index, code, tag?}`, and `kind` is `condition` (409), `conflict` (retries exhausted, `busy`, 503) or `other` (throttling and the like, and a cancellation that carries no reasons list at all: 503 `unavailable`, never 409). `mapCancellationReasons` copies codes only: a reason's `Message` and `Item` never leave the DynamoDB error. A `TransactionInProgressException` (another request holds the same token) is retried like a conflict and ends as `busy`; an `IdempotentParameterMismatchException` (a token reused for a different payload) throws `TxnTokenMismatch`, a caller bug with fixed text.
+- **Hooks.** `opts.onRetry({attempt, delayMs, codes})` and `opts.onBusy({attempts, codes})` are the places to emit the `txn_conflict_retry` and `txn_busy` telemetry events. They carry counts and DynamoDB codes only, and a throwing hook never fails the write. Nothing is wired to them yet; a later observability task owns that.
+- **Counters.** `counterUpdate(key, {n: 1, unread: -1}, {ttl, ifNotExists, condition})` builds `ADD` deltas plus `SET ttl = if_not_exists(...)`. One transaction may not touch an item twice, so `mergeUpdates` folds counter updates on the same key into one and sums their deltas. The placeholders `#cnt*`, `#cs*` and `#ttl` belong to `counterUpdate`. An attribute named by more than one of the deltas, `ifNotExists` and `ttl` throws (DynamoDB rejects two actions on one path). `mergeUpdates` compares conditions, names, values and tags regardless of key order, and refuses updates that differ.
 
 ## Comments and reactions
 
@@ -268,7 +279,7 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - **Create.** A `parentId`, if given, must name a comment in the same thread, otherwise `404`. Any comment can be a parent, so replies can nest. Returns `201`.
 - **Edit.** Author only. If the trimmed text equals the stored body, the comment is returned unchanged with no write. Otherwise the body is replaced and `edited_at` is set.
 - **Delete.** Author or admin. Returns `204`. The comment and every reaction on it are deleted in one transaction with the audit item. Replies are not deleted and keep their `parentId`. A DynamoDB transaction holds at most 100 actions, so a comment with more than 98 reactions cannot be deleted. See [Permissions](#permissions) for `reason`.
-- A cancelled create, edit or delete transaction, such as an edit that races another edit or a delete, is `409 conflict` ("comment changed concurrently"). Any other store failure is `500 server`.
+- A create, edit or delete transaction cancelled by a failed condition, such as an edit that races another edit or a delete, is `409 conflict` ("comment changed concurrently"). One that stays cancelled by `TransactionConflict` after its retries is `503 busy`. Any other store failure is `500 server`.
 - On a `post:<ulid>` thread, list, create, edit and react first check that the caller can see the post ([Subjects](#subjects)).
 
 ### Reactions
@@ -551,7 +562,7 @@ The stack does not set these. Their defaults in code apply on the deployed funct
 What each MCP variable does is in [MCP server: Configuration](mcp-server.md#configuration).
 
 - The role may read only `config/*` in the stack's `ConfigBucket` (the `AdminList` statement), so `ADMIN_LIST_KEY` and `GROUPS_KEY` must stay under `config/`. Because the stack does not set `GROUPS_BUCKET`, the groups config is always read from the default bucket. With any other `ConfigBucket`, the role grants no read on that default bucket, so the groups read fails closed and no MCP caller gets a group.
-- The role may read only `person/*` in `MediaBucket` (the `PersonRecords` statement) and may put objects only under `uploads/posts/*` (`PostPhotoUploads`).
+- The role may read only `person/*` in `MediaBucket` (the `PersonRecords` statement) and may put objects only under `uploads/posts/*` (`PostPhotoUploads`) and `uploads/comments/*` (`CommentPhotoUploads`), and may read objects only under those two prefixes (`UploadReads`). The `Table` statement includes `dynamodb:ConditionCheckItem` for `transact()` condition checks.
 
 The stack sets `ORIGIN_VERIFY` with a Secrets Manager dynamic reference to the secret named by `OriginVerifySecretName` (default `harrisonfamily/cloudfront/origin-verify`). CloudFormation resolves it when the stack is created or updated, so a new secret value reaches the function only after a stack update. See [How to rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md).
 

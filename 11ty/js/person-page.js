@@ -3,6 +3,18 @@
   // Hero (portrait, display-serif name, one lifespan line), then the sections in the order life, family, photos, stories;
   // the personV2 island appends its comments as the last child of #person-content. Copy follows the DS voice: lowercase,
   // no IDs, never the word "record"; errors are one banner line. The auth and data paths below are unchanged.
+  //
+  // MOUNT POINTS (HFY-TSK-137, BRD2 10.2 item 13; documented in 11ty/README.md). This file is edited only by the task that owns
+  // these hosts and events and by the W6 Graphviz removal; every other person-page task fills them from islands. The edit must be copied to the Eleventy source's public/js/person-page.js at the merge stage (not done in this change):
+  //   events   hfy:person-rendered {personId, person, sections}  after every render
+  //            hfy:lightbox-media  {index, media, img, box}      whenever the lightbox shows an image
+  //   hosts    [data-slot="hero-actions"] > [data-slot=edit|follow|presence]   (hero, in that order)
+  //            [data-slot="heading-chips"] > [data-slot=contributions|links]   (under the lifespan line)
+  //            [data-slot="tree-link"]                                         (family section, after the tree)
+  //            #hfy-person-social                                              (last child of #person-content, hidden until filled)
+  //   hook     person JSON {mergedInto: "<id>"} redirects to ?id=<new id>
+  // The hero and its slots are rebuilt by every render, so an island refills them on each hfy:person-rendered.
+  const MAX_MERGE_HOPS = 2;
   const VOICE = {
     loading: "loading…",
     error: "that didn't work. try again, or text J.",
@@ -119,11 +131,21 @@
 
     fetchPerson(personId)
         .then((person) => {
+          const merged = redirectIfMerged(person, personId);
+          if (merged === "limit") {
+            showError(VOICE.error, { loading, error });
+            return;
+          }
+          if (merged) {
+            return;
+          }
           try {
             renderPerson(person, personId);
             hideLoading(loading);
             error.classList.add("d-none");
             content.classList.remove("d-none");
+            // After the loading state is gone and the content is shown, so islands fill visible hosts.
+            announceRendered(person, personId);
           } catch (err) {
             console.error("[ERROR] Failed to render person profile:", err);
             showError(VOICE.error, { loading, error });
@@ -287,13 +309,63 @@
     orderSections();
   }
 
+  // Mount point: a merged person's JSON is the stub {mergedInto: "<id>"} (SYNC-10). Send the visitor to the new id, keeping the
+  // other query parameters and the hash. A malformed id, or the id already shown, is not followed (no redirect loop).
+  function redirectIfMerged(person, personId) {
+    const target = person && typeof person === "object" ? person.mergedInto : null;
+    if (typeof target !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(target) || target === personId) {
+      return false;
+    }
+    // At most MAX_MERGE_HOPS redirects (a cycle or a long chain stops here and shows the error line).
+    const url = new URL(window.location.href);
+    const hops = Number.parseInt(url.searchParams.get("merged") || "0", 10) || 0;
+    if (hops >= MAX_MERGE_HOPS) {
+      return "limit";
+    }
+    url.searchParams.set("id", target);
+    url.searchParams.set("merged", String(hops + 1));
+    window.location.replace(url.toString());
+    return true;
+  }
+
+  // Mount point: islands listen for this and fill the hosts. detail.sections lists the ids of the sections now shown.
+  function announceRendered(person, personId) {
+    const sections = SECTION_ORDER.map(([id]) => id).filter((id) => {
+      const el = document.getElementById(id);
+      return el && !el.classList.contains("d-none");
+    });
+    document.dispatchEvent(new CustomEvent("hfy:person-rendered", { detail: { personId, person, sections } }));
+  }
+
+  // Mount point: #hfy-person-social is the last child of #person-content and stays hidden until an island fills it. The
+  // [data-slot="tree-link"] host follows the tree in the family section. Both survive re-renders (only the hero is rebuilt).
+  function ensureHosts(content) {
+    let social = document.getElementById("hfy-person-social");
+    if (!social) {
+      social = document.createElement("div");
+      social.id = "hfy-person-social";
+      social.hidden = true;
+    }
+    content.appendChild(social);
+    if (!document.querySelector('[data-slot="tree-link"]')) {
+      const tree = document.getElementById("person-family-visualization");
+      if (tree && tree.parentElement) {
+        const host = document.createElement("div");
+        host.setAttribute("data-slot", "tree-link");
+        tree.insertAdjacentElement("afterend", host);
+      }
+    }
+  }
+
   // Sections in DS order with their lowercase headings; the Eleventy spacer divs are dropped.
   function orderSections() {
     const content = document.getElementById("person-content");
     if (!content) {
       return;
     }
+    ensureHosts(content);
     const comments = document.getElementById("hfy-person-comments");
+    const social = document.getElementById("hfy-person-social");
     SECTION_ORDER.forEach(([id, heading]) => {
       const section = document.getElementById(id);
       if (!section) {
@@ -305,8 +377,10 @@
       if (h2) {
         h2.textContent = heading;
       }
-      content.insertBefore(section, comments && comments.parentElement === content ? comments : null);
+      const anchor = [comments, social].find((el) => el && el.parentElement === content);
+      content.insertBefore(section, anchor || null);
     });
+    content.appendChild(social); // an island may have appended after it; the social host is always last
   }
 
   function updateDocumentTitle(person) {
@@ -334,6 +408,8 @@
         <div class="person-heading">
           <h1>${escapeHtml(person.displayName || "name unknown")}</h1>
           ${renderLifespan(person)}
+          <div class="person-chips" data-slot="heading-chips"><span data-slot="contributions"></span><span data-slot="links"></span></div>
+          <div class="person-actions" data-slot="hero-actions"><span data-slot="edit"></span><span data-slot="follow"></span><span data-slot="presence"></span></div>
         </div>
       </div>
     `;
@@ -1489,6 +1565,7 @@
       image.alt = media.title || "photo";
       toggleSpinner(false);
       image.classList.remove("d-none");
+      document.dispatchEvent(new CustomEvent("hfy:lightbox-media", { detail: { index: lightboxState.currentIndex, media, img: image, box: image.parentElement } }));
     };
     loader.onerror = () => {
       if (token !== lightboxState.loadToken) {
