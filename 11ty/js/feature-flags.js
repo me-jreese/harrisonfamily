@@ -12,20 +12,20 @@
         "css": "24d74883"
       },
       "my-posts": {
-        "js": "7ba72d98",
-        "css": "6b1f4442"
+        "js": "d33006a0",
+        "css": "cad6c878"
       },
       "notifications": {
         "js": "16d76326",
         "css": "56799f74"
       },
       "person": {
-        "js": "4ecb3471",
-        "css": "d416dda8"
+        "js": "461c5d94",
+        "css": "3909ca3c"
       },
       "posts": {
-        "js": "8e72a880",
-        "css": "04cffdda"
+        "js": "4c5f89b2",
+        "css": "13d80644"
       },
       "search": {
         "js": "4a67bd09",
@@ -40,7 +40,7 @@
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "1e228186",
+        "js": "8d20680d",
         "css": "6b1f4442"
       }
     },

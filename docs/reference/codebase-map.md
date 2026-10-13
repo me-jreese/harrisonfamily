@@ -102,7 +102,7 @@ Facts:
 Paths:
 
 - [`islands/src/islands/`](../../islands/src/islands/): one entry per island. The entries are `shell.jsx`, `search.jsx`, `person.jsx`, `my-posts.jsx`, `timeline.jsx`, `posts.jsx` and `notifications.jsx`, plus `search.css` and `notifications.css`.
-- [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `content-source.js`, `mount.jsx`, `people-corpus.js`, `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css` and `islands/src/comments.css` sit beside the directory.
+- [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `mount.jsx`, `people-corpus.js`, `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css` and `islands/src/guard.css` sit beside the directory.
 - [`islands/build.mjs`](../../islands/build.mjs): the build. It bundles the islands with esbuild and writes the outputs in [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract` and `lint:css`. Every dependency is pinned to an exact version.
 - [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs): the configuration of the island specs. See [Tests](#tests).
@@ -187,15 +187,18 @@ Paths:
   - `mcp.js`: the MCP mount.
   - `mcp-caps.js`: build-time views of the MCP surface.
   - `origin.js`: the `X-Origin-Verify` check.
-  - `content.js`: posts.
+  - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
+  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `notify.js`: push notifications and their templates.
-  - `uploads.js`: the upload route.
+  - `uploads.js`: the upload route and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
   - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
+- [`api/scripts/scan-contact-info.mjs`](../../api/scripts/scan-contact-info.mjs): the one-off, read-only scan of existing posts and comments for contact information; counts only ([API: Contact-information guard](api.md#contact-information-guard)).
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
 - [`api/parity/`](../../api/parity/): the parity files of the MCP surface. See [MCP server](#mcp-server).
 - [`api/README.md`](../../api/README.md): a short pointer to the [API reference](api.md).

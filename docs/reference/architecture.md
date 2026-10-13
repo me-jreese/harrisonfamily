@@ -188,7 +188,7 @@ None of the buckets is managed by a stack.
 | --- | --- | --- | --- |
 | Root | The static site, synced from `11ty/` | The `s3_static` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), run by [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) | No (this is what the sync owns) |
 | `person/`, `family/`, `event/`, `note/`, `place/`, `media/` | Private Gramps data and media. Served through the six gated behaviors | The private data sync ([How to refresh the family data from Gramps](../how-to/refresh-the-family-data.md)), which syncs these six prefixes and nothing else | Yes: `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` |
-| `uploads/posts/<ulid>/<name>` | Photos attached to member posts (`UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js), HFY-R58). Served through the `/uploads/*` CloudFront behavior, in its public or members-only state ([Request routing](#request-routing)) | Browsers, by presigned PUT issued by `hfy-api` | Yes: `uploads/*`. The deploy role also denies `s3:PutObject` and `s3:DeleteObject` here ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml), `ProtectMemberUploads`) |
+| `uploads/posts/<ulid>/photo.<ext>` | Photos attached to member posts (`UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js), HFY-R58). The server names every new upload `photo.<ext>`; older uploads keep the uploader's cleaned file name. Served through the `/uploads/*` CloudFront behavior, in its public or members-only state ([Request routing](#request-routing)) | Browsers, by presigned PUT issued by `hfy-api` | Yes: `uploads/*`. The deploy role also denies `s3:PutObject` and `s3:DeleteObject` here ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml), `ProtectMemberUploads`) |
 | `media/posts/<ulid>/<name>` | Legacy: photos uploaded before HFY-R58, if any remain. Nothing moved them | No writer since HFY-R58 | Yes, under `media/*`. The private data sync deletes them unless run with `--no-delete` |
 | `js/islands/` | Island bundles | The `11ty/` sync, from the committed build output (HFY-R58) | No (this is site output) |
 | `css/hfy-theme.css`, `css/auth-edge.css`, `fonts/` | The design system's theme layer, the auth edge's sign-in stylesheet, and the self-hosted brand fonts with content-hashed file names ([Theme and asset build](theme-and-asset-build.md)) | The `11ty/` sync, from the committed islands-build output | No (this is site output) |
@@ -352,6 +352,7 @@ Written by `hfy-api`:
 | Comment | `THREAD#<thread-id>` | `C#<ulid>` | `COMMENTS` / `<ulid>` | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
+| Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post attaches the upload | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
 
@@ -414,6 +415,7 @@ Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/
 | `SessionAudience` | `harrisonfamily-web` | `SESSION_AUDIENCE` |
 | `SessionJwksUrl` | `https://<site>/auth/.well-known/jwks.json` | `SESSION_JWKS_URL` |
 | `SessionCookie` | `io_id` | `SESSION_COOKIE` |
+| `GuardDob` | `off` (`off` or `on`) | `HFY_GUARD_DOB`: `on` makes the API refuse `dob_not_allowed` on posts and comments ([API: Contact-information guard](api.md#contact-information-guard)) |
 | `AuthFunctionName` | `hfy-auth-edge` | Edge function, log group and role names |
 | `AuthCodeKey` | `lambda/hfy-auth-edge.zip` | Edge package key. Deploys pass `lambda/hfy-auth-edge-<sha>.zip` |
 | `UserPoolName` | `hfy-users` | User pool name |

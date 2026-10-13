@@ -122,8 +122,8 @@ export const ROUTES = [
     handler: async (c) => { await c.content.delete(c.params.id); await c.afterPostDeleted(c.params.id); return ok(undefined, 204); },
   },
   {
-    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB) under uploads/posts/; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
-    handler: async (c) => ok(await c.uploads.presign(c.actor, { filename: c.body.filename, contentType: c.body.contentType, size: c.body.size }), 201),
+    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB) at uploads/posts/<ulid>/photo.<ext>, bound to you for 24 h; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
+    handler: async (c) => ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size }), 201),
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.
   { name: "notifications.vapid-public-key", method: "GET", path: "/notifications/vapid-public-key", summary: "VAPID application server key", handler: (c) => c.notifyHandler() },

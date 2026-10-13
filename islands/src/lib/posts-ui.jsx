@@ -19,9 +19,14 @@ export const COPY = {
   signedOut: "this page is family-only. sign in to see it.",
   notPosted: "that didn't post. it's still here — try again.",
   notFound: "that post wasn't found. if that's wrong, text J.",
+  // privacy-guard-existing-paths: the API refuses a photo whose stored bytes say where it was taken (photo_has_location) and an
+  // upload that is missing, retyped or not this member's (upload_missing, upload_not_owned; social.md E8 copy).
+  photoLocation: "that photo still says where it was taken. we don't keep that on the site, so please remove it and share a copy without its location, like a screenshot.",
+  photoMissing: "that photo didn't finish uploading. remove it and add it again.",
 };
 export const isSignedOut = (e) => Boolean(e && (e.signedOut || e.code === "unauthenticated" || e.status === 401));
 export const friendlyError = (e) => (isSignedOut(e) ? COPY.signedOut : COPY.failed);
+
 
 /** PostCard / ArticleView labels: lowercase; the meta line is "name · time" (no "by"). */
 export const CARD_LABELS = { by: "", edit: "edit", delete: "delete", open: "open", publish: "publish", withdraw: "withdraw", draft: "draft", withdrawn: "withdrawn" };
