@@ -120,12 +120,23 @@ class AppStack(unittest.TestCase):
             "arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/comments/*",
             "arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/posts/*"])
 
-    def test_api_role_has_no_grant_on_media_or_config_beyond_the_existing_ones(self):
+    def test_api_role_s3_grants_are_an_exact_allowlist(self):
+        # Every S3 statement's resources, with the Sub resolved to bucket parameter + key pattern, must be one of the known prefixes.
+        # Any other (a bare /*, media/*, a wildcard such as m*) fails. config/* is allowed only in AdminList (the config bucket).
+        allowed = {"MediaBucket": {"uploads/posts/*", "uploads/comments/*", "person/*"}, "ConfigBucket": {"config/*"}}
+        seen = 0
         for s in statements(self.r["Role"]):
-            if not isinstance(s, dict) or s.get("Sid") in ("AdminList",):
+            acts = s.get("Action", [])
+            acts = [acts] if isinstance(acts, str) else acts
+            if not any(a.startswith("s3:") for a in acts):
                 continue
-            self.assertNotIn("media/", str(s.get("Resource", "")))
-            self.assertNotIn("config/", str(s.get("Resource", "")))
+            res = s["Resource"]
+            for r in ([res] if not isinstance(res, list) else res):
+                m = re.fullmatch(r"arn:\$\{AWS::Partition\}:s3:::\$\{(\w+)\}/(.+)", r["Fn::Sub"])
+                self.assertIsNotNone(m, f"{s.get('Sid')}: unexpected S3 resource {r}")
+                self.assertIn(m.group(2), allowed.get(m.group(1), set()), f"{s.get('Sid')}: {r}")
+                seen += 1
+        self.assertGreaterEqual(seen, 6)
 
     # HFY-R68: author labels are the person's displayName from the site's own record, never the allowlist email. Read-only, person/* only.
     def test_api_may_only_read_person_records_for_author_labels(self):
