@@ -1,4 +1,5 @@
 # MCP tool -> the human route handler that performs the same action (@io-kit/parity map.yaml). Tool names equal the caps.json action names.
+# api:me.get (GET /api/me) is a session-only identity route with no MCP tool, so it has no row here (HFY-TSK-237).
 surfaces:
   mcp-tools:
     hfy_comments_list: { handler: "api:comments.list" }

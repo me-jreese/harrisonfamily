@@ -194,6 +194,7 @@ Paths:
   - `notify.js`: push notifications and their templates.
   - `uploads.js`: the upload route.
   - `presign.js`: the presigned S3 PUT.
+  - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
 - [`api/parity/`](../../api/parity/): the parity files of the MCP surface. See [MCP server](#mcp-server).
 - [`api/README.md`](../../api/README.md): a short pointer to the [API reference](api.md).
@@ -458,7 +459,7 @@ Facts:
 
 - `io-kit-ci.yml` runs on pull requests and on manual dispatch. It runs the build, a parity report in report mode, and a TruffleHog scan.
 - `io-kit-deploy.yml` runs on push to `main` and on manual dispatch. Its jobs run in this order: build, package, deploy, invalidate, smoke, then rollback if the smoke check fails.
-- The build job runs `patch-client-id.sh`, then `package-lambda.sh`, on Node 20. The package job uploads `11ty/` and `dist/hfy-check-allowed.zip` as the artifact `io-kit-release-<sha>`.
+- The build job runs `patch-client-id.sh`, then `package-lambda.sh`, on Node 22. The package job uploads `11ty/` and `dist/hfy-check-allowed.zip` as the artifact `io-kit-release-<sha>`.
 - The deploy job runs one `aws s3 sync 11ty/ s3://<site-bucket>/ --delete` and then updates the `hfy-check-allowed` code. The sync has no HTML-last ordering, so a page can go live a moment before a file it references by a new `?v`.
 - The sync excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`, and never deletes the excluded paths.
 - The invalidation covers `/*`, and the job waits for it to complete. Until it does, CloudFront can serve the old object for a new `?v`, because the default behavior's cache policy (CachingOptimized in the sample) leaves the query string out of the cache key.

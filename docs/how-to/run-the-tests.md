@@ -1,6 +1,6 @@
 # How to run the test suites
 
-Use this page to run each test suite in the repository with the right prerequisites, and to know before you start which suites reach production. No workflow runs these test suites, so run the ones that cover your change before you open a pull request ([Deploy a site change](deploy-a-site-change.md)). io-kit CI does scan each pull request's commits with TruffleHog. That is a scan of the Git commit range, and it differs from the filesystem scan in step 13. The workflow's `parity` job runs only a pipeline drift check, because the manifest sets no parity baseline. It is unrelated to the MCP parity check in step 11 ([`io-kit-ci.yml`](../reference/repository-operations.md#io-kit-ciyml)). For what each suite exercises, file by file, see the [test suites table](../reference/repository-operations.md#test-suites) in Repository operations and the **Tests** row of the [codebase map](../reference/codebase-map.md).
+Use this page to run each test suite in the repository with the right prerequisites, and to know before you start which suites reach production. CI runs only three CodeArtifact-free suites ([Where each suite runs](#where-each-suite-runs)); no workflow runs the others, so run the ones that cover your change before you open a pull request ([Deploy a site change](deploy-a-site-change.md)). io-kit CI does scan each pull request's commits with TruffleHog. That is a scan of the Git commit range, and it differs from the filesystem scan in step 13. The workflow's `parity` job runs only a pipeline drift check, because the manifest sets no parity baseline. It is unrelated to the MCP parity check in step 11 ([`io-kit-ci.yml`](../reference/repository-operations.md#io-kit-ciyml)). For what each suite exercises, file by file, see the [test suites table](../reference/repository-operations.md#test-suites) in Repository operations and the **Tests** row of the [codebase map](../reference/codebase-map.md).
 
 Values in angle brackets are placeholders. `<project>` is the private project directory, which holds the tooling and data kept outside this repository. `<site>` is the site's host name, `<gramps-id>` is the test account's Gramps ID, and `<test-email>` is the sign-in email of the Cognito test user. `<app-stack>` is the name of the live app stack, which is not `hfy-app`, the `--stack` default of the app behavior scripts. `<distribution-id>` is the CloudFront distribution and `<aws-account-id>` is the AWS account. The forms are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). `<policy-id>` is the ID of a CloudFront response headers policy, as the step 12 scripts print it. `<scratch-site>` is an absolute path to a directory you choose for a scratch build of the site.
 
@@ -24,6 +24,19 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | Infrastructure script tests, [`scripts/infra/test/`](../../scripts/infra/test/) | Offline | A stub `aws` command, fixture distribution configs, and scratch copies and a scratch Git repository in a temporary directory. No call reaches AWS. |
 | Infrastructure dry runs, [`scripts/infra/`](../../scripts/infra/) | **Live**, read only, or offline | Production AWS reads: secret metadata, the origin-verify secret, stack outputs in `us-west-2` and `us-east-1`, the CloudFront distribution config, the account's response headers policies and the code of the `HFYAppendIndex` function. Nothing changes. All five `add-*` scripts can also run fully offline. |
 | Secret scan | Local; may contact providers to verify a finding | Every file on disk under the repository root, including installed `node_modules/` and leftover test reports. By default the scanner calls the matching provider's API to check each candidate secret. |
+
+## Where each suite runs
+
+Suites run in one of four places (BRD2 section 10.4). Most need the private registry, which CI cannot read (HFY-R62), so they run on the worker's checkout and the orchestrator re-runs them on the rebased head before it merges.
+
+| Where | What runs there | How |
+| --- | --- | --- |
+| CI | The `test` job of `io-kit-ci.yml`, on pull requests, on Node 22, in this order: the family-data guard `bash scripts/ci/check-no-family-data.sh`, the infrastructure script tests `bash scripts/infra/test/run.sh` (step 5; it includes the CloudFront Function tests) and the Gramps unit tests `python3 -m unittest discover gramps/tests/unit`. The Gramps step passes while `gramps/tests/unit` does not exist yet. | `ci.manifest.yaml` `tests`, rendered with `io-kit-ci render`; see [Change the CI pipeline](change-the-ci-pipeline.md). No entry installs from CodeArtifact, and a failing command fails the PR check. |
+| Worker-local | Every suite that needs `CODEARTIFACT_AUTH_TOKEN`: the API suite, the auth edge suite, the island suites and `check:islands`, the MCP conformance gate; and the offline suites that CI does not run: the edge gate and client script tests. | Steps 1 to 5, 8, 9 and 11 below, on your checkout. |
+| io's Mac with Gramps 6.0.6 | The suites that need a Gramps install: the fixture tree, the schema export, the Gramps-generated goldens, the addon, the gramplet and the round-trip end-to-end test. | By hand on that Mac. |
+| Production UAT | Flips, audits, seeds and every step that reaches production, including the live login flow and the GUI screenshots. | io's G-uat handoffs on production. |
+
+Add a suite to CI only if it needs nothing from CodeArtifact: put its command in the manifest `tests` and re-render.
 
 ## Before you start
 
@@ -66,7 +79,7 @@ Steps 3 and 4 need the `api/` install from step 1. Step 10 needs the `auth/` ins
 (cd api && npm ci && npm test)
 ```
 
-`npm test` runs `vitest run` over every `test/**/*.test.js` file ([`vitest.config.js`](../../api/vitest.config.js)): the API's routes and rules, the MCP server and its conformance corpus, the packaging script and the MCP behavior script. The tests run against the in-memory DynamoDB fake in [`fake-ddb.js`](../../api/test/fake-ddb.js). They sign test tokens with keys generated for the run, or, in the MCP files, with the kit's committed test-only fixture keys, so they need no AWS credentials. The [test suites table](../reference/repository-operations.md#test-suites) lists what each file covers.
+`npm test` runs `vitest run` over every `test/**/*.test.js` file ([`vitest.config.js`](../../api/vitest.config.js)), then `node --test` over `test/records/*.node-test.js`, the EditOp engine's pure `node:test` suite (`node --test test/records/ops.node-test.js` runs it alone, with no install and no network). The vitest run covers: the API's routes and rules, the MCP server and its conformance corpus, the packaging script and the MCP behavior script. The tests run against the in-memory DynamoDB fake in [`fake-ddb.js`](../../api/test/fake-ddb.js). They sign test tokens with keys generated for the run, or, in the MCP files, with the kit's committed test-only fixture keys, so they need no AWS credentials. The [test suites table](../reference/repository-operations.md#test-suites) lists what each file covers.
 
 Three files run repository scripts in child processes, so the suite also needs `bash` and `jq`:
 

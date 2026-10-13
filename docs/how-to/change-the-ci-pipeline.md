@@ -31,7 +31,7 @@ The deploy role in [`github-roles.yaml`](../../infrastructure/cloudformation/git
 
 Publish a code change with [`scripts/infra/publish-append-index.sh`](../../scripts/infra/publish-append-index.sh) and operator credentials that allow `cloudfront:DescribeFunction`, `GetFunction`, `UpdateFunction`, `TestFunction`, `PublishFunction` and `GetDistributionConfig`. The script runs the local unit tests, refuses an association with any behavior but the default one, runs test cases through `test-function` on the `DEVELOPMENT` stage before it publishes, and saves the previous `LIVE` code first. [Publish a change to the CloudFront Function](publish-the-cloudfront-function.md) has the steps. The script never creates the function: creating it the first time is manual, in [step 4 of Stand up the static site](stand-up-the-static-site.md#4-create-and-attach-hfyappendindex).
 
-No workflow runs the function's tests, `node --test scripts/cloudfront/test/*.test.mjs`. [`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) runs them, and so does the publish script before it touches AWS.
+The `test` job of `io-kit-ci.yml` runs the function's tests, `node --test scripts/cloudfront/test/*.test.mjs`, through [`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) on pull requests, and so does the publish script before it touches AWS.
 
 ### Work that needs the private registry
 
@@ -43,7 +43,7 @@ No workflow can install the `@io-kit/*` packages, because none has a `CODEARTIFA
 
 Neither manifest field that adds CI work changes that:
 
-- **`tests`** renders a `test` job that runs each command after `build`. Its step receives neither `build.env` nor AWS credentials, so the conformance script stops at its token check, and `npm ci` in `islands/` cannot authenticate to the registry. The job also runs on the manifest's Node version, `20`, and `api/` and `islands/` require Node 22.
+- **`tests`** renders a `test` job that runs each command after `build`. Its step receives neither `build.env` nor AWS credentials, so the conformance script stops at its token check, and `npm ci` in `islands/` cannot authenticate to the registry. The job runs on the manifest's Node version, `22`, which `api/` and `islands/` require. Add only commands that need no registry token. `tests` holds the three suites listed in [Run the tests: Where each suite runs](run-the-tests.md#where-each-suite-runs), and a later task that adds a CodeArtifact-free suite adds its command there and re-renders.
 - **`workflows.ci_jobs_file`** names a repo-relative YAML file holding a map of jobs. In `@io-kit/ci` 0.1.3 those jobs replace every generated job in `io-kit-ci.yml` rather than being added to them, and the triggers become `pull_request` and a push to `main`, without `workflow_dispatch`. The kit then stops rendering the `parity-report` and `secret-scan` actions, so the render removes them, together with the vendored `check.cjs` that [step 4](#4-check-for-drift) runs. Adding one job this way means writing the build and secret-scan jobs by hand and losing the vendored drift check, and the new job still has no token.
 
 Run the checks by hand instead, from the repository root, with Node 22 and the token from [step 2](#2-get-a-codeartifact-token) set:

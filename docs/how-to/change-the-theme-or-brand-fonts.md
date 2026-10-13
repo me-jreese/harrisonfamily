@@ -191,7 +191,7 @@ Commit everything in one commit, with the HFY record ID first in the message. A 
 
 ### 6. Deploy the site
 
-Ship the commit with [Deploy a site change](deploy-a-site-change.md): open the pull request, merge it, and watch the `io-kit-deploy.yml` run to the end of its `smoke` job. No workflow runs the lint, `check:islands` or any test suite, so steps 2 to 4 are the only checks the change gets.
+Ship the commit with [Deploy a site change](deploy-a-site-change.md): open the pull request, merge it, and watch the `io-kit-deploy.yml` run to the end of its `smoke` job. No workflow runs the lint or `check:islands`, and the suites CI does run do not cover the theme, so steps 2 to 4 are the only checks the change gets.
 
 ### 7. Redeploy `hfy-auth-edge` if the sign-in stylesheet's URL changed
 
