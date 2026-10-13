@@ -3,7 +3,7 @@
 // the locked `npm ci` (links this checkout's installed packages into the stage), the zip shim records the file list.
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ describe("scripts/ci/package-api.sh", () => {
       mkdirSync(join(root, "scripts/ci"), { recursive: true });
       cpSync(script, join(root, "scripts/ci/package-api.sh"));
       for (const f of ["src", "scripts", "package.json", "package-lock.json"]) cpSync(join(api, f), join(root, "api", f), { recursive: true });
+      cpSync(join(api, "../shared"), join(root, "shared"), { recursive: true });
       writeFileSync(join(root, "api/.npmrc"), "# test stub\n");
       const bin = join(tmp, "bin");
       mkdirSync(bin);
@@ -36,6 +37,11 @@ describe("scripts/ci/package-api.sh", () => {
       expect(existsSync(join(root, "api/node_modules"))).toBe(false); // nothing ran against the checkout's own node_modules
       const files = readFileSync(join(root, "dist/hfy-api.zip"), "utf8").trim().split("\n");
       expect(files).toEqual(expect.arrayContaining(["./dist/caps.json", "./src/index.js", "./src/presign.js", "./package.json"]));
+      // shared/*.mjs is staged as real files (api/src/shared is a symlink in the checkout), never the tests or package.json
+      const shared = readdirSync(join(api, "../shared")).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));
+      expect(shared.length).toBeGreaterThan(0);
+      expect(files).toEqual(expect.arrayContaining(shared.map((f) => `./src/shared/${f}`)));
+      expect(files.filter((f) => f.startsWith("./src/shared/") && !shared.includes(f.slice("./src/shared/".length)))).toEqual([]);
       expect(files.filter((f) => f.startsWith("./scripts/") || f === "./.npmrc" || f === "./package-lock.json")).toEqual([]);
       const caps = JSON.parse(readFileSync(join(root, "api/dist/caps.json"), "utf8"));
       expect(caps).toEqual(JSON.parse(JSON.stringify(buildCaps())));
