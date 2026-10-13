@@ -352,6 +352,8 @@ Written by `hfy-api`:
 | Comment | `THREAD#<thread-id>` | `C#<ulid>` | `COMMENTS` / `<ulid>` | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
+| Allowlist grant, one per email | `ALLOW#<email>` | `META` | `ALLOWSUB#<gramps-id>` / `ALLOW#<email>` (its own PK) | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js) (writes), read by `hfy-auth-edge` |
+| Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
 

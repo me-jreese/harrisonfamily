@@ -1,6 +1,6 @@
 # How to add or remove a family member's access
 
-Use this page to give a family member access to the site, make them an admin, give them MCP access, remove a lost passkey, sign a member out on every device, or take their access away. Site access comes from two private allowlist files: the auth edge reads one, and the legacy sign-in path, which is still deployed, reads both. You edit and publish them, then confirm the change on the auth edge, and on the legacy path too when the deployed site has `authV2` off. Admin rights and MCP access come from two more files in the config bucket, which you edit by hand.
+Use this page to give a family member access to the site, make them an admin, give them MCP access, remove a lost passkey, sign a member out on every device, or take their access away. Site access comes from two private allowlist files: the auth edge reads one, and the legacy sign-in path, which is still deployed, reads both. You edit and publish them, then confirm the change on the auth edge, and on the legacy path too when the deployed site has `authV2` off. Admin rights and MCP access come from two more files in the config bucket, which you edit by hand. A third source, DynamoDB grants written by the API, sits beside the file for the auth edge: read [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb) before you remove anyone.
 
 For why one allowlist decides membership and why admins and MCP groups are separate lists, see [The identity model](../explanation/identity-model.md). For the file formats, what reads each object and how long each reader caches it, see [Private data and secrets](../reference/private-data-and-secrets.md#access-configuration-in-config-bucketconfig).
 
@@ -14,6 +14,7 @@ Values in angle brackets are placeholders. `<email>` is a member's email address
 - `config/groups.json` names the members who get MCP tools, and the `uat` members who may use API routes still behind a flag. No script writes it. You upload it by hand.
 - Passkey records in the app stack's table, only to remove a lost passkey for a member who cannot do it themselves.
 - Revocation records in the app stack's table, only to sign a member out on every device, for example when a device that is still signed in is lost.
+- You never edit `ALLOW#` grant items in the app stack's table by hand. The API writes them; the file publisher never touches them. See [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb).
 
 The legacy Lambda admits an email only when its digest is listed **and** it has a mapping ([`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs)), so keep the two source files in step. Do this whatever the `authV2` flag shows. The legacy path stays deployed for one release after the cutover (HFY-R4), and it still serves a page where `authV2` resolves off or `/auth/session` does not answer ([The identity model](../explanation/identity-model.md#the-legacy-path-after-the-cutover)).
 
@@ -42,6 +43,8 @@ The legacy Lambda admits an email only when its digest is listed **and** it has 
 Check the Gramps ID against the member's person record before you publish, because nothing checks that the record exists. A wrong ID signs the member in as someone else, and correcting it after they have signed in through the edge takes the extra steps in [Change a member's record or email](#change-a-members-record-or-email). [The identity model](../explanation/identity-model.md#the-allowlist-is-the-authority) explains why the Gramps ID is the member's identity.
 
 ## Add a member
+
+If the email once had an access-request grant that was later revoked, adding it to the files below does not admit it: the revoked `ALLOW#` item wins ([Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb)). Check for one first when a sign-in is refused after a correct publish.
 
 ### 1. Edit the source files
 
@@ -224,7 +227,50 @@ The `uat` group of `config/groups.json` names the members who test new features 
 
 **Verify.** Once an API route sits behind a flag that is off, that member gets an answer from it within a minute, while a member outside the group still gets `404`.
 
+## Allowlist grants in DynamoDB
+
+Since HFY-TSK-134, the auth edge reads approved access from two places: io's S3 file, `userGrampsID.json`, and `ALLOW#<email>` items in the app stack's table. The items are written only by `hfy-api`, through the audited grant and revoke transactions in [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), which the access-request admin routes use. Nothing in this repository writes one yet, so a table with no `ALLOW#` item behaves exactly like the file alone.
+
+**The file publisher never touches them.** `publish_allowlists.sh` overwrites the S3 objects and the legacy secret and nothing else. Republishing the file therefore cannot create, change or delete a grant, and a grant survives every republish. The reverse also holds: editing the file does not change an email that has an `ALLOW#` item.
+
+**Precedence: the DynamoDB item wins, active or revoked.**
+
+| `ALLOW#<email>` item | Email in `userGrampsID.json` | The edge decides |
+| --- | --- | --- |
+| `active` | yes or no | Admit, as the item's `sub`. The item's Gramps ID beats the file's. |
+| `revoked` | yes | **Deny.** A revoked item beats the file. |
+| `revoked` | no | Deny. |
+| none | yes | Admit, as the file says. |
+| none | no | Deny. |
+| The table cannot be read | yes | Admit, as the file says. |
+| The table cannot be read | no | Deny. |
+
+The same rule decides the MCP groups, per Gramps ID: a member is one with an active item, or one the file lists under an email that has no item. A `revoked` item removes only its own email.
+
+What follows from it:
+
+- **Removing an email from the file does not remove a grant.** If the member has an active `ALLOW#` item, they still sign in after you publish the file without them. Revoke the grant too, through the API's revoke transaction. Until the admin routes ship, nothing creates a grant, so there is none to revoke.
+- **A revoked item outlives the file.** Adding the email back to the file does not restore access while a `revoked` item exists. Grant the email again through the API (a grant over a revoked item is allowed), or have io delete the revoked item.
+- **Revocation by DynamoDB works on an email that is still in the file.** That is how an approved request is withdrawn without touching io's files.
+- **The legacy path ignores grants.** `hfy-check-allowed` reads only the digest list and the mapping, so a DynamoDB grant never admits a legacy sign-in, and a revoke never denies one. The legacy path is retired after the authV2 release (HFY-R4).
+- **Timing.** The edge reads the item on every lookup with a strongly consistent `GetItem` and does not cache it, so the next sign-in, passkey sign-in, password set or refresh sees a grant or a revoke at once. The S3 file keeps its 300 s cache. The MCP groups cache each Gramps ID's items for 60 s. A session already issued keeps working until its `io_id` expires, up to 1 h, and its next refresh is refused.
+- **A DynamoDB outage does not lock members out, and does not honor a revoke.** While the table cannot be read, the file decides, so an email that is revoked in DynamoDB and still listed in the file signs in until the table is readable again.
+
+**Check one email.** This reads the item and prints nothing when there is none. It needs `dynamodb:GetItem` on the table and `cloudformation:DescribeStacks` on `<app-stack>`, and it changes nothing:
+
+```sh
+TABLE=$(aws cloudformation describe-stacks --stack-name <app-stack> --region us-west-2 \
+  --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" --output text)
+aws dynamodb get-item --table-name "$TABLE" --region us-west-2 --consistent-read \
+  --key '{"PK":{"S":"ALLOW#<email>"},"SK":{"S":"META"}}' \
+  --query 'Item.{state:state.S,sub:sub.S,source:source.S,at:at.S}'
+```
+
+`state` is `active` or `revoked`, `source` is `access-request`, `admin` or `import`. Do not write or delete an `ALLOW#` item by hand without io's go-ahead: a hand write skips the condition and the audit item that the API's transaction adds (`AUDIT#allow:<hash>`, which holds the Gramps ID and a hash of the address, never the address).
+
 ## Remove a member
+
+First check whether the email has an `ALLOW#` grant, as in [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb). A file edit removes only what the file granted. If the check prints `"state": "active"`, the member keeps access until that grant is revoked.
 
 1. In `<project>/docs/dev`, delete the member's key from `userGrampsID.json` and the email from `harrisonfamily-allowlist.json`. Check both:
 
@@ -275,11 +321,13 @@ The member's comments and posts stay. They remain attributed to the Gramps ID. T
 
    It prints `false`.
 
-2. **A fresh edge sign-in is denied.** After 300 s, sign in with Google at `https://<site>/auth/login` in a private window with the removed account. In the network panel, `POST /auth/google` returns `403 {"code":"AUTH_FORBIDDEN","detail":"not_allowlisted"}`, and no session starts. The page shows the `denied_body` text from the `copy` block of [`auth/edge.manifest.json`](../../auth/edge.manifest.json) as a neutral notice, not as an error: the message carries `data-detail="not_allowlisted"`, set by `allowlistNotice` in [`auth/src/edge.js`](../../auth/src/edge.js).
+2. **No active grant remains.** The check in [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb) prints nothing, or `"state": "revoked"`. An `active` state means the edge still admits the email whatever the file says.
 
-3. **A passkey sign-in is refused.** If the member added a passkey and can try it, have them use the passkey button (the manifest's `passkey_button` text) at `https://<site>/auth/login` after 300 s. The page shows the same notice, `POST /auth/passkey/login/verify` returns `403 {"code":"AUTH_FORBIDDEN","detail":"not_allowlisted"}`, and no session starts.
+3. **A fresh edge sign-in is denied.** After 300 s, sign in with Google at `https://<site>/auth/login` in a private window with the removed account. In the network panel, `POST /auth/google` returns `403 {"code":"AUTH_FORBIDDEN","detail":"not_allowlisted"}`, and no session starts. The page shows the `denied_body` text from the `copy` block of [`auth/edge.manifest.json`](../../auth/edge.manifest.json) as a neutral notice, not as an error: the message carries `data-detail="not_allowlisted"`, set by `allowlistNotice` in [`auth/src/edge.js`](../../auth/src/edge.js).
 
-4. **Where `authV2` is off: a fresh legacy sign-in is denied.** Skip this check when the deployed flag is `true`, because `/family-login/` then sends the visitor to `/auth/login`, which checks 2 and 3 cover. Otherwise, sign in at `https://<site>/family-login/` with the removed account. The page can still look signed in, because it marks the visitor signed in before it asks the Lambda. The removal shows in what is missing: the browser stays on `/family-login/`, and in the network panel the `POST /api/check-allowed` request returns `403`, so no gateway session is created. The Lambda log is the deciding test:
+4. **A passkey sign-in is refused.** If the member added a passkey and can try it, have them use the passkey button (the manifest's `passkey_button` text) at `https://<site>/auth/login` after 300 s. The page shows the same notice, `POST /auth/passkey/login/verify` returns `403 {"code":"AUTH_FORBIDDEN","detail":"not_allowlisted"}`, and no session starts.
+
+5. **Where `authV2` is off: a fresh legacy sign-in is denied.** Skip this check when the deployed flag is `true`, because `/family-login/` then sends the visitor to `/auth/login`, which checks 3 and 4 cover. Otherwise, sign in at `https://<site>/family-login/` with the removed account. The page can still look signed in, because it marks the visitor signed in before it asks the Lambda. The removal shows in what is missing: the browser stays on `/family-login/`, and in the network panel the `POST /api/check-allowed` request returns `403`, so no gateway session is created. The Lambda log is the deciding test:
 
    ```sh
    aws logs tail /aws/lambda/hfy-check-allowed --region us-west-2 --since 15m \
@@ -288,7 +336,7 @@ The member's comments and posts stay. They remain attributed to the Gramps ID. T
 
    The log shows only a redacted form of the email: its first three characters, `***@` and the domain.
 
-5. **Admin only: the ID left the admin list.**
+6. **Admin only: the ID left the admin list.**
 
    ```sh
    aws s3 cp s3://<config-bucket>/config/admins.json - \
@@ -297,7 +345,7 @@ The member's comments and posts stay. They remain attributed to the Gramps ID. T
 
    It prints `true`. While the member's existing edge session lasts, the API stops returning `can.delete: true` on other members' comments and posts within 60 s.
 
-6. **MCP only: the member left the groups.** Run the second check from [Give a member MCP access](#give-a-member-mcp-access) step 3 against the live object:
+7. **MCP only: the member left the groups.** Run the second check from [Give a member MCP access](#give-a-member-mcp-access) step 3 against the live object:
 
    ```sh
    aws s3 cp s3://<config-bucket>/config/groups.json - | jq -c --arg g '<gramps-id>' --arg e '<email>' '.groups as $G | {
