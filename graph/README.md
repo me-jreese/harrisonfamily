@@ -66,7 +66,7 @@ Where the build does something the design's section 5.2 table does not spell out
   3. The box is expanded to a square around its centre and clamped to the image. A missing or `[0,0,0,0]` rect uses the centre square of the whole image.
   4. The square is resized to 160x160 and encoded as WebP at quality 70; lower qualities are tried only if needed to stay within 8 KB. All metadata is stripped.
 - **Naming.** `faces/<gramps_id>-<sha8>.webp`, where `sha8` is the first 8 hex digits of `sha256(source bytes || JSON(rect))`. An unchanged input writes nothing. Faces are written before `graph.json`, and faces it no longer references are removed after it is written.
-- **No failure stops the build.** `MEDIA_MISSING`, `PLACEHOLDER_MEDIA` (a 0-byte file), `UNSUPPORTED_FORMAT` (any decode error, including HEIC with HEVC, which the prebuilt sharp cannot decode) and `ORIENTATION_NOT_BAKED` (an EXIF Orientation other than 1) give `face: null`. `RECT_INVALID` falls back to the centre square. The local report counts faces referenced, written and removed.
+- **No failure stops the build.** `MEDIA_MISSING`, `PLACEHOLDER_MEDIA` (a 0-byte file), `UNSUPPORTED_FORMAT` (any decode error, including HEIC with HEVC, which the prebuilt sharp cannot decode) and `ORIENTATION_NOT_BAKED` (an EXIF Orientation other than 1) give `face: null`. `RECT_INVALID` (a rect that is not four integers, or that truncates to zero pixels) also gives `face: null`; an invalid region is never guessed at, because a centre crop of a group photo could show someone else. The local report counts faces referenced, written and removed.
 
 ## Not here yet
 

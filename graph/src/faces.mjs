@@ -8,7 +8,8 @@
 //
 // Files are named faces/<gramps_id>-<sha8>.webp, sha8 = sha256(source bytes || JSON(rect)), so a changed photo or rect is a new
 // URL. An unchanged input writes nothing, and faces no longer referenced are pruned once the new graph.json is written.
-// No failure stops the build: the person gets face null (or, for RECT_INVALID, the centre square) and a report warning.
+// No failure stops the build: the person gets face null and a report warning (AC3; an invalid rect is never guessed at, because
+// a centre crop of a group photo could show someone else). A missing or [0,0,0,0] rect is Gramps' "no region": the centre square.
 
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -35,8 +36,8 @@ export function normalizeRect(raw) {
 }
 
 /**
- * The square crop box in stored pixels: `{ left, top, width, height, invalid }`. A rect that truncates to zero pixels is
- * invalid and falls back to the centre square of the whole image, as a null rect does.
+ * The square crop box in stored pixels: `{ left, top, width, height, invalid }`. A null rect gives the centre square of the
+ * whole image; a rect that truncates to zero pixels is invalid (the caller gives that person face null).
  */
 export function cropBox(width, height, rect) {
   let left = 0;
@@ -148,9 +149,12 @@ export async function buildFaces(jobs, reader, mediaOut) {
       continue;
     }
     const norm = normalizeRect(job.rect);
-    const box = cropBox(meta.width, meta.height, norm.rect);
-    const rect = box.invalid ? null : norm.rect;
-    if (norm.invalid || box.invalid) warn('RECT_INVALID', job.id);
+    const box = norm.invalid ? null : cropBox(meta.width, meta.height, norm.rect);
+    if (!box || box.invalid) {
+      warn('RECT_INVALID', job.id); // AC3: face null, never a guessed crop
+      continue;
+    }
+    const rect = norm.rect;
     const name = faceName(job.id, bytes, rect);
     const target = join(dir, name);
     if (!existsSync(target)) {

@@ -135,10 +135,9 @@ describe('buildFaces', () => {
     const r = await buildFaces(jobs, reader, out);
     const codes = Object.fromEntries(r.warnings.map((w) => [w.id, w.code]));
     assert.deepEqual(codes, { I1: 'MEDIA_MISSING', I2: 'PLACEHOLDER_MEDIA', I3: 'UNSUPPORTED_FORMAT', I4: 'UNSUPPORTED_FORMAT', I5: 'ORIENTATION_NOT_BAKED', I6: 'RECT_INVALID' });
-    for (const id of ['I1', 'I2', 'I3', 'I4', 'I5']) assert.equal(r.faces.get(id), null, id);
-    // an invalid rect is treated as null: the centre square of the whole image
-    assert.equal(r.faces.get('I6'), `faces/${faceName('I6', jpeg, null)}`);
-    assert.deepEqual(readdirSync(join(out, 'faces')), [faceName('I6', jpeg, null)]);
+    // every code gives face null (AC3); an invalid rect is never replaced by a guessed crop
+    for (const id of ['I1', 'I2', 'I3', 'I4', 'I5', 'I6']) assert.equal(r.faces.get(id) ?? null, null, id);
+    assert.deepEqual(existsSync(join(out, 'faces')) ? readdirSync(join(out, 'faces')) : [], []);
   });
 
   it('pruneFaces removes faces no longer referenced and leaves other files alone (AC2)', async () => {
