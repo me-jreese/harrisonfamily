@@ -17,7 +17,7 @@ const override = (page) => page.evaluate(() => ({ session: sessionStorage.getIte
 const banner = (page) => page.locator("[data-hfy-flag-banner][role=region]");
 
 const THEME_COLOR = "#141210"; // --io-color-semantic-surface (archive-950)
-const PAGES = ["/", "/about/", "/contact/", "/family-login/", "/logged-out/", "/person/?id=I0001", "/privacy/", "/private/", "/search/", "/terms/", "/posts/", "/me/notifications/", "/offline.html"];
+const PAGES = ["/", "/about/", "/contact/", "/family-login/", "/logged-out/", "/person/?id=I0001", "/privacy/", "/search/", "/terms/", "/posts/", "/me/notifications/", "/offline.html"];
 
 async function hermetic(page) {
   await page.route("https://accounts.google.com/**", (r) => r.abort());

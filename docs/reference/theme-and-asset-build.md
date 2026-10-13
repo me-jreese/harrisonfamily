@@ -160,6 +160,13 @@ Each block takes the indentation of the line it is anchored to. A build first re
 | `index.html`, calls to action | `About Us` (the `/about/` link) and `Family Login` (the `data-feature="familyLoginLink"` link) | `our story` and `sign in` |
 | `about/index.html`, heading | `Honoring the Harrison Family Legacy` | `honoring the Harrison family legacy` |
 | `family-login/index.html`, heading | `Family Login` | `sign in` |
+| Every page with the footer line, and `posts/` and `me/notifications/` (`COPY_EXTRA`) | No links after the footer line | `FOOTER_NAV`: a `<nav class="site-footer__links" aria-label="about this site">` with `about`, `contact`, `privacy` and `terms`, once. The shell hides the navbar that linked them. `40-site.css` styles them (44 px targets, `text.dim`, underlined). |
+| All ten pages, meta description, `og:description`, `twitter:description` | The Eleventy default, `Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data.` | `DESCRIPTION`: `the Harrison family archive. family members sign in to see the private pages.` |
+| `family-login/index.html`, the text shown before it hands over to `/auth/login` | `Sign in with your approved Google account to access private family records, search, and media.`, `If you need access, reach out to the site administrator.`, `Loading authentication status…` | `sign in with your Google account to see the family pages.`, `not on the list yet? text J.`, `loading…` |
+| `logged-out/index.html`, heading, lede and buttons | `You are signed out`, `Your session has ended successfully. …`, `Return to Family Login` (`/family-login/`), `Back to Home` | `SIGNED_OUT`: `you're signed out.`, `come back whenever you like.`, `sign in again` (`/auth/login`), `home`. `src/logged-out.njk` in the source carries the same text. |
+| `person/index.html`, static strings | `Loading person record…`, `Loading high-resolution media…`, `Download original` | `loading…`, `loading the full-size photo…`, `download original` |
+| `contact/`, `privacy/` and `terms/`, the obfuscated address | `info [@] harrisonfamily [D0T] us` (a zero) | `info [@] harrisonfamily [DOT] us`. Nothing else on `privacy/` or `terms/` is rewritten. |
+| `about/index.html`, the story | `two hundred twenty (222) years` | `two hundred twenty-two years` |
 | `index.html` and `about/index.html`, hero photograph | The hero `<img>` without a `width` | `width` and `height` set to the committed JPEG's pixel size, from `HERO_IMAGES`. CSS still sets the displayed size. |
 
 | Page | `<title>` | `og:title` and `twitter:title` |
@@ -171,7 +178,7 @@ Each block takes the indentation of the line it is anchored to. A build first re
 | `logged-out/index.html` | `signed out · Harrison Family` | `signed out` |
 | `person/index.html` | `family member · Harrison Family` | `family member` |
 | `privacy/index.html` | `privacy · Harrison Family` | `privacy` |
-| `private/index.html` | `family directory · Harrison Family` | `family directory` |
+| `private/index.html` | `your family · Harrison Family` | `your family` |
 | `search/index.html` | `search · Harrison Family` | `search` |
 | `terms/index.html` | `terms · Harrison Family` | `terms` |
 

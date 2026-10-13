@@ -574,7 +574,7 @@ README_EX=$(sed -n '/^rsync -a --delete -n -i/,/_site\//p' "$ROOT/11ty/README.md
 contains "the sync check treats js/person-page.js as repo-owned" "$SYNC_EX" "js/person-page.js"
 contains "the README refresh rsync excludes js/person-page.js" "$README_EX" "js/person-page.js"
 contains "the README repo-owned table lists js/person-page.js" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "js/person-page.js"
-for owned in js/auth.js css/auth-edge.css css/hfy-theme.css fonts/; do
+for owned in js/auth.js css/auth-edge.css css/hfy-theme.css fonts/ private/; do
   contains "the sync check treats $owned as repo-owned" "$SYNC_EX" "$owned"
   contains "the README refresh rsync excludes $owned" "$README_EX" "$owned"
   contains "the README repo-owned table lists $owned" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "$owned"
@@ -583,6 +583,10 @@ CSS_URL=$(jq -r .theme.cssUrl "$ROOT/auth/edge.manifest.json")
 check "auth/edge.manifest.json theme.cssUrl is the repo-owned stylesheet, served from the site origin (login CSP style-src)" test "${CSS_URL%%\?*}" = "https://harrisonfamily.us/css/auth-edge.css"
 check "...versioned ?v=<sha8 of 11ty/css/auth-edge.css> (Cloudflare caches static files for 4 h; islands/build.mjs stamps it)" test "${CSS_URL#*\?v=}" = "$(shasum -a 256 "$ROOT/11ty/css/auth-edge.css" | cut -c1-8)"
 check "...and that file exists in 11ty/css" test -s "$ROOT/11ty/css/auth-edge.css"
+# 11ty/README.md is repo-only: the static sync excludes it (ci.manifest.yaml, rendered into the io-kit-ci deploy-static and invalidate actions)
+MANIFEST_EX=$(sed -n '/^      exclude:/,/^      invalidate:/p' "$ROOT/ci.manifest.yaml")
+contains "ci.manifest.yaml keeps README.md out of the static sync" "$MANIFEST_EX" "README.md"
+contains "...and the rendered deploy-static action carries the same exclude" "$(cat "$ROOT/.github/actions/io-kit-ci/deploy-static/action.yml")" '"uploads/*","README.md"'
 eq "the README rsync and the sync check exclude the same paths (besides .DS_Store)" "$(printf '%s\n' "$SYNC_EX" | grep -vx '.DS_Store')" "$README_EX"
 if command -v rsync >/dev/null && command -v git >/dev/null; then
   DS="$T/ds"; mkdir -p "$DS/workspace/11ty-dev/_site/js" "$DS/repo/11ty/js"

@@ -4,7 +4,7 @@
 //   HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/legacy-pages.spec.mjs
 import { test, expect } from "@playwright/test";
 
-const PAGES = ["/", "/about/", "/contact/", "/privacy/", "/private/", "/logged-out/"];
+const PAGES = ["/", "/about/", "/contact/", "/privacy/", "/logged-out/"];
 const WIDTHS = [375, 688, 1024];
 const GROUND = "rgb(20, 18, 16)"; // surface = archive-950 #141210
 const LINK = "rgb(88, 182, 231)"; // link / accent = columbia-400
@@ -161,15 +161,6 @@ test("/contact/ footer-row links are 44px tap targets", async ({ page }) => {
   await stub(page, { shell: true });
   await open(page, "/contact/", true);
   for (const a of await page.locator("main a.link-light").all()) expect((await a.boundingBox()).height).toBeGreaterThanOrEqual(44);
-});
-
-test("/private/: card badges read as a text.dim word, View Profile reaches 44px", async ({ page }) => {
-  await stub(page, { shell: true });
-  await open(page, "/private/", true);
-  const badge = page.locator(".card-body > .badge").first();
-  const s = await badge.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color, size: getComputedStyle(el).fontSize, text: el.textContent.trim() }));
-  expect(s).toMatchObject({ bg: "rgba(0, 0, 0, 0)", color: TEXT_DIM, size: "16px" });
-  for (const b of await page.locator(".card .btn-sm").all()) expect((await b.boundingBox()).height).toBeGreaterThanOrEqual(44);
 });
 
 test("legacy navbar (shellV2 off): nav.tint bar, text.dim links, never the bs-bridge nav.tint ink", async ({ page }) => {

@@ -25,7 +25,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
 import { expectedHeads, resolveToken } from "./heads.mjs";
-import { COPY_PAGES, applyCopy } from "./copy.mjs";
+import { COPY_EXTRA, COPY_PAGES, applyCopy } from "./copy.mjs";
 import { htmlPages, sha8, stampSources, versionHtml, versionManifestCss } from "./assets.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -185,7 +185,7 @@ async function buildAll() {
   const themeColor = resolveToken(readFileSync(join(tokensDir, "theme.css"), "utf8"), "--io-color-semantic-surface");
   const heads = expectedHeads(site, { themeColor, cssHref: `/css/hfy-theme.css?v=${sha8(themeCss)}`, preloadHref: preloadHref() });
   // DS Voice copy on the Eleventy pages (copy.mjs): applied after the head blocks, so both are rewritten idempotently together.
-  for (const [rel, text] of heads) files.set(rel, COPY_PAGES.includes(rel) ? applyCopy(text, rel) : text);
+  for (const [rel, text] of heads) files.set(rel, COPY_PAGES.includes(rel) || COPY_EXTRA.includes(rel) ? applyCopy(text, rel) : text);
 
   // Asset versioning (assets.mjs). Order matters: the stamped sources (sw.js, then feature-flags.js, which carries sw.js's hash)
   // are final before any page is hashed against them, and the pages come last.

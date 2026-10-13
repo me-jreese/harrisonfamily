@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:8aadf66051bf7b7b8b40bf9378ee5d5f172468f1ff5834112dcd74006726e479
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:c8efe4605894ca5067987ce3985c3d38ab0ac9405a61e0e6b02d2f719400e559
 name: io-kit deploy static
 description: aws s3 sync the build output to each s3_static target with --delete; excluded globs are never deleted.
 inputs:
@@ -7,7 +7,7 @@ inputs:
     default: 11ty
   targets:
     description: JSON array of s3_static targets.
-    default: '[{"kind":"s3_static","bucket":"harrisonfamily-frontend","distribution":"E2JCDK3QLQNNYB","exclude":["person/*.json","media/*","family/*","event/*","note/*","place/*","uploads/*"],"invalidate":["/*"]}]'
+    default: '[{"kind":"s3_static","bucket":"harrisonfamily-frontend","distribution":"E2JCDK3QLQNNYB","exclude":["person/*.json","media/*","family/*","event/*","note/*","place/*","uploads/*","README.md"],"invalidate":["/*"]}]'
 runs:
   using: composite
   steps:

@@ -1,6 +1,7 @@
 // HFY-TSK-062: flag-gated two-path sign-in (GIS + Cognito password at https://harrisonfamily.us/auth).
 // Reads /_data/flags.json. With authV2 off (the default) this script does nothing and the legacy GIS flow runs unchanged.
 // With authV2 on: /family-login/ redirects to /auth/login, and a signed-in visitor (GET /auth/session) gets "My Record" -> /person/?id=<gramps_id>.
+// Signed out, the sign-in links (data-feature="familyLoginLink") point straight at /auth/login?returnTo=<this page>.
 // HFY-R58 fallbacks:
 // - /auth/session must answer (200 JSON with a boolean "authenticated") before anything changes. If it is unreachable
 //   (edge not attached, network error, HTML error page) the preview override is cleared and the legacy flow runs untouched.
@@ -56,6 +57,17 @@
     } catch (e) {
       return FALLBACK_RETURN;
     }
+  }
+
+  // Signed out under authV2: "sign in" (the home hero button, the legacy navbar link) goes straight to the edge sign-in and comes back
+  // to this page. /family-login/ only hands over to /auth/login, and showed its legacy page for a moment first. The static href stays
+  // /family-login/ for authV2 off, and until /auth/session has answered.
+  function pointSignInLinks() {
+    var href = "/auth/login?returnTo=" + encodeURIComponent(safeReturnPath(location.pathname + location.search + location.hash));
+    Array.prototype.forEach.call(document.querySelectorAll('[data-feature="familyLoginLink"]'), function (el) {
+      var link = el.tagName === "A" ? el : el.querySelector('a[href="/family-login/"]');
+      if (link) link.setAttribute("href", href);
+    });
   }
 
   function apply(session) {
@@ -137,6 +149,7 @@
         }
         // Already signed in at the edge: keep the legacy sign-in on this page (see header) rather than looping.
       }
+      if (s.authenticated !== true && !/^\/family-login\/?$/.test(location.pathname)) pointSignInLinks();
       if (s.authenticated !== true || !s.sub) return;
       // legacy feature-flags.js/auth.js also toggle these nav items; re-apply once they have settled
       apply(s);
