@@ -1,0 +1,27 @@
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:9ff0fa2f05ba0a7064b9f9a9760cf43a97cf6a65d70559d636dcbaa6a15d2cb3
+name: io-kit test
+description: Run each manifest test command in order; the first failure fails the job.
+inputs:
+  cmds:
+    description: JSON array of test commands (tests).
+    default: '["bash scripts/ci/check-no-family-data.sh","bash scripts/infra/test/run.sh","if [ -d gramps/tests/unit ]; then python3 -m unittest discover gramps/tests/unit; else echo \"no gramps/tests/unit yet; skipped\"; fi"]'
+  node-version:
+    description: Node version for actions/setup-node.
+    default: "22"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - name: Test
+      shell: bash
+      env:
+        CMDS: ${{ inputs.cmds }}
+      run: |
+        set -euo pipefail
+        while IFS= read -r cmd; do
+          echo "::group::$cmd"
+          bash -c "$cmd"
+          echo "::endgroup::"
+        done < <(jq -r '.[]' <<<"$CMDS")

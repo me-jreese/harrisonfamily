@@ -54,7 +54,7 @@ Cloudflare proxies `<site>` in front of CloudFront. It caches scripts, styleshee
 
   The check rebuilds in memory, so it needs the dependencies that `npm ci` installs with a CodeArtifact token. A `missing`, `stale` or `extra` line means the committed output differs from the source: build again and commit. Never edit a `?v=` value or an `hfy-asset-versions` block by hand.
 - `REPLACE_WITH_GOOGLE_CLIENT_ID` is left as is in the committed files. The pipeline substitutes the real client ID on the runner, so the repository never carries it. `grep -rl REPLACE_WITH_GOOGLE_CLIENT_ID 11ty | wc -l` prints `11`: the ten rendered pages and `js/auth.js`.
-- The suites that cover your change pass locally ([Run the tests](run-the-tests.md)). No workflow runs them.
+- The suites that cover your change pass locally ([Run the tests](run-the-tests.md)). CI runs only the three CodeArtifact-free suites on a pull request; no workflow runs the others.
 - If the change edits `flags.json`, read [Toggle a feature flag](toggle-a-feature-flag.md) first. A global flip needs io's G-prod approval. Never publish an `authV2` value other than `true` while the data gate is attached. This prints `401` while it is attached:
 
   ```sh

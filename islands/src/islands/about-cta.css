@@ -1,0 +1,74 @@
+/* /about/: the signed-in call to action (about-cta.jsx, HFY-TSK-136). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
+   --io-radius-* and --io-typography-* (theme-lint no-literal-token-values). A hairline, the heading and lede in a 40rem measure (10 x
+   space-9), then four cards: one column at 375, 2 x 2 from 688 (43rem). Each card is one link, the whole card, at least 44px. */
+.hfy-about-cta {
+  box-sizing: border-box;
+  margin-block: var(--io-space-7) 0;
+  padding-block: var(--io-space-6) var(--io-space-7);
+  border-top: 1px solid var(--io-color-semantic-border);
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-md);
+  line-height: var(--io-typography-leading-relaxed);
+}
+.hfy-about-cta .hfy-about-cta__h {
+  max-width: calc(10 * var(--io-space-9));
+  font-size: var(--io-typography-size-2xl);
+  line-height: var(--io-typography-leading-tight);
+}
+.hfy-about-cta__lede { max-width: calc(10 * var(--io-space-9)); margin: 0 0 var(--io-space-6); }
+.hfy-about-cta__nudge { max-width: calc(10 * var(--io-space-9)); margin: 0 0 var(--io-space-5); color: var(--io-color-semantic-text-dim); }
+.hfy-about-cta .hfy-about-cta__nudge-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  color: var(--io-color-semantic-link);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-about-cta .hfy-about-cta__nudge-link:hover { color: var(--io-color-semantic-link-hover); }
+
+.hfy-about-cta__cards,
+.hfy-about-cta__skeletons {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--io-space-4);
+  margin: 0 0 var(--io-space-6);
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 43rem) {
+  .hfy-about-cta__cards,
+  .hfy-about-cta__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.hfy-about-cta .hfy-about-cta__card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--io-space-2);
+  height: 100%;
+  min-height: var(--io-control-tap-min);
+  padding: var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-lg);
+  background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text);
+  text-decoration: none;
+}
+.hfy-about-cta .hfy-about-cta__card:hover { border-color: var(--io-color-semantic-border-strong); color: var(--io-color-semantic-text); }
+.hfy-about-cta__title { font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); line-height: var(--io-typography-leading-snug); }
+.hfy-about-cta__line { color: var(--io-color-semantic-text-dim); }
+.hfy-about-cta__action { margin-top: auto; color: var(--io-color-semantic-link); font-weight: var(--io-typography-weight-semibold); }
+.hfy-about-cta__card:hover .hfy-about-cta__action { color: var(--io-color-semantic-link-hover); }
+
+.hfy-about-cta__skeleton {
+  min-height: calc(2 * var(--io-control-h-lg));
+  border-radius: var(--io-radius-lg);
+  background: var(--io-color-semantic-surface-sunken);
+}
+.hfy-about-cta__closing {
+  margin: 0;
+  font-family: var(--io-typography-font-display);
+  font-size: var(--io-typography-size-xl);
+  line-height: var(--io-typography-leading-snug);
+}

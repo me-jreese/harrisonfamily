@@ -205,5 +205,19 @@
 "viz-v3-journeys": "HFY-TSK-292",
 "viz-v3-flip": "HFY-TSK-293",
 "identity-merge-rekey": "HFY-TSK-294",
-"edit-admin-delete": "HFY-TSK-295"
+"edit-admin-delete": "HFY-TSK-295",
+"viz-mvp-visual-desktop": "HFY-TSK-299",
+"viz-mvp-visual-nav": "HFY-TSK-300",
+"viz-mvp-visual-fallback": "HFY-TSK-301",
+"viz-mvp-visual-perf": "HFY-TSK-302",
+"iokit-tokens-viz-install": "HFY-TSK-303",
+"viz-graph-v2-layout": "HFY-TSK-304",
+"viz-v2-time-phone": "HFY-TSK-305",
+"viz-v2-time-eras": "HFY-TSK-306",
+"viz-v2-kinship-ui": "HFY-TSK-307",
+"viz-v2-faces-tab": "HFY-TSK-308",
+"viz-v2-bigtree-nav": "HFY-TSK-309",
+"viz-v3-csp-worker": "HFY-TSK-310",
+"viz-v3-journeys-places": "HFY-TSK-311",
+"viz-v3-journeys-chapters": "HFY-TSK-312"
 }

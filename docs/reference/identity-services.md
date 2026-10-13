@@ -423,7 +423,7 @@ The public key is derived from the private key at startup. The JWKS publishes ex
 
 ### MCP authorization server
 
-[`auth/src/oauth.js`](../../auth/src/oauth.js) is an OAuth 2.1 authorization server for MCP clients. It runs in the same Lambda and uses the same sign-in cookie. It supports one public client, requires PKCE with S256, and accepts no client secret. The resource server that accepts its tokens is the MCP server at `/mcp`, described in [MCP server](mcp-server.md).
+[`auth/src/oauth.js`](../../auth/src/oauth.js) is an OAuth 2.1 authorization server for MCP clients. It runs in the same Lambda and uses the same sign-in cookie. It supports public clients only (`createOAuthServer({ clients })`: the MCP client, and optionally the Gramps desktop client), requires PKCE with S256, and accepts no client secret. The resource server that accepts its tokens is the MCP server at `/mcp`, described in [MCP server](mcp-server.md).
 
 **Enablement and configuration** (set in `init()` in [`auth/src/index.js`](../../auth/src/index.js)):
 
@@ -433,9 +433,26 @@ The public key is derived from the private key at startup. The JWKS publishes ex
 | Issuer | `session.issuer` | `https://<site>/auth` |
 | Client id | `MCP_CLIENT_ID` | `mcp-harrisonfamily` by default. The stack does not set this variable. |
 | Redirect URIs | `MCP_REDIRECT_URIS`, comma-separated | Exact match. The stack default is `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`. |
+| Desktop client | `HFY_SYNC_DESKTOP_CLIENT` | Off unless set to `1`. When on, registers `hfy-sync-desktop` (see [Desktop client](#desktop-client-hfy-sync-desktop)). |
 | Resources | `MCP_RESOURCES`, comma-separated | Default `https://<site>/mcp` (`DEFAULT_MCP_RESOURCE` in `oauth.js`, and the `McpResources` stack default; HFY-R59). The first entry is used when a request names no resource. |
 | Key set | `init()` | A local JWKS holding the edge's own public key, used by `/auth/userinfo` |
 | CORS origins | `MCP_CORS_ORIGINS`, comma-separated | See [CORS on OAuth routes](#cors-on-oauth-routes). |
+
+### Desktop client (hfy-sync-desktop)
+
+Registered only when `HFY_SYNC_DESKTOP_CLIENT=1` (default off; HFY-TSK-120). It is for the Gramps desktop add-on.
+
+- **Redirect:** `http://127.0.0.1/callback`, matched by scheme, host and path with any port (RFC 8252 section 7.3). A different host (including `localhost`), path or scheme, port 0, userinfo, query or fragment is refused with a 400 and no redirect. The MCP client keeps exact matching.
+- **Resource:** `https://harrisonfamily.us/api/sync`; access tokens carry that `aud`, `client_id` `hfy-sync-desktop` and scope `sync`.
+- **Binding:** codes and refresh tokens belong to the client that received them. The other client's code is refused, and another client's refresh token is refused without being consumed.
+- **Refresh:** rotating, and expiring 30 days after the last use. `auth_time` is never advanced (HFY-R64).
+- **Registration:** `/auth/register` still serves only the MCP client; the desktop client cannot be registered dynamically.
+- **Redirect spelling:** the raw redirect must be the canonical `http://127.0.0.1[:port]/callback`; backslashes, whitespace, IPv4 shorthand (`127.1`, `0x7f.1`) and dot segments are refused.
+- **Scopes:** the desktop client may request only `sync` (anything else is `invalid_scope`), and `sync` is reserved to it: the MCP client cannot request it. The sync routes should authorize on `aud` and `client_id`, not on the scope claim.
+- **`/auth/userinfo`:** accepts MCP-resource tokens only. A sync-audience desktop token is refused there, so the sync audience stays resource-specific.
+- **Who may sign in:** the OAuth server issues desktop tokens to any family-list member. The gramps-owner restriction is enforced by the sync routes (sync-routes task), not here.
+- **Replay:** presenting an already-used refresh token revokes its family whichever `client_id` accompanies it.
+- **Stack switch:** the `SyncDesktopClient` parameter of `app-stack.yaml` (default `0`) sets `HFY_SYNC_DESKTOP_CLIENT` on the auth function. Set it to `1` in the same change set as the sync routes (AC6 RG-4).
 
 **Discovery.** The same RFC 8414 document is served at:
 
@@ -627,6 +644,7 @@ Defined on `AuthFunction` in [`infrastructure/cloudformation/app-stack.yaml`](..
 | `MCP_CORS_ORIGINS` | No | `McpCorsOrigins` | CORS allow list |
 | `ADMIN_LIST_KEY` | No | `AdminListKey` | Admin list key. The default is `config/admins.json`. |
 | `MCP_CLIENT_ID` | No | Not set | Overrides `mcp-harrisonfamily` |
+| `HFY_SYNC_DESKTOP_CLIENT` | No | Not set | `1` registers the `hfy-sync-desktop` client |
 | `EDGE_MANIFEST_PATH` | No | Not set | Overrides the manifest path |
 
 The allowlist bucket and key come from the manifest, not from the stack. The stack parameters `ConfigBucket`, `AllowlistKey` and `AdminListKey` scope the function's `s3:GetObject` permission, so they must name the same objects. The role also allows `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem` and `Query` on the table and its indexes, `secretsmanager:GetSecretValue` on the signing-key secret, and `AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminConfirmSignUp` and `AdminUpdateUserAttributes` on the user pool.

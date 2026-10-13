@@ -112,6 +112,7 @@ if ! same "$W/dev.js" "$SOURCE"; then
   fi
   CONFIG=$(jq -nc --arg c "$COMMENT" --arg r "$RUNTIME" '{Comment:$c,Runtime:$r}')
   DEV_ETAG=$(aws cloudfront update-function --name "$NAME" --if-match "$DEV_ETAG" --function-config "$CONFIG" --function-code "fileb://$SOURCE" --output json | jq -r .ETag)
+  # shellcheck disable=SC2015 # C is the failure path for either A or B being false
   [ -n "$DEV_ETAG" ] && [ "$DEV_ETAG" != null ] || { echo "update-function returned no ETag" >&2; exit 1; }
   aws cloudfront get-function --name "$NAME" --stage DEVELOPMENT "$W/dev.after.js" > /dev/null
   same "$W/dev.after.js" "$SOURCE" || { echo "DEVELOPMENT does not hold the repo code after update-function; LIVE untouched" >&2; exit 1; }

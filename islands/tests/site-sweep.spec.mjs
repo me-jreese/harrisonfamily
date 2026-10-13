@@ -100,7 +100,7 @@ test("home: /auth/session unreachable, the hero 'sign in' keeps the legacy /fami
 });
 
 test("/family-login/ shows family-voice copy while it waits (authV2 off, so it stays)", async ({ page }) => {
-  await hermetic(page, { session: "unreachable", flags: { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false } });
+  await hermetic(page, { session: "unreachable", flags: { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false } });
   await page.goto("/family-login/", { waitUntil: "domcontentloaded" });
   const card = page.locator("main .card-body");
   await expect(card).toContainText("sign in with your Google account to see the family pages.");

@@ -5,7 +5,7 @@ import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet, jwtVerify, deco
 import { buildResolver } from "@io-kit/auth/edge/deploy";
 import { createIdentityService, memoryLinkStore, memoryRefreshStore } from "@io-kit/auth/server";
 import { createAuthEdge, loadManifest } from "../src/edge.js";
-import { createOAuthServer, displayNameOf, memoryOAuthStore } from "../src/oauth.js";
+import { createOAuthServer, desktopClient, displayNameOf, loopbackMatches, memoryOAuthStore } from "../src/oauth.js";
 import { createMembership } from "../src/membership.js";
 
 const raw = JSON.parse(readFileSync(new URL("../edge.manifest.json", import.meta.url), "utf8"));
@@ -519,5 +519,202 @@ describe("auth_time survives POST /auth/refresh (HFY-R68, @io-kit/auth 2.1.1)", 
       identityOnFakeClock = false;
       clock = savedClock;
     }
+  });
+});
+
+// ---- HFY-TSK-120: multi-client server + hfy-sync-desktop (loopback, any port) ----
+describe("multi-client OAuth server: hfy-sync-desktop (HFY-TSK-120)", () => {
+  const D = "hfy-sync-desktop";
+  const SYNC = "https://harrisonfamily.us/api/sync";
+  const LB = (port = "") => `http://127.0.0.1${port ? `:${port}` : ""}/callback`;
+  let t0, store2, srv, key;
+  const mk = (extra = {}) => createOAuthServer({
+    issuer: ISS, store: store2, signer: { privateKey: key, kid: "k" }, groupsFor: async (sub) => members[sub] ?? null, now: () => clock,
+    clients: [{ id: "mcp-harrisonfamily", redirectUris: [CB], resources: [RES] }, desktopClient()], ...extra,
+  });
+  const dev = (q) => srv.authorize({ response_type: "code", client_id: D, state: "s", ...q }, async () => ({ sub: "I0111", authTime: Math.floor(clock / 1000), email: "ana@example.com", amr: ["fed"] }));
+  const dtok = (o) => srv.token(o).then((r) => ({ r, body: JSON.parse(r.body) }));
+  const codeFor = async (client, redirect_uri, p) => new URL((await srv.authorize({ response_type: "code", client_id: client, redirect_uri, state: "s", code_challenge: p.challenge, code_challenge_method: "S256" }, async () => ({ sub: "I0111", authTime: Math.floor(clock / 1000) }))).headers.location).searchParams.get("code");
+
+  beforeAll(async () => { key = (await generateKeyPair("RS256", { extractable: true })).privateKey; });
+  const fresh = () => { t0 = Date.now(); clock = t0; store2 = memoryOAuthStore(); srv = mk(); };
+
+  it("accepts an ephemeral port on 127.0.0.1/callback; the code redirects back to that exact URI", async () => {
+    fresh();
+    const p = pkce();
+    const r = await dev({ redirect_uri: LB(53682), code_challenge: p.challenge, code_challenge_method: "S256" });
+    expect(r.statusCode).toBe(302);
+    const u = new URL(r.headers.location);
+    expect(`${u.origin}${u.pathname}`).toBe("http://127.0.0.1:53682/callback");
+    expect(u.searchParams.get("code")).toBeTruthy();
+    for (const port of ["", "80", "1", "65535", "49152"]) expect((await dev({ redirect_uri: LB(port), code_challenge: p.challenge, code_challenge_method: "S256" })).statusCode).toBe(302);
+  });
+  it("refuses another host, path, scheme, port 0, userinfo, query or fragment (never redirecting)", async () => {
+    fresh();
+    const p = { code_challenge: pkce().challenge, code_challenge_method: "S256" };
+    for (const bad of ["http://localhost:5000/callback", "http://[::1]:5000/callback", "http://127.0.0.2:5000/callback", "http://127.0.0.1:5000/other", "http://127.0.0.1:5000/callback/x", "http://127.0.0.1:5000/",
+      "https://127.0.0.1:5000/callback", "http://evil.example/callback", "http://127.0.0.1.evil.example:5000/callback", "http://127.0.0.1:0/callback", "http://u@127.0.0.1:5000/callback",
+      "http://127.0.0.1:5000/callback?x=1", "http://127.0.0.1:5000/callback#f", "https://claude.ai/api/mcp/auth_callback"]) {
+      const r = await dev({ redirect_uri: bad, ...p });
+      expect(r.statusCode, bad).toBe(400);
+      expect(r.headers.location).toBeUndefined();
+    }
+  });
+  it("the MCP client's exact-match rule is unchanged (no port flexibility)", async () => {
+    fresh();
+    const p = pkce();
+    const ask = (uri) => srv.authorize({ response_type: "code", client_id: "mcp-harrisonfamily", redirect_uri: uri, code_challenge: p.challenge, code_challenge_method: "S256" }, async () => ({ sub: "I0111", authTime: Math.floor(clock / 1000) }));
+    expect((await ask(LB(5000))).statusCode).toBe(400);
+    expect((await ask("https://claude.ai:8443/api/mcp/auth_callback")).statusCode).toBe(400);
+    expect((await ask(CB)).statusCode).toBe(302);
+  });
+  it("desktop access token: aud = the sync resource, client_id = hfy-sync-desktop, 1h; the default resource is the sync API; other resources are invalid_target", async () => {
+    fresh();
+    const p = pkce(); const uri = LB(40123);
+    const code = await codeFor(D, uri, p);
+    const { r, body } = await dtok({ grant_type: "authorization_code", code, redirect_uri: uri, client_id: D, code_verifier: p.verifier });
+    expect(r.statusCode).toBe(200);
+    const { payload } = await jwtVerify(body.access_token, createLocalJWKSet({ keys: [{ ...(await exportJWK((await (async () => { const { createPublicKey } = await import("node:crypto"); return createPublicKey(key); })()))), kid: "k", alg: "RS256" }] }), { issuer: ISS, audience: SYNC, currentDate: new Date(clock) });
+    expect(payload).toMatchObject({ aud: SYNC, client_id: D, sub: "I0111", token_use: "access", scope: "sync" });
+    expect(payload.exp - payload.iat).toBe(3600);
+    const bad = await dev({ redirect_uri: uri, resource: RES, code_challenge: p.challenge, code_challenge_method: "S256" });
+    expect(new URL(bad.headers.location).searchParams.get("error")).toBe("invalid_target");
+  });
+  it("token redemption needs the same redirect_uri string the code was issued for", async () => {
+    fresh();
+    const p = pkce();
+    const code = await codeFor(D, LB(40123), p);
+    expect((await dtok({ grant_type: "authorization_code", code, redirect_uri: LB(40124), client_id: D, code_verifier: p.verifier })).body.error).toBe("invalid_grant");
+  });
+  it("a desktop code cannot be redeemed by the MCP client, and an MCP code not by the desktop client", async () => {
+    fresh();
+    const p = pkce();
+    const dcode = await codeFor(D, LB(40123), p);
+    expect((await dtok({ grant_type: "authorization_code", code: dcode, redirect_uri: LB(40123), client_id: "mcp-harrisonfamily", code_verifier: p.verifier })).body.error).toBe("invalid_grant");
+    expect((await dtok({ grant_type: "authorization_code", code: dcode, redirect_uri: LB(40123), client_id: D, code_verifier: p.verifier })).body.error).toBe("invalid_grant"); // burned
+    const mcode = await codeFor("mcp-harrisonfamily", CB, p);
+    expect((await dtok({ grant_type: "authorization_code", code: mcode, redirect_uri: CB, client_id: D, code_verifier: p.verifier })).body.error).toBe("invalid_grant");
+    const mcode2 = await codeFor("mcp-harrisonfamily", CB, p);
+    expect((await dtok({ grant_type: "authorization_code", code: mcode2, redirect_uri: CB, client_id: "mcp-harrisonfamily", code_verifier: p.verifier })).r.statusCode).toBe(200);
+  });
+  it("refresh tokens are bound to their client: the other client is refused without burning the token; an unknown client is invalid_client", async () => {
+    fresh();
+    const p = pkce();
+    const first = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(40123), p), redirect_uri: LB(40123), client_id: D, code_verifier: p.verifier })).body;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: "mcp-harrisonfamily" })).body.error).toBe("invalid_grant");
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: "nope" })).r.statusCode).toBe(401);
+    const ok = await dtok({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: D });
+    expect(ok.r.statusCode).toBe(200);
+    expect(decodeJwt(ok.body.access_token)).toMatchObject({ aud: SYNC, client_id: D });
+    // and the reverse: an MCP refresh token is refused to the desktop client
+    const m = (await dtok({ grant_type: "authorization_code", code: await codeFor("mcp-harrisonfamily", CB, p), redirect_uri: CB, client_id: "mcp-harrisonfamily", code_verifier: p.verifier })).body;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: m.refresh_token, client_id: D })).body.error).toBe("invalid_grant");
+    const mOk = await dtok({ grant_type: "refresh_token", refresh_token: m.refresh_token, client_id: "mcp-harrisonfamily" });
+    expect(decodeJwt(mOk.body.access_token)).toMatchObject({ aud: RES, client_id: "mcp-harrisonfamily" });
+  });
+  it("a refresh without client_id keeps the token's own client; revoke by the wrong client is a no-op", async () => {
+    fresh();
+    const p = pkce();
+    const first = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(40123), p), redirect_uri: LB(40123), client_id: D, code_verifier: p.verifier })).body;
+    await srv.revoke({ token: first.refresh_token, client_id: "mcp-harrisonfamily" });
+    const r = await dtok({ grant_type: "refresh_token", refresh_token: first.refresh_token });
+    expect(r.r.statusCode).toBe(200);
+    expect(decodeJwt(r.body.access_token).client_id).toBe(D);
+    await srv.revoke({ token: r.body.refresh_token, client_id: D });
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: r.body.refresh_token })).body.error).toBe("invalid_grant");
+  });
+  it("HFY-R64: refresh never advances auth_time for the desktop client (iat advances, auth_time stays the sign-in time)", async () => {
+    fresh();
+    const p = pkce();
+    const signedAt = Math.floor(clock / 1000);
+    const first = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(40123), p), redirect_uri: LB(40123), client_id: D, code_verifier: p.verifier })).body;
+    expect(decodeJwt(first.access_token).auth_time).toBe(signedAt);
+    clock += 10 * 86400 * 1000;
+    const second = (await dtok({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: D })).body;
+    const a = decodeJwt(second.access_token);
+    expect(a.auth_time).toBe(signedAt);
+    expect(a.iat).toBe(Math.floor(clock / 1000));
+    clock += 10 * 86400 * 1000;
+    expect(decodeJwt((await dtok({ grant_type: "refresh_token", refresh_token: second.refresh_token, client_id: D })).body.access_token).auth_time).toBe(signedAt);
+  });
+  it("desktop refresh tokens expire after 30 days without use (injected clock); each use renews the window", async () => {
+    fresh();
+    const p = pkce();
+    const day = 86400 * 1000;
+    const first = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(40123), p), redirect_uri: LB(40123), client_id: D, code_verifier: p.verifier })).body;
+    clock = t0 + 30 * day + 1000;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: D })).body.error).toBe("invalid_grant");
+    fresh();
+    const a = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(40123), p), redirect_uri: LB(40123), client_id: D, code_verifier: p.verifier })).body;
+    clock = t0 + 29 * day;
+    const b = await dtok({ grant_type: "refresh_token", refresh_token: a.refresh_token, client_id: D });
+    expect(b.r.statusCode).toBe(200);
+    clock = t0 + 58 * day; // 29 days after the last use
+    const c = await dtok({ grant_type: "refresh_token", refresh_token: b.body.refresh_token, client_id: D });
+    expect(c.r.statusCode).toBe(200);
+    clock = t0 + 58 * day + 30 * day + 1000;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: c.body.refresh_token, client_id: D })).body.error).toBe("invalid_grant");
+  });
+  it("the stored refresh record's lifetime is the client's (30 days), not a global constant", async () => {
+    fresh();
+    srv = mk({ clients: [{ id: "mcp-harrisonfamily", redirectUris: [CB], resources: [RES], refreshTtlS: 3600 }, desktopClient()] });
+    const p = pkce();
+    const m = (await dtok({ grant_type: "authorization_code", code: await codeFor("mcp-harrisonfamily", CB, p), redirect_uri: CB, client_id: "mcp-harrisonfamily", code_verifier: p.verifier })).body;
+    clock = t0 + 2 * 3600 * 1000;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: m.refresh_token })).body.error).toBe("invalid_grant");
+  });
+  it("dynamic registration still serves only the MCP client; the desktop client is not registrable and its loopback URI is not on the MCP list", async () => {
+    fresh();
+    const ok = srv.register({ redirect_uris: [CB] });
+    expect(JSON.parse(ok.body)).toMatchObject({ client_id: "mcp-harrisonfamily", scope: "mcp" });
+    expect(JSON.parse(srv.register({ redirect_uris: [LB(5000)] }).body).error).toBe("invalid_redirect_uri");
+    expect(JSON.parse(srv.register({ redirect_uris: ["http://127.0.0.1/callback"] }).body).error).toBe("invalid_redirect_uri");
+  });
+  it("construction rejects an empty or duplicate client set", () => {
+    expect(() => createOAuthServer({ issuer: ISS, clients: [], store: memoryOAuthStore() })).toThrow();
+    expect(() => createOAuthServer({ issuer: ISS, clients: [desktopClient(), desktopClient()], store: memoryOAuthStore() })).toThrow(/duplicate/);
+    expect(() => createOAuthServer({ issuer: ISS, clients: [{ id: "x", redirectUris: [], resources: ["r"] }], store: memoryOAuthStore() })).toThrow();
+  });
+  it("loopbackMatches: unit cases", () => {
+    expect(loopbackMatches(LB(), LB(1234))).toBe(true);
+    expect(loopbackMatches(LB(), "http://127.0.0.1:99999/callback")).toBe(false);
+    expect(loopbackMatches(LB(), "not a url")).toBe(false);
+    for (const bad of ["http:\\\\127.0.0.1:5000\\callback", "http://127.0.0.1:5000/call\tback", "http://127.0.0.1:5000/callback\n", "http://127.1:5000/callback", "http://0x7f.1:5000/callback", "http://2130706433:5000/callback", "http://127.0.0.1:5000/../callback", "http://127.0.0.1:/callback", "http://127.0.0.1:0/callback"]) {
+      expect(loopbackMatches(LB(), bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+  it("scopes: the desktop client may request only sync; the MCP client cannot take the reserved sync scope but keeps free-form scopes", async () => {
+    fresh();
+    const p = pkce();
+    const bad = await dev({ redirect_uri: LB(5000), code_challenge: p.challenge, code_challenge_method: "S256", scope: "mcp" });
+    expect(new URL(bad.headers.location).searchParams.get("error")).toBe("invalid_scope");
+    const ok = await dev({ redirect_uri: LB(5000), code_challenge: p.challenge, code_challenge_method: "S256", scope: "sync" });
+    expect(new URL(ok.headers.location).searchParams.get("code")).toBeTruthy();
+    const mcp = (scope) => srv.authorize({ response_type: "code", client_id: "mcp-harrisonfamily", redirect_uri: CB, code_challenge: p.challenge, code_challenge_method: "S256", scope }, async () => ({ sub: "I0111", authTime: Math.floor(clock / 1000) }));
+    expect(new URL((await mcp("sync")).headers.location).searchParams.get("error")).toBe("invalid_scope");
+    expect(new URL((await mcp("mcp:tools extra")).headers.location).searchParams.get("code")).toBeTruthy();
+    expect(JSON.parse(srv.metadata().body).scopes_supported).toEqual(expect.arrayContaining(["mcp", "sync"]));
+  });
+  it("replaying a used refresh token revokes the family even when presented with the wrong client_id (a replay is a compromise signal)", async () => {
+    fresh();
+    const p = pkce();
+    const a = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(5000), p), redirect_uri: LB(5000), client_id: D, code_verifier: p.verifier })).body;
+    const b = (await dtok({ grant_type: "refresh_token", refresh_token: a.refresh_token, client_id: D })).body;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: a.refresh_token, client_id: "mcp-harrisonfamily" })).body.error).toBe("invalid_grant");
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: b.refresh_token, client_id: D })).body.error).toBe("invalid_grant");
+  });
+  it("/userinfo accepts MCP-audience tokens but not a sync-audience desktop token", async () => {
+    fresh();
+    const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
+    const { createLocalJWKSet, exportJWK } = await import("jose");
+    const jwk = { ...(await exportJWK(publicKey)), kid: "k", alg: "RS256", use: "sig" };
+    srv = mk({ signer: { privateKey, kid: "k" }, jwks: createLocalJWKSet({ keys: [jwk] }) });
+    const p = pkce();
+    const sync = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(5000), p), redirect_uri: LB(5000), client_id: D, code_verifier: p.verifier })).body;
+    const q = pkce();
+    const mcpTok = (await dtok({ grant_type: "authorization_code", code: await codeFor("mcp-harrisonfamily", CB, q), redirect_uri: CB, client_id: "mcp-harrisonfamily", code_verifier: q.verifier })).body;
+    const ui = (t) => srv.userinfo({ headers: { authorization: `Bearer ${t}` } });
+    expect((await ui(mcpTok.access_token)).statusCode).toBe(200);
+    expect((await ui(sync.access_token)).statusCode).toBe(401);
   });
 });

@@ -194,7 +194,7 @@ test("after the sign-in comes back to /private/, the member lands on the own pag
 });
 
 test("/private/ with authV2 off: the legacy sign-in hands the id over; no stored id goes to /family-login/ with next", async ({ page }) => {
-  const flags = { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false };
+  const flags = { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false };
   await hermetic(page, { session: "unreachable", flags });
   await page.goto("/private/", { waitUntil: "domcontentloaded" });
   await page.waitForURL((u) => u.pathname === "/family-login/" && u.searchParams.get("next") === "/private/");
