@@ -2,7 +2,7 @@
 
 The family graph builder (HFY-PLN-002, task `viz-graph-builder`). It turns `_class`-tagged Gramps JSON lines into `person/graph.json` (schema v1), the one static file the family-tree page reads. The design is in the plan's visualization domain, sections 5.1 to 5.3 and 17.
 
-This package is private. It has no runtime dependencies: `ajv` is a dev dependency, and the tests use it to cross-check the built-in schema validator. Node 22 or later.
+This package is private. Its one runtime dependency is `sharp` (Apache-2.0, exact pin, 0.35.x, Node 20.9 or later), used only to crop faces; it and its libvips binaries (LGPL) stay in `graph/node_modules` and never reach the site output. `ajv` is a dev dependency, and the tests use it to cross-check the built-in schema validator. Node 22 or later.
 
 ## Run it
 
@@ -22,6 +22,7 @@ node graph/bin/build-graph.mjs --verify <staging>/person/graph.json --verify-aga
 - `--out <staging>` writes `<staging>/person/graph.json`. Without it the run is a dry run: it projects and verifies, and writes nothing.
 - `--report <path>` writes the local report (warning codes with gramps ids, never values). The default is `<project>/workspace-local/graph-build-report.json`, outside the synced staging prefixes. `<project>` is the checkout's parent directory (the repository's convention: the checkout sits at `<project>/repo`); in a worktree or any other layout, set `HFY_PROJECT_DIR` to the project root or pass `--report`. When `--verify-against` ran, the report records `livingCheck: { compared, missing }`.
 - `--verify-against <staging>/person` compares each graph `living` flag with `person/<id>.json` `isLiving` (rule L). A person without a file is counted (stderr, and `livingCheck.missing` in the report) but not compared. If NO person in the graph has a matching file (an empty, wrong or unrelated directory), it fails with `INPUT_MISSING` (exit 2) rather than comparing nothing.
+- `--media <dir>` names the staged media to crop faces from, as `<handle>.<ext>` (`.json` excluded); the default is `<staging>/media`. Faces are written to `<staging>/media/faces/` only with `--out`. See [Face crops](#face-crops).
 - `--generated-at <iso>` pins `generatedAt`, for reproducible output. `--max-gzip-bytes <n>` lowers the size budget (default 150 KiB). `--quiet` silences the summary.
 - `--from-gramps-copy` takes the `sqlite.db` file or its directory. It refuses with `GRAMPS_OPEN` if `<dbdir>/lock` exists, so close Gramps or copy the tree first. `HFY_SQLITE3` names another `sqlite3` executable.
 
@@ -55,9 +56,21 @@ Where the build does something the design's section 5.2 table does not spell out
 - **Rule L has no carried-classification hook yet.** `isLiving()` in `src/project.mjs` is the single place `death_ref_index == -1` lives. If the privacy domain moves to a precomputed classification on the record, `isLiving()` is where the override goes, and `--verify-against` still catches drift.
 - **Schema version.** `--from-gramps-copy` reads `metadata.version` (plain digits, JSON text or a small-int pickle) in the same sqlite3 query and rejects anything but 21. The sqlite3 child is killed if the consumer stops early.
 
+## Face crops
+
+`src/faces.mjs` (`viz-face-crops`, the design's section 5.5, VIZ-D9) crops each person's face from `Person.media_list[0]`, Gramps' person image, unless that MediaRef or its Media is private.
+
+- **The crop rule (Gramps parity).**
+  1. The rect `[x1, y1, x2, y2]` is integer percent; its corners are ordered and clamped to 0..100.
+  2. It is converted to pixels by truncation on the stored pixels (`int(x * width / 100)`), with no EXIF auto-orient.
+  3. The box is expanded to a square around its centre and clamped to the image. A missing or `[0,0,0,0]` rect uses the centre square of the whole image.
+  4. The square is resized to 160x160 and encoded as WebP at quality 70; lower qualities are tried only if needed to stay within 8 KB. All metadata is stripped.
+- **Naming.** `faces/<gramps_id>-<sha8>.webp`, where `sha8` is the first 8 hex digits of `sha256(source bytes || JSON(rect))`. An unchanged input writes nothing. Faces are written before `graph.json`, and faces it no longer references are removed after it is written.
+- **No failure stops the build.** `MEDIA_MISSING`, `PLACEHOLDER_MEDIA` (a 0-byte file), `UNSUPPORTED_FORMAT` (any decode error, including HEIC with HEVC, which the prebuilt sharp cannot decode) and `ORIENTATION_NOT_BAKED` (an EXIF Orientation other than 1) give `face: null`. `RECT_INVALID` falls back to the centre square. The local report counts faces referenced, written and removed.
+
 ## Not here yet
 
-The generation index (`generation`, `generations`), face crops (`face`, `counts.faces`) and geocoding (`geo: "geonames"`) belong to later tasks (`viz-generation-index`, `viz-face-crops`, `viz-geocode-offline`). Their fields are in schema v1 and are written as `null`, `0` or an empty list until then. `components` is computed here.
+The generation index (`generation`, `generations`) and geocoding (`geo: "geonames"`) belong to later tasks (`viz-generation-index`, `viz-geocode-offline`). Their fields are in schema v1 and are written as `null`, `false` or an empty list until then. `components` is computed here.
 
 ## Test
 

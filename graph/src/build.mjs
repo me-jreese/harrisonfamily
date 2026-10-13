@@ -87,7 +87,7 @@ export function buildFamilyGraph(objects, opts = {}) {
   const now = resolveNow(opts.now);
   const generatedAt = opts.generatedAt ?? isoSeconds(now);
   const warnings = new Warnings();
-  const { people, unions, places, events } = projectRecords(objects, {
+  const { people, unions, places, events, faceJobs } = projectRecords(objects, {
     maxYear: now.getUTCFullYear(),
     warnings,
     keepLivingResidence: opts.keepLivingResidence === true,
@@ -106,9 +106,7 @@ export function buildFamilyGraph(objects, opts = {}) {
     generations: [], // filled by the generation index (viz-generation-index)
     attribution: { geonames: false },
   };
-  // The snapshot id is a digest of the projected content, so it is the same for any input order and
-  // never touches the unredacted input.
-  const digest = createHash('sha256').update(JSON.stringify(canonicalize(body))).digest('hex').slice(0, 8);
+  const digest = snapshotDigest(body);
   const graph = {
     schemaVersion: SCHEMA_VERSION,
     minor: MINOR,
@@ -126,5 +124,25 @@ export function buildFamilyGraph(objects, opts = {}) {
     ...body,
   };
   const report = { builder: BUILDER, generatedAt, counts: graph.counts, warnings: warnings.toList() };
-  return { graph, faceJobs: [], report };
+  return { graph, faceJobs, report };
+}
+
+const BODY_KEYS = ['people', 'unions', 'edges', 'places', 'events', 'components', 'generations', 'attribution'];
+
+// The snapshot id is a digest of the projected content, so it is the same for any input order and never touches the
+// unredacted input.
+function snapshotDigest(body) {
+  const picked = Object.fromEntries(BODY_KEYS.map((k) => [k, body[k]]));
+  return createHash('sha256').update(JSON.stringify(canonicalize(picked))).digest('hex').slice(0, 8);
+}
+
+/**
+ * Sets each person's `face` from the face crops (faces.mjs: gramps id -> "faces/<id>-<sha8>.webp" or null), `counts.faces`,
+ * and the snapshot digest, which covers the faces too. Returns the same graph.
+ */
+export function applyFaces(graph, faces) {
+  for (const p of graph.people) p.face = faces.get(p.id) ?? null;
+  graph.counts.faces = graph.people.filter((p) => p.face !== null).length;
+  graph.source.snapshot = `sha256:${snapshotDigest(graph)}`;
+  return graph;
 }

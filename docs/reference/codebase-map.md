@@ -324,6 +324,7 @@ Paths:
 - [`graph/bin/build-graph.mjs`](../../graph/bin/build-graph.mjs): the command line. [`graph/src/cli.mjs`](../../graph/src/cli.mjs) holds the argument handling, the exit codes and `--verify` / `--verify-against`.
 - [`graph/src/source.mjs`](../../graph/src/source.mjs): the record sources: a file of JSON lines, stdin, or `sqlite3 -readonly` on a copy of the Gramps tree.
 - [`graph/src/project.mjs`](../../graph/src/project.mjs): the allowlist projection. [`graph/src/build.mjs`](../../graph/src/build.mjs) assembles the graph, [`graph/src/verify.mjs`](../../graph/src/verify.mjs) is `verify()`, and [`graph/src/write.mjs`](../../graph/src/write.mjs) is the atomic writer.
+- [`graph/src/faces.mjs`](../../graph/src/faces.mjs): face crops from Gramps region rects (sharp, a build-time dependency of `graph/` only), written to `<staging>/media/faces/`.
 - [`graph/schema/family-graph.v1.schema.json`](../../graph/schema/family-graph.v1.schema.json): the schema of `person/graph.json`.
 - [`graph/test/`](../../graph/test/): the `node:test` suites and their synthetic fixtures. See [Tests](#tests).
 
