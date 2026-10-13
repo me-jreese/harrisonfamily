@@ -1,6 +1,7 @@
 // Fixed-window request counters in the hfy-app table (HFY-R58 ruling 5): one item per (key, window), removed by the table TTL.
 // Used to rate-limit POST /auth/password/forgot, the only anonymous route that makes Cognito send an email.
 import { createHash } from "node:crypto";
+import { canonicalIp, isCloudflareIp } from "./cloudflare-ranges.js";
 
 /** Default forgot-password limits: per email+IP (the ruled key) and per IP across emails (stops one client cycling addresses). */
 export const FORGOT_LIMITS = Object.freeze([
@@ -59,15 +60,23 @@ const headersOf = (event) => {
 };
 
 /**
- * The viewer's IP behind CloudFront. Preference: CloudFront-Viewer-Address (set by CloudFront, never by the viewer), then the
- * right-most X-Forwarded-For entry CloudFront appended (entries to its left are viewer-supplied), then the immediate caller.
+ * The viewer's IP behind Cloudflare and CloudFront. CloudFront-Viewer-Address is set by CloudFront, never by the viewer; when its
+ * IP is inside Cloudflare's committed ranges, the real client is CF-Connecting-IP (HFY-TSK-135). A CF-Connecting-IP from any other
+ * viewer is client-supplied and ignored. Without the viewer address: the right-most X-Forwarded-For entry CloudFront appended
+ * (entries to its left are viewer-supplied), then the immediate caller.
  */
 export function clientIp(event) {
   const h = headersOf(event);
   const viewer = h["cloudfront-viewer-address"]?.trim();
   if (viewer) {
     const i = viewer.lastIndexOf(":");
-    return (i > 0 ? viewer.slice(0, i) : viewer).replace(/^\[|\]$/g, "");
+    const vip = (i > 0 ? viewer.slice(0, i) : viewer).replace(/^\[|\]$/g, "");
+    if (isCloudflareIp(vip)) {
+      const cf = h["cf-connecting-ip"]?.trim();
+      const canon = cf ? canonicalIp(cf) : null;
+      if (canon) return canon; // one spelling per client, so equivalent forms share a bucket
+    }
+    return vip;
   }
   const src = String(event?.requestContext?.http?.sourceIp ?? event?.requestContext?.identity?.sourceIp ?? "");
   const xff = (h["x-forwarded-for"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
