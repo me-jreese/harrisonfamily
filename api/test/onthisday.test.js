@@ -121,7 +121,7 @@ function fixture() {
   events.push(ev(`e${h += 1}`, TYPE.MARRIAGE, date(1976, 6, 15), [{ grampsId: "ITEST3", role: "Groom" }, { grampsId: "ITEST4", role: "Bride" }]));
   events.push(ev(`e${h += 1}`, TYPE.GRADUATION, date(2006, 6, 15), ["ITEST5"], { description: "Testville High" }));
   // week tier neighbours of 08-10 (nothing on the day itself)
-  events.push(ev(`e${h += 1}`, TYPE.MARRIAGE, date(1980, 8, 12), [{ grampsId: "ITEST6", role: "Groom" }, { grampsId: "ITEST7", role: "Bride" }]));
+  events.push(ev(`e${h += 1}`, TYPE.MARRIAGE, date(1980, 8, 8), [{ grampsId: "ITEST6", role: "Groom" }, { grampsId: "ITEST7", role: "Bride" }]));
   // year-tier only items
   for (let i = 0; i < 12; i += 1) {
     events.push(ev(`y${i}`, i % 3 === 0 ? TYPE.DEATH : TYPE.GRADUATION, date(2026 - 10 - 5 * (i % 6), 1 + (i % 4), 1 + i), [`ITEST${8 + (i % 8)}`]));
@@ -151,7 +151,7 @@ describe("selectOnThisDay", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("falls to the week tier (within 3 days, across a month boundary) when the day is empty", () => {
+  it("falls to the week tier (within the last 3 days) when the day is empty", () => {
     const r = selectOnThisDay(INDEX, { date: "2026-08-10" });
     expect(r.tier).toBe("week");
     expect(r.items.map((i) => i.id)).toEqual(["evt:e5"]);
@@ -160,9 +160,22 @@ describe("selectOnThisDay", () => {
   });
 
   it("measures the week across a year boundary", () => {
-    const idx = buildIndex({ persons: PERSONS, events: [ev("ny", TYPE.GRADUATION, date(2000, 1, 1), ["ITEST1"])] });
-    expect(selectOnThisDay(idx, { date: "2026-12-30" }).tier).toBe("week");
-    expect(selectOnThisDay(idx, { date: "2026-12-27" }).tier).not.toBe("week");
+    const idx = buildIndex({ persons: PERSONS, events: [ev("ny", TYPE.DEATH, date(2000, 12, 30), ["ITEST1"])] });
+    const r = selectOnThisDay(idx, { date: "2026-01-01" });
+    expect(r.tier).toBe("week");
+    // The last anniversary was 2025-12-30, so 25 years, not 26.
+    expect(r.items[0].n).toBe(25);
+    expect(renderItem(r.items[0])).toContain("25 years ago this week");
+    expect(selectOnThisDay(idx, { date: "2026-01-04" }).tier).not.toBe("week");
+  });
+
+  it("never shows a week item whose anniversary is still ahead", () => {
+    const idx = buildIndex({ persons: PERSONS, events: [ev("nz", TYPE.DEATH, date(2000, 1, 2), ["ITEST1"])] });
+    expect(selectOnThisDay(idx, { date: "2025-12-31" }).tier).not.toBe("week");
+    const r = selectOnThisDay(idx, { date: "2026-01-04" });
+    expect(r.tier).toBe("week");
+    expect(r.items[0].n).toBe(26);
+    expect(renderItem(r.items[0])).toBe("remembering Test Person A. 26 years ago this week.");
   });
 
   it("applies tier precedence day, then week, then year", () => {
@@ -248,7 +261,7 @@ describe("selectOnThisDay", () => {
     expect(selectOnThisDay(empty, { date: "2026-11-11", posts: [post] })).toMatchObject({ tier: "archive", items: [], posts: [post] });
     expect(selectOnThisDay(empty, { date: "2026-11-11", posts: [post], hidden: ["01POST"] }).posts).toEqual([]);
     expect(selectOnThisDay(empty, { date: "2026-11-11" })).toMatchObject({ tier: "prompt", prompt: { kind: "generic" } });
-    const undated = buildIndex({ persons: PERSONS, events: [ev("m", TYPE.MARRIAGE, date(1990, null, null), [{ grampsId: "ITEST1", role: "Groom" }, { grampsId: "ITEST2", role: "Bride" }])] });
+    const undated = buildIndex({ persons: PERSONS, events: [ev("m", TYPE.MARRIAGE, date(1991, null, null), [{ grampsId: "ITEST1", role: "Groom" }, { grampsId: "ITEST2", role: "Bride" }])] });
     const r = selectOnThisDay(undated, { date: "2026-11-11" });
     expect(r.prompt).toEqual({ kind: "add_day", itemId: "evt:m", people: [{ grampsId: "ITEST2", name: "Test Person B" }, { grampsId: "ITEST1", name: "Test Person A" }] });
   });
@@ -264,5 +277,75 @@ describe("selectOnThisDay", () => {
     expect(() => selectOnThisDay(INDEX, { date: "2026-02-30" })).toThrow(TypeError);
     expect(() => selectOnThisDay(INDEX, { date: "yesterday" })).toThrow(TypeError);
     for (const d of ["2026-06-15", "2026-08-10", "2026-11-11"]) for (const it of selectOnThisDay(INDEX, { date: d }).items) expect(renderItem(it)).toEqual(expect.any(String));
+  });
+});
+
+describe("hardening", () => {
+  const one = (extra, personExtra = {}) => buildIndex({
+    persons: [person(1, personExtra), ...PERSONS.slice(1)],
+    events: [ev("x1", TYPE.DEATH, date(1990, 5, 5), ["ITEST1"], extra)],
+  }).year.length;
+
+  it("fails closed on private: only an explicit false is public", () => {
+    expect(one({})).toBe(1);
+    for (const v of ["true", "false", 1, 0, null, undefined]) expect(one({ private: v })).toBe(0);
+    expect(one({}, { private: "true" })).toBe(0);
+    expect(one({}, { private: 1 })).toBe(0);
+    expect(one({}, { private: undefined })).toBe(0);
+  });
+
+  it("keeps only real calendar month-day pairs", () => {
+    const idx = buildIndex({ persons: PERSONS, events: [
+      ev("f1", TYPE.DEATH, date(1990, 2, 31), ["ITEST1"]),
+      ev("f2", TYPE.DEATH, date(1992, 2, 29), ["ITEST2"]),
+      ev("f3", TYPE.DEATH, date(1990, 4, 31), ["ITEST3"]),
+    ] });
+    const byId = Object.fromEntries(idx.year.map((i) => [i.id, i]));
+    expect(byId["evt:f1"]).toMatchObject({ month: 2 });
+    expect(byId["evt:f1"]).not.toHaveProperty("day");
+    expect(byId["evt:f2"]).toMatchObject({ month: 2, day: 29 });
+    expect(byId["evt:f3"]).not.toHaveProperty("day");
+    expect(Object.keys(idx.day)).toEqual(["02-29"]);
+  });
+
+  it("keeps the earliest birth year for a person with two births, in any handle order", () => {
+    for (const hs of [["a", "b"], ["b", "a"]]) {
+      const idx = buildIndex({ persons: PERSONS, events: [ev(hs[0], TYPE.BIRTH, date(1950, null, null), ["ITEST1"]), ev(hs[1], TYPE.BIRTH, date(1940, null, null), ["ITEST1"])] });
+      expect(idx.year.map((i) => i.year)).toEqual([1940]);
+    }
+  });
+
+  it("drops a detail with a contact pattern or a full date, keeps a plain one", () => {
+    const detail = (d) => buildIndex({ persons: PERSONS, events: [ev("g1", TYPE.GRADUATION, date(2000, 5, 5), ["ITEST1"], { description: d })] }).year[0].detail;
+    expect(detail("Testville High")).toBe("Testville High");
+    for (const bad of ["call 555-123-4567", "me@example.test", "https://example.test/x", "born 1980-02-03", "on 2/3/1980", "March 3rd", "3 March"]) expect(detail(bad)).toBeUndefined();
+  });
+
+  it("keeps a living person's residence out of the index", () => {
+    const idx = buildIndex({ persons: [person(1, { lifeState: "living" }), person(2)], events: [
+      ev("r1", TYPE.RESIDENCE, date(2000, 5, 5), ["ITEST1"], { place: "Testville" }),
+      ev("r2", TYPE.RESIDENCE, date(2000, 5, 5), ["ITEST2"], { place: "Testville" }),
+    ] });
+    expect(idx.year.map((i) => i.id)).toEqual(["evt:r2"]);
+  });
+
+  it("bounds and types free text in the served item", () => {
+    const bad = { schema: "hfy.onthisday.v1", sourceVersion: "v", day: { "05-05": [
+      { id: "evt:z", kind: "death", tone: "remember", year: 2000, month: 5, day: 5, place: "x".repeat(500), people: [{ grampsId: "ITEST1", name: "N".repeat(500), lifeState: "<b>" }] },
+      { id: "evt:y", kind: "death", tone: "remember", year: 2000, month: 5, day: 5, people: [{ grampsId: "ITEST2", name: { a: 1 } }] },
+    ] }, month: {}, year: [] };
+    const r = selectOnThisDay(bad, { date: "2026-05-05" });
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0].people[0].name.length).toBe(120);
+    expect(r.items[0].people[0].lifeState).toBe("unknown");
+    expect(r.items[0].place.length).toBe(120);
+  });
+
+  it("offers the add-the-day prompt only for year-eligible marriages", () => {
+    const m = (h, y, a, b) => ev(h, TYPE.MARRIAGE, date(y, null, null), [{ grampsId: a, role: "Groom" }, { grampsId: b, role: "Bride" }]);
+    const young = buildIndex({ persons: PERSONS, events: [m("m1", 2024, "ITEST1", "ITEST2")] });
+    expect(selectOnThisDay(young, { date: "2026-11-11" }).prompt).toEqual({ kind: "generic" });
+    const ok = buildIndex({ persons: PERSONS, events: [m("m2", 2001, "ITEST1", "ITEST2")] });
+    expect(selectOnThisDay(ok, { date: "2026-11-11" }).prompt).toMatchObject({ kind: "add_day", itemId: "evt:m2" });
   });
 });

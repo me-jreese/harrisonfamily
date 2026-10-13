@@ -40,12 +40,19 @@ const shuffled = (arr, rand) => {
   return out;
 };
 
-/** Absolute day distance between the item's month-day and today's, across a year boundary. */
-function dayDistance(item, today) {
-  let best = Infinity;
-  for (const dy of [-1, 0, 1]) {
-    const t = Date.UTC(today.y + dy, item.month - 1, item.day);
-    best = Math.min(best, Math.abs(t - Date.UTC(today.y, today.mo - 1, today.d)) / DAY_MS);
+/**
+ * The most recent occurrence of the item's month-day on or before today: `{ dist, year }` (dist in whole days, year of that
+ * occurrence), or null. Only past days are considered, so the week wording ("n years ago this week") is always true and the
+ * count n is taken from the anniversary year, not the calendar-year difference.
+ */
+function lastOccurrence(item, today) {
+  const now = Date.UTC(today.y, today.mo - 1, today.d);
+  let best = null;
+  for (const dy of [-1, 0]) {
+    const t = new Date(Date.UTC(today.y + dy, item.month - 1, item.day));
+    if (t.getUTCMonth() !== item.month - 1) continue; // Feb 29 in a non-leap year has no occurrence
+    const dist = (now - t.getTime()) / DAY_MS;
+    if (dist >= 0 && (!best || dist < best.dist)) best = { dist, year: today.y + dy };
   }
   return best;
 }
@@ -54,10 +61,17 @@ const yearRank = (it) => (it.n % 25 === 0 ? 0 : it.n % 10 === 0 ? 1 : it.n % 5 =
 const yearEligible = (it) => it.n >= 10 && (it.kind === "birth" ? it.n % 10 === 0 || it.n === 25 || it.n === 75 : it.n % 5 === 0);
 
 /** An index item as the served shape, or null when this module must not show it. */
-function shape(raw, when, today, hiddenSet) {
+const LIFE_STATES = new Set(["living", "deceased", "unknown"]);
+const cap = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+const MAX_NAME = 120;
+const MAX_PLACE = 120;
+const MAX_DETAIL = 200;
+
+/** `annivYear` is the year of the anniversary being shown (today's year for the day tier). The served strings are text only: the island must render them as text nodes, never HTML. */
+function shape(raw, when, today, hiddenSet, annivYear = today.y) {
   if (!raw || typeof raw !== "object" || hiddenSet.has(raw.id)) return null;
   if (!KINDS.has(raw.kind) || !Number.isInteger(raw.year) || !Array.isArray(raw.people) || !raw.people.length) return null;
-  const n = today.y - raw.year;
+  const n = annivYear - raw.year;
   if (n < 1) return null;
   const birth = raw.kind === "birth";
   let tone = TONES.has(raw.tone) ? raw.tone : "neutral";
@@ -65,9 +79,10 @@ function shape(raw, when, today, hiddenSet) {
   if (birth && !(tone === "celebrate" && raw.people[0]?.lifeState === "living" && n <= 100)) tone = "neutral";
   if (!birth && raw.kind !== "death" && raw.kind !== "burial" && tone === "remember") tone = "neutral";
   if ((raw.kind === "death" || raw.kind === "burial")) tone = "remember";
-  const item = { id: raw.id, kind: raw.kind, tone, when, n, year: raw.year, people: raw.people.map((p) => ({ grampsId: p.grampsId, name: p.name, lifeState: p.lifeState })) };
-  if (raw.place) item.place = raw.place;
-  if (raw.detail) item.detail = raw.detail;
+  if (typeof raw.id !== "string" || raw.people.some((p) => !p || typeof p.grampsId !== "string" || !cap(p.name, MAX_NAME))) return null;
+  const item = { id: raw.id, kind: raw.kind, tone, when, n, year: raw.year, people: raw.people.map((p) => ({ grampsId: p.grampsId, name: cap(p.name, MAX_NAME), lifeState: LIFE_STATES.has(p.lifeState) ? p.lifeState : "unknown" })) };
+  if (cap(raw.place, MAX_PLACE)) item.place = cap(raw.place, MAX_PLACE);
+  if (cap(raw.detail, MAX_DETAIL)) item.detail = cap(raw.detail, MAX_DETAIL);
   if (!birth && raw.month && raw.day) { item.month = raw.month; item.day = raw.day; }
   return templateFor(item) ? item : null;
 }
@@ -98,10 +113,13 @@ function candidates(index, today, hiddenSet) {
   const day = dated(index?.day?.[key], "day");
   if (day.length) return { tier: "day", list: day };
   const months = new Set();
-  for (let off = -WEEK_DAYS; off <= WEEK_DAYS; off += 1) months.add(pad(new Date(Date.UTC(today.y, today.mo - 1, today.d + off)).getUTCMonth() + 1));
-  const near = [...months].flatMap((m) => (Array.isArray(index?.month?.[m]) ? index.month[m] : []))
-    .filter((r) => r && r.month && r.day && dayDistance(r, today) <= WEEK_DAYS);
-  const week = dated(near, "week");
+  for (let off = -WEEK_DAYS; off <= 0; off += 1) months.add(pad(new Date(Date.UTC(today.y, today.mo - 1, today.d + off)).getUTCMonth() + 1));
+  const week = [...months].flatMap((m) => (Array.isArray(index?.month?.[m]) ? index.month[m] : []))
+    .map((r) => {
+      if (!r || r.kind === "birth" || !r.month || !r.day) return null;
+      const last = lastOccurrence(r, today);
+      return last && last.dist >= 1 && last.dist <= WEEK_DAYS ? shape(r, "week", today, hiddenSet, last.year) : null;
+    }).filter(Boolean);
   if (week.length) return { tier: "week", list: week };
   const year = (Array.isArray(index?.year) ? index.year : []).map((r) => shape(r, "year", today, hiddenSet)).filter((it) => it && yearEligible(it));
   return year.length ? { tier: "year", list: year } : { tier: null, list: [] };
@@ -129,9 +147,13 @@ export function selectOnThisDay(index, { date, posts = [], hidden = [] } = {}) {
   const post = (Array.isArray(posts) ? posts : []).find((p) => p && typeof p.id === "string" && Number.isInteger(p.n) && p.n >= 1 && p.author && !hiddenSet.has(p.id));
   const outPosts = post ? [post] : [];
 
+  // The targeted ask is marriage-only on purpose (the deck has one targeted template, and it never invites a birth date),
+  // and limited to year-tier-eligible marriages (a multiple of 5 years, 10 or more).
+  // HAND-OFF to surf-onthisday-api and surf-onthisday-island: items also carry `emoji` and people carry `lifeState`,
+  // additions to the section 4.4 response shape.
   let prompt = null;
   if (items.length < 2) {
-    const asks = shuffled((Array.isArray(index?.year) ? index.year : []).filter((r) => r && r.kind === "marriage" && r.tone === "celebrate" && !r.day && Array.isArray(r.people) && r.people.length >= 2 && !hiddenSet.has(r.id)), rng(`${date}:prompt`));
+    const asks = shuffled((Array.isArray(index?.year) ? index.year : []).filter((r) => r && r.kind === "marriage" && r.tone === "celebrate" && !r.day && Number.isInteger(r.year) && yearEligible({ kind: "marriage", n: today.y - r.year }) && Array.isArray(r.people) && r.people.length >= 2 && !hiddenSet.has(r.id)), rng(`${date}:prompt`));
     prompt = asks.length
       ? { kind: "add_day", itemId: asks[0].id, people: asks[0].people.slice(0, 2).map((p) => ({ grampsId: p.grampsId, name: p.name })) }
       : { kind: "generic" };

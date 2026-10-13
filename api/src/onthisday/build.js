@@ -24,6 +24,8 @@ const list = (v) => (v == null ? [] : Array.isArray(v) ? v : [...v]);
 const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** A usable date as `{ year, month?, day? }`, or null when the date is missing, imprecise or invalid. */
+const MONTH_LEN = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
 function usableDate(date) {
   if (!date || typeof date !== "object") return null;
   if (!USABLE_MODIFIER.has(date.modifier ?? 0) || (date.quality ?? 0) !== 0) return null;
@@ -31,10 +33,28 @@ function usableDate(date) {
   const out = { year: date.year };
   if (isInt(date.month, 1, 12)) {
     out.month = date.month;
-    if (isInt(date.day, 1, 31)) out.day = date.day;
+    // The day must exist in that month (29 is allowed for February); otherwise only the year and month are kept.
+    if (isInt(date.day, 1, MONTH_LEN[date.month - 1])) out.day = date.day;
   }
   return out;
 }
+
+// Fail closed: only an explicit `false` marks a record public. 'true', 1, null or a missing flag all mean private.
+const isPublic = (rec) => rec?.private === false;
+
+// Free-text `detail` is indexed and served. OWNERSHIP: the full R-18 scan belongs to the source adapter
+// (surf-onthisday-store-source) and the API privacy guard (surf-onthisday-api); this is a last-line guard that drops a
+// detail carrying a contact pattern or a full date, so the index never holds one even if an upstream scan is missed.
+const DETAIL_BLOCK = [
+  /[^\s@]+@[^\s@]+\.[^\s@]+/,
+  /https?:\/\/|www\./i,
+  /(?:\+?\d[\s().-]?){7,}/,
+  /\b\d{4}-\d{1,2}-\d{1,2}\b/,
+  /\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/,
+  /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b/i,
+  /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/i,
+];
+export const safeDetail = (v) => { const t = text(v); return t && !DETAIL_BLOCK.some((re) => re.test(t)) ? t : ""; };
 
 const personRef = (p) => ({ grampsId: p.grampsId, name: p.displayName, lifeState: LIFE_STATES.has(p.lifeState) ? p.lifeState : "unknown" });
 
@@ -43,10 +63,11 @@ const personRef = (p) => ({ grampsId: p.grampsId, name: p.displayName, lifeState
  * `source` is `{ events, persons, version? }` where events and persons are arrays (or any iterable) of the record store's
  * projection: events `{ handle, typeCode, date: { year, month?, day?, modifier, quality }, participants: [{ grampsId, role }],
  * place, description, private }` and persons `{ grampsId, displayName, lifeState, private }`.
- * The index follows `hfy.onthisday.v1`, plus `report` counters (never served to the island).
+ * The index follows `hfy.onthisday.v1`, plus `report` counters. HAND-OFF: the API (surf-onthisday-api) must strip `report`
+ * before the index is stored or served, since it is not part of the schema.
  */
 export function buildIndex(source, { policyVersion = null, generatedAt = null } = {}) {
-  const report = { droppedBirthPrecision: 0, eventsSeen: 0, itemsBuilt: 0, skipped: { type: 0, private: 0, date: 0, people: 0, duplicate: 0 } };
+  const report = { droppedBirthPrecision: 0, eventsSeen: 0, itemsBuilt: 0, skipped: { type: 0, private: 0, living: 0, date: 0, people: 0, duplicate: 0 } };
   const persons = new Map();
   for (const p of list(source?.persons)) if (p && text(p.grampsId) && text(p.displayName)) persons.set(p.grampsId, p);
   const events = list(source?.events).filter((e) => e && typeof e === "object");
@@ -56,7 +77,7 @@ export function buildIndex(source, { policyVersion = null, generatedAt = null } 
   for (const e of events) if (e.typeCode === TYPE.DEATH) for (const x of list(e.participants)) hasDeath.add(x?.grampsId);
 
   const items = [];
-  const birthSeen = new Set();
+  const birthAt = new Map();
   for (const e of [...events].sort((a, b) => String(a.handle).localeCompare(String(b.handle)))) {
     report.eventsSeen += 1;
     const kind = KIND.get(e.typeCode);
@@ -65,7 +86,7 @@ export function buildIndex(source, { policyVersion = null, generatedAt = null } 
     // The assertion: a birth keeps its year only, and the drop is counted (even when the event is later skipped).
     const birthPrecisionPresent = kind === "birth" && e.date && typeof e.date === "object" && (e.date.month != null || e.date.day != null);
     if (birthPrecisionPresent) report.droppedBirthPrecision += 1;
-    if (e.private === true) { report.skipped.private += 1; continue; }
+    if (!isPublic(e)) { report.skipped.private += 1; continue; }
     if (!date) { report.skipped.date += 1; continue; }
 
     const parts = list(e.participants).filter((x) => x && persons.has(x.grampsId));
@@ -77,7 +98,7 @@ export function buildIndex(source, { policyVersion = null, generatedAt = null } 
       chosen = [...new Map(ranked.map((x) => [x.grampsId, x])).values()];
       // A participant who is private or unknown to the person list means the pair is not whole: nothing is shown.
       const declared = list(e.participants).filter((x) => x && MARRIAGE_ROLES.includes(roleOf(x)));
-      if (declared.some((x) => !persons.has(x.grampsId) || persons.get(x.grampsId).private === true)) { report.skipped.private += 1; continue; }
+      if (declared.some((x) => !persons.has(x.grampsId) || !isPublic(persons.get(x.grampsId)))) { report.skipped.private += 1; continue; }
       if (chosen.length < 2) { report.skipped.people += 1; continue; }
       chosen = chosen.slice(0, 2);
     } else {
@@ -85,17 +106,25 @@ export function buildIndex(source, { policyVersion = null, generatedAt = null } 
       chosen = primary.slice(0, 1);
       if (!chosen.length) { report.skipped.people += 1; continue; }
     }
-    if (chosen.some((x) => persons.get(x.grampsId).private === true)) { report.skipped.private += 1; continue; }
+    if (chosen.some((x) => !isPublic(persons.get(x.grampsId)))) { report.skipped.private += 1; continue; }
     if (kind === "burial" && chosen.some((x) => hasDeath.has(x.grampsId))) { report.skipped.type += 1; continue; }
+
+    // A residence place is a location; it is only shown for a deceased person.
+    if (kind === "residence" && personRef(persons.get(chosen[0].grampsId)).lifeState !== "deceased") { report.skipped.living += 1; continue; }
 
     const people = chosen.map((x) => personRef(persons.get(x.grampsId)));
     let id = `evt:${e.handle}`;
+    let replaceAt = -1;
     const item = { id, kind, tone: "neutral", year: date.year };
     if (kind === "birth") {
       id = `birth:${chosen[0].grampsId}`;
-      if (birthSeen.has(id)) { report.skipped.duplicate += 1; continue; }
-      birthSeen.add(id);
       item.id = id;
+      // Two births for one person: keep the earliest usable year, whatever the handle order.
+      if (birthAt.has(id)) {
+        report.skipped.duplicate += 1;
+        if (date.year >= items[birthAt.get(id)].year) continue;
+        replaceAt = birthAt.get(id);
+      } else birthAt.set(id, items.length);
       item.tone = people[0].lifeState === "living" ? "celebrate" : "neutral";
     } else {
       if (date.month) item.month = date.month;
@@ -105,9 +134,9 @@ export function buildIndex(source, { policyVersion = null, generatedAt = null } 
     item.people = people;
     const place = text(e.place);
     if (place) item.place = place;
-    const detail = text(e.description);
+    const detail = safeDetail(e.description);
     if (detail) item.detail = detail;
-    items.push(item);
+    if (replaceAt >= 0) items[replaceAt] = item; else items.push(item);
   }
   items.sort(byId);
   report.itemsBuilt = items.length;

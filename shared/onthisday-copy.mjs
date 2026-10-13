@@ -8,6 +8,9 @@ export const FOOTER_LINK = Object.freeze({ text: "see the family", href: "/searc
 const WHEN = Object.freeze({ day: "today", week: "this week", year: "this year" });
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
+// DECK ADDITION, NEEDS io / DESIGN SIGN-OFF: the burial_* templates are not in the section 4.2 deck. The tone rule makes a burial a remember
+// item only when no death event exists, but gives no wording, so these follow the death voice. Cremation (Gramps type 20) is
+// deliberately NOT indexed (build.js KIND) until io decides; add it there with matching wording if wanted.
 /** Every template, by id. The voice test renders each one. */
 export const TEMPLATES = Object.freeze({
   marriage: "{a} and {b} got married {n} {yearWord} ago {when}.",
