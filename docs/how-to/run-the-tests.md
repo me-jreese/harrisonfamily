@@ -79,7 +79,7 @@ Steps 3 and 4 need the `api/` install from step 1. Step 10 needs the `auth/` ins
 (cd api && npm ci && npm test)
 ```
 
-`npm test` runs `vitest run` over every `test/**/*.test.js` file ([`vitest.config.js`](../../api/vitest.config.js)): the API's routes and rules, the MCP server and its conformance corpus, the packaging script and the MCP behavior script. The tests run against the in-memory DynamoDB fake in [`fake-ddb.js`](../../api/test/fake-ddb.js). They sign test tokens with keys generated for the run, or, in the MCP files, with the kit's committed test-only fixture keys, so they need no AWS credentials. The [test suites table](../reference/repository-operations.md#test-suites) lists what each file covers.
+`npm test` runs `vitest run` over every `test/**/*.test.js` file ([`vitest.config.js`](../../api/vitest.config.js)), then `node --test` over `test/records/*.node-test.js`, the EditOp engine's pure `node:test` suite (`node --test test/records/ops.node-test.js` runs it alone, with no install and no network). The vitest run covers: the API's routes and rules, the MCP server and its conformance corpus, the packaging script and the MCP behavior script. The tests run against the in-memory DynamoDB fake in [`fake-ddb.js`](../../api/test/fake-ddb.js). They sign test tokens with keys generated for the run, or, in the MCP files, with the kit's committed test-only fixture keys, so they need no AWS credentials. The [test suites table](../reference/repository-operations.md#test-suites) lists what each file covers.
 
 Three files run repository scripts in child processes, so the suite also needs `bash` and `jq`:
 
