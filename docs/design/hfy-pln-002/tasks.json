@@ -6603,9 +6603,9 @@
    "R-20"
   ],
   "depends_on": [
-   "viz-mvp-visual",
    "viz-graph-publish",
-   "surf-nav-flip"
+   "surf-nav-flip",
+   "viz-mvp-visual-perf"
   ],
   "acceptance_criteria": [
    "A D-11 audit doc with screenshots at 375 (installed iPhone PWA), 768 and 1280 under the task asset prefix (HFY-R16) is green.",
@@ -7848,10 +7848,11 @@
    "R-22"
   ],
   "depends_on": [
-   "viz-v2-time",
-   "viz-v2-kinship",
-   "viz-v2-faces",
-   "viz-v2-bigtree"
+   "viz-v2-time-phone",
+   "viz-v2-time-eras",
+   "viz-v2-kinship-ui",
+   "viz-v2-faces-tab",
+   "viz-v2-bigtree-nav"
   ],
   "acceptance_criteria": [
    "familyVizTime (C-lite lifelines): io's UAT approval and G-prod approval are recorded verbatim and separately; era bands ship only from the io-approved Q2-14 copy list (attached), otherwise decades only.",
@@ -8808,7 +8809,7 @@
    "R-22"
   ],
   "depends_on": [
-   "viz-v3-journeys"
+   "viz-v3-journeys-chapters"
   ],
   "acceptance_criteria": [
    "The D-11 audit evidence for familyVizJourneys (16 px inputs, 44 px targets, one control height per row, no horizontal scroll at 375, axe clean, installed iPhone PWA) is linked, with screenshots under the task asset prefix (HFY-R16), and io's UAT approval is recorded verbatim, with the Q2-11 (b) answer applied and the Q2-14 chapter copy attached.",
