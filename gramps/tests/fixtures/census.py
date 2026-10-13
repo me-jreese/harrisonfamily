@@ -154,7 +154,9 @@ def run_census(objects):
     res["custom_non_birth_event"] = persons_with_event(
         lambda e: etype(e) == EV_CUSTOM and not re.search(r"birth|bapt|christen|naissance|geburt|nacimiento", estring(e), re.I))
     res["birth_retype_target"] = _ids(
-        p for p in persons if (birth_event(p) or {}).get("description", "").startswith("Retype to Residence"))
+        p for p in persons
+        if (birth_event(p) or {}).get("description", "").startswith("Retype to Residence")
+        and date_is_full((birth_event(p) or {}).get("date", {})))  # day-precise: the leak a retype must not carry
     res["range_birth_date"] = persons_with_event(lambda e: etype(e) == EV_BIRTH and e["date"]["modifier"] == MOD_RANGE)
     res["textonly_birth_date"] = persons_with_event(lambda e: etype(e) == EV_BIRTH and e["date"]["modifier"] == MOD_TEXTONLY)
     res["span_date"] = persons_with_event(lambda e: e["date"]["modifier"] == MOD_SPAN)
@@ -256,10 +258,13 @@ def run_census(objects):
     res["person_association"] = _ids(p for p in persons if p.get("person_ref_list"))
     res["tag_objects_in_use"] = _ids(
         x for x in persons + families if x.get("tag_list"))
-    res["family_every_father_relation"] = (
-        ["all"] if {r["frel"]["value"] for f in families for r in f.get("child_ref_list", [])} >= set(range(1, 8)) else [])
-    res["family_every_mother_relation"] = (
-        ["all"] if {r["mrel"]["value"] for f in families for r in f.get("child_ref_list", [])} >= set(range(1, 8)) else [])
+    # ChildRefType NONE (0) through CUSTOM (7); a custom relation counts only with its string.
+    def rel_values(key):
+        return {r[key]["value"] for f in families for r in f.get("child_ref_list", [])
+                if r[key]["value"] != CHILD_REL_CUSTOM or r[key].get("string")}
+
+    res["family_every_father_relation"] = ["all"] if rel_values("frel") >= set(range(0, 8)) else []
+    res["family_every_mother_relation"] = ["all"] if rel_values("mrel") >= set(range(0, 8)) else []
     res["family_custom_relation_type"] = _ids(f for f in families if f["type"]["value"] == 4 or f["type"]["string"])
     res["family_relation_types"] = (
         ["all"] if {f["type"]["value"] for f in families} >= {0, 1, 2, 3, 4} else [])

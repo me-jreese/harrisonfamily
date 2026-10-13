@@ -511,7 +511,7 @@
       <childref hlink="_50c418f1ed650fcf30dfdf54596e" mrel="Foster" frel="Sponsored"/>
       <childref hlink="_3e03c22a95e749344ecf98004b1b" mrel="Unknown" frel="Foster"/>
       <childref hlink="_c961c3460af9e57f56a91f968ac2" frel="Unknown"/>
-      <childref hlink="_348c3292182f6afd6b0d2764f94d" mrel="" frel="Godchild"/>
+      <childref hlink="_348c3292182f6afd6b0d2764f94d" mrel="Ward" frel="Godchild"/>
     </family>
     <family handle="_62f0d1a06a5f4d29bef2632edd29" change="1700000000" id="F0006" priv="1">
       <rel type="Married"/>
@@ -527,7 +527,7 @@
       <rel type="Fixture partnership"/>
       <father hlink="_99c7bf090025516be03be86882b6"/>
       <mother hlink="_bb442ebc2e70e324eb8807d6cd1f"/>
-      <childref hlink="_8efa0f2b73c0a630b647a139067a"/>
+      <childref hlink="_8efa0f2b73c0a630b647a139067a" mrel="None" frel="None"/>
       <tagref hlink="_c9ac6b4b1f0815684d22a78797ed"/>
     </family>
     <family handle="_b828ece62eb0cbe25d61130bab2a" change="1700000000" id="F0004">
@@ -609,7 +609,7 @@
       <file src="media/synthetic-birth-certificate.pdf" mime="application/pdf" checksum="bb178098e4b015f71729ca3ac6dcf8d0" description="Birth certificate (fictional)"/>
     </object>
     <object handle="_401bbbaee7a25c9cd837399ff571" change="1700000000" id="O0002">
-      <file src="media/synthetic-photo-gps.jpg" mime="image/jpeg" checksum="8b0821cad211a8fff59c5bc566b1658c" description="Photo with embedded location (fictional)"/>
+      <file src="media/synthetic-photo-gps.jpg" mime="image/jpeg" checksum="b38bbaa81ccf3e68368d2594d6bd1bf1" description="Photo with embedded location (fictional)"/>
     </object>
     <object handle="_4a9c81568c6b636df1826c1da393" change="1700000000" id="O0005" priv="1">
       <file src="media/synthetic-photo-plain.jpg" mime="image/jpeg" checksum="3eacedc81d18cd17a72f8974f9ed8820" description="Private photo (fictional)"/>

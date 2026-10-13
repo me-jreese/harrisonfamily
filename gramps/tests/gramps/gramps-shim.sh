@@ -13,9 +13,21 @@
 # Environment:
 #   HFY_GRAMPS_APP        path of Gramps.app (default /Applications/Gramps.app)
 #   HFY_SHIM_FORBID       colon-separated path prefixes the process must never open. An audit hook
-#                         refuses and records any open, listdir, scandir or sqlite connect under them.
+#                         refuses and records any open, listdir, scandir, sqlite connect, process start or
+#                         exec that names a path under them.
 #   HFY_SHIM_AUDIT_LOG    file the hook appends to: "checked <n>" at exit and one "VIOLATION <event> <path>" per hit.
-#   GRAMPSHOME, HOME      set by the caller to a throwaway directory (run.sh does this).
+#                         Required whenever HFY_SHIM_FORBID is set.
+#   HFY_GRAMPS_ALLOW_VERSION=1  skip the bundle version check (the launcher rewrite below is coupled to 6.0.6).
+#   GRAMPSHOME, HOME      a throwaway directory chosen by the caller (run.sh does this). When GRAMPSHOME
+#                         is unset the shim sets both to a throwaway directory of its own, so a bare
+#                         run never reads or writes the real Gramps folders.
+#
+# Limits of the audit hook: it compares the absolute path, then the realpath() (symlinks are
+# resolved, path-like objects converted, sqlite "file:" URIs decoded) and covers open, listdir,
+# scandir, sqlite3.connect, and the program, arguments and cwd of subprocess.Popen,
+# os.posix_spawn, os.exec* and os.system. Python raises no audit event for os.stat or
+# os.path.exists, so those are not covered, and a child process is only covered by what its command
+# line shows. It is a tripwire for test code, not a sandbox.
 set -euo pipefail
 
 APP="${HFY_GRAMPS_APP:-/Applications/Gramps.app}"
@@ -25,6 +37,17 @@ if [ ! -x "$CONTENTS/MacOS/Gramps" ] || [ ! -f "$CONTENTS/Resources/gramps_launc
   exit 2
 fi
 
+if [ "${HFY_GRAMPS_ALLOW_VERSION:-0}" != "1" ] && ! grep -q 'Gramps-6\.0\.6' "$CONTENTS/Info.plist"; then
+  echo "[ERROR] $APP is not Gramps 6.0.6 (the launcher rewrite is coupled to that bundle); set HFY_GRAMPS_ALLOW_VERSION=1 to override" >&2
+  exit 2
+fi
+if [ -n "${HFY_SHIM_FORBID:-}" ] && [ -z "${HFY_SHIM_AUDIT_LOG:-}" ]; then
+  echo "[ERROR] HFY_SHIM_FORBID needs HFY_SHIM_AUDIT_LOG (the hook records violations there)" >&2
+  exit 2
+fi
+
+# The script path is only for --script; never inherit one from the caller's environment.
+unset HFY_SHIM_SCRIPT
 mode="${1:-}"
 case "$mode" in
   --script) shift; [ $# -ge 1 ] || { echo "usage: $0 --script file.py [args...]" >&2; exit 2; }
@@ -33,47 +56,91 @@ case "$mode" in
   *)        echo "usage: $0 --script file.py [args...] | --cli [gramps args...]" >&2; exit 2 ;;
 esac
 
-SHIM="$(mktemp -d "${TMPDIR:-/tmp}/hfy-gramps-shim.XXXXXX")"
-trap 'rm -rf "$SHIM"' EXIT
+SHIM_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hfy-gramps-shim.XXXXXX")"
+trap 'rm -rf "$SHIM_ROOT"' EXIT
+SHIM="$SHIM_ROOT/bundle"
 mkdir -p "$SHIM/Contents/MacOS" "$SHIM/Contents/Resources"
 cp "$CONTENTS/MacOS/Gramps" "$SHIM/Contents/MacOS/Gramps"
 cp "$CONTENTS/Info.plist" "$SHIM/Contents/Info.plist"
 for d in etc include lib share; do ln -s "$CONTENTS/Resources/$d" "$SHIM/Contents/Resources/$d"; done
 # A copied Mach-O loses its signature; arm64 refuses to run it unsigned.
-codesign -s - --force "$SHIM/Contents/MacOS/Gramps" >/dev/null 2>&1
+command -v codesign >/dev/null 2>&1 || { echo "[ERROR] codesign not found; this shim is macOS-only" >&2; exit 2; }
+# Its output is captured, not written to a file: any extra file in the bundle root makes codesign refuse.
+if ! sign_out="$(codesign -s - --force "$SHIM/Contents/MacOS/Gramps" 2>&1)"; then
+  printf '%s\n' "$sign_out" >&2
+  echo "[ERROR] codesign failed for the copied launcher executable" >&2
+  exit 2
+fi
 
 LAUNCHER="$SHIM/Contents/Resources/gramps_launcher.py"
 # Stock launcher minus its final "import gramps.grampsapp as app" and "app.main()".
 grep -v -e '^import gramps.grampsapp as app$' -e '^app.main()$' "$CONTENTS/Resources/gramps_launcher.py" > "$LAUNCHER"
+if grep -q 'grampsapp' "$LAUNCHER"; then
+  echo "[ERROR] the stock launcher differs from the 6.0.6 layout (it still mentions grampsapp after filtering)" >&2
+  exit 2
+fi
 cat >> "$LAUNCHER" <<'PYEOF'
 
 import sys
 
-_forbid = [p for p in environ.get("HFY_SHIM_FORBID", "").split(":") if p]
+import os as _os
+from urllib.parse import unquote as _unquote, urlsplit as _urlsplit
+
+# Each prefix both as written and resolved, so a symlinked home is caught either way.
+_forbid = sorted({f(p) for p in environ.get("HFY_SHIM_FORBID", "").split(":") if p
+                  for f in (_os.path.abspath, _os.path.realpath)})
 _log = environ.get("HFY_SHIM_AUDIT_LOG", "")
 _state = {"checked": 0}
 
 
-def _audit(event, args):
-    if event == "open":
-        target = args[0]
-    elif event in ("os.listdir", "os.scandir"):
-        target = args[0] if args else None
-    elif event == "sqlite3.connect":
-        target = args[0]
-    else:
-        return
+def _under_forbidden(path):
+    return any(path == p or path.startswith(p.rstrip("/") + "/") for p in _forbid)
+
+
+def _hit(target, event):
+    if isinstance(target, _os.PathLike):
+        target = _os.fspath(target)
     if isinstance(target, bytes):
         target = target.decode("utf-8", "replace")
-    if not isinstance(target, str):
+    if not isinstance(target, str) or not target:
         return
+    if event == "sqlite3.connect" and target.startswith("file:"):
+        # A URI filename: the path is the percent-decoded URI path, without its ?query.
+        target = _unquote(_urlsplit(target).path)
+        if not target:
+            return
     _state["checked"] += 1
-    full = abspath(target)
-    for prefix in _forbid:
-        if full == prefix or full.startswith(prefix.rstrip("/") + "/"):
-            with open(_log, "a") as fh:
-                fh.write("VIOLATION %s %s\n" % (event, full))
-            raise PermissionError("hfy shim: access to forbidden path %s" % full)
+    # The lexical path first, so a forbidden path is refused without even a stat of the real folder.
+    full = _os.path.abspath(target)
+    if not _under_forbidden(full):
+        full = _os.path.realpath(full)
+        if not _under_forbidden(full):
+            return
+    with open(_log, "a") as fh:
+        fh.write("VIOLATION %s %s\n" % (event, full))
+    raise PermissionError("hfy shim: access to forbidden path %s" % full)
+
+
+def _audit(event, args):
+    if event in ("open", "os.listdir", "os.scandir", "sqlite3.connect"):
+        if args:
+            _hit(args[0], event)
+    elif event in ("subprocess.Popen", "os.posix_spawn", "os.exec"):
+        # Popen: (executable, args, cwd, env); posix_spawn and exec: (path, argv, env)
+        _hit(args[0], event)
+        argv = args[1]
+        if isinstance(argv, (str, bytes, _os.PathLike)):
+            argv = [argv]
+        for a in (argv or []):
+            _hit(a, event)
+        if event == "subprocess.Popen":
+            _hit(args[2], event)
+    elif event == "os.system":
+        for prefix in _forbid:
+            if prefix in str(args[0]):
+                with open(_log, "a") as fh:
+                    fh.write("VIOLATION %s %s\n" % (event, args[0]))
+                raise PermissionError("hfy shim: os.system names a forbidden path")
 
 
 def _finish():
@@ -99,5 +166,13 @@ else:
 
     app.main()
 PYEOF
+
+# Without a caller-chosen GRAMPSHOME, Gramps would read its config and plugins from (and on a first
+# run migrate data into) the user's real Gramps folders, so the shim then uses a throwaway home.
+if [ -z "${GRAMPSHOME:-}" ]; then
+  export GRAMPSHOME="$SHIM_ROOT/home"
+  export HOME="$GRAMPSHOME"
+  mkdir -p "$GRAMPSHOME"
+fi
 
 "$SHIM/Contents/MacOS/Gramps" "$@"

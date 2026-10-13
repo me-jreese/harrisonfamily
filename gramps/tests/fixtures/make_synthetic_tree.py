@@ -30,7 +30,6 @@ import json
 import os
 import random
 import shutil
-import sqlite3
 import sys
 import tempfile
 import time
@@ -54,7 +53,7 @@ try:
         RepoRef, RepositoryType, Source, SrcAttribute, SrcAttributeType, StyledText, StyledTextTag, StyledTextTagType,
         Surname, Tag, Url, UrlType,
     )
-except ImportError:  # imported by the unit test, which only needs the constants above
+except ImportError:  # importable without Gramps for its constants; building the tree needs the bundle
     Person = None
 
 
@@ -185,14 +184,14 @@ def build_media_files(out_media):
     """Writes the three tiny media files and returns {name: bytes}. Needs Pillow, which the bundle carries."""
     from PIL import Image
     files = {}
-    # JPEG with EXIF GPS (fictional position in the open ocean), 8x8 so it is a real picture.
+    # JPEG with EXIF GPS (fictional position in the open Atlantic, 12.5 N 23.25 W), 8x8 so it is a real picture.
     im = Image.new("RGB", (8, 8), (180, 200, 220))
     exif = Image.Exif()
     exif[0x010F] = "Fixture Camera Co"
     exif[0x0110] = "Synthetic 1"
     gps = {
         1: "N", 2: (12.0, 30.0, 0.0),
-        3: "E", 4: (23.0, 15.0, 0.0),
+        3: "W", 4: (23.0, 15.0, 0.0),
         5: 0, 6: 0.0,
     }
     exif[0x8825] = gps
@@ -371,14 +370,15 @@ def build_tree(media_files):
     person_event(b, p_gp2, "ev_gp2_birth", EventType.BIRTH, mkdate(1844, 11, 30), place="pl_farm", birth=True)
     person_event(b, p_gp2, "ev_gp2_death", EventType.DEATH, mkdate(1920, 1, 9), death=True)
 
-    # Birth event that the review scenario retypes to Residence, with a citation of its own.
+    # Birth event (full date) that the review scenario retypes to Residence: the retype must not carry the date.
     p_retype = mkperson(b, "p_retype", M, mkname("Cedar", "Testwood"))
     person_event(b, p_retype, "ev_retype_birth", EventType.BIRTH, mkdate(1868, 6, 21),
                  "Retype to Residence (review scenario)", place="pl_home", birth=True)
 
-    # Stillbirth
+    # Stillbirth. Like the christening below, it is not the person's birth_ref: Gramps (its editor and
+    # its XML import) points birth_ref only at a Birth event, so a stillbirth or christening is a fallback.
     p_still = mkperson(b, "p_still", U, mkname("Dell", "Testwood"))
-    person_event(b, p_still, "ev_still", EventType.STILLBIRTH, mkdate(1870, 3, 8), birth=True)
+    person_event(b, p_still, "ev_still", EventType.STILLBIRTH, mkdate(1870, 3, 8))
 
     # Baptism of a deceased person, with a day, and no Birth event.
     p_bapt = mkperson(b, "p_bapt", F, mkname("Elm", "Testwood"))
@@ -404,7 +404,7 @@ def build_tree(media_files):
 
     # Christening, blessing, a custom birth-like event, a SPAN residence and a custom unrelated event.
     p_events = mkperson(b, "p_events", F, mkname("Iris", "Samplefield"))
-    person_event(b, p_events, "ev_chr", EventType.CHRISTEN, mkdate(1880, 5, 9), birth=True)
+    person_event(b, p_events, "ev_chr", EventType.CHRISTEN, mkdate(1880, 5, 9))
     person_event(b, p_events, "ev_bless", EventType.BLESS, mkdate(1880, 5, 20))
     person_event(b, p_events, "ev_custom_birth", None, mkdate(1880, 5, 1), custom="Geburt")
     person_event(b, p_events, "ev_span", EventType.RESIDENCE,
@@ -530,11 +530,13 @@ def build_tree(media_files):
         b.add("Family", key, fam)
         return fam
 
-    def addchild(fam, child, frel=ChildRefType.BIRTH, mrel=ChildRefType.BIRTH, private=False, custom=None):
+    def addchild(fam, child, frel=ChildRefType.BIRTH, mrel=ChildRefType.BIRTH, private=False, custom=None,
+                 mcustom=None):
+        # A custom relation always carries its string: ChildRefType(CUSTOM) with no string does not survive XML.
         cr = ChildRef()
         cr.set_reference_handle(child.handle)
         cr.set_father_relation(ChildRefType(custom) if custom else ChildRefType(frel))
-        cr.set_mother_relation(ChildRefType(mrel))
+        cr.set_mother_relation(ChildRefType(mcustom) if mcustom else ChildRefType(mrel))
         cr.set_privacy(private)
         fam.add_child_ref(cr)
         child.add_parent_family_handle(fam.handle)
@@ -566,25 +568,25 @@ def build_tree(media_files):
         addchild(f1, c)
     addchild(f1, p_cite, private=True)  # private ChildRef
 
-    # Every ChildRefType on frel and mrel: second family.
+    # Every ChildRefType on frel and mrel: second family (NONE is on the f5 child below).
     f2 = mkfamily("f2", p_cite, p_events, rel=FamilyRelType.UNMARRIED)
     kinds = [ChildRefType.BIRTH, ChildRefType.ADOPTED, ChildRefType.STEPCHILD, ChildRefType.SPONSORED,
              ChildRefType.FOSTER, ChildRefType.UNKNOWN]
     kids = fillers[:7]
     for i, kid in enumerate(kids[:6]):
         addchild(f2, kid, frel=kinds[i], mrel=kinds[(i + 1) % len(kinds)])
-    addchild(f2, kids[6], custom="Godchild", mrel=ChildRefType.CUSTOM)
+    addchild(f2, kids[6], custom="Godchild", mcustom="Ward")
 
     # Remaining family relationship types.
-    f3 = mkfamily("f3", p_contact, p_tag2, rel=FamilyRelType.CIVIL_UNION)
-    f4 = mkfamily("f4", p_full, p_float, rel=FamilyRelType.UNKNOWN)
+    mkfamily("f3", p_contact, p_tag2, rel=FamilyRelType.CIVIL_UNION)
+    mkfamily("f4", p_full, p_float, rel=FamilyRelType.UNKNOWN)
     f5 = mkfamily("f5", fillers[7], fillers[8], rel=FamilyRelType.CUSTOM)
     f5.set_relationship(FamilyRelType("Fixture partnership"))
     f5.add_tag(b.h("tag_review"))
-    addchild(f5, fillers[9])
+    addchild(f5, fillers[9], frel=ChildRefType.NONE, mrel=ChildRefType.NONE)
 
-    # Private family (couple and its own child), distinct from the others.
-    f_priv = mkfamily("f_private", p_priv, p_privname, private=True)
+    # Private family: a couple of its own (the private person and the private-name person), no children.
+    mkfamily("f_private", p_priv, p_privname, private=True)
 
     return b
 
@@ -646,8 +648,12 @@ def generate(out_dir):
         with open(os.path.join(out_dir, "media", name), "wb") as fh:
             fh.write(data)
 
-    real_time = time.time
+    real_time, real_tz = time.time, os.environ.get("TZ")
     time.time = lambda: float(FIXED_TS)  # change times and the XML created date
+    # The XML created date is time.localtime(time.time()), so pin the zone too: FIXED_TS is late on
+    # 2023-11-14 in UTC and already 2023-11-15 east of UTC+1:47.
+    os.environ["TZ"] = "UTC"
+    time.tzset()
     work = tempfile.mkdtemp(prefix="hfy-fixture-")
     try:
         b = build_tree(media_files)
@@ -659,6 +665,11 @@ def generate(out_dir):
             db.close()
     finally:
         time.time = real_time
+        if real_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = real_tz
+        time.tzset()
         shutil.rmtree(work, ignore_errors=True)
 
     with open(os.path.join(out_dir, "synthetic-tree.jsonl"), "wb") as fh:

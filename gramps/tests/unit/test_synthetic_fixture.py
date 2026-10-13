@@ -6,9 +6,9 @@ Nothing here imports Gramps, so any worker or CI job can run it:
 
 It verifies the committed files against their sha256 manifest, runs the census (every case
 sync.md section 15 and the review scenarios need), cross-checks the XML against the JSONL, scans
-every string for anything that is not obviously fictional, and checks the D-03 allowlist lines.
-One test regenerates the files with the bundled Gramps and compares bytes; it skips when the
-bundle is absent.
+every string for anything that is not obviously fictional, and checks the D-03 allowlist lines and
+.gitignore rules. One test regenerates the files with the bundled Gramps and compares bytes; it
+skips unless the Gramps 6.0.6 bundle is present.
 """
 import hashlib
 import json
@@ -93,6 +93,11 @@ class GoldenFiles(unittest.TestCase):
             xml_handles = sorted(e.get("handle") for e in top.findall(NS + tag))
             json_handles = sorted("_" + o["handle"] for o in by_class.get(cls, []))
             self.assertEqual(xml_handles, json_handles, cls)
+            # Same Gramps ID and privacy flag per object (tags have neither).
+            xml_meta = {e.get("handle"): (e.get("id"), e.get("priv") == "1") for e in top.findall(NS + tag)}
+            for o in by_class.get(cls, []):
+                if cls != "Tag":
+                    self.assertEqual(xml_meta["_" + o["handle"]], (o["gramps_id"], o["private"]), o["gramps_id"])
 
     def test_ids_are_the_fixture_ones_and_handles_unique(self):
         objs = objects()
@@ -103,10 +108,6 @@ class GoldenFiles(unittest.TestCase):
 
     def test_change_times_are_fixed(self):
         self.assertEqual({o["change"] for o in objects()}, {1700000000})
-
-
-FICTIONAL_OK = re.compile(
-    r"^(?:555-01\d\d|15555550\d\d\d|\+15555550\d\d\d)$")
 
 
 class AllFictional(unittest.TestCase):
@@ -138,21 +139,25 @@ class AllFictional(unittest.TestCase):
                 host = m.group(1)
                 self.assertTrue(host == "example.org" or host.endswith(".example.org") or host == "wa.me", host)
 
-    def test_every_phone_is_in_the_reserved_555_01xx_range(self):
+    def test_every_phone_shaped_value_is_in_the_reserved_range(self):
+        """One rule: long digit runs, tel:/wa.me/ links and NNN-NNNN must all be 555-01NN numbers
+        (with area code 555 when there is one: 1-555-555-01NN)."""
+        long_run = re.compile(r"\+?\d{10,}")
+        local = re.compile(r"(?<![\w.-])\d{3}-\d{4}(?![\w-])")
+        seen = 0
         for s in self.strings():
-            for m in re.finditer(r"\+?\d[\d\- ]{6,}\d", s):
-                digits = m.group(0).strip()
-                if re.fullmatch(r"\d{4}( \d{4})*", digits) or re.fullmatch(r"[0-9a-f]{28}", digits):
-                    continue
-                # dates, handles and md5 sums contain long digit runs; only phone-shaped strings are checked
-                if re.fullmatch(r"\+?1?\d{3}-\d{4}", digits) or digits.startswith("+1") or digits.startswith("1555"):
-                    self.assertRegex(digits.replace("-", ""), r"^\+?(1)?5550?1\d\d$|^\+?15555550\d\d\d$", digits)
-
-    def test_no_phone_shaped_text_outside_the_reserved_range(self):
-        pat = re.compile(r"(?<![\w.-])(?:\d{3}-\d{4})(?![\w-])")
-        for s in self.strings():
-            for m in pat.finditer(s):
+            for m in long_run.finditer(s):
+                if re.fullmatch(r"[0-9a-f]+", s) or re.fullmatch(r"\d{4}-\d\d-\d\d.*", s):
+                    continue  # md5 sums and ISO timestamps are not phones
+                seen += 1
+                self.assertRegex(m.group(0), r"^\+?1?55555501\d\d$", s)
+            for m in local.finditer(s):
+                seen += 1
                 self.assertRegex(m.group(0), r"^555-01\d\d$", s)
+            for m in re.finditer(r"(?:tel:|wa\.me/)\+?(\d+)", s):
+                seen += 1
+                self.assertRegex(m.group(1), r"^1?55555501\d\d$", s)
+        self.assertGreater(seen, 0, "the phone rule checked nothing, so it proves nothing")
 
     def test_ssn_style_value_is_the_unissued_all_zero_one(self):
         for s in self.strings():
@@ -212,7 +217,27 @@ class MediaFiles(unittest.TestCase):
         self.assertIsNone(self.exif_gps_tags(self.read("synthetic-photo-plain.jpg")))
 
 
+def _git_ignores(path):
+    """True or False from `git check-ignore --no-index` (rules only, tracked or not); None without git."""
+    try:
+        r = subprocess.run(["git", "-C", REPO, "check-ignore", "--no-index", "-q", path],
+                           capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return {0: True, 1: False}.get(r.returncode)
+
+
 class AllowlistGuard(unittest.TestCase):
+    def test_gitignore_reincludes_only_the_two_goldens(self):
+        if _git_ignores("gramps/tests/fixtures/synthetic-tree.gramps") is None:
+            self.skipTest("needs git and a checkout")
+        for name in ("synthetic-tree.gramps", "synthetic-tree.jsonl", "synthetic-tree.census.json",
+                     "make_synthetic_tree.py", "media/synthetic-photo-gps.jpg"):
+            self.assertFalse(_git_ignores("gramps/tests/fixtures/" + name), name)
+        for name in ("stray.gramps", "stray.jsonl", "sub/stray.jsonl", "sqlite.db", "sub/sqlite.db", "x.sqlite",
+                     "x.gpkg"):
+            self.assertTrue(_git_ignores("gramps/tests/fixtures/" + name), name)
+
     def test_gramps_and_jsonl_goldens_are_allowlisted_with_current_hashes(self):
         with open(ALLOWLIST, encoding="utf-8") as fh:
             entries = {line.split(None, 1)[1].strip(): line.split()[0]
@@ -226,17 +251,41 @@ class AllowlistGuard(unittest.TestCase):
 APP = os.environ.get("HFY_GRAMPS_APP", "/Applications/Gramps.app")
 
 
-@unittest.skipUnless(sys.platform == "darwin" and os.path.isdir(APP) and not os.environ.get("HFY_SKIP_REGEN"),
-                     "needs the Gramps 6.0.6 bundle on macOS")
+def _bundle_is_606():
+    try:
+        with open(os.path.join(APP, "Contents", "Info.plist"), "rb") as fh:
+            return b"Gramps-6.0.6" in fh.read()
+    except OSError:
+        return False
+
+
+@unittest.skipUnless(sys.platform == "darwin" and _bundle_is_606() and not os.environ.get("HFY_SKIP_REGEN"),
+                     "byte-identical regeneration only runs on a Mac with the Gramps 6.0.6 bundle "
+                     "(io-mac-gramps); elsewhere the sha256 manifest checks are the only guard")
 class Reproducible(unittest.TestCase):
     def test_regeneration_is_byte_identical(self):
+        """The generator's --check, in a throwaway GRAMPSHOME, with the real Gramps folders forbidden."""
+        import pwd
+        import tempfile
+
         shim = os.path.join(REPO, "gramps", "tests", "gramps", "gramps-shim.sh")
-        home = subprocess.run(["mktemp", "-d"], capture_output=True, text=True, check=True).stdout.strip()
+        home = tempfile.mkdtemp(prefix="hfy-regen-")
         try:
-            env = dict(os.environ, HOME=home, GRAMPSHOME=home)
+            homes = {os.path.expanduser("~"), pwd.getpwuid(os.getuid()).pw_dir}
+            forbid = ":".join(p for h in sorted(homes)
+                              for p in (os.path.join(h, "Library", "Application Support", "gramps"),
+                                        os.path.join(h, ".gramps")))
+            log = os.path.join(home, "audit.log")
+            env = dict(os.environ, HOME=os.path.join(home, "home"), GRAMPSHOME=os.path.join(home, "home"),
+                       HFY_SHIM_FORBID=forbid, HFY_SHIM_AUDIT_LOG=log)
+            os.mkdir(env["HOME"])
             r = subprocess.run([shim, "--script", os.path.join(FIX, "make_synthetic_tree.py"), "--check"],
                                capture_output=True, text=True, env=env, timeout=300)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            with open(log, encoding="utf-8") as fh:
+                audit = fh.read()
+            self.assertNotIn("VIOLATION", audit)
+            self.assertRegex(audit, r"checked [1-9]")
         finally:
             shutil.rmtree(home, ignore_errors=True)
 

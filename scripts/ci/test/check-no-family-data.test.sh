@@ -36,7 +36,12 @@ new_repo wsl;        add workspace-local/a.txt x; expect "workspace-local file f
 new_repo gout;       add graph/out/a.json x;  expect "graph/out file fails" 1
 new_repo jsonl;      add graph/people/a.jsonl x; expect "graph jsonl fails" 1
 new_repo gaz;        add p/q.gazetteer/a x;   expect "gazetteer file fails" 1
-new_repo fixture;    add gramps/tests/fixtures/t.gramps x; expect "synthetic fixture is exempt" 0
+new_repo fixture;    add gramps/tests/fixtures/t.gramps x; expect "unlisted fixture *.gramps fails" 1
+new_repo fixjl;      add gramps/tests/fixtures/t.jsonl x; expect "unlisted fixture *.jsonl fails" 1
+new_repo fixdb;      add gramps/tests/fixtures/sub/sqlite.db x; expect "unlisted fixture sqlite.db fails" 1
+new_repo fixok;      add gramps/tests/fixtures/t.gramps x; printf '%s  %s\n' "$(sha_of "$R/gramps/tests/fixtures/t.gramps")" gramps/tests/fixtures/t.gramps >> "$R/allow.txt"; expect "allowlisted fixture *.gramps passes" 0
+new_repo fixtamp;    add gramps/tests/fixtures/t.jsonl x; printf '%s  %s\n' "$(sha_of "$R/gramps/tests/fixtures/t.jsonl")" gramps/tests/fixtures/t.jsonl >> "$R/allow.txt"; add gramps/tests/fixtures/t.jsonl y; expect "changed fixture *.jsonl fails" 1
+new_repo fixcode;    add gramps/tests/fixtures/make.py x; add gramps/tests/fixtures/media/a.jpg x; expect "fixture code and media are not guarded" 0
 new_repo other;      add docs/a.md x;         expect "ordinary file passes" 0
 new_repo tamper;     echo '{"changed":1}' > "$R/harrisonfamily-frontend/person/I0001.json"; git -C "$R" add -f -A; expect "changed sample hash fails" 1
 new_repo stale;      echo "$(printf '0%.0s' {1..64})  etl-output/gone.json" >> "$R/allow.txt"; expect "stale allowlist entry fails" 1
