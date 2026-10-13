@@ -78,9 +78,19 @@ node graph/bin/build-graph.mjs lines.jsonl --gazetteer <dir> --out <staging>
 - **Credit.** `attribution.geonames` is true whenever a GeoNames coordinate is used. Every surface that shows a coordinate prints `GEONAMES_CREDIT` from `src/geocode.mjs`, "Place coordinates: GeoNames (geonames.org), CC BY 4.0, modified", with its licence link.
 - **Schema minor 1.** `places[].geo` gains the value `"naturalearth"`.
 
+## Generations
+
+`src/generations.mjs` (`viz-generation-index`, the design's section 5.4) fills `components`, each person's `generation` and `generations[]`. The function is pure and deterministic:
+
+- Every child ref counts as a parent link, whatever its `rel`. A Kahn sort places what it can. Anything on or below an ancestor cycle gets `generation: null`, and its ids go to the local report as `GRAPH_CYCLE`.
+- The generation is the longest path from the oldest ancestor. A partner with no parents takes the highest generation among its partners (the married-in alignment), within at most |people| rounds.
+- Each component is shifted so that its oldest generation is 0. Its levels are ordered by `(birthYear ?? 9999, id)`.
+
+Singletons are their own components at generation 0, with one level each, as the design's step 7 says. The design's invented example shows a singleton with `generation: null` and no `generations[]` entry; the prose is followed here.
+
 ## Not here yet
 
-The generation index (`generation`, `generations`) and face crops (`face`, `counts.faces`) belong to later tasks (`viz-generation-index`, `viz-face-crops`). Their fields are in schema v1 and are written as `null`, `0` or an empty list until then. `components` is computed here.
+Face crops (`face`, `counts.faces`) belong to a later task (`viz-face-crops`). Their fields are in schema v1 and are written as `null` or `0` until then.
 
 ## Test
 

@@ -7,6 +7,7 @@ import { Warnings, projectRecords } from './project.mjs';
 import { canonicalize } from './canonical.mjs';
 import { GraphError } from './errors.mjs';
 import { geocodePlaces } from './geocode.mjs';
+import { computeGenerations } from './generations.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const BUILDER = `hfy-graph@${pkg.version}`;
@@ -32,42 +33,7 @@ export function deriveEdges(unions) {
   return edges.sort((a, b) => cmp(a.s, b.s) || cmp(a.t, b.t) || cmp(a.kind, b.kind) || cmp(a.union, b.union));
 }
 
-/** Connected components over union membership: ids by size descending, ties by the smallest gramps id. */
-export function computeComponents(people, unions) {
-  const parent = new Map(people.map((p) => [p.id, p.id]));
-  const find = (x) => {
-    while (parent.get(x) !== x) {
-      parent.set(x, parent.get(parent.get(x)));
-      x = parent.get(x);
-    }
-    return x;
-  };
-  const join = (a, b) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent.set(ra < rb ? rb : ra, ra < rb ? ra : rb);
-  };
-  const hasParent = new Set();
-  for (const u of unions) {
-    const members = [...u.partners, ...u.children.map((c) => c.id)];
-    for (const m of members.slice(1)) join(members[0], m);
-    if (u.partners.length > 0) for (const c of u.children) hasParent.add(c.id);
-  }
-  const groups = new Map();
-  for (const p of people) {
-    const r = find(p.id);
-    if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(p.id);
-  }
-  const list = [...groups.values()].map((ids) => ids.sort(cmp));
-  list.sort((a, b) => b.length - a.length || cmp(a[0], b[0]));
-  const of = new Map();
-  const components = list.map((ids, i) => {
-    for (const id of ids) of.set(id, i);
-    return { id: i, size: ids.length, roots: ids.filter((id) => !hasParent.has(id)) };
-  });
-  return { components, of };
-}
+export { computeComponents } from './generations.mjs';
 
 /** The clock input as a valid Date, or INPUT_MISSING (exit 2) instead of a RangeError from toISOString. */
 export function resolveNow(now) {
@@ -95,8 +61,12 @@ export function buildFamilyGraph(objects, opts = {}) {
     keepLivingResidence: opts.keepLivingResidence === true,
   });
   const edges = deriveEdges(unions);
-  const { components, of } = computeComponents(people, unions);
-  for (const p of people) p.component = of.get(p.id);
+  const { components, of, generation, generations, cycle } = computeGenerations(people, unions);
+  for (const p of people) {
+    p.component = of.get(p.id);
+    p.generation = generation.get(p.id);
+  }
+  for (const id of cycle) warnings.add('GRAPH_CYCLE', id); // local report only (viz.md 5.4)
   const used = new Set([...events.map((e) => e.place), ...people.flatMap((p) => [p.birthPlace, p.deathPlace])].filter(Boolean));
   const geo = geocodePlaces(projected, opts.gazetteer ?? null, { warnings, used });
   const places = geo.places;
@@ -108,7 +78,7 @@ export function buildFamilyGraph(objects, opts = {}) {
     places,
     events,
     components,
-    generations: [], // filled by the generation index (viz-generation-index)
+    generations,
     attribution: { geonames: geo.geonames }, // any GeoNames coordinate needs the credit (GEONAMES_CREDIT)
   };
   // The snapshot id is a digest of the projected content, so it is the same for any input order and
