@@ -35,7 +35,7 @@ The other excludes keep the family data, `private/` and member `uploads/` out of
 
 ## Person page extension points
 
-`js/person-page.js` exposes these hosts and events, and nothing else, as the extension points for the person page (HFY-TSK-137, BRD2 section 10.2 item 13). Only that task and the W6 Graphviz removal edit the file, and each edit is copied to the source's `public/js/person-page.js` in the same change (HFY-R46; the refresh already excludes it). Every later person-page task changes `islands/` only.
+`js/person-page.js` exposes these hosts and events, and nothing else, as the extension points for the person page (HFY-TSK-137, BRD2 section 10.2 item 13). Only that task and the W6 Graphviz removal edit the file, and each edit must be copied to the source's `public/js/person-page.js` (HFY-R46; the refresh already excludes it). That copy and its refresh dry run are not yet done for HFY-TSK-137 (a merge-stage step): the mirror loop reports `js/person-page.js` as different until it is. Every later person-page task changes `islands/` only.
 
 | Point | What it is |
 | --- | --- |
@@ -45,7 +45,7 @@ The other excludes keep the family data, `private/` and member `uploads/` out of
 | `[data-slot="heading-chips"]` | Under the lifespan line, with the children `[data-slot="contributions"]` and `"links"`. |
 | `[data-slot="tree-link"]` | In the family section, directly after the tree. |
 | `#hfy-person-social` | The last child of `#person-content`, `hidden` until an island fills it. Island hosts such as `#hfy-person-comments` sit before it. |
-| `mergedInto` | When the person JSON is `{mergedInto: "<id>"}`, the page redirects to `?id=<id>`. A self-pointing or malformed id is ignored. |
+| `mergedInto` | When the person JSON is `{mergedInto: "<id>"}`, the page redirects to `?id=<id>`. The id must match `[A-Za-z0-9_-]{1,32}` (Gramps ids such as `I0001` fit); a self-pointing or malformed id is ignored. The redirect adds `merged=<hops>` and stops after 2 hops (a cycle or long chain), showing the error line. `hfy:person-rendered` fires after the loading state is hidden and the content is shown. |
 
 Empty hosts take no space (`islands/src/theme/45-person.css`), so a page with no island loaded renders as it did before. `islands/tests/person-page.spec.mjs` pins each point.
 

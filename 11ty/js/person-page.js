@@ -5,7 +5,7 @@
   // no IDs, never the word "record"; errors are one banner line. The auth and data paths below are unchanged.
   //
   // MOUNT POINTS (HFY-TSK-137, BRD2 10.2 item 13; documented in 11ty/README.md). This file is edited only by the task that owns
-  // these hosts and events and by the W6 Graphviz removal; every other person-page task fills them from islands:
+  // these hosts and events and by the W6 Graphviz removal; every other person-page task fills them from islands. The edit must be copied to the Eleventy source's public/js/person-page.js at the merge stage (not done in this change):
   //   events   hfy:person-rendered {personId, person, sections}  after every render
   //            hfy:lightbox-media  {index, media, img, box}      whenever the lightbox shows an image
   //   hosts    [data-slot="hero-actions"] > [data-slot=edit|follow|presence]   (hero, in that order)
@@ -14,6 +14,7 @@
   //            #hfy-person-social                                              (last child of #person-content, hidden until filled)
   //   hook     person JSON {mergedInto: "<id>"} redirects to ?id=<new id>
   // The hero and its slots are rebuilt by every render, so an island refills them on each hfy:person-rendered.
+  const MAX_MERGE_HOPS = 2;
   const VOICE = {
     loading: "loading…",
     error: "that didn't work. try again, or text J.",
@@ -130,7 +131,12 @@
 
     fetchPerson(personId)
         .then((person) => {
-          if (redirectIfMerged(person, personId)) {
+          const merged = redirectIfMerged(person, personId);
+          if (merged === "limit") {
+            showError(VOICE.error, { loading, error });
+            return;
+          }
+          if (merged) {
             return;
           }
           try {
@@ -138,6 +144,8 @@
             hideLoading(loading);
             error.classList.add("d-none");
             content.classList.remove("d-none");
+            // After the loading state is gone and the content is shown, so islands fill visible hosts.
+            announceRendered(person, personId);
           } catch (err) {
             console.error("[ERROR] Failed to render person profile:", err);
             showError(VOICE.error, { loading, error });
@@ -299,7 +307,6 @@
     toggleSection("person-media-section", true);
     toggleSection("person-stories-section", true);
     orderSections();
-    announceRendered(person, personId);
   }
 
   // Mount point: a merged person's JSON is the stub {mergedInto: "<id>"} (SYNC-10). Send the visitor to the new id, keeping the
@@ -309,8 +316,14 @@
     if (typeof target !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(target) || target === personId) {
       return false;
     }
+    // At most MAX_MERGE_HOPS redirects (a cycle or a long chain stops here and shows the error line).
     const url = new URL(window.location.href);
+    const hops = Number.parseInt(url.searchParams.get("merged") || "0", 10) || 0;
+    if (hops >= MAX_MERGE_HOPS) {
+      return "limit";
+    }
     url.searchParams.set("id", target);
+    url.searchParams.set("merged", String(hops + 1));
     window.location.replace(url.toString());
     return true;
   }

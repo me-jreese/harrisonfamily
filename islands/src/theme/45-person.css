@@ -572,11 +572,12 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--io-space-2);
-  margin-top: var(--io-space-3);
 }
-.person-chips:not(:has(> [data-slot]:not(:empty))),
-.person-actions:not(:has(> [data-slot]:not(:empty))),
-[data-slot]:empty {
+/* The spacing sits on the filled slots, not the containers, so an empty container takes no space without :has(). */
+.person-chips > [data-slot]:not(:empty),
+.person-actions > [data-slot]:not(:empty) { margin-top: var(--io-space-3); }
+#person-content [data-slot]:empty,
+#person-hero [data-slot]:empty {
   display: none;
 }
 [data-slot="tree-link"]:not(:empty) { margin-top: var(--io-space-3); }

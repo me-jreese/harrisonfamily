@@ -156,6 +156,28 @@ test("mergedInto: a self-pointing stub is not followed (no redirect loop)", asyn
   expect(page.url()).toContain("id=I9001");
 });
 
+test("mergedInto: other query parameters and the hash survive the redirect", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "I9003" } });
+  await page.goto("/person/?id=I9001&x=1#h", { waitUntil: "domcontentloaded" });
+  await page.waitForURL(/id=I9003/);
+  expect(page.url()).toContain("x=1");
+  expect(page.url()).toContain("#h");
+});
+
+test("mergedInto: a malformed id is not followed", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "../x" } });
+  await page.goto(URL_PATH, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#person-hero h1")).toHaveText("name unknown");
+  expect(page.url()).toContain("id=I9001");
+});
+
+test("mergedInto: the hop limit stops a redirect cycle and shows the error line", async ({ page }) => {
+  await stub(page, { body: { mergedInto: "I9003" } });
+  await page.goto("/person/?id=I9001&merged=2", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#person-error")).toBeVisible();
+  expect(page.url()).toContain("id=I9001");
+});
+
 test("timeline: rows at least 56px, date in the mono face, text.dim", async ({ page }) => {
   await openPerson(page);
   const rows = await page.locator(".timeline-row").evaluateAll((els) => els.map((el) => {
