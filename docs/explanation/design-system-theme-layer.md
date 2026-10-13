@@ -45,7 +45,7 @@ The exemptions are, almost all, places where a token cannot be used rather than 
 
 Bootstrap is why there are so many partials. `bs-bridge.css` re-points Bootstrap's variables, but `main.css` compiles many component values as literals, and some as `-rgb` triplets that a hex token cannot alias. [`30-bootstrap.css`](../../islands/src/theme/30-bootstrap.css) therefore re-points those components class by class, and each rule's comment names the `main.css` literal it replaces.
 
-Nothing runs the lint automatically. It is part of `npm test` in `islands/` and runs on its own as `npm run lint:css` ([run the tests](../how-to/run-the-tests.md)). No workflow runs any test suite.
+Nothing runs the lint automatically. It is part of `npm test` in `islands/` and runs on its own as `npm run lint:css` ([run the tests](../how-to/run-the-tests.md)). CI runs only three CodeArtifact-free suites (the family-data guard, the infra script tests and the Gramps unit tests), and none of them is the lint.
 
 ## Why main.css stays untouched
 
