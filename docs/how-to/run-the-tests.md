@@ -13,6 +13,7 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | Passkey end to end, [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs) | Local | The real auth edge app, served in process at `http://localhost:<E2E_PORT>` (default `4173`) with test-only wiring and synthetic data, driven by Playwright's Chromium with a virtual authenticator. The login page still requests Google's sign-in script. |
 | Sign-in pages end to end, [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) | Local | The real auth edge pages, with their real CSP, served in process at `http://localhost:<E2E_PORT>` (default `4175`) with test-only wiring and a synthetic allowlist, plus `/css` and `/fonts` from the scratch site that `SITE` names. Google Chrome drives them. The login page requests Google's sign-in script unless `E2E_OFFLINE=1`. |
 | Edge gate, [`edge-gate/test/`](../../edge-gate/test/) | Offline | In process only: RSA keys generated for the run, a stubbed JWKS fetch and a fixed clock. |
+| Graph builder, [`graph/test/`](../../graph/test/) | Offline | In process, plus child processes of the builder's own command line on synthetic input. One test runs the real `sqlite3` on a database it creates in a temporary directory; the others use a stub. Nothing is read from a real tree. |
 | Client scripts, [`tests/client/`](../../tests/client/) | Offline | In process only: the real `11ty/js/feature-flags.js` and `auth-v2.js` in a `vm` sandbox with stubbed `fetch`, storage and location. |
 | Island `node:test` suites, `islands/tests/*.test.mjs` | Offline | In process only. The content contract drives the real `api/` handler over the DynamoDB fake, and the comments contract uses an in-memory store. The theme, copy, asset-version and bundle tests read the site in `11ty/`, or the scratch site that `HFY_SITE` names, and the bundle test rebuilds every build output in memory to compare. |
 | Island browser tests, `islands/tests/*.spec.mjs` | Local | A static server on `127.0.0.1:<PW_PORT>` (default `8089`) that serves `11ty/`, or the scratch site that `HFY_SITE` names. The specs stub the API, `/auth/*` and data requests they make with synthetic data. The `notifications` and `search` specs let pages request Google's sign-in script. The others block it, and two `d11-fixes` tests answer it with a stub. The `shell` and `settings-hub` specs also run axe-core, a pinned dev dependency injected from `node_modules` by `islands/tests/axe.mjs`, and fail on a serious or critical finding. |
@@ -26,7 +27,7 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 
 ## Before you start
 
-- **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `edge-gate/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
+- **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
 - **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
 - **Google Chrome installed** for the island browser tests, unless you switch them to Playwright's Chromium (step 4), and for the sign-in pages end-to-end test, which always uses Chrome (step 10).
 - **Start each block from the repository root.** Every command below assumes it. Blocks that change directory do so inside parentheses, in a subshell, so your shell is back at the root when each block ends.
@@ -42,6 +43,7 @@ Run the steps that cover your change:
 | The sign-in pages' styling (`islands/src/auth-edge/`) or `auth/edge.manifest.json` | Steps 2, 3 and 5, and the sign-in pages test in step 10. |
 | `islands/`, a theme partial or an `11ty/` page | Steps 3 and 4. |
 | `edge-gate/` | Step 8. |
+| `graph/` | Step 14. |
 | `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js`, `search-navbar.js` or `search-results.js` | Step 9. |
 | `scripts/infra/`, `scripts/cloudfront/`, or a file under `11ty/person/` | Step 5. |
 | `11ty/README.md` or `scripts/check-deployment-sync.sh` | Step 5, which checks that both list the same repo-owned `11ty/` files. |
@@ -477,6 +479,16 @@ git config core.hooksPath scripts/git-hooks
 
 The [pre-commit hook](../../scripts/git-hooks/pre-commit) then runs the deployment sync check and this scan. It blocks the commit when the sync check fails, for example because `rsync` is missing or staged `11ty/`, `lambda/` or `functions/` files differ from their sources, when the scan finds something, or when `trufflehog` is not on `PATH`. [Repository operations](../reference/repository-operations.md#git-hook-scriptsgit-hookspre-commit) describes the sync check.
 
+### 14. Run the graph builder tests (offline)
+
+From the repository root:
+
+```sh
+(cd graph && npm ci && node --test)
+```
+
+`npm ci` installs `ajv`, the only dependency and a dev one, from the public registry, so no `CODEARTIFACT_AUTH_TOKEN` is needed. The suites build the family graph from synthetic Gramps objects and check the allowlist projection, the messy-genealogy golden, `verify()`, the schema against ajv, shuffled input giving identical bytes, atomic writes, the exit codes and `--verify-against`. They start the builder's command line as a child process. The `--from-gramps-copy` tests use a stub `sqlite3`; one more creates a small database in a temporary directory and runs the real `sqlite3` on it, and is skipped when `sqlite3` is not installed. Every temporary directory is removed afterwards. An intended change to the output needs `UPDATE_GOLDEN=1 node --test test/build.test.mjs` to rewrite the golden file. See the [graph builder README](../../graph/README.md).
+
 ## Verify
 
 Each command you ran exits `0`. Check with `echo $?` straight after it, and read the summary:
@@ -484,7 +496,7 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | Suite | A pass looks like |
 | --- | --- |
 | API, auth edge | Vitest reports every test file passed and none failed. |
-| Island `node:test` suites, theme lint, CloudFront Function tests, edge gate, client scripts | The `node --test` summary shows `fail 0`, prefixed `ℹ` by the spec reporter or `#` by the TAP reporter, which Node 22 uses when the output is piped. |
+| Island `node:test` suites, theme lint, CloudFront Function tests, edge gate, client scripts, graph builder | The `node --test` summary shows `fail 0`, prefixed `ℹ` by the spec reporter or `#` by the TAP reporter, which Node 22 uses when the output is piped. |
 | Passkey end to end | Every scenario line starts with `PASS`, and the last line reads `<n>/<n> scenarios passed`, with both numbers equal. |
 | Sign-in pages end to end | Every check line starts with `PASS`, and the last line reads `<n>/<n> checks passed`, with both numbers equal. |
 | Island browser tests | Playwright reports `passed` with no `failed`. |

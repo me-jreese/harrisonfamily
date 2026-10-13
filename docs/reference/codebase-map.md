@@ -27,11 +27,12 @@ Each capability has a section below with its paths, the facts that change how yo
 | [MCP server](#mcp-server) | `api/src/mcp.js`, `api/src/policy.js`, `api/src/labels.js`, `api/src/mcp-caps.js`, `api/parity/`, `scripts/ci/mcp-conformance.sh`, `infrastructure/mcp-edge401.us-east-1.yaml`, `scripts/infra/add-mcp-behavior.sh` | [MCP server](mcp-server.md) |
 | [Auth edge and MCP authorization server](#auth-edge-and-mcp-authorization-server) | `auth/` | [Identity services](identity-services.md) |
 | [Private data gate](#private-data-gate) | `edge-gate/`, `infrastructure/cloudformation/edge-gate-stack.yaml`, `scripts/ci/package-edge-gate.sh`, `scripts/infra/add-data-gate-behaviors.sh` | [Identity services](identity-services.md#private-data-gate-hfy-edge-gate), [Architecture](architecture.md#hfy-edge-gate) |
+| [Family graph builder](#family-graph-builder) | `graph/` | [Graph builder README](../../graph/README.md) |
 | [CloudFront Function](#cloudfront-function) | `scripts/cloudfront/`, `scripts/infra/publish-append-index.sh` | [Architecture](architecture.md#hfyappendindex) |
 | [Legacy sign-in](#legacy-sign-in) | `lambda/`, `functions/`, `gcloud/` | [Identity services](identity-services.md) |
 | [Infrastructure](#infrastructure) | `infrastructure/`, `scripts/infra/`, `cloudfront/` | [Architecture](architecture.md) |
 | [CI and repo operations](#ci-and-repo-operations) | `ci.manifest.yaml`, `.github/`, `scripts/ci/`, `scripts/git-hooks/`, the workspace helpers in `scripts/` | [Repository operations](repository-operations.md) |
-| [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
+| [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
 | [Sanitized samples](#sanitized-samples) | `allowlist/`, `harrisonfamily-frontend/`, `etl-output/`, `gramps_exports/`, `cloudfront/` | [Private data and secrets](private-data-and-secrets.md) |
 | [Outside the repository](#outside-the-repository) | `<eleventy-source>`, `<project>/scripts/`, `<project>/workspace-local/` | [Private data and secrets](private-data-and-secrets.md) |
 
@@ -292,6 +293,7 @@ Paths:
 - [`edge-gate/src/index.mjs`](../../edge-gate/src/index.mjs): the Lambda@Edge entry. It reads `config.json`, which the package script bakes into the zip.
 - [`edge-gate/gate.config.json`](../../edge-gate/gate.config.json): the issuer, audience, JWKS URL, cookie name, sign-in path and timing settings.
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): the gate's tests. See [Tests](#tests).
+- [`graph/test/`](../../graph/test/): `node:test` suites `build`, `schema`, `verify`, `source` and `cli`. `fixtures/gramps.mjs` builds the synthetic Gramps objects and `fixtures/messy.graph.golden.json` is the golden output.
 - [`infrastructure/cloudformation/edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml): the us-east-1 stack `hfy-edge-gate`, with the function, its role and a retained version. Its output `EdgeGateVersionArn` is the version to attach.
 - [`scripts/ci/package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh): builds `dist/hfy-edge-gate.zip`.
 - [`scripts/infra/add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh): attaches the gate to the data paths and `/uploads/*`, or detaches it with `--remove`.
@@ -314,6 +316,24 @@ Facts:
 - Once the gate is attached, visitors without `authV2` cannot read the family data. `authV2` is therefore turned on first and the gate attached after it. The production cutover ran in that order on 2026-10-12 (HFY-TSK-069, HFY-R67). See [How to cut over to authV2 and the private data gate, and roll back](../how-to/cut-over-to-the-private-data-gate.md), and for the reasoning, [The gate is a third switch, and the order matters](../explanation/release-model.md#the-gate-is-a-third-switch-and-the-order-matters).
 - While the gate is attached, an automatic rollback or a revert that restores a `flags.json` with `authV2` false, or any change that sets `authV2` false, locks visitors out of the family data: the legacy client can neither get nor refresh the `io_id` cookie that the gate checks. Remove the gate first: `add-data-gate-behaviors.sh --remove --app-stack <app-stack>`, with `us-west-2` as the CLI's region, or with `--restore-uploads-policy-id`. For what `--remove` changes, see [Infrastructure](#infrastructure); for what the data paths answer afterwards, see [CloudFront Function](#cloudfront-function).
 - No workflow builds, deploys or attaches the gate. Building, validating and deploying it: [How to deploy and update the Lambda@Edge functions in us-east-1](../how-to/deploy-the-edge-functions.md). Why it exists: [Gating the JSON](../explanation/family-data-privacy.md#gating-the-json).
+
+## Family graph builder
+
+Paths:
+
+- [`graph/bin/build-graph.mjs`](../../graph/bin/build-graph.mjs): the command line. [`graph/src/cli.mjs`](../../graph/src/cli.mjs) holds the argument handling, the exit codes and `--verify` / `--verify-against`.
+- [`graph/src/source.mjs`](../../graph/src/source.mjs): the record sources: a file of JSON lines, stdin, or `sqlite3 -readonly` on a copy of the Gramps tree.
+- [`graph/src/project.mjs`](../../graph/src/project.mjs): the allowlist projection. [`graph/src/build.mjs`](../../graph/src/build.mjs) assembles the graph, [`graph/src/verify.mjs`](../../graph/src/verify.mjs) is `verify()`, and [`graph/src/write.mjs`](../../graph/src/write.mjs) is the atomic writer.
+- [`graph/schema/family-graph.v1.schema.json`](../../graph/schema/family-graph.v1.schema.json): the schema of `person/graph.json`.
+- [`graph/test/`](../../graph/test/): the `node:test` suites and their synthetic fixtures. See [Tests](#tests).
+
+Facts:
+
+- It is a private Node 22 package with no runtime dependencies. It runs by hand on io's machine, on a copy of the Gramps tree or on JSON lines. No workflow builds the graph or runs its tests, and nothing publishes `person/graph.json` yet.
+- Nothing reads the live Gramps database. `--from-gramps-copy` refuses when the copy's `lock` file exists, opens the copy read-only and streams the rows over a pipe, so no unredacted JSON lines reach a file.
+- The projection copies only the allowlisted fields, as years and ids. `verify()` runs before every write, and a failure writes nothing.
+- The output is deterministic and written by temp file and rename, so a failed run leaves the previous `graph.json` as it was.
+- The generation index, face crops and geocoding are later tasks. Their fields are in the schema and are `null`, `0` or empty until then.
 
 ## CloudFront Function
 
@@ -588,6 +608,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `docs/`, `AGENTS.md` | This documentation. `AGENTS.md` is the entry point for automated agents. |
 | `edge-gate/` | Private data gate |
 | `functions/`, `gcloud/`, `lambda/` | Legacy sign-in |
+| `graph/` | Family graph builder |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
 | `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. |
