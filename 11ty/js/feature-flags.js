@@ -842,6 +842,12 @@
     loadIsland("settings", { onError() { /* the page keeps its "not turned on" text */ } });
   });
 
+  // HFY-TSK-136: aboutCta mounts the signed-in call to action after the story on /about/ (the island renders nothing signed out).
+  resolveFlags().then((flags) => {
+    if (flags.aboutCta !== true || !/^\/about\/?(index\.html)?$/.test(window.location.pathname)) return;
+    loadIsland("about-cta", { onError() { /* the story stands on its own */ } });
+  });
+
   onReady(applyFeatureVisibility);
 
   function hydrateSessionState() {
