@@ -563,3 +563,21 @@
   #mediaLightbox .modal-body > .mt-3 { max-width: 68ch; }
 }
 .lightbox-error { margin: 0; }
+
+/* ---------------------------------------------------------------- mount points (HFY-TSK-137)
+   Stable hosts that islands fill. With nothing in them they take no space, so the page is exactly as before. */
+.person-chips,
+.person-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-space-2);
+  margin-top: var(--io-space-3);
+}
+.person-chips:not(:has(> [data-slot]:not(:empty))),
+.person-actions:not(:has(> [data-slot]:not(:empty))),
+[data-slot]:empty {
+  display: none;
+}
+[data-slot="tree-link"]:not(:empty) { margin-top: var(--io-space-3); }
+#hfy-person-social[hidden] { display: none; }

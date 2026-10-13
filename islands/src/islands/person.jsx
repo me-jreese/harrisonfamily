@@ -40,7 +40,7 @@ async function init() {
       mountAt((h) => panel.appendChild(h), <Notes notes={notes} />, "hfy-notes-v2");
     }
   } catch { /* keep the legacy notes */ }
-  // Interface contract (f): the comments host is the LAST child of #person-content, after life, family, photos and stories.
-  mountAt((h) => content.appendChild(h), <Comments subject={`person:${id}`} />, "hfy-person-comments");
+  // Interface contract (f): the comments host follows life, family, photos and stories; #hfy-person-social (HFY-TSK-137) stays the last child.
+  mountAt((h) => { const social = document.getElementById("hfy-person-social"); if (social && social.parentElement === content) content.insertBefore(h, social); else content.appendChild(h); }, <Comments subject={`person:${id}`} />, "hfy-person-comments");
 }
 init();

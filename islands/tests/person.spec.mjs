@@ -59,8 +59,8 @@ test("flag on: md notes, comment list, post, react; 16px inputs, 44px targets, n
   const comments = page.locator("[data-hfy-comments]");
   await expect(comments.getByText("Hello")).toBeVisible();
   await expect(comments.getByRole("heading", { name: "comments" })).toBeVisible();
-  // Interface contract (f): the comments host is the LAST child of #person-content (after life, family, photos, stories).
-  expect(await page.evaluate(() => document.getElementById("person-content").lastElementChild?.id)).toBe("hfy-person-comments");
+  // Interface contract (f): the comments host follows life, family, photos, stories; #hfy-person-social (HFY-TSK-137) is the last child.
+  expect(await page.evaluate(() => [...document.getElementById("person-content").children].slice(-2).map((el) => el.id))).toEqual(["hfy-person-comments", "hfy-person-social"]);
   await expect(comments.locator("time").first()).toHaveAttribute("title", /^[a-z]+ \d{1,2}, \d{4}, \d{1,2}:\d{2} (am|pm)$/);
   await expect(comments.getByRole("link", { name: "I0044" })).toHaveAttribute("href", "/person/?id=I0044");
   await expect(page.locator("[data-hfy-signin]")).toHaveCount(0);
