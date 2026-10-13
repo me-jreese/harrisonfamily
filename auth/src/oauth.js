@@ -17,7 +17,7 @@ export const DESKTOP_LOOPBACK_REDIRECT = "http://127.0.0.1/callback";
 /** The desktop client definition for createOAuthServer({ clients }). */
 export const desktopClient = (over = {}) => ({
   id: DESKTOP_CLIENT_ID, redirectUris: [DESKTOP_LOOPBACK_REDIRECT], resources: [DESKTOP_SYNC_RESOURCE],
-  loopback: true, registrable: false, defaultScope: "sync", name: "Harrison Family Gramps sync", refreshTtlS: REFRESH_TTL_S, ...over,
+  loopback: true, registrable: false, userinfo: false, defaultScope: "sync", allowedScopes: ["sync"], name: "Harrison Family Gramps sync", refreshTtlS: REFRESH_TTL_S, ...over,
 });
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
@@ -25,6 +25,7 @@ const SCOPE_RE = /^[A-Za-z0-9:._\/ -]{1,200}$/;
 const MAX_AGE_RE = /^[0-9]{1,9}$/; // OIDC max_age: a non-negative integer number of seconds
 const NAME_MAX = 200;
 const PORT_RE = /^[0-9]{1,5}$/;
+const LOOPBACK_RAW_RE = /^http:\/\/127\.0\.0\.1(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/; // canonical spelling only: no backslash, whitespace, shorthand or odd escapes
 
 /**
  * RFC 8252 section 7.3: a loopback client may use any port. Matches scheme, host and path of a registered loopback URI exactly
@@ -32,9 +33,11 @@ const PORT_RE = /^[0-9]{1,5}$/;
  */
 export function loopbackMatches(registered, candidate) {
   let r, c;
+  if (typeof candidate !== "string" || !LOOPBACK_RAW_RE.test(candidate)) return false;
   try { r = new URL(registered); c = new URL(candidate); } catch { return false; }
   if (r.protocol !== "http:" || c.protocol !== "http:") return false;
   if (c.username || c.password || c.search || c.hash || candidate.includes("#") || candidate.includes("?")) return false;
+  if (candidate.includes("/./") || candidate.includes("/../") || candidate.includes("//", 7)) return false;
   if (c.hostname !== r.hostname || c.pathname !== r.pathname) return false;
   return c.port === "" || (PORT_RE.test(c.port) && Number(c.port) >= 1 && Number(c.port) <= 65535);
 }
@@ -74,7 +77,8 @@ export function memoryOAuthStore() {
 }
 
 /**
- * HFY-TSK-120: `clients` is [{ id, redirectUris, resources, loopback?, registrable?, defaultScope?, name?, refreshTtlS? }].
+ * HFY-TSK-120: `clients` is [{ id, redirectUris, resources, loopback?, registrable?, userinfo?, defaultScope?, allowedScopes?, name?, refreshTtlS? }].
+ * `allowedScopes` limits what that client may request (anything else is invalid_scope) and reserves those scopes to it; without a list a client may request any scope not reserved by another client. `userinfo: false` keeps the client's resources out of the /userinfo audience.
  * The legacy `redirectUris` / `resources` / `clientId` arguments still describe the single MCP client when `clients` is absent.
  * A `loopback` client matches its redirect URIs by RFC 8252 section 7.3 (any port); every other client matches exactly.
  * Codes and refresh tokens are bound to the issuing client. Only `registrable` clients (default true) are served by /register.
@@ -86,12 +90,12 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     if (clients.has(c.id)) throw new Error(`duplicate client ${c.id}`);
     if (!c.redirectUris?.length) throw new Error("redirectUris must not be empty");
     if (!c.resources?.length) throw new Error("resources must not be empty");
-    clients.set(c.id, { registrable: true, defaultScope: "mcp", name: "Harrison Family MCP", refreshTtlS: REFRESH_TTL_S, loopback: false, ...c });
+    clients.set(c.id, { registrable: true, defaultScope: "mcp", name: "Harrison Family MCP", refreshTtlS: REFRESH_TTL_S, loopback: false, userinfo: true, ...c });
   }
   if (!clients.size) throw new Error("at least one client is required");
   const clientOf = (id) => (typeof id === "string" ? clients.get(id) : undefined);
   const redirectOk = (c, uri) => typeof uri === "string" && (c.loopback ? c.redirectUris.some((r) => loopbackMatches(r, uri)) : c.redirectUris.includes(uri));
-  const allResources = [...new Set([...clients.values()].flatMap((c) => c.resources))];
+  const userinfoResources = [...new Set([...clients.values()].filter((c) => c.userinfo).flatMap((c) => c.resources))];
   const registrationClient = [...clients.values()].find((c) => c.registrable);
   if (corsOrigins.some((o) => !/^https:\/\/[^/*\s]+$/.test(o))) throw new Error("corsOrigins must be exact https origins (no wildcard)");
   const base = issuer.replace(/\/+$/, "");
@@ -102,7 +106,14 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) u.searchParams.set(k, String(v));
     return u.toString();
   };
-  const scopeOf = (s, c) => (typeof s === "string" && SCOPE_RE.test(s) ? s : c.defaultScope);
+  // A client that declares allowedScopes is limited to them and those scopes are reserved to it; a client without a list keeps the
+  // pre-TSK-120 behavior (any well-formed scope) except it can never ask for a scope reserved by another client.
+  const reservedBy = (scope) => [...clients.values()].filter((k) => k.allowedScopes?.includes(scope));
+  /** undefined = the scope is outside the client's allowedScopes (invalid_scope); a missing or malformed one falls back to the default. */
+  const scopeOf = (s, c) => {
+    if (typeof s !== "string" || !SCOPE_RE.test(s)) return c.defaultScope;
+    return s.split(/\s+/).filter(Boolean).every((x) => (c.allowedScopes ? c.allowedScopes.includes(x) : reservedBy(x).length === 0)) ? s : undefined;
+  };
 
   const metadata = () => json(200, {
     issuer: base,
@@ -117,7 +128,7 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: [...new Set([...clients.values()].map((c) => c.defaultScope))],
+    scopes_supported: [...new Set([...clients.values()].flatMap((c) => c.allowedScopes ?? [c.defaultScope]))],
     authorization_response_iss_parameter_supported: true,
   }, { "cache-control": "public, max-age=300" });
 
@@ -135,6 +146,8 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     }
     const resource = q.resource ? client.resources.find((r) => r === q.resource) : client.resources[0];
     if (!resource) return back({ error: "invalid_target", error_description: "unknown resource" });
+    const scope = scopeOf(q.scope, client);
+    if (scope === undefined) return back({ error: "invalid_scope", error_description: "scope is not allowed for this client" });
     // HFY-R64 / RFC 9470: max_age and prompt=login ask for a fresh sign-in (the MCP server's step-up delete needs auth_time within 300 s).
     let maxAge;
     if (q.max_age !== undefined) {
@@ -154,7 +167,7 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     const code = b64u(random(32));
     const name = displayNameOf(session.label, session.sub);
     await store.put({
-      PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope: scopeOf(q.scope, client),
+      PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope,
       ...assuranceOf(session), ...(name ? { name } : {}),
       expiresAt: now() + CODE_TTL_S * 1000, ttl: secs() + CODE_TTL_S + 60,
     });
@@ -208,7 +221,7 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
       const rt = p.refresh_token;
       if (!rt) return err(400, "invalid_request", "refresh_token is required");
       if (p.client_id && !clientOf(p.client_id)) return err(401, "invalid_client", "unknown client_id");
-      // Client binding: another client's refresh token is refused without being consumed (it is not a replay).
+      // Client binding: when client_id is sent and differs from the token's client, the live token is refused without being consumed. A token already used is a replay whatever client presents it: its family is revoked.
       const peek = await store.get(`MCPRT#${keyOf(rt)}`);
       if (peek && p.client_id && peek.clientId !== p.client_id) return err(400, "invalid_grant", "refresh token was not issued to this client");
       const rec = await store.take(`MCPRT#${keyOf(rt)}`);
@@ -275,7 +288,7 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     if (!jwks) return json(503, { error: "server_error" });
     let payload;
     try {
-      ({ payload } = await jwtVerify(m[1], jwks, { issuer: base, audience: allResources, algorithms: ["RS256"], clockTolerance: 5, currentDate: new Date(now()) }));
+      ({ payload } = await jwtVerify(m[1], jwks, { issuer: base, audience: userinfoResources, algorithms: ["RS256"], clockTolerance: 5, currentDate: new Date(now()) }));
     } catch {
       return bearer("invalid_token");
     }

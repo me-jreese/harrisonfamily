@@ -26,6 +26,7 @@ Parameters:
   McpRedirectUris: { Type: String, Default: "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback", Description: "HFY-TSK-076: comma-separated exact redirect URIs the public MCP client may use (the only allowed list)" }
   McpResources: { Type: String, Default: "https://harrisonfamily.us/mcp", Description: "HFY-TSK-076: comma-separated resource indicators (token aud); the first is the default" }
   McpCorsOrigins: { Type: String, Default: "https://claude.ai,https://claude.com", Description: "Exact browser origins allowed CORS on /auth/token, /register, /revoke (never a wildcard)" }
+  SyncDesktopClient: { Type: String, Default: "0", AllowedValues: ["0", "1"], Description: "HFY-TSK-120 stack switch (default off): 1 registers the hfy-sync-desktop OAuth client (Gramps desktop add-on) on the auth edge. Turn on in the same change set as the sync routes (AC6 RG-4)" }
   OriginVerifySecretName: { Type: String, Default: harrisonfamily/cloudfront/origin-verify, Description: "Secret created by scripts/infra/create-origin-verify.sh; CloudFront sends it as X-Origin-Verify (HFY-R43)" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
   SesIdentityArn: { Type: String, Default: "", Description: "Optional verified SES identity ARN (for example harrisonfamily.us, same region) for Cognito email. Empty keeps COGNITO_DEFAULT (about 50 emails/day for the account); the edge rate-limits /auth/password/forgot per email+IP either way" }
@@ -305,6 +306,7 @@ Resources:
           MCP_REDIRECT_URIS: !Ref McpRedirectUris
           MCP_RESOURCES: !Ref McpResources
           MCP_CORS_ORIGINS: !Ref McpCorsOrigins
+          HFY_SYNC_DESKTOP_CLIENT: !Ref SyncDesktopClient
           ORIGIN_VERIFY: !Sub "{{resolve:secretsmanager:${OriginVerifySecretName}:SecretString}}"
           ADMIN_LIST_KEY: !Ref AdminListKey
 

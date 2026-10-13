@@ -679,5 +679,42 @@ describe("multi-client OAuth server: hfy-sync-desktop (HFY-TSK-120)", () => {
     expect(loopbackMatches(LB(), LB(1234))).toBe(true);
     expect(loopbackMatches(LB(), "http://127.0.0.1:99999/callback")).toBe(false);
     expect(loopbackMatches(LB(), "not a url")).toBe(false);
+    for (const bad of ["http:\\\\127.0.0.1:5000\\callback", "http://127.0.0.1:5000/call\tback", "http://127.0.0.1:5000/callback\n", "http://127.1:5000/callback", "http://0x7f.1:5000/callback", "http://2130706433:5000/callback", "http://127.0.0.1:5000/../callback", "http://127.0.0.1:/callback", "http://127.0.0.1:0/callback"]) {
+      expect(loopbackMatches(LB(), bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+  it("scopes: the desktop client may request only sync; the MCP client cannot take the reserved sync scope but keeps free-form scopes", async () => {
+    fresh();
+    const p = pkce();
+    const bad = await dev({ redirect_uri: LB(5000), code_challenge: p.challenge, code_challenge_method: "S256", scope: "mcp" });
+    expect(new URL(bad.headers.location).searchParams.get("error")).toBe("invalid_scope");
+    const ok = await dev({ redirect_uri: LB(5000), code_challenge: p.challenge, code_challenge_method: "S256", scope: "sync" });
+    expect(new URL(ok.headers.location).searchParams.get("code")).toBeTruthy();
+    const mcp = (scope) => srv.authorize({ response_type: "code", client_id: "mcp-harrisonfamily", redirect_uri: CB, code_challenge: p.challenge, code_challenge_method: "S256", scope }, async () => ({ sub: "I0111", authTime: Math.floor(clock / 1000) }));
+    expect(new URL((await mcp("sync")).headers.location).searchParams.get("error")).toBe("invalid_scope");
+    expect(new URL((await mcp("mcp:tools extra")).headers.location).searchParams.get("code")).toBeTruthy();
+    expect(JSON.parse(srv.metadata().body).scopes_supported).toEqual(expect.arrayContaining(["mcp", "sync"]));
+  });
+  it("replaying a used refresh token revokes the family even when presented with the wrong client_id (a replay is a compromise signal)", async () => {
+    fresh();
+    const p = pkce();
+    const a = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(5000), p), redirect_uri: LB(5000), client_id: D, code_verifier: p.verifier })).body;
+    const b = (await dtok({ grant_type: "refresh_token", refresh_token: a.refresh_token, client_id: D })).body;
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: a.refresh_token, client_id: "mcp-harrisonfamily" })).body.error).toBe("invalid_grant");
+    expect((await dtok({ grant_type: "refresh_token", refresh_token: b.refresh_token, client_id: D })).body.error).toBe("invalid_grant");
+  });
+  it("/userinfo accepts MCP-audience tokens but not a sync-audience desktop token", async () => {
+    fresh();
+    const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
+    const { createLocalJWKSet, exportJWK } = await import("jose");
+    const jwk = { ...(await exportJWK(publicKey)), kid: "k", alg: "RS256", use: "sig" };
+    srv = mk({ signer: { privateKey, kid: "k" }, jwks: createLocalJWKSet({ keys: [jwk] }) });
+    const p = pkce();
+    const sync = (await dtok({ grant_type: "authorization_code", code: await codeFor(D, LB(5000), p), redirect_uri: LB(5000), client_id: D, code_verifier: p.verifier })).body;
+    const q = pkce();
+    const mcpTok = (await dtok({ grant_type: "authorization_code", code: await codeFor("mcp-harrisonfamily", CB, q), redirect_uri: CB, client_id: "mcp-harrisonfamily", code_verifier: q.verifier })).body;
+    const ui = (t) => srv.userinfo({ headers: { authorization: `Bearer ${t}` } });
+    expect((await ui(mcpTok.access_token)).statusCode).toBe(200);
+    expect((await ui(sync.access_token)).statusCode).toBe(401);
   });
 });
