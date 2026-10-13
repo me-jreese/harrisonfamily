@@ -247,7 +247,8 @@ Other cases the tests pin:
   "version": 1,
   "groups": {
     "mcp-authors": { "emails": ["member-one@example.com"], "subjects": ["<gramps-id>"] },
-    "hfy-admin": { "subjects": ["<gramps-id>"] }
+    "hfy-admin": { "subjects": ["<gramps-id>"] },
+    "uat": { "subjects": ["<gramps-id>"] }
   }
 }
 ```
@@ -257,6 +258,7 @@ Other cases the tests pin:
 - **Cache.** 60 s per container. A failed read or a body that is not JSON logs `groups config unavailable (failing closed)` with the error message, grants no groups to anyone, and is retried after 5 s. A failure also discards a copy loaded earlier.
 - **`mcp-authors`** matches when the token's `sub` (a gramps id) is in `subjects`, or when `emails` is not empty and the token's `email` claim matches an entry case-insensitively. The email counts only when `email_verified` is not `false`. MCP access tokens from the auth edge carry no `email_verified` claim, so their `email` always counts when present.
 - **`hfy-admin`** matches `subjects` only. An `emails` list under it is ignored.
+- **`uat`** matches `subjects` only, like `hfy-admin`. It grants no tool, because no policy row names it. The API's feature gate reads it: its members reach routes that are still behind a flag ([API: Feature gate](api.md#feature-gate)).
 - A token with no `sub` gets no groups.
 - The token's own `groups` claim (`members`, `admins` and allowlist roles from the auth edge) is ignored. `config/admins.json` plays no part in MCP authorization, and an `hfy-admin` subject need not be on it.
 - `createGroupResolver` also accepts `emailsFor(sub)`, an allowlist lookup of the emails bound to a subject. It exists in `policy.js` but is not wired in `index.js`, so only the token's `email` claim is matched.
@@ -289,6 +291,7 @@ A tool runs as the actor `{id, label, admin}`, the shape the HTTP path builds fr
 `buildMcpRegistry` gives each tool a `run` that calls `handler.invoke(actor, routeName, {params, query, body})` ([`api/src/handler.js`](../../api/src/handler.js)). `invoke` finds the route by name and calls the route's own handler with the services built for that actor. A tool call therefore gets the same validation, Q-4 permissions, D-15 `AUDIT#` items and notifications as the HTTP route ([API: Permissions](api.md#permissions), [API: Audit records](api.md#audit-records), [API: Notifications](api.md#notifications)).
 
 - What `invoke` skips is the HTTP framing: route matching, the session cookie, the content-type check and body parsing. The tool's `args` supplies `params`, `query` and `body` directly.
+- What `invoke` keeps is the route's [feature gate](api.md#feature-gate). A tool whose route is behind a flag that is off answers `404 not_found` unless the actor is in `uat`. A tool call has no preview header.
 - `admin` comes from `hfy-admin`, so an `hfy-admin` caller is an API admin for the call: `hfy_posts_list` and `hfy_posts_get` show other members' drafts and withdrawn posts, and a `reason` on `hfy_comments_delete` is recorded when the comment is someone else's.
 - Audit items record the actor's `id` as `principal`. Comments removed with a deleted post are audited with that `id` and the reason `post deleted`.
 - `hfy_posts_create` makes drafts only, so it never sends `new_family_post`. `hfy_comments_create` sends the usual comment notifications when push is configured.

@@ -160,6 +160,7 @@ Rules:
 - **Automatic clearing.** The override is cleared, and the banner removed, when a flagged dependency is unavailable: an island bundle fails to load, or `/auth/session` does not answer for `authV2`. The page then falls back to the legacy behavior, and a console warning names the dependency (`preview flags turned off: <what> unavailable`).
 - **Old storage.** Builds before HFY-R58 kept the override in `localStorage` with no expiry. Every page load deletes `localStorage["hfy:flags"]`.
 - If `sessionStorage` cannot be used, the `hfy_flags` parameter applies to the current page only.
+- **The API ignores it.** The override changes only what the page shows. An API route behind a flag answers `404` until the flag is `true` in the deployed file, except to members of the `uat` group ([API: Feature gate](api.md#feature-gate)).
 
 [`feature-flags.js`](../../11ty/js/feature-flags.js) merges the flags in this order:
 
