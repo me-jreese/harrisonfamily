@@ -67,6 +67,7 @@ export function MyPosts({ id }) {
   const [ping, setPing] = usePing();
   const posts = usePosts({ subject: id });
   const composer = useRef(null);
+  const shareHandled = useRef(false);
   // Uploaded photo urls, in the kit's attachment order (index i = the i-th .iok-content-attachment row).
   const photos = useRef([]);
   const [count, setCount] = useState(0);
@@ -88,10 +89,25 @@ export function MyPosts({ id }) {
     root.addEventListener("click", onRemove, true);
     return () => { mo.disconnect(); root.removeEventListener("click", onRemove, true); };
   }, [me, sync]);
+  // HFY-TSK-136: /person/?id=<me>#share (the /about/ call to action's "add a photo") scrolls the composer in and focuses it. The browser's
+  // own anchor jump ran before this section existed, so it is done here, once the section is drawn and on a later hash change.
+  useEffect(() => {
+    if (me !== id) return undefined;
+    const go = () => {
+      if (window.location.hash !== "#share") return;
+      const box = composer.current?.querySelector("textarea");
+      document.getElementById("share")?.scrollIntoView({ block: "start" });
+      if (box) box.focus({ preventScroll: true });
+    };
+    // Once per mount: a re-render or remount with the hash still set must not pull focus back; a real hash change still does.
+    if (!shareHandled.current) { shareHandled.current = true; go(); }
+    window.addEventListener("hashchange", go);
+    return () => window.removeEventListener("hashchange", go);
+  }, [me, id]);
   if (me !== id) return null;
   const pickPhoto = () => composer.current?.querySelector('input[type="file"]')?.click();
   return (
-    <section className="hfy-posts hfy-posts__mine" aria-labelledby="hfy-my-posts-h" data-hfy-my-posts>
+    <section className="hfy-posts hfy-posts__mine" id="share" aria-labelledby="hfy-my-posts-h" data-hfy-my-posts>
       <h2 className="hfy-h" id="hfy-my-posts-h">share something</h2>
       <div className="hfy-posts__composer" ref={composer}>
         <PostComposer

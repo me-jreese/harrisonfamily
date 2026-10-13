@@ -9,7 +9,7 @@ import { createMemoryCorpusStorage, useCorpusIndex } from "@io-kit/search/corpus
 import { CollectionSearch } from "@io-kit/search-ui";
 import { cloudscapeUi, useColorMode } from "@io-kit/search-ui/cloudscape";
 import { mountAt } from "../lib/mount.jsx";
-import { SEARCH_COPY, peopleSource, peopleProperties } from "../lib/people-corpus.js";
+import { SEARCH_COPY, peopleSource, peopleProperties, filterTokensFromParams } from "../lib/people-corpus.js";
 
 // Cloudscape's half of the theme is static: search.css imports `hfy:cloudscape-theme`, which islands/build.mjs generates at build time
 // from lib/cloudscape-theme.js (Cloudscape generateThemeStylesheet over var(--io-search-*) values). Kit root cause and upstream there.
@@ -101,7 +101,7 @@ function SearchApp() {
   useColorMode("dark"); // what the Cloudscape CollectionSearch wrapper does; the base one is used for the ui overrides
   const params = new URLSearchParams(window.location.search);
   const q0 = (params.get("q") || params.get("query") || "").trim();
-  const [query, setQuery] = useState(() => ({ operation: "and", tokens: q0 ? [{ operator: ":", value: q0 }] : [] }));
+  const [query, setQuery] = useState(() => ({ operation: "and", tokens: [...(q0 ? [{ operator: ":", value: q0 }] : []), ...filterTokensFromParams(params)] }));
   const idx = useCorpusIndex(peopleSource, { storage, retryDelaysMs: [1000], pollMs: 0 });
   const pending = idx.status === "seeding" || (idx.status === "warm" && idx.rows.length === 0);
   const error = idx.status === "error" ? idx.error || SEARCH_COPY.failed : null;

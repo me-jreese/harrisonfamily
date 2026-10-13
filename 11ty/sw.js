@@ -7,7 +7,7 @@ const ASSET_V = {
   "theme": "6f489551",
   "manifest": "c0f9b5fc",
   "shell": {
-    "js": "87aed6ae",
+    "js": "1493681f",
     "css": "53cdeb03"
   },
   "notify": "f25d03ad"
