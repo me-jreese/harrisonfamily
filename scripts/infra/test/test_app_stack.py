@@ -236,6 +236,7 @@ class SyncInfra(unittest.TestCase):
         rules = {r["Id"]: r for r in pr["LifecycleConfiguration"]["Rules"]}
         self.assertEqual(rules["snapshots-current-30d"]["ExpirationInDays"], 30)
         self.assertEqual(rules["snapshots-current-30d"]["Prefix"], "snapshots/")
+        self.assertNotIn("latest.json", str(rules))  # a quiet tree loses its snapshots/latest.json checkpoint after 30 days; the design accepts that
         for rid, prefix in [("snapshots-noncurrent-1d", "snapshots/"), ("render-shadow-noncurrent-1d", "render-shadow/")]:
             self.assertEqual(rules[rid]["Prefix"], prefix)
             self.assertEqual(rules[rid]["NoncurrentVersionExpiration"], {"NoncurrentDays": 1})
@@ -283,7 +284,10 @@ class SyncInfra(unittest.TestCase):
         sub_ = self.r["AlarmSubscription"]
         self.assertEqual(sub_["Condition"], "HasAlarmEmail")
         self.assertEqual((sub_["Properties"]["Protocol"], sub_["Properties"]["Endpoint"]), ("email", {"Ref": "AlarmEmail"}))
-        self.assertNotIn("@", (CFN / "app-stack.yaml").read_text().split("Parameters:")[1].split("Conditions:")[0].replace("no-reply@harrisonfamily.us", ""))
+        for name, spec in self.p.items():  # no individual's address lives in the template; SesFromAddress is the generic site sender (default empty)
+            self.assertNotIn("@", str(spec.get("Default", "")), name)
+        self.assertEqual(self.p["AlarmEmail"]["Default"], "")
+        self.assertEqual(self.p["SesFromAddress"]["Default"], "")
 
     def test_schedule_invokes_the_renderer_every_15_minutes(self):
         rule = self.r["RenderSchedule"]["Properties"]
@@ -313,7 +317,16 @@ class SyncInfra(unittest.TestCase):
         self.assertIn("media/tree_*", prefixes)
         self.assertEqual(sorted(p.split("/")[0] for p in prefixes if p != "media/tree_*"), sorted(DATA_PREFIXES[:-1]))
         self.assertEqual(sorted(by_sid(self.r["RenderRole"], "Stream")["Action"]),
-                         ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"])
+                         ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator"])  # ListStreams is not authorized per stream ARN
+        sync_list = by_sid(self.r["RenderRole"], "SyncBucketList")
+        self.assertEqual(sync_list["Condition"]["StringLike"]["s3:prefix"], ["snapshots/*", "render-shadow/*", "render/*"])
+        # table writes are limited to the renderer's own partitions; REC# heads and SYNC#LOG stay read-only
+        read = by_sid(self.r["RenderRole"], "TableRead")
+        self.assertEqual(sorted(read["Action"]), ["dynamodb:BatchGetItem", "dynamodb:GetItem", "dynamodb:Query"])
+        write = by_sid(self.r["RenderRole"], "TableWrite")
+        self.assertEqual(write["Condition"], {"ForAllValues:StringEquals": {"dynamodb:LeadingKeys": ["SYNC#RENDER", "SYNC#RENDERED"]}})
+        self.assertEqual(write["Resource"], {"Fn::GetAtt": ["Table", "Arn"]})  # no index ARNs: GSIs are never written directly
+        self.assertFalse(any(a.startswith("dynamodb:Get") or a == "dynamodb:Query" for a in write["Action"]))
         for s in statements(self.r["RenderRole"]):
             self.assertNotIn("uploads/", str(s.get("Resource")))
 
@@ -339,6 +352,14 @@ class SyncInfra(unittest.TestCase):
             st = ses[0]["Fn::If"][1]
             self.assertEqual((st["Sid"], st["Action"]), ("SendEmail", "ses:SendEmail"))
             self.assertEqual(st["Resource"][0], {"Ref": "SesIdentityArn"})
+            self.assertEqual(st["Condition"], {"StringEquals": {"ses:FromAddress": {"Ref": "SesFromAddress"}}}, role)
+        rules = self.t["Rules"]  # a config set or identity without its companions would fail at runtime, so the template refuses them
+        self.assertEqual(rules["SesConfigurationSetNeedsIdentity"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesIdentityArn"}, ""]}]})
+        self.assertEqual(rules["SesConfigurationSetNeedsIdentity"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesConfigurationSet"}, ""]}]})
+        self.assertEqual(rules["SesIdentityNeedsFromAddress"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesFromAddress"}, ""]}]})
+        pattern = re.compile(self.p["SesFromAddress"]["AllowedPattern"])
+        self.assertTrue(pattern.match("") and pattern.match("no-reply@example.test"))
+        self.assertIsNone(pattern.match("Site <no-reply@example.test>"))
 
     # AC7: break-glass
     def test_breakglass_role_requires_mfa_and_io_only(self):
@@ -359,22 +380,41 @@ class SyncInfra(unittest.TestCase):
         f = self.r["GraphRenderFunction"]["Properties"]
         self.assertEqual((f["Runtime"], f["Architectures"], f["ReservedConcurrentExecutions"]), ("nodejs22.x", ["arm64"], 1))
         self.assertEqual(f["Code"]["S3Key"], {"Ref": "GraphRenderCodeKey"})
-        out = by_sid(self.r["GraphRenderRole"], "GraphOutputs")
-        self.assertEqual(sorted(sub(x).split("}/", 1)[1] for x in out["Resource"]), ["media/faces/*", "person/graph.json"])
+        # the placeholder role is logs only; viz-graph-cloud-source widens it with the real package
+        self.assertEqual([x["Sid"] for x in statements(self.r["GraphRenderRole"])], ["Logs"])
         # nothing invokes it: no event source, schedule target or permission references it
         for n, r in self.r.items():
             if r["Type"] in ("AWS::Lambda::EventSourceMapping", "AWS::Events::Rule", "AWS::Lambda::Permission") and n != "GraphRenderFunction":
                 self.assertNotIn("GraphRenderFunction", json.dumps(r), n)
 
     def test_placeholders_are_no_ops(self):
-        py = (ROOT / "lambda" / "placeholders" / "hfy-sync-render" / "handler.py").read_text()
-        self.assertIn("def handler(event, context)", py)
+        import importlib.util
+        import os
+        from unittest import mock
+        path = ROOT / "lambda" / "placeholders" / "hfy-sync-render" / "handler.py"
+        py = path.read_text()
         self.assertNotIn("boto3", py)
-        self.assertNotIn("import", py.replace("import os", ""))
+        self.assertEqual(re.findall(r"^\s*(?:import|from)\s+(\w+)", py, re.M), ["os"])
+        spec = importlib.util.spec_from_file_location("hfy_sync_render_placeholder", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with mock.patch.dict(os.environ, {"RENDER_MODE": "off"}):
+            self.assertEqual(mod.handler({}, None), {"status": "noop", "mode": "off"})
+        for mode in ("shadow", "live"):
+            with mock.patch.dict(os.environ, {"RENDER_MODE": mode}), self.assertRaises(RuntimeError):
+                mod.handler({}, None)
+        esm = self.r["RenderStreamMapping"]["Properties"]
+        self.assertEqual(esm["FunctionResponseTypes"], ["ReportBatchItemFailures"])
+        self.assertEqual(esm["MaximumBatchingWindowInSeconds"], 5)
+        self.assertEqual(esm["StartingPosition"], "LATEST")
         mjs = (ROOT / "lambda" / "placeholders" / "hfy-graph-render" / "src" / "index.mjs").read_text()
         self.assertNotIn("import", mjs.replace("// Placeholder", ""))
         self.assertEqual(self.r["RenderFunction"]["Properties"]["Handler"], "handler.handler")
         self.assertEqual(self.r["GraphRenderFunction"]["Properties"]["Handler"], "src/index.handler")
+
+    def test_break_glass_principal_has_no_default_and_is_not_in_the_repo(self):
+        self.assertNotIn("Default", self.p["BreakGlassPrincipalArn"])  # io's ARN stays out of the repo; every change set passes it (first) or UsePreviousValue (later)
+        self.assertNotIn("Conditions", self.r["BreakGlassRole"])
 
     # AC3: nothing that exists is renamed, removed or re-keyed (a rename or a changed physical name would be a replacement or a Remove)
     def test_existing_resources_and_outputs_are_kept(self):

@@ -32,7 +32,7 @@ Parameters:
   OriginVerifySecretName: { Type: String, Default: harrisonfamily/cloudfront/origin-verify, Description: "Secret created by scripts/infra/create-origin-verify.sh; CloudFront sends it as X-Origin-Verify (HFY-R43)" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
   SesIdentityArn: { Type: String, Default: "", Description: "Optional verified SES identity ARN (for example harrisonfamily.us, same region) for Cognito email. Empty keeps COGNITO_DEFAULT (about 50 emails/day for the account); the edge rate-limits /auth/password/forgot per email+IP either way" }
-  SesFromAddress: { Type: String, Default: "", Description: "Optional From address when SesIdentityArn is set, for example: Harrison Family <no-reply@harrisonfamily.us>" }
+  SesFromAddress: { Type: String, Default: "", AllowedPattern: "^$|^[^<>\\s]+@[^<>\\s]+$", Description: "Optional bare From address when SesIdentityArn is set, for example: no-reply@harrisonfamily.us. Bare because the ses:FromAddress condition on the SendEmail grants compares it exactly (a display-name form never matches). SesConfigurationSet and SesIdentityArn each require it, see Rules" }
 
   # --- W2/W3 (HFY-TSK-247, BRD2 10.2 item 8): every default-off parameter lands in this one change set; later changes are parameter-only ---
   SyncBucketName: { Type: String, Default: harrisonfamily-sync, Description: "Stack-managed private bucket for snapshots/, render-shadow/ and render/ (BRD2 section 8)" }
@@ -49,6 +49,18 @@ Parameters:
   ChatServicePublicKeys: { Type: String, Default: "", Description: "JSON array of {kid, spki} chat-worker service public keys (env CHAT_SERVICE_PUBLIC_KEYS); public, so not a secret. Empty makes the chat service routes answer 503" }
   AlarmEmail: { Type: String, Default: "", Description: "Address subscribed to the alarm topic (io). Empty creates the topic without a subscription. The subscription is confirmed from the email it sends" }
   BreakGlassPrincipalArn: { Type: String, AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:(user|role)/.+$", Description: "IAM user or role (io) allowed to assume hfy-data-breakglass with MFA. Compared by ARN in a condition, so the role survives the principal being recreated" }
+
+Rules:
+  SesConfigurationSetNeedsIdentity:
+    RuleCondition: !Not [!Equals [!Ref SesConfigurationSet, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref SesIdentityArn, ""]]
+        AssertDescription: SesConfigurationSet requires SesIdentityArn (the SendEmail grant exists only when an identity is set)
+  SesIdentityNeedsFromAddress:
+    RuleCondition: !Not [!Equals [!Ref SesIdentityArn, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref SesFromAddress, ""]]
+        AssertDescription: SesIdentityArn requires SesFromAddress (the SendEmail grant is conditioned on it)
 
 Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
@@ -157,6 +169,8 @@ Resources:
                   Resource:
                     - !Ref SesIdentityArn
                     - !If [HasSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SesConfigurationSet}", !Ref "AWS::NoValue"]
+                  Condition:
+                    StringEquals: { "ses:FromAddress": !Ref SesFromAddress }
                 - !Ref "AWS::NoValue"
               - !If
                 - HasVapid
@@ -347,6 +361,8 @@ Resources:
                   Resource:
                     - !Ref SesIdentityArn
                     - !If [HasSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SesConfigurationSet}", !Ref "AWS::NoValue"]
+                  Condition:
+                    StringEquals: { "ses:FromAddress": !Ref SesFromAddress }
                 - !Ref "AWS::NoValue"
 
   AuthFunction:
@@ -491,13 +507,20 @@ Resources:
                 Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${RenderFunctionName}:*
-              - Sid: Table
+              - Sid: TableRead
                 Effect: Allow
-                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:BatchGetItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem]
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:BatchGetItem]
                 Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              # The renderer writes only its own cursor and rendered markers; REC# heads and the append-only SYNC#LOG are read-only to it.
+              - Sid: TableWrite
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem]
+                Resource: !GetAtt Table.Arn
+                Condition:
+                  ForAllValues:StringEquals: { "dynamodb:LeadingKeys": ["SYNC#RENDER", "SYNC#RENDERED"] }
               - Sid: Stream
                 Effect: Allow
-                Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator, dynamodb:ListStreams]
+                Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator]
                 Resource: !GetAtt Table.StreamArn
               - Sid: Dlq
                 Effect: Allow
@@ -514,6 +537,8 @@ Resources:
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt SyncBucket.Arn
+                Condition:
+                  StringLike: { "s3:prefix": ["snapshots/*", "render-shadow/*", "render/*"] }
               # The rendered data keys only (BRD2 section 8). person/index.html and the other public shell files are not renderer-owned.
               - Sid: RenderedData
                 Effect: Allow
@@ -691,22 +716,7 @@ Resources:
                 Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${GraphRenderFunctionName}:*
-              - Sid: TableRead
-                Effect: Allow
-                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:BatchGetItem]
-                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
-              - Sid: PhotoReads
-                Effect: Allow
-                Action: s3:GetObject
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
-                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/*
-              - Sid: GraphOutputs
-                Effect: Allow
-                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/graph.json
-                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/faces/*
+              # Placeholder: logs only. viz-graph-cloud-source widens this (table read, photo reads, graph outputs) with the real package.
 
   GraphRenderFunction:
     Type: AWS::Lambda::Function
