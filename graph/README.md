@@ -55,9 +55,19 @@ Where the build does something the design's section 5.2 table does not spell out
 - **Rule L has no carried-classification hook yet.** `isLiving()` in `src/project.mjs` is the single place `death_ref_index == -1` lives. If the privacy domain moves to a precomputed classification on the record, `isLiving()` is where the override goes, and `--verify-against` still catches drift.
 - **Schema version.** `--from-gramps-copy` reads `metadata.version` (plain digits, JSON text or a small-int pickle) in the same sqlite3 query and rejects anything but 21. The sqlite3 child is killed if the consumer stops early.
 
+## Generations
+
+`src/generations.mjs` (`viz-generation-index`, the design's section 5.4) fills `components`, each person's `generation` and `generations[]`. The function is pure and deterministic:
+
+- Every child ref counts as a parent link, whatever its `rel`. A Kahn sort places what it can. Anything on or below an ancestor cycle gets `generation: null`, and its ids go to the local report as `GRAPH_CYCLE`.
+- The generation is the longest path from the oldest ancestor. A partner with no parents takes the highest generation among its partners (the married-in alignment), within at most |people| rounds.
+- Each component is shifted so that its oldest generation is 0. Its levels are ordered by `(birthYear ?? 9999, id)`.
+
+Singletons are their own components at generation 0, with one level each, as the design's step 7 says. The design's invented example shows a singleton with `generation: null` and no `generations[]` entry; the prose is followed here.
+
 ## Not here yet
 
-The generation index (`generation`, `generations`), face crops (`face`, `counts.faces`) and geocoding (`geo: "geonames"`) belong to later tasks (`viz-generation-index`, `viz-face-crops`, `viz-geocode-offline`). Their fields are in schema v1 and are written as `null`, `0` or an empty list until then. `components` is computed here.
+Face crops (`face`, `counts.faces`) and geocoding (`geo: "geonames"`) belong to later tasks (`viz-face-crops`, `viz-geocode-offline`). Their fields are in schema v1 and are written as `null`, `0` or `false` until then.
 
 ## Test
 
