@@ -40,6 +40,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out. |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation and the object key. |
 | [`presign.js`](../../api/src/presign.js) | The S3 presigner for uploads, kept apart so tests can sign offline. |
+| [`records/ops.js`](../../api/src/records/ops.js) | The EditOp engine for the editing work: `applyOps`, `invertOps`, `rebaseOps` (clean, no-op or conflict per op), keyed list segments (`@ref=`, `@=`, `@k=`) and `mintHandle`. It imports nothing, so it runs in Node and in a browser, and no route calls it yet. See [The EditOp engine](#the-editop-engine). |
 
 ### Dependencies
 
@@ -528,6 +529,49 @@ Photos are read back at `publicUrl`, through the CloudFront `/uploads/*` behavio
 - **Rolling the gate back.** `add-data-gate-behaviors.sh --remove` puts `/uploads/*` back in the public state, with the policy ID that it reads from the stack named by `--app-stack` (default `hfy-app`) or takes from `--restore-uploads-policy-id`. The live app stack is `<app-stack>`, so a production `--remove` passes `--app-stack <app-stack>` or `--restore-uploads-policy-id` (the **Gate rollback** notes in [System architecture: Request routing](architecture.md#request-routing)). Afterwards anyone who holds a photo URL can read the photo again.
 
 For why member photos sit behind the gate, see [The privacy model for family data](../explanation/family-data-privacy.md).
+
+## The EditOp engine
+
+[`api/src/records/ops.js`](../../api/src/records/ops.js) turns a list of EditOps into changed Gramps objects, the ops that undo them, and a three-way verdict for a stale proposal. It is a library: no route, tool or Lambda path calls it yet (HFY-TSK-234), and it ships in the `hfy-api` zip unreachable. It is pure: it imports nothing (no AWS SDK, no `node:` module), reads no environment and makes no network call. Its canonical JSON and SHA-256 are its own, so the editor and the API compute the same key hashes. The op format is the one in the editing design, section 5.3.
+
+Objects travel as a map `{ "Person:<handle>": <Gramps JSON> }`. An op is `{ id, op, obj, path, base, value, before }` with `op` one of `set`, `add`, `remove`, `move`, `create` and `delete`.
+
+| Call | Result |
+| --- | --- |
+| `applyOps(objects, ops, ctx?)` | `{ ok, objects, minted, results, conflicts, inverse }`. All or nothing: any conflict leaves the objects as given. It never mutates its input. |
+| `invertOps(objects, ops, ctx?)` | The ops that undo `ops`. Throws when they do not apply. |
+| `rebaseOps(ops, current, ctx?)` | `{ status: "current" \| "clean" \| "conflict", results, conflicts, objects }`. |
+| `mintHandle()` | A lowercase-hex handle in the shape of Gramps' `create_id()`. |
+| `keyFor(listName, array, index)` and `keySegment` | The key segment of a list element, for building paths. |
+
+**List elements are addressed by key, never by position.** A path is an RFC 6901 pointer whose list segments are keys:
+
+| Segment | Names | Lists |
+| --- | --- | --- |
+| `@ref=<handle>[#<n>][:<hash12>]` | an element by its `ref`; `#n` is the occurrence among equal refs; `:<hash12>` is a base content-hash check | `event_ref_list`, `child_ref_list`, `media_list`, `placeref_list`, `person_ref_list`, `reporef_list` |
+| `@=<string>` | a handle in a list of handles | `family_list`, `parent_family_list`, `note_list`, `citation_list`, `tag_list` |
+| `@k=<hash12>` | an element by the first 12 hex of the SHA-256 of its canonical JSON | every other list of objects |
+
+`media_list` keys always carry `#n` and the hash, so two tags of one person in one photo are two elements, the same key as the sync merge (SI-22). Keys are read against the objects at the start of the call, so a key still names its element after an earlier op in the batch moved or edited it; an op marked `seq: true` reads its keys after the ops ahead of it, and every inverse op is `seq`. A key that no longer matches is a conflict (`stale_key`, `key_not_found` or `ambiguous_key`), never a different element.
+
+**Rebase** gives each op one status, from the table in the editing design, section 7.5:
+
+| Op | Clean when | No-op when |
+| --- | --- | --- |
+| `set` | the current value deep-equals `base` | it already equals the proposed value |
+| `add` | the list exists and the key is absent | an identical element is present |
+| `remove` | the element is present with the same content hash | it is absent |
+| `move` | both keys are present | |
+| `create` | always | |
+| `delete` | the object exists and its hash equals `base` | |
+
+Every other outcome is a conflict row: `{ opId, obj, op, path, reason, base, current, proposed }`. Malformed ops are conflicts with the reason `invalid_op`, `invalid_path` or `missing_base`.
+
+**Reduced Dates.** A viewer who saw a Date through `publishView` never saw its day and month. Their `set` carries `base_version` instead of `base`, and rebase compares the object's version from `ctx.versions`. A whole-Date `set` of that kind keeps the stored day, month, second day and month, text and `sortval` unless the op lists `day`, `month`, `day2`, `month2` or `text` in `sets`.
+
+**Handles.** A `create` of `new:<n>` mints a handle and replaces every `new:<n>` in the batch (in `obj`, paths, `before` and string values). A `create` with a real `Class:<handle>` object key restores that object, which is how the inverse of a `delete` works.
+
+The tests are [`api/test/records/ops.node-test.js`](../../api/test/records/ops.node-test.js), run by `npm test` after vitest, or alone with `node --test`.
 
 ## Environment
 

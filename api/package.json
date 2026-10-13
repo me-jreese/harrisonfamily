@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run && node --test \"test/records/*.node-test.js\"",
     "gen-caps": "node scripts/gen-caps.mjs"
   },
   "dependencies": {
