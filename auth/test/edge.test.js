@@ -493,6 +493,7 @@ describe("sign-in pages: manifest theme and copy (design system SignIn + Voice)"
 
 // ---- HFY-R58 review fixes ----
 import { safeReturnTo } from "../src/edge.js";
+import { CLOUDFLARE_IPV4, CLOUDFLARE_IPV6, CLOUDFLARE_RANGES_SOURCE_DATE, isCloudflareIp } from "../src/cloudflare-ranges.js";
 import { FORGOT_LIMITS, clientIp, ddbRateLimiter, memoryRateLimiter, rateKey } from "../src/ratelimit.js";
 
 const SITE = "https://harrisonfamily.us";
@@ -631,6 +632,19 @@ describe("forgot-password rate limit (cognito-default-email-quota)", () => {
     expect(res.statusCode).toBe(503);
     expect(calls.forgot).toEqual([]);
   });
+  it("behind Cloudflare the forgot limiter keys on CF-Connecting-IP; a spoofed header from a non-Cloudflare viewer is ignored", async () => {
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter() });
+    // Cloudflare viewer (documentation addresses stand in for real clients): three clients behind one Cloudflare IP are separate buckets
+    for (const client of ["203.0.113.21", "203.0.113.22", "2001:db8::21"]) {
+      for (let i = 0; i < 3; i++) expect((await e(from("172.64.0.7", "ana@example.com", { "cf-connecting-ip": client }))).statusCode).toBe(200);
+      expect((await e(from("172.64.0.7", "ana@example.com", { "cf-connecting-ip": client }))).statusCode).toBe(429);
+    }
+    // a non-Cloudflare viewer rotating CF-Connecting-IP stays in one bucket
+    const codes = [];
+    for (let i = 0; i < 4; i++) codes.push((await e(from("198.51.100.30", "bo@example.com", { "cf-connecting-ip": `203.0.113.${100 + i}` }))).statusCode);
+    expect(codes).toEqual([200, 200, 200, 429]);
+    expect(calls.forgot).toHaveLength(12);
+  });
   it("the default limits are the ruled email+IP key plus a per-IP cap", () => {
     expect(FORGOT_LIMITS.map((r) => r.scope)).toEqual(["email+ip", "ip"]);
     const a = rateKey("forgot", "email+ip", { email: "ana@example.com", ip: "203.0.113.5" });
@@ -645,6 +659,33 @@ describe("forgot-password rate limit (cognito-default-email-quota)", () => {
     expect(clientIp(ev({ "x-forwarded-for": "6.6.6.6, 203.0.113.5, 130.176.0.1" }))).toBe("203.0.113.5"); // spoofed left entry ignored
     expect(clientIp(ev({ "x-forwarded-for": "6.6.6.6, 203.0.113.5" }))).toBe("203.0.113.5");
     expect(clientIp(ev({}))).toBe("130.176.0.1");
+  });
+  it("clientIp trusts CF-Connecting-IP only when the viewer address is a Cloudflare range", () => {
+    const ev = (headers) => ({ headers, requestContext: { http: { sourceIp: "130.176.0.1" } } });
+    const cf = (viewer, client) => ev({ "cloudfront-viewer-address": viewer, ...(client ? { "cf-connecting-ip": client } : {}) });
+    expect(clientIp(cf("172.64.0.7:443", "203.0.113.5"))).toBe("203.0.113.5");
+    expect(clientIp(cf("2606:4700::1:443", "2001:db8::5"))).toBe("2001:db8::5"); // IPv6 Cloudflare viewer
+    expect(clientIp(cf("[2606:4700::1]:443", "203.0.113.5"))).toBe("203.0.113.5"); // bracketed form
+    expect(clientIp(cf("2a06:98c7:ffff::1:443", "203.0.113.5"))).toBe("203.0.113.5"); // inside the /29
+    expect(clientIp(cf("172.64.0.7:443"))).toBe("172.64.0.7"); // no header: the viewer address
+    expect(clientIp(cf("172.64.0.7:443", "not-an-ip"))).toBe("172.64.0.7"); // malformed header ignored
+    // spoofed CF-Connecting-IP from non-Cloudflare viewers is ignored
+    expect(clientIp(cf("198.51.100.9:443", "203.0.113.5"))).toBe("198.51.100.9");
+    expect(clientIp(cf("2001:db8::9:51234", "203.0.113.5"))).toBe("2001:db8::9");
+    expect(clientIp(cf("172.63.255.255:443", "203.0.113.5"))).toBe("172.63.255.255"); // just below 172.64.0.0/13
+    expect(clientIp(cf("172.72.0.0:443", "203.0.113.5"))).toBe("172.72.0.0"); // just above it
+    expect(clientIp(ev({ "cf-connecting-ip": "203.0.113.5", "x-forwarded-for": "203.0.113.7" }))).toBe("203.0.113.7"); // no viewer address: header never used
+  });
+  it("pins the committed Cloudflare range list and its source date", () => {
+    expect(CLOUDFLARE_RANGES_SOURCE_DATE).toBe("2026-10-13");
+    expect(CLOUDFLARE_IPV4).toEqual(["173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22"]);
+    expect(CLOUDFLARE_IPV6).toEqual(["2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32"]);
+    for (const c of [...CLOUDFLARE_IPV4, ...CLOUDFLARE_IPV6]) {
+      const [a] = c.split("/");
+      expect(isCloudflareIp(a), c).toBe(true);
+    }
+    expect(isCloudflareIp("::ffff:172.64.0.1")).toBe(true); // IPv4-mapped
+    expect(isCloudflareIp("garbage")).toBe(false);
   });
   it("ddbRateLimiter is one atomic ADD per hit on a TTL'd window item", async () => {
     const sent = [];
