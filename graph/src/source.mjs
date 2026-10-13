@@ -24,7 +24,7 @@ export function grampsSql() {
   return [VERSION_SELECT, ...GRAMPS_TABLES.map((t) => `SELECT json_data FROM ${t}`)].join(' UNION ALL ') + ';';
 }
 
-/** Decodes the `metadata.version` value: plain digits, JSON, or a small-int pickle. Returns null when unreadable. */
+/** Decodes the `metadata.version` value: plain digits, JSON, or a pickled small int or digit string. Returns null when unreadable. */
 export function decodeSchemaVersion(hex) {
   if (typeof hex !== 'string' || !/^([0-9a-f]{2})+$/i.test(hex)) return null;
   const buf = Buffer.from(hex, 'hex');
@@ -38,6 +38,11 @@ export function decodeSchemaVersion(hex) {
   if (buf[i] === 0x4b && buf.length > i + 1) return buf[i + 1]; // BININT1
   if (buf[i] === 0x4d && buf.length > i + 2) return buf.readUInt16LE(i + 1); // BININT2
   if (buf[i] === 0x4a && buf.length > i + 4) return buf.readInt32LE(i + 1); // BININT
+  // Gramps 5.2+ pickles the version as a STRING ('21'): SHORT_BINUNICODE, SHORT_BINSTRING (1-byte length) or BINUNICODE (4-byte)
+  let str = null;
+  if ((buf[i] === 0x8c || buf[i] === 0x55) && buf.length > i + 1) str = buf.subarray(i + 2, i + 2 + buf[i + 1]);
+  else if (buf[i] === 0x58 && buf.length > i + 4) str = buf.subarray(i + 5, i + 5 + buf.readUInt32LE(i + 1));
+  if (str !== null && /^\d{1,6}$/.test(str.toString('latin1'))) return Number(str.toString('latin1'));
   return null;
 }
 

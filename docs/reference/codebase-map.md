@@ -293,7 +293,7 @@ Paths:
 - [`edge-gate/src/index.mjs`](../../edge-gate/src/index.mjs): the Lambda@Edge entry. It reads `config.json`, which the package script bakes into the zip.
 - [`edge-gate/gate.config.json`](../../edge-gate/gate.config.json): the issuer, audience, JWKS URL, cookie name, sign-in path and timing settings.
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): the gate's tests. See [Tests](#tests).
-- [`graph/test/`](../../graph/test/): `node:test` suites `build`, `schema`, `verify`, `source` and `cli`. `fixtures/gramps.mjs` builds the synthetic Gramps objects and `fixtures/messy.graph.golden.json` is the golden output.
+- [`graph/test/`](../../graph/test/): `node:test` suites `build`, `schema`, `verify`, `source`, `cli` and `generations`. `fixtures/gramps.mjs` builds the synthetic Gramps objects and `fixtures/messy.graph.golden.json` is the golden output.
 - [`infrastructure/cloudformation/edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml): the us-east-1 stack `hfy-edge-gate`, with the function, its role and a retained version. Its output `EdgeGateVersionArn` is the version to attach.
 - [`scripts/ci/package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh): builds `dist/hfy-edge-gate.zip`.
 - [`scripts/infra/add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh): attaches the gate to the data paths and `/uploads/*`, or detaches it with `--remove`.
@@ -323,7 +323,9 @@ Paths:
 
 - [`graph/bin/build-graph.mjs`](../../graph/bin/build-graph.mjs): the command line. [`graph/src/cli.mjs`](../../graph/src/cli.mjs) holds the argument handling, the exit codes and `--verify` / `--verify-against`.
 - [`graph/src/source.mjs`](../../graph/src/source.mjs): the record sources: a file of JSON lines, stdin, or `sqlite3 -readonly` on a copy of the Gramps tree.
-- [`graph/src/project.mjs`](../../graph/src/project.mjs): the allowlist projection. [`graph/src/build.mjs`](../../graph/src/build.mjs) assembles the graph, [`graph/src/verify.mjs`](../../graph/src/verify.mjs) is `verify()`, and [`graph/src/write.mjs`](../../graph/src/write.mjs) is the atomic writer.
+- [`graph/src/project.mjs`](../../graph/src/project.mjs): the allowlist projection. [`graph/src/generations.mjs`](../../graph/src/generations.mjs) is the generation index (components, generations, levels). [`graph/src/build.mjs`](../../graph/src/build.mjs) assembles the graph, [`graph/src/verify.mjs`](../../graph/src/verify.mjs) is `verify()`, and [`graph/src/write.mjs`](../../graph/src/write.mjs) is the atomic writer.
+- [`graph/src/geocode.mjs`](../../graph/src/geocode.mjs): offline geocoding of place names. [`graph/src/gazetteer.mjs`](../../graph/src/gazetteer.mjs) reads the pinned GeoNames and Natural Earth cache, and [`graph/bin/fetch-gazetteer.mjs`](../../graph/bin/fetch-gazetteer.mjs), the only network path, fills it and pins [`graph/gazetteer.lock.json`](../../graph/gazetteer.lock.json).
+- [`graph/src/faces.mjs`](../../graph/src/faces.mjs): face crops from Gramps region rects (sharp, a build-time dependency of `graph/` only), written to `<staging>/media/faces/`.
 - [`graph/schema/family-graph.v1.schema.json`](../../graph/schema/family-graph.v1.schema.json): the schema of `person/graph.json`.
 - [`graph/test/`](../../graph/test/): the `node:test` suites and their synthetic fixtures. See [Tests](#tests).
 
