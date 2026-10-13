@@ -203,7 +203,7 @@ describe("key segments resolve to the same element after the list is reordered",
     changed.media_list[1].rect = [1, 2, 3, 4];
     const res = apply1(changed, [{ id: "o", op: "set", obj: P, path: `/media_list/${key}/private`, base: false, value: true }]);
     assert.equal(res.conflicts[0].reason, REASONS.staleKey);
-    const res2 = apply1(base, [{ id: "o", op: "set", obj: P, path: `/media_list/@ref=${H(99)}#0/private`, base: false, value: true }]);
+    const res2 = apply1(base, [{ id: "o", op: "set", obj: P, path: `/media_list/@ref=${H(99)}#0:000000000000/private`, base: false, value: true }]);
     assert.equal(res2.conflicts[0].reason, REASONS.keyNotFound);
   });
 
@@ -212,8 +212,31 @@ describe("key segments resolve to the same element after the list is reordered",
     dup.family_list.push(H(21));
     const res = apply1(dup, [{ id: "o", op: "move", obj: P, path: "/family_list/@=" + H(21) }]);
     assert.equal(res.conflicts[0].reason, REASONS.ambiguousKey);
-    const res2 = apply1(base, [{ id: "o", op: "set", obj: P, path: `/media_list/@ref=${H(41)}/private`, base: false, value: true }]);
-    assert.equal(res2.conflicts[0].reason, REASONS.ambiguousKey); // two tags of H(41): the plain ref names neither
+    const twice = deepClone(base);
+    twice.event_ref_list.push(eventRef(H(11)));
+    const res2 = apply1(twice, [{ id: "o", op: "set", obj: P, path: `/event_ref_list/@ref=${H(11)}/private`, base: false, value: true }]);
+    assert.equal(res2.conflicts[0].reason, REASONS.ambiguousKey); // two refs of H(11): the plain ref names neither
+  });
+
+  it("a media_list key without :<hash12> is invalid_path, never a selection by occurrence", () => {
+    const bare = [`@ref=${H(41)}`, `@ref=${H(41)}#0`, `@ref=${H(41)}#1`, `@ref=${H(42)}`];
+    for (const seg of bare) {
+      const op = { id: "o", op: "set", obj: P, path: `/media_list/${seg}/private`, base: false, value: true };
+      assert.equal(validateOps([op])[0].reason, REASONS.invalidPath, seg);
+      const res = apply1(base, [op]);
+      assert.equal(res.ok, false);
+      assert.equal(res.conflicts[0].reason, REASONS.invalidPath, seg);
+      assert.deepEqual(res.objects[P], base);
+    }
+    // remove, move and the before anchor are held to the same rule
+    const rm = { id: "r", op: "remove", obj: P, path: `/media_list/@ref=${H(42)}#0`, base: base.media_list[1] };
+    assert.equal(validateOps([rm])[0].reason, REASONS.invalidPath);
+    const mv = { id: "m", op: "move", obj: P, path: `/media_list/${keySegment("media_list", base.media_list, 0)}`, before: `@ref=${H(42)}#0` };
+    assert.equal(validateOps([mv])[0].reason, REASONS.invalidPath);
+    const ad = { id: "a", op: "add", obj: P, path: "/media_list", value: media(H(43), [1, 1, 2, 2]), before: `@ref=${H(42)}#0` };
+    assert.equal(validateOps([ad])[0].reason, REASONS.invalidPath);
+    // the other ref lists keep the plain form
+    assert.equal(validateOps([{ id: "e", op: "set", obj: P, path: `/event_ref_list/@ref=${H(12)}/private`, base: false, value: true }]).length, 0);
   });
 
   it("parsePath keeps handles with a colon (new:1) and rejects malformed segments", () => {
@@ -340,11 +363,36 @@ describe("a Date edited from a reduced view", () => {
   });
 
   it("the inverse restores the full stored Date", () => {
-    const res = applyOps({ [EV]: ev() }, [reducedYearEdit]);
+    const res = applyOps({ [EV]: ev() }, [reducedYearEdit], { versions: { [EV]: 4 } });
     ok(res);
     const back = applyOps(res.objects, res.inverse);
     ok(back);
     assert.deepEqual(back.objects[EV], ev());
+  });
+
+  it("a reduced set with no version to check is a conflict, never a silent apply (apply and rebase)", () => {
+    const stored = { [EV]: ev() };
+    for (const ctx of [undefined, {}, { versions: {} }, { versions: { "Event:other": 4 } }]) {
+      const a = applyOps(stored, [reducedYearEdit], ctx);
+      assert.equal(a.ok, false);
+      assert.equal(a.conflicts[0].reason, REASONS.missingVersion);
+      assert.deepEqual(a.objects[EV], ev());
+      const r = rebaseOps([reducedYearEdit], stored, ctx);
+      assert.equal(r.status, "conflict");
+      assert.equal(r.conflicts[0].reason, REASONS.missingVersion);
+      assert.equal(r.objects, null);
+    }
+  });
+
+  it("a reduced set outside a Date falls back to its value base; with no base it is invalid", () => {
+    const thing = { ...ev(), description: "x" };
+    const op = { id: "o", op: "set", obj: EV, path: "/description", base_version: 4, base: "x", value: "y" };
+    const res = applyOps({ [EV]: thing }, [op]); // no versions needed: the value base is the guard
+    ok(res);
+    assert.equal(res.objects[EV].description, "y");
+    assert.equal(applyOps({ [EV]: { ...thing, description: "z" } }, [op]).conflicts[0].reason, REASONS.baseMismatch);
+    const { base, ...noBase } = op; // eslint-disable-line no-unused-vars
+    assert.equal(applyOps({ [EV]: thing }, [noBase], { versions: { [EV]: 4 } }).conflicts[0].reason, REASONS.missingBase);
   });
 
   it("mergeReducedDate leaves RANGE tuples' second day and month alone too", () => {
@@ -431,11 +479,27 @@ describe("three-way rebase, one test per row of the section 7.5 table", () => {
     });
     it("is a no-op when the element is already absent", () => {
       const cur = person();
-      cur.attribute_list.splice(0, 1);
-      assert.deepEqual(statuses(rb([op], cur)), ["noop"]);
       const gone = person();
       gone.family_list = [H(21), H(23)];
       assert.deepEqual(statuses(rb([{ id: "o", op: "remove", obj: P, path: "/family_list/@=" + H(22), base: H(22) }], gone)), ["noop"]);
+    });
+    it("is a conflict, never a no-op, when an @k element was edited since base (the old key is stale)", () => {
+      const cur = person();
+      cur.attribute_list[0].value = "green"; // someone edited the entry the proposer wants to remove
+      const r = rb([op], cur);
+      assert.equal(r.status, "conflict");
+      assert.equal(r.conflicts[0].reason, REASONS.staleKey);
+      assert.deepEqual(statuses(r), ["conflict"]);
+      assert.equal(r.objects, null);
+      // the same through apply: the element is still there
+      const a = apply1(cur, [op]);
+      assert.equal(a.ok, false);
+      assert.equal(a.objects[P].attribute_list.length, 2);
+      // an @ref remove of an edited element is a conflict too
+      const edited = person();
+      edited.event_ref_list[1].role.value = 9;
+      const byRef = rb([{ id: "o", op: "remove", obj: P, path: "/event_ref_list/@ref=" + H(12), base: person().event_ref_list[1] }], edited);
+      assert.equal(byRef.conflicts[0].reason, REASONS.contentChanged);
     });
     it("is a conflict when the element is there with different content", () => {
       const cur = person();
@@ -527,6 +591,136 @@ describe("three-way rebase, one test per row of the section 7.5 table", () => {
     const r = rb([{ id: "x", op: "move", obj: P, path: "/family_list", base: 0 }], person());
     assert.equal(r.status, "conflict");
     assert.equal(r.conflicts[0].reason, REASONS.invalidPath);
+  });
+});
+
+// ---- review fixes: absent properties, values, anchors, missing objects ---------------------------------------------
+describe("set creates an absent property; remove drops one", () => {
+  it("set on a property the stored object lacks is clean when base is null, and its inverse removes it", () => {
+    const p = person();
+    delete p.private;
+    {
+      const res = apply1(p, [{ id: "o", op: "set", obj: P, path: "/private", value: true, base: null }]);
+      ok(res);
+      assert.equal(only(res).private, true);
+      const back = applyOps(res.objects, res.inverse);
+      ok(back);
+      assert.deepEqual(back.objects[P], p);
+      assert.equal(Object.prototype.hasOwnProperty.call(back.objects[P], "private"), false);
+      // and the inverse of that inverse sets it again
+      const again = applyOps(back.objects, back.inverse);
+      ok(again);
+      assert.deepEqual(again.objects[P], res.objects[P]);
+    }
+  });
+  it("set on an absent property with a real base is a conflict; a missing parent stays a conflict; identity fields are never created", () => {
+    const p = person();
+    delete p.private;
+    assert.equal(apply1(p, [{ id: "o", op: "set", obj: P, path: "/private", base: false, value: true }]).conflicts[0].reason, REASONS.noSuchPath);
+    assert.equal(apply1(p, [{ id: "o", op: "set", obj: P, path: "/nothing/deeper", base: null, value: 1 }]).conflicts[0].reason, REASONS.noSuchPath);
+    const noClass = person();
+    delete noClass._class;
+    assert.equal(apply1(noClass, [{ id: "o", op: "set", obj: P, path: "/_class", base: null, value: "X" }]).ok, false);
+  });
+  it("remove of an absent property is a no-op; of a present one needs its content; handle and _class cannot be removed", () => {
+    const p = person();
+    assert.deepEqual(statuses(apply1(p, [{ id: "o", op: "remove", obj: P, path: "/not_there", base: 1 }])), ["noop"]);
+    const res = apply1(p, [{ id: "o", op: "remove", obj: P, path: "/gender", base: 1 }]);
+    ok(res);
+    assert.equal("gender" in only(res), false);
+    assert.equal(apply1(p, [{ id: "o", op: "remove", obj: P, path: "/gender", base: 2 }]).conflicts[0].reason, REASONS.contentChanged);
+    const back = applyOps(res.objects, res.inverse);
+    ok(back);
+    assert.deepEqual(back.objects[P], p);
+    for (const f of ["handle", "_class"]) assert.equal(apply1(p, [{ id: "o", op: "remove", obj: P, path: `/${f}`, base: "x" }]).conflicts[0].reason, REASONS.invalidPath);
+  });
+});
+
+describe("values that could confuse identity or hashing", () => {
+  it("an own __proto__ key in a value is invalid_op, not a prototype swap", () => {
+    const evil = JSON.parse('{"__proto__":{"ref":"zzz"},"first_name":"X"}');
+    const add = { id: "o", op: "add", obj: P, path: "/alternate_names", value: evil };
+    assert.equal(validateOps([add])[0].reason, REASONS.invalidOp);
+    const res = apply1(person(), [add]);
+    assert.equal(res.ok, false);
+    assert.equal(res.conflicts[0].reason, REASONS.invalidOp);
+    assert.equal(Object.getPrototypeOf(res.objects[P].alternate_names[0]), Object.prototype);
+    assert.equal(validateOps([{ id: "n", op: "create", obj: "new:1", cls: "Note", value: JSON.parse('{"a":[{"__proto__":1}]}') }])[0].reason, REASONS.invalidOp);
+    assert.equal(validateOps([{ id: "s", op: "set", obj: P, path: "/gender", base: JSON.parse('{"__proto__":1}'), value: 2 }])[0].reason, REASONS.invalidOp);
+  });
+  it("deepClone keeps an own __proto__ key as an own key (stored objects from JSON.parse hash as they read)", () => {
+    const src = JSON.parse('{"__proto__":{"ref":"zzz"},"a":1}');
+    const c = deepClone(src);
+    assert.equal(Object.getPrototypeOf(c), Object.prototype);
+    assert.equal(c.ref, undefined);
+    assert.equal(canonicalJson(c), canonicalJson(src));
+  });
+});
+
+describe("new:n is rewritten only where a handle lives", () => {
+  it("free text that reads new:1 stays as typed; reference fields are rewritten", () => {
+    const res = applyOps({}, [
+      { id: "c1", op: "create", obj: "new:1", cls: "Person", value: { family_list: [] } },
+      { id: "c2", op: "create", obj: "new:2", cls: "Note", value: { text: { string: "new:1" }, name: "new:1", ref_hint: "new:1", place: "new:1", father_handle: "new:1", event_ref_list: [{ ref: "new:1", description: "new:1" }], note_list: ["new:1"] } },
+      { id: "s1", op: "add", obj: "new:1", path: "/family_list", value: "new:2" },
+    ]);
+    ok(res);
+    const h1 = res.minted["new:1"];
+    const n = res.objects[`Note:${res.minted["new:2"]}`];
+    assert.deepEqual(n.text, { string: "new:1" });
+    assert.equal(n.name, "new:1");
+    assert.equal(n.ref_hint, "new:1");
+    assert.equal(n.place, h1);
+    assert.equal(n.father_handle, h1);
+    assert.deepEqual(n.event_ref_list, [{ ref: h1, description: "new:1" }]);
+    assert.deepEqual(n.note_list, [h1]);
+    assert.deepEqual(res.objects[`Person:${h1}`].family_list, [res.minted["new:2"]]);
+  });
+  it("a set of a reference field to new:n is rewritten, a set of free text is not", () => {
+    const res = applyOps({ [P]: { ...person(), place: "", title: "" } }, [
+      { id: "c", op: "create", obj: "new:1", cls: "Place", value: {} },
+      { id: "a", op: "set", obj: P, path: "/place", base: "", value: "new:1" },
+      { id: "b", op: "set", obj: P, path: "/title", base: "", value: "new:1" },
+    ]);
+    ok(res);
+    assert.equal(res.objects[P].place, res.minted["new:1"]);
+    assert.equal(res.objects[P].title, "new:1");
+  });
+});
+
+describe("a position whose anchor is gone", () => {
+  it("add with a before key that no longer exists is a conflict, like move, not an append", () => {
+    const cur = person();
+    const gone = `@ref=${H(99)}#0:000000000000`;
+    const add = { id: "o", op: "add", obj: P, path: "/media_list", value: media(H(43), [1, 1, 2, 2]), before: gone };
+    const r = rebaseOps([add], { [P]: cur });
+    assert.equal(r.status, "conflict");
+    assert.equal(r.conflicts[0].reason, REASONS.keyNotFound);
+    assert.equal(r.objects, null);
+    const mv = { id: "m", op: "move", obj: P, path: `/media_list/${keySegment("media_list", cur.media_list, 0)}`, before: gone };
+    assert.equal(rebaseOps([mv], { [P]: cur }).conflicts[0].reason, REASONS.keyNotFound);
+    const fam = { id: "f", op: "add", obj: P, path: "/family_list", value: H(24), before: "@=" + H(99) };
+    assert.equal(rebaseOps([fam], { [P]: cur }).conflicts[0].reason, REASONS.keyNotFound);
+  });
+});
+
+describe("objects that are already gone, or already there", () => {
+  it("delete and remove of an object that is not in the store are missing_object conflicts (the superseded flow decides)", () => {
+    const del = rebaseOps([{ id: "d", op: "delete", obj: "Person:" + H(7), base: "0".repeat(64) }], {});
+    assert.equal(del.status, "conflict");
+    assert.equal(del.conflicts[0].reason, REASONS.missingObject);
+    const rm = rebaseOps([{ id: "r", op: "remove", obj: "Person:" + H(7), path: "/family_list/@=x", base: "x" }], {});
+    assert.equal(rm.conflicts[0].reason, REASONS.missingObject);
+  });
+  it("create of a key already in the store is object_exists, except an identical object, which is a no-op", () => {
+    const stored = person();
+    const clash = rebaseOps([{ id: "c", op: "create", obj: P, cls: "Person", value: { gramps_id: "other" } }], { [P]: stored });
+    assert.equal(clash.status, "conflict");
+    assert.equal(clash.conflicts[0].reason, REASONS.objectExists);
+    const same = rebaseOps([{ id: "c", op: "create", obj: P, cls: "Person", value: stored }], { [P]: stored });
+    assert.equal(same.status, "clean");
+    assert.deepEqual(statuses(same), ["noop"]);
+    assert.deepEqual(same.objects[P], stored);
   });
 });
 

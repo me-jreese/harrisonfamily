@@ -548,30 +548,32 @@ Objects travel as a map `{ "Person:<handle>": <Gramps JSON> }`. An op is `{ id, 
 
 | Segment | Names | Lists |
 | --- | --- | --- |
-| `@ref=<handle>[#<n>][:<hash12>]` | an element by its `ref`; `#n` is the occurrence among equal refs; `:<hash12>` is a base content-hash check | `event_ref_list`, `child_ref_list`, `media_list`, `placeref_list`, `person_ref_list`, `reporef_list` |
+| `@ref=<handle>[#<n>][:<hash12>]` | an element by its `ref`; `#n` is the occurrence among equal refs; `:<hash12>` is a base content-hash check (required in `media_list`) | `event_ref_list`, `child_ref_list`, `media_list`, `placeref_list`, `person_ref_list`, `reporef_list` |
 | `@=<string>` | a handle in a list of handles | `family_list`, `parent_family_list`, `note_list`, `citation_list`, `tag_list` |
 | `@k=<hash12>` | an element by the first 12 hex of the SHA-256 of its canonical JSON | every other list of objects |
 
-`media_list` keys always carry `#n` and the hash, so two tags of one person in one photo are two elements, the same key as the sync merge (SI-22). Keys are read against the objects at the start of the call, so a key still names its element after an earlier op in the batch moved or edited it; an op marked `seq: true` reads its keys after the ops ahead of it, and every inverse op is `seq`. A key that no longer matches is a conflict (`stale_key`, `key_not_found` or `ambiguous_key`), never a different element.
+`media_list` keys must carry `#n` and the hash, so two tags of one person in one photo are two elements, the same key as the sync merge (SI-22). A `media_list` key without `:<hash12>` (in a path or a `before`) is `invalid_path`: occurrence alone could select a different tag after the list was edited. Only `media_list` has to match the merge key exactly. The other ref lists use the plain `@ref=<handle>` form (with `#n` and the hash added only when a ref repeats), as the editing design does. Keys are read against the objects at the start of the call, so a key still names its element after an earlier op in the batch moved or edited it; an op marked `seq: true` reads its keys after the ops ahead of it, and every inverse op is `seq`. A key that no longer matches is a conflict (`stale_key`, `key_not_found` or `ambiguous_key`), never a different element.
 
 **Rebase** gives each op one status, from the table in the editing design, section 7.5:
 
 | Op | Clean when | No-op when |
 | --- | --- | --- |
-| `set` | the current value deep-equals `base` | it already equals the proposed value |
+| `set` | the current value deep-equals `base`; or the property is absent and `base` is `null` (it creates the property) | it already equals the proposed value |
 | `add` | the list exists and the key is absent | an identical element is present |
-| `remove` | the element is present with the same content hash | it is absent |
+| `remove` | the element (or property) is present with the same content hash | the key says it is not there (`key_not_found`, or an absent property). An `@k` key whose element was edited since base is a `stale_key` conflict, never a no-op, and an `@ref` with changed content is `content_changed` |
 | `move` | both keys are present | |
-| `create` | always | |
+| `create` | the key is free | an identical object is already stored. A different object under the key is an `object_exists` conflict (restoring the inverse of a `delete` therefore conflicts if the handle was reused) |
 | `delete` | the object exists and its hash equals `base` | |
 
-Every other outcome is a conflict row: `{ opId, obj, op, path, reason, base, current, proposed }`. Malformed ops are conflicts with the reason `invalid_op`, `invalid_path` or `missing_base`.
+An `add` or `move` whose `before` key is gone is a conflict (`key_not_found`) rather than an append: the proposer's position would be lost silently. An op whose target object is not in the store (`delete`, `remove`, `set`, ...) is a `missing_object` conflict, not a no-op: a deleted target belongs to the superseded flow, not to rebase. `remove` of an object property is allowed for the inverse of a property-creating `set`; `handle` and `_class` can never be added or removed.
 
-**Reduced Dates.** A viewer who saw a Date through `publishView` never saw its day and month. Their `set` carries `base_version` instead of `base`, and rebase compares the object's version from `ctx.versions`. A whole-Date `set` of that kind keeps the stored day, month, second day and month, text and `sortval` unless the op lists `day`, `month`, `day2`, `month2` or `text` in `sets`.
+Every other outcome is a conflict row: `{ opId, obj, op, path, reason, base, current, proposed }`. Malformed ops are conflicts with the reason `invalid_op`, `invalid_path` or `missing_base`. A value or base that carries an own `__proto__` key is `invalid_op`.
 
-**Handles.** A `create` of `new:<n>` mints a handle and replaces every `new:<n>` in the batch (in `obj`, paths, `before` and string values). A `create` with a real `Class:<handle>` object key restores that object, which is how the inverse of a `delete` works.
+**Reduced Dates.** A viewer who saw a Date through `publishView` never saw its day and month. Their `set` carries `base_version` instead of `base`, and rebase compares the object's version from `ctx.versions`. The version is the only staleness guard such an op has, so a missing `ctx.versions` entry for the object is a `missing_version` conflict (it never applies unchecked, in `applyOps` or `rebaseOps`). `base_version` is honoured only on a Date or inside one; elsewhere the op needs a plain `base`. A whole-Date `set` of that kind keeps the stored day, month, second day and month, text and `sortval` unless the op lists `day`, `month`, `day2`, `month2` or `text` in `sets`.
 
-The tests are [`api/test/records/ops.node-test.js`](../../api/test/records/ops.node-test.js), run by `npm test` after vitest, or alone with `node --test`.
+**Handles.** A `create` of `new:<n>` mints a handle and replaces every `new:<n>` in the batch: in `obj`, paths and `before`, and in string values that sit in a reference field (`ref`, `place`, `*_handle` and the handle lists `family_list`, `parent_family_list`, `note_list`, `citation_list`, `tag_list`). Free text that reads `new:1` is left as typed. A `create` with a real `Class:<handle>` object key restores that object, which is how the inverse of a `delete` works.
+
+The tests are [`api/test/records/ops.node-test.js`](../../api/test/records/ops.node-test.js), run by `npm test` after vitest, or alone with `node --test`. The GitHub workflows (`io-kit-ci`) build and package only; they do not run `api` tests, so the gate is the `api/` row of AGENTS.md (`npm test`) before a PR.
 
 ## Environment
 

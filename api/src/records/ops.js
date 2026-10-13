@@ -13,8 +13,10 @@
 // and its `path` is an RFC 6901 pointer whose list segments are KEYS, never positions:
 //   @ref=<handle>[#<n>][:<hash12>]  a *_ref_list element by its `ref`. n is the occurrence among equal refs (default
 //                                   0 when it is the only one). With :<hash12> the element's content must still hash
-//                                   to it. MediaRef elements use #n and :<hash12> always (two tags of one person in
-//                                   one photo are two elements).
+//                                   to it. MediaRef elements (media_list) REQUIRE #n and :<hash12> (two tags of one
+//                                   person in one photo are two elements); a media_list key without the hash is an
+//                                   invalid_path. The other ref lists use the plain form unless refs repeat, so only
+//                                   media_list matches the sync merge key (`ref#n` + hash) exactly.
 //   @=<string>                      an element of a handle list (family_list, note_list, ...)
 //   @k=<hash12>                     first 12 hex of sha256(canonical element), for the other secondary lists
 // Every key is computed against the objects the ops are applied to at the start of the call (the "base"), so a key
@@ -30,6 +32,7 @@ export const REASONS = Object.freeze({
   invalidOp: "invalid_op",
   invalidPath: "invalid_path",
   missingBase: "missing_base",
+  missingVersion: "missing_version",
   missingObject: "missing_object",
   noSuchPath: "no_such_path",
   notAList: "not_a_list",
@@ -145,7 +148,11 @@ export function deepClone(v) {
   if (Array.isArray(v)) return v.map(deepClone);
   if (v && typeof v === "object") {
     const o = {};
-    for (const k of Object.keys(v)) o[k] = deepClone(v[k]);
+    // an own "__proto__" key (JSON.parse makes one) must stay an own key, not set the clone's prototype
+    for (const k of Object.keys(v)) {
+      if (k === "__proto__") Object.defineProperty(o, k, { value: deepClone(v[k]), enumerable: true, writable: true, configurable: true });
+      else o[k] = deepClone(v[k]);
+    }
     return o;
   }
   return v;
@@ -345,6 +352,7 @@ function locate(st, root, segs) {
         if (seg.i >= node.length) return fail(REASONS.noSuchPath, { at: i, last });
         key = seg.i;
       } else {
+        if (seg.t === "ref" && listName === "media_list" && !seg.hash) return fail(REASONS.invalidPath, { at: i, last, seg });
         const m = matchKey(st, node, seg);
         if (!m.ok) return { ...m, at: i, last, seg };
         key = m.idx;
@@ -354,7 +362,7 @@ function locate(st, root, segs) {
     } else if (isPlain(node)) {
       const name = seg.t === "index" ? seg.name : seg.t === "prop" ? seg.name : null;
       if (name === null) return fail(REASONS.invalidPath, { at: i, last });
-      if (!Object.prototype.hasOwnProperty.call(node, name)) return fail(REASONS.noSuchPath, { at: i, last });
+      if (!Object.prototype.hasOwnProperty.call(node, name)) return fail(REASONS.noSuchPath, { at: i, last, absent: { node, name, chain: chain.slice() } });
       key = name;
       child = node[name];
       chain.push({ container: node, key, seg: { t: "prop", name }, listName: undefined, child });
@@ -392,6 +400,8 @@ const clean = () => ({ status: "clean" });
 const noop = () => ({ status: "noop" });
 const conflict = (reason, extra = {}) => ({ status: "conflict", reason, ...extra });
 const hasKey = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+// Properties an op may never add or drop: they are the object's identity.
+const RESERVED_FIELDS = new Set(["handle", "_class"]);
 
 export function isDateValue(v) {
   return isPlain(v) && Array.isArray(v.dateval);
@@ -420,21 +430,47 @@ function adopt(st, newVal, oldVal) {
   if (meta) st.reg.set(newVal, meta); // a replaced element keeps the identity its key was computed from
 }
 
+// True when the located value is a Date or sits inside one (a sub-path such as /date/dateval/2).
+const inDate = (chain) => chain.some((l) => isDateValue(l.child));
+
 function opSet(st, op) {
   const obj = getObj(st, op);
   if (!obj) return conflict(REASONS.missingObject);
   const segs = parsePath(op.path);
   if (!segs.length) throw new OpsError(REASONS.invalidPath, "set needs a path");
   const loc = locate(st, obj, segs);
-  if (!loc.ok) return conflict(loc.reason);
+  if (!loc.ok) {
+    // set creates a property the stored object lacks (Gramps JSON omits empty optional fields) when the proposer's
+    // base was "absent": `base: null`. The inverse is a remove of the property.
+    const ab = loc.absent;
+    if (ab && loc.last && op.base_version === undefined && op.base === null && !RESERVED_FIELDS.has(ab.name)) {
+      const next = deepClone(op.value);
+      ab.node[ab.name] = next;
+      register(next, st.reg);
+      st.inverse.push({ id: `inv:${op.id}`, op: "remove", obj: op.obj, path: rebuildPath(ab.chain) + "/" + esc(ab.name), base: deepClone(next) });
+      return clean();
+    }
+    return conflict(loc.reason);
+  }
   const cur = loc.value;
-  const reduced = op.base_version !== undefined;
+  let reduced = op.base_version !== undefined;
+  // A base_version set is only meaningful on a Date (or inside one): a reduced view is a Date view. On anything else
+  // the plain value base is the only staleness check there is.
+  if (reduced && !inDate(loc.chain)) {
+    if (!hasKey(op, "base")) throw new OpsError(REASONS.missingBase, "base_version applies to a Date; set anything else with base");
+    reduced = false;
+  }
+  if (reduced) {
+    // Reduced ops carry no value base, so the object version is the only staleness guard: without it the set cannot be
+    // judged and must not apply.
+    const v = st.versions ? st.versions[op.obj] : undefined;
+    if (v === undefined) return conflict(REASONS.missingVersion, { current: cur });
+  }
   let proposed = op.value;
   if (reduced && isDateValue(proposed) && isDateValue(cur)) proposed = mergeReducedDate(cur, proposed, op.sets || []);
   if (deepEqual(cur, proposed)) return noop(); // already applied
   if (reduced) {
-    const v = st.versions ? st.versions[op.obj] : undefined;
-    if (v !== undefined && v !== op.base_version) return conflict(REASONS.versionChanged, { current: cur });
+    if (st.versions[op.obj] !== op.base_version) return conflict(REASONS.versionChanged, { current: cur });
   } else if (!deepEqual(cur, op.base)) {
     return conflict(REASONS.baseMismatch, { current: cur });
   }
@@ -454,12 +490,13 @@ function resolveList(st, op) {
   return { loc };
 }
 
-function anchorIndex(st, arr, before) {
+function anchorIndex(st, arr, before, listName) {
   if (before === undefined || before === null) return { ok: true, idx: arr.length };
   const text = String(before);
   const seg = parseSegment(unesc(text[0] === "/" ? text.slice(1) : text));
   if (seg.t === "index") return { ok: true, idx: Math.min(seg.i, arr.length) };
   if (seg.t === "prop") throw new OpsError(REASONS.invalidPath, "before must be a key segment");
+  if (seg.t === "ref" && listName === "media_list" && !seg.hash) throw new OpsError(REASONS.invalidPath, "a media_list key needs :<hash12>");
   return matchKey(st, arr, seg);
 }
 
@@ -475,8 +512,9 @@ function opAdd(st, op) {
   if (isPlain(v) && typeof v.ref === "string" && SINGLE_REF_LISTS.has(listName) && arr.some((el) => isPlain(el) && el.ref === v.ref)) {
     return conflict(REASONS.keyExists);
   }
-  const a = anchorIndex(st, arr, op.before);
-  const at = a.ok ? a.idx : arr.length; // a position whose anchor is gone falls back to the end
+  const a = anchorIndex(st, arr, op.before, listName);
+  if (!a.ok) return conflict(a.reason); // the element the proposer meant to sit before is gone: the position is lost
+  const at = a.idx;
   const el = deepClone(v);
   register(el, st.reg);
   if (isPlain(el)) st.reg.set(el, { canon: canonicalJson(el), n: typeof el.ref === "string" ? arr.filter((o) => isPlain(o) && o.ref === el.ref).length : 0, ref: el.ref });
@@ -492,23 +530,33 @@ function expectedElementHash(op) {
   throw new OpsError(REASONS.missingBase, "remove needs base or base_hash");
 }
 
+// remove drops a list element, or (inverse of a set that created it) an object property.
 function opRemove(st, op) {
   const obj = getObj(st, op);
   if (!obj) return conflict(REASONS.missingObject);
   const segs = parsePath(op.path);
   const lastSeg = segs[segs.length - 1];
-  if (!lastSeg || !["ref", "item", "k", "index"].includes(lastSeg.t)) throw new OpsError(REASONS.invalidPath, "remove must end in a list element");
+  if (!lastSeg || !["ref", "item", "k", "index", "prop"].includes(lastSeg.t)) throw new OpsError(REASONS.invalidPath, "remove must end in a list element or a property");
+  if (lastSeg.t === "prop" && RESERVED_FIELDS.has(lastSeg.name)) throw new OpsError(REASONS.invalidPath, "reserved property");
   const want = expectedElementHash(op);
   const loc = locate(st, obj, segs);
   if (!loc.ok) {
-    if (loc.last && (loc.reason === REASONS.keyNotFound || (loc.seg?.t === "k" && loc.reason === REASONS.staleKey))) return noop(); // absent
+    // Absent is a no-op only when the key says "not there" (key_not_found, or a property that is not there). A stale
+    // @k or @ref hash means the element exists with other content: that is a conflict, never an absence.
+    if (loc.last && (loc.reason === REASONS.keyNotFound || (loc.reason === REASONS.noSuchPath && loc.absent))) return noop();
     return conflict(loc.reason);
   }
   const el = loc.value;
   const meta = isPlain(el) ? st.reg.get(el) : null;
   const same = contentHash(el) === want || (meta && sha256Hex(meta.canon) === want);
   if (!same) return conflict(REASONS.contentChanged, { current: el });
-  const arr = loc.parent;
+  const container = loc.parent;
+  if (!Array.isArray(container)) {
+    delete container[loc.key];
+    st.inverse.push({ id: `inv:${op.id}`, op: "set", obj: op.obj, path: rebuildPath(loc.chain), base: null, value: deepClone(el) });
+    return clean();
+  }
+  const arr = container;
   const idx = loc.key;
   const listName = loc.chain[loc.chain.length - 1].listName;
   arr.splice(idx, 1);
@@ -533,7 +581,7 @@ function opMove(st, op) {
   const nextEl = arr[from + 1];
   let anchor = null;
   if (op.before !== undefined && op.before !== null) {
-    const a = anchorIndex(st, arr, op.before);
+    const a = anchorIndex(st, arr, op.before, link.listName);
     if (!a.ok) return conflict(a.reason);
     anchor = arr[a.idx];
   }
@@ -554,12 +602,12 @@ function splitKey(key) {
 }
 
 function opCreate(st, op) {
-  if (st.objs.has(op.obj)) return conflict(REASONS.objectExists);
   const [cls, handle] = splitKey(op.obj);
   const value = deepClone(op.value);
   if (!isPlain(value)) throw new OpsError(REASONS.invalidOp, "create needs an object value");
   value.handle = handle;
   value._class = cls;
+  if (st.objs.has(op.obj)) return deepEqual(st.objs.get(op.obj), value) ? noop() : conflict(REASONS.objectExists, { current: st.objs.get(op.obj) });
   st.objs.set(op.obj, value);
   register(value, st.reg);
   st.inverse.push({ id: `inv:${op.id}`, op: "delete", obj: op.obj, base: hashObject(value) });
@@ -584,6 +632,13 @@ const HANDLERS = { set: opSet, add: opAdd, remove: opRemove, move: opMove, creat
 // Validation, temp handles, the run loop
 // ---------------------------------------------------------------------------------------------------------------
 
+// An own "__proto__" key in a value (JSON.parse creates one) would make the stored object disagree with its hash.
+function hasProtoKey(v) {
+  if (Array.isArray(v)) return v.some(hasProtoKey);
+  if (v && typeof v === "object") return Object.keys(v).some((k) => k === "__proto__" || hasProtoKey(v[k]));
+  return false;
+}
+
 export function validateOps(ops) {
   const problems = [];
   if (!Array.isArray(ops)) return [{ id: null, reason: REASONS.invalidOp, message: "ops must be an array" }];
@@ -593,6 +648,7 @@ export function validateOps(ops) {
     if (!isPlain(op)) return bad(REASONS.invalidOp, "op must be an object");
     if (!OP_KINDS.includes(op.op)) return bad(REASONS.invalidOp, `unknown op ${String(op.op)}`);
     if (typeof op.obj !== "string" || !op.obj) return bad(REASONS.invalidOp, "obj is required");
+    if ((hasKey(op, "value") && hasProtoKey(op.value)) || (hasKey(op, "base") && hasProtoKey(op.base))) return bad(REASONS.invalidOp, "a value may not carry a __proto__ key");
     if (op.op === "create") {
       if (!hasKey(op, "value")) return bad(REASONS.invalidOp, "create needs a value");
       if (/^new:\d+$/.test(op.obj) && typeof op.cls !== "string") return bad(REASONS.invalidOp, "create of a new object needs cls");
@@ -606,7 +662,15 @@ export function validateOps(ops) {
     try {
       const segs = parsePath(op.path);
       if (op.op !== "set" && !segs.length) return bad(REASONS.invalidPath, `${op.op} needs a path`);
-      if (op.before !== undefined && op.before !== null) parseSegment(unesc(String(op.before)[0] === "/" ? String(op.before).slice(1) : String(op.before)));
+      // a MediaRef key is ref#n plus a content hash; without the hash a stale key could select another tag
+      segs.forEach((sg, j) => {
+        if (sg.t === "ref" && !sg.hash && j > 0 && segs[j - 1].t === "prop" && segs[j - 1].name === "media_list") throw new OpsError(REASONS.invalidPath, "a media_list key needs :<hash12>");
+      });
+      if (op.before !== undefined && op.before !== null) {
+        const bs = parseSegment(unesc(String(op.before)[0] === "/" ? String(op.before).slice(1) : String(op.before)));
+        const listSeg = op.op === "add" ? segs[segs.length - 1] : segs[segs.length - 2];
+        if (bs.t === "ref" && !bs.hash && listSeg && listSeg.t === "prop" && listSeg.name === "media_list") throw new OpsError(REASONS.invalidPath, "a media_list key needs :<hash12>");
+      }
     } catch (e) {
       return bad(e.code || REASONS.invalidPath, e.message);
     }
@@ -624,6 +688,18 @@ export function validateOps(ops) {
 
 const TEMP = /\bnew:(\d+)\b/g;
 
+// The fields whose string values are Gramps handles, and so may name a not-yet-minted object.
+const isRefField = (name) => typeof name === "string" && (name === "ref" || name === "place" || name.endsWith("_handle") || STRING_LISTS.has(name));
+// The property an op's value lands in: the last property name on its path (a key segment names an element of the
+// list before it, so the list's name is what counts).
+function fieldOfPath(path) {
+  if (typeof path !== "string") return undefined;
+  let segs;
+  try { segs = parsePath(path.replace(TEMP, "x")); } catch { return undefined; }
+  for (let i = segs.length - 1; i >= 0; i--) if (segs[i].t === "prop") return segs[i].name;
+  return undefined;
+}
+
 // Mint a handle for every `create` of a new:n object and rewrite references to it. Returns { ops, minted, keys }.
 function substituteTemps(ops, st, objectsHave) {
   const keys = {}; // "new:1" -> "Person:<handle>"
@@ -638,10 +714,12 @@ function substituteTemps(ops, st, objectsHave) {
   }
   if (!Object.keys(handles).length) return { ops, handles };
   const text = (s) => s.replace(TEMP, (m) => handles[m] ?? m);
-  const val = (v) => {
-    if (typeof v === "string") return handles[v] ?? v;
-    if (Array.isArray(v)) return v.map(val);
-    if (isPlain(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, val(x)]));
+  // Only fields that hold a handle are rewritten: free text such as a note's `text` that reads "new:1" stays as typed.
+  // `field` is the name of the property (or list) the string sits in.
+  const val = (v, field) => {
+    if (typeof v === "string") return isRefField(field) ? handles[v] ?? v : v;
+    if (Array.isArray(v)) return v.map((x) => val(x, field));
+    if (isPlain(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, val(x, k)]));
     return v;
   };
   const out = ops.map((op) => {
@@ -649,8 +727,9 @@ function substituteTemps(ops, st, objectsHave) {
     o.obj = keys[op.obj] ?? op.obj;
     if (typeof o.path === "string") o.path = text(o.path);
     if (typeof o.before === "string") o.before = text(o.before);
-    if (hasKey(o, "value")) o.value = val(o.value);
-    if (hasKey(o, "base")) o.base = val(o.base);
+    const field = fieldOfPath(op.path);
+    if (hasKey(o, "value")) o.value = val(o.value, field);
+    if (hasKey(o, "base")) o.base = val(o.base, field);
     return o;
   });
   return { ops: out, handles };
