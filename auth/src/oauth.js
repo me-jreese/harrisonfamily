@@ -10,11 +10,34 @@ export const DEFAULT_MCP_RESOURCE = "https://harrisonfamily.us/mcp";
 export const CODE_TTL_S = 120;
 export const ACCESS_TTL_S = 3600;
 export const REFRESH_TTL_S = 30 * 86400;
+/** HFY-TSK-120: the Gramps desktop add-on (loopback public client). Resource = the sync API; refresh tokens expire after 30 days without use. */
+export const DESKTOP_CLIENT_ID = "hfy-sync-desktop";
+export const DESKTOP_SYNC_RESOURCE = "https://harrisonfamily.us/api/sync";
+export const DESKTOP_LOOPBACK_REDIRECT = "http://127.0.0.1/callback";
+/** The desktop client definition for createOAuthServer({ clients }). */
+export const desktopClient = (over = {}) => ({
+  id: DESKTOP_CLIENT_ID, redirectUris: [DESKTOP_LOOPBACK_REDIRECT], resources: [DESKTOP_SYNC_RESOURCE],
+  loopback: true, registrable: false, defaultScope: "sync", name: "Harrison Family Gramps sync", refreshTtlS: REFRESH_TTL_S, ...over,
+});
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const SCOPE_RE = /^[A-Za-z0-9:._\/ -]{1,200}$/;
 const MAX_AGE_RE = /^[0-9]{1,9}$/; // OIDC max_age: a non-negative integer number of seconds
 const NAME_MAX = 200;
+const PORT_RE = /^[0-9]{1,5}$/;
+
+/**
+ * RFC 8252 section 7.3: a loopback client may use any port. Matches scheme, host and path of a registered loopback URI exactly
+ * (host is the IPv4 literal as registered; "localhost" is never matched unless registered), with any port 1-65535. No userinfo, query or fragment.
+ */
+export function loopbackMatches(registered, candidate) {
+  let r, c;
+  try { r = new URL(registered); c = new URL(candidate); } catch { return false; }
+  if (r.protocol !== "http:" || c.protocol !== "http:") return false;
+  if (c.username || c.password || c.search || c.hash || candidate.includes("#") || candidate.includes("?")) return false;
+  if (c.hostname !== r.hostname || c.pathname !== r.pathname) return false;
+  return c.port === "" || (PORT_RE.test(c.port) && Number(c.port) >= 1 && Number(c.port) <= 65535);
+}
 
 /**
  * The member's display label for the access token's `name` claim (the MCP actor label, api/src/mcp.js). It comes from the io_id session
@@ -50,9 +73,26 @@ export function memoryOAuthStore() {
   return { put: async (i) => { m.set(i.PK, { SK: "META", ...i }); }, get: async (pk) => m.get(pk), take: async (pk) => { const v = m.get(pk); m.delete(pk); return v; } };
 }
 
-export function createOAuthServer({ issuer, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, jwks, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
-  if (!redirectUris?.length) throw new Error("redirectUris must not be empty");
-  if (!resources?.length) throw new Error("resources must not be empty");
+/**
+ * HFY-TSK-120: `clients` is [{ id, redirectUris, resources, loopback?, registrable?, defaultScope?, name?, refreshTtlS? }].
+ * The legacy `redirectUris` / `resources` / `clientId` arguments still describe the single MCP client when `clients` is absent.
+ * A `loopback` client matches its redirect URIs by RFC 8252 section 7.3 (any port); every other client matches exactly.
+ * Codes and refresh tokens are bound to the issuing client. Only `registrable` clients (default true) are served by /register.
+ */
+export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, resources, clientId = DEFAULT_CLIENT_ID, store, signer, groupsFor, jwks, corsOrigins = [], now = () => Date.now(), random = (n) => randomBytes(n) }) {
+  const clients = new Map();
+  for (const c of clientDefs ?? [{ id: clientId, redirectUris, resources }]) {
+    if (!c?.id) throw new Error("client id must not be empty");
+    if (clients.has(c.id)) throw new Error(`duplicate client ${c.id}`);
+    if (!c.redirectUris?.length) throw new Error("redirectUris must not be empty");
+    if (!c.resources?.length) throw new Error("resources must not be empty");
+    clients.set(c.id, { registrable: true, defaultScope: "mcp", name: "Harrison Family MCP", refreshTtlS: REFRESH_TTL_S, loopback: false, ...c });
+  }
+  if (!clients.size) throw new Error("at least one client is required");
+  const clientOf = (id) => (typeof id === "string" ? clients.get(id) : undefined);
+  const redirectOk = (c, uri) => typeof uri === "string" && (c.loopback ? c.redirectUris.some((r) => loopbackMatches(r, uri)) : c.redirectUris.includes(uri));
+  const allResources = [...new Set([...clients.values()].flatMap((c) => c.resources))];
+  const registrationClient = [...clients.values()].find((c) => c.registrable);
   if (corsOrigins.some((o) => !/^https:\/\/[^/*\s]+$/.test(o))) throw new Error("corsOrigins must be exact https origins (no wildcard)");
   const base = issuer.replace(/\/+$/, "");
   const mount = new URL(base).pathname.replace(/\/+$/, "") || "";
@@ -62,7 +102,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) u.searchParams.set(k, String(v));
     return u.toString();
   };
-  const scopeOf = (s) => (typeof s === "string" && SCOPE_RE.test(s) ? s : "mcp");
+  const scopeOf = (s, c) => (typeof s === "string" && SCOPE_RE.test(s) ? s : c.defaultScope);
 
   const metadata = () => json(200, {
     issuer: base,
@@ -77,21 +117,23 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: ["mcp"],
+    scopes_supported: [...new Set([...clients.values()].map((c) => c.defaultScope))],
     authorization_response_iss_parameter_supported: true,
   }, { "cache-control": "public, max-age=300" });
 
   async function authorize(q, sessionOf) {
     q = q ?? {};
     // errors that must NOT redirect (the redirect target is not trusted yet)
-    if (q.client_id !== clientId) return err(400, "invalid_request", "unknown client_id");
-    if (!q.redirect_uri || !redirectUris.includes(q.redirect_uri)) return err(400, "invalid_request", "redirect_uri is not registered");
+    const client = clientOf(q.client_id);
+    if (!client) return err(400, "invalid_request", "unknown client_id");
+    const clientId = client.id;
+    if (!q.redirect_uri || !redirectOk(client, q.redirect_uri)) return err(400, "invalid_request", "redirect_uri is not registered");
     const back = (p) => redirectTo(withParams(q.redirect_uri, { ...p, state: q.state, iss: base }));
     if (q.response_type !== "code") return back({ error: "unsupported_response_type" });
     if (!CHALLENGE_RE.test(q.code_challenge ?? "") || q.code_challenge_method !== "S256") {
       return back({ error: "invalid_request", error_description: "PKCE with code_challenge_method=S256 is required" });
     }
-    const resource = q.resource ? resources.find((r) => r === q.resource) : resources[0];
+    const resource = q.resource ? client.resources.find((r) => r === q.resource) : client.resources[0];
     if (!resource) return back({ error: "invalid_target", error_description: "unknown resource" });
     // HFY-R64 / RFC 9470: max_age and prompt=login ask for a fresh sign-in (the MCP server's step-up delete needs auth_time within 300 s).
     let maxAge;
@@ -112,7 +154,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     const code = b64u(random(32));
     const name = displayNameOf(session.label, session.sub);
     await store.put({
-      PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope: scopeOf(q.scope),
+      PK: `MCPCODE#${keyOf(code)}`, clientId, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, sub: session.sub, resource, scope: scopeOf(q.scope, client),
       ...assuranceOf(session), ...(name ? { name } : {}),
       expiresAt: now() + CODE_TTL_S * 1000, ttl: secs() + CODE_TTL_S + 60,
     });
@@ -133,17 +175,17 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
    * auth_time is the original sign-in time: refresh grants pass the stored value through, they never advance it.
    * `name` (the member's display label, see displayNameOf) is carried the same way: from the session at authorize, preserved on refresh.
    */
-  async function issue({ sub, resource, scope, groups, family, email, amr, authTime, name }) {
+  async function issue({ client, sub, resource, scope, groups, family, email, amr, authTime, name }) {
     const iat = secs();
     const a = assuranceOf({ email, amr, authTime });
     const n = displayNameOf(name, sub);
     if (n) a.name = n;
-    const accessToken = await new SignJWT({ groups, scope, client_id: clientId, token_use: "access", ...(a.email ? { email: a.email } : {}), ...(a.name ? { name: a.name } : {}), ...(a.amr ? { amr: a.amr } : {}), auth_time: a.authTime })
+    const accessToken = await new SignJWT({ groups, scope, client_id: client.id, token_use: "access", ...(a.email ? { email: a.email } : {}), ...(a.name ? { name: a.name } : {}), ...(a.amr ? { amr: a.amr } : {}), auth_time: a.authTime })
       .setProtectedHeader({ alg: "RS256", kid: signer.kid, typ: "at+jwt" })
       .setSubject(sub).setIssuer(base).setAudience(resource).setIssuedAt(iat).setExpirationTime(iat + ACCESS_TTL_S).setJti(b64u(random(12)))
       .sign(signer.privateKey);
     const refreshToken = `hfyrt_${b64u(random(32))}`;
-    await store.put({ PK: `MCPRT#${keyOf(refreshToken)}`, clientId, sub, resource, scope, family, ...a, expiresAt: now() + REFRESH_TTL_S * 1000, ttl: secs() + REFRESH_TTL_S + 3600 });
+    await store.put({ PK: `MCPRT#${keyOf(refreshToken)}`, clientId: client.id, sub, resource, scope, family, ...a, expiresAt: now() + client.refreshTtlS * 1000, ttl: secs() + client.refreshTtlS + 3600 });
     return json(200, { access_token: accessToken, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refreshToken, scope });
   }
 
@@ -151,20 +193,24 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     if (p.grant_type === "authorization_code") {
       const { code, redirect_uri: redirectUri, code_verifier: verifier } = p;
       if (!code || !redirectUri || !verifier) return err(400, "invalid_request", "code, redirect_uri and code_verifier are required");
-      if (p.client_id !== clientId) return err(401, "invalid_client", "unknown client_id");
+      const client = clientOf(p.client_id);
+      if (!client) return err(401, "invalid_client", "unknown client_id");
       if (!VERIFIER_RE.test(verifier)) return err(400, "invalid_request", "malformed code_verifier");
       const rec = await store.take(`MCPCODE#${keyOf(code)}`); // consumed whether or not the rest checks out
-      if (!rec || rec.expiresAt <= now() || rec.clientId !== clientId || rec.redirectUri !== redirectUri) return err(400, "invalid_grant", "invalid, expired or already used code");
+      if (!rec || rec.expiresAt <= now() || rec.clientId !== client.id || rec.redirectUri !== redirectUri) return err(400, "invalid_grant", "invalid, expired or already used code");
       if (!safeEq(b64u(sha256(verifier)), rec.codeChallenge)) return err(400, "invalid_grant", "PKCE verification failed");
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the authorization request");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)), email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name });
+      return issue({ client, sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: b64u(random(12)), email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name });
     }
     if (p.grant_type === "refresh_token") {
       const rt = p.refresh_token;
       if (!rt) return err(400, "invalid_request", "refresh_token is required");
-      if (p.client_id && p.client_id !== clientId) return err(401, "invalid_client", "unknown client_id");
+      if (p.client_id && !clientOf(p.client_id)) return err(401, "invalid_client", "unknown client_id");
+      // Client binding: another client's refresh token is refused without being consumed (it is not a replay).
+      const peek = await store.get(`MCPRT#${keyOf(rt)}`);
+      if (peek && p.client_id && peek.clientId !== p.client_id) return err(400, "invalid_grant", "refresh token was not issued to this client");
       const rec = await store.take(`MCPRT#${keyOf(rt)}`);
       if (!rec) {
         const used = await store.get(`MCPRTUSED#${keyOf(rt)}`);
@@ -172,37 +218,43 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
         return err(400, "invalid_grant", "invalid or already used refresh token");
       }
       await store.put({ PK: `MCPRTUSED#${keyOf(rt)}`, family: rec.family, ttl: secs() + REFRESH_TTL_S + 3600 });
-      if (rec.expiresAt <= now() || rec.clientId !== clientId || (await store.get(`MCPFAM#${rec.family}`))) return err(400, "invalid_grant", "refresh token revoked or expired");
+      const client = clientOf(rec.clientId);
+      if (!client || rec.expiresAt <= now() || (await store.get(`MCPFAM#${rec.family}`))) return err(400, "invalid_grant", "refresh token revoked or expired");
       if (p.resource && p.resource !== rec.resource) return err(400, "invalid_target", "resource does not match the grant");
       const groups = await groupsFor(rec.sub);
       if (!groups) return err(400, "invalid_grant", "subject is no longer on the family access list");
-      return issue({ sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family, email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name }); // never refreshes auth_time
+      return issue({ client, sub: rec.sub, resource: rec.resource, scope: rec.scope, groups, family: rec.family, email: rec.email, amr: rec.amr, authTime: rec.authTime, name: rec.name }); // never refreshes auth_time
     }
     return err(400, "unsupported_grant_type", "authorization_code and refresh_token are supported");
   }
 
   /** E16-R1: secretless registration facade. Always the fixed public client; never a secret; unknown redirect URIs rejected. */
   function register(body) {
+    if (!registrationClient) return err(400, "invalid_client_metadata", "dynamic registration is not available");
+    const { id: clientId, redirectUris, name: defaultName, defaultScope } = registrationClient;
     const wanted = body?.redirect_uris;
     if (wanted !== undefined && (!Array.isArray(wanted) || wanted.some((u) => typeof u !== "string"))) return err(400, "invalid_client_metadata", "redirect_uris must be an array of strings");
     if (wanted?.some((u) => !redirectUris.includes(u))) return err(400, "invalid_redirect_uri", "redirect_uri is not on the allowed list");
     if (body?.token_endpoint_auth_method !== undefined && body.token_endpoint_auth_method !== "none") return err(400, "invalid_client_metadata", "only token_endpoint_auth_method none is supported");
     return json(201, {
       client_id: clientId,
-      client_name: typeof body?.client_name === "string" && body.client_name ? body.client_name.slice(0, 100) : "Harrison Family MCP",
+      client_name: typeof body?.client_name === "string" && body.client_name ? body.client_name.slice(0, 100) : defaultName,
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       redirect_uris: wanted?.length ? wanted : [...redirectUris],
-      scope: "mcp",
+      scope: defaultScope,
     });
   }
 
   /** RFC 7009: revokes a refresh token (and its rotation family). Always 200 for unknown tokens; access tokens simply expire (1h). */
   async function revoke(p) {
-    if (p.client_id && p.client_id !== clientId) return err(401, "invalid_client", "unknown client_id");
+    if (p.client_id && !clientOf(p.client_id)) return err(401, "invalid_client", "unknown client_id");
     const t = p.token;
     if (typeof t === "string" && t.startsWith("hfyrt_")) {
+      // a refresh token is revoked only by the client it was issued to
+      const live = await store.get(`MCPRT#${keyOf(t)}`);
+      if (live && p.client_id && live.clientId !== p.client_id) return { statusCode: 200, headers: { "content-type": "application/json", ...noStore }, body: "{}" };
       const rec = (await store.take(`MCPRT#${keyOf(t)}`)) ?? (await store.get(`MCPRTUSED#${keyOf(t)}`));
       if (rec?.family) await store.put({ PK: `MCPFAM#${rec.family}`, revoked: true, ttl: secs() + REFRESH_TTL_S + 3600 });
     }
@@ -223,7 +275,7 @@ export function createOAuthServer({ issuer, redirectUris, resources, clientId = 
     if (!jwks) return json(503, { error: "server_error" });
     let payload;
     try {
-      ({ payload } = await jwtVerify(m[1], jwks, { issuer: base, audience: resources, algorithms: ["RS256"], clockTolerance: 5, currentDate: new Date(now()) }));
+      ({ payload } = await jwtVerify(m[1], jwks, { issuer: base, audience: allResources, algorithms: ["RS256"], clockTolerance: 5, currentDate: new Date(now()) }));
     } catch {
       return bearer("invalid_token");
     }
