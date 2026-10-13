@@ -37,7 +37,7 @@ Inside quoted messages, file names and artifact names, other angle-bracket words
 | [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) | io-kit deploy | `push` to `main`, `workflow_dispatch` | Builds and packages a release, syncs `11ty/` to `<site-bucket>`, deploys `hfy-check-allowed`, invalidates CloudFront, runs smoke checks, and rolls back after a failed smoke check. | Rendered from `ci.manifest.yaml` |
 | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) | Deploy GCF (legacy) | `push` to `main`, `workflow_dispatch` | Deploys the legacy `getAllowlist` Google Cloud Function. | Hand-maintained |
 
-A push to `main` starts `io-kit-deploy.yml` and `deploy-gcf-legacy.yml` as separate, independent runs. The drift check and the secret scan run only in `io-kit-ci.yml`, so they run on pull requests and manual runs, not on a push to `main`. No workflow runs a test suite or the islands build. See [what no workflow ships or runs](#what-no-workflow-ships-or-runs).
+A push to `main` starts `io-kit-deploy.yml` and `deploy-gcf-legacy.yml` as separate, independent runs. The drift check and the secret scan run only in `io-kit-ci.yml`, so they run on pull requests and manual runs, not on a push to `main`. `io-kit-ci.yml` runs the CodeArtifact-free suites in its `test` job on pull requests (the `tests` key; see [Run the tests](../how-to/run-the-tests.md#where-each-suite-runs)), and no workflow runs the islands build or the other suites. See [what no workflow ships or runs](#what-no-workflow-ships-or-runs).
 
 ### Kit manifest: `ci.manifest.yaml`
 
@@ -47,7 +47,7 @@ A push to `main` starts `io-kit-deploy.yml` and `deploy-gcf-legacy.yml` as separ
 |---|---|---|
 | `stack` | `static` | Kit stack type. |
 | `branch` | `main` | Deploy branch. |
-| `node_version` | `"20"` | Node version for `actions/setup-node`. |
+| `node_version` | `"22"` | Node version for `actions/setup-node`. |
 | `build.cmd` | `bash scripts/ci/patch-client-id.sh && bash scripts/ci/package-lambda.sh` | Build command, run from the checkout root. See [build scripts](#build-scripts-scriptsci). |
 | `build.out` | `11ty` | Build output directory. The build fails if it does not exist afterwards. |
 | `build.env.HFY_GOOGLE_CLIENT_ID` | `{secret: HFY_GOOGLE_CLIENT_ID}` | Passed to the build from the GitHub secret. |
@@ -209,7 +209,7 @@ No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the
 | CloudFront Function `HFYAppendIndex` | [`publish-append-index.sh`](#publish-append-indexsh) publishes [`append-index.js`](#cloudfront-function-scriptscloudfrontappend-indexjs) | By hand, with operator credentials that allow `cloudfront:DescribeFunction`, `GetFunction`, `UpdateFunction`, `TestFunction`, `PublishFunction` and `GetDistributionConfig`. The deploy role has none of these, and the manifest has no `cloudfront_function` target. See [publish a change to the HFYAppendIndex CloudFront Function](../how-to/publish-the-cloudfront-function.md). |
 | Secrets | [`create-session-key.sh`](#create-session-keysh-and-create-origin-verifysh), [`create-origin-verify.sh`](#create-session-keysh-and-create-origin-verifysh); the web push secret `harrisonfamily/api/vapid` has no script | Created by hand. See [turn on push notifications](../how-to/turn-on-push-notifications.md) for the VAPID secret. |
 | `config/groups.json` | Written by hand. Its shape is documented in [`api/src/policy.js`](../../api/src/policy.js). | Uploaded by hand to `<config-bucket>`. `hfy-api` reads it, read-only, for the MCP groups and grants no group when it is missing or unreadable. The repository holds no copy. See [manage family access](../how-to/manage-family-access.md). |
-| Every test suite, and the MCP conformance gate | By hand | No workflow runs any [test suite](#test-suites), including the `edge-gate/`, `tests/client/` and `scripts/cloudfront/test/` suites, `npm run check:islands`, the two auth end-to-end runs, or [`mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh). |
+| Every test suite except three, and the MCP conformance gate | By hand | The `test` job runs only the family-data guard, `scripts/infra/test/run.sh` and the Gramps unit tests. No workflow runs any other [test suite](#test-suites), including the `edge-gate/`, `tests/client/` and `scripts/cloudfront/test/` suites, `npm run check:islands`, the two auth end-to-end runs, or [`mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh). |
 
 ## Build scripts: `scripts/ci/`
 
@@ -627,7 +627,7 @@ About the artifacts:
 
 ## Known limitations
 
-- No workflow runs a test suite, `npm run check:islands` or the MCP conformance gate. Nothing in CI checks the committed islands build output against `islands/`, the infra scripts, the edge gate, the CloudFront Function, the client scripts, or the API and auth edge code.
+- No workflow runs a test suite other than the three in the `tests` key (the family-data guard, `scripts/infra/test/run.sh` and the Gramps unit tests), `npm run check:islands` or the MCP conformance gate. Nothing in CI checks the committed islands build output against `islands/`, the infra scripts, the edge gate, the CloudFront Function, the client scripts, or the API and auth edge code.
 - No workflow deploys `hfy-api`, `hfy-auth-edge`, the app stack, the deploy-role stack, distribution changes or `HFYAppendIndex`. The two `us-east-1` edge stacks, `hfy-edge-gate` and `hfy-mcp-edge401`, the gate's package in `<edge-code-bucket>`, the MCP and data gate behaviors (`/uploads/*` included) are shipped by hand as well, and so is `config/groups.json`. See [what no workflow ships or runs](#what-no-workflow-ships-or-runs).
 - `deploy-static` uploads HTML and the files it references in one sync, with no HTML-last order. The default behavior's `CachingOptimized` cache policy leaves the query string out of the cache key, so until the `/*` invalidation completes CloudFront can answer a `?v=<new sha8>` URL with the old file, which Cloudflare then caches under the new URL.
 - Rollback starts only after a failed smoke job. A failure in `deploy` or `invalidate` leaves whatever was already synced or updated. Rollback needs an earlier successful run whose artifact is still within the 90-day retention, and it restores `11ty/` and `hfy-check-allowed` only.

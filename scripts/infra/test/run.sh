@@ -2,7 +2,7 @@
 # Offline tests for scripts/infra (HFY-R58). Never touches AWS: test/stub/aws is first on PATH for every script run.
 # Usage: scripts/infra/test/run.sh        (needs bash, jq, python3 with PyYAML; uses cfn-lint and shellcheck when installed, and
 # node + zip + openssl for the scripts/ci/package-edge-gate.sh checks, rsync + git for the scripts/check-deployment-sync.sh run)
-# shellcheck disable=SC2016 # the jq programs are single-quoted on purpose
+# shellcheck disable=SC2016,SC2002 # the jq programs are single-quoted on purpose
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 INFRA=$(cd "$HERE/.." && pwd)
@@ -117,7 +117,7 @@ contains "reports the pin" "$OUT" "legacy /api/check-allowed stays on origin api
 contains "diff is redacted" "$OUT" '"HeaderValue": "<redacted>"'
 B=$(find "$STUB_DIR/backups" -name 'E2JCDK3QLQNNYB-*-before.json' | head -1)
 check "pre-change backup saved" test -s "$B"
-eq "backup is mode 600" "$(stat -f %Lp "$B" 2>/dev/null || stat -c %a "$B")" 600
+eq "backup is mode 600" "$(stat -c %a "$B" 2>/dev/null || stat -f %Lp "$B")" 600
 eq "backup is the pre-change config" "$(jq -c --slurpfile f "$FIXTURE" '. == $f[0].DistributionConfig' "$B")" true
 
 CURRENT="api: rerun against CloudFront's echo is a true no-op"
@@ -674,7 +674,7 @@ OLDJS
   LB=$(find "$STUB_DIR/backups" -name 'HFYAppendIndex-LIVE-*-before.js' | head -1)
   check "the previous LIVE code is saved outside the repo" test -s "$LB"
   eq "...and is exactly the old code" "$(cmp -s "$LB" "$OLD_FN" && echo same)" same
-  eq "...mode 600" "$(stat -f %Lp "$LB" 2>/dev/null || stat -c %a "$LB")" 600
+  eq "...mode 600" "$(stat -c %a "$LB" 2>/dev/null || stat -f %Lp "$LB")" 600
   eq "a DEVELOPMENT copy identical to LIVE is not saved twice" "$(fn_backups)" 1
   contains "the rollback command names that file" "$OUT" "fileb://$LB"
 
