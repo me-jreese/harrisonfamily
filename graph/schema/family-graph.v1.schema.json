@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harrisonfamily.invalid/schema/family-graph.v1.schema.json",
+  "title": "family graph v1 (person/graph.json)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "minor", "generatedAt", "source", "counts", "people", "unions", "edges", "places", "events", "components", "generations", "attribution"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "minor": { "type": "integer", "minimum": 0 },
+    "generatedAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "snapshot", "builder", "projection"],
+      "properties": {
+        "kind": { "enum": ["gramps-copy", "jsonl", "snapshot", "cloud"] },
+        "snapshot": { "type": "string", "pattern": "^sha256:[0-9a-f]{8}$" },
+        "builder": { "type": "string", "pattern": "^hfy-graph@\\d+\\.\\d+\\.\\d+$" },
+        "projection": { "const": 1 }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["people", "unions", "edges", "places", "events", "components", "faces"],
+      "properties": {
+        "people": { "$ref": "#/$defs/count" },
+        "unions": { "$ref": "#/$defs/count" },
+        "edges": { "$ref": "#/$defs/count" },
+        "places": { "$ref": "#/$defs/count" },
+        "events": { "$ref": "#/$defs/count" },
+        "components": { "$ref": "#/$defs/count" },
+        "faces": { "$ref": "#/$defs/count" }
+      }
+    },
+    "people": { "type": "array", "items": { "$ref": "#/$defs/person" } },
+    "unions": { "type": "array", "items": { "$ref": "#/$defs/union" } },
+    "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+    "places": { "type": "array", "items": { "$ref": "#/$defs/place" } },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+    "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+    "generations": { "type": "array", "items": { "$ref": "#/$defs/generation" } },
+    "attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geonames"],
+      "properties": { "geonames": { "type": "boolean" } }
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
+    "idOrNull": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,32}$" },
+    "year": { "type": "integer", "minimum": 1000, "maximum": 9999 },
+    "yearOrNull": { "type": ["integer", "null"], "minimum": 1000, "maximum": 9999 },
+    "rel": { "enum": ["birth", "adopted", "step", "sponsored", "foster", "unknown", "none", "custom"] },
+    "person": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "given", "surname", "sex", "living", "birthYear", "deathYear", "yearApprox", "birthPlace", "deathPlace", "generation", "component", "face"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "given": { "type": "string", "maxLength": 100 },
+        "surname": { "type": "string", "maxLength": 100 },
+        "sex": { "enum": ["f", "m", "u"] },
+        "living": { "type": "boolean" },
+        "birthYear": { "$ref": "#/$defs/yearOrNull" },
+        "deathYear": { "$ref": "#/$defs/yearOrNull" },
+        "yearApprox": { "type": "boolean" },
+        "birthPlace": { "$ref": "#/$defs/idOrNull" },
+        "deathPlace": { "$ref": "#/$defs/idOrNull" },
+        "generation": { "type": ["integer", "null"], "minimum": 0 },
+        "component": { "type": "integer", "minimum": 0 },
+        "face": { "type": ["string", "null"], "pattern": "^faces/[A-Za-z0-9_-]{1,32}-[0-9a-f]{8}\\.webp$" }
+      }
+    },
+    "union": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "partners", "children"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["married", "unmarried", "civil_union", "unknown", "custom"] },
+        "partners": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/id" } },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "rel"],
+            "properties": {
+              "id": { "$ref": "#/$defs/id" },
+              "rel": {
+                "type": "object",
+                "additionalProperties": false,
+                "patternProperties": { "^[A-Za-z0-9_-]{1,32}$": { "$ref": "#/$defs/rel" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "edge": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["s", "t", "kind", "union", "type"],
+          "properties": {
+            "s": { "$ref": "#/$defs/id" },
+            "t": { "$ref": "#/$defs/id" },
+            "kind": { "const": "partner" },
+            "union": { "$ref": "#/$defs/id" },
+            "type": { "enum": ["married", "unmarried", "civil_union", "unknown", "custom"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["s", "t", "kind", "union", "rel"],
+          "properties": {
+            "s": { "$ref": "#/$defs/id" },
+            "t": { "$ref": "#/$defs/id" },
+            "kind": { "const": "parent" },
+            "union": { "$ref": "#/$defs/id" },
+            "rel": { "$ref": "#/$defs/rel" }
+          }
+        }
+      ]
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "parent", "lat", "lon", "geo"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "type": { "enum": ["unknown", "custom", "country", "state", "county", "city", "parish", "locality", "province", "region", "department", "district", "borough", "municipality", "town", "village", "hamlet"] },
+        "parent": { "$ref": "#/$defs/idOrNull" },
+        "lat": { "type": ["number", "null"], "minimum": -90, "maximum": 90 },
+        "lon": { "type": ["number", "null"], "minimum": -180, "maximum": 180 },
+        "geo": { "enum": [null, "gramps", "geonames"] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["person", "type", "year", "place"],
+      "properties": {
+        "person": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["birth", "death", "burial", "marriage", "divorce", "residence", "education", "graduation", "degree", "military_serv", "emigration", "immigration", "occupation", "other"] },
+        "year": { "$ref": "#/$defs/yearOrNull" },
+        "place": { "$ref": "#/$defs/idOrNull" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "size", "roots"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "size": { "type": "integer", "minimum": 1 },
+        "roots": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "levels"],
+      "properties": {
+        "component": { "type": "integer", "minimum": 0 },
+        "levels": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/id" } } }
+      }
+    }
+  }
+}
