@@ -26,7 +26,8 @@ test("the deck is the surfaces 5.2 copy", () => {
   assert.equal(full.fix.action, "start with your page");
   assert.equal(full.photos.title, "add photos");
   assert.equal(full.photos.line, "340 people don't have a photo yet. a phone photo of an old print counts.");
-  assert.equal(full.photos.action, "add a photo");
+  assert.equal(full.photos.action, "see who needs a photo");
+  assert.equal(byId(buildCards({ counts: COUNTS, flags: { postsV2: true }, sub: SUB })).photos.action, "add a photo");
 });
 
 test("copy: lowercase, no '!', no 'record', no 'users' or 'members'", () => {
@@ -112,4 +113,14 @@ test("search URL contract: has_photo, has_birth_year and living accept true|fals
     { propertyKey: "living", operator: "=", value: "false" }
   ]);
   assert.deepEqual(filterTokensFromParams(new URLSearchParams("has_photo=maybe&unknown=true&living=")), []);
+});
+
+test("death-only lifespan summaries do not count as having a birth year", () => {
+  for (const lifespanSummary of ["d. 1980", "\u2013 1980", "died 1980"]) {
+    const f = mapPerson({ grampsId: "I1", displayName: "Test Person", lifespanSummary }).fields;
+    assert.equal(f.has_birth_year, false, lifespanSummary);
+    assert.equal(f.birth_year, null, lifespanSummary);
+  }
+  assert.equal(mapPerson({ grampsId: "I2", displayName: "Test Person", lifespanSummary: "b. 1975" }).fields.has_birth_year, true);
+  assert.equal(countsFrom([{ grampsId: "I1", displayName: "A B", lifespanSummary: "d. 1980" }]).noBirthYear, 1);
 });

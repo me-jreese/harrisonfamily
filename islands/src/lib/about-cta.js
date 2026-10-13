@@ -123,7 +123,7 @@ export function buildCards({ counts, flags, sub }) {
       line: !have(c.noPhoto) ? "a phone photo of an old print counts."
         : zero(c.noPhoto) ? "every page has a photo. nice work, family."
         : `${n(c.noPhoto)} ${c.noPhoto === 1 ? "person doesn't" : "people don't"} have a photo yet. a phone photo of an old print counts.`,
-      action: "add a photo",
+      action: mode.photoSearch || !sub ? "see who needs a photo" : "add a photo",
       href: mode.photoSearch || !sub ? "/search/?has_photo=false" : `${ownRoute(sub)}#share`
     });
   } else {
@@ -144,6 +144,7 @@ export function buildCards({ counts, flags, sub }) {
 /** Every string the island can show, for the copy test. */
 export function allCopy() {
   const out = [HEADING, LEDE, CLOSING, NUDGE_ACTION];
+  out.push("see who needs a photo");
   for (const gap of ["a photo", "a birth year", "a birthplace", "a story"]) out.push(nudgeLine(gap));
   const flagSets = [{}, { recordEdit: true }, { commentPhotosV1: true }, { postsV2: true }, { recordEdit: true, commentPhotosV1: true, postsV2: true }];
   const countSets = [{}, { people: 0, noPhoto: 0, noBirthYear: 0 }, { people: 1, noPhoto: 1, noBirthYear: 1 }, { people: 1200, noPhoto: 340, noBirthYear: 55 }];

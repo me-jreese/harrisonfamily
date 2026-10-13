@@ -67,6 +67,7 @@ export function MyPosts({ id }) {
   const [ping, setPing] = usePing();
   const posts = usePosts({ subject: id });
   const composer = useRef(null);
+  const shareHandled = useRef(false);
   // Uploaded photo urls, in the kit's attachment order (index i = the i-th .iok-content-attachment row).
   const photos = useRef([]);
   const [count, setCount] = useState(0);
@@ -98,7 +99,8 @@ export function MyPosts({ id }) {
       document.getElementById("share")?.scrollIntoView({ block: "start" });
       if (box) box.focus({ preventScroll: true });
     };
-    go();
+    // Once per mount: a re-render or remount with the hash still set must not pull focus back; a real hash change still does.
+    if (!shareHandled.current) { shareHandled.current = true; go(); }
     window.addEventListener("hashchange", go);
     return () => window.removeEventListener("hashchange", go);
   }, [me, id]);
