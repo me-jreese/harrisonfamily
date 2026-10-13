@@ -2,6 +2,7 @@
 // so the two cannot drift. Pure data + functions: no AWS imports here.
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
+import { buildMe } from "./me.js";
 
 export const API_NAME = "hfy-api";
 export const API_VERSION = "0.1.0";
@@ -59,6 +60,10 @@ const need = (v, field) => {
 };
 
 export const ROUTES = [
+  {
+    name: "me.get", method: "GET", path: "/me", summary: "Who you are: id, label, admin, server-computed can.*, and admin badges (no MCP tool)",
+    handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount, log: c.log })),
+  },
   {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first (cursor), with reactions",
     handler: async (c) => {
