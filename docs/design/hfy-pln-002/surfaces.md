@@ -465,7 +465,7 @@ The search URL contract is: `has_photo`, `has_birth_year` and `living` accept `t
 | instagram | instagram.com (`www`, `m`) | `/<username>/?`; reserved first segments rejected: `p`, `reel`, `reels`, `explore`, `accounts`, `stories`, `m`, `direct`, `share` | `[A-Za-z0-9._]{1,30}` | `https://www.instagram.com/<u>/` |
 | tiktok | tiktok.com (`www`, `m`) | `/@<username>` | `[A-Za-z0-9._]{2,24}` | `https://www.tiktok.com/@<u>` |
 | snapchat | snapchat.com (`www`) | `/add/<u>`, `/@<u>` | `[A-Za-z][A-Za-z0-9._-]{2,14}` | `https://www.snapchat.com/@<u>` |
-| linkedin | linkedin.com (`www` and country subdomains) | `/in/<slug>`, `/pub/<…>` (legacy); `/company/` rejected (SURF-D8) | `[A-Za-z0-9-]{3,100}` | `https://www.linkedin.com/in/<slug>` |
+| linkedin | linkedin.com (`www` and country subdomains) | `/in/<slug>`; legacy `/pub/<…>` refused with a hint to use the `/in/` address (P2-R17); `/company/` rejected (SURF-D8) | `[A-Za-z0-9-]{3,100}` | `https://www.linkedin.com/in/<slug>` |
 | linktree | linktr.ee, linktree.com | `/<username>` | `[A-Za-z0-9._]{2,30}` | `https://linktr.ee/<u>` |
 | website | any host except all of the above, shorteners, contact hosts, IPs and local names | any | — | as typed, with the scheme defaulted to https |
 
