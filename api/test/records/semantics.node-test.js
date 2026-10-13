@@ -254,6 +254,21 @@ describe("checkSemantics: dates in an object", () => {
     assert.equal(res.objects[E("ev1")].date.sortval, 5, "and leaves its sortval alone");
   });
 
+  it("restores the stored sortval when a client changes only the sortval of an unchanged Date", () => {
+    const old = event("ev1", 1, { date: date(5, 3, 1900, { sortval: 2415084 }) });
+    const res = checkSemantics({ before: store(old), after: store({ ...old, date: { ...old.date, sortval: 5 } }), get: () => undefined, today: TODAY });
+    assert.ok(res.ok, JSON.stringify(res.errors));
+    assert.equal(res.objects[E("ev1")].date.sortval, 2415084);
+    // a nested date too, and a sortval added where none was stored is dropped
+    const nm = { _class: "Name", date: date(1, 1, 2000, { sortval: 2451545 }), surname_list: [] };
+    const p = person("p1", { primary_name: nm });
+    const r2 = checkSemantics({ before: store(p), after: store({ ...p, primary_name: { ...nm, date: { ...nm.date, sortval: 9 } } }), get: () => undefined, today: TODAY });
+    assert.equal(r2.objects[P("p1")].primary_name.date.sortval, 2451545);
+    const bare = (({ sortval, ...r }) => r)(old.date); // eslint-disable-line no-unused-vars
+    const r3 = checkSemantics({ before: store({ ...old, date: bare }), after: store({ ...old, date: { ...bare, sortval: 9 } }), get: () => undefined, today: TODAY });
+    assert.ok(!("sortval" in r3.objects[E("ev1")].date));
+  });
+
   it("judges a Date that changed, wherever it sits (a nested name date)", () => {
     const p = person("p1", { primary_name: { _class: "Name", date: date(1, 1, 2000), surname_list: [] } });
     const next = JSON.parse(JSON.stringify(p));
@@ -427,6 +442,17 @@ describe("references", () => {
     const ok = checkSemantics({ before: { "Note:n1": base["Note:n1"] }, after: {}, get: getter(base), referrers: () => [], today: TODAY });
     assert.ok(ok.ok);
   });
+
+  it("fails closed: deleting without a referrers lookup is an error, not a silent pass", () => {
+    const base = tree();
+    base[P("g1")].note_list = ["n1"];
+    base["Note:n1"] = { _class: "Note", handle: "n1" };
+    const res = checkSemantics({ before: { "Note:n1": base["Note:n1"] }, after: {}, get: getter(base), today: TODAY });
+    assert.ok(has(res, CODES.referrersRequired));
+    assert.equal(res.ok, false);
+    // a change that deletes nothing needs no lookup
+    assert.ok(change(base, [P("g1")], (a) => { a[P("g1")].gender = 1; }).ok);
+  });
 });
 
 describe("two-sided family links", () => {
@@ -485,12 +511,12 @@ describe("two-sided family links", () => {
 
   it("rejects deleting a family and leaving its people linked to it", () => {
     const base = tree();
-    const res = checkSemantics({ before: { [F("fam1")]: base[F("fam1")] }, after: {}, get: getter(base), today: TODAY });
+    const res = checkSemantics({ before: { [F("fam1")]: base[F("fam1")] }, after: {}, get: getter(base), referrers: () => [], today: TODAY });
     assert.ok(has(res, CODES.danglingFamilyLink));
     const clean = copy(base);
     for (const k of ["f1", "m1"]) clean[P(k)].family_list = [];
     clean[P("c1")].parent_family_list = [];
-    const ok = checkSemantics({ before: { [F("fam1")]: base[F("fam1")], [P("f1")]: base[P("f1")], [P("m1")]: base[P("m1")], [P("c1")]: base[P("c1")] }, after: { [P("f1")]: clean[P("f1")], [P("m1")]: clean[P("m1")], [P("c1")]: clean[P("c1")] }, get: getter(base), today: TODAY });
+    const ok = checkSemantics({ before: { [F("fam1")]: base[F("fam1")], [P("f1")]: base[P("f1")], [P("m1")]: base[P("m1")], [P("c1")]: base[P("c1")] }, after: { [P("f1")]: clean[P("f1")], [P("m1")]: clean[P("m1")], [P("c1")]: clean[P("c1")] }, get: getter(base), referrers: () => [], today: TODAY });
     assert.ok(ok.ok, JSON.stringify(ok.errors));
   });
 
@@ -603,6 +629,61 @@ describe("ancestry cycles", () => {
     base[F("fam1")].child_ref_list.push({ _class: "ChildRef", ref: "f1" });
     const res = change(base, [P("g1")], (a) => { a[P("g1")].gender = 1; });
     assert.ok(res.ok, JSON.stringify(res.errors));
+  });
+});
+
+describe("ancestry cycles that share people with an old cycle", () => {
+  it("catches a second cycle added to a tree that already has one", () => {
+    const base = tree();
+    // old cycle: f1 is his own parent
+    base[P("f1")].parent_family_list = ["fam1"];
+    base[F("fam1")].child_ref_list.push({ _class: "ChildRef", ref: "f1" });
+    // new cycle through the same people: c1 becomes a parent of f1 as well, via a new family
+    base[F("fam9")] = family("fam9", { father: "c1", children: ["f1"] });
+    const res = change(base, [F("fam9"), P("c1"), P("f1")], (a) => {
+      a[F("fam9")] = family("fam9", { father: "c1", children: ["f1"] });
+      a[P("c1")].family_list.push("fam9");
+      a[P("f1")].parent_family_list.push("fam9");
+    });
+    const e = res.errors.find((x) => x.code === CODES.ancestryCycle);
+    assert.ok(e, JSON.stringify(res.errors));
+    assert.deepEqual([...e.cycle].sort(), [P("c1"), P("f1")]);
+  });
+});
+
+describe("call name", () => {
+  const named = (first, call) => person("p1", { primary_name: { _class: "Name", first_name: first, call, surname_list: [] } });
+  it("must be one of the first_name words", () => {
+    const ok = checkSemantics({ before: {}, after: store(named("Anna Marie", "Marie")), get: () => undefined, today: TODAY });
+    assert.ok(ok.ok, JSON.stringify(ok.errors));
+    const bad = checkSemantics({ before: {}, after: store(named("Anna Marie", "Mary")), get: () => undefined, today: TODAY });
+    assert.ok(has(bad, CODES.callNameNotInFirstName));
+    assert.equal(bad.errors[0].path, "/primary_name/call");
+    assert.ok(checkSemantics({ before: {}, after: store(named("Anna", "")), get: () => undefined, today: TODAY }).ok);
+  });
+  it("is not re-judged on a Name that is unchanged, and is judged when first_name changes", () => {
+    const old = named("Anna", "Ana"); // an old import that breaks the rule
+    assert.ok(checkSemantics({ before: store(old), after: store({ ...old, gender: 1 }), get: () => undefined, today: TODAY }).ok);
+    const changed = checkSemantics({ before: store(named("Anna Marie", "Marie")), after: store(named("Anna", "Marie")), get: () => undefined, today: TODAY });
+    assert.ok(has(changed, CODES.callNameNotInFirstName));
+  });
+  it("applies to alternate names", () => {
+    const p = person("p1", { alternate_names: [{ _class: "Name", first_name: "Anna", call: "Bea", surname_list: [] }] });
+    const res = checkSemantics({ before: {}, after: store(p), get: () => undefined, today: TODAY });
+    assert.equal(res.errors[0].path, "/alternate_names/0/call");
+  });
+});
+
+describe("the today option", () => {
+  const ev = event("ev1", 1, { date: date(1, 1, 2000) });
+  const run = (today) => checkSemantics({ before: {}, after: store(ev), get: () => undefined, today });
+  it("throws on a value it cannot read instead of using the clock", () => {
+    for (const bad of ["2026/10/13", "tomorrow", "2026-13-01", 20261013, { y: "2026", m: 10, d: 13 }, new Date(NaN), []]) {
+      assert.throws(() => run(bad), TypeError, JSON.stringify(bad));
+    }
+  });
+  it("reads an object, a YYYY-MM-DD string, a Date, and nothing (the clock)", () => {
+    for (const ok of [TODAY, "2026-10-13", new Date(Date.UTC(2026, 9, 13)), undefined]) assert.ok(run(ok).ok);
   });
 });
 

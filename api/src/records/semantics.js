@@ -8,8 +8,13 @@
 //                holds the Family, and a ChildRef for `c` exists exactly when `c.parent_family_list` holds it.
 //   family sense a parent is not also a child of the family, father is not mother, no ChildRef twice.
 //   ancestry     no person is their own ancestor.
+//   call name    a new or changed Name's `call` is one of the words of its `first_name`.
 //   derived      `birth_ref_index` and `death_ref_index` are recomputed with Gramps' `set_birth_death_index` for every
 //                Person whose `event_ref_list` changed and every Person that uses an Event whose type changed.
+//
+// NOT BUILT HERE (deferred to `edit-api-changes` and the relationship compiler): the non-blocking warnings of
+// editing design section 6.2 (a person who already has birth parents, a parent under 13 years older than the child,
+// a possible duplicate person). `warnings` is always [] and is kept in the result so a caller can rely on its shape.
 //
 // PURE. Its only import is the EditOp engine's canonical JSON, so it runs under `node --test` and in a browser. No
 // route calls it yet (its first caller is `edit-api-changes`), so it ships in the `hfy-api` zip unreachable.
@@ -26,10 +31,11 @@
 //     get     (key) => object | undefined, the stored object for anything not in before/after
 //     eventReferrers  (eventHandle) => ["Person:<h>", ...], every stored Person that references the Event. Required
 //             when an Event's type changed (records.graph() provides it).
-//     referrers  (key) => [keys], every stored object that references `key`. Optional: with it, deleting an object
-//             that something still references is refused.
+//     referrers  (key) => [keys], every stored object that references `key`. Required when the change deletes an
+//             object (without it the check cannot tell whether something still points at it: `referrers_required`).
 //     admin   an admin may submit non-Gregorian calendars and dates outside the member range
-//     today   { y, m, d } | Date | "YYYY-MM-DD" (default: now, UTC)
+//     today   { y, m, d } | Date | "YYYY-MM-DD" (default: now, UTC). Anything else throws a TypeError. A caller that
+//             knows the member's time zone should pass the member's local day, since the future-date rule is exact.
 //   -> { ok, errors, warnings, objects, derivedKeys }
 //     errors  [{ code, obj, path?, message, ... }]; `objects` is `after` with the derived fields filled in (sortval on
 //     each new Date, the two indexes), plus any Person this change forced to recompute (listed in `derivedKeys`).
@@ -49,6 +55,7 @@ export const CODES = Object.freeze({
   missingReference: "missing_reference",
   stillReferenced: "still_referenced",
   referrersRequired: "referrers_required",
+  callNameNotInFirstName: "call_name_not_in_first_name",
   linkMissingFamilyList: "link_missing_family_list",
   linkOrphanFamilyList: "link_orphan_family_list",
   linkMissingParentFamily: "link_missing_parent_family",
@@ -147,13 +154,21 @@ export function normalizeDate(date) {
 }
 
 function todayParts(today) {
-  if (today && typeof today === "object" && !(today instanceof Date)) return { y: today.y, m: today.m, d: today.d };
-  if (typeof today === "string") {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(today);
-    if (m) return { y: +m[1], m: +m[2], d: +m[3] };
+  if (today === undefined || today === null) {
+    const t = new Date();
+    return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
   }
-  const t = today instanceof Date ? today : new Date();
-  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
+  if (today instanceof Date) {
+    if (Number.isNaN(today.getTime())) throw new TypeError("today is an invalid Date");
+    return { y: today.getUTCFullYear(), m: today.getUTCMonth() + 1, d: today.getUTCDate() };
+  }
+  if (typeof today === "string") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(today);
+    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return { y: +m[1], m: +m[2], d: +m[3] };
+    throw new TypeError(`today must be YYYY-MM-DD, got ${JSON.stringify(today)}`);
+  }
+  if (isPlain(today) && Number.isInteger(today.y) && Number.isInteger(today.m) && Number.isInteger(today.d)) return { y: today.y, m: today.m, d: today.d };
+  throw new TypeError("today must be { y, m, d }, a Date or a YYYY-MM-DD string");
 }
 
 const isLeap = (calendar, y) => (calendar === CALENDAR.JULIAN ? y % 4 === 0 : y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0));
@@ -310,6 +325,14 @@ const canonDate = (d) => {
   return canonicalJson(rest);
 };
 
+// The Names of a Person: [{ path, name }] for primary_name and each alternate_names entry.
+function personNames(p) {
+  const out = [];
+  if (isPlain(p.primary_name)) out.push({ path: ["primary_name"], name: p.primary_name });
+  asList(p.alternate_names).forEach((n, i) => { if (isPlain(n)) out.push({ path: ["alternate_names", i], name: n }); });
+  return out;
+}
+
 function familyMembers(f) {
   if (!isPlain(f)) return [];
   const out = [];
@@ -375,48 +398,50 @@ function personSanity(pk, p) {
   return out;
 }
 
-// Ancestry: person -> parents through parent_family_list and the Family's father/mother. Depth-first from `starts`,
-// returns the cycles found keyed by their sorted member list.
-function findCycles(v, starts) {
+// Ancestry: person -> parents through parent_family_list and the Family's father/mother.
+const parentsOf = (v, pk) => {
+  const p = v(pk);
+  const out = [];
+  for (const fh of asList(p && p.parent_family_list)) {
+    const f = v(keyOf("Family", fh));
+    if (!f) continue;
+    for (const h of [f.father_handle, f.mother_handle]) if (h && !out.includes(keyOf("Person", h))) out.push(keyOf("Person", h));
+  }
+  return out;
+};
+
+// A new cycle must contain a new child -> parent edge, so look at each edge the change adds (present now, absent
+// before) and ask whether the parent can already reach the child going up. That finds a second cycle that shares
+// people with one already in the tree, which a plain depth-first search from the touched people would miss.
+// Returns { cycles: [[person keys]], limit }; each cycle starts at the child of the new edge.
+function newCycles(now, was, starts) {
   const cycles = new Map();
-  const state = new Map(); // 1 on the stack, 2 done
   let visits = 0;
-  const parents = (pk) => {
-    const p = v(pk);
-    const out = [];
-    for (const fh of asList(p && p.parent_family_list)) {
-      const f = v(keyOf("Family", fh));
-      if (!f) continue;
-      for (const h of [f.father_handle, f.mother_handle]) if (h && !out.includes(keyOf("Person", h))) out.push(keyOf("Person", h));
-    }
-    return out;
-  };
   for (const s of starts) {
-    if (state.get(s)) continue;
-    state.set(s, 1);
-    const path = [s];
-    const stack = [{ it: parents(s), i: 0 }];
-    while (stack.length) {
-      if (++visits > MAX_ANCESTRY_VISITS) return { cycles, limit: true };
-      const top = stack[stack.length - 1];
-      if (top.i < top.it.length) {
-        const next = top.it[top.i++];
-        const st = state.get(next);
-        if (st === 1) {
-          const members = path.slice(path.indexOf(next));
-          cycles.set([...members].sort().join(","), members);
-        } else if (!st) {
-          state.set(next, 1);
-          path.push(next);
-          stack.push({ it: parents(next), i: 0 });
+    const before = new Set(parentsOf(was, s));
+    for (const p of parentsOf(now, s)) {
+      if (before.has(p)) continue;
+      // breadth-first from p up the ancestry, looking for s
+      const prev = new Map([[p, null]]);
+      const queue = [p];
+      let found = p === s;
+      for (let i = 0; i < queue.length && !found; i++) {
+        if (++visits > MAX_ANCESTRY_VISITS) return { cycles: [...cycles.values()], limit: true };
+        for (const n of parentsOf(now, queue[i])) {
+          if (prev.has(n)) continue;
+          prev.set(n, queue[i]);
+          if (n === s) { found = true; break; }
+          queue.push(n);
         }
-      } else {
-        state.set(path.pop(), 2);
-        stack.pop();
       }
+      if (!found) continue;
+      const members = [];
+      for (let c = prev.has(s) ? s : p; c !== null && c !== undefined; c = prev.get(c)) members.push(c);
+      const cycle = [s, ...members.filter((m) => m !== s).reverse()];
+      cycles.set([...cycle].sort().join(","), cycle);
     }
   }
-  return { cycles, limit: false };
+  return { cycles: [...cycles.values()], limit: false };
 }
 
 export function checkSemantics(input) {
@@ -456,7 +481,9 @@ export function checkSemantics(input) {
     }
   }
   // A deleted object that something stored still points to.
-  if (typeof referrers === "function") {
+  if (deleted.length && typeof referrers !== "function") {
+    err({ code: CODES.referrersRequired, message: "an object is being deleted and the objects that point to it were not supplied" });
+  } else if (typeof referrers === "function") {
     for (const dk of deleted) {
       for (const rk of referrers(dk)) {
         const o = view(rk);
@@ -493,27 +520,30 @@ export function checkSemantics(input) {
 
   const starts = new Set(personKeys);
   for (const fk of familyKeys) for (const h of new Set([...familyMembers(after[fk]), ...familyMembers(before[fk])])) starts.add(keyOf("Person", h));
-  const cyclesNow = findCycles(view, [...starts]);
-  if (cyclesNow.limit) err({ code: CODES.ancestryLimit, message: "the family tree is too large to check for loops in one change" });
-  const cyclesBefore = findCycles(beforeView, [...starts]).cycles;
-  for (const [id, members] of cyclesNow.cycles) {
-    if (!cyclesBefore.has(id)) err({ code: CODES.ancestryCycle, obj: members[0], cycle: members, message: "that would make a person their own ancestor" });
-  }
+  const cyc = newCycles(view, beforeView, starts);
+  if (cyc.limit) err({ code: CODES.ancestryLimit, message: "the family tree is too large to check for loops in one change" });
+  for (const members of cyc.cycles) err({ code: CODES.ancestryCycle, obj: members[0], cycle: members, message: "that would make a person their own ancestor" });
 
   // 5. Dates: validate each Date that is new or different, and recompute its sortval in the copy we return.
   const objects = {};
   for (const k of afterKeys) objects[k] = clone(after[k]);
   let datesNormalized = 0;
   for (const k of afterKeys) {
+    // The stored Dates, by content without sortval. An unchanged Date is not judged again, and its sortval goes back
+    // to the stored value, so a client cannot change it by sending only a different sortval.
     const prior = new Map();
     for (const { date } of findDates(before[k])) {
       const c = canonDate(date);
-      prior.set(c, (prior.get(c) || 0) + 1);
+      if (!prior.has(c)) prior.set(c, []);
+      prior.get(c).push(date.sortval);
     }
     for (const { path, date } of findDates(objects[k])) {
       const c = canonDate(date);
-      if (prior.get(c) > 0) {
-        prior.set(c, prior.get(c) - 1);
+      const stock = prior.get(c);
+      if (stock && stock.length) {
+        const was = stock.shift();
+        if (was === undefined) delete date.sortval;
+        else date.sortval = was;
         continue;
       }
       const problems = validateDate(date, { admin, today: input.today });
@@ -524,6 +554,21 @@ export function checkSemantics(input) {
         date.calendar = g.calendar;
         date.sortval = g.sortval;
         datesNormalized++;
+      }
+    }
+  }
+
+  // 5b. Call name: a new or changed Name's `call` is one of the words of its `first_name` (editing design 6.2).
+  for (const k of afterKeys) {
+    if (classOf(k) !== "Person" || !isPlain(after[k])) continue;
+    const oldNames = new Set(isPlain(before[k]) ? personNames(before[k]).map((n) => canonicalJson(n.name)) : []);
+    for (const { path, name } of personNames(after[k])) {
+      if (oldNames.has(canonicalJson(name))) continue;
+      const call = typeof name.call === "string" ? name.call.trim() : "";
+      if (call === "") continue;
+      const words = String(typeof name.first_name === "string" ? name.first_name : "").split(/\s+/).filter(Boolean);
+      if (!words.includes(call)) {
+        err({ code: CODES.callNameNotInFirstName, obj: k, path: pointer(path.concat("call")), message: "the call name must be one of the given names" });
       }
     }
   }
