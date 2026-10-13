@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const EXACT = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+const EXACT = /^\d+\.\d+\.\d+$/;
 
 function kitDeps(rel) {
   const pkg = JSON.parse(readFileSync(resolve(repo, rel), "utf8"));
@@ -26,11 +26,13 @@ describe("@io-kit exact pins", () => {
     });
   }
 
-  it("api lockfile root entry matches package.json and resolves each kit to its pinned version", () => {
-    const lock = JSON.parse(readFileSync(resolve(repo, "api/package-lock.json"), "utf8"));
-    for (const d of kitDeps("api/package.json")) {
-      expect(lock.packages[""][d.field][d.name], d.name).toBe(d.range);
-      expect(lock.packages[`node_modules/${d.name}`].version, d.name).toBe(d.range);
-    }
-  });
+  for (const dir of ["api", "islands"]) {
+    it(`${dir} lockfile root entry matches package.json and resolves each kit to its pinned version`, () => {
+      const lock = JSON.parse(readFileSync(resolve(repo, `${dir}/package-lock.json`), "utf8"));
+      for (const d of kitDeps(`${dir}/package.json`)) {
+        expect(lock.packages[""][d.field][d.name], d.name).toBe(d.range);
+        expect(lock.packages[`node_modules/${d.name}`].version, d.name).toBe(d.range);
+      }
+    });
+  }
 });
