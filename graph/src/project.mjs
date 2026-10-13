@@ -269,7 +269,7 @@ export function projectRecords(objects, opts) {
       yearApprox: (b.year !== null && b.approx) || (d.year !== null && d.approx),
       birthPlace: birthPlace ? birthPlace.gramps_id : null,
       deathPlace: deathPlace ? deathPlace.gramps_id : null,
-      generation: null, // filled by the generation index (viz-generation-index)
+      generation: null, // set by build.mjs (generations.mjs)
       component: 0, // set by build.mjs
       face: null, // filled by the face crops (viz-face-crops)
     };
