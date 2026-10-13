@@ -100,8 +100,15 @@
 
     (async () => {
       if (!personId) {
-        console.error("[HFY_PERSON] Missing required person id (?id=<GRAMPS_ID>).");
-        showError(VOICE.error, { loading, error });
+        // /person/ without an id has nothing to show: it is the family route (HFYFeatureFlags.goToFamily, same as /private/).
+        // Signed in it goes to the member's own page, otherwise to the sign-in, which returns to the own page. Only a page
+        // that cannot decide where to go (no feature-flags.js, a session without a gramps id) shows the error line.
+        const featureFlags = await waitForFeatureFlags();
+        const url = featureFlags && typeof featureFlags.goToFamily === "function" ? await featureFlags.goToFamily() : null;
+        if (!url) {
+          console.error("[HFY_PERSON] Missing required person id (?id=<GRAMPS_ID>).");
+          showError(VOICE.error, { loading, error });
+        }
         return;
       }
 

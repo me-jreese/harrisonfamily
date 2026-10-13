@@ -8,9 +8,14 @@ import { defineNavRegistry } from "@io-kit/shell";
 import { KitShell, ScrollTopZone, SearchLauncher, Sheet, useBreakpoint, useShellScroll, usePwaInstall, useDisplayMode, detectPlatform } from "@io-kit/shell/react";
 import { mountAt } from "../lib/mount.jsx";
 import { suggestPeople } from "../lib/people-corpus.js";
+import { navPathname, ownRoute } from "../lib/family-route.js";
 
 // Nav registry (R8, DS Shell anatomy): five lowercase destinations. The icon is a placeholder glyph (a space) so the kit renders
 // its .io-nav__icon span; shell.css paints each item's single-weight line icon as a currentColor mask keyed by data-io-nav-item.
+// "family" is "your family": /private/ is its stable route, a redirect page (HFYFeatureFlags.goToFamily) that sends a signed-in
+// member to their own page and a signed-out visitor to the sign-in, which returns there. Once the edge session says who the member
+// is, Shell() swaps the route for the own page itself (lib/family-route.js), so the tab links straight to it. The tab is marked
+// current on that page only; another person's page has no marked tab.
 export const NAV = [
   { id: "home", label: "home", route: "/", icon: " ", order: 1 },
   { id: "family", label: "family", route: "/private/", icon: " ", order: 2 },
@@ -18,9 +23,9 @@ export const NAV = [
   { id: "posts", label: "posts", route: "/posts/", icon: " ", order: 4 },
   { id: "me", label: "me", route: "/family-login/", icon: " ", order: 5 }
 ];
-const router = { pathname: window.location.pathname, navigate: (href) => window.location.assign(href) };
+const navigate = (href) => window.location.assign(href);
 // Same rule as the kit's bottom bar: "/" is exact, every other route also matches its sub-paths.
-const isCurrent = (route) => (route === "/" ? router.pathname === "/" : router.pathname === route || router.pathname.startsWith(route));
+const isCurrent = (pathname, route) => (route === "/" ? pathname === "/" : pathname === route || pathname.startsWith(route));
 const here = () => window.location.pathname + window.location.search + window.location.hash;
 
 function InstallPrompt() {
@@ -145,7 +150,7 @@ function Account({ notifyV2 }) {
       </button>
       <Sheet open={open} onClose={() => setOpen(false)} side={bp === "compact" ? "bottom" : "right"} title={label} closeLabel="close" className="hfy-account">
         <ul className="hfy-account__list">
-          <li><a className="hfy-account__item" href={`/person/?id=${encodeURIComponent(session.sub)}`}>your page</a></li>
+          <li><a className="hfy-account__item" href={ownRoute(session.sub)}>your page</a></li>
           {notifyV2 && <li><a className="hfy-account__item" href="/me/notifications/">notifications</a></li>}
           <li><button type="button" className="hfy-account__item" onClick={() => { setOpen(false); signOut(); }}>sign out</button></li>
         </ul>
@@ -166,8 +171,14 @@ function Shell() {
   const searchV2 = useFlag("searchV2");
   // notifyV2 (HFY-TSK-068): "me" opens the notification settings page.
   const notifyV2 = useFlag("notifyV2");
-  const nav = NAV.map((i) => (i.id === "me" && notifyV2 ? { ...i, route: "/me/notifications/" } : i));
-  const registry = useMemo(() => defineNavRegistry({ items: nav.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" }), [notifyV2]);
+  // "family" opens the member's own page once the edge session names them; until then (pending, signed out, authV2 off) it is the
+  // stable /private/ redirect, which decides the same way. Only an authenticated session with a sub gives an own page.
+  const session = useEdgeSession();
+  const sub = session && session.authenticated === true && session.sub ? String(session.sub) : null;
+  const nav = NAV.map((i) => (i.id === "me" && notifyV2 ? { ...i, route: "/me/notifications/" } : i.id === "family" && sub ? { ...i, route: ownRoute(sub) } : i));
+  const registry = useMemo(() => defineNavRegistry({ items: nav.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" }), [notifyV2, sub]);
+  const pathname = navPathname(window.location, sub);
+  const router = useMemo(() => ({ pathname, navigate }), [pathname]);
   // stack "enceladus" only names the kit's data-theme; no harrisonfamily selector matches it, so it is inert (a StackName
   // "harrisonfamily" is a kit follow-up). The theme resolves on :root from the static layer.
   return (
@@ -176,7 +187,7 @@ function Shell() {
         <ScrollTopZone as="header" className="hfy-bar">
           <a className="hfy-bar__brand" href="/">Harrison Family</a>
           <nav className="hfy-bar__links" aria-label="primary">
-            {nav.map((i) => <a key={i.id} href={i.route} aria-current={isCurrent(i.route) ? "page" : undefined}>{i.label}</a>)}
+            {nav.map((i) => <a key={i.id} href={i.route} aria-current={isCurrent(pathname, i.route) ? "page" : undefined}>{i.label}</a>)}
           </nav>
           <SearchLauncher
             to="/search/"

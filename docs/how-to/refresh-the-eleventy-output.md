@@ -249,7 +249,7 @@ If rsync warns that it cannot delete `_data` because the directory is not empty,
 
    Copy only `index.html`. Everything else in `_site/person/` is private person JSON, which the source's config copies into `_site/` on every build.
 
-3. Leave `11ty/private/index.html` as it is. The source's private page renders the whole person directory from the private data, including names, living status, birth years and record IDs, so `_site/private/index.html` must never reach the repository. The committed copy is a sanitized placeholder. If the base layout or `src/private/index.njk` has changed, make the same change in `11ty/private/index.html` by hand, and let step 6 rewrite its head blocks, copy and versions. [Family data privacy](../explanation/family-data-privacy.md) explains why the data stays out of `11ty/`.
+3. Leave `11ty/private/index.html` as it is. It is the family tab's redirect page, "your family": it holds no person data, and `src/private/index.njk` in the source renders the same page. (Until 2026-10 the source's page rendered the whole person directory from the private data, including names, living status, birth years and record IDs, which is why the directory was kept out of the repository.) If the base layout or `src/private/index.njk` has changed, make the same change in `11ty/private/index.html` by hand, and let step 6 rewrite its head blocks, copy and versions. [Family data privacy](../explanation/family-data-privacy.md) explains why the data stays out of `11ty/`.
 
 #### Alternative to steps 3 to 5 (dry run, apply, check)
 

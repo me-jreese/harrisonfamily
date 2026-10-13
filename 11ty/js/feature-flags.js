@@ -28,7 +28,7 @@
         "css": "9e007813"
       },
       "shell": {
-        "js": "442f7b19",
+        "js": "0be5d1c0",
         "css": "89b22c11"
       },
       "timeline": {
@@ -36,9 +36,9 @@
         "css": "6b1f4442"
       }
     },
-    "theme": "b5c5cdf0",
+    "theme": "b8607abf",
     "manifest": "c0f9b5fc",
-    "sw": "b7ab88f2"
+    "sw": "6a62c685"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -610,6 +610,33 @@
     return LOGIN_URL + "?returnTo=" + encodeURIComponent(here);
   }
   featureAPI.signInUrl = signInUrl;
+
+  // "Your family" (the shell's family tab, /private/ and /person/ without an id): familyUrl() resolves where the visitor goes.
+  // Signed in: their own page, /person/?id=<gramps id>, the edge session's sub (authV2 off or /auth/session unreachable: the id the
+  // legacy sign-in kept). Signed out: the sign-in with a return to FAMILY_ROUTE, which lands on the own page afterwards (the edge
+  // /auth/login?returnTo=..., or the legacy /family-login/?next=... when there is no edge session to ask). Null for an
+  // authenticated session without a gramps id: the caller shows its own error, so a broken session cannot bounce in a loop.
+  // FAMILY_ROUTE is /private/, not /family/: /family/* is a gated data prefix at the edge. goToFamily() replaces the history entry,
+  // so Back does not return to the redirecting page.
+  const FAMILY_ROUTE = "/private/";
+  const ownPageUrl = (id) => "/person/?id=" + encodeURIComponent(id);
+  featureAPI.familyRoute = FAMILY_ROUTE;
+  featureAPI.familyUrl = function familyUrl() {
+    return edgeSession()
+      .then((s) => {
+        if (s && s.authenticated === true) return s.sub ? ownPageUrl(s.sub) : null;
+        if (s) return LOGIN_URL + "?returnTo=" + encodeURIComponent(FAMILY_ROUTE);
+        const legacyId = featureAPI.getUserGrampsID() || storageGet("localStorage", "HFY_AUTH_USER_GRAMPS_ID");
+        return legacyId ? ownPageUrl(legacyId) : "/family-login/?next=" + encodeURIComponent(FAMILY_ROUTE);
+      })
+      .catch(() => null);
+  };
+  featureAPI.goToFamily = function goToFamily() {
+    return featureAPI.familyUrl().then((url) => {
+      if (url) window.location.replace(url);
+      return url;
+    });
+  };
 
   // (c) the session could not be recovered: go to the edge sign-in and back, unless this tab was just there (no loops).
   function sendToSignIn() {

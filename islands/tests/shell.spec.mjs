@@ -4,7 +4,7 @@
 // -shellV2 through the ?hfy_flags preview override. /auth and Google are stubbed; data is synthetic.
 import { test, expect } from "@playwright/test";
 
-const PAGES = ["/", "/about/", "/search/", "/private/"];
+const PAGES = ["/", "/about/", "/search/", "/contact/"]; // (/private/ redirects, so it has no shell to audit: tests/family-route.spec.mjs)
 const LABELS = ["home", "family", "search", "posts", "me"];
 const ME = { sub: "I0001", label: "Marie" };
 

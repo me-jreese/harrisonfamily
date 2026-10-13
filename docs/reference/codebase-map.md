@@ -49,7 +49,7 @@ Facts:
 - [`islands/build.mjs`](../../islands/build.mjs) also writes into `11ty/`: the island bundles, the theme layer, the sign-in stylesheet, the fonts, and parts of the pages, `sw.js`, `js/feature-flags.js` and `manifest.webmanifest`. Every output is committed. See [React islands](#react-islands) and [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - CI deploys `11ty/` as committed and builds nothing into it. Its one change in CI is `scripts/ci/patch-client-id.sh`, which replaces the `REPLACE_WITH_GOOGLE_CLIENT_ID` placeholder in the HTML and JS files of the CI checkout. The committed files keep the placeholder.
 - The `?v=<sha8>` on each script and stylesheet reference is the hash of the committed file. The client-ID patch changes `js/auth.js` after that, so the served `auth.js` does not hash to its own `?v`.
-- `11ty/README.md` is deployed with the rest of `11ty/` and is served at `https://<site>/README.md`. It must name no private path.
+- `11ty/README.md` is repo-only: `ci.manifest.yaml` excludes `README.md` from the static sync, so it is not served. It still names no private path, because the repository can be read by others.
 - When any staged path is under `11ty/`, the pre-commit check [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh) compares `<project>/workspace/11ty-dev/_site` with `11ty/` using `rsync -ain --delete --omit-dir-times`. Any difference fails the commit.
 - That comparison excludes the data directories (`person/`, `family/`, `event/`, `note/`, `media/`, `place/`), `private/`, `uploads/`, `README.md`, `.DS_Store` and the repo-owned files, among them `js/person-page.js`, `js/auth.js`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`.
 - Excluding `person/` and `private/` also excludes the one page in each, `person/index.html` and `private/index.html`. The other Eleventy pages are compared whole. Fresh source output lacks their `auth-v2.js` tag, their Voice copy and their `?v` versions, so it differs from the committed pages (see [What in `11ty/` is generated](#what-in-11ty-is-generated)).
@@ -127,7 +127,7 @@ Facts:
   - `person` loads on `personV2`, on `/person/?id=…`.
   - Under `postsV2`, `my-posts` loads on `/person/?id=…`, `timeline` on `/`, and `posts` on `/posts/`.
   - `notifications` loads on `notifyV2`, on `/me/notifications/`.
-- The shell's navigation registry, `NAV` in `shell.jsx`, has five items: home, family (`/private/`), search, posts, and me (`/family-login/`, or `/me/notifications/` under `notifyV2`).
+- The shell's navigation registry, `NAV` in `shell.jsx`, has five items: home, family (`/private/`), search, posts, and me (`/family-login/`, or `/me/notifications/` under `notifyV2`). The family tab is "your family": once the edge session names the member, its route becomes their own page, `/person/?id=<sub>` (`src/lib/family-route.js`), and it is marked current on that page only. Signed out, or before the session answers, it stays `/private/`, a redirect page (`HFYFeatureFlags.goToFamily`) that sends a signed-in visitor to their own page and a signed-out one to `/auth/login?returnTo=/private/`. `/person/` without an id does the same. `/family/` cannot be the route: it is a gated data prefix.
 - Installing needs `CODEARTIFACT_AUTH_TOKEN` for the `@io-kit/*` packages ([`islands/.npmrc`](../../islands/.npmrc)). The build also needs the dev dependencies, which hold the fonts, so install with `npm ci`, not with `--omit=dev`. `package.json` requires Node 22 or later.
 - How to rebuild: [How to build and preview the React islands](../how-to/build-and-preview-the-islands.md).
 
@@ -566,7 +566,7 @@ After any refresh, and after `scripts/promote_workspace_assets.sh`, run `cd isla
 | `sw.js`, `manifest.webmanifest` | Repo-only. The islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `offline.html`, `posts/index.html`, `me/notifications/index.html` | Repo-only. The islands build writes their head blocks and `?v` versions. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `js/islands/`, including `chunks/` and `notify-sw.js`; `css/hfy-theme.css`; `css/auth-edge.css`; `fonts/` | Build output. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
-| `README.md` | Repository note for the directory. It is deployed with the site. | Excluded. | Excluded. | Excluded. |
+| `README.md` | Repository note for the directory. It is not deployed: the static sync excludes it. | Excluded. | Excluded. | Excluded. |
 
 [^dirs]: The tracked `person/index.html` and `private/index.html` are the only files under `person/` and `private/`. Every refresh and the sync check exclude both whole directories, so none of them overwrites, deletes or compares these two pages. A change to either page in the source output reaches `11ty/` only when it is copied by hand.
 

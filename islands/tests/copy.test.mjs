@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { COPY_PAGES, FOOTER, HERO, HERO_IMAGES, RETIRED, TITLES, applyCopy } from "../copy.mjs";
+import { COPY_EXTRA, COPY_PAGES, DESCRIPTION, FOOTER, FOOTER_LINKS, FOOTER_NAV, HERO, HERO_IMAGES, OLD_DESCRIPTION, RETIRED, SIGNED_OUT, TITLES, applyCopy } from "../copy.mjs";
 import { PAGES } from "../heads.mjs";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -77,4 +77,51 @@ test("applyCopy only rewrites the old copy", () => {
   assert.match(heroOnce, /<img\n  src="\/images\/00_mama_harrison\.jpg" width="3038" height="3931"\n class="x">/);
   assert.equal(applyCopy(heroOnce, "index.html"), heroOnce);
   assert.match(applyCopy("<h3>learn about our heritage and help us preserve our family history.</h3>", "index.html"), /^<p class="home-hero__lede">/);
+});
+
+test("every page with the footer line carries the quiet footer links, once, and the rewrite is idempotent", () => {
+  for (const page of [...COPY_PAGES, ...COPY_EXTRA]) {
+    const html = read(page);
+    assert.equal(html.split(FOOTER_NAV).length - 1, 1, `${page}: the footer links once`);
+    assert.equal(html.match(/class="site-footer__links"/g).length, 1, `${page}: one links nav`);
+    assert.ok(html.indexOf(FOOTER_NAV) > html.indexOf(FOOTER), `${page}: after the footer line`);
+    assert.equal(applyCopy(html, page), html, `${page}: applyCopy is a no-op on the built page`);
+  }
+  assert.deepEqual(FOOTER_LINKS.map(([label]) => label), ["about", "contact", "privacy", "terms"]);
+  for (const [label, href] of FOOTER_LINKS) assert.equal(label, label.toLowerCase(), href);
+});
+
+test("the footer links go in after the footer line of an old page, keeping its indentation (and only once)", () => {
+  const old = '<div class="x">\n      <p class="site-footer__text text-center mb-0">&copy; 2025 Harrison Family Heritage. All rights reserved.</p>\n    </div>';
+  const once = applyCopy(old, "search/index.html");
+  assert.equal(once, `<div class="x">\n      <p class="site-footer__text text-center mb-0">${FOOTER}</p>\n      ${FOOTER_NAV}\n    </div>`);
+  assert.equal(applyCopy(once, "search/index.html"), once);
+});
+
+test("the Eleventy default description, the [D0T] typo, the 222 years typo and the person page's static strings are put right", () => {
+  const withOld = `<meta name="description" content="${OLD_DESCRIPTION}" />`;
+  assert.equal(applyCopy(withOld, "search/index.html"), `<meta name="description" content="${DESCRIPTION}" />`);
+  assert.match(DESCRIPTION, /^the Harrison family archive\. family members sign in/);
+  assert.equal(applyCopy("email info [@] harrisonfamily [D0T] us.", "contact/index.html"), "email info [@] harrisonfamily [DOT] us.");
+  assert.equal(applyCopy("Over the next two hundred twenty (222) years, they", "about/index.html"), "Over the next two hundred twenty-two years, they");
+  assert.equal(applyCopy("<p>Loading person record…</p><p>Loading high-resolution media…</p> Download original", "person/index.html"), "<p>loading…</p><p>loading the full-size photo…</p> download original");
+  // only /privacy/ and /terms/ wording the email typo: nothing else of their prose is in the rewrite set
+  assert.deepEqual(HERO["privacy/index.html"], [["harrisonfamily [D0T] us", "harrisonfamily [DOT] us"]]);
+  assert.deepEqual(HERO["terms/index.html"], [["harrisonfamily [D0T] us", "harrisonfamily [DOT] us"]]);
+});
+
+test("/logged-out/ is in the family voice and signs in again at the edge", () => {
+  const html = read("logged-out/index.html");
+  const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+  assert.match(main, new RegExp(`<h1 class="mb-3">${SIGNED_OUT.heading.replace(/[.']/g, "\\$&")}</h1>`));
+  assert.match(main, /<a class="btn btn-primary" href="\/auth\/login">sign in again<\/a>/);
+  assert.match(main, /<a class="btn btn-outline-light" href="\/">home<\/a>/);
+  assert.equal(main.replace(/<[^>]+>/g, " ").trim(), main.replace(/<[^>]+>/g, " ").trim().toLowerCase(), "all lowercase");
+});
+
+test("the /family-login/ copy that shows before the redirect to the edge sign-in is in the voice", () => {
+  const html = read("family-login/index.html");
+  assert.match(html, /sign in with your Google account to see the family pages\./);
+  assert.match(html, /not on the list yet\? text J\./);
+  assert.doesNotMatch(html, /approved Google account|site administrator|authentication status/);
 });

@@ -99,12 +99,12 @@
 
     if (state.signedIn && state.profile && state.profile.email) {
       setStatus({
-        message: `Signed in as <strong>${state.profile.email}</strong>.`,
+        message: `signed in as <strong>${state.profile.email}</strong>.`,
         variant: "success"
       });
     } else if (!state.signedIn) {
       setStatus({
-        message: "Please sign in with your approved Google account to continue.",
+        message: "sign in with your Google account to continue.",
         variant: "info"
       });
     }
@@ -245,7 +245,7 @@
     }
     updateUI();
     setStatus({
-      message: "Signed out. Use the button above to sign in again.",
+      message: "you're signed out. use the button above to sign in again.",
       variant: "warning"
     });
     notifySubscribers();
@@ -353,7 +353,7 @@
       console.error("[HFY_AUTH] Unable to initialize Google Sign-In", error);
       if (!state.signedIn) {
         setStatus({
-          message: "Google Sign-In is unavailable right now. Please try again later.",
+          message: "Google sign-in isn't working right now. try again later, or text J.",
           variant: "danger"
         });
       }

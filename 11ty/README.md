@@ -1,6 +1,6 @@
 # 11ty/
 
-The deployable site, synced to the site bucket on every deploy. This file is deployed with it and public at `https://<site>/README.md`, so keep private paths and values out of it. The directory holds the output of the out-of-repo Eleventy source, `<eleventy-source>`, plus the repo-owned files and islands-build outputs listed below. Never `rsync --delete` into it, and never hand-edit a build output: rebuild with `cd islands && npm run build` and commit every file it touched (HFY-R58).
+The deployable site, synced to the site bucket on every deploy. This file is repo-only: `ci.manifest.yaml` excludes `README.md` from the static sync, so it is not served at `https://<site>/README.md`. Keep private paths and values out of it anyway, because it sits in a repository other people can read. The directory holds the output of the out-of-repo Eleventy source, `<eleventy-source>`, plus the repo-owned files and islands-build outputs listed below. Never `rsync --delete` into it, and never hand-edit a build output: rebuild with `cd islands && npm run build` and commit every file it touched (HFY-R58).
 
 ## Where it is documented
 
@@ -28,6 +28,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `js/auth.js` | Edited in the repository: with `authV2` on, the legacy Google button still renders but One Tap no longer prompts, because its bottom sheet covered the shell's tab bar at 375 px (HFY-TSK-069). The source's copy still prompts. |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | The PWA shell (HFY-TSK-064). Every islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. The worker is registered at `/sw.js?v=<sha8 of sw.js>` and names its cache after that hash. |
 | `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068). |
+| `private/index.html` | The route of the shell's family tab, "your family": a redirect page with no person data. Signed in, it sends the visitor to their own page, `/person/?id=<gramps id>`; signed out, to the edge sign-in, which returns to `/private/`. It replaced the 2025 "Person Directory" dev scaffold. It is not `/family/`, which is a gated data prefix. The refresh excludes `private/`; the source's matching page is `src/private/index.njk`. |
 | `README.md` | This file. |
 
 The other excludes keep the family data, `private/` and member `uploads/` out of the refresh. The other rendered pages are overwritten, which strips what the repository writes into them: [step 6 of the how-to](../docs/how-to/refresh-the-eleventy-output.md#6-rebuild-the-islands-over-the-refreshed-pages) rebuilds the head blocks, the family-voice copy and the `?v=` versions, but nothing puts back the `auth-v2.js` script tag unless the source is [mirrored](../docs/how-to/refresh-the-eleventy-output.md#mirror-the-repositorys-files-into-the-source).

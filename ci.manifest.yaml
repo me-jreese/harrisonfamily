@@ -26,6 +26,7 @@ deploy:
         - "note/*"
         - "place/*"
         - "uploads/*"
+        - "README.md"
       invalidate: ["/*"]
     - kind: lambda
       name: hfy-check-allowed

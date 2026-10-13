@@ -58,6 +58,25 @@ html.hfy-shell-v2 .site-footer {
   align-items: center;
   min-height: var(--io-control-tap-min);
 }
+/* The quiet footer links (copy.mjs FOOTER_LINKS: about, contact, privacy, terms). The shell hides the Bootstrap navbar that carried
+   them, so without these /contact/, /privacy/ and /terms/ had no way in. text.dim on the footer surface (AAA), underlined so the
+   links read without colour alone, gold on hover and focus like every link; each target is at least 44 x 44. The row wraps under
+   the line at 375 and sits beside it from 688. */
+.site-footer__inner { flex-wrap: wrap; column-gap: var(--io-space-6); }
+.site-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.site-footer__links a {
+  justify-content: center;
+  min-width: var(--io-control-tap-min);
+  padding-inline: var(--io-space-3);
+  color: var(--io-color-semantic-text-dim);
+  text-decoration: underline;
+  text-underline-offset: var(--io-space-1);
+}
+.site-footer__links a:is(:hover, :focus-visible) { color: var(--io-color-semantic-link-hover); }
 
 /* ---------------------------------------------------------------- lead copy */
 /* .lead {color:hsla(0,0%,100%,.85)} · .home-hero__copy p {color:hsla(0,0%,100%,.85); margin-bottom:1.25rem} */
@@ -174,18 +193,6 @@ html.hfy-shell-v2 .site-footer {
   display: inline-flex;
   align-items: center;
   min-height: var(--io-control-tap-min);
-}
-
-/* ---------------------------------------------------------------- private directory (/private/) */
-/* card badges ("Deceased", 12px uppercase pills) become a text.dim word */
-.card-body > .badge:not(:empty) {
-  display: block;
-  padding: 0;
-  background-color: transparent;
-  color: var(--io-color-semantic-text-dim);
-  font-weight: var(--io-typography-weight-regular);
-  text-transform: lowercase;
-  text-align: start;
 }
 
 /* ---------------------------------------------------------------- legacy search (/search/ with searchV2 off, navbar search) */

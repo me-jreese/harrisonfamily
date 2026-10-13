@@ -19,12 +19,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>family directory · Harrison Family</title>
-  <meta name="description" content="Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data." />
+  <title>your family · Harrison Family</title>
+  <meta name="description" content="the Harrison family archive. family members sign in to see the private pages." />
   <link rel="canonical" href="https://harrisonfamily.us/private/" />
 
-  <meta property="og:title" content="family directory" />
-  <meta property="og:description" content="Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data." />
+  <meta property="og:title" content="your family" />
+  <meta property="og:description" content="the Harrison family archive. family members sign in to see the private pages." />
   <meta property="og:url" content="https://harrisonfamily.us/private/" />
   <meta property="og:site_name" content="Harrison Family Heritage" />
   <meta property="og:type" content="website" />
@@ -37,8 +37,8 @@
 
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:site" content="@harrisonfamily" />
-  <meta name="twitter:title" content="family directory" />
-  <meta name="twitter:description" content="Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data." />
+  <meta name="twitter:title" content="your family" />
+  <meta name="twitter:description" content="the Harrison family archive. family members sign in to see the private pages." />
   
   <meta name="twitter:image" content="https://harrisonfamily.us/images/Adell-MinorSr-1901-social.jpg" />
   <meta name="twitter:image:alt" content="Historic family portrait" />
@@ -51,7 +51,7 @@
   <!-- hfy-theme:end A -->
   <link rel="stylesheet" href="/css/main.css?v=6853df92" />
   <!-- hfy-theme:start B -->
-  <link rel="stylesheet" href="/css/hfy-theme.css?v=b5c5cdf0" />
+  <link rel="stylesheet" href="/css/hfy-theme.css?v=b8607abf" />
   <!-- hfy-theme:end B -->
 </head>
 
@@ -128,68 +128,39 @@
 
     <main class="container py-5">
       
-<div class="container py-5">
-  <h1 class="mb-4">Person Directory</h1>
-  <p class="lead">Available person profiles (local development preview)</p>
-
-  <div class="alert alert-info">
-    <strong>Note:</strong> This page is for local development only. In production, person pages will be accessed via direct URLs with authentication.
+<section class="py-5" data-family-redirect>
+  <div class="container">
+    <h1 class="h3 mb-3">your family</h1>
+    <p class="lead mb-3" role="status" data-family-status hidden>taking you to your page…</p>
+    <p class="mb-0" data-family-fallback hidden><a href="/family-login/?next=%2Fprivate%2F">sign in</a></p>
+    <noscript><p class="mb-0"><a href="/auth/login?returnTo=%2Fprivate%2F">sign in to see your family</a></p></noscript>
   </div>
+</section>
 
-  <div class="row mt-4">
-    
-    <div class="col-md-6 col-lg-4 mb-4">
-      <div class="card">
-        
-        <img src="/media/M0001.jpg" class="card-img-top" alt="Sample Person" style="height: 200px; object-fit: cover;" onerror="this.src=''">
-        
-        <div class="card-body">
-          <h5 class="card-title">Sample Person</h5>
-          
-            <span class="badge bg-secondary mb-2">Deceased</span>
-          
-          
-          <a href="/person/?id=I0001" class="btn btn-primary btn-sm">View Profile</a>
-        </div>
-      </div>
-    </div>
-    
-    <div class="col-md-6 col-lg-4 mb-4">
-      <div class="card">
-        
-        <div class="card-body">
-          <h5 class="card-title"></h5>
-          
-            <span class="badge bg-secondary mb-2">Deceased</span>
-          
-          
-          <a href="/person/?id=" class="btn btn-primary btn-sm">View Profile</a>
-        </div>
-      </div>
-    </div>
-    
-    <div class="col-md-6 col-lg-4 mb-4">
-      <div class="card">
-        
-        <div class="card-body">
-          <h5 class="card-title"></h5>
-          
-            <span class="badge bg-secondary mb-2">Deceased</span>
-          
-          
-          <a href="/person/?id=" class="btn btn-primary btn-sm">View Profile</a>
-        </div>
-      </div>
-    </div>
-    
-  </div>
-</div>
+<script>
+  // The family tab's stable route (HFY: "your family"): signed in goes to the member's own page, /person/?id=<gramps id>; signed
+  // out goes to the sign-in, which comes back here and lands on the own page. The rule is HFYFeatureFlags.goToFamily
+  // (js/feature-flags.js), shared with /person/ without an id; it replaces the history entry, so Back skips this page.
+  document.addEventListener("DOMContentLoaded", function () {
+    var status = document.querySelector("[data-family-status]");
+    var fallback = document.querySelector("[data-family-fallback]");
+    if (status) status.hidden = false;
+    var flags = window.HFYFeatureFlags;
+    var go = flags && typeof flags.goToFamily === "function" ? flags.goToFamily() : Promise.resolve(null);
+    go.then(function (url) {
+      if (url) return;
+      if (status) status.textContent = "that didn't work. try again, or text J.";
+      if (fallback) fallback.hidden = false;
+    });
+  });
+</script>
 
     </main>
     <footer class="site-footer bg-dark text-light border-top border-light-subtle mt-auto fixed-bottom">
   <div class="container">
     <div class="site-footer__inner d-flex align-items-center justify-content-center">
       <p class="site-footer__text text-center mb-0 opacity-75">harrisonfamily.us · kept by the family, for the family</p>
+      <nav class="site-footer__links" aria-label="about this site"><a href="/about/">about</a><a href="/contact/">contact</a><a href="/privacy/">privacy</a><a href="/terms/">terms</a></nav>
     </div>
   </div>
 </footer>
@@ -207,8 +178,8 @@
         window.HFY_FEATURE_FLAGS || {}
       );
     </script>
-    <script src="/js/auth-v2.js?v=711e9219" defer></script>
-    <script src="/js/feature-flags.js?v=5428a4a8"></script>
+    <script src="/js/auth-v2.js?v=67814cdc" defer></script>
+    <script src="/js/feature-flags.js?v=d74a940e"></script>
     <script>
       window.HFY_AUTH_CONFIG = Object.assign(
         {},
@@ -217,7 +188,7 @@
       );
     </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="/js/auth.js?v=96f33ba9"></script>
+    <script src="/js/auth.js?v=21a23e3e"></script>
     <script>
       window.HFY_SEARCH_CONFIG = Object.assign({
         manifestUrl: "/person/index.json",
