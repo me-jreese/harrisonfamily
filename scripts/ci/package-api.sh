@@ -10,6 +10,7 @@ cp -R "$ROOT/api/src" "$ROOT/api/scripts" "$ROOT/api/package.json" "$ROOT/api/pa
 # src/shared is a committed symlink to ../../shared in the checkout; stage the real files instead (shared/*.mjs, never the tests).
 rm -rf "$STAGE/src/shared" && mkdir "$STAGE/src/shared"
 for f in "$ROOT"/shared/*.mjs; do case "$f" in *.test.mjs) ;; *) cp "$f" "$STAGE/src/shared/" ;; esac; done
+[ ! -L "$STAGE/src/shared" ] || { echo "package-api: src/shared is still a symlink" >&2; exit 1; }
 ls "$STAGE"/src/shared/*.mjs >/dev/null 2>&1 || { echo "package-api: no shared/*.mjs staged" >&2; exit 1; }
 ( cd "$STAGE" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund >/dev/null && rm -f .npmrc package-lock.json )
 # gen-caps imports src/routes.js (-> @io-kit/content, @io-kit/comments, @io-kit/notify: all runtime deps, now installed).
