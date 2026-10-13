@@ -5,10 +5,11 @@ Nothing here imports Gramps, so any worker or CI job can run it:
     python3 -m unittest discover gramps/tests/unit
 
 It verifies the committed files against their sha256 manifest, runs the census (every case
-sync.md section 15 and the review scenarios need), cross-checks the XML against the JSONL, scans
-every string for anything that is not obviously fictional, and checks the D-03 allowlist lines and
-.gitignore rules. One test regenerates the files with the bundled Gramps and compares bytes; it
-skips unless the Gramps 6.0.6 bundle is present.
+sync.md section 15, the review scenarios and the section 5 rules need), cross-checks the XML
+against the JSONL, scans every string for anything that is not obviously fictional (with the
+project's own R-18 scanner as well as a plain digit-run rule), and checks the D-03 allowlist lines
+and .gitignore rules. Two tests regenerate the files with the bundled Gramps, in the caller's
+locale and in German, and compare bytes; they skip unless the Gramps 6.0.6 bundle is present.
 """
 import hashlib
 import json
@@ -25,7 +26,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 FIX = os.path.join(REPO, "gramps", "tests", "fixtures")
 sys.path.insert(0, FIX)
+sys.path.insert(0, os.path.join(REPO, "gramps"))
 import census  # noqa: E402
+from hfygramps import scanner  # noqa: E402  (the R-18 detector; standard library only)
 
 JSONL = os.path.join(FIX, "synthetic-tree.jsonl")
 GRAMPS_XML = os.path.join(FIX, "synthetic-tree.gramps")
@@ -110,28 +113,91 @@ class GoldenFiles(unittest.TestCase):
         self.assertEqual({o["change"] for o in objects()}, {1700000000})
 
 
+# Phones: 555-01NN, optionally with area code 555 and country code 1 (the fixture's only phone forms).
+RESERVED_PHONE_DIGITS = re.compile(r"(?:1?555)?55501[0-9]{2}")
+# Seven or more digits in a run of digits and phone separators: the plain rule, beside the scanner's.
+PHONE_RUN = re.compile(r"[+(]?[0-9](?:[0-9 ().+-]*[0-9])?")
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)")
+COORDINATE = re.compile(r"-?[0-9]{1,3}\.[0-9]{1,8}")
+UNISSUED_SSN = "000-00-0000"  # test_ssn_style_value_is_the_unissued_all_zero_one checks every SSN shape
+
+
+def _keyed_strings(node, key=None):
+    """(dict key, string) for every string in a JSON value."""
+    if isinstance(node, str):
+        yield key, node
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            yield from _keyed_strings(v, k)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _keyed_strings(v, key)
+
+
+def _fictional_domain(domain):
+    domain = domain.lower().rstrip(".")
+    return domain == "example.org" or domain.endswith(".example.org")
+
+
+def fictional_violations(objs):
+    """([(kind, value)] that are not obviously fictional, number of phone and e-mail values checked).
+
+    Handles and media checksums are skipped (hex, not contact data), and so are Place coordinates
+    that are plain decimals. Everything else is scanned twice: by the project's R-18 scanner and by
+    a plain rule (any run of 7+ digits with phone separators; any user@domain).
+    """
+    handles = {o["handle"] for o in objs}
+    bad, checked = [], 0
+    for o in objs:
+        for key, s in _keyed_strings(o):
+            if s in handles or key == "checksum" or (key in ("lat", "long") and COORDINATE.fullmatch(s)):
+                continue
+            hits = scanner.scan_text(s, kinds=("phone", "email"))
+            emails = [m.group(0) for m in EMAIL.finditer(s)]
+            emails += [s[h["start"]:h["end"]] for h in hits if h["kind"] == "email"]
+            for e in emails:
+                checked += 1
+                if "@" not in e or not _fictional_domain(e.rsplit("@", 1)[1]):
+                    bad.append(("email", e))
+            phones = [m.group(0) for m in PHONE_RUN.finditer(s) if len(re.sub(r"[^0-9]", "", m.group(0))) >= 7]
+            phones += [s[h["start"]:h["end"]] for h in hits if h["kind"] == "phone"]
+            for p in phones:
+                if p == UNISSUED_SSN:
+                    continue
+                checked += 1
+                if not RESERVED_PHONE_DIGITS.fullmatch(re.sub(r"[^0-9]", "", p)):
+                    bad.append(("phone", p))
+    return bad, checked
+
+
+def _with_note(objs, text):
+    return objs + [{"_class": "Note", "handle": "zz" * 14, "gramps_id": "N9999", "private": False,
+                    "change": 1700000000, "text": {"_class": "StyledText", "string": text, "tags": []}}]
+
+
 class AllFictional(unittest.TestCase):
     def strings(self):
-        out = []
+        return [s for o in objects() for _, s in _keyed_strings(o)]
 
-        def walk(n):
-            if isinstance(n, str):
-                out.append(n)
-            elif isinstance(n, dict):
-                for v in n.values():
-                    walk(v)
-            elif isinstance(n, list):
-                for v in n:
-                    walk(v)
+    def test_no_phone_or_email_outside_the_reserved_ranges(self):
+        bad, checked = fictional_violations(objects())
+        self.assertEqual(bad, [])
+        self.assertGreater(checked, 5, "the rule checked almost nothing, so it proves nothing")
 
-        for o in objects():
-            walk(o)
-        return out
+    def test_the_check_catches_real_looking_values(self):
+        """Negative controls: each value, planted in a note, must be reported."""
+        base = objects()
+        for planted in ("Call 617-555-1234 tonight", "6175551234", "+1 617 555 1234", "617.555.1234",
+                        "(617) 555-1234", "555-1234", "1-617-555-0123", "x@myexample.org", "x@example.org.evil.net",
+                        "write to someone@mail.example.com", "tel:+16175551234", "https://wa.me/16175551234"):
+            bad, _ = fictional_violations(_with_note(base, planted))
+            self.assertTrue(bad, planted)
 
-    def test_every_email_is_example_org(self):
-        for s in self.strings():
-            for m in re.finditer(r"[\w.+-]+@([\w.-]+)", s):
-                self.assertTrue(m.group(1).endswith("example.org"), m.group(0))
+    def test_reserved_values_pass(self):
+        base = objects()
+        for planted in ("555-0199", "1-555-555-0100", "+1 555 555 0123", "x@example.org", "y@sub.example.org"):
+            bad, _ = fictional_violations(_with_note(base, planted))
+            self.assertEqual(bad, [], planted)
 
     def test_every_hostname_is_documentation_or_the_contact_channel(self):
         for s in self.strings():
@@ -139,30 +205,10 @@ class AllFictional(unittest.TestCase):
                 host = m.group(1)
                 self.assertTrue(host == "example.org" or host.endswith(".example.org") or host == "wa.me", host)
 
-    def test_every_phone_shaped_value_is_in_the_reserved_range(self):
-        """One rule: long digit runs, tel:/wa.me/ links and NNN-NNNN must all be 555-01NN numbers
-        (with area code 555 when there is one: 1-555-555-01NN)."""
-        long_run = re.compile(r"\+?\d{10,}")
-        local = re.compile(r"(?<![\w.-])\d{3}-\d{4}(?![\w-])")
-        seen = 0
-        for s in self.strings():
-            for m in long_run.finditer(s):
-                if re.fullmatch(r"[0-9a-f]+", s) or re.fullmatch(r"\d{4}-\d\d-\d\d.*", s):
-                    continue  # md5 sums and ISO timestamps are not phones
-                seen += 1
-                self.assertRegex(m.group(0), r"^\+?1?55555501\d\d$", s)
-            for m in local.finditer(s):
-                seen += 1
-                self.assertRegex(m.group(0), r"^555-01\d\d$", s)
-            for m in re.finditer(r"(?:tel:|wa\.me/)\+?(\d+)", s):
-                seen += 1
-                self.assertRegex(m.group(1), r"^1?55555501\d\d$", s)
-        self.assertGreater(seen, 0, "the phone rule checked nothing, so it proves nothing")
-
     def test_ssn_style_value_is_the_unissued_all_zero_one(self):
         for s in self.strings():
             for m in re.finditer(r"\b\d{3}-\d{2}-\d{4}\b", s):
-                self.assertEqual(m.group(0), "000-00-0000")
+                self.assertEqual(m.group(0), UNISSUED_SSN)
 
 
 class MediaFiles(unittest.TestCase):
@@ -174,6 +220,14 @@ class MediaFiles(unittest.TestCase):
         for o in objects():
             if o["_class"] == "Media":
                 self.assertEqual(o["checksum"], hashlib.md5(self.read(os.path.basename(o["path"]))).hexdigest(), o["path"])
+
+    def test_every_media_object_has_bytes_of_its_own(self):
+        """No two Media objects share a file or a checksum: a leak test that finds the private photo's
+        bytes (or md5) anywhere has found the private photo, not a public one with the same bytes."""
+        media = [o for o in objects() if o["_class"] == "Media"]
+        self.assertEqual(len({o["checksum"] for o in media}), len(media))
+        self.assertEqual(len({o["path"] for o in media}), len(media))
+        self.assertEqual(sorted(os.path.basename(o["path"]) for o in media), sorted(census.MEDIA_FILES))
 
     def test_placeholder_is_zero_bytes(self):
         self.assertEqual(self.read("synthetic-placeholder.jpg"), b"")
@@ -263,8 +317,8 @@ def _bundle_is_606():
                      "byte-identical regeneration only runs on a Mac with the Gramps 6.0.6 bundle "
                      "(io-mac-gramps); elsewhere the sha256 manifest checks are the only guard")
 class Reproducible(unittest.TestCase):
-    def test_regeneration_is_byte_identical(self):
-        """The generator's --check, in a throwaway GRAMPSHOME, with the real Gramps folders forbidden."""
+    def check(self, **env_overrides):
+        """The generator's --check, in a throwaway GRAMPSHOME, with the real Gramps and Pictures folders forbidden."""
         import pwd
         import tempfile
 
@@ -274,10 +328,10 @@ class Reproducible(unittest.TestCase):
             homes = {os.path.expanduser("~"), pwd.getpwuid(os.getuid()).pw_dir}
             forbid = ":".join(p for h in sorted(homes)
                               for p in (os.path.join(h, "Library", "Application Support", "gramps"),
-                                        os.path.join(h, ".gramps")))
+                                        os.path.join(h, ".gramps"), os.path.join(h, "Pictures")))
             log = os.path.join(home, "audit.log")
             env = dict(os.environ, HOME=os.path.join(home, "home"), GRAMPSHOME=os.path.join(home, "home"),
-                       HFY_SHIM_FORBID=forbid, HFY_SHIM_AUDIT_LOG=log)
+                       HFY_SHIM_FORBID=forbid, HFY_SHIM_AUDIT_LOG=log, **env_overrides)
             os.mkdir(env["HOME"])
             r = subprocess.run([shim, "--script", os.path.join(FIX, "make_synthetic_tree.py"), "--check"],
                                capture_output=True, text=True, env=env, timeout=300)
@@ -288,6 +342,13 @@ class Reproducible(unittest.TestCase):
             self.assertRegex(audit, r"checked [1-9]")
         finally:
             shutil.rmtree(home, ignore_errors=True)
+
+    def test_regeneration_is_byte_identical(self):
+        self.check()
+
+    def test_regeneration_is_byte_identical_under_a_german_locale_and_another_zone(self):
+        """Under German, Gramps maps the type name "Geburt" to a standard Birth: the generator must not care."""
+        self.check(LANG="de_DE.UTF-8", LC_ALL="de_DE.UTF-8", LANGUAGE="de", TZ="Asia/Tokyo")
 
 
 if __name__ == "__main__":

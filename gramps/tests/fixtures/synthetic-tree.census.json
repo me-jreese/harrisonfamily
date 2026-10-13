@@ -51,8 +51,14 @@
   "building_place": [
     "P0007"
   ],
+  "child_ref_to_held_person": [
+    "F0005"
+  ],
   "christening_event": [
     "I0009"
+  ],
+  "citation_ref_to_private_citation": [
+    "E0002"
   ],
   "custom_birth_like_event": [
     "I0009"
@@ -62,6 +68,13 @@
   ],
   "custom_non_birth_event": [
     "I0009"
+  ],
+  "event_dob_attributes": [
+    "E0002",
+    "E0003"
+  ],
+  "event_ref_dob_attributes": [
+    "I0013"
   ],
   "family_custom_relation_type": [
     "F0005"
@@ -81,6 +94,9 @@
   "farm_place": [
     "P0003"
   ],
+  "free_text_with_exact_dob": [
+    "N0010"
+  ],
   "lds_ordinance": [
     "I0012"
   ],
@@ -96,6 +112,9 @@
   "media_ref_on_family": [
     "F0001"
   ],
+  "media_ref_to_private_media": [
+    "I0015"
+  ],
   "media_zero_byte_placeholder": [
     "O0003"
   ],
@@ -108,8 +127,17 @@
   "note_with_phone": [
     "N0002"
   ],
+  "note_with_po_box": [
+    "N0009"
+  ],
   "note_with_street_address": [
     "N0005"
+  ],
+  "number_place": [
+    "P0010"
+  ],
+  "other_event_on_full_birth_date": [
+    "I0012"
   ],
   "person_address": [
     "I0012"
@@ -119,6 +147,9 @@
   ],
   "place_six_decimal_coordinates": [
     "P0005"
+  ],
+  "placeref_to_private_place": [
+    "P0009"
   ],
   "private_address": [
     "I0012"
@@ -149,7 +180,8 @@
     "I0012"
   ],
   "private_media": [
-    "O0005"
+    "O0005",
+    "O0006"
   ],
   "private_media_ref": [
     "I0013"
@@ -167,8 +199,23 @@
   "private_person_ref": [
     "I0012"
   ],
+  "private_place": [
+    "P0008"
+  ],
   "private_primary_name": [
     "I0011"
+  ],
+  "private_repo_ref": [
+    "S0001"
+  ],
+  "private_repository": [
+    "R0002"
+  ],
+  "private_source": [
+    "S0002"
+  ],
+  "private_src_attribute": [
+    "S0001"
   ],
   "private_url": [
     "I0012"
@@ -182,8 +229,20 @@
   "rect_full_frame_0_0_100_100": [
     "I0014"
   ],
+  "repo_ref_to_private_repository": [
+    "S0001"
+  ],
   "repository_address": [
     "R0001"
+  ],
+  "shared_child_of_private_family": [
+    "I0026"
+  ],
+  "shared_family_with_held_parent": [
+    "F0007"
+  ],
+  "shared_family_with_private_parent": [
+    "F0008"
   ],
   "span_date": [
     "I0009"

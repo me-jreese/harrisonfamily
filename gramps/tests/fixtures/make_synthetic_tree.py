@@ -16,9 +16,10 @@ Run it under the bundled Gramps with the shim, never with a system Python:
     gramps/tests/gramps/gramps-shim.sh --script gramps/tests/fixtures/make_synthetic_tree.py --check
 
 `--check` regenerates into a temporary directory and fails if any byte differs from the
-committed files. `--out DIR` writes somewhere else. The output is a pure function of SEED and
-of the Gramps version (6.0.6): handles, change times, the XML "created" date and the media
-bytes are all fixed.
+committed files. `--out DIR` writes somewhere else. The output is a pure function of SEED,
+FIXED_TS and the Gramps version (6.0.6): handles, change times, the XML "created" date and the
+media bytes are fixed, the time zone is pinned to UTC, and the caller's locale cannot leak in
+(see LOCALE below). The generator refuses to write anything when the census misses a case.
 
 Every value is fictional: names are invented, phones are 555-01xx, mail is example.org, and
 addresses are documentation-style. No real person, date, place or contact detail is used.
@@ -39,6 +40,14 @@ SEED = 20261013
 FIXED_TS = 1700000000  # 2023-11-14T22:13:20Z; every change time and the XML created date derive from it
 GRAMPS_VERSION = "6.0.6"
 
+# Gramps reads its locale once, when gramps is first imported, and maps a type given by name through
+# the translated names (under German, EventType("Geburt") is a standard Birth). Two defences: every
+# custom type is built by value, (CUSTOM, string), never by name (see custom_type()), and the locale is
+# pinned to US English before the import, so nothing else translated can reach the output either.
+LOCALE = {"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "LANGUAGE": "en"}
+if __name__ == "__main__":
+    os.environ.update(LOCALE)
+
 # Class order of the JSONL file and of the XML census.
 CLASSES = ("Tag", "Note", "Source", "Repository", "Place", "Media", "Citation", "Event", "Person", "Family")
 
@@ -55,6 +64,15 @@ try:
     )
 except ImportError:  # importable without Gramps for its constants; building the tree needs the bundle
     Person = None
+
+
+class FixtureError(Exception):
+    """The generated tree is not the fixture it should be; nothing was written."""
+
+
+def custom_type(type_cls, string):
+    """A custom Gramps type, built by value so no locale can map the string to a standard type."""
+    return type_cls((type_cls.CUSTOM, string))
 
 
 class Builder:
@@ -127,7 +145,7 @@ def mkname(first, surname, name_type=None, date=None, private=False, call="", ni
 
 def attr(type_value, value, private=False, custom=None):
     a = Attribute()
-    t = AttributeType(custom) if custom else AttributeType(type_value)
+    t = custom_type(AttributeType, custom) if custom else AttributeType(type_value)
     a.set_type(t)
     a.set_value(value)
     a.set_privacy(private)
@@ -137,7 +155,7 @@ def attr(type_value, value, private=False, custom=None):
 def person_event(b, p, key, etype, date, description="", place=None, role=None, private=False,
                  citations=(), custom=None, attributes=(), media_refs=(), birth=False, death=False):
     ev = Event()
-    ev.set_type(EventType(custom) if custom else EventType(etype))
+    ev.set_type(custom_type(EventType, custom) if custom else EventType(etype))
     if date is not None:
         ev.set_date_object(date)
     ev.set_description(description)
@@ -180,8 +198,16 @@ def mkmediaref(b, media_key, rect=None, private=False):
     return m
 
 
-def build_media_files(out_media):
-    """Writes the three tiny media files and returns {name: bytes}. Needs Pillow, which the bundle carries."""
+def tiny_pdf(width, height):
+    """A one-page PDF, hand-written so it is byte-stable; the page size makes each one's bytes unique."""
+    return (b"%%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+            b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 %d %d]>>endobj\n"
+            b"trailer<</Root 1 0 R>>\n%%%%EOF\n") % (width, height)
+
+
+def build_media_files():
+    """The tiny media files as {name: bytes}, every one with different bytes. Needs Pillow, which the bundle carries."""
     from PIL import Image
     files = {}
     # JPEG with EXIF GPS (fictional position in the open Atlantic, 12.5 N 23.25 W), 8x8 so it is a real picture.
@@ -203,14 +229,19 @@ def build_media_files(out_media):
     buf = io.BytesIO()
     im2.save(buf, "JPEG", quality=75, optimize=False)
     files["synthetic-photo-plain.jpg"] = buf.getvalue()
+    # The private person's exclusive photo has bytes of its own, so a leak test that searches uploads for
+    # its bytes or md5 cannot find them through a shared photo.
+    im3 = Image.new("RGB", (8, 8), (90, 160, 110))
+    buf = io.BytesIO()
+    im3.save(buf, "JPEG", quality=75, optimize=False)
+    files["synthetic-photo-private.jpg"] = buf.getvalue()
     # A Dropbox-placeholder-like file: present, zero bytes.
     files["synthetic-placeholder.jpg"] = b""
-    # A tiny PDF standing in for a birth certificate. Hand-written so it is byte-stable.
-    pdf = (b"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-           b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
-           b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 72 72]>>endobj\n"
-           b"trailer<</Root 1 0 R>>\n%%EOF\n")
-    files["synthetic-birth-certificate.pdf"] = pdf
+    # A tiny PDF standing in for a birth certificate, and a private scan a shared person points at.
+    files["synthetic-birth-certificate.pdf"] = tiny_pdf(72, 72)
+    files["synthetic-private-scan.pdf"] = tiny_pdf(72, 36)
+    if len({hashlib.md5(data).hexdigest() for data in files.values()}) != len(files):
+        raise FixtureError("two fixture media files have the same bytes")
     return files
 
 
@@ -245,14 +276,22 @@ def build_tree(media_files):
     u.set_description("Archive website")
     repo.add_url(u)
     b.add("Repository", "repo_archive", repo)
+    # A private repository (sync.md 5.1: an excluded primary object), referenced by a shared source below.
+    repo_priv = Repository()
+    repo_priv.set_name("Fixture Private Collection")
+    repo_priv.set_type(RepositoryType(RepositoryType.LIBRARY))
+    repo_priv.set_privacy(True)
+    b.add("Repository", "repo_private", repo_priv)
 
     # ---- places -------------------------------------------------------------------------------
-    def mkplace(key, name, ptype, parent=None, lat="", lon="", custom=None, alt_loc=None, url=None, code=""):
+    def mkplace(key, name, ptype, parent=None, lat="", lon="", custom=None, alt_loc=None, url=None, code="",
+                private=False):
         pl = Place()
+        pl.set_privacy(private)
         pn = PlaceName()
         pn.set_value(name)
         pl.set_name(pn)
-        pl.set_type(PlaceType(custom) if custom else PlaceType(ptype))
+        pl.set_type(custom_type(PlaceType, custom) if custom else PlaceType(ptype))
         pl.set_title(name)
         pl.set_code(code)
         if lat:
@@ -285,25 +324,48 @@ def build_tree(media_files):
     pl_url.set_type(UrlType(UrlType.WEB_HOME))
     mkplace("pl_street", "Example Street", PlaceType.STREET, "pl_city", alt_loc=loc, url=pl_url)
     mkplace("pl_building", "Sample Hall", PlaceType.BUILDING, "pl_street")
+    # A private place with a shared place under it (a placeref_list entry to an excluded place), and a
+    # NUMBER place under the street (two excluded levels before the nearest kept ancestor, the city).
+    mkplace("pl_private", "Fixture Private Estate", PlaceType.LOCALITY, "pl_city", private=True)
+    mkplace("pl_under_private", "Fixture Garden", PlaceType.NEIGHBORHOOD, "pl_private")
+    mkplace("pl_number", "12", PlaceType.NUMBER, "pl_street")
 
     # ---- sources and citations ----------------------------------------------------------------
+    def mkreporef(repo_key, call_number="", private=False):
+        r = RepoRef()
+        r.set_reference_handle(b.h(repo_key))
+        r.set_call_number(call_number)
+        r.set_privacy(private)
+        return r
+
+    def mksrcattr(value, private=False):
+        s = SrcAttribute()
+        s.set_type(SrcAttributeType(SrcAttributeType.CUSTOM))
+        s.set_value(value)
+        s.set_privacy(private)
+        return s
+
     src = Source()
     src.set_title("Fixture Parish Register")
     src.set_author("A. Clerk")
     src.set_publication_info("Example Press")
     src.set_abbreviation("FPR")
-    rr = RepoRef()
-    rr.set_reference_handle(b.h("repo_archive"))
-    src.add_repo_reference(rr)
-    sa = SrcAttribute()
-    sa.set_type(SrcAttributeType(SrcAttributeType.CUSTOM))
-    sa.set_value("registry lot 7")
-    src.add_attribute(sa)
+    src.add_repo_reference(mkreporef("repo_archive"))
+    src.add_repo_reference(mkreporef("repo_archive", "FPR-SEALED", private=True))  # a private RepoRef
+    src.add_repo_reference(mkreporef("repo_private", "FPC-1"))  # a shared RepoRef to a private repository
+    src.add_attribute(mksrcattr("registry lot 7"))
+    src.add_attribute(mksrcattr("sealed lot 9", private=True))  # a private SrcAttribute
     b.add("Source", "src_register", src)
+    # A private source; only the private citation cites it.
+    src_priv = Source()
+    src_priv.set_title("Fixture Sealed Letters")
+    src_priv.set_author("B. Keeper")
+    src_priv.set_privacy(True)
+    b.add("Source", "src_private", src_priv)
 
-    def mkcite(key, page, date=None, private=False):
+    def mkcite(key, page, date=None, private=False, source="src_register"):
         c = Citation()
-        c.set_reference_handle(b.h("src_register"))
+        c.set_reference_handle(b.h(source))
         c.set_page(page)
         if date is not None:
             c.set_date_object(date)
@@ -313,7 +375,7 @@ def build_tree(media_files):
 
     mkcite("cit_plain", "folio 1")
     mkcite("cit_birth_fulldate", "folio 2", date=mkdate(1871, 4, 12))
-    mkcite("cit_private", "folio 3", private=True)
+    mkcite("cit_private", "folio 3", private=True, source="src_private")  # cited by a shared event below
 
     # ---- media objects ------------------------------------------------------------------------
     def mkmedia(key, name, mime, desc, private=False, date=None):
@@ -332,7 +394,9 @@ def build_tree(media_files):
     mkmedia("med_gps", "synthetic-photo-gps.jpg", "image/jpeg", "Photo with embedded location (fictional)")
     mkmedia("med_placeholder", "synthetic-placeholder.jpg", "image/jpeg", "Zero-byte placeholder file")
     mkmedia("med_cert", "synthetic-birth-certificate.pdf", "application/pdf", "Birth certificate (fictional)")
-    mkmedia("med_private", "synthetic-photo-plain.jpg", "image/jpeg", "Private photo (fictional)", private=True)
+    mkmedia("med_private", "synthetic-photo-private.jpg", "image/jpeg", "Private photo (fictional)", private=True)
+    mkmedia("med_private_scan", "synthetic-private-scan.pdf", "application/pdf", "Private scan (fictional)",
+            private=True)  # a shared person's MediaRef points at it (media_list to an excluded object)
 
     # ---- notes (with phone / email / styled tags) ---------------------------------------------------
     def mknote(key, text, ntype=None, tags=(), private=False):
@@ -357,6 +421,9 @@ def build_tree(media_files):
     mknote("note_dob_prose", "Born on 3 May 1900 according to the register (fictional).")
     mknote("note_private", "A private note that only the private person carries.", private=True)
     mknote("note_priv_inner", "A private note on an otherwise shared person.", private=True)
+    mknote("note_po_box", "Letters went to P.O. Box 0100, Exampleville.")
+    # The exact-DOB scan (sync.md 5.2): Laurel's full birth date, with no birth word near it.
+    mknote("note_dob_exact", "The family Bible lists 12/25/1960 beside her name.")
 
     # ---- persons and events -------------------------------------------------------------------------
     M, F, U = Person.MALE, Person.FEMALE, Person.UNKNOWN
@@ -365,9 +432,14 @@ def build_tree(media_files):
     p_gp1 = mkperson(b, "p_gp1", M, mkname("Alder", "Testwood"))
     person_event(b, p_gp1, "ev_gp1_birth", EventType.BIRTH, mkdate(1840, 2, 14), "Born (fictional)",
                  place="pl_farm", birth=True, citations=("cit_plain",))
-    person_event(b, p_gp1, "ev_gp1_death", EventType.DEATH, mkdate(1912, 9, 3), place="pl_city", death=True)
+    # The death event cites the private citation (a citation_list entry to an excluded object) and carries
+    # AGE and TIME attributes on the event itself (sync.md 5.2 covers persons, events and event refs).
+    person_event(b, p_gp1, "ev_gp1_death", EventType.DEATH, mkdate(1912, 9, 3), place="pl_city", death=True,
+                 citations=("cit_private",),
+                 attributes=(attr(AttributeType.AGE, "72"), attr(AttributeType.TIME, "23:40")))
     p_gp2 = mkperson(b, "p_gp2", F, mkname("Birch", "Samplefield"))
-    person_event(b, p_gp2, "ev_gp2_birth", EventType.BIRTH, mkdate(1844, 11, 30), place="pl_farm", birth=True)
+    person_event(b, p_gp2, "ev_gp2_birth", EventType.BIRTH, mkdate(1844, 11, 30), place="pl_farm", birth=True,
+                 attributes=(attr(AttributeType.FATHER_AGE, "41"), attr(AttributeType.MOTHER_AGE, "35")))
     person_event(b, p_gp2, "ev_gp2_death", EventType.DEATH, mkdate(1920, 1, 9), death=True)
 
     # Birth event (full date) that the review scenario retypes to Residence: the retype must not carry the date.
@@ -457,6 +529,8 @@ def build_tree(media_files):
     p_contact.add_note(b.h("note_dob_prose"))
     p_contact.add_note(b.h("note_styled"))
     p_contact.add_note(b.h("note_priv_inner"))
+    p_contact.add_note(b.h("note_po_box"))
+    p_contact.add_note(b.h("note_dob_exact"))
     p_contact.add_attribute(attr(AttributeType.AGE, "62"))
     p_contact.add_attribute(attr(AttributeType.FATHER_AGE, "30"))
     p_contact.add_attribute(attr(AttributeType.MOTHER_AGE, "28"))
@@ -487,7 +561,10 @@ def build_tree(media_files):
 
     # Photo tags: two tags of one person in one photo, a [0,0,100,100] rect, a float rect, a private ref.
     p_tag2 = mkperson(b, "p_tag2", M, mkname("Maple", "Fixturely"))
-    person_event(b, p_tag2, "ev_tag2_birth", EventType.BIRTH, mkdate(1962, 4, 4), birth=True)
+    _, tag2_birth_ref = person_event(b, p_tag2, "ev_tag2_birth", EventType.BIRTH, mkdate(1962, 4, 4), birth=True)
+    for a in (attr(AttributeType.AGE, "0"), attr(AttributeType.TIME, "06:30"),
+              attr(AttributeType.FATHER_AGE, "33"), attr(AttributeType.MOTHER_AGE, "31")):
+        tag2_birth_ref.add_attribute(a)  # the same four kinds on an EventRef
     p_tag2.add_media_reference(mkmediaref(b, "med_group", rect=(10, 10, 40, 40)))
     p_tag2.add_media_reference(mkmediaref(b, "med_group", rect=(50, 10, 90, 40)))
     p_tag2.add_media_reference(mkmediaref(b, "med_gps", private=True))
@@ -500,6 +577,7 @@ def build_tree(media_files):
     p_float.add_media_reference(mkmediaref(b, "med_group", rect=(12.5, 10.25, 40.75, 60.5)))
     p_float.add_media_reference(mkmediaref(b, "med_placeholder"))
     p_float.add_media_reference(mkmediaref(b, "med_cert"))
+    p_float.add_media_reference(mkmediaref(b, "med_private_scan"))  # shared ref, private Media
 
     # Birth certificate PDF as media on the retype person, coordinates place on a custom event.
     p_retype.add_media_reference(mkmediaref(b, "med_cert"))
@@ -535,8 +613,8 @@ def build_tree(media_files):
         # A custom relation always carries its string: ChildRefType(CUSTOM) with no string does not survive XML.
         cr = ChildRef()
         cr.set_reference_handle(child.handle)
-        cr.set_father_relation(ChildRefType(custom) if custom else ChildRefType(frel))
-        cr.set_mother_relation(ChildRefType(mcustom) if mcustom else ChildRefType(mrel))
+        cr.set_father_relation(custom_type(ChildRefType, custom) if custom else ChildRefType(frel))
+        cr.set_mother_relation(custom_type(ChildRefType, mcustom) if mcustom else ChildRefType(mrel))
         cr.set_privacy(private)
         fam.add_child_ref(cr)
         child.add_parent_family_handle(fam.handle)
@@ -581,12 +659,29 @@ def build_tree(media_files):
     mkfamily("f3", p_contact, p_tag2, rel=FamilyRelType.CIVIL_UNION)
     mkfamily("f4", p_full, p_float, rel=FamilyRelType.UNKNOWN)
     f5 = mkfamily("f5", fillers[7], fillers[8], rel=FamilyRelType.CUSTOM)
-    f5.set_relationship(FamilyRelType("Fixture partnership"))
+    f5.set_relationship(custom_type(FamilyRelType, "Fixture partnership"))
     f5.add_tag(b.h("tag_review"))
     addchild(f5, fillers[9], frel=ChildRefType.NONE, mrel=ChildRefType.NONE)
 
-    # Private family: a couple of its own (the private person and the private-name person), no children.
-    mkfamily("f_private", p_priv, p_privname, private=True)
+    # Private family: a couple of its own (the private person and the private-name person).
+    f_priv = mkfamily("f_private", p_priv, p_privname, private=True)
+
+    # ---- more sync.md section 5 cases. Added last, so the Gramps IDs above stay where they were. ----------
+    # A shared child of the private family (parent_family_list to an excluded family).
+    p_pfc = mkperson(b, "p_private_family_child", F, mkname("Primrose", "Fixturely"))
+    person_event(b, p_pfc, "ev_pfc_birth", EventType.BIRTH, mkdate(1982), birth=True)
+    addchild(f_priv, p_pfc)
+    # Shared families with a held father (private primary name) and with a private mother: the projection
+    # sets those father_handle / mother_handle to null.
+    mkfamily("f_held_father", p_privname, p_events)
+    mkfamily("f_private_mother", p_retype, p_priv)
+    # The held person as a shared ChildRef in a shared family (child_ref_list to a held person).
+    addchild(f5, p_privname)
+    # A non-birth event on Laurel's exact full birth date (the exact-DOB scan reduces it as if birth-like).
+    person_event(b, p_contact, "ev_contact_same_day", EventType.RESIDENCE, mkdate(1960, 12, 25),
+                 "First residence (fictional)")
+    # An event at the NUMBER place: its reference is re-pointed past the street to the city.
+    person_event(b, p_retype, "ev_retype_number", EventType.RESIDENCE, mkdate(1897), place="pl_number")
 
     return b
 
@@ -640,13 +735,22 @@ def write_xml(db, path):
     XmlWriter(db, User(), 0, 0).write(path)
 
 
+def check_locale():
+    """Fails unless Gramps runs in the pinned US English locale (main() pins it before importing gramps)."""
+    from gramps.gen.const import GRAMPS_LOCALE
+    if not (GRAMPS_LOCALE.lang or "").startswith("en_US") or GRAMPS_LOCALE.language[:1] != ["en"]:
+        raise FixtureError("Gramps runs in locale %r / %r, not US English: run the generator as a script (it pins %s)"
+                           % (GRAMPS_LOCALE.lang, GRAMPS_LOCALE.language, ", ".join(sorted(LOCALE))))
+
+
 def generate(out_dir):
-    """Writes every fixture file into out_dir. Pure function of SEED and the Gramps version."""
-    os.makedirs(os.path.join(out_dir, "media"), exist_ok=True)
-    media_files = build_media_files(out_dir)
-    for name, data in media_files.items():
-        with open(os.path.join(out_dir, "media", name), "wb") as fh:
-            fh.write(data)
+    """Writes every fixture file into out_dir. Pure function of SEED, FIXED_TS and the Gramps version.
+
+    Everything is built in memory and in a throwaway directory first, and the census runs on the result:
+    if any required case is missing, FixtureError is raised and nothing is written to out_dir.
+    """
+    check_locale()
+    media_files = build_media_files()
 
     real_time, real_tz = time.time, os.environ.get("TZ")
     time.time = lambda: float(FIXED_TS)  # change times and the XML created date
@@ -660,7 +764,10 @@ def generate(out_dir):
         db, _ = write_database(b, work)
         try:
             jsonl = dump_jsonl(db)
-            write_xml(db, os.path.join(out_dir, "synthetic-tree.gramps"))
+            xml_path = os.path.join(work, "synthetic-tree.gramps")
+            write_xml(db, xml_path)
+            with open(xml_path, "rb") as fh:
+                xml = fh.read()
         finally:
             db.close()
     finally:
@@ -672,14 +779,23 @@ def generate(out_dir):
         time.tzset()
         shutil.rmtree(work, ignore_errors=True)
 
-    with open(os.path.join(out_dir, "synthetic-tree.jsonl"), "wb") as fh:
-        fh.write(jsonl)
+    result = census_mod.run_census([json.loads(line) for line in jsonl.decode("utf-8").splitlines() if line])
+    missing = census_mod.missing(result)
+    if missing:
+        raise FixtureError("the generated tree misses required case(s): %s" % ", ".join(missing))
+    census_bytes = (json.dumps(result, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
-    objs = census_mod.load_jsonl(os.path.join(out_dir, "synthetic-tree.jsonl"))
-    result = census_mod.run_census(objs)
-    with open(os.path.join(out_dir, "synthetic-tree.census.json"), "w", encoding="utf-8") as fh:
-        json.dump(result, fh, sort_keys=True, indent=2)
-        fh.write("\n")
+    os.makedirs(os.path.join(out_dir, "media"), exist_ok=True)
+    stale = set(os.listdir(os.path.join(out_dir, "media"))) - set(media_files)
+    if stale:
+        raise FixtureError("files in %s that the generator does not make: %s"
+                           % (os.path.join(out_dir, "media"), ", ".join(sorted(stale))))
+    outputs = [("media/" + name, data) for name, data in media_files.items()]
+    outputs += [("synthetic-tree.gramps", xml), ("synthetic-tree.jsonl", jsonl),
+                ("synthetic-tree.census.json", census_bytes)]
+    for name, data in outputs:
+        with open(os.path.join(out_dir, name), "wb") as fh:
+            fh.write(data)
 
     write_checksums(out_dir)
 
@@ -722,12 +838,21 @@ def main():
     if args.check:
         tmp = tempfile.mkdtemp(prefix="hfy-fixture-check-")
         try:
-            generate(tmp)
+            try:
+                generate(tmp)
+            except FixtureError as err:
+                print("[FAIL] %s" % err)
+                return 1
             bad = []
             for n in census_mod.ALL_FILES:
-                with open(os.path.join(tmp, n), "rb") as a, open(os.path.join(args.out, n), "rb") as c:
-                    if a.read() != c.read():
+                committed = os.path.join(args.out, n)
+                with open(os.path.join(tmp, n), "rb") as a:
+                    if not os.path.isfile(committed):
                         bad.append(n)
+                        continue
+                    with open(committed, "rb") as c:
+                        if a.read() != c.read():
+                            bad.append(n)
             if bad:
                 print("[FAIL] regenerated output differs from the committed files: %s" % ", ".join(bad))
                 return 1
@@ -736,7 +861,11 @@ def main():
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    generate(args.out)
+    try:
+        generate(args.out)
+    except FixtureError as err:
+        print("[FAIL] %s; nothing was written" % err)
+        return 1
     print("[OK] wrote %d files to %s" % (len(census_mod.ALL_FILES), args.out))
     if os.path.abspath(args.out) == HERE:
         update_allowlist()

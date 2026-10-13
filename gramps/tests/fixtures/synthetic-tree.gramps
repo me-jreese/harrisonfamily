@@ -62,6 +62,8 @@
       <type>Birth</type>
       <dateval val="1844-11-30"/>
       <place hlink="_92f24ae20142c6b4030186345c8d"/>
+      <attribute type="Father Age" value="41"/>
+      <attribute type="Mother Age" value="35"/>
     </event>
     <event handle="_3dab1d0c574579e77690f2d6cfb9" change="1700000000" id="E0026">
       <type>Birth</type>
@@ -71,6 +73,9 @@
       <type>Death</type>
       <dateval val="1912-09-03"/>
       <place hlink="_2274a9f6cb93e7050af9f7b80471"/>
+      <attribute type="Age" value="72"/>
+      <attribute type="Time" value="23:40"/>
+      <citationref hlink="_a7e0b30a9d76e740efd1921ffd44"/>
     </event>
     <event handle="_406ac8a2f7d4150ac364766f74e5" change="1700000000" id="E0028">
       <type>Birth</type>
@@ -93,6 +98,11 @@
       <type>Birth</type>
       <dateval val="1814"/>
     </event>
+    <event handle="_62932b91e5d19c53754eb1425964" change="1700000000" id="E0039">
+      <type>Residence</type>
+      <dateval val="1960-12-25"/>
+      <description>First residence (fictional)</description>
+    </event>
     <event handle="_691cefce058f9c3ad5018d5bd0d4" change="1700000000" id="E0031">
       <type>Birth</type>
       <dateval val="1778"/>
@@ -100,6 +110,11 @@
     <event handle="_829770ac016ad54636d838cc70ab" change="1700000000" id="E0006">
       <type>Stillbirth</type>
       <dateval val="1870-03-08"/>
+    </event>
+    <event handle="_87eb53490d9d746a7a345d3e9074" change="1700000000" id="E0040">
+      <type>Residence</type>
+      <dateval val="1897"/>
+      <place hlink="_47876697dc71ed8439b9b7957038"/>
     </event>
     <event handle="_8ff228b67dba628b986befc9291d" change="1700000000" id="E0021">
       <type>Birth</type>
@@ -130,6 +145,10 @@
     <event handle="_d9b724dab180e07bc67308538287" change="1700000000" id="E0022">
       <type>Birth</type>
       <dateval val="1964-09-09"/>
+    </event>
+    <event handle="_dd920a9962e4b681f1b2bdf915ba" change="1700000000" id="E0038">
+      <type>Birth</type>
+      <dateval val="1982"/>
     </event>
     <event handle="_e2e851e70865096e016e9cf795b8" change="1700000000" id="E0008">
       <type>Death</type>
@@ -185,7 +204,9 @@
         <surname>Fixturely</surname>
       </name>
       <eventref hlink="_fd2d6815f29903416475b707c3b2" role="Primary"/>
+      <childof hlink="_af90b262010e6155b14fa29cf0bb"/>
       <parentin hlink="_62f0d1a06a5f4d29bef2632edd29"/>
+      <parentin hlink="_cab86a8d11f8f43b9a5f871708b7"/>
     </person>
     <person handle="_0bc8e2a3459c41cfab040610b448" change="1700000000" id="I0012">
       <gender>F</gender>
@@ -194,6 +215,7 @@
         <surname>Fixturely</surname>
       </name>
       <eventref hlink="_457ec4dccd4a28f66c2c4e5f0db0" role="Primary"/>
+      <eventref hlink="_62932b91e5d19c53754eb1425964" role="Primary"/>
       <lds_ord type="baptism">
         <dateval val="1969-03-02"/>
       </lds_ord>
@@ -234,6 +256,8 @@
       <noteref hlink="_b519687fc092865e77651955c046"/>
       <noteref hlink="_021482b303418ebb656dd1bb870b"/>
       <noteref hlink="_afc0588c157693713513bfbfb862"/>
+      <noteref hlink="_ee3650d2854ac6122ee5937b4b3c"/>
+      <noteref hlink="_2ddfd20610d11bd5d4043753b0e9"/>
       <tagref hlink="_d1f7bd704d4913dd4d596cc48c74"/>
     </person>
     <person handle="_14de4add7097a12b1896f6636efa" change="1700000000" id="I0008">
@@ -320,6 +344,15 @@
       <eventref hlink="_2bd8a199fef286841bc29193c365" role="Primary"/>
       <childof hlink="_0731c5d8ddafa8cc55b91fe41c2f"/>
     </person>
+    <person handle="_6f848b7c4c49a86b1592ad33d2ad" change="1700000000" id="I0026">
+      <gender>F</gender>
+      <name type="Birth Name">
+        <first>Primrose</first>
+        <surname>Fixturely</surname>
+      </name>
+      <eventref hlink="_dd920a9962e4b681f1b2bdf915ba" role="Primary"/>
+      <childof hlink="_62f0d1a06a5f4d29bef2632edd29"/>
+    </person>
     <person handle="_7b785ec6873eebab439b8d166846" change="1700000000" id="I0004">
       <gender>U</gender>
       <name type="Birth Name">
@@ -338,6 +371,7 @@
       <eventref hlink="_a2ca6d5eae43ba6aa8f6276118e7" role="Primary"/>
       <objref hlink="_4a9c81568c6b636df1826c1da393"/>
       <parentin hlink="_62f0d1a06a5f4d29bef2632edd29"/>
+      <parentin hlink="_868977894a87ffaf7143ff092c63"/>
       <noteref hlink="_c72f133b179c057ede7e73d3fb74"/>
     </person>
     <person handle="_8efa0f2b73c0a630b647a139067a" change="1700000000" id="I0025">
@@ -371,6 +405,7 @@
       <eventref hlink="_e81f7dfba128d26c21b3c4d7a93e" role="Primary"/>
       <eventref hlink="_ea635373da9825225f528a50f9d5" role="Primary"/>
       <parentin hlink="_0731c5d8ddafa8cc55b91fe41c2f"/>
+      <parentin hlink="_cab86a8d11f8f43b9a5f871708b7"/>
     </person>
     <person handle="_b3c2407f526a59370b99ab7062f6" change="1700000000" id="I0014">
       <gender>F</gender>
@@ -419,8 +454,10 @@
       <eventref hlink="_3082b5202c459fb5e81a84104364" role="Primary"/>
       <eventref hlink="_4b64e5b34646b435e7839a7a09f7" role="Primary"/>
       <eventref hlink="_fb4c5987011c531caf764fa3bf97" role="Primary"/>
+      <eventref hlink="_87eb53490d9d746a7a345d3e9074" role="Primary"/>
       <objref hlink="_39d3a1e49e21299572d52de56b01"/>
       <childof hlink="_02f2755b6921d0244009c98a60b8"/>
+      <parentin hlink="_868977894a87ffaf7143ff092c63"/>
       <tagref hlink="_c9ac6b4b1f0815684d22a78797ed"/>
     </person>
     <person handle="_c961c3460af9e57f56a91f968ac2" change="1700000000" id="I0021">
@@ -454,6 +491,7 @@
       </objref>
       <objref hlink="_ed8a4fb4a7a879a66b2156c0e906"/>
       <objref hlink="_39d3a1e49e21299572d52de56b01"/>
+      <objref hlink="_19ada188d73be82d6af9a39a69d3"/>
       <parentin hlink="_b828ece62eb0cbe25d61130bab2a"/>
     </person>
     <person handle="_f1f7cb7d5d3a1bb2a38b887534a6" change="1700000000" id="I0013">
@@ -462,7 +500,12 @@
         <first>Maple</first>
         <surname>Fixturely</surname>
       </name>
-      <eventref hlink="_8ff228b67dba628b986befc9291d" role="Primary"/>
+      <eventref hlink="_8ff228b67dba628b986befc9291d" role="Primary">
+        <attribute type="Age" value="0"/>
+        <attribute type="Time" value="06:30"/>
+        <attribute type="Father Age" value="33"/>
+        <attribute type="Mother Age" value="31"/>
+      </eventref>
       <objref hlink="_95c1e2e76d98047b229a3390d414">
        <region corner1_x="10" corner1_y="10" corner2_x="40" corner2_y="40"/>
       </objref>
@@ -517,23 +560,35 @@
       <rel type="Married"/>
       <father hlink="_8139ef22397940f9deea4df8bc06"/>
       <mother hlink="_06027edb53a6c82d7369033a53c9"/>
+      <childref hlink="_6f848b7c4c49a86b1592ad33d2ad"/>
     </family>
     <family handle="_638075c0700e89bd54e7f32b5e7e" change="1700000000" id="F0003">
       <rel type="Civil Union"/>
       <father hlink="_0bc8e2a3459c41cfab040610b448"/>
       <mother hlink="_f1f7cb7d5d3a1bb2a38b887534a6"/>
     </family>
+    <family handle="_868977894a87ffaf7143ff092c63" change="1700000000" id="F0008">
+      <rel type="Married"/>
+      <father hlink="_c674d671cf21b92d98477690162a"/>
+      <mother hlink="_8139ef22397940f9deea4df8bc06"/>
+    </family>
     <family handle="_af90b262010e6155b14fa29cf0bb" change="1700000000" id="F0005">
       <rel type="Fixture partnership"/>
       <father hlink="_99c7bf090025516be03be86882b6"/>
       <mother hlink="_bb442ebc2e70e324eb8807d6cd1f"/>
       <childref hlink="_8efa0f2b73c0a630b647a139067a" mrel="None" frel="None"/>
+      <childref hlink="_06027edb53a6c82d7369033a53c9"/>
       <tagref hlink="_c9ac6b4b1f0815684d22a78797ed"/>
     </family>
     <family handle="_b828ece62eb0cbe25d61130bab2a" change="1700000000" id="F0004">
       <rel type="Unknown"/>
       <father hlink="_b3c2407f526a59370b99ab7062f6"/>
       <mother hlink="_dc7a86bea5186bd8e33fd5ea683f"/>
+    </family>
+    <family handle="_cab86a8d11f8f43b9a5f871708b7" change="1700000000" id="F0007">
+      <rel type="Married"/>
+      <father hlink="_06027edb53a6c82d7369033a53c9"/>
+      <mother hlink="_a65743e0b4847e76a32f8785fe1e"/>
     </family>
   </families>
   <citations>
@@ -551,7 +606,7 @@
     <citation handle="_a7e0b30a9d76e740efd1921ffd44" change="1700000000" id="C0003" priv="1">
       <page>folio 3</page>
       <confidence>2</confidence>
-      <sourceref hlink="_2d333c8793bbec4587d2dda2c70d"/>
+      <sourceref hlink="_c684d5a6984be36579e23fd151e8"/>
     </citation>
   </citations>
   <sources>
@@ -561,7 +616,14 @@
       <spubinfo>Example Press</spubinfo>
       <sabbrev>FPR</sabbrev>
       <srcattribute type="" value="registry lot 7"/>
+      <srcattribute priv="1" type="" value="sealed lot 9"/>
       <reporef hlink="_2e56de41abb919cad17f74f6baa9" medium="Book"/>
+      <reporef hlink="_2e56de41abb919cad17f74f6baa9" priv="1" callno="FPR-SEALED" medium="Book"/>
+      <reporef hlink="_7b51a19b866f3a90ca574479e0da" callno="FPC-1" medium="Book"/>
+    </source>
+    <source handle="_c684d5a6984be36579e23fd151e8" change="1700000000" id="S0002" priv="1">
+      <stitle>Fixture Sealed Letters</stitle>
+      <sauthor>B. Keeper</sauthor>
     </source>
   </sources>
   <places>
@@ -575,6 +637,16 @@
       <code>00000</code>
       <pname value="Exampleville"/>
       <placeref hlink="_a151dd8d66f4784636022f6e6d7c"/>
+    </placeobj>
+    <placeobj handle="_47876697dc71ed8439b9b7957038" change="1700000000" id="P0010" type="Number">
+      <ptitle>12</ptitle>
+      <pname value="12"/>
+      <placeref hlink="_d557fc2fadb8b92bfa96528704c5"/>
+    </placeobj>
+    <placeobj handle="_49713281f3f61331c57b3e212e25" change="1700000000" id="P0008" priv="1" type="Locality">
+      <ptitle>Fixture Private Estate</ptitle>
+      <pname value="Fixture Private Estate"/>
+      <placeref hlink="_2274a9f6cb93e7050af9f7b80471"/>
     </placeobj>
     <placeobj handle="_5817b548b286c5bed4b007b6e744" change="1700000000" id="P0007" type="Building">
       <ptitle>Sample Hall</ptitle>
@@ -596,6 +668,11 @@
       <ptitle>Fixtureland</ptitle>
       <pname value="Fixtureland"/>
     </placeobj>
+    <placeobj handle="_b39f697d80c36e7438a43fc45f03" change="1700000000" id="P0009" type="Neighborhood">
+      <ptitle>Fixture Garden</ptitle>
+      <pname value="Fixture Garden"/>
+      <placeref hlink="_49713281f3f61331c57b3e212e25"/>
+    </placeobj>
     <placeobj handle="_d557fc2fadb8b92bfa96528704c5" change="1700000000" id="P0006" type="Street">
       <ptitle>Example Street</ptitle>
       <pname value="Example Street"/>
@@ -605,6 +682,9 @@
     </placeobj>
   </places>
   <objects>
+    <object handle="_19ada188d73be82d6af9a39a69d3" change="1700000000" id="O0006" priv="1">
+      <file src="media/synthetic-private-scan.pdf" mime="application/pdf" checksum="a65febfcd439e5b9ecf8b01f96e02576" description="Private scan (fictional)"/>
+    </object>
     <object handle="_39d3a1e49e21299572d52de56b01" change="1700000000" id="O0004">
       <file src="media/synthetic-birth-certificate.pdf" mime="application/pdf" checksum="bb178098e4b015f71729ca3ac6dcf8d0" description="Birth certificate (fictional)"/>
     </object>
@@ -612,7 +692,7 @@
       <file src="media/synthetic-photo-gps.jpg" mime="image/jpeg" checksum="b38bbaa81ccf3e68368d2594d6bd1bf1" description="Photo with embedded location (fictional)"/>
     </object>
     <object handle="_4a9c81568c6b636df1826c1da393" change="1700000000" id="O0005" priv="1">
-      <file src="media/synthetic-photo-plain.jpg" mime="image/jpeg" checksum="3eacedc81d18cd17a72f8974f9ed8820" description="Private photo (fictional)"/>
+      <file src="media/synthetic-photo-private.jpg" mime="image/jpeg" checksum="7dece0915a67dccdde0f93d6c0b9e30a" description="Private photo (fictional)"/>
     </object>
     <object handle="_95c1e2e76d98047b229a3390d414" change="1700000000" id="O0001">
       <file src="media/synthetic-photo-plain.jpg" mime="image/jpeg" checksum="3eacedc81d18cd17a72f8974f9ed8820" description="Group photo (fictional)"/>
@@ -636,6 +716,10 @@
       </address>
       <url  href="https://archive.example.org/" type="Web Home" description="Archive website"/>
     </repository>
+    <repository handle="_7b51a19b866f3a90ca574479e0da" change="1700000000" id="R0002" priv="1">
+      <rname>Fixture Private Collection</rname>
+      <type>Library</type>
+    </repository>
   </repositories>
   <notes>
     <note handle="_021482b303418ebb656dd1bb870b" change="1700000000" id="N0001" type="Person Note">
@@ -656,6 +740,9 @@
     <note handle="_1ab65fd1a669b8d8807541eead80" change="1700000000" id="N0004" type="Person Note">
       <text>A plain note with nothing sensitive in it.</text>
     </note>
+    <note handle="_2ddfd20610d11bd5d4043753b0e9" change="1700000000" id="N0010" type="Person Note">
+      <text>The family Bible lists 12/25/1960 beside her name.</text>
+    </note>
     <note handle="_afc0588c157693713513bfbfb862" change="1700000000" id="N0008" priv="1" type="Person Note">
       <text>A private note on an otherwise shared person.</text>
     </note>
@@ -670,6 +757,9 @@
     </note>
     <note handle="_e8d78d6fa203fe8541d0347ad59b" change="1700000000" id="N0005" type="Person Note">
       <text>The cottage was at 456 Sample Road, Exampleville.</text>
+    </note>
+    <note handle="_ee3650d2854ac6122ee5937b4b3c" change="1700000000" id="N0009" type="Person Note">
+      <text>Letters went to P.O. Box 0100, Exampleville.</text>
     </note>
   </notes>
 </database>

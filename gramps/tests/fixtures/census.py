@@ -1,11 +1,12 @@
 """Census of the synthetic fixture tree (HFY-TSK-228). Standard library only.
 
 `run_census(objects)` returns {case: [gramps ids that show it]} over the parsed
-synthetic-tree.jsonl. REQUIRED_CASES is the list sync.md section 15 and the review
-scenarios call for; `missing(result)` names every case with no hit. The generator writes
-the result to synthetic-tree.census.json and the unit test fails on any missing case, so a
-fixture edit that drops a case cannot go unnoticed. No Gramps import here: the check runs
-anywhere Python 3.12+ does.
+synthetic-tree.jsonl. REQUIRED_CASES is the list sync.md section 15, the review scenarios and
+the section 5 redaction rules call for; `missing(result)` names every case with no hit. The
+generator refuses to write a tree with a missing case and writes the result to
+synthetic-tree.census.json, and the unit test fails on any missing case, so a fixture edit
+that drops a case cannot go unnoticed. The Gramps lane runs the same census on the imported
+template tree. No Gramps import here: the check runs anywhere Python 3.12+ does.
 """
 import hashlib
 import json
@@ -20,8 +21,10 @@ GENERATED_FILES = [
 MEDIA_FILES = [
     "synthetic-photo-gps.jpg",
     "synthetic-photo-plain.jpg",
+    "synthetic-photo-private.jpg",
     "synthetic-placeholder.jpg",
     "synthetic-birth-certificate.pdf",
+    "synthetic-private-scan.pdf",
 ]
 CHECKSUM_FILE = "synthetic-tree.sha256"
 ALL_FILES = GENERATED_FILES + ["media/" + n for n in MEDIA_FILES] + [CHECKSUM_FILE]
@@ -30,17 +33,30 @@ ALL_FILES = GENERATED_FILES + ["media/" + n for n in MEDIA_FILES] + [CHECKSUM_FI
 EV_CUSTOM, EV_MARRIAGE, EV_DIVORCE = 0, 1, 7
 EV_BIRTH, EV_DEATH, EV_BAPTISM, EV_BLESS, EV_CHRISTEN, EV_STILLBIRTH = 12, 13, 15, 18, 22, 45
 MOD_RANGE, MOD_SPAN, MOD_TEXTONLY = 4, 5, 6
-PLACE_CUSTOM, PLACE_STREET, PLACE_FARM, PLACE_BUILDING = 0, 7, 18, 19
+PLACE_CUSTOM, PLACE_STREET, PLACE_FARM, PLACE_BUILDING, PLACE_NUMBER = 0, 7, 18, 19, 20
 URL_EMAIL = 1
 ATTR_ID, ATTR_SSN, ATTR_AGE, ATTR_FATHER_AGE, ATTR_MOTHER_AGE, ATTR_TIME = 3, 6, 10, 11, 12, 14
 CHILD_REL_BIRTH, CHILD_REL_CUSTOM = 1, 7
 BIRTH_LIKE = {EV_BIRTH, EV_BAPTISM, EV_BLESS, EV_CHRISTEN, EV_STILLBIRTH}
+DOB_ATTRS = {ATTR_AGE, ATTR_FATHER_AGE, ATTR_MOTHER_AGE, ATTR_TIME}  # sync.md 5.2: local-only on persons, events, event refs
 CONTACT_HOSTS = ("wa.me", "m.me", "t.me", "ig.me", "telegram.me", "messenger.com", "signal.me")
 
 PHONE_RE = re.compile(r"\b555-01\d\d\b")
 EMAIL_RE = re.compile(r"[\w.+-]+@example\.org")
 STREET_RE = re.compile(r"\b\d+ [A-Z][a-z]+ (Road|Street|Lane)\b")
 DOB_PROSE_RE = re.compile(r"[Bb]orn on \d{1,2} [A-Z][a-z]+ \d{4}")
+PO_BOX_RE = re.compile(r"\bP\.? ?O\.? Box \d+", re.I)
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+
+
+def dob_renderings(year, month, day):
+    """A full date in the forms the exact-DOB scan looks for (sync.md 5.2)."""
+    mon = MONTHS[month - 1]
+    return {"%04d-%02d-%02d" % (year, month, day), "%d/%d/%04d" % (month, day, year),
+            "%02d/%02d/%04d" % (month, day, year), "%d.%d.%04d" % (day, month, year),
+            "%04d/%02d/%02d" % (year, month, day), "%s %d, %04d" % (mon, day, year), "%d %s %04d" % (day, mon, year),
+            "%s %d, %04d" % (mon[:3], day, year), "%d %s %04d" % (day, mon[:3], year)}
 
 
 def load_jsonl(path):
@@ -115,6 +131,7 @@ def run_census(objects):
     media = c.get("Media", [])
     cites = c.get("Citation", [])
     repos = c.get("Repository", [])
+    sources = c.get("Source", [])
     ev_by_handle = {e["handle"]: e for e in events}
     refs = referrers(objects)
     res = {}
@@ -197,6 +214,11 @@ def run_census(objects):
     def exclusive_to(handle, owner_id):
         return refs.get(handle, []) == [owner_id]
 
+    media_by_handle = {m["handle"]: m for m in media}
+    checksum_uses = {}
+    for m in media:
+        checksum_uses[m["checksum"]] = checksum_uses.get(m["checksum"], 0) + 1
+
     excl = []
     for p in persons:
         if not p["private"]:
@@ -205,10 +227,83 @@ def run_census(objects):
         has_ev = bool(be and be["private"] and exclusive_to(be["handle"], p["gramps_id"]))
         has_note = any(exclusive_to(h, p["gramps_id"]) and n["private"] for h in p.get("note_list", [])
                        for n in notes if n["handle"] == h)
-        has_media = any(exclusive_to(r["ref"], p["gramps_id"]) for r in p.get("media_list", []))
+        # The photo is exclusive by reference and by bytes: no other Media has its checksum, so a leak
+        # test that finds those bytes (or that md5) somewhere has found this photo.
+        has_media = any(exclusive_to(r["ref"], p["gramps_id"]) and r["ref"] in media_by_handle
+                        and checksum_uses[media_by_handle[r["ref"]]["checksum"]] == 1
+                        for r in p.get("media_list", []))
         if has_ev and has_note and has_media:
             excl.append(p)
     res["private_person_exclusive_event_note_photo"] = _ids(excl)
+
+    # --- sync.md 5.1: every primary class that can be private, private secondary elements of sources, and
+    # shared references to excluded or held objects (the projection filters them or nulls them)
+    private_handles = {o["handle"] for o in objects if o.get("private")}
+    held = {p["handle"] for p in persons if p["primary_name"]["private"] and not p["private"]}
+    private_persons = {p["handle"] for p in persons if p["private"]}
+    res["private_source"] = _ids(x for x in sources if x["private"])
+    res["private_repository"] = _ids(x for x in repos if x["private"])
+    res["private_place"] = _ids(x for x in places if x["private"])
+    res["private_repo_ref"] = _ids(x for x in sources if any(r["private"] for r in x.get("reporef_list", [])))
+    res["private_src_attribute"] = _ids(
+        x for x in sources + cites if any(a["private"] for a in x.get("attribute_list", [])))
+    res["citation_ref_to_private_citation"] = _ids(
+        x for x in objects if "gramps_id" in x and not x["private"]
+        and any(h in private_handles for h in x.get("citation_list", [])))
+    res["repo_ref_to_private_repository"] = _ids(
+        x for x in sources if not x["private"]
+        and any(not r["private"] and r["ref"] in private_handles for r in x.get("reporef_list", [])))
+    res["placeref_to_private_place"] = _ids(
+        x for x in places if not x["private"] and any(r["ref"] in private_handles for r in x.get("placeref_list", [])))
+    res["media_ref_to_private_media"] = _ids(
+        x for x in persons + families + events if not x["private"]
+        and any(not r["private"] and r["ref"] in private_handles for r in x.get("media_list", [])))
+    res["shared_child_of_private_family"] = _ids(
+        p for p in persons if not p["private"] and not p["primary_name"]["private"]
+        and any(h in private_handles for h in p.get("parent_family_list", [])))
+    res["child_ref_to_held_person"] = _ids(
+        f for f in families if not f["private"]
+        and any(not r["private"] and r["ref"] in held for r in f.get("child_ref_list", [])))
+    res["shared_family_with_held_parent"] = _ids(
+        f for f in families if not f["private"] and (f.get("father_handle") in held or f.get("mother_handle") in held))
+    res["shared_family_with_private_parent"] = _ids(
+        f for f in families if not f["private"]
+        and (f.get("father_handle") in private_persons or f.get("mother_handle") in private_persons))
+
+    # --- sync.md 5.2: AGE, FATHER_AGE, MOTHER_AGE and TIME on events and on event refs too (all four kinds
+    # must show up), the exact-DOB scan of free text, and a non-birth event on a person's full birth date
+    def dob_attr_holders(items, attr_lists):
+        kinds = set()
+        hits = []
+        for x in items:
+            got = {a["type"]["value"] for lst in attr_lists(x) for a in lst} & DOB_ATTRS
+            kinds |= got
+            if got:
+                hits.append(x)
+        return _ids(hits) if kinds >= DOB_ATTRS else []
+
+    res["event_dob_attributes"] = dob_attr_holders(events, lambda e: [e.get("attribute_list", [])])
+    res["event_ref_dob_attributes"] = dob_attr_holders(
+        persons + families, lambda x: [r.get("attribute_list", []) for r in x.get("event_ref_list", [])])
+
+    def full_birth_ymd(p):
+        e = birth_event(p)
+        if not e or etype(e) != EV_BIRTH or e["date"].get("modifier") != 0 or not date_is_full(e["date"]):
+            return None
+        d, m, y = e["date"]["dateval"][:3]
+        return y, m, d
+
+    birth_ymd = {p["handle"]: full_birth_ymd(p) for p in persons if full_birth_ymd(p)}
+    renderings = set()
+    for ymd in birth_ymd.values():
+        renderings |= dob_renderings(*ymd)
+    res["free_text_with_exact_dob"] = _ids(
+        x for x in notes + events
+        if any(r in (note_text(x) if x["_class"] == "Note" else x.get("description", "")) for r in renderings))
+    res["other_event_on_full_birth_date"] = _ids(
+        p for p in persons if p["handle"] in birth_ymd and any(
+            etype(e) not in BIRTH_LIKE and e["date"].get("modifier") == 0 and date_is_full(e["date"])
+            and tuple(e["date"]["dateval"][2::-1]) == birth_ymd[p["handle"]] for e in person_events(p)))
 
     # --- places
     res["farm_place"] = _ids(x for x in places if x["place_type"]["value"] == PLACE_FARM)
@@ -222,6 +317,7 @@ def run_census(objects):
         if x["place_type"]["value"] == PLACE_STREET and any(
             l.get("street") and l.get("phone") and l.get("postal") for l in x.get("alt_loc", [])))
     res["building_place"] = _ids(x for x in places if x["place_type"]["value"] == PLACE_BUILDING)
+    res["number_place"] = _ids(x for x in places if x["place_type"]["value"] == PLACE_NUMBER)
 
     # --- contact data
     res["person_address"] = _ids(p for p in persons if any(not a["private"] for a in p.get("address_list", [])))
@@ -238,6 +334,7 @@ def run_census(objects):
     res["note_with_email"] = _ids(n for n in notes if EMAIL_RE.search(note_text(n)))
     res["note_with_street_address"] = _ids(n for n in notes if STREET_RE.search(note_text(n)))
     res["note_with_dob_prose"] = _ids(n for n in notes if DOB_PROSE_RE.search(note_text(n)))
+    res["note_with_po_box"] = _ids(n for n in notes if PO_BOX_RE.search(note_text(n)))
     res["styled_note_tags"] = _ids(n for n in notes if n["text"].get("tags"))
 
     # --- attributes
@@ -317,6 +414,13 @@ def _required():
         "family_relation_types", "two_tags_of_one_person_in_one_photo", "rect_full_frame_0_0_100_100",
         "rect_float", "media_birth_certificate_pdf", "media_zero_byte_placeholder", "media_jpeg_with_gps",
         "media_ref_on_family",
+        # sync.md section 5 rules (5.1 to 5.3) beyond the section 15 list
+        "private_source", "private_repository", "private_place", "private_repo_ref", "private_src_attribute",
+        "citation_ref_to_private_citation", "repo_ref_to_private_repository", "placeref_to_private_place",
+        "media_ref_to_private_media", "shared_child_of_private_family", "child_ref_to_held_person",
+        "shared_family_with_held_parent", "shared_family_with_private_parent", "event_dob_attributes",
+        "event_ref_dob_attributes", "free_text_with_exact_dob", "other_event_on_full_birth_date", "number_place",
+        "note_with_po_box",
     ]
 
 

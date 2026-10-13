@@ -1,15 +1,16 @@
 """Gramps-integration self-test for the fixture import and the per-test copy (HFY-TSK-228).
 
 Run by run.sh inside the bundled Python, once per test file, against a private copy of the
-template tree (env HFY_TREE_NAME names the copy). Most checks need only sqlite3; the one that opens
-the copy with the Gramps API skips outside the bundle.
+template tree (env HFY_TREE_NAME names the copy). Most checks need only sqlite3; the ones that open
+the copy with the Gramps API skip outside the bundle.
 """
+import hashlib
 import os
 import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIXTURES = os.path.join(HERE, "..", "fixtures")
+FIXTURES = os.path.abspath(os.path.join(HERE, "..", "fixtures"))
 sys.path.insert(0, HERE)
 sys.path.insert(0, FIXTURES)
 import census  # noqa: E402
@@ -62,21 +63,62 @@ class ImportedTreeCopy(unittest.TestCase):
             per_class[o["_class"].lower()] = per_class.get(o["_class"].lower(), 0) + 1
         self.assertEqual(ft.counts(self.dir), {t: per_class.get(t, 0) for t in ft.TABLES})
 
-    def test_imported_objects_equal_the_jsonl_up_to_the_documented_rect_loss(self):
-        """Every object the CLI imported from the XML equals its JSONL line, field for field.
+    def test_every_object_equals_its_jsonl_line(self):
+        """Every object in the tree equals its JSONL line, field for field, the two rect cases included.
 
-        The one difference allowed is the XML format's MediaRef rect loss (fixture_trees._xml_rect):
-        the 0,0,100,100 rect comes back as None and the float rect is floored. Both must show up, so
-        the JSONL-only cases stay documented.
+        The XML format drops the 0,0,100,100 rect and floors the float rect (fixture_trees._xml_rect),
+        exactly on two objects; run.sh's prepare_template.py puts both back after the import.
         """
         got = ft.json_objects(self.dir)
-        changed = 0
+        lossy = [o["gramps_id"] for o in self.jsonl if ft.expected_after_xml_import(o) != o]
+        self.assertEqual(len(lossy), 2, "exactly the full-frame-rect and float-rect persons lose data in XML")
         for o in self.jsonl:
             key = (o["_class"].lower(), o["handle"])
-            want = ft.expected_after_xml_import(o)
-            changed += want != o
-            self.assertEqual(got.get(key), want, "%s %s" % (o["_class"], o.get("gramps_id") or o.get("name")))
-        self.assertEqual(changed, 2, "exactly the full-frame-rect and float-rect persons lose data in XML")
+            self.assertEqual(got.get(key), o, "%s %s" % (o["_class"], o.get("gramps_id") or o.get("name")))
+
+    def test_every_census_case_is_in_the_tree(self):
+        """The census of the tree itself, not of the JSONL: the Gramps lane holds every case."""
+        result = census.run_census(list(ft.json_objects(self.dir).values()))
+        self.assertEqual(census.missing(result), [])
+        self.assertTrue(result["rect_full_frame_0_0_100_100"])
+        self.assertTrue(result["rect_float"])
+
+    def test_media_resolve_to_the_committed_fixture_files(self):
+        """The media path is the fixtures directory; each Media object reads its own committed bytes."""
+        try:
+            from gramps.gen.db.dbconst import DBMODE_R
+            from gramps.gen.db.utils import make_database
+            from gramps.gen.utils.file import media_path_full
+        except ImportError:
+            self.skipTest("needs the bundled Gramps")
+        forbid = [p for p in os.environ.get("HFY_SHIM_FORBID", "").split(":") if p]
+        self.assertTrue(any(p.endswith("/Pictures") for p in forbid), "run.sh must forbid the real Pictures folder")
+        db = make_database("sqlite")
+        db.load(self.dir, None, DBMODE_R)
+        data = {}
+        try:
+            self.assertEqual(os.path.realpath(db.get_mediapath() or ""), os.path.realpath(FIXTURES))
+            n = 0
+            for m in db.iter_media():
+                n += 1
+                full = media_path_full(db, m.get_path())
+                self.assertTrue(_under(full, os.path.join(FIXTURES, "media")), m.get_gramps_id())
+                for p in forbid:
+                    self.assertFalse(_under(full, p), m.get_gramps_id())
+                with open(full, "rb") as fh:
+                    data[m.get_gramps_id()] = (os.path.basename(full), fh.read())
+                self.assertEqual(hashlib.md5(data[m.get_gramps_id()][1]).hexdigest(), m.get_checksum(),
+                                 m.get_gramps_id())
+            self.assertEqual(n, sum(o["_class"] == "Media" for o in self.jsonl))
+        finally:
+            db.close()
+        by_name = dict(data.values())
+        self.assertEqual(by_name["synthetic-placeholder.jpg"], b"")
+        self.assertTrue(by_name["synthetic-birth-certificate.pdf"].startswith(b"%PDF-"))
+        self.assertTrue(by_name["synthetic-photo-gps.jpg"].startswith(b"\xff\xd8"))
+        self.assertIn(b"Exif", by_name["synthetic-photo-gps.jpg"])
+        # Every Media object has bytes of its own, so tests can tell them apart.
+        self.assertEqual(len({hashlib.md5(b).hexdigest() for _, b in data.values()}), len(data))
 
     def test_copy_opens_with_the_gramps_api(self):
         try:

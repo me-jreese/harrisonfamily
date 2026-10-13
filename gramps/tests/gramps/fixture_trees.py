@@ -1,7 +1,8 @@
 """Per-test copies of the imported fixture tree (HFY-TSK-228). Standard library only.
 
 run.sh imports synthetic-tree.gramps once into a template tree under a throwaway GRAMPSHOME,
-then calls `copy_tree` for every test so no test shares or mutates another's database. A Gramps
+finishes it with prepare_template.py (media path, the rects the XML format drops), then calls
+`copy_tree` for every test so no test shares or mutates another's database. A Gramps
 tree is one directory (sqlite.db, meta_data.db, name.txt, database.txt) under
 <GRAMPSHOME>/gramps/grampsdb/<id>/; a copy is that directory under a new id with a new name.
 """
@@ -115,9 +116,10 @@ def _xml_rect(rect):
 
 
 def expected_after_xml_import(obj):
-    """A JSONL object as the template tree holds it after the CLI import of synthetic-tree.gramps.
+    """A JSONL object as the CLI import of synthetic-tree.gramps alone leaves it.
 
     The only loss the fixture shows is in MediaRef rects (see _xml_rect); everything else round-trips.
+    prepare_template.py restores those rects, so the finished template equals the JSONL.
     """
     if isinstance(obj, list):
         return [expected_after_xml_import(v) for v in obj]
