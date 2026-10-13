@@ -12,7 +12,8 @@ tests:
   - bash scripts/ci/check-no-family-data.sh
   - bash scripts/infra/test/run.sh
   - if [ -d gramps/tests/unit ]; then python3 -m unittest discover gramps/tests/unit; else echo "no gramps/tests/unit yet; skipped"; fi
-  - node --test scripts/ci/test/check-client-licenses.test.mjs && node scripts/ci/check-client-licenses.mjs
+  - node --test 'scripts/ci/test/**/*.test.mjs'
+  - node scripts/ci/check-client-licenses.mjs
 parity:
   mode: report
 secrets_scan: trufflehog

@@ -93,6 +93,8 @@ Change `ci.manifest.yaml`. Common changes:
 | Deploy another Lambda | A new `kind: lambda` entry in `deploy.targets`, for a function in `us-west-2` whose zip `build.cmd` can produce without the private registry. List the zip in `artifacts` too: the `deploy` job does not build, it deploys from the release artifact. Add an `alias` if a rollback should repoint an alias rather than re-upload the previous zip. The app Lambdas and the Lambda@Edge functions cannot be added this way ([What the manifest cannot add](#what-the-manifest-cannot-add)). |
 | Publish `HFYAppendIndex` | Not a manifest change. See [The CloudFront Function](#the-cloudfront-function). |
 
+A `tests` entry that checks client licences reads [`scripts/ci/license-overrides.json`](../../scripts/ci/license-overrides.json). Moving to a newer `@io-kit/*` version, or adopting a package with no `license` field, needs a new exact-version entry there in the same pull request.
+
 ### 2. Get a CodeArtifact token
 
 ```sh

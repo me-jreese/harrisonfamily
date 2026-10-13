@@ -10,7 +10,13 @@
 //          unless scripts/ci/license-overrides.json holds a reviewed override for that exact
 //          package AND version.
 //
-// SPDX expressions: "A OR B" passes when one alternative passes; "A AND B" needs every part.
+// SPDX expressions use real precedence (WITH, then AND, then OR; parentheses group): "A OR B"
+// passes when one alternative passes, "A AND B" needs every part, and a malformed expression fails.
+//
+// Scope: the PRODUCTION closure of the lockfile, plus every package named in the overrides file's
+// "shippedDevDependencies" (devDependencies copied into the build output, such as the font
+// packages) and their own closure. Any other devDependency is not checked. A library that is
+// bundled into the output must stay in "dependencies" or be listed in "shippedDevDependencies".
 // An override never rescues a GPL, AGPL, LGPL, EPL or SSPL licence.
 //
 // Usage: node scripts/ci/check-client-licenses.mjs [--lock <package-lock.json>]... [--overrides <file>]
@@ -30,35 +36,69 @@ export function isDenied(id) {
   return DENIED.test(id);
 }
 
-// Evaluates an SPDX expression. Returns { ok, denied, unknown } for the expression.
-function evalExpression(expr) {
-  const tokens = expr.replace(/[()]/g, ' ').split(/\s+/).filter(Boolean);
-  // Parentheses are flattened: OR binds loosest, AND tighter, which matches how a lockfile
-  // writes real expressions; mixed nesting is rare and fails closed below.
-  if (/[()]/.test(expr) && tokens.includes('AND') && tokens.includes('OR')) return { ok: false, denied: false, unknown: [expr] };
-  const orParts = [[]];
-  for (const t of tokens) {
-    if (t === 'OR') orParts.push([]);
-    else if (t !== 'AND') orParts[orParts.length - 1].push(t);
-  }
-  const andMode = tokens.includes('AND') && !tokens.includes('OR');
-  const verdict = (id) => (ALLOWED.has(id) ? 'ok' : isDenied(id) ? 'denied' : 'unknown');
-  if (andMode) {
-    const ids = orParts[0];
-    const v = ids.map((id) => [id, verdict(id)]);
-    return {
-      ok: v.every(([, s]) => s === 'ok'),
-      denied: v.some(([, s]) => s === 'denied'),
-      unknown: v.filter(([, s]) => s === 'unknown').map(([id]) => id),
-    };
-  }
-  const flat = orParts.map((p) => p[0]).filter(Boolean);
-  const v = flat.map((id) => [id, verdict(id)]);
-  return {
-    ok: v.some(([, s]) => s === 'ok'),
-    denied: v.length > 0 && v.every(([, s]) => s === 'denied'),
-    unknown: v.filter(([, s]) => s === 'unknown').map(([id]) => id),
+const verdict = (id) => {
+  const base = id.split(' WITH ')[0];
+  return ALLOWED.has(base) ? 'ok' : isDenied(base) ? 'denied' : 'unknown';
+};
+
+// Parses an SPDX expression with the real precedence: WITH binds tightest, then AND, then OR,
+// and parentheses group. Throws on anything malformed (empty, trailing operator, bad parens),
+// which the caller turns into a failure.
+function parseExpression(expr) {
+  const tokens = expr.replace(/([()])/g, ' $1 ').split(/\s+/).filter(Boolean);
+  let i = 0;
+  const parseOr = () => {
+    const parts = [parseAnd()];
+    while (tokens[i] === 'OR') { i++; parts.push(parseAnd()); }
+    return parts.length === 1 ? parts[0] : { op: 'OR', parts };
   };
+  const parseAnd = () => {
+    const parts = [parseAtom()];
+    while (tokens[i] === 'AND') { i++; parts.push(parseAtom()); }
+    return parts.length === 1 ? parts[0] : { op: 'AND', parts };
+  };
+  const parseAtom = () => {
+    const t = tokens[i];
+    if (t === undefined || t === 'AND' || t === 'OR' || t === 'WITH' || t === ')') throw new Error('malformed licence expression');
+    i++;
+    if (t === '(') {
+      const inner = parseOr();
+      if (tokens[i] !== ')') throw new Error('unbalanced parentheses');
+      i++;
+      return inner;
+    }
+    if (tokens[i] === 'WITH') {
+      const ex = tokens[i + 1];
+      if (ex === undefined || ['AND', 'OR', 'WITH', '(', ')'].includes(ex)) throw new Error('malformed WITH clause');
+      i += 2;
+      return { id: `${t} WITH ${ex}` };
+    }
+    return { id: t };
+  };
+  const tree = parseOr();
+  if (i !== tokens.length) throw new Error('malformed licence expression');
+  return tree;
+}
+
+function evalNode(n) {
+  if (n.id) {
+    const v = verdict(n.id);
+    return { ok: v === 'ok', denied: v === 'denied', unknown: v === 'unknown' ? [n.id] : [] };
+  }
+  const rs = n.parts.map(evalNode);
+  const unknown = rs.flatMap((r) => r.unknown);
+  return n.op === 'AND'
+    ? { ok: rs.every((r) => r.ok), denied: rs.some((r) => r.denied), unknown }
+    : { ok: rs.some((r) => r.ok), denied: rs.every((r) => r.denied), unknown };
+}
+
+// Evaluates an SPDX expression. Returns { ok, denied, unknown }; a malformed expression fails closed.
+export function evalExpression(expr) {
+  try {
+    return evalNode(parseExpression(expr));
+  } catch {
+    return { ok: false, denied: false, unknown: [expr] };
+  }
 }
 
 function nameFromPath(path, entry) {
@@ -75,7 +115,7 @@ function normaliseLicense(entry) {
 }
 
 // Walks the production closure of a v2/v3 lockfile. Returns [{ path, name, version, license }].
-export function productionClosure(lock) {
+export function productionClosure(lock, extraRoots = []) {
   const pkgs = lock && lock.packages;
   if (!pkgs || !pkgs['']) throw new Error('lockfile has no "packages" map (lockfileVersion 2 or 3 is required)');
   const resolveDep = (fromPath, dep) => {
@@ -90,6 +130,10 @@ export function productionClosure(lock) {
   };
   const seen = new Set();
   const queue = [''];
+  for (const name of extraRoots) {
+    const r = resolveDep('', name);
+    if (r) queue.push(r); // a name absent from this lockfile ships nothing here
+  }
   while (queue.length) {
     const p = queue.pop();
     let e = pkgs[p];
@@ -117,21 +161,23 @@ export function productionClosure(lock) {
 }
 
 export function loadOverrides(file = DEFAULT_OVERRIDES) {
-  if (!existsSync(file)) return { overrides: [], firstPartyScopes: [] };
+  if (!existsSync(file)) return { overrides: [], shippedDevDependencies: [] };
   const raw = JSON.parse(readFileSync(file, 'utf8'));
   const overrides = raw.overrides || [];
   for (const o of overrides) {
+    // licenseFile is evidence for the reviewer (the file or field the licence was read from); it is
+    // required but advisory, and the gate does not open it.
     for (const k of ['package', 'version', 'license', 'licenseFile']) {
       if (typeof o[k] !== 'string' || !o[k]) throw new Error(`license override ${JSON.stringify(o)} is missing "${k}"`);
     }
     if (isDenied(o.license)) throw new Error(`license override for ${o.package}@${o.version} names a denied licence (${o.license})`);
   }
-  return { overrides, firstPartyScopes: raw.firstPartyScopes || [] };
+  return { overrides, shippedDevDependencies: raw.shippedDevDependencies || [] };
 }
 
 // Returns { checked, violations: [{ name, version, license, reason }] }.
-export function checkLock(lock, cfg = { overrides: [], firstPartyScopes: [] }) {
-  const rows = productionClosure(lock);
+export function checkLock(lock, cfg = { overrides: [], shippedDevDependencies: [] }) {
+  const rows = productionClosure(lock, cfg.shippedDevDependencies || []);
   const violations = [];
   for (const r of rows) {
     const tag = (reason) => violations.push({ name: r.name, version: r.version, license: r.license || '(none)', reason });
@@ -148,8 +194,6 @@ export function checkLock(lock, cfg = { overrides: [], firstPartyScopes: [] }) {
       tag('denied licence (GPL, AGPL, LGPL, EPL or SSPL)');
       continue;
     }
-    const fp = cfg.firstPartyScopes.find((s) => r.name.startsWith(s.scope) && s.license === r.license);
-    if (fp) continue;
     const o = cfg.overrides.find((x) => x.package === r.name && x.version === r.version);
     if (o) continue;
     const stale = cfg.overrides.find((x) => x.package === r.name);
@@ -162,12 +206,17 @@ function main(argv) {
   const locks = [];
   let overridesFile = DEFAULT_OVERRIDES;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--lock') locks.push(resolve(argv[++i]));
-    else if (argv[i] === '--overrides') overridesFile = resolve(argv[++i]);
+    if (argv[i] === '--lock' || argv[i] === '--overrides') {
+      const v = argv[++i];
+      if (!v || v.startsWith('--')) { console.error(`${argv[i - 1]} needs a value`); return 2; }
+      if (argv[i - 1] === '--lock') locks.push(resolve(v)); else overridesFile = resolve(v);
+    }
     else { console.error(`unknown argument ${argv[i]}`); return 2; }
   }
-  const targets = locks.length ? locks : DEFAULT_LOCKS.map((p) => resolve(REPO, p)).filter((p) => existsSync(p));
-  if (!targets.length) { console.error('no lockfile to check'); return 2; }
+  // islands/package-lock.json is required; chat-worker/ is optional until it exists.
+  const targets = locks.length ? locks : DEFAULT_LOCKS.map((p) => resolve(REPO, p)).filter((p, n) => n > 0 ? existsSync(p) : true);
+  const missing = targets.filter((p) => !existsSync(p));
+  if (missing.length) { console.error(`lockfile not found: ${missing.join(', ')}`); return 2; }
   const cfg = loadOverrides(overridesFile);
   let bad = 0;
   for (const file of targets) {
