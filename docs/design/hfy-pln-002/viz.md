@@ -134,9 +134,26 @@ These are fixed regardless of the research outcome. They are invariants, and the
 
 ### 4.3 Chosen approach
 
-To be filled at intake.
+**Decided.** This is the Q2-13 default in BRD2 section 6.5, the verified recommendation. io answered sheet item Q9 (Q2-13 with Q2-14) on 2026-10-13 with "all approved. proceed." (decision sheet DOC-C31D9E3DD932). The answer is recorded in the viz ADR, DOC-A4FBA13AE98A, section 4.1. It approves the recommendation together with its budget changes (§11).
 
-If the report is late or inconclusive and io wants to proceed, the fallback is a **focus+context hourglass**:
+- **MVP: Concept A, the Family Card Navigator** (flag `familyViz`).
+  - A framework-free `<family-navigator>` custom element in the lazy chart chunk: our own code, light DOM, no React inside it and no third-party tree library (family-chart is not embedded).
+  - On a phone it shows one family at a time as large cards: the focus card, a parents strip, one tab per partner family and a row of children, with the details in the kit `Sheet`. From 64rem it widens into a four-row card grid.
+  - There is no pan-and-zoom canvas. Every swipe has a visible button, and arrow keys walk the family.
+  - The outline and focus navigator (§12.3) stay the accessible path and the fallback.
+- **v2: C-lite lifelines, Faces and a desktop big-tree poster.**
+  - Lifelines (`familyVizTime`): per-person and per-family lines by decade, with the TimeNets fade for uncertain dates. Era bands come only from io-approved copy (VIZ-D12).
+  - Faces (`familyVizFaces`): "pictured with" chips and a faces tab.
+  - The poster (`familyVizBigTree`): a whole-family view for desktop whose layout d3-dag 1.2.2 precomputes at build time, so no layout code ships to the client.
+  - The kinship finder keeps its own flag (`familyVizKinship`).
+- **v3: Journeys** (`familyVizJourneys`).
+  - A map story on maplibre-gl 6.14.0 (never v5), pmtiles 4.5.0 and @protomaps/basemaps 5.7.2.
+  - It reads a self-hosted maxzoom-11 PMTiles extract with versioned file names and a Cloudflare Cache Rule (gate G-map).
+  - It loads only on the map view, and falls back to the outline's places list without WebGL2.
+  - There is no v2 places layer (VIZ-D11).
+- **In the ADR:** the desktop and 375 px layouts (its 4.5), what is precomputed (4.6), the additive graph.json fields `layout` and `photoEdges` (4.7), the cut (4.8) and the 1-3 day task re-cut (section 9).
+
+**Fallback (not used, because io did not reject Q2-13).** If io had rejected the recommendation, the fallback was a **focus+context hourglass**:
 - **Desktop:** 2 generations up, 2 generations down, partners beside, siblings in a collapsed row, with photo nodes.
 - **Phone:** the focus navigator of §9.3.
 - **Chart engine:** a small permissive layout (a d3-hierarchy-class tidy tree, one for ancestors and one for descendants) rendered as DOM or SVG buttons. That keeps every node focusable.
@@ -332,31 +349,41 @@ The client derives relative labels, so absolute numbers never appear in the UI: 
 
 **Rule:** geocoding uses place names only, matched locally. No person data and no place name leaves the machine.
 
+*Amended by the viz ADR (DOC-A4FBA13AE98A, section 7; BRD2 section 11.6; VIZ-D6), approved by io on 2026-10-13.*
+
 **5.6.1 Precedence.** Coordinates are taken in this order:
 1. Gramps `lat`/`long`, if they parse (`geo: "gramps"`). Decimal and simple DMS are parsed; anything else gives warning `COORD_UNPARSEABLE` and falls through to step 2.
-2. The offline GeoNames match (`geo: "geonames"`).
-3. Otherwise `null`.
+2. io's reviewed coordinates from `places.geo.json` (5.6.4), which are GeoNames-derived (`geo: "geonames"`).
+3. The offline GeoNames match (`geo: "geonames"`).
+4. For a state, province or country place, a centroid (`geo: "naturalearth"`, 5.6.3 step 4). The schema's `minor` 1 adds that value.
+5. Otherwise `null`.
 
 **5.6.2 Gazetteer.**
-- **Files.** GeoNames public dumps under CC BY 4.0: `cities500.zip`, `admin1CodesASCII.txt`, `admin2Codes.txt` and `countryInfo.txt`.
-- **Fetching.** `graph/bin/fetch-gazetteer.mjs` fetches them once into `$HFY_GAZETTEER_DIR` (default `~/Library/Caches/hfy-gazetteer`, outside the repo and Dropbox) and records their sha256 in `graph/gazetteer.lock.json`. A bulk download of a public file reveals nothing about the family.
+- **Files.**
+  - GeoNames public dumps under CC BY 4.0: `cities1000.zip` (replacing `cities500.zip`), `admin1CodesASCII.txt`, `admin2Codes.txt` and `countryInfo.txt`.
+  - Centroids for state, province and country places: the Natural Earth admin-0 and admin-1 files (`ne_10m_admin_0_countries.zip`, `ne_10m_admin_1_states_provinces.zip`, public domain), or the Census State Gazetteer. `admin1CodesASCII.txt` has no coordinates.
+- **Fetching.** `graph/bin/fetch-gazetteer.mjs` fetches them once into `$HFY_GAZETTEER_DIR` (default `~/Library/Caches/hfy-gazetteer`, outside the repo and Dropbox). It records each file's sha256, size and retrieval date in `graph/gazetteer.lock.json`. A bulk download of a public file reveals nothing about the family.
+- **Local files next to the cache, never in Git.**
+  - `overrides.json`, the override table, holds place names only (5.6.3).
+  - `places.geo.json` holds io's reviewed coordinates (5.6.4).
 - **Checksums.** A later checksum mismatch fails with `GAZETTEER_CHECKSUM` unless `--update` is passed, which re-pins.
 - **Missing files.** If the files are missing, the build continues with Gramps coordinates only (`GAZETTEER_MISSING`).
 - **No network during builds.** A build never touches the network. A test blocks `fetch`, `http` and `https` and still passes.
 
 **5.6.3 Matching.** For each place that an event uses, or that has no children:
-1. Walk its parent chain. The country is matched by name or ISO code in `countryInfo`. Each ancestor is matched against admin1, then admin2, names for that country, using accent- and case-folded `name`, `asciiname` and alternate names. This handles a "Province" that is really an admin2 département, and a city placed directly under its country.
-2. Candidates are rows of class P whose name matches and whose country, admin1 and admin2 match wherever those are known.
-3. The candidate with the highest population wins. If the top two are within 2× of each other, the result is `AMBIGUOUS` and the place is left unresolved. No match at all gives `UNRESOLVED`.
-4. State and country places get no point in v1 (`lat: null`).
-5. The report records each resolved place's `geonameId`, its population and any runner-up, for io's review. The report is local and never synced.
+1. Walk its parent chain. The country is matched first, by name or ISO code in `countryInfo`. Each ancestor below it is accepted as a parent at **admin1 or admin2** of that country, using accent- and case-folded `name`, `asciiname` and alternate names. This handles a "Province" that is really an admin2 département, and a city placed directly under its country.
+2. Candidates are the `cities1000` rows of class P whose name, ASCII name **or alternate name** matches, and whose country, admin1 and admin2 match wherever those are known.
+3. The candidate with the highest population wins. If the top two are within 2× of each other, the result is `AMBIGUOUS_PLACE` and the place is left unresolved. No match at all gives `UNRESOLVED_PLACE`.
+4. State, province and country places take their centroid from Natural Earth or the Census Gazetteer (`geo: "naturalearth"`), because `admin1CodesASCII` has no coordinates. A county or other admin2 area gets no point, and a map fits to its child points instead.
+5. **The override table** (`overrides.json`) handles what folding cannot: a region that GeoNames files at admin2, a city known by another name (a `geonameId`), or another spelling to search.
+6. The report records each resolved place's `geonameId`, its population and any runner-up, for io's review. The report is local and never synced.
 
 Expected today: all 23 leaf places resolve. The names that could be ambiguous are disambiguated by their parent place (digest gap-fill §5).
 
 **5.6.4 Long term (VIZ-D6).**
-- The 23 resolved coordinates are a reviewable list. io may type them into Gramps (lat/long) once.
+- The 23 resolved coordinates are a reviewable list. io writes the reviewed coordinates back into Gramps (lat/long) once, or approves a reviewed `places.geo.json` kept outside the repo.
 - From then on the coordinates live in the source of truth, sync to the cloud store, and the cloud renderer (§5.7) needs no gazetteer, because Lambda reads stored lat/long only.
-- The UI shows "place coordinates: GeoNames (CC BY 4.0)" whenever `attribution.geonames` is true.
+- **The credit.** Every surface that shows a coordinate shows "Place coordinates: GeoNames (geonames.org), CC BY 4.0, modified", with its licence link, whenever `attribution.geonames` is true. The text is `GEONAMES_CREDIT` in `graph/src/geocode.mjs`.
 
 ### 5.7 Publishing
 
@@ -558,17 +585,29 @@ The page URL contract:
 - Synthetic graphs of 231 and 2,000 people from a deterministic generator (`islands/tests/fixtures/graph-synth.mjs`, invented names).
 - CDP `Emulation.setCPUThrottlingRate(4)` and a network profile of about 1.6 Mbps with 150 ms RTT (the Lighthouse "slow 4G" class).
 
+**The ADR's budget changes.** The viz ADR (DOC-A4FBA13AE98A, section 5) changed these budgets, and io approved them with Q2-13 on 2026-10-13 (BRD2 section 11.6):
+- **The navigator.** The 120 KB chart chunk becomes the navigator chunk: at most 35 KB gzip of JS and 15 KB gzip of CSS.
+- **The map.** The 250 KB v2 places chunk is removed. It is replaced by the v3 map: maplibre-gl 6.14.0 is about 431 KB gzip (287 KB main plus a 144 KB worker) plus 10.5 KB of CSS, loaded only on the map view.
+- **New ceilings.** The table adds ceilings for the v2 chunks, the build-time layout and the basemap file.
+- **Changes.** A miss fails the test that enforces it. Changing a number needs an amendment to the ADR, approved by io.
+
 | budget | 231 people | 2,000 people | enforced by |
 |---|---|---|---|
-| `person/graph.json` gzip | ≤ 25 KB | ≤ 150 KB | `graph/test/size.test.mjs`; builder exits 3 (`SIZE_BUDGET`) over 150 KB gzip |
+| `person/graph.json` gzip, including the additive `layout` and `photoEdges` blocks | ≤ 25 KB | ≤ 150 KB | the "size at 2,000 people" test in `graph/test/build.test.mjs`; builder exits 3 (`SIZE_BUDGET`) over 150 KB gzip. A miss is remedied by an ADR amendment (for example a separate gated layout file), never by a silent budget change. |
 | tree island entry + its own chunks, gzip, excluding the shared React chunk the shell already loads | ≤ 60 KB | same | `islands/tests/tree-budget.test.mjs`: follows static imports from `11ty/js/islands/tree.js` and subtracts chunks `shell.js` also imports |
-| chart chunk (lazy), gzip | ≤ 120 KB, or the ADR-approved figure | same | same test |
-| v2 places chunk (lazy, only when the layer opens), gzip | ≤ 250 KB | same | same test |
-| time from navigation to a visible focus card (LCP proxy), cold, throttled | ≤ 2.5 s | ≤ 3.5 s | `islands/tests/tree-perf.spec.mjs` |
+| navigator chunk (lazy; Concept A, `<family-navigator>`), gzip | ≤ 35 KB JS and ≤ 15 KB CSS | same | same test (the old 120 KB chart-chunk line is removed) |
+| v3 Journeys chunk set (lazy, only when the map view opens): maplibre-gl 6.14.0 main and worker (about 431 KB), pmtiles (about 8 KB), @protomaps/basemaps (about 6.8 KB) and our code, gzip | ≤ 460 KB JS and ≤ 12 KB CSS (MapLibre CSS about 10.5 KB); 0 bytes on `/tree/` before the map opens | same | same test, plus a network test that the map view alone fetches it |
+| v2 lifelines chunk (lazy), gzip | ≤ 25 KB JS and ≤ 5 KB CSS | same | same test |
+| v2 faces tab chunk (lazy), gzip | ≤ 15 KB JS and ≤ 5 KB CSS | same | same test |
+| v2 poster chunk (lazy), gzip | ≤ 30 KB JS and ≤ 5 KB CSS; no d3-dag module | same | same test; the bundle test lists no d3-dag module |
+| v2 kinship UI chunk (lazy), gzip | ≤ 10 KB JS | same | same test |
+| time from navigation to a visible focus card (LCP proxy), cold, throttled | ≤ 2.5 s | ≤ 3.5 s | `islands/tests/tree-perf.spec.mjs`. The card renders from the fetched, gated graph: no data inlined into the page, no service-worker cache. |
 | re-centre: longest main-thread task (PerformanceObserver `longtask`) | ≤ 100 ms | ≤ 200 ms | same |
 | CLS on load | ≤ 0.05 | ≤ 0.05 | same (layout-shift entries) |
 | face requests in the first view | ≤ 24, lazy via IntersectionObserver, each ≤ 8 KB | same | perf spec counts requests; `graph/test/faces.test.mjs` checks the size |
 | generation compute (builder, Node 22) | — | ≤ 200 ms | `graph/test/generations.test.mjs` |
+| poster layout compute (builder; d3-dag 1.2.2 `coordGreedy`) | ≤ 5 s, checked everywhere, CI included | ≤ 60 s, checked only where `HFY_GRAPH_PERF=1` (the worker and io's machine), never on shared CI runners | the graph suite's layout-time tests (`viz-graph-v2-layout`); the ADR measured 1.09 s and 12.9 s at most, on Node 24 |
+| basemap file (v3, `map/*.pmtiles`) | ≤ 512 MB per file (the maxzoom-11 extract is about 0.29 GB) | same | `viz-v3-basemap` records the extract's size; Cloudflare caches no file over 512 MB |
 
 Gated responses are `no-store` (HFY-R65), so the graph and faces are fetched again on every visit. That is why they are kept small, and why the ruling is not loosened.
 
@@ -625,10 +664,14 @@ The chart is a supplementary view:
 | flag | default | gates | dependencies |
 |---|---|---|---|
 | `familyViz` | `false` in `11ty/_data/flags.json` (mirrored to Dropbox per HFY-R70) | the `/tree/` island; the family tab remap and the `/private/` → `/tree/` redirect; the person-page "see in the family tree" link | The nav remap needs `shellV2`. Without it the page still works by direct link. The data fetch uses the authV2 session. |
-| `familyVizPlaces` | `false` | v2 places layer | `familyViz` |
-| `familyVizTime` | `false` | v2 time layer | `familyViz` |
+| `familyVizTime` | `false` | v2 C-lite lifelines (time layer) | `familyViz` |
 | `familyVizKinship` | `false` | v2 "how are we related" panel | `familyViz` |
+| `familyVizFaces` | `false` | v2 Faces: "pictured with" chips and the faces tab on `/tree/` | `familyViz`; the published graph's `photoEdges` |
+| `familyVizBigTree` | `false` | v2 desktop big-tree poster (64rem and wider) | `familyViz`; the published graph's `layout` block |
 | `familyVizPersonMini` | `false` | v2: the person page shows a mini focus view instead of the Graphviz frame | `familyViz` |
+| `familyVizJourneys` | `false` | v3 Journeys map (replaces `familyVizPlaces`; there is no v2 places layer) | `familyViz`; the `map/` basemap (G-map) and the CSP `worker-src 'self'` |
+
+`familyVizPlaces` is retired: it becomes `familyVizJourneys` in v3 (BRD2 section 11.6). `familyVizFaces` and `familyVizBigTree` are new in v2. Each v2 and v3 flag flips on its own, after its own D-11 audit and io approval (`viz-v2-flips`, `viz-v3-flip`).
 
 Preview and UAT on prod use `?hfy_flags=familyViz` (session-scoped, with the preview banner; HFY-R42 and HFY-R58).
 
@@ -703,18 +746,18 @@ Preview and UAT on prod use `?hfy_flags=familyViz` (session-scoped, with the pre
 
 | id | question | default | needs io |
 |---|---|---|---|
-| VIZ-D1 | Which visualization approach is adopted? | The research report's recommendation, filtered by the §4.1 invariants in the ADR. The fallback is the hourglass and navigator in §4.3. | **yes** (io's research decides; io approves the ADR) |
+| VIZ-D1 | Which visualization approach is adopted? | **Decided:** the verified recommendation in the viz ADR DOC-A4FBA13AE98A (§4.3). The MVP is Concept A, the Family Card Navigator. v2 adds C-lite lifelines, Faces and a desktop big-tree poster laid out by d3-dag 1.2.2 at build time. v3 adds Journeys. The ADR's budget changes are in §11. The hourglass in §4.3 was the fallback and is not used. | **answered:** io's sheet answer to Q9 (Q2-13), "all approved. proceed.", on 2026-10-13 (DOC-C31D9E3DD932; recorded verbatim in ADR 4.1) |
 | VIZ-D2 | How is the graph served? | Static `person/graph.json` plus `media/faces/` under existing gated prefixes, with no API route | no |
 | VIZ-D3 | What is the builder's input contract? | `_class`-tagged Gramps JSON lines (the cloud-store snapshot format), streamed from a read-only SQLite copy in the interim | no |
 | VIZ-D4 | Which living-person fields go in the graph? | Name, birth year, birth city and primary-photo face crop, matching `person/index.json` and the hero. Never a day or month. Gramps private objects are excluded. | no (no new exposure) |
 | VIZ-D5 | Does the v2 places layer include Residence events of living people? | No. They are dropped at build time; births, deaths, marriages and education stay. | **yes** (privacy-defining aggregate: "where everyone lives now") |
-| VIZ-D6 | How is geocoding done? | Offline GeoNames cities500 (CC BY 4.0) at build time, with Gramps lat/long winning. The report helps io enter the 23 coordinates into Gramps, which is optional. | no |
+| VIZ-D6 | How is geocoding done? | Offline at build time (§5.6, as amended): GeoNames cities1000 plus admin1 and admin2 (CC BY 4.0), with a parent matched at admin1 or admin2, an alternate-name search and an override table. State, province and country places take Natural Earth or Census Gazetteer centroids. Gramps lat/long wins. Reviewed coordinates go back into Gramps, or into a reviewed `places.geo.json` outside the repo. The credit reads "Place coordinates: GeoNames (geonames.org), CC BY 4.0, modified". | no |
 | VIZ-D7 | What is the family tab destination, and how does it sequence with R-20? | `/tree/` (`/private/` redirects there). Supersede HFY-R74 clause 1. Flip in the same release group as R-20. | no |
 | VIZ-D8 | How are generations numbered? | Longest path per component with married-in partners aligned; 0 is the oldest; the UI uses relative labels only | no |
 | VIZ-D9 | What is the face crop rule? | Gramps truncating crop on stored pixels, square-expanded, 160 px WebP, content-hashed name | no |
 | VIZ-D10 | Is the viz a kit package or local to HFY? | Local to HFY. A tokens patch only if the ADR needs one. | no |
-| VIZ-D11 | What is the v2 basemap? | An SVG outline basemap (Natural Earth, public domain, with d3-geo/topojson, ISC) and no tiles. MapLibre plus self-hosted PMTiles only if the ADR justifies it, which also needs a new infra behavior and an io gate. | no (settled by the ADR) |
-| VIZ-D12 | Era bands and their copy in the v2 time layer (slavery, Reconstruction, the Great Migration) | Ship decades only. Add era bands only from an io-approved copy list. | **yes** (tone of hard history is io's call) |
+| VIZ-D11 | What is the basemap? | **Settled by the ADR:** v3 Journeys uses maplibre-gl 6.14.0 (exact pin, never v5), pmtiles 4.5.0 and @protomaps/basemaps 5.7.2. They run over a self-hosted maxzoom-11 PMTiles extract under `map/`, with versioned file names and a Cloudflare Cache Rule, behind gate G-map. There is no SVG places layer in v2. | no (settled by the ADR); G-map is io's go-ahead for the upload and the Cache Rule |
+| VIZ-D12 | Era bands in the v2 time layer, and the chapter copy of v3 Journeys (Q2-14), on hard history such as slavery, Reconstruction and the Great Migration | Ship decades only. Add era bands, or Journeys chapter titles and copy, only from a copy list io approves. | **yes** (tone of hard history is io's call) |
 
 ## 19. Tasks
 
