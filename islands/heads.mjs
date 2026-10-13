@@ -9,7 +9,7 @@
 //   block B, immediately AFTER main.css: <link rel=stylesheet href=/css/hfy-theme.css?v=<sha8>>, so the cascade is
 //     main.css first and the theme second. (Its ?v is the same sha8 of the file that assets.mjs writes on every other script,
 //     stylesheet and manifest reference of the page, so the two stay consistent; the main.css anchor matches with or without it.)
-// Pages without main.css (posts/, me/notifications/, offline.html) get A then B right after </title>.
+// Pages without main.css (posts/, me/, me/notifications/, offline.html) get A then B right after </title>.
 // offline.html gets no early hint: it never loads feature-flags.js (so nothing would mount the shell or clear the class), and
 // html.hfy-shell-v2 there would leave the shell's pre-mount placeholder bars (theme partial 60) painted on the offline page.
 // After an Eleventy refresh rewrites a page, `cd islands && npm run build` puts the blocks back. Workspace port: partials/head.njk
@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** The 13 pages that get the block: the 10 Eleventy pages plus the three repo-owned ones. */
+/** The 14 pages that get the block: the 10 Eleventy pages plus the four repo-owned ones. */
 export const PAGES = [
   "index.html",
   "about/index.html",
@@ -30,6 +30,8 @@ export const PAGES = [
   "search/index.html",
   "terms/index.html",
   "posts/index.html",
+  // the settings hub (navMe, HFY-TSK-091)
+  "me/index.html",
   "me/notifications/index.html",
   "offline.html"
 ];

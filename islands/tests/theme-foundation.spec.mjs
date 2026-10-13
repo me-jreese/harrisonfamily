@@ -4,8 +4,8 @@
 // Run against a scratch build: HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/theme-foundation.spec.mjs
 import { test, expect } from "@playwright/test";
 
-const PAGES = ["/", "/about/", "/search/", "/privacy/", "/posts/", "/me/notifications/", "/offline.html"];
-const NO_FOCUS_TARGET = new Set(["/me/notifications/"]); // nothing focusable before the island mounts
+const PAGES = ["/", "/about/", "/search/", "/privacy/", "/posts/", "/me/", "/me/notifications/", "/offline.html"];
+const NO_FOCUS_TARGET = new Set(["/me/", "/me/notifications/"]); // nothing focusable before the island mounts
 const SURFACE = "rgb(20, 18, 16)"; // archive-950
 const TEXT = "rgb(250, 246, 238)"; // archive-50
 const FOCUS = "rgb(255, 193, 7)"; // gold-400

@@ -1,6 +1,7 @@
 // The family tab is "your family": it opens the signed-in member's own page, /person/?id=<edge session sub = gramps id>, and a
 // signed-out visitor goes to the sign-in, which returns to /private/ (the stable family route, a redirect page) and then to the
-// own page. /person/ without an id does the same; the 2025 dev scaffold that /private/ used to be is gone.
+// own page. /person/ without an id does the same; the 2025 dev scaffold that /private/ used to be is gone. With navMe (HFY-TSK-091,
+// turned on here with the ?hfy_flags preview override) the same own-page tab is "me", and "family" leaves the bar.
 // /auth and /api are stubbed; the person data answers 404 (only the shell and the redirects are under test). Run against the committed
 // site (../11ty on 8089) or a scratch build: HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/family-route.spec.mjs
 import { test, expect } from "@playwright/test";
@@ -104,6 +105,65 @@ test("the other sections still mark their own tab (search)", async ({ page }) =>
   await expect(bottom(page, "search")).toHaveAttribute("aria-current", "page");
 });
 
+// ------------------------------------------------------------------------------------------- navMe: "me" is the own page (HFY-TSK-091)
+// With navMe the own-page tab is "me" (lib/nav.js navItems) and "family" leaves the bar until familyViz; the rules above apply to it.
+const NAVME = "hfy_flags=navMe";
+for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
+  const me = (page) => (width < 688 ? bottom(page, "me") : top(page, "me"));
+  const current = (page) => (width < 688 ? page.locator('#hfy-shell-root .io-nav__item--bar[aria-current="page"]') : page.locator('#hfy-shell-root .hfy-bar__links a[aria-current="page"]'));
+
+  test(`${name} navMe: signed in, "me" links to the member's own page (the account sheet's "your page" too); no family tab`, async ({ page }) => {
+    await hermetic(page);
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(`/about/?${NAVME}`, { waitUntil: "domcontentloaded" });
+    await shellUp(page);
+    await expect(me(page)).toHaveAttribute("href", OWN);
+    await expect(width < 688 ? bottom(page, "family") : top(page, "family")).toHaveCount(0);
+    await page.locator('[data-hfy-account="signed-in"]').click();
+    await expect(page.getByRole("link", { name: "your page" })).toHaveAttribute("href", OWN);
+  });
+
+  test(`${name} navMe: signed out or session unreachable, "me" is the stable /private/ route (never /family/)`, async ({ page }) => {
+    for (const session of ["out", "unreachable"]) {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await hermetic(page, { session });
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(`/about/?${NAVME}`, { waitUntil: "domcontentloaded" });
+      await shellUp(page);
+      await expect(me(page)).toHaveAttribute("href", "/private/");
+      for (const href of await page.locator("#hfy-shell-root nav a[href]").evaluateAll((els) => els.map((e) => e.getAttribute("href")))) expect(href).not.toMatch(/^\/family\//);
+    }
+  });
+
+  test(`${name} navMe: "me" is current on the member's own page, and only there`, async ({ page }) => {
+    await hermetic(page);
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(`${OWN}&${NAVME}`, { waitUntil: "domcontentloaded" });
+    await shellUp(page);
+    await expect(me(page)).toHaveAttribute("href", OWN);
+    await expect(current(page)).toHaveCount(1);
+    await expect(current(page)).toContainText("me");
+    await page.goto(`/person/?id=${OTHER}`, { waitUntil: "domcontentloaded" }); // the override persists in this tab
+    await shellUp(page);
+    await expect(me(page)).toHaveAttribute("href", OWN);
+    await expect(current(page)).toHaveCount(0);
+  });
+}
+
+test("navMe signed out: 'me' goes to the edge sign-in and, signed in, back to the member's own page", async ({ page }) => {
+  let signedIn = false;
+  await hermetic(page, { session: "out" });
+  await page.route("**/auth/session", (r) => r.fulfill({ json: signedIn ? { authenticated: true, sub: SUB, grampsId: SUB, label: "Marie" } : { authenticated: false } }));
+  await page.goto(`/about/?${NAVME}`, { waitUntil: "domcontentloaded" });
+  await shellUp(page);
+  await expect(page.locator('[data-hfy-account="signed-out"]')).toBeVisible();
+  await bottom(page, "me").click();
+  await page.waitForURL((u) => u.pathname === "/auth/login" && u.searchParams.get("returnTo") === "/private/");
+  signedIn = true; // the sign-in finished and returns to /private/
+  await page.goto("/private/", { waitUntil: "domcontentloaded" });
+  await page.waitForURL((u) => u.pathname === "/person/" && u.searchParams.get("id") === SUB);
+});
+
 // --------------------------------------------------------------------------------------------------- /private/ is a redirect page
 test("/private/ signed in: goes to the member's own page (history replaced)", async ({ page }) => {
   await hermetic(page);
@@ -132,7 +192,7 @@ test("after the sign-in comes back to /private/, the member lands on the own pag
 });
 
 test("/private/ with authV2 off: the legacy sign-in hands the id over; no stored id goes to /family-login/ with next", async ({ page }) => {
-  const flags = { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false };
+  const flags = { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false };
   await hermetic(page, { session: "unreachable", flags });
   await page.goto("/private/", { waitUntil: "domcontentloaded" });
   await page.waitForURL((u) => u.pathname === "/family-login/" && u.searchParams.get("next") === "/private/");

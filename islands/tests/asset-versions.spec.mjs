@@ -12,7 +12,7 @@ const SITE = resolve(process.env.HFY_SITE || "../11ty");
 const sha8 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 8);
 const onDisk = (path) => sha8(readFileSync(resolve(SITE, path.replace(/^\//, ""))));
 const WIDTHS = [375, 688, 1024];
-const PAGES = ["/", "/about/", "/search/", "/contact/", "/posts/", "/me/notifications/"];
+const PAGES = ["/", "/about/", "/search/", "/contact/", "/posts/", "/me/", "/me/notifications/"];
 
 async function hermetic(page) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());

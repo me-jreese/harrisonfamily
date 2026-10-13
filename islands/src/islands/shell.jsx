@@ -1,5 +1,5 @@
 // KitShell (frame="bare") replaces the Bootstrap navbar on every page when flag shellV2 is on (HFY-TSK-064).
-// Styling follows the approved design system (ds/components/Shell, HFY-R13): five-item bottom bar under 688 px, a translucent
+// Styling follows the approved design system (ds/components/Shell, HFY-R13): five-item bottom bar under 688 px (four with navMe), a translucent
 // Columbia top bar with links and an inline search field from 688 px up, no kit rail or sidebar. The theme (fonts, tokens,
 // bridges) is the static /css/hfy-theme.css layer; shell.css only aliases --io-shell-* / --io-* tokens.
 import "../shell.css";
@@ -9,20 +9,19 @@ import { KitShell, ScrollTopZone, SearchLauncher, Sheet, useBreakpoint, useShell
 import { mountAt } from "../lib/mount.jsx";
 import { suggestPeople } from "../lib/people-corpus.js";
 import { navPathname, ownRoute } from "../lib/family-route.js";
+import { SETTINGS_ROUTE, navItems, onSettings } from "../lib/nav.js";
+import { signOut } from "../lib/sign-out.js";
+// The page's edge session (HFYFeatureFlags.edgeSession, one GET /auth/session per page) and the "signed in" rule, shared with the
+// settings hub: undefined while pending, null when authV2 is off or /auth/session is unreachable, else {authenticated, sub, label}.
+import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 
-// Nav registry (R8, DS Shell anatomy): five lowercase destinations. The icon is a placeholder glyph (a space) so the kit renders
-// its .io-nav__icon span; shell.css paints each item's single-weight line icon as a currentColor mask keyed by data-io-nav-item.
-// "family" is "your family": /private/ is its stable route, a redirect page (HFYFeatureFlags.goToFamily) that sends a signed-in
-// member to their own page and a signed-out visitor to the sign-in, which returns there. Once the edge session says who the member
-// is, Shell() swaps the route for the own page itself (lib/family-route.js), so the tab links straight to it. The tab is marked
-// current on that page only; another person's page has no marked tab.
-export const NAV = [
-  { id: "home", label: "home", route: "/", icon: " ", order: 1 },
-  { id: "family", label: "family", route: "/private/", icon: " ", order: 2 },
-  { id: "search", label: "search", route: "/search/", icon: " ", order: 3 },
-  { id: "posts", label: "posts", route: "/posts/", icon: " ", order: 4 },
-  { id: "me", label: "me", route: "/family-login/", icon: " ", order: 5 }
-];
+// Nav registry (R8, DS Shell anatomy): lowercase destinations composed by navItems() (lib/nav.js) from the flags navMe, familyViz and
+// notifyV2 and the edge session's sub. Without navMe it is today's five: home, family, search, posts, me. "family" is "your family":
+// /private/ is its stable route, a redirect page (HFYFeatureFlags.goToFamily) that sends a signed-in member to their own page and a
+// signed-out visitor to the sign-in, which returns there. Once the edge session says who the member is, the route is the own page
+// itself (lib/family-route.js), so the tab links straight to it. With navMe (HFY-TSK-091) "me" takes that own-page route and "family"
+// leaves the bar until familyViz gives it the tree; the settings move behind the gear (/me/). The own-page tab is marked current on
+// that page only; another person's page has no marked tab.
 const navigate = (href) => window.location.assign(href);
 // Same rule as the kit's bottom bar: "/" is exact, every other route also matches its sub-paths.
 const isCurrent = (pathname, route) => (route === "/" ? pathname === "/" : pathname === route || pathname.startsWith(route));
@@ -93,50 +92,18 @@ function Content() {
 }
 
 // searchV2 (HFY-TSK-065): SearchLauncher gets local-corpus suggestions; with the flag off it only routes to /search/?q=.
-function useFlag(name) {
-  const [on, setOn] = useState(false);
+function useFlag(name, initial = false) {
+  const [on, setOn] = useState(initial);
   useEffect(() => { window.HFYFeatureFlags?.resolveFlags?.().then((f) => setOn(f[name] === true)); }, [name]);
   return on;
 }
 
-// The page's edge session (HFYFeatureFlags.edgeSession, one GET /auth/session per page): undefined while it is pending,
-// null when authV2 is off or /auth/session is unreachable, else {authenticated, sub, label}.
-function useEdgeSession() {
-  const [session, setSession] = useState(undefined);
-  useEffect(() => {
-    let live = true;
-    const probe = window.HFYFeatureFlags?.edgeSession;
-    Promise.resolve(typeof probe === "function" ? probe() : null).then(
-      (s) => { if (live) setSession(s ?? null); },
-      () => { if (live) setSession(null); }
-    );
-    return () => { live = false; };
-  }, []);
-  return session;
-}
-
-// "sign out" proxies the legacy navbar link, which auth-v2.js wires to end the edge session AND run the legacy signOut.
-// Pages without the navbar (posts/, me/notifications/) do not load auth-v2.js, so the fallback ends the edge session the same way
-// (POST /auth/logout, x-requested-with: io-kit) before going to /logged-out/; a bare location.assign would leave the visitor signed in.
-function signOut() {
-  const link = document.querySelector("nav.navbar-hf [data-auth-signout-link]");
-  if (link && link.getAttribute("data-auth-v2-wired") === "1") { link.click(); return; }
-  try { window.HFYFeatureFlags?.forgetEdgeSession?.(); } catch { /* keep signing out */ }
-  for (const k of ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID", "hfy:edge-session"]) { try { localStorage.removeItem(k); } catch { /* storage blocked */ } }
-  try { sessionStorage.removeItem("HFY_GATEWAY_SESSION_V1"); } catch { /* storage blocked */ }
-  const done = fetch("/auth/logout", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json", "x-requested-with": "io-kit" }, body: "{}" }).catch(() => {});
-  Promise.race([done, new Promise((r) => setTimeout(r, 4000))]).then(() => {
-    try { if (typeof window.HFY_AUTH?.signOut === "function") { window.HFY_AUTH.signOut(); return; } } catch { /* fall through */ }
-    window.location.assign("/logged-out/");
-  });
-}
-
-function Account({ notifyV2 }) {
+function Account({ notifyV2, navMe }) {
   const session = useEdgeSession();
   const bp = useBreakpoint();
   const [open, setOpen] = useState(false);
   if (session === undefined) return <span className="hfy-account__skel" aria-hidden="true" data-hfy-account="loading" />;
-  if (!session || session.authenticated !== true || !session.sub) {
+  if (!memberSub(session)) {
     // authV2 signed out: the edge sign-in. authV2 off / edge unreachable: the legacy entry, which hands `next` to the edge when authV2 is on.
     const href = session ? `/auth/login?returnTo=${encodeURIComponent(here())}` : `/family-login/?next=${encodeURIComponent(here())}`;
     return <a className="hfy-signin" href={href} data-hfy-account="signed-out">sign in</a>;
@@ -151,7 +118,8 @@ function Account({ notifyV2 }) {
       <Sheet open={open} onClose={() => setOpen(false)} side={bp === "compact" ? "bottom" : "right"} title={label} closeLabel="close" className="hfy-account">
         <ul className="hfy-account__list">
           <li><a className="hfy-account__item" href={ownRoute(session.sub)}>your page</a></li>
-          {notifyV2 && <li><a className="hfy-account__item" href="/me/notifications/">notifications</a></li>}
+          {/* navMe: the notification settings move into the hub, which the sheet opens as "settings" */}
+          {navMe ? <li><a className="hfy-account__item" href={SETTINGS_ROUTE}>settings</a></li> : notifyV2 && <li><a className="hfy-account__item" href="/me/notifications/">notifications</a></li>}
           <li><button type="button" className="hfy-account__item" onClick={() => { setOpen(false); signOut(); }}>sign out</button></li>
         </ul>
       </Sheet>
@@ -167,16 +135,31 @@ function MagnifierIcon() {
   );
 }
 
-function Shell() {
+// The gear (HFY-TSK-091, navMe): the settings hub, signed in only (settings need a session), before the account control. A 44px link
+// with a single-weight gear drawn as a currentColor mask (shell.css), gold when current: on /me/ and its sub-paths.
+function Gear() {
+  const current = onSettings(window.location.pathname);
+  return (
+    <a className="hfy-gear" href={SETTINGS_ROUTE} aria-label="settings" aria-current={current ? "page" : undefined} data-hfy-gear>
+      <span className="hfy-gear__icon" aria-hidden="true" />
+    </a>
+  );
+}
+
+function Shell({ flags }) {
   const searchV2 = useFlag("searchV2");
-  // notifyV2 (HFY-TSK-068): "me" opens the notification settings page.
+  // notifyV2 (HFY-TSK-068): "me" opens the notification settings page (without navMe).
   const notifyV2 = useFlag("notifyV2");
-  // "family" opens the member's own page once the edge session names them; until then (pending, signed out, authV2 off) it is the
-  // stable /private/ redirect, which decides the same way. Only an authenticated session with a sub gives an own page.
+  // navMe (HFY-TSK-091) and familyViz (viz domain) change how many items the bar has, so they start from the flags the shell was
+  // mounted with (resolved before the mount, below) instead of false: the bottom bar never paints five cells and then four.
+  const navMe = useFlag("navMe", flags.navMe === true);
+  const familyViz = useFlag("familyViz", flags.familyViz === true);
+  // The own-page tab opens the member's own page once the edge session names them; until then (pending, signed out, authV2 off) it is
+  // the stable /private/ redirect, which decides the same way. Only an authenticated session with a sub gives an own page.
   const session = useEdgeSession();
-  const sub = session && session.authenticated === true && session.sub ? String(session.sub) : null;
-  const nav = NAV.map((i) => (i.id === "me" && notifyV2 ? { ...i, route: "/me/notifications/" } : i.id === "family" && sub ? { ...i, route: ownRoute(sub) } : i));
-  const registry = useMemo(() => defineNavRegistry({ items: nav.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" }), [notifyV2, sub]);
+  const sub = memberSub(session);
+  const nav = useMemo(() => navItems({ navMe, familyViz, notifyV2, sub }), [navMe, familyViz, notifyV2, sub]);
+  const registry = useMemo(() => defineNavRegistry({ items: nav.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" }), [nav]);
   const pathname = navPathname(window.location, sub);
   const router = useMemo(() => ({ pathname, navigate }), [pathname]);
   // stack "enceladus" only names the kit's data-theme; no harrisonfamily selector matches it, so it is inert (a StackName
@@ -196,7 +179,7 @@ function Shell() {
             suggest={searchV2 ? suggestPeople : undefined}
             icon={<><MagnifierIcon /><span className="hfy-bar__search-hint" aria-hidden="true">search the family</span></>}
           />
-          <div className="hfy-bar__end"><Account notifyV2={notifyV2} /></div>
+          <div className="hfy-bar__end">{navMe && sub && <Gear />}<Account notifyV2={notifyV2} navMe={navMe} /></div>
         </ScrollTopZone>
         <Offline />
         <Content />
@@ -206,7 +189,11 @@ function Shell() {
 }
 
 document.documentElement.classList.add("io-no-focus-zoom");
-mountAt((h) => document.body.prepend(h), <Shell />, "hfy-shell-root");
+// The loader injects this island only after resolveFlags() settled, so this awaits an already settled promise, not a fetch: the shell
+// mounts with the flags that decide the bar's shape (navMe, familyViz) already known.
+Promise.resolve(window.HFYFeatureFlags?.resolveFlags?.())
+  .catch(() => null)
+  .then((flags) => { mountAt((h) => document.body.prepend(h), <Shell flags={flags || {}} />, "hfy-shell-root"); });
 
 // Offline shell only. 068 plugs @io-kit/notify's notify-sw into /sw.js (see the hook there).
 // Registered at /sw.js?v=<sha8 of sw.js> (stamped into feature-flags.js by islands/build.mjs): updateViaCache "none" makes the

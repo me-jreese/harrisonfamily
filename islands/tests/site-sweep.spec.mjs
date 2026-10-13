@@ -4,7 +4,7 @@
 import { test, expect } from "@playwright/test";
 
 const LINKS = [["about", "/about/"], ["contact", "/contact/"], ["privacy", "/privacy/"], ["terms", "/terms/"]];
-const FOOTER_PAGES = ["/", "/about/", "/contact/", "/privacy/", "/terms/", "/search/", "/posts/", "/me/notifications/", "/logged-out/"];
+const FOOTER_PAGES = ["/", "/about/", "/contact/", "/privacy/", "/terms/", "/search/", "/posts/", "/me/", "/me/notifications/", "/logged-out/"];
 
 async function hermetic(page, { session = "out", flags } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
@@ -100,7 +100,7 @@ test("home: /auth/session unreachable, the hero 'sign in' keeps the legacy /fami
 });
 
 test("/family-login/ shows family-voice copy while it waits (authV2 off, so it stays)", async ({ page }) => {
-  await hermetic(page, { session: "unreachable", flags: { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false } });
+  await hermetic(page, { session: "unreachable", flags: { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false } });
   await page.goto("/family-login/", { waitUntil: "domcontentloaded" });
   const card = page.locator("main .card-body");
   await expect(card).toContainText("sign in with your Google account to see the family pages.");

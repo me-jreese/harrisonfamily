@@ -773,6 +773,7 @@ Cloudflare, in front of CloudFront, keeps static files for 4 hours under the URL
    | `personV2` | `/person/?id=<gramps-id>` | `person` |
    | `postsV2` | `/`, `/posts/`, `/person/?id=<gramps-id>` | `timeline`, `posts`, `my-posts` |
    | `notifyV2` | `/me/notifications/` | `notifications` |
+   | `navMe` | `/me/` | `settings` |
 
    `authV2` loads no island. It moves the person, search and photo data requests to the `io_id` cookie as soon as the flag resolves. Once `/auth/session` answers with JSON, it also makes `/family-login/` send a signed-out visitor to `/auth/login?returnTo=<path>`. `<path>` is the page's `next` parameter when that is a same-origin path outside `/auth` and `/family-login`, and `/` otherwise ([`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js)). A visitor already signed in at the edge stays on the legacy page. If `/auth/session` does not answer, the sign-in and navigation stay as they were and the preview override is cleared.
 

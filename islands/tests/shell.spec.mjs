@@ -1,11 +1,14 @@
 // HFY-TSK-064 AC2/AC3 + the approved design system's Shell (ds/components/Shell, HFY-R13) at 375 / 688 / 1024.
 // Run against a built site: `node build.mjs --site <dir>` then `HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/shell.spec.mjs`
-// (defaults: the committed ../11ty on 8089). The build flags (11ty/_data/flags.json) are all on, so "flag off" checks force
+// (defaults: the committed ../11ty on 8089). The build flags (11ty/_data/flags.json) are all on except navMe, which ships off, so "flag off" checks force
 // -shellV2 through the ?hfy_flags preview override. /auth and Google are stubbed; data is synthetic.
 import { test, expect } from "@playwright/test";
+import { axeViolations } from "./axe.mjs";
 
 const PAGES = ["/", "/about/", "/search/", "/contact/"]; // (/private/ redirects, so it has no shell to audit: tests/family-route.spec.mjs)
-const LABELS = ["home", "family", "search", "posts", "me"];
+// The labels are a function of the flags (lib/nav.js navItems, HFY-TSK-091): navMe ships off, so the build flags give the five.
+const labelsFor = ({ navMe = false, familyViz = false } = {}) => (navMe && !familyViz ? ["home", "search", "posts", "me"] : ["home", "family", "search", "posts", "me"]);
+const LABELS = labelsFor();
 const ME = { sub: "I0001", label: "Marie" };
 
 async function hermetic(page, { signedIn = false } = {}) {
@@ -212,6 +215,156 @@ for (const path of ["/about/", "/posts/"]) test(`${path}: the account sheet link
   await sheet.getByRole("button", { name: "sign out" }).click();
   await page.waitForURL("**/logged-out/");
   expect(calls).toContain("POST /auth/logout");
+});
+
+// ----------------------------------------------------------------------------------------------------- navMe (HFY-TSK-091)
+// With navMe the own page is "me", "family" leaves the bar (until familyViz), and a gear before the avatar opens the /me/ settings hub.
+const GOLD = "rgb(255, 193, 7)"; // accent.secondary (gold-400)
+const TEXT = "rgb(250, 246, 238)"; // text (archive-50)
+const gearOf = (page) => page.locator("#hfy-shell-root .hfy-bar__end a.hfy-gear");
+
+for (const path of PAGES) {
+  for (const signedIn of [true, false]) {
+    test(`375 ${path} navMe ${signedIn ? "signed in" : "signed out"}: four bottom cells (about 94 x 56), the gear ${signedIn ? "before the avatar" : "absent"}, 44px targets, 16px inputs, no h-scroll, axe clean`, async ({ page }) => {
+      await hermetic(page, { signedIn });
+      await page.goto(`${path}?hfy_flags=shellV2,navMe`, { waitUntil: "domcontentloaded" });
+      await expect(shell(page)).toHaveAttribute("data-bp", "compact");
+      await expect(page.locator(`#hfy-shell-root [data-hfy-account="${signedIn ? "signed-in" : "signed-out"}"]`)).toBeVisible();
+      const items = page.locator("#hfy-shell-root nav.io-shell__bar .io-nav__item--bar");
+      const labels = labelsFor({ navMe: true });
+      await expect(items).toHaveCount(4);
+      for (const [i, label] of labels.entries()) await expect(items.nth(i)).toHaveAccessibleName(label);
+      const cells = await items.evaluateAll((els) => els.map((e) => {
+        const r = e.getBoundingClientRect();
+        const icon = e.querySelector(".io-nav__icon").getBoundingClientRect();
+        return { w: r.width, h: r.height, icon: `${icon.width}x${icon.height}` };
+      }));
+      for (const c of cells) {
+        expect(Math.abs(c.w - 375 / 4), `cell width ${c.w}`).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(c.h - 56), `cell height ${c.h}`).toBeLessThanOrEqual(0.5);
+        expect(c.icon).toBe("24x24");
+      }
+      await expect(page.locator('#hfy-shell-root [data-io-nav-item="family"]')).toHaveCount(0);
+      if (signedIn) {
+        const gear = gearOf(page);
+        await expect(gear).toBeVisible();
+        await expect(gear).toHaveAttribute("href", "/me/");
+        await expect(gear).toHaveAccessibleName("settings");
+        const box = await gear.boundingBox();
+        expect([box.width, box.height]).toEqual([44, 44]);
+        // .hfy-bar__end: the gear, then the account control
+        const order = await page.locator("#hfy-shell-root .hfy-bar__end > *").evaluateAll((els) => els.map((e) => (e.hasAttribute("data-hfy-gear") ? "gear" : e.getAttribute("data-hfy-account"))));
+        expect(order).toEqual(["gear", "signed-in"]);
+      } else {
+        await expect(gearOf(page)).toHaveCount(0);
+      }
+      const a = await audit(page);
+      expect(a.small, "targets < 44px").toEqual([]);
+      expect(a.smallInputs, "inputs < 16px").toEqual([]);
+      expect(a.scrollW).toBeLessThanOrEqual(a.innerW);
+      expect(await axeViolations(page)).toEqual([]);
+    });
+  }
+}
+
+// Until the session names the member there is no gear and "me" is the /private/ redirect: while it is pending, and when /auth/session
+// is unreachable (the bar then shows "sign in", as the /me/ hub does).
+test("375 navMe, session pending: no gear and 'me' is /private/; once the session names the member, the gear and the own page", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  let release;
+  const hold = new Promise((r) => { release = r; });
+  await page.route("**/auth/session", async (r) => { await hold; return r.fulfill({ json: { authenticated: true, sub: ME.sub, grampsId: ME.sub, label: ME.label } }); });
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  const me = page.locator('#hfy-shell-root [data-io-nav-item="me"]');
+  await expect(me).toHaveAttribute("href", "/private/");
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="loading"]')).toBeAttached();
+  await expect(gearOf(page)).toHaveCount(0);
+  release();
+  await expect(gearOf(page)).toBeVisible();
+  await expect(me).toHaveAttribute("href", `/person/?id=${ME.sub}`);
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+});
+
+test("375 navMe, /auth/session unreachable: no gear, 'me' stays /private/, and the bar shows 'sign in'", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.route("**/auth/session", (r) => r.fulfill({ status: 503, body: "down" }));
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-out"]')).toBeVisible();
+  await expect(page.locator("#hfy-shell-root nav.io-shell__bar .io-nav__item--bar")).toHaveCount(4);
+  await expect(page.locator('#hfy-shell-root [data-io-nav-item="me"]')).toHaveAttribute("href", "/private/");
+  await expect(gearOf(page)).toHaveCount(0);
+});
+
+test("375 navMe + familyViz: five cells again, family is the tree (never /family/), me is the own page", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.goto("/about/?hfy_flags=shellV2,navMe,familyViz", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+  const items = page.locator("#hfy-shell-root nav.io-shell__bar .io-nav__item--bar");
+  await expect(items).toHaveCount(5);
+  for (const [i, label] of labelsFor({ navMe: true, familyViz: true }).entries()) await expect(items.nth(i)).toHaveAccessibleName(label);
+  await expect(page.locator('#hfy-shell-root [data-io-nav-item="family"]')).toHaveAttribute("href", "/tree/");
+  await expect(page.locator('#hfy-shell-root [data-io-nav-item="me"]')).toHaveAttribute("href", `/person/?id=${ME.sub}`);
+  for (const w of await items.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width))) expect(Math.abs(w - 75)).toBeLessThanOrEqual(0.5);
+});
+
+for (const width of [688, 1024]) {
+  test(`${width} navMe: top bar with four links, the gear at the right end before the avatar, 44px targets`, async ({ page }) => {
+    await hermetic(page, { signedIn: true });
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+    const avatar = page.locator('#hfy-shell-root [data-hfy-account="signed-in"]');
+    await expect(avatar).toBeVisible();
+    const links = page.locator("#hfy-shell-root .hfy-bar__links a");
+    await expect(links).toHaveText(labelsFor({ navMe: true }));
+    await expect(links.filter({ hasText: /^me$/ })).toHaveAttribute("href", `/person/?id=${ME.sub}`);
+    const g = await gearOf(page).boundingBox();
+    const av = await avatar.boundingBox();
+    const bar = await page.locator("#hfy-shell-root .hfy-bar").boundingBox();
+    expect([g.width, g.height]).toEqual([44, 44]);
+    expect(g.x + g.width).toBeLessThanOrEqual(av.x);
+    expect(bar.x + bar.width - (av.x + av.width)).toBeLessThanOrEqual(64); // the end of the bar, inside the page gutter
+    const a = await audit(page);
+    expect(a.small, "targets < 44px").toEqual([]);
+    expect(a.scrollW).toBeLessThanOrEqual(a.innerW);
+  });
+}
+
+test("navMe: the gear's icon is a currentColor mask, `text` elsewhere and gold on /me/ and its sub-paths (aria-current)", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  const look = () => gearOf(page).evaluate((e) => {
+    const icon = getComputedStyle(e.querySelector(".hfy-gear__icon"));
+    return { current: e.getAttribute("aria-current"), color: getComputedStyle(e).color, fill: icon.backgroundColor, mask: (icon.maskImage || icon.webkitMaskImage || "").startsWith('url("data:image/svg+xml') };
+  });
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  await expect(gearOf(page)).toBeVisible();
+  expect(await look()).toEqual({ current: null, color: TEXT, fill: TEXT, mask: true });
+  for (const path of ["/me/", "/me/notifications/"]) {
+    await page.goto(path, { waitUntil: "domcontentloaded" });
+    await expect(gearOf(page)).toBeVisible();
+    expect(await look()).toEqual({ current: "page", color: GOLD, fill: GOLD, mask: true });
+  }
+});
+
+test("navMe: the account sheet reads 'your page', 'settings', 'sign out' (the notifications row moved into the hub)", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: `you're signed in as ${ME.label}` }).click();
+  const sheet = page.getByRole("dialog", { name: ME.label });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator(".hfy-account__item")).toHaveText(["your page", "settings", "sign out"]);
+  await expect(sheet.getByRole("link", { name: "your page" })).toHaveAttribute("href", `/person/?id=${ME.sub}`);
+  await expect(sheet.getByRole("link", { name: "settings" })).toHaveAttribute("href", "/me/");
+  await expect(sheet.getByRole("link", { name: "notifications" })).toHaveCount(0);
+  for (const h of await sheet.locator(".hfy-account__item").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) expect(h).toBeGreaterThanOrEqual(44);
+});
+
+test("navMe off (the build flags): no gear, and the sheet keeps 'notifications'", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+  await expect(gearOf(page)).toHaveCount(0);
+  await page.getByRole("button", { name: `you're signed in as ${ME.label}` }).click();
+  await expect(page.getByRole("dialog", { name: ME.label }).locator(".hfy-account__item")).toHaveText(["your page", "notifications", "sign out"]);
 });
 
 // ------------------------------------------------------------------------------------------------- scroller and modals

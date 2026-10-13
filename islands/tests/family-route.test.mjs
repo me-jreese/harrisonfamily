@@ -1,5 +1,6 @@
-// The family tab ("your family"): which page is the member's own, what the nav matches its routes against, that the route is not a gated
-// data prefix, and that the 2025 dev scaffold (/private/ as a sample "Person Directory") is gone from every page.
+// The own-page tab ("family" without navMe, "me" with it): which page is the member's own, what the nav matches its routes against, the
+// nav's shape for every flag combination (lib/nav.js navItems, HFY-TSK-091), that no route is a gated data prefix, and that the 2025 dev
+// scaffold (/private/ as a sample "Person Directory") is gone from every page.
 // HFY_SITE=<dir> checks a scratch copy built with `node build.mjs --site <dir>` instead of ../11ty.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -7,6 +8,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { navPathname, onOwnPage, ownRoute } from "../src/lib/family-route.js";
+import { navItems, onSettings } from "../src/lib/nav.js";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const site = process.env.HFY_SITE ? resolve(process.env.HFY_SITE) : join(islandsDir, "..", "11ty");
@@ -38,30 +40,96 @@ test("navPathname: the own page matches the family route itself; every other pag
   assert.equal(navPathname(loc("/search/", "?q=x"), "I0042"), "/search/");
 });
 
-// The NAV registry of shell.jsx, with the kit's matching rules (KitShell isActive; the top bar's isCurrent), without importing the island.
-const NAV = [...shellSrc.slice(shellSrc.indexOf("export const NAV"), shellSrc.indexOf("];", shellSrc.indexOf("export const NAV"))).matchAll(/\{ id: "(\w+)", label: "(\w+)", route: "([^"]+)"/g)].map((m) => ({ id: m[1], label: m[2], route: m[3] }));
+// The nav of shell.jsx is navItems() (lib/nav.js), matched with the kit's rules (KitShell isActive; the top bar's isCurrent).
 const kitActive = (pathname, route) => (route === "/" ? pathname === "/" : pathname === route || pathname.startsWith(`${route}/`));
 const barActive = (pathname, route) => (route === "/" ? pathname === "/" : pathname === route || pathname.startsWith(route));
-const marked = (location, sub) => {
-  const routes = NAV.map((i) => (i.id === "family" && sub ? { ...i, route: ownRoute(sub) } : i));
+const marked = (location, sub, flags = {}) => {
+  const routes = navItems({ ...flags, sub });
   const p = navPathname(location, sub);
   return { kit: routes.filter((i) => kitActive(p, i.route)).map((i) => i.id), bar: routes.filter((i) => barActive(p, i.route)).map((i) => i.id) };
 };
+const GATED = /^\/(family|person|media|event|note|place|uploads)(\/|$)/;
+const SUB = "I0042";
+const OWN = ownRoute(SUB);
 
-test("the registry keeps its shape: five lowercase destinations, family at /private/ (never the gated /family/ prefix)", () => {
-  assert.deepEqual(NAV.map((i) => i.id), ["home", "family", "search", "posts", "me"]);
-  assert.deepEqual(NAV.map((i) => i.label), ["home", "family", "search", "posts", "me"]);
-  assert.equal(NAV.find((i) => i.id === "family").route, "/private/");
-  for (const i of NAV) assert.doesNotMatch(i.route, /^\/(family|person|media|event|note|place)(\/|$)/, `${i.id}: ${i.route} is a gated data prefix or a data page`);
+test("shell.jsx composes its nav with navItems() and keeps no inline registry of its own", () => {
+  assert.match(shellSrc, /import \{[^}]*\bnavItems\b[^}]*\} from "\.\.\/lib\/nav\.js"/);
+  assert.match(shellSrc, /navItems\(\{ navMe, familyViz, notifyV2, sub \}\)/);
+  assert.doesNotMatch(shellSrc, /export const NAV\b/);
 });
 
-test("aria-current: the family tab on the own page only", () => {
+// The four flag combinations (HFY-PLN-002 surfaces §3.1), each signed in (the session names the member) and signed out (or pending).
+// `route(signedIn)` per id; notifyV2 only decides where "me" goes while it is still the settings item.
+const TABLE = [
+  { navMe: false, familyViz: false, ids: ["home", "family", "search", "posts", "me"], family: (inn) => (inn ? OWN : "/private/"), me: (_, notify) => (notify ? "/me/notifications/" : "/family-login/") },
+  { navMe: false, familyViz: true, ids: ["home", "family", "search", "posts", "me"], family: () => "/tree/", me: (_, notify) => (notify ? "/me/notifications/" : "/family-login/") },
+  { navMe: true, familyViz: false, ids: ["home", "search", "posts", "me"], family: null, me: (inn) => (inn ? OWN : "/private/") },
+  { navMe: true, familyViz: true, ids: ["home", "family", "search", "posts", "me"], family: () => "/tree/", me: (inn) => (inn ? OWN : "/private/") }
+];
+for (const row of TABLE) {
+  for (const notifyV2 of [false, true]) {
+    for (const signedIn of [true, false]) {
+      const name = `navItems navMe=${row.navMe} familyViz=${row.familyViz} notifyV2=${notifyV2} ${signedIn ? "signed in" : "signed out"}`;
+      test(`${name}: ${row.ids.join(", ")}; no route is a gated data prefix`, () => {
+        const items = navItems({ navMe: row.navMe, familyViz: row.familyViz, notifyV2, sub: signedIn ? SUB : null });
+        assert.deepEqual(items.map((i) => i.id), row.ids);
+        assert.deepEqual(items.map((i) => i.label), row.ids, "labels are the lowercase ids");
+        assert.deepEqual(items.map((i) => i.order), row.ids.map((_, n) => n + 1), "order 1..n");
+        assert.ok(items.length <= 5, "the kit's compact cap is 5 primary items");
+        assert.ok(items.every((i) => i.icon === " "), "a placeholder glyph, painted by shell.css");
+        const by = Object.fromEntries(items.map((i) => [i.id, i.route]));
+        assert.equal(by.home, "/");
+        assert.equal(by.search, "/search/");
+        assert.equal(by.posts, "/posts/");
+        if (row.family) assert.equal(by.family, row.family(signedIn));
+        else assert.equal(by.family, undefined, "family leaves the bar while navMe is on and familyViz is off");
+        assert.equal(by.me, row.me(signedIn, notifyV2));
+        // Every route but the own page is a static route outside the data prefixes; the own page is the public person page shell
+        // (/person/?id=<sub>, never a .json), the one /person/ URL the nav may name.
+        for (const i of items) {
+          if (signedIn && i.route === OWN) { assert.doesNotMatch(i.route, /\.json/i); continue; }
+          assert.doesNotMatch(i.route, GATED, `${i.id}: ${i.route} is a gated data prefix or a data page`);
+        }
+        const own = items.filter((i) => i.route === OWN || i.route === "/private/");
+        assert.ok(own.length <= 1, "at most one item opens the own page");
+      });
+    }
+  }
+}
+
+test("navItems: the defaults are today's nav (every flag off)", () => {
+  assert.deepEqual(navItems({ sub: SUB }), navItems({ navMe: false, familyViz: false, notifyV2: false, sub: SUB }));
+  assert.deepEqual(navItems().map((i) => [i.id, i.route]), [["home", "/"], ["family", "/private/"], ["search", "/search/"], ["posts", "/posts/"], ["me", "/family-login/"]]);
+});
+
+test("aria-current without navMe: the family tab on the own page only", () => {
   assert.deepEqual(marked(loc("/person/", "?id=I0042"), "I0042"), { kit: ["family"], bar: ["family"] });
   assert.deepEqual(marked(loc("/person/", "?id=I0099"), "I0042"), { kit: [], bar: [] }, "another person's page marks no tab");
   assert.deepEqual(marked(loc("/person/", "?id=I0042"), null), { kit: [], bar: [] }, "signed out");
   assert.deepEqual(marked(loc("/search/"), "I0042"), { kit: ["search"], bar: ["search"] });
   assert.deepEqual(marked(loc("/"), "I0042"), { kit: ["home"], bar: ["home"] });
   assert.deepEqual(marked(loc("/private/"), null), { kit: ["family"], bar: ["family"] }, "the redirect page is the family route");
+});
+
+for (const familyViz of [false, true]) {
+  test(`aria-current with navMe (familyViz=${familyViz}): "me" on the own page only`, () => {
+    const flags = { navMe: true, familyViz };
+    assert.deepEqual(marked(loc("/person/", "?id=I0042"), "I0042", flags), { kit: ["me"], bar: ["me"] });
+    assert.deepEqual(marked(loc("/person/index.html", "?id=I0042"), "I0042", flags), { kit: ["me"], bar: ["me"] });
+    assert.deepEqual(marked(loc("/person/", "?id=I0099"), "I0042", flags), { kit: [], bar: [] }, "another person's page marks no tab");
+    assert.deepEqual(marked(loc("/person/", "?id=I0042"), null, flags), { kit: [], bar: [] }, "signed out");
+    assert.deepEqual(marked(loc("/me/"), "I0042", flags), { kit: [], bar: [] }, "the settings hub is the gear's, not a tab's");
+    assert.deepEqual(marked(loc("/me/notifications/"), "I0042", flags), { kit: [], bar: [] });
+    assert.deepEqual(marked(loc("/search/"), "I0042", flags), { kit: ["search"], bar: ["search"] });
+    assert.deepEqual(marked(loc("/"), "I0042", flags), { kit: ["home"], bar: ["home"] });
+    assert.deepEqual(marked(loc("/private/"), null, flags), { kit: ["me"], bar: ["me"] }, "the redirect page is the me route");
+    if (familyViz) assert.deepEqual(marked(loc("/tree/"), "I0042", flags), { kit: ["family"], bar: ["family"] });
+  });
+}
+
+test("onSettings: the gear is current on /me/ and its sub-paths only", () => {
+  for (const p of ["/me", "/me/", "/me/index.html", "/me/notifications/", "/me/links/"]) assert.equal(onSettings(p), true, p);
+  for (const p of ["/", "/media/", "/meetings/", "/person/", "/posts/", "/search/me/"]) assert.equal(onSettings(p), false, p);
 });
 
 // ------------------------------------------------------------------------------------------------- the scaffold is gone
@@ -73,7 +141,7 @@ const rel = (p) => relative(site, p).split(sep).join("/");
 
 test("no page of the site says 'local development' or carries the sample person / the person directory", () => {
   const pages = htmlFiles(site);
-  assert.ok(pages.length >= 13, "found the site's pages");
+  assert.ok(pages.length >= 14, "found the site's pages");
   for (const p of pages) {
     const html = readFileSync(p, "utf8");
     assert.doesNotMatch(html, /local development/i, rel(p));
