@@ -6536,7 +6536,7 @@
  },
  {
   "key": "viz-mvp-visual",
-  "title": "Family Card Navigator (Concept A): a framework-free <family-navigator> web component as the lazy chunk, within the performance and accessibility budgets",
+  "title": "Family Card Navigator: the framework-free <family-navigator> element and its 375 px phone layout",
   "wave": "W4",
   "parent": "wave-W4",
   "repo": "harrisonfamily",
@@ -6562,20 +6562,19 @@
   ],
   "depends_on": [
    "viz-outline-navigator",
-   "iokit-tokens-viz",
    "client-license-gate"
   ],
   "acceptance_criteria": [
-   "The lazy chunk implements Concept A (Q2-13): a framework-free custom element <family-navigator> (our own code; no React inside it, no third-party tree library, family-chart not embedded). On a phone it shows the focus card (face crop, name, years with qualifiers in words, one place line), a parents strip with a dashed 'parent not recorded' card, one tab per partner family, a row of children cards, and a bottom sheet with the details; from 64rem it widens into a four-row card grid (grandparents, parents, the focus family with siblings beside it, children). There is no pan or zoom canvas. If io rejects Q2-13, the chunk implements the viz.md section 4.3 hourglass instead.",
-   "Every swipe has visible arrow buttons; touch handling never captures one-finger vertical drag or page scroll; tapping a card re-centres; reduced motion turns slides into fades; relationship types (adopted, step, half) are text badges, never colour alone.",
-   "tree-budget.test.mjs and tree-perf.spec.mjs pass: the navigator chunk at most 35 KB gzip and its CSS at most 15 KB (the ADR budgets), the island entry at most 60 KB gzip, a visible focus card in at most 2.5 s at 231 people and 3.5 s at 2,000 under 4x CPU and slow-4G, a re-centre long task of at most 100/200 ms, CLS at most 0.05, and at most 24 lazy face requests.",
-   "Cards are buttons with accessible names; arrow keys walk the family (up to parents, down to children, left and right across siblings and partners) in our own code, following Data Navigator's model; data-navigator@3.0.0 (MIT, zero dependencies) is added only if a runtime library proves necessary, with a client-license-gate override because its package.json has no license field; Olli is used as a pattern only. A polite live region announces each re-centre, and no path needs a gesture.",
-   "CSS uses tokens only (theme-lint), and a CHART_CHUNK_FAILED state falls back to the outline.",
-   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved.",
-   "If iokit-tokens-viz published @io-kit/tokens 0.4.3, islands pin it exactly and hfy-theme.css is rebuilt; theme-delivery and theme-lint pass, and a before/after screenshot of two existing pages at 375 and 1280 shows no regression (a site-wide theme change). Install discipline: the package.json diff changes only the target @io-kit package and never lowers any pin; the lockfile is regenerated with a local CodeArtifact token (no CI-time npm); npm ci from the committed lockfile passes."
+   "islands/src/lib/family-navigator.js defines <family-navigator>: light DOM (no shadow root), no React inside it and no third-party runtime module; the bundle test lists only our own modules in the navigator chunk and no family-chart, Topola, Olli or d3 module. The lazy ChartView imports it, sets graph and focus as properties, and handles the hfy-focus and hfy-details CustomEvents (a unit test dispatches each).",
+   "At 375 px the element renders the focus card (the face crop, or initials in the role colour pair when face is null, for example after RECT_INVALID, never a guessed crop; the name; years in words such as 'about 1880' and 'years unknown'; one place line built from the real place chain), a parents strip with a dashed 'parent not recorded' card or 'parents not recorded yet', one tab per union ('with <partner>' or 'partner not recorded'), that union's children as a scroll-snap row, siblings with 'half-' badges, and text badges for adopted, step and foster from the per-parent rel. A Playwright snapshot test on the synthetic graph asserts each part.",
+   "hfy-details opens the kit Sheet, rendered by the island (the element ships no sheet of its own), with years, places, unions, children and a 'view page' link to /person/?id=<id>; Esc and the close button dismiss it (Playwright).",
+   "A pure navigatorModel(graph, focus) is node-tested on a messy synthetic fixture: two partner families, a mother-only union, a parentless sibling group, every rel value, a private-excluded person (absent), approximate and unknown years, and a singleton, which is its own component at generation 0 as the builder on main emits and is shown as 'not yet connected to the tree' with no relative-generation label.",
+   "tree.spec.mjs at 375 px: every card is a <button> with an accessible name like 'Ben Example, father, 1878 to unknown'; names are at least 16 px and targets at least 44 px; no horizontal page scroll at 320 or 375 (the children row scrolls inside itself); axe reports 0 serious or critical issues in the cards view.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
   ],
   "model": "sonnet",
   "effort": "high",
+  "notes": "Re-cut by the viz ADR (DOC-A4FBA13AE98A section 9.1; HFY-TSK-117 AC7): this task is the element and the 375 px layout only. Desktop, navigation, fallback and budgets are separate PRs (viz-mvp-visual-desktop, -nav, -fallback, -perf). The tokens pin and theme rebuild moved to iokit-tokens-viz-install, and the dependency on iokit-tokens-viz is dropped: the MVP needs no new tokens (ADR 4.9, measured on @io-kit/tokens 0.4.0; re-checked in viz-mvp-visual-perf). Size 2-3 d. Component comp-hfy-eleventy-site. Concept A was approved by io with Q2-13 on 2026-10-13 ('all approved. proceed.').",
   "origin": "viz"
  },
  {
@@ -6604,9 +6603,9 @@
    "R-20"
   ],
   "depends_on": [
-   "viz-mvp-visual",
    "viz-graph-publish",
-   "surf-nav-flip"
+   "surf-nav-flip",
+   "viz-mvp-visual-perf"
   ],
   "acceptance_criteria": [
    "A D-11 audit doc with screenshots at 375 (installed iPhone PWA), 768 and 1280 under the task asset prefix (HFY-R16) is green.",
@@ -6621,7 +6620,7 @@
  },
  {
   "key": "viz-graph-v2-data",
-  "title": "graph.json v2 data: the d3-dag 1.2.2 layout block for the big-tree poster and photoEdges for Faces (additive, built at build time)",
+  "title": "graph.json photoEdges: additive photo co-occurrence block for Faces, built at build time",
   "wave": "W4",
   "parent": "wave-W4",
   "repo": "harrisonfamily",
@@ -6649,14 +6648,16 @@
    "viz-research-intake"
   ],
   "acceptance_criteria": [
-   "graph/ adds d3-dag 1.2.2 (MIT, ESM) as an exact-pinned build-time dependency. build.mjs emits an additive layout block (schema minor bumped, additionalProperties still false): union (family) nodes, layeringSimplex with rank and group constraints so generations line up, and deterministic coordinates (shuffled input gives byte-identical output). No layout code ships to the client.",
-   "build.mjs emits photoEdges: for each photo, the gramps ids of the people tagged on it (no handles, rects or notes), skipping private Media, private MediaRefs and degenerate rects. viz-graph-cloud-source reuses build.mjs, so the cloud graph carries the same blocks, and its photoEdges also skip MOD#-hidden MediaRefs and Media.",
-   "Messy-genealogy fixtures (two partner families, a mother-only union, step and adoptive links, pedigree collapse, a disconnected component, a cycle) lay out without overlapping cards, and verify() still rejects day-precise dates, emails, phone numbers and URLs.",
-   "size.test.mjs and a layout-time test pass at 231 and 2,000 synthetic people with the budgets the ADR records (graph.json gzip and build time); node --test passes on synthetic fixtures only.",
-   "The interim publisher picks the new blocks up at io's next refresh run (docs/how-to/refresh-the-family-data.md step 2b is unchanged), and build-graph.mjs --verify passes on the staged file."
+   "graph/src/build.mjs emits photoEdges as in ADR 4.7: one entry per photo with at least one tagged, non-excluded person, {media: <Media gramps_id>, people: [sorted gramps ids]}, with no handles, rects, paths, descriptions or notes. family-graph.v1.schema.json gains it as an optional property with additionalProperties false, and MINOR is bumped by one from its value on main (1 today).",
+   "It skips private Media, private MediaRefs, excluded (private) people and tags whose rect the builder marks RECT_INVALID (the same rule faces.mjs uses for face: null); a MediaRef with no rect is a whole-photo tag and counts. Fixture tests: a photo with a private MediaRef has no edge for that person; a photo whose only tag is private emits nothing; a RECT_INVALID tag adds no person.",
+   "Shuffled input gives a byte-identical graph.json (determinism test), and verify() passes on the emitted graph and still rejects day-precise dates, emails, phone numbers and URLs.",
+   "The size test in graph/test/build.test.mjs passes with photoEdges included: at most 25 KB gzip at 231 synthetic people and 150 KB at 2,000 (one tagged photo per person); the builder still exits 3 (SIZE_BUDGET) over 150 KB.",
+   "build-graph.mjs --verify passes on a staged synthetic output, and docs/how-to/refresh-the-family-data.md step 2b is unchanged (the interim publisher picks the block up at io's next refresh). graph/README.md documents the block.",
+   "cd graph && npm ci && node --test passes on synthetic fixtures only (invented names, places and ids); pass and fail counts are recorded as acceptance evidence."
   ],
   "model": "sonnet",
   "effort": "high",
+  "notes": "Re-cut by the viz ADR (section 9.2): photoEdges only (1 d); the d3-dag layout block moves to viz-graph-v2-layout. viz-graph-cloud-source reuses build.mjs and additionally skips MOD#-hidden MediaRefs and Media (BRD2 11.6, first item). Component comp-hfy-graph. Rewire: viz-v2-faces depends on this task; viz-v2-bigtree depends on viz-graph-v2-layout instead.",
   "origin": "intake"
  },
  {
@@ -7656,7 +7657,7 @@
  },
  {
   "key": "viz-v2-time",
-  "title": "Viz v2 C-lite lifelines (familyVizTime): per-person and per-family lifelines, decades, optional io-approved era bands (Q2-14)",
+  "title": "Viz v2 C-lite lifelines on desktop (familyVizTime): per-person and per-family strips by decade",
   "wave": "W5",
   "parent": "wave-W5",
   "repo": "harrisonfamily",
@@ -7684,19 +7685,21 @@
    "viz-mvp-flip"
   ],
   "acceptance_criteria": [
-   "A lazy lifelines chunk (our own SVG renderer, with d3-scale and d3-shape, ISC, exact pins, if needed) shows a per-person and per-family lifeline strip: partners' lines converge at a union and children's lines start from it; uncertain starts and ends fade with a gradient (the TimeNets encoding), and approximate years are labelled in words ('about 1880'); a one-event person is a dot, not a line; living people's lines run to today with the birth year only.",
-   "At most 40 lifelines per view, after which sub-branches collapse; on phones time runs down the screen, one branch per panel, with buttons to move between panels; tapping a lifeline opens the navigator focused on that person.",
-   "Era bands appear only from an io-approved copy list (Q2-14, VIZ-D12); without it, decades only ship.",
-   "A D-11 audit at 375/768/1280 is green with ?hfy_flags=familyVizTime (evidence for viz-v2-flips); this task does not flip the flag.",
+   "A lazy tree-lifelines chunk renders our own SVG lifelines, with d3-shape 3.2.0 optional and exact-pinned and no d3-scale; tree-budget.test.mjs holds it at most 25 KB gzip JS and 5 KB CSS.",
+   "Per-person and per-family strips on a decades axis: partners converge at 'about' the first child's birth year, else not at all (graph v1 has no union year); children start from the union; uncertain ends fade (TimeNets); approximate years read in words; a one-event person is a dot; living people run to today with the birth year only. A fixture with a person in two unions shows each union converging at its own first child.",
+   "At most 40 lines per view; beyond that, sub-branches collapse into a '+N more in <name>'s family' button (a 2,000-person synthetic test counts rendered lines).",
+   "Each lifeline is a button with an accessible name; choosing it opens the navigator focused on that person (Playwright).",
+   "Decades only: no era band renders in this task (a test asserts no band element exists).",
    "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
   ],
   "model": "sonnet",
   "effort": "medium",
+  "notes": "Re-cut by the viz ADR (section 9.2): desktop lifelines (2-3 d); phones and the table view move to viz-v2-time-phone, era bands to viz-v2-time-eras. ADR drops d3-scale (7.9 KB for one linear scale). Component comp-hfy-eleventy-site.",
   "origin": "viz"
  },
  {
   "key": "viz-v2-kinship",
-  "title": "Viz v2 'how are we related' (Concept A's relationship finder; familyVizKinship)",
+  "title": "Kinship engine: relationPaths and a 30-case relationLabel table in family-graph.js (pure logic, no flag)",
   "wave": "W5",
   "parent": "wave-W5",
   "repo": "harrisonfamily",
@@ -7721,21 +7724,22 @@
    "R-22"
   ],
   "depends_on": [
-   "viz-mvp-flip"
+   "viz-page-shell"
   ],
   "acceptance_criteria": [
-   "relationLabel handles a table of 30 kinship cases (cousins, removed, half, step, in-law, pedigree collapse) in node tests.",
-   "A 'how are we related?' pill for signed-in members shows a vertical chain of cards from the viewer up to the common ancestor and down to the person, ending in one plain sentence; 'my grandparents' and 'my cousins' shortcuts re-centre the navigator; with pedigree collapse both paths are listed; every person on the chain is a button that re-centres.",
-   "A D-11 audit at 375/768/1280 is green with ?hfy_flags=familyVizKinship (evidence for viz-v2-flips); this task does not flip the flag.",
+   "islands/src/lib/family-graph.js gains relationPaths(a, b): every shortest path through common ancestors over parent and partner links. A node test on a synthetic 2,000-person graph runs it within 50 ms.",
+   "relationLabel passes a 30-case node table: ancestors to third great-grandparents; siblings and half-siblings; aunts and uncles including great-; first to third cousins and removed; step-, adopted and in-law through a partner; pedigree collapse with two paths; no relation; and 'not yet connected' for people in different components (singletons are their own component at generation 0, so generations are never compared across components).",
+   "Labels use the lowercase DS voice and are never derived from colour (the table asserts exact strings).",
    "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
   ],
   "model": "sonnet",
   "effort": "medium",
+  "notes": "Re-cut by the viz ADR (section 9.2): the engine (1.5-2 d), with no flag, so it can start as soon as viz-page-shell merges (it may be pulled into W4). The UI moves to viz-v2-kinship-ui. viz-v2-bigtree uses relationPaths for its pedigree-collapse badge. Component comp-hfy-eleventy-site.",
   "origin": "viz"
  },
  {
   "key": "viz-v2-faces",
-  "title": "Viz v2 Faces (familyVizFaces): 'pictured with' chips, a tagged-region photo viewer and a faces tab on /tree/",
+  "title": "Viz v2 Faces chips (familyVizFaces): 'pictured with' buttons from photoEdges in the details sheet",
   "wave": "W5",
   "parent": "wave-W5",
   "repo": "harrisonfamily",
@@ -7762,24 +7766,22 @@
   ],
   "depends_on": [
    "viz-mvp-flip",
-   "viz-graph-v2-data",
-   "surf-photo-tags-ui"
+   "viz-graph-v2-data"
   ],
   "acceptance_criteria": [
-   "With familyVizFaces, the navigator's bottom sheet shows 'pictured with' chips: everyone who shares a tagged photo with the person (from photoEdges), as buttons that re-centre.",
-   "A faces tab on /tree/ (no new page) shows a mosaic of 160 px face crops grouped by photo; choosing a face highlights every photo that person appears in; opening a photo shows its tagged regions through the photo-tag display of surf-photo-tags-ui (containedRect, hover, tap and keyboard), not a second implementation.",
-   "On phones the mosaic is a two-column grid and 'people in this photo' outlines the tagged regions on tap; targets are 44 px, axe is clean, and faces load lazily (at most 24 in the first view, each at most 8 KB).",
-   "Private or hidden photos never appear: the tab reads only photoEdges and faces from the published graph, which already skip them; a fixture with a private MediaRef shows no edge.",
-   "A D-11 audit at 375/768/1280 is green with ?hfy_flags=familyVizFaces (evidence for viz-v2-flips); this task does not flip the flag.",
+   "With familyVizFaces, the details sheet shows 'pictured with' chips, one per person who shares a photoEdges entry with the focus person, as buttons that re-centre (Playwright on a synthetic graph).",
+   "Chips read only photoEdges from the published graph: a fixture with a private MediaRef or a RECT_INVALID tag shows no chip for that person, and a graph without photoEdges renders no chips section and no error.",
+   "With the flag off nothing renders, and tree-budget.test.mjs still holds the navigator chunk at 35 KB gzip JS and 15 KB CSS.",
    "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
   ],
   "model": "sonnet",
   "effort": "medium",
+  "notes": "Re-cut by the viz ADR (section 9.2): chips (1 d); the faces tab moves to viz-v2-faces-tab. Component comp-hfy-eleventy-site.",
   "origin": "intake"
  },
  {
   "key": "viz-v2-bigtree",
-  "title": "Viz v2 desktop big-tree poster (familyVizBigTree): the precomputed d3-dag layout as an SVG poster",
+  "title": "Viz v2 big-tree poster render (familyVizBigTree): the precomputed layout block drawn as SVG from 64rem",
   "wave": "W5",
   "parent": "wave-W5",
   "repo": "harrisonfamily",
@@ -7805,17 +7807,20 @@
   ],
   "depends_on": [
    "viz-mvp-flip",
-   "viz-graph-v2-data"
+   "viz-graph-v2-layout",
+   "viz-v2-kinship"
   ],
   "acceptance_criteria": [
-   "With familyVizBigTree, from 64rem a 'whole family' view renders the precomputed layout block as an SVG poster of cards with a minimap. It is the only pan and zoom surface, desktop-first: buttons (zoom in, zoom out, fit, minimap) do everything a gesture does, and the wheel zooms only with a modifier key, so page scroll is never captured. Below 64rem the view is not offered, and the navigator and outline stay.",
-   "No layout code ships to the client: d3-dag stays a build-time dependency of graph/ (the bundle test shows no d3-dag module); each card is a button that opens the navigator focused on that person; with pedigree collapse a person appears once with an 'also your ancestor through …' badge.",
-   "Without a layout block in the published graph (before io's next refresh run, or before viz-graph-cloud-source), the view shows 'the whole-family view is being prepared' and loads nothing more.",
-   "A D-11 audit at 1280 and 1920 (and at 375, where the view is absent) is green with ?hfy_flags=familyVizBigTree (evidence for viz-v2-flips); this task does not flip the flag.",
+   "From 64rem, with familyVizBigTree, a 'whole family' view draws the layout block as SVG: person cards as buttons that open the navigator, union nodes as small connectors, and elbow links from the coordinates and bend points. Below 64rem the view is not offered (Playwright at 375 and 1280).",
+   "A pedigree-collapsed person appears once, with an 'also your ancestor through …' badge from relationPaths (fixture test).",
+   "Names never render below 16 px: at a zoom where one would, the card shows its face or initials only, and the name stays in the accessible name and in a hover or focus label (a test measures computed font sizes).",
+   "Without a layout block in the published graph, the view shows 'the whole-family view is being prepared' and loads nothing more (network test).",
+   "tree-budget.test.mjs holds the chunk at most 30 KB gzip JS and 5 KB CSS, and the bundle test shows no d3-dag module.",
    "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
   ],
   "model": "sonnet",
   "effort": "medium",
+  "notes": "Re-cut by the viz ADR (section 9.2): the render (2 d); zoom, pan and minimap move to viz-v2-bigtree-nav. Depends on viz-graph-v2-layout (the layout block now lives there, not in viz-graph-v2-data). The poster is about 14,000 px wide even at 231 people (ADR 3.3). Component comp-hfy-eleventy-site.",
   "origin": "intake"
  },
  {
@@ -7843,10 +7848,11 @@
    "R-22"
   ],
   "depends_on": [
-   "viz-v2-time",
-   "viz-v2-kinship",
-   "viz-v2-faces",
-   "viz-v2-bigtree"
+   "viz-v2-time-phone",
+   "viz-v2-time-eras",
+   "viz-v2-kinship-ui",
+   "viz-v2-faces-tab",
+   "viz-v2-bigtree-nav"
   ],
   "acceptance_criteria": [
    "familyVizTime (C-lite lifelines): io's UAT approval and G-prod approval are recorded verbatim and separately; era bands ship only from the io-approved Q2-14 copy list (attached), otherwise decades only.",
@@ -8691,7 +8697,7 @@
  },
  {
   "key": "viz-v3-basemap",
-  "title": "Viz v3 basemap: a maxzoom-11 PMTiles extract with fonts and sprites under map/, a Cloudflare Cache Rule and the CSP worker-src (gates G-map and G-csp)",
+  "title": "Viz v3 basemap: maxzoom-11 PMTiles extract, fonts and sprites under map/, Cache Rule and runbook (G-map)",
   "wave": "W6",
   "parent": "wave-W6",
   "repo": "harrisonfamily",
@@ -8719,24 +8725,23 @@
    "R-22"
   ],
   "depends_on": [
-   "viz-research-intake",
-   "site-csp-headers"
+   "viz-research-intake"
   ],
   "acceptance_criteria": [
-   "A dry run first, then the real extract: pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles <region>-<YYYYMMDD>.pmtiles --region=<region>.geojson --maxzoom=11 --dry-run, then without --dry-run. At maxzoom 11 the file is about 0.29 GB, under the 512 MB that Cloudflare's non-Enterprise plans cache; if z12 is ever needed, the extract is split per region so each file stays under 512 MB. The region GeoJSON is coarse (whole states and metro areas, no place points) and is stored with the extract, outside the repo; the build date, size and sha256 are recorded.",
-   "With io's go-ahead (gate G-map), the orchestrator uploads the extract, the basemaps-assets fonts (SIL OFL) and sprites/v4 under map/ in harrisonfamily-frontend with versioned file names and no Content-Encoding. This is the recorded exception to BRD2 section 1.2: map/ holds only the public OpenStreetMap-derived basemap (ODbL), no family data, and is not gated.",
-   "ci.manifest.yaml excludes map/* from the site deploy, so CI never deletes the basemap; the workflows are re-rendered with io-kit-ci render, and io-kit-ci check is clean.",
-   "A Cloudflare Cache Rule (the zone is on the Free plan) caches /map/*.pmtiles, *.pbf and the style JSON, created under the G-map go-ahead. Evidence: a ranged request returns 206 with the requested bytes, and a repeat shows a cache HIT.",
-   "The CloudFront CSP (site-csp-headers) gains worker-src 'self' for MapLibre's module worker, report-only first with the Playwright crawl at zero violations, then enforced, through the G-csp go-ahead; the rollback is recorded.",
-   "docs/how-to/rebuild-the-basemap.md covers the dry run, the extract, the versioned upload, the cache rule and the rollback (repoint to the previous file name)."
+   "A dry run first (pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles <region>-<YYYYMMDD>.pmtiles --region=<region>.geojson --maxzoom=11 --dry-run), then the real extract. The file is about 0.29 GB and no file exceeds 512 MB; the coarse region GeoJSON (whole states and metro areas, no place points) is kept with the extract outside the repo; the build date, size and sha256 are recorded as evidence.",
+   "Under io's G-map go-ahead (recorded verbatim), the extract, the basemaps-assets fonts (SIL OFL) and sprites/v4 (MIT) are uploaded under map/ in harrisonfamily-frontend with versioned names and no Content-Encoding; an S3 listing shows map/ holds only those public basemap files (the recorded BRD2 1.2 exception: ODbL data, no family data, not gated).",
+   "ci.manifest.yaml excludes map/* from the site deploy; the workflows are re-rendered with io-kit-ci render, npx io-kit-ci check is clean, and bash scripts/infra/test/run.sh passes.",
+   "A Cloudflare Cache Rule on the Free-plan zone caches /map/*.pmtiles, *.pbf and the style JSON, created once under G-map (by io, or by the orchestrator with io's go-ahead, outside the chat CI token's scope) and recorded with a screenshot. Evidence: a ranged curl returns 206 with the requested bytes, and a repeat shows a cache HIT with the same ETag.",
+   "docs/how-to/rebuild-the-basemap.md covers the dry run, the extract, the versioned upload, the Cache Rule and the rollback (repoint to the previous file name)."
   ],
   "model": "orchestrator",
   "effort": "medium",
+  "notes": "Re-cut by the viz ADR (section 9.2): extract, upload, Cache Rule and runbook (2 d plus G-map); the CSP worker-src change moves to viz-v3-csp-worker, so this task no longer depends on site-csp-headers. Orchestrator task, components comp-hfy-docs and comp-hfy-infra. The map needs no Worker route (ADR 4.10).",
   "origin": "intake"
  },
  {
   "key": "viz-v3-journeys",
-  "title": "Viz v3 Journeys (familyVizJourneys): the family's places across the map and the decades, on maplibre-gl 6.14.0 over the self-hosted basemap",
+  "title": "Viz v3 Journeys map shell (familyVizJourneys): maplibre-gl 6.14.0 over the self-hosted basemap, lazy",
   "wave": "W6",
   "parent": "wave-W6",
   "repo": "harrisonfamily",
@@ -8763,22 +8768,20 @@
   ],
   "depends_on": [
    "viz-mvp-flip",
-   "q2-11-living-city",
-   "viz-v3-basemap"
+   "viz-v3-basemap",
+   "viz-v3-csp-worker"
   ],
   "acceptance_criteria": [
-   "A lazy Journeys chunk loads maplibre-gl 6.14.0 (exact pin; track the latest 6.x; never v5, because CVE-2026-85061 / GHSA-jrc7-96c5-q579 affects every v5 release and has no backport), pmtiles 4.5.0 and @protomaps/basemaps 5.7.2 only when the map view opens: about 431 KB gzip plus 10.5 KB CSS (the ADR budget), and nothing on /tree/ before that (bundle and network tests).",
-   "maplibre-gl-worker.mjs is served beside the island module (or set with setWorkerUrl) and loaded as a module under the CSP's worker-src 'self' (viz-v3-basemap); tiles, glyphs and sprites come only from the same-origin map/ files, and a network test shows no third-party request.",
-   "GPUInitializationError and the map's error event fall back to the outline's places list (iOS 14 and older, GPU failures), tested by removing WebGL2 in the browser.",
-   "Chapters with io-approved copy (Q2-14) and a decade scrubber light up the places of each era; a place sheet lists people as cards that open the navigator; 'follow this person' draws a life path as a MapLibre line layer drawn once (no particles, no deck.gl); residence dates snap to decades with 'about' labels; chapters use native IntersectionObserver.",
-   "Residence events of living people are dropped at build time per Q2-11 (VIZ-D5), proven by a fixture test.",
-   "Attribution strings are static and written by us (because of the CVE): '© OpenStreetMap' always, and 'Place coordinates: GeoNames (geonames.org), CC BY 4.0, modified' whenever attribution.geonames is true; the OFL (fonts) and MIT (sprites) notices are on the credits line.",
-   "A D-11 audit at 375/768/1280 is green with ?hfy_flags=familyVizJourneys (evidence for viz-v3-flip); this task does not flip the flag.",
+   "A lazy Journeys chunk set loads maplibre-gl 6.14.0 (exact pin; a test fails on any 5.x), pmtiles 4.5.0 and @protomaps/basemaps 5.7.2 only when the map view opens: tree-budget.test.mjs holds it at most 460 KB gzip JS and 12 KB CSS, and bundle and network tests show 0 bytes of it on /tree/ before then. client-license-gate passes (BSD-3 code; ODbL data is not in the bundle).",
+   "maplibre-gl-worker.mjs is served beside the island module (or set with setWorkerUrl) under worker-src 'self'; tiles, glyphs and sprites come only from same-origin map/, and a network test shows no third-party request.",
+   "GPUInitializationError and the map's error event fall back to the outline's places list, tested with WebGL2 removed in the browser.",
+   "The map shows the family's geocoded places as points, fitted to them; a place with lat/lon null (unresolved, ambiguous, or a county-level area) is never drawn at a guessed point and is listed under the outline's places list instead (fixture test).",
+   "Attribution strings are static and written by us: '© OpenStreetMap' always, and whenever attribution.geonames is true the exact text of GEONAMES_CREDIT from graph/src/geocode.mjs ('Place coordinates: GeoNames (geonames.org), CC BY 4.0, modified') with its licence link; a test compares the strings and checks the credit is absent when the flag is false. The OFL and MIT notices are on the credits line.",
    "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
   ],
   "model": "sonnet",
   "effort": "medium",
-  "notes": "Was viz-v2-places (an SVG places layer in v2). The verified research moves the map to v3 Journeys on MapLibre 6.14.0 (BRD2 Appendix A and C).",
+  "notes": "Re-cut by the viz ADR (section 9.2): the map shell (2-3 d); places, decades and life paths move to viz-v3-journeys-places, chapters to viz-v3-journeys-chapters. Never MapLibre v5 (CVE-2026-85061, no backport). At checkout, confirm @protomaps/basemaps 5.7.2's release date with npm view (ADR 3.1). Respects main: geo 'naturalearth' centroids exist for state, province and country places; how an event placed at such a centroid is drawn (area marker vs point) is a design call for this checkout, not settled by the ADR. Component comp-hfy-eleventy-site.",
   "origin": "viz (re-cut by the 2026-10-13 intake)"
  },
  {
@@ -8806,7 +8809,7 @@
    "R-22"
   ],
   "depends_on": [
-   "viz-v3-journeys"
+   "viz-v3-journeys-chapters"
   ],
   "acceptance_criteria": [
    "The D-11 audit evidence for familyVizJourneys (16 px inputs, 44 px targets, one control height per row, no horizontal scroll at 375, axe clean, installed iPhone PWA) is linked, with screenshots under the task asset prefix (HFY-R16), and io's UAT approval is recorded verbatim, with the Q2-11 (b) answer applied and the Q2-14 chapter copy attached.",
@@ -8904,5 +8907,593 @@
   "effort": "high",
   "notes": "Review IF-03: io asked for parity; deleting people and families is a core Gramps edit.",
   "origin": "review"
+ },
+ {
+  "key": "viz-mvp-visual-desktop",
+  "title": "Family Card Navigator desktop: the four-row card grid from 64rem and the two-column medium layout",
+  "wave": "W4",
+  "parent": "wave-W4",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-mvp-visual"
+  ],
+  "acceptance_criteria": [
+   "From 64rem the element renders four rows: grandparents (up to 4, with 'not recorded' cards), parents, the focus family (siblings beside the focus card, the selected partner beside it, other unions as tabs) and children; the viz.md 9.1 detail panel shows the focus person (Playwright at 1280).",
+   "From 43rem to 64rem the layout has two columns (grid and detail panel), and the outline opens in the kit Sheet behind a 'generations' button (Playwright at 768).",
+   "There is no pan or zoom. A row wider than its column shows the first cards and a '+N more' button that expands in place; no name renders below 16 px at 768, 1280 or 1920 (a test measures computed font sizes).",
+   "tree.spec.mjs at 768 and 1280: axe 0 serious or critical, 44 px targets, and a keyboard-only run re-centres three times; screenshots at 768 and 1280 are attached as acceptance evidence.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "high",
+  "notes": "Split from viz-mvp-visual (ADR 9.1). Layout per ADR 4.5. Size 1-2 d. Component comp-hfy-eleventy-site.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-mvp-visual-nav",
+  "title": "Family Card Navigator navigation: buttons, horizontal-only touch, arrow keys, reduced motion, announcements",
+  "wave": "W4",
+  "parent": "wave-W4",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-mvp-visual"
+  ],
+  "acceptance_criteria": [
+   "Visible buttons cover every direction: to parents, to children, previous and next sibling, previous and next partner family. Tapping a card re-centres; ?focus and back/forward go through TreeApp's single history handler (Playwright: re-centre three times, then back three times restores each focus).",
+   "Touch: only horizontal movement inside the children row and the union tabs is handled, and the element sets touch-action: pan-y; a Playwright touch test shows that a vertical drag starting on a card scrolls the page.",
+   "Arrow keys move focus between cards (up to parents, down to children, left and right across siblings and partner families); Enter or Space re-centres; there are no single-character shortcuts; after a re-centre, focus moves to the new focus card's heading (keyboard test).",
+   "Transitions take at most 250 ms; with prefers-reduced-motion: reduce they are fades or instant (tested with emulateMedia).",
+   "The island's one polite live region announces 'centred on X: 2 parents, 1 partner, 3 children'; the element adds no second live region (a DOM test counts aria-live regions).",
+   "data-navigator@3.0.0 is added only if this model needs it, with its client-license-gate override in the same PR and the budget test still green; Olli is not added (the bundle test lists neither unless data-navigator is adopted).",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "high",
+  "notes": "Split from viz-mvp-visual (ADR 9.1). Swipe up/down for generations (a report proposal) is replaced by buttons (ADR section 6). Size 1-2 d. Component comp-hfy-eleventy-site.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-mvp-visual-fallback",
+  "title": "Family Card Navigator fallbacks: outline-only on chunk failure, cards|outline toggle, error states, faces",
+  "wave": "W4",
+  "parent": "wave-W4",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-mvp-visual"
+  ],
+  "acceptance_criteria": [
+   "If the lazy import rejects or customElements.define throws, the page shows outline-only mode with 'the chart didn't load. the outline below has everything.' (CHART_CHUNK_FAILED), and the outline is complete without the chunk (Playwright with the chunk route aborted).",
+   "The cards | outline toggle works at 375, 768 and 1280; ?view=outline and localStorage['hfy:tree-view'] are honoured, with every storage read and write in try/catch (a test with a throwing localStorage still renders); the noscript line stays.",
+   "The viz.md section 7 states keep working with the cards view, one test each: a 401 refreshes once and then signs in with returnTo; a 403 or 404 shows 'the family tree is being prepared'; a bad schema shows the retry state.",
+   "A face that fails to load becomes initials with no layout shift (CLS test at most 0.05 with the face route returning 404).",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "high",
+  "notes": "Split from viz-mvp-visual (ADR 9.1). Size 1 d. Component comp-hfy-eleventy-site.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-mvp-visual-perf",
+  "title": "Family Card Navigator budgets: 35 KB JS + 15 KB CSS gzip, perf at 231 and 2,000 people, no inlined data",
+  "wave": "W4",
+  "parent": "wave-W4",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-mvp-visual-desktop",
+   "viz-mvp-visual-nav",
+   "viz-mvp-visual-fallback"
+  ],
+  "acceptance_criteria": [
+   "tree-budget.test.mjs asserts the navigator chunk is at most 35 KB gzip JS and 15 KB gzip CSS and the island entry at most 60 KB gzip (excluding the shared React chunk), and the old 120 KB chart-chunk line is removed.",
+   "tree-perf.spec.mjs on synthetic graphs of 231 and 2,000 people (graph-synth.mjs, invented names), with 4x CPU and slow 4G: a visible focus card within 2.5 s and 3.5 s, a re-centre long task of at most 100 and 200 ms, CLS at most 0.05, and at most 24 face requests in the first view, each at most 8 KB.",
+   "A test proves the built 11ty/tree/index.html holds no person data (no synthetic name or id from the fixture) and 11ty/sw.js has no /person/ route.",
+   "theme-lint passes, and the ADR 4.9 contrast computation (contrast.mjs, or the kit's helper if one exists by then) against the tokens pinned at build time shows at least 3:1 in dark and light for the dashed border-strong card border and the focus ring against surface-raised and surface. If any pair is below 3:1, the task records that iokit-tokens-viz is needed for the MVP and the dependency is restored.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "high",
+  "notes": "Split from viz-mvp-visual (ADR 9.1). Budgets approved by io with Q2-13 on 2026-10-13 (ADR section 5; viz.md section 11 as amended). Rewire: viz-mvp-flip depends on viz-mvp-visual-perf (and through it on all five MVP PRs), viz-graph-publish and surf-nav-flip, instead of viz-mvp-visual. Size 1 d. Component comp-hfy-eleventy-site.",
+  "origin": "viz"
+ },
+ {
+  "key": "iokit-tokens-viz-install",
+  "title": "Install side of iokit-tokens-viz: pin the published @io-kit/tokens exactly and rebuild the theme",
+  "wave": "W4",
+  "parent": "wave-W4",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "iokit-tokens-viz"
+  ],
+  "acceptance_criteria": [
+   "If iokit-tokens-viz published @io-kit/tokens 0.4.3 (CodeArtifact list-package-versions lists it), the islands pin it exactly and hfy-theme.css is rebuilt; theme-delivery and theme-lint pass, and before/after screenshots of two existing pages at 375 and 1280 show no regression.",
+   "Install discipline: the package.json diff changes only @io-kit/tokens and lowers no pin; the lockfile is regenerated with a local CodeArtifact token (no CI-time npm); npm ci from the committed lockfile passes.",
+   "If iokit-tokens-viz closed as not needed, this task closes as not needed, citing that evidence.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "high",
+  "notes": "Moved out of viz-mvp-visual (its old AC7; ADR 9.1, HFY-TSK-117 AC7). iokit-tokens-viz is re-scoped to the era-band fills (only if io approves era copy) and the map overlay point, selected point and life-path line tokens, each at 3:1 or better against the Protomaps dark and light flavours; it keeps its kit-release ACs. Dependants: viz-v2-time-eras and viz-v3-journeys-places. Not on the MVP path. Size 0.5-1 d. Component comp-hfy-eleventy-site.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-graph-v2-layout",
+  "title": "graph.json layout block: d3-dag 1.2.2 build-time poster layout (coordGreedy, ranks) with time budgets",
+  "wave": "W4",
+  "parent": "wave-W4",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-graph"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd graph && node --test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22",
+   "R-29"
+  ],
+  "depends_on": [
+   "viz-generation-index",
+   "viz-research-intake"
+  ],
+  "acceptance_criteria": [
+   "graph/package.json pins d3-dag 1.2.2 exactly as a dependency of graph/ only; its dependencies (javascript-lp-solver, quadprog, stringify-object, d3-array) appear in graph/package-lock.json and in no islands or chat-worker lockfile (a test greps the lockfiles).",
+   "build.mjs emits layout as in ADR 4.7: ranks from the generation index (a person at 2 x generation; a union at 2 x its highest partner generation + 1; a partnerless union at 2 x its lowest child generation - 1), layeringSimplex with those rank constraints, decrossTwoLayer and coordGreedy (never coordSimplex or decrossOpt), integer coordinates, and bend points only for links that span more than one layer. The schema gains layout as optional with additionalProperties false, and MINOR is bumped by one.",
+   "Only components of at least 2 people are laid out: singletons (their own component at generation 0, as generations.mjs on main emits) and GRAPH_CYCLE members (generation null) are left out, filtered before d3-dag runs; a test proves a cyclic fixture still emits no cycle member, because d3-dag 1.2.2 lays out a cyclic graph without error.",
+   "A messy synthetic fixture (two partner families, mother-only, parentless siblings, birth plus adoptive parents, pedigree collapse, a second component, a cycle, a singleton) places each laid-out person once, no two nodes at one position and every generation on one layer, and shuffled input gives byte-identical output.",
+   "Budgets on a seeded synthetic generator (invented names): graph.json gzip with layout and photoEdges at most 25 KB at 231 and 150 KB at 2,000; layout time at most 5 s at 231 people, run everywhere including CI; at most 60 s at 2,000 people in a test that runs only with HFY_GRAPH_PERF=1 and is skipped on shared CI runners; the measured time and Node version are recorded as acceptance evidence. A miss fails the test; the remedy is an ADR amendment, never a silent budget change.",
+   "layout.engine is the schema-pinned string 'd3-dag 1.2.2' (no '@'; layout is not exempt from the verify() scan). source.builder keeps main's 'hfy-graph@<version>' under its existing /source/ scan exemption and strict schema pattern. A test feeding engine 'd3-dag@1.2.2' gets PRIVACY_VIOLATION (exit 4), and a test asserts no string in the block contains '@' or matches the day-precise date pattern.",
+   "cd graph && npm ci && node --test passes on synthetic fixtures only (invented names, places and ids); pass and fail counts are recorded as acceptance evidence."
+  ],
+  "model": "sonnet",
+  "effort": "high",
+  "notes": "Split from viz-graph-v2-data (ADR 9.2, 2-3 d). Respects main: verify() on main exempts /source/ (strict schema pattern), so ADR 4.7's 'hfy-graph 0.1.0' builder rename is not needed; only the new layout block avoids '@'. viz-graph-cloud-source runs the same layout in Lambda after each debounced batch, so its timeout must allow for tens of seconds at 2,000 people. Component comp-hfy-graph. Rewire: viz-v2-bigtree depends on this task.",
+  "origin": "intake"
+ },
+ {
+  "key": "viz-v2-time-phone",
+  "title": "Viz v2 lifelines on phones: one branch per panel down the screen, plus the table view for screen readers",
+  "wave": "W5",
+  "parent": "wave-W5",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-v2-time"
+  ],
+  "acceptance_criteria": [
+   "Below 43rem time runs down the screen, one branch per panel, with previous and next buttons; no gesture is required and there is no horizontal page scroll at 320 or 375 (Playwright).",
+   "A table view (person, born, died, events) is the screen-reader path, reachable from the view toggle; a test checks it lists the same people as the lifelines.",
+   "A D-11 audit at 375, 768 and 1280 is green with ?hfy_flags=familyVizTime (axe 0 serious or critical, 44 px targets, 16 px names, no horizontal page scroll at 320 and 375), with screenshots under the task asset prefix (HFY-R16). It is evidence for the flip task; this task does not flip familyVizTime.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v2-time (ADR 9.2, 1-2 d). Component comp-hfy-eleventy-site. Rewire: viz-v2-flips depends on viz-v2-time-phone and viz-v2-time-eras instead of viz-v2-time.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-v2-time-eras",
+  "title": "Viz v2 era bands from io's approved copy list (Q2-14, VIZ-D12), else decades only",
+  "wave": "W5",
+  "parent": "wave-W5",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-v2-time",
+   "iokit-tokens-viz-install"
+  ],
+  "acceptance_criteria": [
+   "Bands render only from an io-approved copy list: a data file of name, start year, end year and a one-sentence note, attached with io's verbatim approval and its date. Without the list the task closes 'decades only' and nothing renders.",
+   "Bands are labelled in text, never by colour alone; labels have at least 4.5:1 contrast and band boundaries at least 3:1, in dark and light; choosing a band opens its note in the kit Sheet.",
+   "There is one test with the list and one without it; the second asserts that no band element and no copy string are present.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v2-time (ADR 9.2, 0.5-1 d). io's 2026-10-13 sheet answer keeps the Q2-14 default: era names only in wording io approves. Uses the era-band fill tokens from iokit-tokens-viz only if io approves copy. Component comp-hfy-eleventy-site.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-v2-kinship-ui",
+  "title": "Viz v2 'how are we related?' panel (familyVizKinship): chain of cards and grandparent and cousin shortcuts",
+  "wave": "W5",
+  "parent": "wave-W5",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-v2-kinship",
+   "viz-mvp-flip"
+  ],
+  "acceptance_criteria": [
+   "For signed-in members with familyVizKinship, a pill opens a vertical chain of cards from the viewer up to the common ancestor and down to the person, ending in one plain sentence; with pedigree collapse both paths are listed (Playwright on a synthetic fixture).",
+   "The 'my grandparents' and 'my cousins' shortcuts re-centre the navigator, every card is a button, and tree-budget.test.mjs holds the chunk at most 10 KB gzip JS.",
+   "A D-11 audit at 375, 768 and 1280 is green with ?hfy_flags=familyVizKinship (axe 0 serious or critical, 44 px targets, 16 px names, no horizontal page scroll at 320 and 375), with screenshots under the task asset prefix (HFY-R16). It is evidence for the flip task; this task does not flip familyVizKinship.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v2-kinship (ADR 9.2, 1-2 d). Component comp-hfy-eleventy-site. Rewire: viz-v2-flips depends on viz-v2-kinship-ui instead of viz-v2-kinship.",
+  "origin": "viz"
+ },
+ {
+  "key": "viz-v2-faces-tab",
+  "title": "Viz v2 faces tab on /tree/: a mosaic of 160 px crops grouped by photo, opened through surf-photo-tags-ui",
+  "wave": "W5",
+  "parent": "wave-W5",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22",
+   "R-29"
+  ],
+  "depends_on": [
+   "viz-v2-faces",
+   "surf-photo-tags-ui"
+  ],
+  "acceptance_criteria": [
+   "A faces tab on /tree/ (no new page) shows a mosaic of 160 px face crops grouped by photoEdges entry; choosing a face highlights every photo that person is in. A person whose face is null (RECT_INVALID, placeholder or missing media on main) shows initials, never a crop guessed from the region.",
+   "Opening a photo uses surf-photo-tags-ui's tag display (containedRect, hover, tap, keyboard), not a second implementation; the PR diff adds no region-geometry code.",
+   "On phones the mosaic is a two-column grid, and 'people in this photo' outlines the regions on tap (Playwright at 375).",
+   "44 px targets, axe clean, at most 24 lazy faces in the first view (each at most 8 KB), and the chunk at most 15 KB gzip JS and 5 KB CSS (tree-budget.test.mjs).",
+   "A D-11 audit at 375, 768 and 1280 is green with ?hfy_flags=familyVizFaces (axe 0 serious or critical, 44 px targets, 16 px names, no horizontal page scroll at 320 and 375), with screenshots under the task asset prefix (HFY-R16). It is evidence for the flip task; this task does not flip familyVizFaces.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v2-faces (ADR 9.2, 2 d). Component comp-hfy-eleventy-site. Rewire: viz-v2-flips depends on viz-v2-faces-tab instead of viz-v2-faces.",
+  "origin": "intake"
+ },
+ {
+  "key": "viz-v2-bigtree-nav",
+  "title": "Viz v2 poster navigation: zoom and fit buttons, minimap, modifier-only wheel zoom, no touch capture",
+  "wave": "W5",
+  "parent": "wave-W5",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "viz-v2-bigtree"
+  ],
+  "acceptance_criteria": [
+   "Buttons for zoom in, zoom out, fit, reset to the viewer and a minimap do everything a gesture does (Playwright drives each).",
+   "The wheel zooms only with Ctrl or Cmd, mouse drag pans inside the poster region only, and touch input on wide tablets never pans or zooms the poster while the page scrolls (touch-action: pan-x pan-y; tested).",
+   "Keyboard users move between cards with Tab, and the focused card is scrolled into view (keyboard test).",
+   "A D-11 audit at 1280 and 1920, plus 375 where the view is absent, is green with ?hfy_flags=familyVizBigTree (axe 0 serious or critical, 44 px targets, 16 px names, no horizontal page scroll at 320 and 375), with screenshots under the task asset prefix (HFY-R16). It is evidence for the flip task; this task does not flip familyVizBigTree.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v2-bigtree (ADR 9.2, 1-2 d). The poster is the only pan-and-zoom surface (viz.md 4.1 invariant 4 holds on phones). Component comp-hfy-eleventy-site. Rewire: viz-v2-flips depends on viz-v2-bigtree-nav instead of viz-v2-bigtree; its familyVizBigTree row still needs the layout block in the published graph.",
+  "origin": "intake"
+ },
+ {
+  "key": "viz-v3-csp-worker",
+  "title": "CSP worker-src 'self' for MapLibre's module worker: report-only, then enforced under G-csp",
+  "wave": "W6",
+  "parent": "wave-W6",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "infra-script",
+  "release_group": "infra-script",
+  "components": [
+   "comp-hfy-infra"
+  ],
+  "test_plan": {
+   "suites": [
+    "bash scripts/infra/test/run.sh",
+    "npx io-kit-ci check",
+    "a ranged curl of the map file through the zone (206, then a cache HIT)"
+   ],
+   "runs_on": [
+    "worker-local",
+    "CI",
+    "prod-UAT"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence; the CI run URL; io's G-uat or gate approval recorded verbatim, with screenshots or counts under the HFY-R16 prefix."
+  },
+  "requirements": [
+   "R-22"
+  ],
+  "depends_on": [
+   "site-csp-headers"
+  ],
+  "acceptance_criteria": [
+   "The CloudFront CSP (site-csp-headers) gains worker-src 'self' (not blob:) in report-only mode, and the Playwright crawl of the site reports zero violations.",
+   "Through io's G-csp go-ahead, recorded verbatim, the directive is enforced; a post-deploy curl -sI shows the enforced header with worker-src 'self'.",
+   "The rollback (revert to the previous header policy) is recorded in the PR body, and bash scripts/infra/test/run.sh and npx io-kit-ci check pass."
+  ],
+  "model": "orchestrator",
+  "effort": "medium",
+  "notes": "Split from viz-v3-basemap (ADR 9.2; ADR 1.3 item 3: maplibre-gl 6.x is ESM-only with a separate module worker). 1 d plus a report-only soak. Component comp-hfy-infra.",
+  "origin": "intake"
+ },
+ {
+  "key": "viz-v3-journeys-places",
+  "title": "Viz v3 Journeys places: decade scrubber, place sheets, 'follow this person' life paths, Q2-11(b) living rule",
+  "wave": "W6",
+  "parent": "wave-W6",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22",
+   "R-18"
+  ],
+  "depends_on": [
+   "viz-v3-journeys",
+   "q2-11-living-city",
+   "iokit-tokens-viz-install"
+  ],
+  "acceptance_criteria": [
+   "A decade scrubber (buttons, plus a keyboard-operable slider) lights up each decade's places (Playwright with the keyboard alone).",
+   "A place sheet lists people as cards that open the navigator (Playwright on a synthetic graph).",
+   "'Follow this person' draws a life path as a MapLibre line layer drawn once (no particles, no deck.gl; the bundle test lists no deck.gl module); residence years snap to decades with 'about' labels.",
+   "A fixture asserts io's recorded Q2-11(b) answer read from q2-11-living-city (sheet Q3), not a hard-coded rule: under the default, living people's residence events are absent from the published graph and never drawn on the family map. Under any other answer the fixture asserts exactly what that answer allows, and the ADR is amended before checkout.",
+   "Map overlay point, selected point and life-path line use the iokit-tokens-viz tokens, at 3:1 or better against the Protomaps dark and light flavours (contrast test); the outline's places list is the screen-reader equivalent.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v3-journeys (ADR 9.2, 2-3 d). io approved every sheet default on 2026-10-13, including Q3 (Q2-11(b)); the fixture still reads the recorded answer rather than hard-coding it. Component comp-hfy-eleventy-site.",
+  "origin": "viz (re-cut by the 2026-10-13 intake)"
+ },
+ {
+  "key": "viz-v3-journeys-chapters",
+  "title": "Viz v3 Journeys chapters from io's approved copy (Q2-14), published only as a gated object under person/",
+  "wave": "W6",
+  "parent": "wave-W6",
+  "repo": "harrisonfamily",
+  "transition_type": "github_pr_deploy",
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge",
+  "components": [
+   "comp-hfy-eleventy-site",
+   "comp-hfy-graph"
+  ],
+  "test_plan": {
+   "suites": [
+    "cd islands && npm run build && npm run check:islands",
+    "cd islands && npm run test:contract",
+    "cd islands && npm test"
+   ],
+   "runs_on": [
+    "worker-local"
+   ],
+   "evidence": "suite results (pass and fail counts) recorded as acceptance evidence."
+  },
+  "requirements": [
+   "R-22",
+   "R-18"
+  ],
+  "depends_on": [
+   "viz-v3-journeys-places"
+  ],
+  "acceptance_criteria": [
+   "Chapters render only from an io-approved chapter copy list, attached with io's verbatim approval and its date; without it the task closes with the decade scrubber only (one test with the list, one without).",
+   "The approved list is kept with io's data outside the repo (never in Git, CI, Eleventy front matter, _data or any public HTML or JS). build-graph.mjs --chapters <file> validates it against a schema, runs the verify() text scan on it and writes person/journeys-chapters.json atomically; it is served by the existing /person/*.json behaviour and edge gate with private, no-store (graph suite tests plus a signed-out curl returning 401).",
+   "A test proves the built 11ty/tree/index.html and every tree and Journeys island JS file contain none of the fixture's chapter copy, and a network test shows the copy arriving only from the gated path when the map view opens.",
+   "Chapters are triggered by native IntersectionObserver; camera moves are cuts under prefers-reduced-motion: reduce, and nothing animates as flying arcs (emulateMedia test).",
+   "A D-11 audit at 375, 768 and 1280 is green with ?hfy_flags=familyVizJourneys (axe 0 serious or critical, 44 px targets, 16 px names, no horizontal page scroll at 320 and 375), with screenshots under the task asset prefix (HFY-R16). It is evidence for the flip task; this task does not flip familyVizJourneys.",
+   "Islands merge train (BRD2 section 10.2): cd islands && npm run build; every file the build touched is committed; npm run check:islands, npm run test:contract and npm test pass (results recorded as acceptance evidence). The PR is rebased on origin/main and rebuilt immediately before merge, and on a rebase conflict in a generated file (11ty/js/islands/**, the hfy-asset-versions blocks, the ?v= values) it takes origin/main's side and rebuilds, so a generated file is never hand-resolved. The graph suite (cd graph && node --test) also passes, because this task touches graph/."
+  ],
+  "model": "sonnet",
+  "effort": "medium",
+  "notes": "Split from viz-v3-journeys (ADR 9.2, 1-2 d; ADR 4.6 for the gated storage). docs/how-to/refresh-the-family-data.md step 2b gains the --chapters flag only once io approves a list. Components comp-hfy-eleventy-site and comp-hfy-graph. Rewire: viz-v3-flip depends on viz-v3-journeys-chapters instead of viz-v3-journeys.",
+  "origin": "viz (re-cut by the 2026-10-13 intake)"
  }
 ]
