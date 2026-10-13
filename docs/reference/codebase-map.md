@@ -188,7 +188,7 @@ Paths:
   - `origin.js`: the `X-Origin-Verify` check.
   - `content.js`: posts.
   - `comments.js`: comments and reactions.
-  - `txn.js`: transactions and audit items.
+  - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `notify.js`: push notifications and their templates.
   - `uploads.js`: the upload route.
@@ -453,7 +453,7 @@ Facts:
 
 Paths:
 
-- [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign` and `producers`. `fake-ddb.js` and `world.js` are helpers.
+- [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers` and `txn`. `fake-ddb.js` and `world.js` are helpers.
 - [`auth/test/`](../../auth/test/): Vitest. The suites are `cognito`, `edge`, `linkstore`, `oauth`, `origin`, `passkey`, `passkeystore` and `userinfo`. `fake-table.js` is a helper.
 - [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs): a Playwright end-to-end passkey test.
 - [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs): a Playwright end-to-end test of the styled sign-in pages.

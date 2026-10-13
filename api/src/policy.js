@@ -13,6 +13,8 @@
 // `email` claim; the group is granted only on an exact, case-insensitive match. hfy-admin accepts subjects ONLY (no email path), and the token's own
 // `groups` claim (members/admins from the auth edge) is deliberately ignored for MCP authorization. Any load/parse failure fails closed (no groups).
 
+import { logSafeError } from "./http.js";
+
 export const AUTHORS_GROUP = "mcp-authors";
 export const ADMIN_GROUP = "hfy-admin";
 export const STEP_UP_MAX_AGE_SECONDS = 300;
@@ -61,7 +63,7 @@ export function createGroupResolver({ load, emailsFor, ttlMs = 60_000, now = () 
     try {
       cache = { at: now(), cfg: parseGroupsConfig(await load()) };
     } catch (e) {
-      log.error?.("groups config unavailable (failing closed)", e instanceof Error ? e.message : String(e));
+      log.error?.("groups config unavailable (failing closed)", logSafeError(e));
       cache = { at: now() - ttlMs + 5_000, cfg: parseGroupsConfig(null) }; // retry in 5 s; nobody is granted anything meanwhile
     }
     return cache.cfg;

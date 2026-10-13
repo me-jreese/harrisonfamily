@@ -7,6 +7,8 @@
 //   3. else the gramps_id (the sub). Never an email, never an error.
 
 /** Same ceiling as the auth edge's displayNameOf (auth/src/oauth.js): the label it mints as the access token's `name` claim. */
+import { logSafeError } from "./http.js";
+
 export const LABEL_MAX = 200;
 /** What a gramps_id looks like. Only ids of this shape are ever turned into an S3 key (the sub is verified, this is defence in depth). */
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -57,7 +59,7 @@ export function createLabelResolver({ load, ttlMs = 3_600_000, missTtlMs = 60_00
       const absent = e?.name === "NoSuchKey" || e?.Code === "NoSuchKey" || status === 404;
       // Without s3:ListBucket, S3 answers 403 AccessDenied for a key that does not exist; an unreadable (bad JSON) record is as final as an absent one.
       const definite = absent || e?.name === "AccessDenied" || e?.Code === "AccessDenied" || status === 403 || e instanceof SyntaxError;
-      if (!absent) log.warn?.("author label unavailable (using the gramps_id)", id, e instanceof Error ? e.message : String(e));
+      if (!absent) log.warn?.("author label unavailable (using the gramps_id)", id, logSafeError(e));
       const stale = cache.get(id)?.label;
       remember(id, stale, now() + (definite ? missTtlMs : errorTtlMs));
       return stale;

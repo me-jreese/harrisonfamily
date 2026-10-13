@@ -1,6 +1,6 @@
 // Lambda entry point: wires real AWS clients. Handler is `src/index.handler`.
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
@@ -12,9 +12,10 @@ import { createPresignPut } from "./presign.js";
 import { createGroupResolver } from "./policy.js";
 import { createLabelResolver, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
+import { logSafeError } from "./http.js";
 
 const env = process.env;
-const cmds = { GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand, TransactWriteCommand };
+const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand };
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
 const secrets = new SecretsManagerClient({});
@@ -42,7 +43,7 @@ async function loadPush() {
     const mod = await import("web-push");
     push = { vapid: { subject: v.subject, publicKey: v.publicKey, privateKey: v.privateKey }, webpush: mod.default ?? mod, vapidPublicKey: v.publicKey };
   } catch (e) {
-    console.error("push disabled", e instanceof Error ? e.message : String(e));
+    console.error("push disabled", logSafeError(e));
   }
   return push;
 }

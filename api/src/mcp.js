@@ -5,6 +5,7 @@ import { createEdge, lambdaAdapter, buildWwwAuthenticate } from "@io-kit/mcp/edg
 import { createMcpServer } from "@io-kit/mcp/core";
 import { ROUTES, MCP_RESOURCE } from "./routes.js";
 import { ADMIN_GROUP, POLICY, STEP_UP_MAX_AGE_SECONDS, STRONG_AMR } from "./policy.js";
+import { logSafeError } from "./http.js";
 import { cleanLabel, fallbackLabel, ownLabelOnly } from "./labels.js";
 
 export const MCP_PATH = "/mcp";
@@ -94,7 +95,7 @@ export function createMcpMount({ config = loadMcpConfig(), invoke, resolveGroups
   const registry = buildMcpRegistry(async (principal, name, parts) => invoke(await actorFor(principal, resolveLabel), name, parts));
   const server = createMcpCore({
     registry, now,
-    logger: { audit: (r) => log.info?.("mcp.audit", { ...r, principal: { type: r.principal.type, sub: r.principal.sub, groups: r.principal.groups } }), error: (m, d) => log.error?.(m, d instanceof Error ? d.message : d) },
+    logger: { audit: (r) => log.info?.("mcp.audit", { ...r, principal: { type: r.principal.type, sub: r.principal.sub, groups: r.principal.groups } }), error: (m, d) => log.error?.(m, logSafeError(d)) },
   });
   const wwwAuth = () => buildWwwAuthenticate({ realm: new URL(config.resourceUrl).host, resourceMetadata: `${edge.origin}${PRM_PREFIX}`, scope: config.scopes.join(" "), error: "invalid_token", description: "token not issued for this resource" });
   const downstream = async (req, pass) => {

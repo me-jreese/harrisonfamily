@@ -20,14 +20,31 @@ export class HttpError extends Error {
   }
 }
 
-/** Maps any thrown value to a JSON error response. Unknown errors are 500 with no detail. */
-export function errorResponse(e, log = console) {
+/** A log-safe token: a short word-character string, else the fallback. Error names and codes only ever pass through this. */
+const logToken = (v, fallback) => (typeof v === "string" && /^[\w.-]{1,64}$/.test(v) ? v : fallback);
+
+/**
+ * The only thing the API logs about an unexpected error: `{name, code, route, requestId}` (PS-20). Never `message` or `stack`:
+ * a JSON.parse failure quotes the text it choked on, and a cancelled transaction's reasons can carry the old item. `route` is the
+ * matched route's name and `requestId` the Function URL's request id; both are optional.
+ */
+export function logSafeError(e, ctx = {}) {
+  return {
+    name: logToken(e instanceof Error ? e.name : undefined, "NonError"),
+    code: logToken(e?.code, undefined),
+    route: logToken(ctx.route, undefined),
+    requestId: logToken(ctx.requestId, undefined),
+  };
+}
+
+/** Maps any thrown value to a JSON error response. Unknown errors are 500 with no detail, logged as `logSafeError` only. */
+export function errorResponse(e, log = console, ctx = {}) {
   if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message });
   if (e instanceof ContentError) {
     return json(e.status, { error: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) });
   }
   if (e instanceof CommentError) return json(e.status, { error: e.code, message: e.message, ...(e.field ? { details: { field: e.field } } : {}) });
-  log.error?.("unhandled", e instanceof Error ? e.stack : String(e));
+  log.error?.("unhandled", logSafeError(e, ctx));
   return json(500, { error: "internal", message: "internal error" });
 }
 

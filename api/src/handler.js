@@ -5,7 +5,7 @@ import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments
 import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { createUploads } from "./uploads.js";
-import { HttpError, errorResponse, json } from "./http.js";
+import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -16,7 +16,7 @@ export function createHandler(deps) {
     try {
       await fn();
     } catch (e) {
-      log.error?.(`${label} failed (write already committed)`, e instanceof Error ? e.message : String(e));
+      log.error?.(`${label} failed (write already committed)`, logSafeError(e));
     }
   };
 
@@ -68,6 +68,7 @@ export function createHandler(deps) {
   }
 
   async function handler(event) {
+    const ctx = { requestId: event.requestContext?.requestId };
     try {
       const method = (event.requestContext?.http?.method ?? event.httpMethod ?? "GET").toUpperCase();
       let path = (event.rawPath ?? event.path ?? "/").replace(/\/+$/, "") || "/";
@@ -77,6 +78,7 @@ export function createHandler(deps) {
       const { route, params, pathMatched } = matchRoute(method, path);
       if (!route) throw pathMatched ? new HttpError(405, "method_not_allowed", "method not allowed") : new HttpError(404, "not_found", "no such route");
 
+      ctx.route = route.name;
       const actor = await authenticate(event);
       if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
 
@@ -98,7 +100,7 @@ export function createHandler(deps) {
       if (r.statusCode !== undefined) return { ...r, headers: { "cache-control": "no-store", ...r.headers } }; // notify handler result
       return json(r.status, r.body);
     } catch (e) {
-      return errorResponse(e, log);
+      return errorResponse(e, log, ctx);
     }
   }
   handler.invoke = invoke;
