@@ -159,7 +159,7 @@ test("/private/ is the redirect page: no cards, no images, no data, a noscript s
   assert.match(html, /<!-- hfy-theme:start A -->/);
   assert.match(html, /<!-- hfy-theme:start B -->/);
   assert.match(html, /<link rel="stylesheet" href="\/css\/hfy-theme\.css\?v=[0-9a-f]{8}" \/>/);
-  assert.match(html, /<title>your family · Harrison Family<\/title>/);
+  assert.match(html, /<title>your page · Harrison Family<\/title>/); // since the navMe flip (HFY-TSK-223): "me" opens it
 });
 
 test("the redirect rule is one function (HFYFeatureFlags.goToFamily) used by /private/ and by /person/ without an id", () => {

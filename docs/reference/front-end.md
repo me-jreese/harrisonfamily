@@ -131,7 +131,7 @@ In `<head>`, block A's early-hint script runs before any stylesheet. In the body
 
 ### Build-time values
 
-[`11ty/_data/flags.json`](../../11ty/_data/flags.json) is served at `/_data/flags.json`. It defines seven flags: `authV2`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `searchV2` and `shellV2`. In the committed file `navMe` is `false`: it shipped default-off with HFY-TSK-091 (HFY-R8). The other six are `true`, a change made by PR #8 (HFY-TSK-069). The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67): the site with the flip deployed first, and the data gate attached after it. To see what the site serves now:
+[`11ty/_data/flags.json`](../../11ty/_data/flags.json) is served at `/_data/flags.json`. It defines seven flags: `authV2`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `searchV2` and `shellV2`. In the committed file all seven are `true`. Six were set by PR #8 (HFY-TSK-069). `navMe` shipped default-off with HFY-TSK-091 (HFY-R8) and was turned on on 2026-10-13 with io's approval (HFY-TSK-223); setting it back to `false` is that flip's rollback. The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67): the site with the flip deployed first, and the data gate attached after it. To see what the site serves now:
 
 ```sh
 curl -s https://<site>/_data/flags.json | jq .

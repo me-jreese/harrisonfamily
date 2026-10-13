@@ -1,6 +1,6 @@
 {
   "authV2": true,
-  "navMe": false,
+  "navMe": true,
   "notifyV2": true,
   "personV2": true,
   "postsV2": true,

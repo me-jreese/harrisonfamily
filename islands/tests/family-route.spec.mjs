@@ -1,7 +1,8 @@
 // The family tab is "your family": it opens the signed-in member's own page, /person/?id=<edge session sub = gramps id>, and a
 // signed-out visitor goes to the sign-in, which returns to /private/ (the stable family route, a redirect page) and then to the
-// own page. /person/ without an id does the same; the 2025 dev scaffold that /private/ used to be is gone. With navMe (HFY-TSK-091,
-// turned on here with the ?hfy_flags preview override) the same own-page tab is "me", and "family" leaves the bar.
+// own page. /person/ without an id does the same; the 2025 dev scaffold that /private/ used to be is gone. With navMe (HFY-TSK-091, on in
+// the build flags since its flip, HFY-TSK-223) the same own-page tab is "me", and "family" leaves the bar. Both states are pinned with the
+// ?hfy_flags preview override (-navMe for the family tab, the rollback state; navMe for "me"), so no test leans on the build value.
 // /auth and /api are stubbed; the person data answers 404 (only the shell and the redirects are under test). Run against the committed
 // site (../11ty on 8089) or a scratch build: HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/family-route.spec.mjs
 import { test, expect } from "@playwright/test";
@@ -9,6 +10,7 @@ import { test, expect } from "@playwright/test";
 const SUB = "I0042";
 const OTHER = "I0099";
 const OWN = `/person/?id=${SUB}`;
+const NONAVME = "hfy_flags=-navMe"; // the family tab is the pre-flip (navMe off) bar
 
 async function hermetic(page, { session = "in", flags } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
@@ -36,7 +38,7 @@ for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
   test(`${name}: signed in, the family tab links to the member's own page`, async ({ page }) => {
     await hermetic(page);
     await page.setViewportSize({ width, height: 800 });
-    await page.goto("/about/", { waitUntil: "domcontentloaded" });
+    await page.goto(`/about/?${NONAVME}`, { waitUntil: "domcontentloaded" });
     await shellUp(page);
     await expect(family(page)).toHaveAttribute("href", OWN);
     // the account menu's "your page" is the same URL
@@ -47,7 +49,7 @@ for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
   test(`${name}: signed out, the family tab is the stable /private/ route (never /family/, a gated data prefix)`, async ({ page }) => {
     await hermetic(page, { session: "out" });
     await page.setViewportSize({ width, height: 800 });
-    await page.goto("/about/", { waitUntil: "domcontentloaded" });
+    await page.goto(`/about/?${NONAVME}`, { waitUntil: "domcontentloaded" });
     await shellUp(page);
     await expect(page.locator('[data-hfy-account="signed-out"]')).toBeVisible();
     await expect(family(page)).toHaveAttribute("href", "/private/");
@@ -57,7 +59,7 @@ for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
   test(`${name}: /auth/session unreachable, the family tab is still /private/`, async ({ page }) => {
     await hermetic(page, { session: "unreachable" });
     await page.setViewportSize({ width, height: 800 });
-    await page.goto("/about/", { waitUntil: "domcontentloaded" });
+    await page.goto(`/about/?${NONAVME}`, { waitUntil: "domcontentloaded" });
     await shellUp(page);
     await expect(family(page)).toHaveAttribute("href", "/private/");
   });
@@ -71,7 +73,7 @@ for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
   test(`${name}: the family tab is current on the member's own page, and only there`, async ({ page }) => {
     await hermetic(page);
     await page.setViewportSize({ width, height: 800 });
-    await page.goto(OWN, { waitUntil: "domcontentloaded" });
+    await page.goto(`${OWN}&${NONAVME}`, { waitUntil: "domcontentloaded" });
     await shellUp(page);
     await expect(current(page)).toHaveCount(1);
     await expect(current(page)).toContainText("family");
@@ -82,7 +84,7 @@ for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
   test(`${name}: another person's page marks no tab (family is not it, and search would be a guess)`, async ({ page }) => {
     await hermetic(page);
     await page.setViewportSize({ width, height: 800 });
-    await page.goto(`/person/?id=${OTHER}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/person/?id=${OTHER}&${NONAVME}`, { waitUntil: "domcontentloaded" });
     await shellUp(page);
     await expect(family(page)).toHaveAttribute("href", OWN); // the session has resolved: the tab names the member's own page
     await expect(current(page)).toHaveCount(0);

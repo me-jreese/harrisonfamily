@@ -419,10 +419,10 @@ for (const [width, gutter] of [[375, 16], [688, 24], [1024, 64]]) {
 
 test("shell at 375: the bottom bar's focus ring is drawn inside its cell (no edge cut off)", async ({ page }) => {
   await stub(page);
-  await page.goto(`/about/?${FLAGS}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/about/?${FLAGS},navMe`, { waitUntil: "domcontentloaded" }); // the shipped four-cell bar since the navMe flip (HFY-TSK-223)
   const items = page.locator(".io-nav__item--bar");
-  await expect(items).toHaveCount(5);
-  for (const i of [0, 4]) {
+  await expect(items).toHaveCount(4);
+  for (const i of [0, 3]) { // the first and the last cell
     await page.keyboard.press("Tab"); // enters the page; then walk until the item has focus
     await items.nth(i).focus();
     await page.keyboard.press("Shift+Tab");

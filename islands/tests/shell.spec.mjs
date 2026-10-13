@@ -1,14 +1,16 @@
 // HFY-TSK-064 AC2/AC3 + the approved design system's Shell (ds/components/Shell, HFY-R13) at 375 / 688 / 1024.
 // Run against a built site: `node build.mjs --site <dir>` then `HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/shell.spec.mjs`
-// (defaults: the committed ../11ty on 8089). The build flags (11ty/_data/flags.json) are all on except navMe, which ships off, so "flag off" checks force
-// -shellV2 through the ?hfy_flags preview override. /auth and Google are stubbed; data is synthetic.
+// (defaults: the committed ../11ty on 8089). The build flags (11ty/_data/flags.json) are all on, navMe too since its flip (HFY-TSK-223), so "flag off"
+// checks force -shellV2 through the ?hfy_flags preview override. No test leans on the build value of navMe: the five-item checks pin -navMe (the
+// rollback state) and the navMe checks pin navMe. /auth and Google are stubbed; data is synthetic.
 import { test, expect } from "@playwright/test";
 import { axeViolations } from "./axe.mjs";
 
 const PAGES = ["/", "/about/", "/search/", "/contact/"]; // (/private/ redirects, so it has no shell to audit: tests/family-route.spec.mjs)
-// The labels are a function of the flags (lib/nav.js navItems, HFY-TSK-091): navMe ships off, so the build flags give the five.
+// The labels are a function of the flags (lib/nav.js navItems, HFY-TSK-091): navMe off (-navMe, the rollback state) gives the five.
 const labelsFor = ({ navMe = false, familyViz = false } = {}) => (navMe && !familyViz ? ["home", "search", "posts", "me"] : ["home", "family", "search", "posts", "me"]);
-const LABELS = labelsFor();
+const LABELS = labelsFor(); // navMe off
+const OFF = "shellV2,-navMe"; // the pre-flip bar, pinned (HFY-TSK-223 flipped navMe on in the build flags)
 const ME = { sub: "I0001", label: "Marie" };
 
 async function hermetic(page, { signedIn = false } = {}) {
@@ -49,9 +51,9 @@ const shell = (page) => page.locator("#hfy-shell-root .io-shell");
 
 // ---------------------------------------------------------------------------------------------------------------- 375
 for (const path of PAGES) {
-  test(`375 ${path}: KitShell, five-item bottom bar (75 x 56 cells, 16px labels), no top links, 44px targets, no h-scroll`, async ({ page }) => {
+  test(`375 ${path} navMe off: KitShell, five-item bottom bar (75 x 56 cells, 16px labels), no top links, 44px targets, no h-scroll`, async ({ page }) => {
     await hermetic(page);
-    await page.goto(`${path}?hfy_flags=shellV2`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${path}?hfy_flags=${OFF}`, { waitUntil: "domcontentloaded" });
     await expect(shell(page)).toBeVisible();
     await expect(shell(page)).toHaveAttribute("data-bp", "compact");
     await expect(page.locator("nav.navbar-hf")).toBeHidden();
@@ -106,10 +108,10 @@ test("375: the current page's bottom-bar item has a text label (AAA on the tint)
 // ---------------------------------------------------------------------------------------------------------- 688 / 1024
 for (const width of [688, 1024]) {
   for (const path of ["/", "/about/", "/search/"]) {
-    test(`${width} ${path}: top bar with five links and an inline search field, no bottom bar, rail 0x0, 44px targets`, async ({ page }) => {
+    test(`${width} ${path} navMe off: top bar with five links and an inline search field, no bottom bar, rail 0x0, 44px targets`, async ({ page }) => {
       await hermetic(page);
       await page.setViewportSize({ width, height: 800 });
-      await page.goto(`${path}?hfy_flags=shellV2`, { waitUntil: "domcontentloaded" });
+      await page.goto(`${path}?hfy_flags=${OFF}`, { waitUntil: "domcontentloaded" });
       await expect(shell(page)).toBeVisible();
       await expect(shell(page)).toHaveAttribute("data-bp", width >= 1024 ? "expanded" : "medium"); // @io-kit/tokens 0.4.1: bp.wide = 64rem (HFY-R72); HFY styles key only on compact vs not
       await expect(page.locator("#hfy-shell-root nav.io-shell__bar")).toHaveCount(0);
@@ -202,9 +204,9 @@ for (const width of [375, 1024]) {
 }
 
 // /about/ has the hidden legacy navbar (auth-v2.js wires its sign-out link, which the sheet proxies); /posts/ has none (fallback).
-for (const path of ["/about/", "/posts/"]) test(`${path}: the account sheet links your page and notifications, and 'sign out' ends the edge session`, async ({ page }) => {
+for (const path of ["/about/", "/posts/"]) test(`${path} navMe off: the account sheet links your page and notifications, and 'sign out' ends the edge session`, async ({ page }) => {
   const calls = await hermetic(page, { signedIn: true });
-  await page.goto(`${path}?hfy_flags=shellV2`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${path}?hfy_flags=${OFF}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: `you're signed in as ${ME.label}` }).click();
   const sheet = page.getByRole("dialog", { name: ME.label });
   await expect(sheet).toBeVisible();
@@ -358,9 +360,9 @@ test("navMe: the account sheet reads 'your page', 'settings', 'sign out' (the no
   for (const h of await sheet.locator(".hfy-account__item").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) expect(h).toBeGreaterThanOrEqual(44);
 });
 
-test("navMe off (the build flags): no gear, and the sheet keeps 'notifications'", async ({ page }) => {
+test("navMe off (-navMe, the rollback state): no gear, and the sheet keeps 'notifications'", async ({ page }) => {
   await hermetic(page, { signedIn: true });
-  await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
+  await page.goto(`/about/?hfy_flags=${OFF}`, { waitUntil: "domcontentloaded" });
   await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
   await expect(gearOf(page)).toHaveCount(0);
   await page.getByRole("button", { name: `you're signed in as ${ME.label}` }).click();
@@ -474,7 +476,7 @@ const stub = (name) => `(window.__unfill ||= []).push(window.HFYBarSlots.fill(${
 for (const navMe of [true, false]) {
   test(`375 slots, navMe ${navMe ? "on" : "off"}: empty bell and chat render nothing; stub fillers land in the order bell, chat, gear, account; the bar does not overflow`, async ({ page }) => {
     await hermetic(page, { signedIn: true });
-    await page.goto(`/about/?hfy_flags=shellV2${navMe ? ",navMe" : ""}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/about/?hfy_flags=shellV2,${navMe ? "navMe" : "-navMe"}`, { waitUntil: "domcontentloaded" });
     await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
     if (navMe) await expect(gearOf(page)).toBeVisible();
     const own = navMe ? ["gear", "account"] : ["account"];

@@ -1,5 +1,5 @@
 // HFY-TSK-091 (HFY-PLN-002 surfaces §3.1-3.3): the /me/ settings hub, the `settings` island under navMe, at 375 and 1280.
-// navMe ships off (11ty/_data/flags.json), so the hub is turned on with the ?hfy_flags preview override over the build flags.
+// navMe is on in the build flags since its flip (HFY-TSK-223); the hub is still pinned on with the ?hfy_flags preview override, so no test leans on the build value.
 // /auth and /api are stubbed; the member is synthetic. Run against the committed site (../11ty on 8089) or a scratch build:
 // HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/settings-hub.spec.mjs
 import { test, expect } from "@playwright/test";

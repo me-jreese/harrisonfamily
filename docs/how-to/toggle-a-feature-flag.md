@@ -1,6 +1,6 @@
 # How to turn a feature flag on or off, for one tab or for everyone
 
-Each E5 surface ships behind a flag in [`11ty/_data/flags.json`](../../11ty/_data/flags.json): `authV2`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `searchV2` and `shellV2`. A deploy publishes the file at `/_data/flags.json`, and the pages read it there at runtime. PR #8 (HFY-TSK-069) set the six flags it had then to `true`. `navMe` came later, with HFY-TSK-091, and shipped `false`. The production cutover ran on 2026-10-12 (HFY-R67): the site deploy went first and the private data gate was attached second. To see the values the site serves now, run:
+Each E5 surface ships behind a flag in [`11ty/_data/flags.json`](../../11ty/_data/flags.json): `authV2`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `searchV2` and `shellV2`. A deploy publishes the file at `/_data/flags.json`, and the pages read it there at runtime. PR #8 (HFY-TSK-069) set the six flags it had then to `true`. `navMe` came later, with HFY-TSK-091, and shipped `false`; HFY-TSK-223 set it to `true` on 2026-10-13, with io's approval. The production cutover ran on 2026-10-12 (HFY-R67): the site deploy went first and the private data gate was attached second. To see the values the site serves now, run:
 
 ```bash
 curl -s https://<site>/_data/flags.json | jq .
