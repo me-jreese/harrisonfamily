@@ -1,8 +1,9 @@
 // GET /api/me (HFY-TSK-237): the one identity route for every domain. The server computes every capability from actor.admin
 // (config/admins.json, src/auth.js); no client infers admin from can.delete. The shape is additive-only: later tasks add fields
 // (edit-api-core: ownRecord, editing), never rename or remove one.
-// Gate exemption (BRD2 D2-12 / api-feature-gate): /api/me is exempt from the feature gate, because every surface reads it to
-// learn identity and capabilities before it knows which flags are on. The later api-feature-gate task must leave me.get ungated.
+// Gate exemption (BRD2 10.1, api-feature-gate): /api/me is exempt from the feature gate, because every surface reads it to
+// learn identity and capabilities before it knows which flags are on. routes.js declares it with gateExempt, the only exemption
+// test/features.test.js allows.
 
 /** Pending access requests: GSI1 partition ACCESSREQS#pending, counted (Select COUNT) across every page. An empty partition is 0.
  * `pageSize` (optional) sets the query Limit; production leaves it to DynamoDB's own 1 MB page. */

@@ -9,7 +9,8 @@ import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
 import { createPresignPut } from "./presign.js";
-import { createGroupResolver } from "./policy.js";
+import { createGroupResolver, UAT_GROUP } from "./policy.js";
+import { configureFeatures, createFeatureGate, createFlagSource, DEFAULT_FLAGS_URL } from "./features.js";
 import { createLabelResolver, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
 import { guardDobFromEnv } from "./guard.js";
@@ -75,6 +76,13 @@ const getGroups = createGroupResolver({
   },
 });
 
+// HFY-TSK-238: the feature gate reads the flags file the site itself serves, over HTTPS through CloudFront (no S3 grant), cached 60 s,
+// last good kept 10 minutes, then fail closed. The uat group comes from the same cached, fail-closed groups.json read as the MCP groups.
+const features = configureFeatures(createFeatureGate({
+  flags: createFlagSource({ url: env.FLAGS_URL ?? DEFAULT_FLAGS_URL }),
+  isUat: async (sub) => (await getGroups({ sub })).includes(UAT_GROUP),
+}));
+
 let inner;
 let mcp;
 export const handler = async (event) => {
@@ -90,6 +98,7 @@ export const handler = async (event) => {
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
+      features,
       ...p,
     });
   }

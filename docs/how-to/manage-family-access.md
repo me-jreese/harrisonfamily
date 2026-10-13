@@ -11,7 +11,7 @@ Values in angle brackets are placeholders. `<email>` is a member's email address
 - `userGrampsID.json` maps each email to a Gramps ID. It is the auth edge's allowlist.
 - `harrisonfamily-allowlist.json` lists the emails. The publisher turns it into the digest list that the legacy Lambda checks.
 - `config/admins.json` lists the Gramps IDs of site admins. It has no source file. You edit the S3 object.
-- `config/groups.json` names the members who get MCP tools. No script writes it. You upload it by hand.
+- `config/groups.json` names the members who get MCP tools, and the `uat` members who may use API routes still behind a flag. No script writes it. You upload it by hand.
 - Passkey records in the app stack's table, only to remove a lost passkey for a member who cannot do it themselves.
 - Revocation records in the app stack's table, only to sign a member out on every device, for example when a device that is still signed in is lost.
 
@@ -205,6 +205,25 @@ An MCP client, such as Claude, acts on the site as the member who connects it. T
 
 **Verify.** Have the member list the server's tools in their client, as in [Connect an MCP client: Check what you can do](connect-an-mcp-client.md#2-check-what-you-can-do). In `mcp-authors` they see five tools. In `hfy-admin` they also see `hfy_posts_delete` and `hfy_comments_delete`, disabled with `step_up_required` until a fresh passkey sign-in. If the member is in neither group, the list is empty. If the client still shows an old list, have the member reconnect it.
 
+## Give a member UAT access to flagged API routes
+
+The `uat` group of `config/groups.json` names the members who test new features on the live site before their flag is turned on for everyone. A route behind a flag answers `404` to everyone else ([API: Feature gate](../reference/api.md#feature-gate)). The group takes `subjects` (Gramps IDs) only, grants no MCP tool, and needs io's go-ahead like any other change to the file.
+
+1. **Start from a copy that matches the live object**, as in [step 1 of Give a member MCP access](#give-a-member-mcp-access). Keep a backup of the live object outside the repository before you change it. If the file has no `uat` group, add `"uat": { "subjects": [] }` under `groups`.
+2. **Add the member.** Put `"<gramps-id>"` in the `subjects` of `uat`. To end their access, remove it.
+3. **Validate the file.** A file that is not valid JSON makes nobody `uat`, and also takes every member's MCP tools away.
+
+   ```sh
+   jq -e '(.groups | type == "object") and ((.groups.uat.subjects // []) | type == "array" and all(type == "string"))' groups.json
+   jq --arg g '<gramps-id>' '(.groups.uat.subjects // []) | index($g) != null' groups.json
+   ```
+
+   Both print `true`.
+
+4. **Upload it**, as in [step 4 of Give a member MCP access](#give-a-member-mcp-access). Each API container keeps the file for 60 s.
+
+**Verify.** Once an API route sits behind a flag that is off, that member gets an answer from it within a minute, while a member outside the group still gets `404`.
+
 ## Remove a member
 
 1. In `<project>/docs/dev`, delete the member's key from `userGrampsID.json` and the email from `harrisonfamily-allowlist.json`. Check both:
@@ -230,7 +249,7 @@ An MCP client, such as Claude, acts on the site as the member who connects it. T
    rm admins.json admins.new.json
    ```
 
-5. If the member is in `groups.json`, remove their Gramps ID and email from it and upload it, as in [Give a member MCP access](#give-a-member-mcp-access). Their MCP client loses its tools within 60 s.
+5. If the member is in `groups.json`, remove their Gramps ID and email from it, `uat` included, and upload it, as in [Give a member MCP access](#give-a-member-mcp-access). Their MCP client loses its tools within 60 s.
 6. Optional: disable the member's Cognito user, if one exists. A pool user exists only if the member set a password at `/auth/link`, or signed up before the pool was locked down. Disabling it blocks only the email-and-password method, and a removed member cannot set a new password, because `/auth/link` checks the allowlist first. Google sign-in never touches Cognito, so the allowlist removal is what denies access. The user pool's region is the part of `<user-pool-id>` before the `_`.
 
    ```sh

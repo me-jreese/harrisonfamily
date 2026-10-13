@@ -1,5 +1,6 @@
 // @io-kit/comments CommentSource over the harrisonfamily /api (HFY-TSK-063). threadId is the subject, `person:<gramps_id>`.
-// can.* arrives server-computed on every comment; nothing here derives it.
+// can.* arrives server-computed on every comment; nothing here derives it. Who may moderate comes from GET /api/me (lib/me.js), never
+// from the comments (HFY-TSK-298).
 import { CommentError } from "@io-kit/comments";
 import { ApiError } from "./api.js";
 import { GUARD_CODES, GUARD_COPY, learnFromRefusal, precheck } from "./contact-precheck.js";
@@ -46,18 +47,11 @@ function refuseContactInfo(body, asPromise = false) {
   throw err;
 }
 
-/**
- * `onList(comments)` lets the host observe loaded comments (the island infers moderator rights from can.delete).
- * `onAdded(comment)` fires after the server stored a new comment (the island's 3 s "posted" ping).
- */
-export function createHfyCommentSource(api, { onList, onAdded } = {}) {
+/** `onAdded(comment)` fires after the server stored a new comment (the island's 3 s "posted" ping). */
+export function createHfyCommentSource(api, { onAdded } = {}) {
   const enc = encodeURIComponent;
   return {
-    async list(threadId, opts = {}) {
-      const r = await wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit } }), "list");
-      if (onList) onList(r.thread.comments);
-      return r;
-    },
+    list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit } }), "list"),
     async create(threadId, input) {
       refuseContactInfo(input.body);
       const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");

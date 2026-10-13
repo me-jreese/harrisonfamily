@@ -25,21 +25,22 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | --- | --- |
 | [`index.js`](../../api/src/index.js) | Lambda entry. Creates the AWS clients and the admin-list, label and groups resolvers, runs the origin check, builds the handler on the first verified request, and sends MCP paths to the MCP mount. |
 | [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, notification and upload services for each request. Also exposes `handler.invoke(actor, routeName, {params, query, body})`, which runs a route's own handler without the HTTP steps, for the MCP tools. |
-| [`routes.js`](../../api/src/routes.js) | The route registry `ROUTES` (including each MCP tool's definition), `matchRoute`, `MCP_RESOURCE`, and `buildCaps` for `caps.json`. |
+| [`routes.js`](../../api/src/routes.js) | The route registry `ROUTES` (including each MCP tool's definition and each route's `gate`), `defineRoutes`, `matchRoute`, `MCP_RESOURCE`, and `buildCaps` for `caps.json`. |
+| [`features.js`](../../api/src/features.js) | The [feature gate](#feature-gate): `requireFeature`, `serverSwitch` and `gateExempt` for `ROUTES` entries, the flags-file reader `createFlagSource`, `createFeatureGate`, the `x-hfy-preview` parser, and `featureOn` for producers. |
 | [`http.js`](../../api/src/http.js) | JSON responses, `HttpError`, error mapping, cookie parsing. |
 | [`origin.js`](../../api/src/origin.js) | The `X-Origin-Verify` check. |
 | [`auth.js`](../../api/src/auth.js) | Remote JWKS, session authenticator (which resolves the actor's label), admin list. |
 | [`labels.js`](../../api/src/labels.js) | Author labels: `cleanLabel`, `fallbackLabel` and the cached person-record resolver `createLabelResolver` (see [Author label](#author-label)). Used by the cookie path and the MCP path. |
 | [`mcp.js`](../../api/src/mcp.js) | The MCP mount: `isMcpPath`, `loadMcpConfig`, the bearer edge, the tool registry built from `ROUTES`, and the actor a tool runs as. See [MCP server](mcp-server.md). |
 | [`mcp-caps.js`](../../api/src/mcp-caps.js) | Build-time views of the MCP surface for `gen-caps`: the `tools/list` result and the `@io-kit/parity` caps document. |
-| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json`, whose shape is documented at the top of the file. |
+| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
-| [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out. |
+| [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation, the server-chosen object key and the `UPLOAD#` binding. |
 | [`presign.js`](../../api/src/presign.js) | The S3 presigner for uploads, kept apart so tests can sign offline. |
 | [`records/ops.js`](../../api/src/records/ops.js) | The EditOp engine for the editing work: `applyOps`, `invertOps`, `rebaseOps` (clean, no-op or conflict per op), keyed list segments (`@ref=`, `@=`, `@k=`) and `mintHandle`. It imports nothing, so it runs in Node and in a browser, and no route calls it yet. See [The EditOp engine](#the-editop-engine). |
@@ -79,15 +80,17 @@ Every request goes through these steps in order. The first step that fails decid
 1. **Origin check** ([`origin.js`](../../api/src/origin.js), called from `index.js`). The `x-origin-verify` header, matched in any case, must equal `ORIGIN_VERIFY`. The two values are compared as SHA-256 digests with a constant-time comparison. If `ORIGIN_VERIFY` is unset or empty, every request fails. Failure: `403` with the body `{"error":"forbidden"}`. This step runs for every path, MCP paths included, before routing and before the handler is built.
 2. **MCP paths** (`index.js`). When `isMcpPath` in [`mcp.js`](../../api/src/mcp.js) matches `rawPath` (`/mcp`, `/mcp/...`, `/.well-known/oauth-protected-resource` or `/.well-known/oauth-protected-resource/...`), the request goes to the MCP mount, which `createMcpMount` builds on the first such request in the container. The mount authenticates with a bearer access token and never reads the session cookie. These requests never reach the steps below. See [MCP server: Routing in `index.js`](mcp-server.md#routing-in-indexjs).
 3. **Prefix check.** Trailing slashes are removed from `rawPath`. Any other path outside `/api/`, including `/api` itself, is `404 not_found`.
-4. **Route match.** `/api` is removed and the rest is matched against `ROUTES`. Path parameters are URL-decoded with `decodeURIComponent`. A path parameter with malformed percent-encoding (for example `%E0%A4%A`) makes it throw, which is `500 internal`, before the session is checked. No path match is `404 not_found`. A path that matches with a different method is `405 method_not_allowed`. That includes `OPTIONS` and `HEAD`: the API does no CORS handling.
-5. **Session.** The session cookie must verify (see [Session verification](#session-verification)). Otherwise `401 unauthenticated`. Every route requires a session, reads included.
-6. **Content type**, for `POST`, `PUT` and `PATCH` only. `content-type` must start with `application/json`, ignoring case. Otherwise `415 unsupported_media_type`.
-7. **Body**, for `POST`, `PUT` and `PATCH` only. A base64-encoded body is decoded. An empty body counts as `{}`. A body that does not parse is `400 validation` ("invalid JSON body"). A body that parses to anything other than an object (an array, `null`, a string or a number) is `400 validation` ("body must be a JSON object"). `DELETE` bodies are not read here.
-8. **Route handler.**
+4. **Route match.** `/api` is removed and the rest is matched against `ROUTES`. Path parameters are URL-decoded with `decodeURIComponent`. A path parameter with malformed percent-encoding (for example `%E0%A4%A`) makes it throw, which is `500 internal`, before the session is checked. No path match is `404 not_found`. A path that matches with a different method is `405 method_not_allowed`. That includes `OPTIONS` and `HEAD`: the API does no CORS handling. The exception is a path whose every route is behind a [feature gate](#feature-gate) that is closed to the caller: the session is read, and the answer is `404 not_found`, so the wrong method does not reveal a dark route.
+5. **Session.** The session cookie is verified (see [Session verification](#session-verification)). A missing or invalid cookie is not refused yet.
+6. **Feature gate.** A route that declares a feature or a server switch is refused when it is closed to the caller ([Feature gate](#feature-gate)): `404 not_found`, the same response as a route that does not exist, or a switch's own error. This runs before the session is required, so a signed-out caller also gets `404` from a dark route.
+7. **Session required.** Without a verified session: `401 unauthenticated`. Every route requires a session, reads included.
+8. **Content type**, for `POST`, `PUT` and `PATCH` only. `content-type` must start with `application/json`, ignoring case. Otherwise `415 unsupported_media_type`.
+9. **Body**, for `POST`, `PUT` and `PATCH` only. A base64-encoded body is decoded. An empty body counts as `{}`. A body that does not parse is `400 validation` ("invalid JSON body"). A body that parses to anything other than an object (an array, `null`, a string or a number) is `400 validation` ("body must be a JSON object"). `DELETE` bodies are not read here.
+10. **Route handler.**
 
-Because the session is checked at step 5, a request without a session to an unknown path gets `404`, and one with the wrong method gets `405`, not `401`.
+Because the session is required only at step 7, a request without a session to an unknown path gets `404`, and one with the wrong method on an ungated path gets `405`, not `401`.
 
-On the first request in a container that passes step 1, whatever its path, `index.js` loads the VAPID keys (if configured) and builds the handler. Both are kept for the life of the container. The MCP mount reuses that handler's `invoke`, so a tool call runs the same route handler as the HTTP route but skips steps 3 to 7.
+On the first request in a container that passes step 1, whatever its path, `index.js` loads the VAPID keys (if configured) and builds the handler. Both are kept for the life of the container. The MCP mount reuses that handler's `invoke`, so a tool call runs the same route handler as the HTTP route and passes the same feature gate (step 6), but skips the other steps from 3 to 9.
 
 The rest of this page describes the `/api/*` responses. The MCP mount's responses are in [MCP server: What the mount answers](mcp-server.md#what-the-mount-answers).
 
@@ -121,7 +124,7 @@ Two statuses exist for validation. Checks on the request itself (body parsing, a
 | 403 | `forbidden` | Failed origin check; caller lacks the permission for a post or comment action |
 | 403 | `self_react` | Reacting to your own comment |
 | 403 | `upload_not_owned` | A new post attachment that is not the caller's own, unexpired, not yet attached upload ([Upload binding](#upload-binding)) |
-| 404 | `not_found` | Unknown route; post missing or not visible to the caller; comment missing; malformed subject or comment id |
+| 404 | `not_found` | Unknown route; a route behind a feature gate that is closed to the caller; post missing or not visible to the caller; comment missing; malformed subject or comment id |
 | 405 | `method_not_allowed` | Known path, other method |
 | 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)) |
 | 415 | `unsupported_media_type` | A write without a JSON content type |
@@ -139,7 +142,7 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 | Name | Method | Path | Input | Success | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `me.get` | GET | `/me` | none | `200 {id, label, admin, can: {moderate, graduate, approve}}`, plus `badges: {accessRequests}` for admins only | Not an MCP tool. `admin` is `actor.admin` from `config/admins.json`, and `can.*` is computed on the server; clients never infer admin from `can.delete`. `badges.accessRequests` counts the GSI1 partition `ACCESSREQS#pending` (`0` when empty). If the badge count fails it is logged and `badges` is omitted (id, label, admin and `can.*` still return). Fields are additive only: later tasks add `ownRecord` and `editing`. Exempt from the api-feature-gate. `no-store`. |
+| `me.get` | GET | `/me` | none | `200 {id, label, admin, can: {moderate, graduate, approve}}`, plus `badges: {accessRequests}` for admins only | Not an MCP tool. `admin` is `actor.admin` from `config/admins.json`, and `can.*` is computed on the server; clients never infer admin from `can.delete`. `badges.accessRequests` counts the GSI1 partition `ACCESSREQS#pending` (`0` when empty). If the badge count fails it is logged and `badges` is omitted (id, label, admin and `can.*` still return). Fields are additive only: later tasks add `ownRecord` and `editing`. Exempt from the [feature gate](#feature-gate) (`gateExempt`). `no-store`. |
 | `comments.list` | GET | `/comments` | query `subject` (required), `cursor`, `limit` | `200` thread | Oldest first |
 | `comments.create` | POST | `/comments` | body `subject`, `body`, optional `parentId` | `201` comment | Sends notifications |
 | `comments.update` | PATCH | `/comments/:id` | body `body`; `subject` in the body or the query | `200` comment | Author only |
@@ -160,7 +163,52 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
+None of these routes is behind the [feature gate](#feature-gate). The comments, posts, uploads and notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+
 Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools).
+
+## Feature gate
+
+[`features.js`](../../api/src/features.js) is the one server-side gate for the routes of HFY-PLN-002 (HFY-TSK-238; BRD2 D2-28). The flags in `flags.json` decide what the islands show. This gate decides what the API answers, so a dark route cannot be reached with `curl`, an MCP tool or a member's `?hfy_flags` before its flip.
+
+### Declaring a gate
+
+A `ROUTES` entry may carry `gate`:
+
+| Declaration | Meaning |
+| --- | --- |
+| `requireFeature("<flag>")` | `404 not_found` unless `<flag>` is `true` in the deployed flags file or the caller is in the `uat` group. |
+| `serverSwitch("<switch>", check)` | `<switch>` is one of `HFY_EDITING`, `ACCESS_REQUESTS`, `CHAT_SERVICE_AUTH` or `SYNC_API_ENABLED`. `check({actor})` runs before the handler: `true` continues, anything else is `404 not_found`, and it may throw the switch's own error instead. The declaring route supplies `check`, and `serverSwitch` refuses a declaration without one. Membership of `uat` does not open a switch. |
+| `gateExempt("<reason>")` | Not gated. Only `me.get` carries it (BRD2 10.1). |
+| none | The routes that predate the gate ([Routes](#routes)). |
+
+[`features.test.js`](../../api/test/features.test.js) holds the rule: every `caps.json` action outside its list of pre-gate routes declares a feature or a switch, and only `GET /api/me` is exempt. A new route without a gate fails it.
+
+### Who passes a feature
+
+| Caller | Flag `true` | Flag not `true`, or the file unreadable for more than 10 minutes |
+| --- | --- | --- |
+| Signed out | `401` ([step 7](#request-pipeline)) | `404` |
+| Member or admin | The route runs | `404` |
+| `uat` member | The route runs, unless their `x-hfy-preview` names `-<flag>` (then `404`) | The same |
+
+- **`uat` group.** The `subjects` (gramps ids) of the `uat` group in `config/groups.json`. An `emails` list under it is ignored, and being an admin does not make anyone `uat`. It is read through the same cached, fail-closed resolver as the MCP groups ([MCP server: Groups](mcp-server.md#groups)), so a failed read makes nobody `uat`. No MCP policy row names it.
+- **`x-hfy-preview`.** A request header carrying the page's `?hfy_flags` value: comma-separated names, `-name` for off, at most 32 names. The API applies it only for a `uat` caller, for whom `-name` closes that feature for the request. Anyone else's header is ignored, so a member's preview neither opens a dark route nor closes a live one. No island sets the header at present, and a `uat` caller reaches dark routes without it.
+- **MCP.** `handler.invoke` checks the same gate for the tool's actor, with no preview header.
+
+### The flags file
+
+- **Source.** `GET https://<site>/_data/flags.json`: the file the site itself serves, read over HTTPS through the CDN, so the role needs no S3 grant. `FLAGS_URL` overrides it ([Environment](#environment)). A URL that is not `https://` stops the function at start-up. Redirects are refused, and a read times out after 3 s.
+- **Cache.** 60 s per container from the last successful read, and concurrent requests share one read. Only routes with a feature gate read the file.
+- **Failures.** A non-2xx status, a body that is not a JSON object, a timeout or a network error keeps the last good copy for up to 10 minutes after the last successful read. After that every feature is off until a read succeeds. A failed read is retried after 5 s. The log line is `flags read failed (keeping the last good flags)` or `flags read failed (features off)`, with only the error's name and code.
+- **Values.** Only boolean values are kept, and a feature is on only when its value is exactly `true`.
+- **Flips.** A change to `flags.json` reaches the API within about 60 s of the site deploy, with no API deploy.
+
+### `featureOn` for producers
+
+`featureOn(name, principal)` applies the same rule outside a route. `principal` is a gramps id or an actor: a `uat` principal gets `true`, anyone else the deployed value. `index.js` configures it with the deployed gate; until then it returns `false`. A route handler gets `c.featureOn(name)` for its caller, which counts the caller's preview header when they are `uat`.
+
+**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires no inbox store yet (`hfy-inbox-delivery-api` adds it), so today the notifier behaves as described in [Notifications](#notifications).
 
 ## Subjects
 
@@ -512,7 +560,7 @@ It is read once per container. If `VAPID_SECRET` is unset, or the secret cannot 
 
 Notification fan-out runs after the write has committed and never fails the request ([`handler.js`](../../api/src/handler.js), `afterCommit`; [`notify.js`](../../api/src/notify.js)):
 
-- **Push off.** With no VAPID keys loaded, the producers return at once and do no reads at all: no post lookup, no thread query for earlier commenters and no `SUB#` scan.
+- **Push off.** With no VAPID keys loaded and no inbox store wired, the producers return at once and do no reads at all: no post lookup, no thread query for earlier commenters and no `SUB#` scan. With an inbox store, comment notifications still run so that items are stored first ([`featureOn` for producers](#featureon-for-producers)).
 - **Push on.** Finding the recipients and sending to them are both guarded. A failure is logged (for example `comment notification failed (write already committed)`, `publish notification failed` or `notify failed`) and the response is the write's normal success.
 - A failed send to one recipient does not stop the others.
 
@@ -673,7 +721,8 @@ The stack does not set these. Their defaults in code apply on the deployed funct
 | Variable | Default in code | Purpose |
 | --- | --- | --- |
 | `GROUPS_BUCKET` | `<config-bucket>` | Bucket holding the MCP groups config |
-| `GROUPS_KEY` | `config/groups.json` | MCP groups config key. Its shape is documented in [`policy.js`](../../api/src/policy.js) and in [MCP server: Groups](mcp-server.md#groups). |
+| `GROUPS_KEY` | `config/groups.json` | Groups config key: the MCP groups and the feature gate's `uat` group. Its shape is documented in [`policy.js`](../../api/src/policy.js) and in [MCP server: Groups](mcp-server.md#groups). |
+| `FLAGS_URL` | `https://<site>/_data/flags.json` (`DEFAULT_FLAGS_URL` in `features.js`) | The flags file the [feature gate](#feature-gate) reads. Must be `https://`. |
 | `MCP_RESOURCE_URL` | `https://<site>/mcp` (`MCP_RESOURCE` in `routes.js`) | The MCP resource URL |
 | `MCP_AUDIENCE` | `MCP_RESOURCE_URL`, else `MCP_RESOURCE` | The `aud` every MCP access token must carry |
 | `MCP_TOKEN_ISSUER` | `SESSION_ISSUER`, else `https://<site>/auth` | The `iss` every MCP access token must carry |
@@ -746,7 +795,7 @@ The person-record lookups are cached in memory, per container:
 | `base_path` | `/api` |
 | `auth` | `{scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true}` |
 | `subjects` | `["person:<gramps_id>", "post:<ulid>"]` |
-| `actions` | One per route: `{name, method, path, auth: "session", write, summary}`. `write` is true for every method except GET. |
+| `actions` | One per route: `{name, method, path, auth: "session", write, summary}`, plus `gate` when the route declares one: `{feature}`, `{switch}` or `{exempt}` ([Feature gate](#feature-gate)). `write` is true for every method except GET. |
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
 | `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
