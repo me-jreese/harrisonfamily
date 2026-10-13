@@ -196,6 +196,7 @@ Paths:
   - `uploads.js`: the upload route.
   - `presign.js`: the presigned S3 PUT.
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
+  - `records/semantics.js`, `records/gcalendar.js`: the Gramps rules for edited records (dates and `sortval`, references, two-sided family links, ancestry cycles, derived birth and death indexes) and the port of Gramps' calendar arithmetic. Pure, and no route reaches them yet.
   - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
 - [`api/parity/`](../../api/parity/): the parity files of the MCP surface. See [MCP server](#mcp-server).
@@ -479,6 +480,7 @@ Facts:
 Paths:
 
 - [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers` and `txn`. `fake-ddb.js` and `world.js` are helpers.
+- [`api/test/records/`](../../api/test/records/): `node:test` suites `ops.node-test.js` (the EditOp engine) and `semantics.node-test.js` (the Gramps rules, run against `fixtures/gramps-semantics.golden.json`, the values Gramps 6.0.6 computed). Run by `npm test` after Vitest.
 - [`auth/test/`](../../auth/test/): Vitest. The suites are `cognito`, `edge`, `linkstore`, `oauth`, `origin`, `passkey`, `passkeystore` and `userinfo`. `fake-table.js` is a helper.
 - [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs): a Playwright end-to-end passkey test.
 - [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs): a Playwright end-to-end test of the styled sign-in pages.
@@ -495,6 +497,7 @@ Paths:
   - `test_edge_gate_stack.py` and `test_mcp_edge401_stack.py`: static checks on the two us-east-1 templates.
   - `stub/aws`, `cf-echo.jq`, `fixtures/live-like.json` and `fixtures/live-with-uploads.json`: test doubles.
 - [`tests/login-flow/`](../../tests/login-flow/): Playwright specs `login-flow.spec.ts` and `auth-v2.spec.ts`.
+- [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py): `unittest`, standard library only. It runs [`scripts/records/check_gramps_goldens.py`](../../scripts/records/check_gramps_goldens.py) over the committed Gramps goldens and checks that tampering is caught.
 - [`scripts/mcp/token-smoke.sh`](../../scripts/mcp/token-smoke.sh): a live MCP token check.
 
 Facts:
@@ -617,8 +620,13 @@ The reverse lookup: from a directory to the capability sections above.
 | `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (not CI-gated yet) |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
+<<<<<<< HEAD
 | `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. `shared/legacy-form.mjs` is the join form's schema (`FIELDS`, `validateForm`, `mapToGramps`; surfaces.md 7.3): birth year only, male or female, place fields city and state only, every free-text field through the R-18 detector; `mapToGramps` takes `storeCurrentCity` (Q2-11(a)). It is not reachable from any deployed route yet. |
 | `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests |
+=======
+| `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. |
+| `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests, and the Gramps golden tooling (`scripts/records/`: the bundle shim, the generator and the standard-library check) |
+>>>>>>> 8237cc4 (HFY-TSK-249: Gramps semantics (dates and sortval, references, two-sided family links, cycle check, derived birth/death index))
 | `tests/` (`client/`, `login-flow/`) | Tests |
 | `workspace/` | Static site output (the stray `featureFlags.js` only) |
 
