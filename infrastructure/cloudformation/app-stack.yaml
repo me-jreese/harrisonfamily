@@ -87,7 +87,7 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${FunctionName}:*
               - Sid: Table
                 Effect: Allow
-                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem]
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem]
                 Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
               - Sid: AdminList
                 Effect: Allow
@@ -98,6 +98,18 @@ Resources:
                 Effect: Allow
                 Action: s3:PutObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/posts/*
+              # HFY-TSK-236 (BRD2 10.3): comment photos upload under uploads/comments/ only; never media/ or config/.
+              - Sid: CommentPhotoUploads
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/comments/*
+              # HFY-TSK-236: HEAD (size and type check) and copy source need s3:GetObject on the upload prefixes only.
+              - Sid: UploadReads
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/comments/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/posts/*
               # HFY-R68: author labels are the person's displayName from the site's own record (never the allowlist email). Read-only, person/* only.
               - Sid: PersonRecords
                 Effect: Allow

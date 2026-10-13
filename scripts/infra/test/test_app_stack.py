@@ -102,6 +102,31 @@ class AppStack(unittest.TestCase):
         for s in statements(self.r["Role"]):
             self.assertNotIn("media/", str(s.get("Resource", "")) if isinstance(s, dict) else "")
 
+    # HFY-TSK-236 (app-iam-w1): transact() condition checks, comment photo uploads, and upload reads (HEAD and copy source).
+    def test_api_may_condition_check_items_in_the_table(self):
+        self.assertIn("dynamodb:ConditionCheckItem", by_sid(self.r["Role"], "Table")["Action"])
+
+    def test_api_may_put_comment_photos_under_uploads_comments_only(self):
+        st = by_sid(self.r["Role"], "CommentPhotoUploads")
+        self.assertEqual(st["Effect"], "Allow")
+        self.assertEqual(st["Action"], "s3:PutObject")
+        self.assertEqual(st["Resource"], {"Fn::Sub": "arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/comments/*"})
+
+    def test_api_may_read_only_the_upload_prefixes(self):
+        st = by_sid(self.r["Role"], "UploadReads")
+        self.assertEqual(st["Effect"], "Allow")
+        self.assertEqual(st["Action"], "s3:GetObject")
+        self.assertEqual(sorted(x["Fn::Sub"] for x in st["Resource"]), [
+            "arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/comments/*",
+            "arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/posts/*"])
+
+    def test_api_role_has_no_grant_on_media_or_config_beyond_the_existing_ones(self):
+        for s in statements(self.r["Role"]):
+            if not isinstance(s, dict) or s.get("Sid") in ("AdminList",):
+                continue
+            self.assertNotIn("media/", str(s.get("Resource", "")))
+            self.assertNotIn("config/", str(s.get("Resource", "")))
+
     # HFY-R68: author labels are the person's displayName from the site's own record, never the allowlist email. Read-only, person/* only.
     def test_api_may_only_read_person_records_for_author_labels(self):
         st = by_sid(self.r["Role"], "PersonRecords")
