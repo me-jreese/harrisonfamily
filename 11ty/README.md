@@ -24,7 +24,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `js/auth-v2.js` | The flag-gated `authV2` sign-in script (HFY-TSK-062). |
 | `js/feature-flags.js` | Edited in the repository: the flag resolver, preview override and island loader, and the `authV2` data path. Its `hfy-asset-versions` block, the content hashes the island loader and the worker registration use, is a build stamp that every islands build rewrites. |
 | `js/search-navbar.js`, `js/search-results.js` | Edited in the repository: the `searchV2` stand-down and the `authV2` data path. |
-| `js/person-page.js` | Edited in the repository: its data requests go through the `authV2` data path, `HFYFeatureFlags.dataFetch` (HFY-R66), and it renders the design system's person layout. The source's copy lacks both and still waits for the legacy `X-HFY-Session` token, which breaks person pages while the private data gate is attached. |
+| `js/person-page.js` | Edited in the repository: its data requests go through the `authV2` data path, `HFYFeatureFlags.dataFetch` (HFY-R66), and it renders the design system's person layout and the extension points below. The source's copy lacks both and still waits for the legacy `X-HFY-Session` token, which breaks person pages while the private data gate is attached. |
 | `js/auth.js` | Edited in the repository: with `authV2` on, the legacy Google button still renders but One Tap no longer prompts, because its bottom sheet covered the shell's tab bar at 375 px (HFY-TSK-069). The source's copy still prompts. |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | The PWA shell (HFY-TSK-064). Every islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. The worker is registered at `/sw.js?v=<sha8 of sw.js>` and names its cache after that hash. |
 | `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068), and `me/index.html`, the settings hub of the `navMe` island `settings` (HFY-TSK-091). |
@@ -32,6 +32,22 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `README.md` | This file. |
 
 The other excludes keep the family data, `private/` and member `uploads/` out of the refresh. The other rendered pages are overwritten, which strips what the repository writes into them: [step 6 of the how-to](../docs/how-to/refresh-the-eleventy-output.md#6-rebuild-the-islands-over-the-refreshed-pages) rebuilds the head blocks, the family-voice copy and the `?v=` versions, but nothing puts back the `auth-v2.js` script tag unless the source is [mirrored](../docs/how-to/refresh-the-eleventy-output.md#mirror-the-repositorys-files-into-the-source).
+
+## Person page extension points
+
+`js/person-page.js` exposes these hosts and events, and nothing else, as the extension points for the person page (HFY-TSK-137, BRD2 section 10.2 item 13). Only that task and the W6 Graphviz removal edit the file, and each edit must be copied to the source's `public/js/person-page.js` (HFY-R46; the refresh already excludes it). That copy and its refresh dry run are not yet done for HFY-TSK-137 (a merge-stage step): the mirror loop reports `js/person-page.js` as different until it is. Every later person-page task changes `islands/` only.
+
+| Point | What it is |
+| --- | --- |
+| `hfy:person-rendered` | Event on `document` after every render: `detail` is `{personId, person, sections}`, with `sections` the ids of the sections shown. The hero is rebuilt by each render, so an island refills its slots on every event. |
+| `hfy:lightbox-media` | Event on `document` whenever the lightbox shows an image: `detail` is `{index, media, img, box}`, `box` being the image's container. |
+| `[data-slot="hero-actions"]` | In the hero, with the ordered children `[data-slot="edit"]`, `"follow"` and `"presence"`. |
+| `[data-slot="heading-chips"]` | Under the lifespan line, with the children `[data-slot="contributions"]` and `"links"`. |
+| `[data-slot="tree-link"]` | In the family section, directly after the tree. |
+| `#hfy-person-social` | The last child of `#person-content`, `hidden` until an island fills it. Island hosts such as `#hfy-person-comments` sit before it. |
+| `mergedInto` | When the person JSON is `{mergedInto: "<id>"}`, the page redirects to `?id=<id>`. The id must match `[A-Za-z0-9_-]{1,32}` (Gramps ids such as `I0001` fit); a self-pointing or malformed id is ignored. The redirect adds `merged=<hops>` and stops after 2 hops (a cycle or long chain), showing the error line. `hfy:person-rendered` fires after the loading state is hidden and the content is shown. |
+
+Empty hosts take no space (`islands/src/theme/45-person.css`), so a page with no island loaded renders as it did before. `islands/tests/person-page.spec.mjs` pins each point.
 
 ## Refreshing from the Eleventy source
 
