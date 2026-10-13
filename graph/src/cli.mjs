@@ -12,7 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { GraphError, EXIT } from './errors.mjs';
 import { collect, fileSource, grampsCopySource, stdinSource } from './source.mjs';
-import { buildFamilyGraph } from './build.mjs';
+import { applyFaces, buildFamilyGraph } from './build.mjs';
+import { buildFaces, pruneFaces, stagingMediaReader } from './faces.mjs';
+import { defaultGazetteerDir, loadGazetteer } from './gazetteer.mjs';
 import { assertSizeBudget, assertVerified, GZIP_BUDGET_BYTES, loadSharedGuard } from './verify.mjs';
 import { stringify } from './canonical.mjs';
 import { writeAtomic } from './write.mjs';
@@ -20,10 +22,14 @@ import { writeAtomic } from './write.mjs';
 const USAGE = `usage:
   build-graph (<file> | - | --input <file|-> | --snapshot <file|-> | --from-gramps-copy <sqlite.db|dir>)
               [--out <staging>] [--report <path>] [--verify-against <staging>/person]
-              [--generated-at <iso>] [--max-gzip-bytes <n>] [--quiet]
+              [--media <dir>] [--gazetteer <dir>] [--generated-at <iso>] [--max-gzip-bytes <n>] [--quiet]
   build-graph --verify <graph.json> [--verify-against <staging>/person]
 
-  --out writes <staging>/person/graph.json (temp file, then rename). Without --out nothing is written.
+  --out writes <staging>/person/graph.json (temp file, then rename) and <staging>/media/faces/. Without --out nothing is
+        written and no face is cropped.
+  --media names the staged media to crop faces from (<handle>.<ext>, default <staging>/media).
+  --gazetteer reads the cache fetch-gazetteer filled (default $HFY_GAZETTEER_DIR, else ~/Library/Caches/hfy-gazetteer);
+              without it the build keeps Gramps coordinates only (GAZETTEER_MISSING). A build never uses the network.
   Exit codes: 0 ok, 2 input missing, 3 size budget, 4 privacy violation, 5 living mismatch,
               6 Gramps open, 7 snapshot shape, 8 gazetteer checksum.`;
 
@@ -36,6 +42,19 @@ const USAGE = `usage:
 export function defaultReportPath(env = process.env) {
   const project = env.HFY_PROJECT_DIR ? resolve(env.HFY_PROJECT_DIR) : resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   return join(project, 'workspace-local', 'graph-build-report.json');
+}
+
+/** The report's warning list with more {code, id} findings folded in, in the same sorted shape as Warnings.toList(). */
+function mergeWarnings(list, extra) {
+  const map = new Map(list.map((w) => [w.code, new Set(w.ids)]));
+  for (const { code, id } of extra) {
+    if (!map.has(code)) map.set(code, new Set());
+    map.get(code).add(id);
+  }
+  return [...map.keys()].sort().map((code) => {
+    const ids = [...map.get(code)].filter(Boolean).sort();
+    return { code, count: ids.length || 1, ids };
+  });
 }
 
 /** graph `living` against person/<id>.json `isLiving`. Returns the mismatching gramps ids. */
@@ -88,7 +107,8 @@ function parseGraphFile(path) {
 
 /**
  * @param {string[]} argv
- * @param {{ stdin?: NodeJS.ReadableStream, stdout?: {write: Function}, stderr?: {write: Function}, now?: Date, guard?: Function|null }} [io]
+ * @param {{ stdin?: NodeJS.ReadableStream, stdout?: {write: Function}, stderr?: {write: Function}, now?: Date, guard?: Function|null,
+ *   env?: object, gazetteerLock?: string }} [io]  env and gazetteerLock (a lock file path) are for tests
  * @returns {Promise<number>} the process exit code
  */
 export async function main(argv, io = {}) {
@@ -111,6 +131,8 @@ export async function main(argv, io = {}) {
           'verify-against': { type: 'string' },
           'generated-at': { type: 'string' },
           'max-gzip-bytes': { type: 'string' },
+          media: { type: 'string' },
+          gazetteer: { type: 'string' },
           quiet: { type: 'boolean' },
           help: { type: 'boolean', short: 'h' },
         },
@@ -156,9 +178,22 @@ export async function main(argv, io = {}) {
       if (o.snapshot !== undefined) sourceKind = 'snapshot';
     }
     const objects = await collect(source);
-    const { graph, report } = buildFamilyGraph(objects, { generatedAt: o['generated-at'], now, sourceKind });
+    const gazetteerDir = o.gazetteer !== undefined ? resolve(o.gazetteer) : defaultGazetteerDir(io.env ?? process.env);
+    const gazetteer = loadGazetteer(gazetteerDir, io.gazetteerLock ? { lockPath: io.gazetteerLock } : {});
+    const { graph, faceJobs, report } = buildFamilyGraph(objects, { generatedAt: o['generated-at'], now, sourceKind, gazetteer });
     // A shape error wins over this check. An empty input must never replace a good graph.
     if (!objects.some((x) => x._class === 'Person')) throw new GraphError('INPUT_MISSING', 'the input holds no Person objects');
+    let keepFaces = null;
+    if (o.out !== undefined) {
+      // faces first, so the new graph.json never names a file that is not there yet; pruning waits until it is written
+      const mediaOut = join(o.out, 'media');
+      const r = await buildFaces(faceJobs, stagingMediaReader(o.media !== undefined ? resolve(o.media) : mediaOut), mediaOut);
+      applyFaces(graph, r.faces);
+      report.counts = graph.counts;
+      report.warnings = mergeWarnings(report.warnings, r.warnings);
+      report.faces = { referenced: r.keep.size, written: r.written };
+      keepFaces = r.keep;
+    }
     assertVerified(graph, { now, guard });
     const text = stringify(graph);
     const gz = assertSizeBudget(text, maxGzip);
@@ -169,6 +204,7 @@ export async function main(argv, io = {}) {
     if (o.out !== undefined) {
       const target = join(o.out, 'person', 'graph.json');
       writeAtomic(target, text);
+      report.faces.removed = pruneFaces(join(o.out, 'media'), keepFaces);
       writeAtomic(o.report ?? defaultReportPath(), stringify(report));
       if (!o.quiet) err.write(`wrote ${target}: ${graph.counts.people} people, ${graph.counts.unions} unions, ${text.length} bytes (${gz} gzipped)\n`);
     } else if (!o.quiet) {

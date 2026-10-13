@@ -90,13 +90,18 @@ describe('gramps copy source', () => {
     await assert.rejects(collect(grampsCopySource(dir, { sqlite3: join(dir, 'no-such-sqlite3') })), isErr('INPUT_MISSING', 2));
   });
 
-  it('decodes the stored schema version: digits, JSON text and pickled ints', () => {
+  it('decodes the stored schema version: digits, JSON text, pickled ints and pickled digit strings', () => {
     const hex = (b) => Buffer.from(b).toString('hex');
     assert.equal(decodeSchemaVersion(hex('21')), 21);
     assert.equal(decodeSchemaVersion(hex('"21"')), 21);
     assert.equal(decodeSchemaVersion(hex([0x80, 0x04, 0x4b, 0x15, 0x2e])), 21); // protocol 4, BININT1
     assert.equal(decodeSchemaVersion(hex([0x80, 0x04, 0x95, 0, 0, 0, 0, 0, 0, 0, 0, 0x4d, 0x2c, 0x01, 0x2e])), 300); // framed BININT2
     assert.equal(decodeSchemaVersion(hex('I21\n.')), 21); // protocol 0
+    // Gramps 5.2+ pickles the version as a string: the exact protocol-4 bytes of pickle.dumps('21')
+    assert.equal(decodeSchemaVersion('80049506000000000000008c023231942e'), 21); // framed SHORT_BINUNICODE
+    assert.equal(decodeSchemaVersion(hex([0x80, 0x02, 0x55, 0x02, 0x32, 0x31, 0x71, 0x00, 0x2e])), 21); // SHORT_BINSTRING
+    assert.equal(decodeSchemaVersion(hex([0x80, 0x03, 0x58, 0x02, 0, 0, 0, 0x32, 0x31, 0x71, 0x00, 0x2e])), 21); // BINUNICODE
+    assert.equal(decodeSchemaVersion(hex([0x80, 0x04, 0x8c, 0x02, 0x32, 0x78, 0x94, 0x2e])), null); // a non-digit string
     assert.equal(decodeSchemaVersion(hex([0xff, 0xfe])), null);
     assert.equal(decodeSchemaVersion('zz'), null);
     assert.equal(decodeSchemaVersion(undefined), null);

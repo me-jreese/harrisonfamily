@@ -226,6 +226,7 @@ export function projectRecords(objects, opts) {
   const personByHandle = new Map(); // handle -> output person (kept only)
   const used = new Set(); // place handles an output record points at
   const people = [];
+  const faceJobs = []; // [{ id, media handle, rect }] for faces.mjs; read by the CLI, never written to the graph
 
   for (const p of sortedPeople) {
     if (p.private === true) {
@@ -269,12 +270,19 @@ export function projectRecords(objects, opts) {
       yearApprox: (b.year !== null && b.approx) || (d.year !== null && d.approx),
       birthPlace: birthPlace ? birthPlace.gramps_id : null,
       deathPlace: deathPlace ? deathPlace.gramps_id : null,
-      generation: null, // filled by the generation index (viz-generation-index)
+      generation: null, // set by build.mjs (generations.mjs)
       component: 0, // set by build.mjs
-      face: null, // filled by the face crops (viz-face-crops)
+      face: null, // set by applyFaces (build.mjs) from the face crops (faces.mjs)
     };
     people.push(out);
     personByHandle.set(p.handle, { out, src: p });
+    // the face crop source: Person.media_list[0], Gramps' person image, unless it or its Media is private
+    const mref = Array.isArray(p.media_list) ? p.media_list[0] : null;
+    if (mref && typeof mref.ref === 'string' && mref.private !== true) {
+      const media = idx.Media.get(mref.ref);
+      if (media && media.private === true) noteExcluded(media);
+      else faceJobs.push({ id, media: mref.ref, rect: mref.rect ?? null });
+    }
   }
 
   // ---- unions ------------------------------------------------------------------------------------------
@@ -445,5 +453,5 @@ export function projectRecords(objects, opts) {
   const places = [...outPlaces.values()].sort((a, b) => cmp(a.id, b.id));
 
   unions.sort((a, b) => cmp(a.id, b.id));
-  return { people, unions, places, events, warnings };
+  return { people, unions, places, events, warnings, faceJobs };
 }
