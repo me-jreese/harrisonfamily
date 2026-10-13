@@ -6,6 +6,7 @@ import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { createUploads } from "./uploads.js";
 import { HttpError, errorResponse, json } from "./http.js";
+import { countPendingAccessRequests } from "./me.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -57,7 +58,8 @@ export function createHandler(deps) {
     const notifyHandler = () =>
       createNotifyHandler({ vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id })(event);
     const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, bucket: deps.mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
-    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted };
+    const accessRequestCount = () => countPendingAccessRequests({ ddb, cmds, table });
+    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount };
   }
 
   /** Run a route's own handler for a non-HTTP caller (the MCP tools): same registry, same validation, Q-4 and audit. Returns {status, body}. */

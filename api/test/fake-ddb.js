@@ -51,6 +51,7 @@ export function createFakeDdb() {
     const limit = i.Limit ?? Infinity;
     const page = items.slice(0, limit);
     const more = items.length > limit;
+    if (i.Select === "COUNT") return { Count: page.length, ...(more ? { LastEvaluatedKey: { PK: page.at(-1).PK, SK: page.at(-1).SK } } : {}) };
     return { Items: structuredClone(page), ...(more ? { LastEvaluatedKey: { PK: page.at(-1).PK, SK: page.at(-1).SK } } : {}) };
   }
   return {
