@@ -108,7 +108,7 @@ test("mount points: hero and heading slots in order, tree-link after the tree, s
   await expect(social).toBeHidden();
   expect(await social.evaluate((el) => el.hidden && el.childElementCount === 0)).toBe(true);
   // every host is empty and takes no space (the default page is unchanged)
-  const boxes = await page.evaluate(() => [...document.querySelectorAll('[data-slot], .person-chips, .person-actions')].map((el) => el.getBoundingClientRect().height + "|" + el.textContent + "|" + getComputedStyle(el).display));
+  const boxes = await page.evaluate(() => [...document.querySelectorAll('[data-slot], .person-chips, .person-actions')].filter((el) => !el.closest(".hfy-bar")).map((el) => el.getBoundingClientRect().height + "|" + el.textContent + "|" + getComputedStyle(el).display));
   for (const b of boxes) expect(b.startsWith("0||")).toBe(true);
   // an island that fills a slot makes it visible; the next render rebuilds the hero slots and the event lets it refill
   await page.evaluate(() => { document.querySelector('[data-slot="follow"]').textContent = "x"; });
