@@ -110,6 +110,21 @@ test("the Eleventy default description, the [D0T] typo, the 222 years typo and t
   assert.deepEqual(HERO["terms/index.html"], [["harrisonfamily [D0T] us", "harrisonfamily [DOT] us"]]);
 });
 
+test("HFY-TSK-223: /private/ (the 'me' own-page redirect under navMe) is titled 'your page'; the old and the pre-flip titles rewrite once", () => {
+  const html = read("private/index.html");
+  assert.equal(TITLES["private/index.html"].title, "your page · Harrison Family");
+  assert.match(html, /<title>your page · Harrison Family<\/title>/);
+  assert.match(html, /<meta property="og:title" content="your page" \/>/);
+  assert.match(html, /<meta name="twitter:title" content="your page" \/>/);
+  assert.doesNotMatch(html.slice(0, html.indexOf("</head>")), /your family/i, "no old title left in the head");
+  for (const [title, og] of [["Your Family · Harrison Family Heritage", "Your Family"], ["your family · Harrison Family", "your family"]]) {
+    const old = `<title>${title}</title><meta property="og:title" content="${og}" /><meta name="twitter:title" content="${og}" />`;
+    const once = applyCopy(old, "private/index.html");
+    assert.equal(once, '<title>your page · Harrison Family</title><meta property="og:title" content="your page" /><meta name="twitter:title" content="your page" />');
+    assert.equal(applyCopy(once, "private/index.html"), once);
+  }
+});
+
 test("/logged-out/ is in the family voice and signs in again at the edge", () => {
   const html = read("logged-out/index.html");
   const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));

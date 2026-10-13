@@ -78,7 +78,7 @@ for (const width of WIDTHS) {
     await hermetic(page);
     await staleEdge(page, []);
     await page.setViewportSize({ width, height: 800 });
-    await page.goto("/about/?hfy_flags=shellV2");
+    await page.goto("/about/?hfy_flags=shellV2,navMe"); // the shipped bar since the navMe flip (HFY-TSK-223): home, search, posts, me
     const shell = page.locator("#hfy-shell-root .io-shell");
     await expect(shell).toBeVisible();
     await expect(shell).toHaveAttribute("data-bp", width >= 1024 ? "expanded" : width >= 688 ? "medium" : "compact");
@@ -86,10 +86,10 @@ for (const width of WIDTHS) {
     await expect(bar).toBeVisible();
     await expect(bar.locator(".hfy-bar__brand")).toBeVisible();
     if (width >= 688) {
-      await expect(page.locator("#hfy-shell-root .hfy-bar__links a")).toHaveCount(5);
+      await expect(page.locator("#hfy-shell-root .hfy-bar__links a")).toHaveCount(4);
       await expect(page.locator("#hfy-shell-root nav.io-shell__bar")).toHaveCount(0);
     } else {
-      await expect(page.locator("#hfy-shell-root nav.io-shell__bar .io-nav__item--bar")).toHaveCount(5);
+      await expect(page.locator("#hfy-shell-root nav.io-shell__bar .io-nav__item--bar")).toHaveCount(4);
     }
     // no sidebar / rail painted at any width: the kit renders it hidden (0 x 0) or not at all
     const rail = await page.evaluate(() => {

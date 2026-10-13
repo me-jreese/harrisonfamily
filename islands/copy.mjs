@@ -36,8 +36,10 @@ export const TITLES = {
   "logged-out/index.html": { from: ["Logged Out · Harrison Family Heritage", "Logged Out"], title: `signed out · ${SITE}`, og: "signed out" },
   "person/index.html": { from: ["Person Profile · Harrison Family Heritage", "Person Profile"], title: `family member · ${SITE}`, og: "family member" },
   "privacy/index.html": { from: ["Privacy Policy · Harrison Family Heritage", "Privacy Policy"], title: `privacy · ${SITE}`, og: "privacy" },
-  // The family tab's redirect page (HFYFeatureFlags.goToFamily); it replaced the 2025 "Person Directory" dev scaffold.
-  "private/index.html": { from: ["Your Family · Harrison Family Heritage", "Your Family"], title: `your family · ${SITE}`, og: "your family" },
+  // The own-page redirect (HFYFeatureFlags.goToFamily), the "me" item's route while the session does not name the member; it replaced
+  // the 2025 "Person Directory" dev scaffold. "your page" since the navMe flip (HFY-TSK-223), as the account sheet's link; the
+  // pre-flip "your family" title is rewritten too, so an Eleventy refresh that brings it back is put right by the next build.
+  "private/index.html": { from: ["Your Family · Harrison Family Heritage", "Your Family", `your family · ${SITE}`, "your family"], title: `your page · ${SITE}`, og: "your page" },
   "search/index.html": { from: ["Search · Harrison Family Heritage", "Search"], title: `search · ${SITE}`, og: "search" },
   "terms/index.html": { from: ["Terms of Service · Harrison Family Heritage", "Terms of Service"], title: `terms · ${SITE}`, og: "terms" },
 };
