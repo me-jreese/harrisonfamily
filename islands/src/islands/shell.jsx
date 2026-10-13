@@ -151,8 +151,10 @@ function Gear() {
 function SlotHost({ name, entry }) {
   const ref = useRef(null);
   useEffect(() => {
-    const cleanup = entry.mount(ref.current);
-    return () => { if (typeof cleanup === "function") cleanup(); };
+    // A throwing filler must not take the shell down: log it and leave the slot empty.
+    let cleanup;
+    try { cleanup = entry.mount(ref.current); } catch (err) { console.error(`HFYBarSlots: the ${name} filler threw while mounting`, err); }
+    return () => { if (typeof cleanup === "function") { try { cleanup(); } catch (err) { console.error(`HFYBarSlots: the ${name} filler threw in cleanup`, err); } } };
   }, [entry]);
   return <span ref={ref} className="hfy-bar__slot" data-slot={name} />;
 }

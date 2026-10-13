@@ -494,3 +494,34 @@ for (const navMe of [true, false]) {
     expect(await slotOrder(page)).toEqual(own);
   });
 }
+
+test("slots: a throwing filler leaves its slot empty and the shell (search, account) intact", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+  await page.evaluate(() => { window.HFYBarSlots.fill("bell", () => { throw new Error("synthetic filler failure"); }); });
+  await expect(page.locator('#hfy-shell-root [data-slot="bell"]')).toHaveCount(1); // the host exists, empty
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+  await expect(page.locator("#hfy-shell-root .hfy-bar")).toBeVisible();
+});
+
+test("slots: a second fill replaces the first (the old one is cleaned up) and a withdraw runs the filler's cleanup", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.goto("/about/?hfy_flags=shellV2", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+  await page.evaluate(() => {
+    window.__log = [];
+    const f = (tag) => (host) => { host.dataset.filler = tag; window.__log.push(`mount ${tag}`); return () => window.__log.push(`cleanup ${tag}`); };
+    window.__f = f;
+    window.__offA = window.HFYBarSlots.fill("chat", f("a"));
+  });
+  await expect(page.locator('#hfy-shell-root [data-slot="chat"][data-filler="a"]')).toHaveCount(1);
+  await page.evaluate(() => { window.__offB = window.HFYBarSlots.fill("chat", window.__f("b")); });
+  await expect(page.locator('#hfy-shell-root [data-slot="chat"][data-filler="b"]')).toHaveCount(1);
+  expect(await page.evaluate(() => window.__log)).toContain("cleanup a");
+  await page.evaluate(() => window.__offA()); // stale withdraw: a no-op
+  await expect(page.locator('#hfy-shell-root [data-slot="chat"]')).toHaveCount(1);
+  await page.evaluate(() => window.__offB());
+  await expect(page.locator('#hfy-shell-root [data-slot="chat"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__log)).toContain("cleanup b");
+});
