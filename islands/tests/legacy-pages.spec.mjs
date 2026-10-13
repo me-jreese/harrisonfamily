@@ -15,7 +15,7 @@ const LITERALS = ["7, 17, 28", "10, 10, 15", "17, 24, 39", "61, 155, 168"];
 
 async function stub(page, { shell }) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
-  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false } }));
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: false } }));
   await page.route("**/api/**", (r) => r.fulfill({ status: 401, json: { error: "unauthenticated" } }));
   await page.route("**/person/index.json", (r) => r.fulfill({ json: { people: [] } }));

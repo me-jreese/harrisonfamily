@@ -75,6 +75,7 @@ export function mapPerson(raw) {
       death_year: !living && years.length > 1 ? years[years.length - 1] : null,
       living,
       has_photo: Boolean(raw.primaryPhoto),
+      has_birth_year: typeof raw.birthYear === "number" || years.length > 0,
       lifespan: raw.lifespanSummary || "",
       photo: raw.primaryPhoto || ""
     }
@@ -103,8 +104,23 @@ export const peopleProperties = [
   { key: "birth_year", label: "born", type: "number" },
   { key: "death_year", label: "died", type: "number" },
   { key: "living", label: "living", type: "bool" },
-  { key: "has_photo", label: "has a photo", type: "bool" }
+  { key: "has_photo", label: "has a photo", type: "bool" },
+  { key: "has_birth_year", label: "has a birth year", type: "bool" }
 ];
+
+/**
+ * The search URL contract (HFY-TSK-136): `has_photo`, `has_birth_year` and `living` accept true|false and seed one filter token each,
+ * which the filter pills show and the visitor can remove. Any other value, and any other param, is ignored.
+ */
+export const FILTER_PARAMS = ["has_photo", "has_birth_year", "living"];
+export function filterTokensFromParams(params) {
+  const tokens = [];
+  for (const key of FILTER_PARAMS) {
+    const v = (params.get(key) || "").trim().toLowerCase();
+    if (v === "true" || v === "false") tokens.push({ propertyKey: key, operator: "=", value: v });
+  }
+  return tokens;
+}
 
 let enginePromise = null;
 function engine() {

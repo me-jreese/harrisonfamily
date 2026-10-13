@@ -1,0 +1,1 @@
+import{c as l,e as s}from"./chunk-NGPM3T4G.js";var t=l(s(),1);function i(){let[e,u]=(0,t.useState)(void 0);return(0,t.useEffect)(()=>{let n=!0,r=window.HFYFeatureFlags?.edgeSession;return Promise.resolve(typeof r=="function"?r():null).then(o=>{n&&u(o??null)},()=>{n&&u(null)}),()=>{n=!1}},[]),e}var f=e=>e&&e.authenticated===!0&&e.sub?String(e.sub):null;export{i as a,f as b};
