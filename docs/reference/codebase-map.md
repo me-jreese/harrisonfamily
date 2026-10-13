@@ -598,7 +598,7 @@ The reverse lookup: from a directory to the capability sections above.
 
 - This page is a routing index, not an inventory of record. Where it and the code disagree, the code is authoritative.
 - The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67): PR #8 set all six flags in `11ty/_data/flags.json` to `true` and the site deployed, and then, per the HFY records, the private data gate was attached. The flags and the gate can change without an edit to this page, so check them rather than assume:
-  - the flags: `curl -s https://<site>/_data/flags.json | jq .authV2`, or without `.authV2` for all six;
+  - the flags: `curl -s https://<site>/_data/flags.json | jq .authV2`, or without `.authV2` for all seven (`navMe` included);
   - the gate: a signed-out `curl -s -o /dev/null -w '%{http_code}' https://<site>/person/index.json` prints `401` while the gate is attached. Without it, the request reaches the default behavior and its answer depends on the `HFYAppendIndex` code ([CloudFront Function](#cloudfront-function)).
 
   [How to turn a feature flag on for one tab or for everyone](../how-to/toggle-a-feature-flag.md) covers the flags, and the [release model](../explanation/release-model.md) explains them. The private data gate is not a flag: it applies from the moment `add-data-gate-behaviors.sh` attaches it.

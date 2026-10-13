@@ -9,8 +9,9 @@
   line-height: var(--io-typography-leading-normal);
 }
 
-/* Rows: 56 high (control.h.lg), a 24px single-weight icon in currentColor, the label (16/600) over its dim line (16, text.dim),
-   a hairline between rows. The whole row is the link (or, for "sign out", the button). */
+/* Rows: 56 high (control.h.lg: 4 + the 24px label + its 24px dim line + 4; a row grows only where the line wraps, at 375), a 24px
+   single-weight icon in currentColor, the label (16/600) over its dim line (16, text.dim), a hairline between rows. The whole row
+   is the link (or, for "sign out", the button). */
 .hfy-settings__list {
   list-style: none;
   margin: 0;
@@ -26,7 +27,7 @@
   width: 100%;
   min-height: var(--io-control-h-lg);
   margin: 0;
-  padding: var(--io-space-2) var(--io-space-3);
+  padding: var(--io-space-1) var(--io-space-3);
   border: 0;
   border-radius: var(--io-radius-md);
   background: transparent;

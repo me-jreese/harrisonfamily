@@ -39,6 +39,8 @@ Values in angle brackets, such as `<site>`, `<site-bucket>`, `<app-stack>`, `<di
 
 `searchV2` turns `shellV2` on as well, because the search launcher lives in the shell (HFY-R48). Check the shell's prerequisites for search too.
 
+`familyViz` is the viz domain's flag. It is not in `flags.json` yet, but the shell already reads it (HFY-TSK-091) and points "family" at `/tree/`, with or without `navMe`. `/tree/` does not exist until the viz task ships, so do not preview `familyViz`: a `?hfy_flags=familyViz` link turns today's "family" tab, which opens your own page, into a link to a `404`.
+
 > **Warning:** do not flip a flag whose prerequisites fail. A missing island bundle leaves the legacy page, or the placeholder text on `/posts/` and `/me/notifications/`. A missing API shows an error inside the island. An unreachable auth edge stops sign-in and, while the gate is attached, the family data for everyone. [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md#find-your-symptom) lists the symptoms and their fixes.
 
 ### Check the prerequisites

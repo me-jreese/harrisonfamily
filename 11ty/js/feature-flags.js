@@ -28,11 +28,11 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "6b6449ca",
-        "css": "30ce79f2"
+        "js": "6366ba84",
+        "css": "b1550e24"
       },
       "shell": {
-        "js": "feb6cbc2",
+        "js": "54ddc248",
         "css": "07d64dde"
       },
       "timeline": {
@@ -42,7 +42,7 @@
     },
     "theme": "b8607abf",
     "manifest": "c0f9b5fc",
-    "sw": "7bf088c1"
+    "sw": "02ca276e"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

@@ -1,6 +1,6 @@
 // HFY-TSK-064 AC2/AC3 + the approved design system's Shell (ds/components/Shell, HFY-R13) at 375 / 688 / 1024.
 // Run against a built site: `node build.mjs --site <dir>` then `HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/shell.spec.mjs`
-// (defaults: the committed ../11ty on 8089). The build flags (11ty/_data/flags.json) are all on, so "flag off" checks force
+// (defaults: the committed ../11ty on 8089). The build flags (11ty/_data/flags.json) are all on except navMe, which ships off, so "flag off" checks force
 // -shellV2 through the ?hfy_flags preview override. /auth and Google are stubbed; data is synthetic.
 import { test, expect } from "@playwright/test";
 import { axeViolations } from "./axe.mjs";
@@ -266,6 +266,34 @@ for (const path of PAGES) {
     });
   }
 }
+
+// Until the session names the member there is no gear and "me" is the /private/ redirect: while it is pending, and when /auth/session
+// is unreachable (the bar then shows "sign in", as the /me/ hub does).
+test("375 navMe, session pending: no gear and 'me' is /private/; once the session names the member, the gear and the own page", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  let release;
+  const hold = new Promise((r) => { release = r; });
+  await page.route("**/auth/session", async (r) => { await hold; return r.fulfill({ json: { authenticated: true, sub: ME.sub, grampsId: ME.sub, label: ME.label } }); });
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  const me = page.locator('#hfy-shell-root [data-io-nav-item="me"]');
+  await expect(me).toHaveAttribute("href", "/private/");
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="loading"]')).toBeAttached();
+  await expect(gearOf(page)).toHaveCount(0);
+  release();
+  await expect(gearOf(page)).toBeVisible();
+  await expect(me).toHaveAttribute("href", `/person/?id=${ME.sub}`);
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+});
+
+test("375 navMe, /auth/session unreachable: no gear, 'me' stays /private/, and the bar shows 'sign in'", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.route("**/auth/session", (r) => r.fulfill({ status: 503, body: "down" }));
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-out"]')).toBeVisible();
+  await expect(page.locator("#hfy-shell-root nav.io-shell__bar .io-nav__item--bar")).toHaveCount(4);
+  await expect(page.locator('#hfy-shell-root [data-io-nav-item="me"]')).toHaveAttribute("href", "/private/");
+  await expect(gearOf(page)).toHaveCount(0);
+});
 
 test("375 navMe + familyViz: five cells again, family is the tree (never /family/), me is the own page", async ({ page }) => {
   await hermetic(page, { signedIn: true });

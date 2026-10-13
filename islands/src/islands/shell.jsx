@@ -11,6 +11,9 @@ import { suggestPeople } from "../lib/people-corpus.js";
 import { navPathname, ownRoute } from "../lib/family-route.js";
 import { SETTINGS_ROUTE, navItems, onSettings } from "../lib/nav.js";
 import { signOut } from "../lib/sign-out.js";
+// The page's edge session (HFYFeatureFlags.edgeSession, one GET /auth/session per page) and the "signed in" rule, shared with the
+// settings hub: undefined while pending, null when authV2 is off or /auth/session is unreachable, else {authenticated, sub, label}.
+import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 
 // Nav registry (R8, DS Shell anatomy): lowercase destinations composed by navItems() (lib/nav.js) from the flags navMe, familyViz and
 // notifyV2 and the edge session's sub. Without navMe it is today's five: home, family, search, posts, me. "family" is "your family":
@@ -95,28 +98,12 @@ function useFlag(name, initial = false) {
   return on;
 }
 
-// The page's edge session (HFYFeatureFlags.edgeSession, one GET /auth/session per page): undefined while it is pending,
-// null when authV2 is off or /auth/session is unreachable, else {authenticated, sub, label}.
-function useEdgeSession() {
-  const [session, setSession] = useState(undefined);
-  useEffect(() => {
-    let live = true;
-    const probe = window.HFYFeatureFlags?.edgeSession;
-    Promise.resolve(typeof probe === "function" ? probe() : null).then(
-      (s) => { if (live) setSession(s ?? null); },
-      () => { if (live) setSession(null); }
-    );
-    return () => { live = false; };
-  }, []);
-  return session;
-}
-
 function Account({ notifyV2, navMe }) {
   const session = useEdgeSession();
   const bp = useBreakpoint();
   const [open, setOpen] = useState(false);
   if (session === undefined) return <span className="hfy-account__skel" aria-hidden="true" data-hfy-account="loading" />;
-  if (!session || session.authenticated !== true || !session.sub) {
+  if (!memberSub(session)) {
     // authV2 signed out: the edge sign-in. authV2 off / edge unreachable: the legacy entry, which hands `next` to the edge when authV2 is on.
     const href = session ? `/auth/login?returnTo=${encodeURIComponent(here())}` : `/family-login/?next=${encodeURIComponent(here())}`;
     return <a className="hfy-signin" href={href} data-hfy-account="signed-out">sign in</a>;
@@ -170,7 +157,7 @@ function Shell({ flags }) {
   // The own-page tab opens the member's own page once the edge session names them; until then (pending, signed out, authV2 off) it is
   // the stable /private/ redirect, which decides the same way. Only an authenticated session with a sub gives an own page.
   const session = useEdgeSession();
-  const sub = session && session.authenticated === true && session.sub ? String(session.sub) : null;
+  const sub = memberSub(session);
   const nav = useMemo(() => navItems({ navMe, familyViz, notifyV2, sub }), [navMe, familyViz, notifyV2, sub]);
   const registry = useMemo(() => defineNavRegistry({ items: nav.map((i) => ({ ...i, placement: "primary" })), stack: "enceladus" }), [nav]);
   const pathname = navPathname(window.location, sub);
