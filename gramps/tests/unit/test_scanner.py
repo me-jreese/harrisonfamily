@@ -22,7 +22,7 @@ if str(GRAMPS) not in sys.path:
 from hfygramps import scanner  # noqa: E402
 
 VECTORS = json.loads((REPO / "shared" / "privacy-guard.vectors.json").read_text(encoding="utf-8"))
-RULES = {"plus", "grouped", "run", "address", "spelled", "number-street", "box", "scheme", "host", "path",
+RULES = {"plus", "grouped", "run", "address", "spelled", "number-street", "rural-route", "box", "scheme", "host", "path",
          "month-day", "day-month", "numeric", "month-year"}
 OPEN, CLOSE = "⟦", "⟧"
 
@@ -74,6 +74,15 @@ class VectorFileTest(unittest.TestCase):
         self.assertEqual([list(p) for p in scanner.CONTACT_PATHS], k["contact_paths"])
         self.assertEqual(list(scanner.CONTACT_SCHEMES), k["contact_schemes"])
         self.assertEqual([list(r) for r in scanner.FOLD], k["fold"])
+        self.assertEqual([list(r) for r in scanner.DIGITS], k["digits"])
+        self.assertEqual([list(r) for r in scanner.DROP], k["drop"])
+
+    def test_normalization_tables_never_overlap(self):
+        ranges = sorted((r[0], r[1]) for r in scanner.FOLD + scanner.DIGITS + scanner.DROP)
+        for lo, hi in ranges:
+            self.assertTrue(0x7F < lo <= hi, (hex(lo), hex(hi)))
+        for a, b in zip(ranges, ranges[1:]):
+            self.assertGreater(b[0], a[1], hex(b[0]))
 
 
 class VectorCasesTest(unittest.TestCase):
@@ -168,6 +177,23 @@ class GuaranteesTest(unittest.TestCase):
             t0 = time.monotonic()
             scanner.scan_text(s)
             self.assertLess(time.monotonic() - t0, 2.0, s[:12])
+
+    def test_100k_character_inputs_finish_in_under_1s(self):
+        """Linear URL, keyword and box scans (the shared/privacy-guard.test.mjs inputs)."""
+        n = 100000
+
+        def fill(s):
+            return (s * (n // len(s) + 1))[:n]
+
+        inputs = [
+            "x.org/?" + fill("a=1234567&amp;"), fill("#1234567"), fill("born 5/12 "), fill("d. 5 May born "),
+            fill("😀 born 5 May "), fill("\u200b1"), fill("01 23 45 67 89 "), fill("in 1850 Main Street "), fill("RR 2 Box 15 "),
+            "p" + " " * n + "x", "pmb" + " " * n + "x", "01-" * (n // 3) + "01",
+        ]
+        for s in inputs:
+            t0 = time.monotonic()
+            scanner.scan_text(s)
+            self.assertLess(time.monotonic() - t0, 1.0, ascii(s[:16]))
 
 
 if __name__ == "__main__":

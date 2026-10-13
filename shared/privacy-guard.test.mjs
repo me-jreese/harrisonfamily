@@ -8,14 +8,14 @@ import { fileURLToPath } from "node:url";
 import * as guard from "./privacy-guard.mjs";
 
 const {
-  BIRTHDAY_KEYWORDS, CONTACT_HOSTS, CONTACT_PATHS, CONTACT_SCHEMES, COPY, DOB_WINDOW, FOLD, KINDS,
+  BIRTHDAY_KEYWORDS, CONTACT_HOSTS, CONTACT_PATHS, CONTACT_SCHEMES, COPY, DIGITS, DOB_WINDOW, DROP, FOLD, KINDS,
   isContactChannel, matchesDomain, rejectContactInfo, scanText,
 } = guard;
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(readFileSync(join(dir, "privacy-guard.vectors.json"), "utf8"));
-const RULES = new Set(["plus", "grouped", "run", "address", "spelled", "number-street", "box", "scheme", "host", "path",
-  "month-day", "day-month", "numeric", "month-year"]);
+const RULES = new Set(["plus", "grouped", "run", "address", "spelled", "number-street", "rural-route", "box", "scheme", "host",
+  "path", "month-day", "day-month", "numeric", "month-year"]);
 
 /** Strips ⟦kind/rule|text⟧ markers (nestable); offsets are UTF-16 units of the stripped text, as scanText reports them. */
 export function parseCase(marked) {
@@ -67,7 +67,15 @@ test("module constants equal the vector file's, so the Python port is pinned to 
   assert.deepEqual(CONTACT_PATHS.map((p) => [...p]), k.contact_paths);
   assert.deepEqual([...CONTACT_SCHEMES], k.contact_schemes);
   assert.deepEqual(FOLD.map((r) => [...r]), k.fold);
+  assert.deepEqual(DIGITS.map((r) => [...r]), k.digits);
+  assert.deepEqual(DROP.map((r) => [...r]), k.drop);
   assert.deepEqual({ ...COPY }, k.copy);
+});
+
+test("the normalization tables never overlap, so the order they apply in cannot matter", () => {
+  const ranges = [...FOLD, ...DIGITS, ...DROP].map(([lo, hi]) => [lo, hi]).sort((a, b) => a[0] - b[0]);
+  for (const [lo, hi] of ranges) assert.ok(lo <= hi && lo > 0x7f, `${lo.toString(16)}-${hi.toString(16)}`);
+  for (let i = 1; i < ranges.length; i++) assert.ok(ranges[i][0] > ranges[i - 1][1], `overlap at ${ranges[i][0].toString(16)}`);
 });
 
 for (const c of cases) {
@@ -175,5 +183,20 @@ test("adversarial inputs stay fast (no catastrophic backtracking)", () => {
     const t0 = Date.now();
     scanText(s);
     assert.ok(Date.now() - t0 < 2000, `${s.slice(0, 12)}… took ${Date.now() - t0} ms`);
+  }
+});
+
+test("100k-character inputs finish in under 1 s (linear URL, keyword and box scans)", () => {
+  const N = 100000;
+  const fill = (s) => s.repeat(Math.ceil(N / s.length)).slice(0, N);
+  const inputs = [
+    "x.org/?" + fill("a=1234567&amp;"), fill("#1234567"), fill("born 5/12 "), fill("d. 5 May born "), fill("😀 born 5 May "),
+    fill("\u200b1"), fill("01 23 45 67 89 "), fill("in 1850 Main Street "), fill("RR 2 Box 15 "), "p" + " ".repeat(N) + "x",
+    "pmb" + " ".repeat(N) + "x", "01-".repeat(N / 3) + "01",
+  ];
+  for (const s of inputs) {
+    const t0 = Date.now();
+    scanText(s);
+    assert.ok(Date.now() - t0 < 1000, `${JSON.stringify(s.slice(0, 16))}… took ${Date.now() - t0} ms`);
   }
 });
