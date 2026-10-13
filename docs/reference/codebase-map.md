@@ -179,11 +179,12 @@ Paths:
 - [`api/src/`](../../api/src/):
   - `index.js`: Lambda entry and AWS clients. It checks `X-Origin-Verify`, then sends the MCP paths to the MCP mount and every other path to the API handler.
   - `handler.js`: Function URL handler. Its `invoke` runs a route's own handler for a non-HTTP caller, the MCP tools.
-  - `routes.js`: route registry, including `MCP_RESOURCE` and the `mcp` member of each route exposed as a tool.
+  - `routes.js`: route registry, including `MCP_RESOURCE`, the `mcp` member of each route exposed as a tool, and each route's `gate`.
+  - `features.js`: the server-side feature gate (HFY-TSK-238): `requireFeature`, `serverSwitch` and `gateExempt` for routes, the flags-file reader, the `uat` and `x-hfy-preview` rules, and `featureOn` for producers ([API: Feature gate](api.md#feature-gate)).
   - `http.js`: HTTP helpers.
   - `auth.js`: session principal and admin list. It resolves the actor's label through `labels.js`.
   - `labels.js`: author labels, shared by the cookie path and the MCP path.
-  - `policy.js`: the MCP and UI permission table, the step-up settings and the groups config resolver.
+  - `policy.js`: the MCP and UI permission table, the step-up settings and the groups config resolver (the MCP groups and the `uat` group).
   - `mcp.js`: the MCP mount.
   - `mcp-caps.js`: build-time views of the MCP surface.
   - `origin.js`: the `X-Origin-Verify` check.

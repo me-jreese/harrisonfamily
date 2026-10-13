@@ -5,6 +5,7 @@ import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/
 import { createFakeDdb, cmds } from "./fake-ddb.js";
 import { createAdminList, createAuthenticator } from "../src/auth.js";
 import { createHandler } from "../src/handler.js";
+import { createFeatureGate } from "../src/features.js";
 
 export const TABLE = "hfy-app";
 export const ISSUER = "https://harrisonfamily.us/auth";
@@ -28,8 +29,12 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
 /**
  * `intercept(cmd)` runs before every DynamoDB command reaches the fake (throw to simulate a store failure, or await another
  * request to simulate a race). The returned `ddb` is the raw fake, for assertions.
+ * Feature gate (HFY-TSK-238): `flags` is the deployed flags map (an object read on every call, so a test can flip it, or an async
+ * function such as a createFlagSource), `uat` the uat subjects, or `features` a whole gate. With none of them the handler uses the
+ * closed default (everything off, nobody uat). `routes` replaces the registry (tests mount gated routes with defineRoutes); `inbox`
+ * is a persist-first inbox store.
  */
-export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel, log = { warn() {}, error() {} } } = {}) {
+export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel, log = { warn() {}, error() {} }, flags, uat, features, routes, inbox } = {}) {
   const raw = createFakeDdb();
   const ddb = intercept ? { send: async (cmd) => { await intercept(cmd); return raw.send(cmd); } } : raw;
   const now = ticker();
@@ -41,18 +46,22 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept,
     getAdmins: createAdminList({ load: async () => ({ admins }) }), log: { warn() {}, error() {} },
     ...(resolveLabel ? { resolveLabel } : {}),
   });
+  const gate = features ?? (flags !== undefined || uat !== undefined
+    ? createFeatureGate({ flags: typeof flags === "function" ? flags : async () => ({ ...(flags ?? {}) }), isUat: async (sub) => (uat ?? []).includes(sub) })
+    : undefined);
   const subscriptions = new DynamoSubscriptionStore(ddb, cmds, TABLE);
   const preferences = new DynamoPreferencesStore(ddb, cmds, TABLE);
   const handler = createHandler({
     ddb, cmds, table: TABLE, authenticate, ulid: createUlidFactory(), now, subscriptions, preferences,
     ...(audit ? { audit } : {}),
+    ...(gate ? { features: gate } : {}), ...(routes ? { routes } : {}), ...(inbox ? { inbox } : {}),
     presignPut: async (a) => { presigned.push(a); return `https://presign.test/${a.bucket}/${a.key}?sig=x`; },
     vapidPublicKey: "vapid-public", log,
     ...(withPush ? { vapid: { subject: "mailto:test@example.test", publicKey: "vapid-public", privateKey: "x" }, webpush: { async sendNotification(sub, payload) { sent.push({ sub, payload: JSON.parse(payload) }); } } } : {}),
   });
-  const ev = (method, path, { token, body, query, ct = "application/json" } = {}) => ({
+  const ev = (method, path, { token, body, query, ct = "application/json", headers = {} } = {}) => ({
     requestContext: { http: { method } }, rawPath: path, queryStringParameters: query,
-    headers: ct ? { "content-type": ct } : {}, cookies: token ? [`io_id=${token}`] : [],
+    headers: { ...(ct ? { "content-type": ct } : {}), ...headers }, cookies: token ? [`io_id=${token}`] : [],
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const call = async (method, path, opts) => {

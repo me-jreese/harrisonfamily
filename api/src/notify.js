@@ -18,16 +18,27 @@ export const TEMPLATE_REGISTRY = {
 export const mentionsOf = (body) => [...new Set([...String(body).matchAll(/(?:^|[^\w@])@(I\d{4,8})\b/g)].map((m) => m[1]))].slice(0, 10);
 export const NOTIFY_TYPES = Object.keys(TEMPLATE_REGISTRY.features);
 
+/** The flag that gates persist-first inbox writes and the push app_badge (HFY-TSK-238 AC4; BRD2 D2-15, 10.1). */
+export const INBOX_FLAG = "inboxV1";
+/** Push-only types never become inbox items (BRD2 D2-15: new_family_post, and chat_message when chat lands). */
+export const PUSH_ONLY_TYPES = new Set(["new_family_post"]);
+
 /**
- * deps: { subscriptions, preferences, webpush, vapid, listPrincipals, log }.
- * Never throws: push is a nicety and must not fail a write.
+ * deps: { subscriptions, preferences, webpush, vapid, listPrincipals, log, inbox?, featureOn? }.
+ * `inbox.put(principal, {type, navigate, actorLabel}) => {unread?}` is the persist-first store (hfy-inbox-delivery-api wires the
+ * @io-kit/notify inbox store here). An item is stored, and the push carries `app_badge` (the unread count), only while
+ * `featureOn("inboxV1", recipient)` (src/features.js): no inbox item exists for anyone while the flag is off, except uat recipients.
+ * Without `featureOn` the inbox is off (fail closed).
+ * Never throws: delivery is a nicety and must not fail a write.
  */
 export function createNotifier(deps) {
   const log = deps.log ?? console;
   const enabled = () => Boolean(deps.webpush && deps.vapid);
-  /** Producers run after a committed write: no push configured => no reads at all; any failure is logged and swallowed. */
+  const active = () => enabled() || Boolean(deps.inbox);
+  const inboxOn = async (principal) => Boolean(deps.inbox && deps.featureOn) && (await deps.featureOn(INBOX_FLAG, principal)) === true;
+  /** Producers run after a committed write: no push and no inbox configured => no reads at all; any failure is logged and swallowed. */
   const guarded = (label, fn) => async (...args) => {
-    if (!enabled()) return;
+    if (!active()) return;
     try {
       await fn(...args);
     } catch (e) {
@@ -35,7 +46,7 @@ export function createNotifier(deps) {
     }
   };
   async function notify(feature, recipients, { navigate, actorLabel, exclude = [] }) {
-    if (!enabled()) return { sent: 0 };
+    if (!active()) return { sent: 0 };
     const skip = new Set(exclude);
     let sent = 0;
     await Promise.allSettled(
@@ -43,8 +54,14 @@ export function createNotifier(deps) {
         .filter((r) => !skip.has(r))
         .map(async (principal) => {
           try {
+            let badge;
+            if (!PUSH_ONLY_TYPES.has(feature) && (await inboxOn(principal))) {
+              const stored = await deps.inbox.put(principal, { type: feature, navigate, actorLabel }); // persist first, then push
+              if (Number.isInteger(stored?.unread) && stored.unread >= 0) badge = stored.unread;
+            }
+            if (!enabled()) return;
             const prefs = await deps.preferences.get(principal);
-            const payload = buildDeclarativePush({ registry: TEMPLATE_REGISTRY, feature, prefs, navigate, fields: { actor: actorLabel } });
+            const payload = buildDeclarativePush({ registry: TEMPLATE_REGISTRY, feature, prefs, navigate, fields: { actor: actorLabel }, ...(badge === undefined ? {} : { appBadge: badge }) });
             if (!payload) return;
             const r = await sendToPrincipal({ store: deps.subscriptions, webpush: deps.webpush, vapid: deps.vapid, principal, payload });
             sent += r.sent;
@@ -70,8 +87,9 @@ export function createNotifier(deps) {
       const owner = c.threadId.startsWith("person:") ? c.threadId.slice(7) : postAuthorId;
       if (owner) await notify("comment_on_my_record", take([owner]), base);
     }),
-    /** After a post becomes published: everyone subscribed except the author (the principal Scan only runs with push on). */
+    /** After a post becomes published: everyone subscribed except the author (the principal Scan only runs with push on; push-only type). */
     onPublished: guarded("publish notification", async (post) => {
+      if (!enabled()) return;
       const everyone = deps.listPrincipals ? await deps.listPrincipals() : [];
       await notify("new_family_post", everyone, { navigate: `/posts/?id=${post.id}`, actorLabel: post.author.label, exclude: [post.author.id] });
     }),
