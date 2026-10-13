@@ -348,7 +348,7 @@ Paths:
 
 - [`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs): the `hfy-check-allowed` Lambda.
 - [`functions/get-allowlist/`](../../functions/get-allowlist/): the `getAllowlist` Google Cloud Function. This is the deployed copy.
-- [`gcloud/allowlist-fn/`](../../gcloud/allowlist-fn/): a byte-identical sample copy, refreshed by `scripts/export_workspace_samples.sh`.
+- [`gcloud/allowlist-fn/`](../../gcloud/allowlist-fn/): a byte-identical sample copy.
 
 Facts:
 
@@ -430,7 +430,7 @@ Paths:
   - `build-islands.sh`, `package-api.sh`, `package-auth.sh` and `package-edge-gate.sh` are local build scripts.
   - `mcp-conformance.sh` is the MCP conformance gate. See [MCP server](#mcp-server).
 - [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit): the pre-commit hook.
-- Workspace helpers: [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh), [`scripts/export_workspace_samples.sh`](../../scripts/export_workspace_samples.sh), [`scripts/promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh), [`scripts/sync_sanitized_assets.py`](../../scripts/sync_sanitized_assets.py), [`scripts/validate_build.sh`](../../scripts/validate_build.sh).
+- Workspace helpers: [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh), [`scripts/promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh), [`scripts/sync_sanitized_assets.py`](../../scripts/sync_sanitized_assets.py), [`scripts/validate_build.sh`](../../scripts/validate_build.sh).
 
 Facts:
 
@@ -518,8 +518,8 @@ Facts:
 - `etl-output/` holds only READMEs, and `gramps_exports/` holds only `.gitkeep`.
 - The top-level README in each sample directory that has one is a short pointer into these docs.
 - `coming-soon-index.html` is a standalone placeholder page.
-- `scripts/export_workspace_samples.sh` replaces `allowlist/`, `cloudfront/`, `etl-output/`, `gcloud/`, `harrisonfamily-frontend/` and `tests/login-flow/` with their copies in `<project>/workspace/`. It also copies `coming-soon-index.html`.
-- `<project>/workspace/cloudfront/` also holds placeholder JSON files that `scripts/sync_sanitized_assets.py --sync` wrote for files in `<project>/workspace-local/cloudfront/`. The next export copies them into `cloudfront/`. See [How to refresh the sanitized samples](../how-to/refresh-the-sanitized-samples.md).
+- The samples are edited in the repository. `.gitignore` and `scripts/ci/check-no-family-data.sh` keep real data out (D-03).
+- `<project>/workspace/cloudfront/` also holds placeholder JSON files that `scripts/sync_sanitized_assets.py --sync` wrote for files in `<project>/workspace-local/cloudfront/`. They are not copied into the repository. See [How to refresh the sanitized samples](../how-to/refresh-the-sanitized-samples.md).
 
 ## Outside the repository
 

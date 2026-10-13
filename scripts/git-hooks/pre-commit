@@ -12,6 +12,14 @@ else
   echo "[WARNING] Missing deployment sync checker at $CHECK_SCRIPT. Skipping comparison step."
 fi
 
+GUARD_SCRIPT="$REPO_ROOT/scripts/ci/check-no-family-data.sh"
+if [ -x "$GUARD_SCRIPT" ]; then
+  "$GUARD_SCRIPT"
+else
+  echo "[ERROR] Missing family-data guard at $GUARD_SCRIPT." >&2
+  exit 1
+fi
+
 if ! command -v trufflehog >/dev/null 2>&1; then
   echo "[ERROR] trufflehog is not installed or not on PATH. Install it before committing." >&2
   exit 1

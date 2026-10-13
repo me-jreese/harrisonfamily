@@ -36,3 +36,64 @@ islands/node_modules/
 islands/test-results/
 islands/playwright-report/
 !.github/actions/io-kit-ci/build/
+
+# Family-data protection (HFY-PLN-002 D-03)
+# Real family data never enters this repo. Each data directory is ignored except the 14 tracked synthetic samples.
+# scripts/ci/check-no-family-data.sh (CI and pre-commit) fails on any other tracked file there.
+# To add a new synthetic sample, add its negation here and its path + sha256 to scripts/ci/data-sample-allowlist.txt.
+/etl-output/*
+!/etl-output/README.md
+!/etl-output/sample_bundle/
+/etl-output/sample_bundle/*
+!/etl-output/sample_bundle/README.md
+
+/harrisonfamily-frontend/*
+!/harrisonfamily-frontend/README.md
+!/harrisonfamily-frontend/event/
+/harrisonfamily-frontend/event/*
+!/harrisonfamily-frontend/event/E0001.json
+!/harrisonfamily-frontend/family/
+/harrisonfamily-frontend/family/*
+!/harrisonfamily-frontend/family/F0001.json
+!/harrisonfamily-frontend/media/
+/harrisonfamily-frontend/media/*
+!/harrisonfamily-frontend/media/M0001.json
+!/harrisonfamily-frontend/media/index.json
+!/harrisonfamily-frontend/note/
+/harrisonfamily-frontend/note/*
+!/harrisonfamily-frontend/note/N0001.json
+!/harrisonfamily-frontend/person/
+/harrisonfamily-frontend/person/*
+!/harrisonfamily-frontend/person/I0001.json
+!/harrisonfamily-frontend/person/index.json
+!/harrisonfamily-frontend/place/
+/harrisonfamily-frontend/place/*
+!/harrisonfamily-frontend/place/P0001.json
+!/harrisonfamily-frontend/place/index.json
+
+/workspace/*
+!/workspace/11ty-dev/
+/workspace/11ty-dev/*
+!/workspace/11ty-dev/src/
+/workspace/11ty-dev/src/*
+!/workspace/11ty-dev/src/_data/
+/workspace/11ty-dev/src/_data/*
+!/workspace/11ty-dev/src/_data/featureFlags.js
+
+/workspace-local/
+/gramps_exports/*
+!/gramps_exports/.gitkeep
+/graph/out/
+*.gazetteer/
+
+# Case variants (Family.GRAMPS) and mixed-case directories are not matched by gitignore on all platforms;
+# the guard is case-insensitive and is the real enforcement.
+# Gramps and SQLite databases, anywhere, except synthetic test fixtures.
+*.gramps
+*.gpkg
+*.sqlite
+*.db
+sqlite.db
+**/hfy_sync/*/backups/
+graph/**/*.jsonl
+!gramps/tests/fixtures/**

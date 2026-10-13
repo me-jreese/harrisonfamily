@@ -539,14 +539,15 @@ The output prints the token's `sub`, which is a real gramps_id, and its groups, 
 [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit) runs from the repository root, in this order:
 
 1. If [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh) is executable, run it. A failure blocks the commit. If it is not executable, print a warning and continue.
-2. Require `trufflehog` on `PATH`. If it is missing, exit 1.
-3. Run `trufflehog --no-update --fail filesystem .`. This scans the files on disk under the checkout, not only the staged changes.
+2. Run [`scripts/ci/check-no-family-data.sh`](../../scripts/ci/check-no-family-data.sh), the family-data guard: it fails when a tracked file in a data directory, or any `*.gramps`, `*.sqlite` or `*.db` file, is not on [`data-sample-allowlist.txt`](../../scripts/ci/data-sample-allowlist.txt) (path and sha256). A missing guard script blocks the commit. It needs no CodeArtifact access.
+3. Require `trufflehog` on `PATH`. If it is missing, exit 1.
+4. Run `trufflehog --no-update --fail filesystem .`. This scans the files on disk under the checkout, not only the staged changes.
 
 | Exit status | Meaning |
 |---|---|
 | 0 | No findings. The commit proceeds. |
 | 183 | TruffleHog found potential secrets. |
-| Any other non-zero | The sync check failed, `trufflehog` is missing, or TruffleHog itself failed. |
+| Any other non-zero | The sync check or the family-data guard failed, `trufflehog` is missing, or TruffleHog itself failed. |
 
 The hook is active in a clone whose `core.hooksPath` is `scripts/git-hooks` (`git config core.hooksPath scripts/git-hooks`). `SKIP_DEPLOYMENT_SYNC_CHECK=1` skips the sync check. The TruffleHog scan still runs.
 
@@ -559,7 +560,6 @@ These scripts predate the E5 release. They assume the checkout sits at `<project
 | [`check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh) | Staged file names. For staged `11ty/*`: `<eleventy-source>/_site` against `11ty/`, with the excludes listed below. For staged `lambda/*`: `<project>/scripts/auth/check-allowed-lambda` against `lambda/hfy-check-allowed`, excluding `node_modules/`. For staged `functions/*`: `<project>/workspace/gcloud/allowlist-fn` against `functions/get-allowlist`. | Nothing | `SKIP_DEPLOYMENT_SYNC_CHECK=1` |
 | [`validate_build.sh`](../../scripts/validate_build.sh) | `<eleventy-source>/_site/index.html` | Nothing | None |
 | [`promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh) | A session-log JSON whose `changes[]` entries have `promote: true`, `workspace_path` (relative to `<project>`), `repo_path` (relative to the checkout) and `notes` | The listed paths in this checkout | `--log FILE` (required, relative to the current directory), `--dry-run` or `-n`, `-h` |
-| [`export_workspace_samples.sh`](../../scripts/export_workspace_samples.sh) | `<project>/workspace/{allowlist,cloudfront,etl-output,gcloud,harrisonfamily-frontend}`, `<project>/workspace/tests/login-flow`, `<project>/workspace/coming-soon-index.html` | The same paths under `<project>/repo/` | None |
 | [`sync_sanitized_assets.py`](../../scripts/sync_sanitized_assets.py) | `<project>/workspace-local/allowlist/`, `<project>/workspace-local/cloudfront/`, `<project>/workspace-local/coming-soon-index.html` | Placeholders under `<project>/workspace/` (with `--sync`) | `--sync` |
 
 Behavior details:
@@ -568,7 +568,6 @@ Behavior details:
 - **The `11ty/` comparison excludes** the data directories (`person/`, `family/`, `event/`, `note/`, `media/`, `place/`), `private/`, `uploads/`, `README.md` and `.DS_Store`, and the repository-owned files that `<eleventy-source>` does not produce or produces only in an older form: `_data/flags.json`, `js/islands/`, `js/auth-v2.js`, `js/feature-flags.js`, `js/search-navbar.js`, `js/search-results.js`, `js/person-page.js` (which carries the `authV2` data-gate path, HFY-TSK-080), `js/auth.js` (which carries the `authV2` One Tap suppression), `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/` (islands build output), `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png`, `posts/` and `me/`. This list must equal the exclude list of the refresh rsync in [`11ty/README.md`](../../11ty/README.md), apart from `.DS_Store`, and `scripts/infra/test/run.sh` fails when they differ. It does not exclude the Eleventy pages outside the excluded directories, which the repository changes after the Eleventy build: each carries an `auth-v2.js` script tag that `<eleventy-source>` does not emit, and the islands build rewrites their head blocks, Voice copy and `?v=<sha8>` versions. Those pages count as differences, so a commit that stages any `11ty/` file fails the check (see the [codebase map](codebase-map.md)).
 - **`validate_build.sh`** fails if `index.html` lacks `"enforceAssets":true` or contains `"clientId":""`. It warns if `REPLACE_WITH_GOOGLE_CLIENT_ID` is present. It validates the Eleventy build in the workspace, not `11ty/` in this checkout.
 - **`promote_workspace_assets.sh`** needs `python3`, which parses the session log, and `rsync`. It copies a file entry with `rsync -a`. It mirrors a directory entry with `rsync -a --delete`, which removes files in the destination directory that the source lacks, `README.md` files included. It has no exclude list. A directory entry that mirrors the Eleventy output into `11ty/` would delete the repository-owned files the workspace does not produce, such as `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` and `fonts/`, and overwrite those it holds an older copy of, such as `js/person-page.js` and `js/auth.js`. Promoted pages also lack the islands build's head blocks, Voice copy and versions until the islands build runs again ([refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)). A missing workspace path prints a warning and is skipped. An unknown argument prints the usage and exits 1.
-- **`export_workspace_samples.sh`** deletes each destination directory, including the READMEs in it, before copying the workspace directory in. Whatever the workspace holds replaces what the repository holds. It also replaces `tests/login-flow/`, its `.gitignore` included, and `coming-soon-index.html`. It writes to `<project>/repo` by name, not to the checkout that runs it.
 - **`sync_sanitized_assets.py`** reports each private file with no sanitized counterpart, and with `--sync` it writes a placeholder for it. Placeholders are a JSON list of two `example.com` addresses for the allowlist, a `{"placeholder": true, …}` JSON for CloudFront files, and an HTML comment for the coming-soon page. It never copies real data, never overwrites an existing file and never writes into the checkout. It always exits 0. Run with no arguments, it reports.
 
 How each behaves when the parent directory is `<parent>` rather than `<project>`:
@@ -578,7 +577,6 @@ How each behaves when the parent directory is `<parent>` rather than `<project>`
 | `check-deployment-sync.sh` | Exits 0 when no `11ty/`, `lambda/` or `functions/` file is staged. Otherwise the sources under `<parent>` are missing, so it exits 1 and blocks the commit unless `SKIP_DEPLOYMENT_SYNC_CHECK=1` is set. |
 | `validate_build.sh` | Exits 1 because the build directory under `<parent>` is not found. |
 | `promote_workspace_assets.sh` | Reads workspace paths from `<parent>`. Missing paths are skipped with a warning, and anything found is written into this checkout. |
-| `export_workspace_samples.sh` | Prints nothing and does nothing when `<parent>` has no `workspace/` directories. If it has them, the script writes to `<parent>/repo/`, which is not this checkout. |
 | `sync_sanitized_assets.py` | When `<parent>` has no `workspace-local/`, it skips every entry and prints `[OK] Sanitized workspace mirrors workspace-local for tracked assets.`, an OK that checked nothing. |
 
 ## Test suites
