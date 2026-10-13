@@ -141,7 +141,7 @@
         "parent": { "$ref": "#/$defs/idOrNull" },
         "lat": { "type": ["number", "null"], "minimum": -90, "maximum": 90 },
         "lon": { "type": ["number", "null"], "minimum": -180, "maximum": 180 },
-        "geo": { "enum": [null, "gramps", "geonames"] }
+        "geo": { "enum": [null, "gramps", "geonames", "naturalearth"] }
       }
     },
     "event": {
