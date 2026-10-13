@@ -27,12 +27,32 @@ Parameters:
   McpResources: { Type: String, Default: "https://harrisonfamily.us/mcp", Description: "HFY-TSK-076: comma-separated resource indicators (token aud); the first is the default" }
   McpCorsOrigins: { Type: String, Default: "https://claude.ai,https://claude.com", Description: "Exact browser origins allowed CORS on /auth/token, /register, /revoke (never a wildcard)" }
   SyncDesktopClient: { Type: String, Default: "0", AllowedValues: ["0", "1"], Description: "HFY-TSK-120 stack switch (default off): 1 registers the hfy-sync-desktop OAuth client (Gramps desktop add-on) on the auth edge. Turn on in the same change set as the sync routes (AC6 RG-4)" }
+  TurnstileSecretName: { Type: String, Default: harrisonfamily/auth-edge/turnstile, Description: "Secret holding the Turnstile secret key; created by io in Secrets Manager" }
+  AccessRequestPepperSecretName: { Type: String, Default: harrisonfamily/access-request/pepper, Description: "Secret holding the HMAC pepper for access-request email hashes" }
   OriginVerifySecretName: { Type: String, Default: harrisonfamily/cloudfront/origin-verify, Description: "Secret created by scripts/infra/create-origin-verify.sh; CloudFront sends it as X-Origin-Verify (HFY-R43)" }
   GoogleClientId: { Type: String, Description: Google OAuth web client id for GIS sign-in (public value) }
   SesIdentityArn: { Type: String, Default: "", Description: "Optional verified SES identity ARN (for example harrisonfamily.us, same region) for Cognito email. Empty keeps COGNITO_DEFAULT (about 50 emails/day for the account); the edge rate-limits /auth/password/forgot per email+IP either way" }
   SesFromAddress: { Type: String, Default: "", Description: "Optional From address when SesIdentityArn is set, for example: Harrison Family <no-reply@harrisonfamily.us>" }
 
+  # --- W2/W3 (HFY-TSK-247, BRD2 10.2 item 8): every default-off parameter lands in this one change set; later changes are parameter-only ---
+  SyncBucketName: { Type: String, Default: harrisonfamily-sync, Description: "Stack-managed private bucket for snapshots/, render-shadow/ and render/ (BRD2 section 8)" }
+  RenderFunctionName: { Type: String, Default: hfy-sync-render }
+  GraphRenderFunctionName: { Type: String, Default: hfy-graph-render }
+  SyncApiEnabled: { Type: String, Default: "0", AllowedValues: ["0", "1"], Description: "Desktop-only stop for /api/sync/* (env SYNC_API_ENABLED). 0 answers 404 not_enabled" }
+  RenderMode: { Type: String, Default: "off", AllowedValues: ["off", "shadow", "live"], Description: "hfy-sync-render mode (env RENDER_MODE). off is the primary rollback" }
+  RenderCodeKey: { Type: String, Default: lambda/hfy-sync-render-placeholder.zip, Description: "Key of the hfy-sync-render package in CodeBucket. The placeholder is a no-op under RENDER_MODE=off" }
+  GraphRenderCodeKey: { Type: String, Default: lambda/hfy-graph-render-placeholder.zip, Description: "Key of the hfy-graph-render package in CodeBucket. The placeholder is a no-op that nothing invokes (review DL-34)" }
+  HfyEditing: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Editing routes switch (env HFY_EDITING). While off they answer 404 not_found" }
+  AccessRequests: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Access-request intake kill switch on the auth edge (env ACCESS_REQUESTS)" }
+  TurnstileSiteKey: { Type: String, Default: "", Description: "Public Cloudflare Turnstile site key (env TURNSTILE_SITE_KEY); not a secret" }
+  SesConfigurationSet: { Type: String, Default: "", Description: "Optional SES configuration set name for the access-request and notification mail (env SES_CONFIGURATION_SET)" }
+  ChatServicePublicKeys: { Type: String, Default: "", Description: "JSON array of {kid, spki} chat-worker service public keys (env CHAT_SERVICE_PUBLIC_KEYS); public, so not a secret. Empty makes the chat service routes answer 503" }
+  AlarmEmail: { Type: String, Default: "", Description: "Address subscribed to the alarm topic (io). Empty creates the topic without a subscription. The subscription is confirmed from the email it sends" }
+  BreakGlassPrincipalArn: { Type: String, AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:(user|role)/.+$", Description: "IAM user or role (io) allowed to assume hfy-data-breakglass with MFA. Compared by ARN in a condition, so the role survives the principal being recreated" }
+
 Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+  HasSesConfigSet: !Not [!Equals [!Ref SesConfigurationSet, ""]]
   HasVapid: !Not [!Equals [!Ref VapidSecretName, ""]]
   HasSes: !Not [!Equals [!Ref SesIdentityArn, ""]]
   HasSesFrom: !And [!Condition HasSes, !Not [!Equals [!Ref SesFromAddress, ""]]]
@@ -62,6 +82,8 @@ Resources:
       TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
       PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
       SSESpecification: { SSEEnabled: true }
+      # HFY-TSK-247: the change-log stream feeds hfy-sync-render. KEYS_ONLY: the renderer re-reads the store, so no item data leaves the table.
+      StreamSpecification: { StreamViewType: KEYS_ONLY }
 
   LogGroup:
     Type: AWS::Logs::LogGroup
@@ -116,6 +138,26 @@ Resources:
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*
+              # HFY-TSK-247: desktop media presign (PutObject) and comment-photo graduation (GetObject source, PutObject destination)
+              # under media/*, which also covers hfy-graduate-api. The bucket-policy deny on media/*.json (cutover) leaves binaries to this role only.
+              - Sid: MediaBinaries
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
+              # HFY-TSK-247: change snapshots (snapshots/<seq>.jsonl.gz, latest.json) in the sync bucket; nothing else there.
+              - Sid: SyncSnapshots
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${SyncBucketName}/snapshots/*
+              - !If
+                - HasSes
+                - Sid: SendEmail
+                  Effect: Allow
+                  Action: ses:SendEmail
+                  Resource:
+                    - !Ref SesIdentityArn
+                    - !If [HasSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SesConfigurationSet}", !Ref "AWS::NoValue"]
+                - !Ref "AWS::NoValue"
               - !If
                 - HasVapid
                 - Sid: Secrets
@@ -149,6 +191,12 @@ Resources:
           MEDIA_BUCKET: !Ref MediaBucket
           MEDIA_PUBLIC_BASE: !Ref MediaPublicBase
           VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
+          SYNC_API_ENABLED: !Ref SyncApiEnabled
+          HFY_EDITING: !Ref HfyEditing
+          CHAT_SERVICE_PUBLIC_KEYS: !Ref ChatServicePublicKeys
+          SYNC_BUCKET: !Ref SyncBucketName
+          SES_FROM_ADDRESS: !Ref SesFromAddress
+          SES_CONFIGURATION_SET: !Ref SesConfigurationSet
 
   FunctionUrl:
     Type: AWS::Lambda::Url
@@ -284,6 +332,22 @@ Resources:
                 Effect: Allow
                 Action: [cognito-idp:AdminGetUser, cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword, cognito-idp:AdminConfirmSignUp, cognito-idp:AdminUpdateUserAttributes]
                 Resource: !GetAtt UserPool.Arn
+              # HFY-TSK-247 (BRD2 section 9, surfaces): the anonymous access-request routes read the Turnstile secret and the pepper that hashes emails.
+              - Sid: AccessRequestSecrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${TurnstileSecretName}-*
+                  - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AccessRequestPepperSecretName}-*
+              - !If
+                - HasSes
+                - Sid: SendEmail
+                  Effect: Allow
+                  Action: ses:SendEmail
+                  Resource:
+                    - !Ref SesIdentityArn
+                    - !If [HasSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SesConfigurationSet}", !Ref "AWS::NoValue"]
+                - !Ref "AWS::NoValue"
 
   AuthFunction:
     Type: AWS::Lambda::Function
@@ -309,6 +373,12 @@ Resources:
           HFY_SYNC_DESKTOP_CLIENT: !Ref SyncDesktopClient
           ORIGIN_VERIFY: !Sub "{{resolve:secretsmanager:${OriginVerifySecretName}:SecretString}}"
           ADMIN_LIST_KEY: !Ref AdminListKey
+          ACCESS_REQUESTS: !Ref AccessRequests
+          TURNSTILE_SITE_KEY: !Ref TurnstileSiteKey
+          TURNSTILE_SECRET_NAME: !Ref TurnstileSecretName
+          ACCESS_REQUEST_PEPPER_SECRET: !Ref AccessRequestPepperSecretName
+          SES_FROM_ADDRESS: !Ref SesFromAddress
+          SES_CONFIGURATION_SET: !Ref SesConfigurationSet
 
   AuthFunctionUrl:
     Type: AWS::Lambda::Url
@@ -333,6 +403,367 @@ Resources:
       Principal: "*"
       InvokedViaFunctionUrl: true
 
+  # ---------------- sync + render (HFY-TSK-247, BRD2 sections 8 and 11): bucket, renderer, schedule, alarms, break-glass ----------------
+  # Private, versioned, SSE-S3. snapshots/ expire after 30 days; noncurrent versions of snapshots/ and render-shadow/ expire after
+  # 1 day and expired delete markers go, so an expunge (PS-05) leaves no versioned copy behind.
+  SyncBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref SyncBucketName
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      OwnershipControls: { Rules: [{ ObjectOwnership: BucketOwnerEnforced }] }
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - { Id: snapshots-current-30d, Status: Enabled, Prefix: snapshots/, ExpirationInDays: 30 }
+          - Id: snapshots-noncurrent-1d
+            Status: Enabled
+            Prefix: snapshots/
+            NoncurrentVersionExpiration: { NoncurrentDays: 1 }
+            ExpiredObjectDeleteMarker: true
+          - Id: render-shadow-noncurrent-1d
+            Status: Enabled
+            Prefix: render-shadow/
+            NoncurrentVersionExpiration: { NoncurrentDays: 1 }
+            ExpiredObjectDeleteMarker: true
+          - { Id: abort-incomplete-multipart, Status: Enabled, AbortIncompleteMultipartUpload: { DaysAfterInitiation: 2 } }
+
+  SyncBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SyncBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt SyncBucket.Arn, !Sub "${SyncBucket.Arn}/*"]
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${FunctionName}-alarms
+
+  AlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # Not CMK-encrypted on purpose: CloudWatch alarms can publish only to a topic whose key policy admits cloudwatch.amazonaws.com.
+  RenderDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${RenderFunctionName}-dlq
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  RenderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${RenderFunctionName}
+      RetentionInDays: 30
+
+  RenderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${RenderFunctionName}-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
+      Policies:
+        - PolicyName: hfy-sync-render
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${RenderFunctionName}:*
+              - Sid: Table
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:BatchGetItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem]
+                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              - Sid: Stream
+                Effect: Allow
+                Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator, dynamodb:ListStreams]
+                Resource: !GetAtt Table.StreamArn
+              - Sid: Dlq
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt RenderDlq.Arn
+              - Sid: SyncBucketObjects
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${SyncBucketName}/snapshots/*
+                  - !Sub arn:${AWS::Partition}:s3:::${SyncBucketName}/render-shadow/*
+                  - !Sub arn:${AWS::Partition}:s3:::${SyncBucketName}/render/*
+              - Sid: SyncBucketList
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt SyncBucket.Arn
+              # The rendered data keys only (BRD2 section 8). person/index.html and the other public shell files are not renderer-owned.
+              - Sid: RenderedData
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/family/*.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/event/*.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/note/*.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/place/*.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*.json
+              - Sid: RenderedDataList
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
+                Condition:
+                  StringLike:
+                    "s3:prefix": ["media/tree_*", "person/*", "family/*", "event/*", "note/*", "place/*"]
+              - Sid: Metrics
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition: { StringEquals: { "cloudwatch:namespace": HFY/SyncRender } }
+
+  # No-op under RENDER_MODE=off until render-lambda ships a real package under the same key parameter.
+  RenderFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: RenderLogGroup
+    Properties:
+      FunctionName: !Ref RenderFunctionName
+      Runtime: python3.13
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 300
+      ReservedConcurrentExecutions: 1
+      Handler: handler.handler
+      Role: !GetAtt RenderRole.Arn
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref RenderCodeKey }
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+          SYNC_BUCKET: !Ref SyncBucketName
+          SITE_BUCKET: !Ref MediaBucket
+          RENDER_MODE: !Ref RenderMode
+          METRICS_NAMESPACE: HFY/SyncRender
+
+  RenderStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref RenderFunction
+      EventSourceArn: !GetAtt Table.StreamArn
+      StartingPosition: LATEST
+      BatchSize: 100
+      MaximumBatchingWindowInSeconds: 5
+      MaximumRetryAttempts: 5
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"dynamodb":{"Keys":{"PK":{"S":["SYNC#LOG"]}}}}'
+      DestinationConfig:
+        OnFailure: { Destination: !GetAtt RenderDlq.Arn }
+
+  # Every 15 minutes the renderer is invoked; it exits at once unless SYNC#RENDER.rendered_seq < SYNC#HEAD.seq (and RENDER_MODE is not off).
+  RenderSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "hfy-sync-render catch-up while rendered_seq < head seq (abandoned push sessions, stream gaps)"
+      ScheduleExpression: rate(15 minutes)
+      State: ENABLED
+      Targets:
+        - { Id: render, Arn: !GetAtt RenderFunction.Arn, Input: '{"source":"schedule"}' }
+
+  RenderSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RenderFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RenderSchedule.Arn
+
+  DlqDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${RenderFunctionName}-dlq-depth
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt RenderDlq.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  RenderErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${RenderFunctionName}-RenderError
+      Namespace: HFY/SyncRender
+      MetricName: RenderError
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  RenderPrivacyBlockAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${RenderFunctionName}-RenderPrivacyBlock
+      Namespace: HFY/SyncRender
+      MetricName: RenderPrivacyBlock
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  MassDeleteGuardAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${RenderFunctionName}-MassDeleteGuard
+      Namespace: HFY/SyncRender
+      MetricName: MassDeleteGuard
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  HeadMismatchAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${RenderFunctionName}-HeadMismatch
+      Namespace: HFY/SyncRender
+      MetricName: HeadMismatch
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # Review DL-34: the graph renderer's function, role and code-key parameter land now (placeholder package, nothing invokes it) so the
+  # RG-6 change set that ships the real package is parameter-only.
+  GraphRenderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GraphRenderFunctionName}
+      RetentionInDays: 30
+
+  GraphRenderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${GraphRenderFunctionName}-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
+      Policies:
+        - PolicyName: hfy-graph-render
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${GraphRenderFunctionName}:*
+              - Sid: TableRead
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:BatchGetItem]
+                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              - Sid: PhotoReads
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/uploads/*
+              - Sid: GraphOutputs
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/graph.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/faces/*
+
+  GraphRenderFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: GraphRenderLogGroup
+    Properties:
+      FunctionName: !Ref GraphRenderFunctionName
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 300
+      ReservedConcurrentExecutions: 1
+      Handler: src/index.handler
+      Role: !GetAtt GraphRenderRole.Arn
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref GraphRenderCodeKey }
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+          SITE_BUCKET: !Ref MediaBucket
+
+  # Break-glass writer for the data prefixes once the bucket-policy deny is on (BRD2 11.4, PS-05, SI-15). io only, MFA required, one hour.
+  BreakGlassRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: hfy-data-breakglass
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" }
+            Action: sts:AssumeRole
+            Condition:
+              ArnEquals: { "aws:PrincipalArn": !Ref BreakGlassPrincipalArn }
+              Bool: { "aws:MultiFactorAuthPresent": "true" }
+      Policies:
+        - PolicyName: hfy-data-breakglass
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DataPrefixes
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/family/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/event/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/note/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/place/*
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
+              - Sid: DataPrefixList
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
+                Condition:
+                  StringLike:
+                    "s3:prefix": ["person/*", "family/*", "event/*", "note/*", "place/*", "media/*"]
+
 Outputs:
   FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }
   TableName: { Value: !Ref Table }
@@ -342,3 +773,8 @@ Outputs:
   AuthFunctionName: { Value: !Ref AuthFunction }
   UserPoolId: { Value: !Ref UserPool }
   UserPoolClientId: { Value: !Ref UserPoolClient }
+  SyncBucketName: { Value: !Ref SyncBucket }
+  RenderFunctionArn: { Value: !GetAtt RenderFunction.Arn }
+  RenderDlqUrl: { Value: !Ref RenderDlq }
+  AlarmTopicArn: { Value: !Ref AlarmTopic }
+  BreakGlassRoleArn: { Value: !GetAtt BreakGlassRole.Arn }

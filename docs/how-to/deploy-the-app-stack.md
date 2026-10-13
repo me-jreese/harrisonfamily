@@ -167,6 +167,18 @@ aws cloudformation deploy \
 - On a first deploy, every parameter you leave out takes its template default. `ConfigBucket` and `MediaBucket` default to the production `<config-bucket>` and `<site-bucket>`. `VapidSecretName` defaults to empty, so notifications are stored but no push is sent ([Turn on push notifications](turn-on-push-notifications.md)). `SesIdentityArn` defaults to empty, so Cognito sends verification and reset email from its default sender, which allows about 50 emails a day for the account. To send through SES instead, pass a verified SES identity ARN in the same region as `SesIdentityArn`, and optionally `SesFromAddress`.
 - On an update, a parameter you leave out keeps the stack's current value, as `McpResources` shows. To change one, add it to `--parameter-overrides`. [Architecture](../reference/architecture.md#parameters) lists the parameters.
 
+#### The sync and render change set (HFY-TSK-247)
+
+The change set that adds the sync bucket, the table stream, `hfy-sync-render`, its 15-minute schedule, the alarm topic, the `hfy-data-breakglass` role and the `hfy-graph-render` placeholder has three extra inputs:
+
+1. Package and upload the two no-op placeholders first: `bash scripts/ci/package-placeholders.sh`, then copy `dist/placeholders/hfy-sync-render-placeholder.zip` and `dist/placeholders/hfy-graph-render-placeholder.zip` to `lambda/` in `<code-bucket>` under those names (the `RenderCodeKey` and `GraphRenderCodeKey` defaults). The renderer placeholder does nothing under `RenderMode=off` and fails loudly under any other mode.
+2. Pass `BreakGlassPrincipalArn=<io-iam-principal-arn>` (it has no default, and it is compared by ARN, so it is never stored in the repository) and `AlarmEmail=<io-email>`. After the execute, confirm the subscription from the email SNS sends; an unconfirmed subscription delivers no alarm.
+3. Pass every other new parameter at its default (`SyncApiEnabled=0`, `RenderMode=off`, `HfyEditing=off`, `AccessRequests=off`, and empty `TurnstileSiteKey`, `SesConfigurationSet` and `ChatServicePublicKeys`). Every later change to these is parameter-only: use `--use-previous-template` and `UsePreviousValue` for each other parameter.
+
+The review must show no `Remove` action and no `Replacement` for the table, `hfy-api`, `hfy-auth-edge`, the user pool or the two Function URLs beyond the `Conditional` ones above. The table gains a stream in place. Reserved concurrency of 1 on each of the two new functions needs the account to keep at least 10 unreserved executions.
+
+`config/groups.json` gains the `gramps-owner` group in the config bucket by hand, not through this stack: copy the current object to a dated backup key first, add the group with io's subject, and upload. Nothing in this stack or its code writes that file.
+
 The command prints `Changeset created successfully. Run the following command to review changes:`, then an `aws cloudformation describe-change-set --change-set-name <change-set-arn>` line. The change set's name starts with `awscli-cloudformation-package-deploy-`. Keep its ARN in the shell:
 
 ```sh
