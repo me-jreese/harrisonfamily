@@ -1,0 +1,6 @@
+{
+  "name": "hfy-shared",
+  "private": true,
+  "type": "module",
+  "main": "shared.test.mjs"
+}

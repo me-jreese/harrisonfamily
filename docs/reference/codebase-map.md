@@ -590,6 +590,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `functions/`, `gcloud/`, `lambda/` | Legacy sign-in |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
+| `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. |
 | `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests |
 | `tests/` (`client/`, `login-flow/`) | Tests |
 | `workspace/` | Static site output (the stray `featureFlags.js` only) |

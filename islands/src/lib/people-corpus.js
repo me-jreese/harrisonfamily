@@ -1,6 +1,7 @@
 // HFY-TSK-065: CorpusSource for the family index (local-only tier of @io-kit/search 1.0). No server search, no hybrid.
 // Seeded from the same signed-session assets the Lunr search used: /person/index.json (manifest) + /person/search-index.json.
 import { createLocalEngine } from "@io-kit/search";
+import { cleanText } from "../../../shared/validate.mjs"; // repo-root shared/ (pure ESM, also staged into the api and auth zips)
 
 const MANIFEST_URL = "/person/index.json";
 const INDEX_URL = "/person/search-index.json";
@@ -52,7 +53,7 @@ async function getJson(url, init) {
 const year = (s) => { const m = /(\d{4})/g; const out = []; let x; while ((x = m.exec(s || ""))) out.push(Number(x[1])); return out; };
 
 function splitName(displayName) {
-  const name = String(displayName || "").trim();
+  const name = cleanText(displayName);
   if (name.includes(",")) { const [surname, given] = name.split(",").map((p) => p.trim()); return { surname, given: given || "" }; }
   const parts = name.split(/\s+/);
   return { surname: parts.length > 1 ? parts[parts.length - 1] : name, given: parts.slice(0, -1).join(" ") };
