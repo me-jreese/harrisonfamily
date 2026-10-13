@@ -12,6 +12,7 @@ import { createPresignPut } from "./presign.js";
 import { createGroupResolver } from "./policy.js";
 import { createLabelResolver, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
+import { logSafeError } from "./http.js";
 
 const env = process.env;
 const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand };
@@ -42,7 +43,7 @@ async function loadPush() {
     const mod = await import("web-push");
     push = { vapid: { subject: v.subject, publicKey: v.publicKey, privateKey: v.privateKey }, webpush: mod.default ?? mod, vapidPublicKey: v.publicKey };
   } catch (e) {
-    console.error("push disabled", e instanceof Error ? e.message : String(e));
+    console.error("push disabled", logSafeError(e));
   }
   return push;
 }

@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { createFakeDdb, cmds, makeApi, signToken } from "./world.js";
 import { errorResponse, HttpError, logSafeError } from "../src/http.js";
-import { TxnCancelled, assertTxnSize, counterUpdate, mapCancellationReasons, mergeUpdates, transact, MAX_TXN_ITEMS } from "../src/txn.js";
+import { TxnCancelled, TxnTokenMismatch, assertTxnSize, counterUpdate, mapCancellationReasons, mergeUpdates, transact, MAX_TXN_ITEMS } from "../src/txn.js";
 
 const T = "hfy-app";
 const key = (n) => ({ PK: `CNT#${n}`, SK: "TOTAL" });
@@ -156,6 +156,84 @@ describe("transact(): TransactionConflict retry", () => {
   });
 });
 
+describe("transact(): hooks, TransactionInProgress and token reuse", () => {
+  const spec = () => ({ updates: [counterUpdate(key("a"), { n: 1 })], clientRequestToken: "hook-token" });
+
+  it("onRetry fires before each wait and onBusy once when retries run out; both carry codes and counts only", async () => {
+    const ddb = createFakeDdb();
+    ddb.failNext("TransactionConflict", 10);
+    const retries = [];
+    const busy = [];
+    const e = await transact(ddb, cmds, T, spec(), { ...noSleep, random: () => 1, onRetry: (i) => retries.push(i), onBusy: (i) => busy.push(i) }).catch((x) => x);
+    expect(e.busy).toBe(true);
+    expect(retries).toEqual([
+      { attempt: 1, delayMs: 20, codes: ["TransactionConflict"] },
+      { attempt: 2, delayMs: 60, codes: ["TransactionConflict"] },
+      { attempt: 3, delayMs: 150, codes: ["TransactionConflict"] },
+    ]);
+    expect(busy).toEqual([{ attempts: 4, codes: ["TransactionConflict"] }]);
+  });
+
+  it("no hook fires on success, on a condition failure or on throttling; a throwing hook never breaks the write", async () => {
+    const calls = [];
+    const hooks = { ...noSleep, onRetry: (i) => calls.push(["retry", i]), onBusy: (i) => calls.push(["busy", i]) };
+    const ok = createFakeDdb();
+    await transact(ok, cmds, T, spec(), hooks);
+    const cond = await transact(createFakeDdb(), cmds, T, { checks: [{ key: { PK: "x", SK: "1" }, condition: "attribute_exists(PK)" }] }, hooks).catch((x) => x);
+    expect(cond.conditionFailed).toBe(true);
+    const thr = createFakeDdb();
+    thr.failNext("ThrottlingError", 1);
+    await transact(thr, cmds, T, spec(), hooks).catch(() => {});
+    expect(calls).toEqual([]);
+    const flaky = createFakeDdb();
+    flaky.failNext("TransactionConflict", 1);
+    const r = await transact(flaky, cmds, T, spec(), { ...noSleep, onRetry: () => { throw new Error("hook broke"); } });
+    expect(r.attempts).toBe(2);
+    const stuck = createFakeDdb();
+    stuck.failNext("TransactionConflict", 10);
+    await expect(transact(stuck, cmds, T, spec(), { ...noSleep, onBusy: () => { throw new Error("hook broke"); } })).rejects.toBeInstanceOf(TxnCancelled);
+  });
+
+  it("a TransactionInProgressException is retried with the same token and succeeds once the first request settles", async () => {
+    const ddb = createFakeDdb();
+    ddb.failNext("TransactionInProgressException", 2);
+    const retries = [];
+    const r = await transact(ddb, cmds, T, spec(), { ...noSleep, onRetry: (i) => retries.push(i) });
+    expect(r.attempts).toBe(3);
+    expect(new Set(ddb.tokens)).toEqual(new Set(["hook-token"]));
+    expect(retries.map((x) => x.attempt)).toEqual([1, 2]);
+    expect(ddb.all().find((x) => x.PK === "CNT#a").n).toBe(1);
+  });
+
+  it("a TransactionInProgressException that never clears ends as a busy TxnCancelled after 4 attempts", async () => {
+    const ddb = createFakeDdb();
+    ddb.failNext("TransactionInProgressException", 10);
+    const busy = [];
+    const e = await transact(ddb, cmds, T, spec(), { ...noSleep, onBusy: (i) => busy.push(i) }).catch((x) => x);
+    expect(e).toBeInstanceOf(TxnCancelled);
+    expect(e).toMatchObject({ busy: true, conditionFailed: false, code: "busy", attempts: 4, reasons: [] });
+    expect(busy).toEqual([{ attempts: 4, codes: [] }]);
+    expect(ddb.tokens).toHaveLength(4);
+  });
+
+  it("an IdempotentParameterMismatchException (a token reused for a different payload) is a fixed-text TxnTokenMismatch, never retried", async () => {
+    const ddb = createFakeDdb();
+    ddb.failNext("IdempotentParameterMismatchException", 1);
+    const e = await transact(ddb, cmds, T, spec(), noSleep).catch((x) => x);
+    expect(e).toBeInstanceOf(TxnTokenMismatch);
+    expect(e).toMatchObject({ name: "TxnTokenMismatch", code: "token_mismatch" });
+    expect(logSafeError(e)).toEqual({ name: "TxnTokenMismatch", code: "token_mismatch", route: undefined, requestId: undefined });
+    expect(ddb.tokens).toHaveLength(1);
+  });
+
+  it("the real replay is rejected by the fake the way DynamoDB does: same token, different items", async () => {
+    const ddb = createFakeDdb();
+    await transact(ddb, cmds, T, { puts: [{ item: { PK: "A", SK: "1" } }], clientRequestToken: "same-token" });
+    const e = await transact(ddb, cmds, T, { puts: [{ item: { PK: "B", SK: "1" } }], clientRequestToken: "same-token" }, noSleep).catch((x) => x);
+    expect(e).toBeInstanceOf(TxnTokenMismatch);
+  });
+});
+
 describe("mapCancellationReasons: failure codes by item index", () => {
   it("maps each reason to its item index, in the order puts, deletes, updates, checks", () => {
     const err = { CancellationReasons: [{ Code: "None" }, { Code: "ConditionalCheckFailed", Message: "m" }, { Code: "None" }, { Code: "TransactionConflict" }] };
@@ -167,11 +245,14 @@ describe("mapCancellationReasons: failure codes by item index", () => {
     });
   });
 
-  it("classifies the kind: all-conflict is retryable, throttling is other, no reasons is a condition failure (legacy 409)", () => {
+  it("classifies the kind: all-conflict is retryable, throttling is other, no reasons is the store failing (other), not a 409", () => {
     expect(mapCancellationReasons({ CancellationReasons: [{ Code: "None" }, { Code: "TransactionConflict" }, { Code: "TransactionConflict" }] }).kind).toBe("conflict");
     expect(mapCancellationReasons({ CancellationReasons: [{ Code: "ThrottlingError" }] }).kind).toBe("other");
     expect(mapCancellationReasons({ CancellationReasons: [{ Code: "None" }] })).toMatchObject({ kind: "other", failedIndex: -1, failures: [] });
-    expect(mapCancellationReasons({})).toMatchObject({ kind: "condition", codes: [] });
+    // A cancellation without a reasons list is a malformed or throttled answer, not a user-visible conflict: callers answer 503, never 409.
+    expect(mapCancellationReasons({})).toMatchObject({ kind: "other", codes: [], failures: [], failedIndex: -1 });
+    expect(mapCancellationReasons({ CancellationReasons: [] }).kind).toBe("other");
+    expect(mapCancellationReasons({ CancellationReasons: "x" }).kind).toBe("other");
   });
 
   it("copies codes only: Message and the ALL_OLD Item never leave the reason", () => {
@@ -249,6 +330,31 @@ describe("counterUpdate, mergeUpdates and assertTxnSize", () => {
     expect(() => mergeUpdates([raw, { ...raw }])).toThrow(/non-counter/);
     expect(() => mergeUpdates([counterUpdate(key("a"), { n: 1 }, { condition: "attribute_exists(PK)" }), counterUpdate(key("a"), { n: 1 })])).toThrow(/different conditions/);
     expect(mergeUpdates([raw])).toEqual([raw]);
+  });
+
+  it("counterUpdate refuses an attribute that two actions would target (DynamoDB rejects two actions on one path)", () => {
+    expect(() => counterUpdate(key("a"), { seen: 1 }, { ifNotExists: { seen: 0 } })).toThrow(/more than one action/);
+    expect(() => counterUpdate(key("a"), { ttl: 1 }, { ttl: 99 })).toThrow(/more than one action/);
+    expect(() => counterUpdate(key("a"), { n: 1 }, { ifNotExists: { ttl: 5 }, ttl: 99 })).toThrow(/more than one action/);
+    // The same names are fine when they do not collide.
+    expect(() => counterUpdate(key("a"), { ttl: 1 })).not.toThrow(); // no ttl option: ADD on an attribute that happens to be called ttl
+    expect(() => counterUpdate(key("a"), { n: 1 }, { ifNotExists: { first_at: 5 }, ttl: 99 })).not.toThrow();
+  });
+
+  it("mergeUpdates refuses a merge that would make two actions target one attribute", () => {
+    const a = counterUpdate(key("a"), { seen: 1 });
+    const b = counterUpdate(key("a"), { n: 1 }, { ifNotExists: { seen: 0 } });
+    expect(() => mergeUpdates([a, b])).toThrow(/more than one action/);
+  });
+
+  it("mergeUpdates compares conditions regardless of key order, but still refuses different ones or different tags", () => {
+    const c1 = { condition: "#a = :a AND #b = :b", names: { "#a": "x", "#b": "y" }, values: { ":a": 1, ":b": { p: 1, q: 2 } } };
+    const c2 = { condition: "#a = :a AND #b = :b", names: { "#b": "y", "#a": "x" }, values: { ":b": { q: 2, p: 1 }, ":a": 1 } };
+    const merged = mergeUpdates([counterUpdate(key("a"), { n: 1 }, c1), counterUpdate(key("a"), { n: 2 }, c2)]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].values[":cnt0"]).toBe(3);
+    expect(() => mergeUpdates([counterUpdate(key("a"), { n: 1 }, { ...c1, tag: "t1" }), counterUpdate(key("a"), { n: 1 }, { ...c1, tag: "t2" })])).toThrow(/different conditions/);
+    expect(() => mergeUpdates([counterUpdate(key("a"), { n: 1 }, c1), counterUpdate(key("a"), { n: 1 }, { ...c2, values: { ...c2.values, ":a": 2 } })])).toThrow(/different conditions/);
   });
 
   it("assertTxnSize passes 100 items and throws on 101", () => {
@@ -437,6 +543,18 @@ describe("comments and content commits: 409 for a condition failure, 503 busy fo
     const r = await w.call("POST", "/api/posts", { token: ann, body: { body: "news", visibility: "published" } });
     expect(r.status).toBe(503);
     expect(r.body.error).toBe("unavailable");
+  });
+
+  it("a cancellation with no reasons list is the store failing: 503 unavailable for posts and a server error for comments, never 409", async () => {
+    const empty = { intercept: async (cmd) => { if (cmd.constructor.name === "TransactWriteCommand") throw Object.assign(new Error("x"), { name: "TransactionCanceledException" }); } };
+    const w = makeApi(empty);
+    const [ann, olive] = await Promise.all(["I0001", "I0002"].map((s) => signToken(s)));
+    const post = await w.call("POST", "/api/posts", { token: ann, body: { body: "news", visibility: "published" } });
+    expect(post.status).toBe(503);
+    expect(post.body.error).toBe("unavailable");
+    const c = await w.call("POST", "/api/comments", { token: olive, body: { subject, body: "hello" } });
+    expect(c.status).not.toBe(409);
+    expect(c.status).toBeGreaterThanOrEqual(500);
   });
 
   it("a comment edit race stays 409 (condition failure), without retry", async () => {

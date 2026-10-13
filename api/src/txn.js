@@ -54,8 +54,9 @@ export function assertTxnSize(items) {
  *   codes:       one DynamoDB code per item ("None" for an item that did not fail)
  *   failures:    [{ index, code, tag? }] for the items that did fail; `tag` is the optional `tag` the caller put on that item
  *   failedIndex: index of the first failure, or -1
- *   kind:        "condition" (some ConditionalCheckFailed, or no reasons at all), "conflict" (every failure is a
- *                TransactionConflict: retryable) or "other" (throttling, size limit, validation)
+ *   kind:        "condition" (some ConditionalCheckFailed), "conflict" (every failure is a TransactionConflict: retryable) or
+ *                "other" (throttling, size limit, validation, and a cancellation that carries no reasons at all: that is the
+ *                store misbehaving, not a user-visible conflict, so the callers answer 503 unavailable rather than 409)
  */
 export function mapCancellationReasons(error, tags = []) {
   const raw = Array.isArray(error?.CancellationReasons) ? error.CancellationReasons : [];
@@ -65,7 +66,7 @@ export function mapCancellationReasons(error, tags = []) {
     if (code !== "None") failures.push({ index, code, ...(tags[index] !== undefined ? { tag: tags[index] } : {}) });
   });
   let kind = "other";
-  if (codes.length === 0 || failures.some((f) => f.code === "ConditionalCheckFailed")) kind = "condition";
+  if (failures.some((f) => f.code === "ConditionalCheckFailed")) kind = "condition";
   else if (failures.length > 0 && failures.every((f) => f.code === "TransactionConflict")) kind = "conflict";
   return { codes, failures, failedIndex: failures.length ? failures[0].index : -1, kind };
 }
@@ -96,6 +97,18 @@ export class TxnCancelled extends Error {
   }
 }
 
+/**
+ * Thrown by transact() when DynamoDB rejects a caller-supplied ClientRequestToken that was already used for a different request
+ * (IdempotentParameterMismatchException). A caller bug, not a runtime condition: fixed message and code, nothing from the store.
+ */
+export class TxnTokenMismatch extends Error {
+  constructor() {
+    super("clientRequestToken was already used for a different transaction");
+    this.name = "TxnTokenMismatch";
+    this.code = "token_mismatch";
+  }
+}
+
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -107,12 +120,24 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
  *   clientRequestToken: 1 to 36 characters; default a fresh UUID. Set once and reused on every retry, so DynamoDB applies a
  *   retry whose first attempt actually committed only once (10-minute window).
  * A cancellation whose reasons are only TransactionConflict is retried up to `retries` (3) times with jittered backoff and the
- * same token. ConditionalCheckFailed is never retried. Any cancellation that ends the call throws TxnCancelled.
- * `opts`: `{ retries, sleep(ms), random(), backoff }` (injected by tests).
+ * same token. ConditionalCheckFailed is never retried. Any cancellation that ends the call throws TxnCancelled. A
+ * TransactionInProgressException (another request holds the same token) is retried the same way and ends as a busy TxnCancelled
+ * with no reasons; an IdempotentParameterMismatchException (the token was used for a different payload) throws TxnTokenMismatch.
+ * `opts`: `{ retries, sleep(ms), random(), backoff, onRetry, onBusy }` (injected by tests and by observability).
+ *   onRetry({ attempt, delayMs, codes })  before each retry wait (txn_conflict_retry); attempt counts the failed attempts so far
+ *   onBusy({ attempts, codes })           when retries ran out (txn_busy)
+ * The hooks carry only counts and DynamoDB codes (never an item, message or key) and a throwing hook never breaks the write.
  * Returns `{ token, attempts }`.
  */
 export async function transact(ddb, cmds, table, { puts = [], deletes = [], updates = [], checks = [], clientRequestToken } = {}, opts = {}) {
-  const { retries = 3, sleep = sleepMs, random = Math.random, backoff = CONFLICT_BACKOFF_MS } = opts;
+  const { retries = 3, sleep = sleepMs, random = Math.random, backoff = CONFLICT_BACKOFF_MS, onRetry, onBusy } = opts;
+  const hook = (fn, info) => {
+    try {
+      fn?.(info);
+    } catch {
+      // observability must never fail a write
+    }
+  };
   const entries = [
     ...puts.map((p) => [{ Put: { TableName: table, Item: p.item, ...conditionOf(p) } }, p.tag]),
     ...deletes.map((d) => [{ Delete: { TableName: table, Key: d.key ?? d, ...(d.key ? conditionOf(d) : {}) } }, d.key ? d.tag : undefined]),
@@ -125,16 +150,25 @@ export async function transact(ddb, cmds, table, { puts = [], deletes = [], upda
   const token = clientRequestToken ?? randomUUID();
   if (typeof token !== "string" || token.length < 1 || token.length > 36) throw new TypeError("clientRequestToken must be 1 to 36 characters");
   for (let attempt = 0; ; attempt += 1) {
+    let info;
     try {
       await ddb.send(new cmds.TransactWriteCommand({ TransactItems, ClientRequestToken: token }));
       return { token, attempts: attempt + 1 };
     } catch (e) {
-      if (e?.name !== "TransactionCanceledException") throw e;
-      const info = mapCancellationReasons(e, tags);
-      if (info.kind !== "conflict" || attempt >= retries) throw new TxnCancelled(info, attempt + 1);
-      const base = backoff[Math.min(attempt, backoff.length - 1)] ?? 0;
-      await sleep(Math.round(base * (0.5 + random() / 2)));
+      if (e?.name === "IdempotentParameterMismatchException") throw new TxnTokenMismatch();
+      if (e?.name === "TransactionInProgressException") info = { codes: [], failures: [], failedIndex: -1, kind: "conflict" };
+      else if (e?.name === "TransactionCanceledException") info = mapCancellationReasons(e, tags);
+      else throw e;
     }
+    if (info.kind !== "conflict" || attempt >= retries) {
+      const cancelled = new TxnCancelled(info, attempt + 1);
+      if (cancelled.busy) hook(onBusy, { attempts: attempt + 1, codes: info.codes });
+      throw cancelled;
+    }
+    const base = backoff[Math.min(attempt, backoff.length - 1)] ?? 0;
+    const delayMs = Math.round(base * (0.5 + random() / 2));
+    hook(onRetry, { attempt: attempt + 1, delayMs, codes: info.codes });
+    await sleep(delayMs);
   }
 }
 
@@ -143,6 +177,10 @@ export async function transact(ddb, cmds, table, { puts = [], deletes = [], upda
 // a caller's own condition placeholders must not use them.
 
 function buildCounter(key, adds, ifNotExists, ttl, cond) {
+  // DynamoDB rejects an expression with two actions on one path, and the fake store does not model it, so refuse it here.
+  const paths = [...Object.keys(adds), ...Object.keys(ifNotExists), ...(ttl !== undefined ? ["ttl"] : [])];
+  const dup = paths.find((a, i) => paths.indexOf(a) !== i);
+  if (dup !== undefined) throw new TypeError(`counterUpdate: attribute ${dup} is targeted by more than one action (delta, ifNotExists, ttl)`);
   const names = {};
   const values = {};
   const addParts = [];
@@ -189,10 +227,14 @@ export function counterUpdate(key, deltas, { ttl, ifNotExists = {}, condition, n
   return buildCounter(key, adds, ifNotExists, ttl, cond);
 }
 
+/** JSON with object keys sorted, so two structurally equal condition fragments compare equal whatever order they were built in. */
+const stable = (v) => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+
 /**
  * One transaction may not touch an item twice, so updates that target the same key are folded into one: ADD deltas on the same
  * attribute are summed, if_not_exists values keep the first, the first ttl stands. Only counterUpdate results merge; two other
- * updates on one key, or two with different conditions, throw (the caller must combine them). Order of first appearance is kept.
+ * updates on one key, or two with a different condition, names, values or tag, throw (the caller must combine them). The
+ * comparison ignores key order. Order of first appearance is kept.
  */
 export function mergeUpdates(updates) {
   const out = new Map();
@@ -204,7 +246,7 @@ export function mergeUpdates(updates) {
       continue;
     }
     if (!prev.counter || !u.counter) throw new Error("mergeUpdates: two non-counter updates target one key");
-    const same = (a, b) => JSON.stringify([a.condition, a.names, a.values, a.tag]) === JSON.stringify([b.condition, b.names, b.values, b.tag]);
+    const same = (a, b) => stable([a.condition, a.names, a.values, a.tag]) === stable([b.condition, b.names, b.values, b.tag]);
     const pc = prev.counter.cond ?? {};
     const uc = u.counter.cond ?? {};
     if (!same(pc, uc)) throw new Error("mergeUpdates: updates on one key carry different conditions");

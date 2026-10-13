@@ -123,6 +123,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       await transact(ddb, cmds, table, { puts, deletes });
     } catch (e) {
       // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
+      // @io-kit/content has no busy code, so busy is the API's HttpError: errorResponse answers it 503 for HTTP, and the MCP core reports any thrown Error's message as the tool error ("busy, try again").
       if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
       if (e instanceof TxnCancelled && e.conditionFailed) throw new ContentError("conflict", "record changed concurrently", { id });
       throw new ContentError("unavailable", "store unavailable", { id });
