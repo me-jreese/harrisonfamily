@@ -195,6 +195,7 @@ Paths:
   - `uploads.js`: the upload route.
   - `presign.js`: the presigned S3 PUT.
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
+  - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
 - [`api/parity/`](../../api/parity/): the parity files of the MCP surface. See [MCP server](#mcp-server).
 - [`api/README.md`](../../api/README.md): a short pointer to the [API reference](api.md).
