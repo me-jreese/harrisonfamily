@@ -20,15 +20,15 @@ node graph/bin/build-graph.mjs --verify <staging>/person/graph.json --verify-aga
 ```
 
 - `--out <staging>` writes `<staging>/person/graph.json`. Without it the run is a dry run: it projects and verifies, and writes nothing.
-- `--report <path>` writes the local report (warning codes with gramps ids, never values). The default is `workspace-local/graph-build-report.json` next to the repository checkout, outside the synced staging prefixes.
-- `--verify-against <staging>/person` compares each graph `living` flag with `person/<id>.json` `isLiving` (rule L). A person without a file is reported, not compared.
+- `--report <path>` writes the local report (warning codes with gramps ids, never values). The default is `<project>/workspace-local/graph-build-report.json`, outside the synced staging prefixes. `<project>` is the checkout's parent directory (the repository's convention: the checkout sits at `<project>/repo`); in a worktree or any other layout, set `HFY_PROJECT_DIR` to the project root or pass `--report`. When `--verify-against` ran, the report records `livingCheck: { compared, missing }`.
+- `--verify-against <staging>/person` compares each graph `living` flag with `person/<id>.json` `isLiving` (rule L). A person without a file is counted (stderr, and `livingCheck.missing` in the report) but not compared. If NO person in the graph has a matching file (an empty, wrong or unrelated directory), it fails with `INPUT_MISSING` (exit 2) rather than comparing nothing.
 - `--generated-at <iso>` pins `generatedAt`, for reproducible output. `--max-gzip-bytes <n>` lowers the size budget (default 150 KiB). `--quiet` silences the summary.
 - `--from-gramps-copy` takes the `sqlite.db` file or its directory. It refuses with `GRAMPS_OPEN` if `<dbdir>/lock` exists, so close Gramps or copy the tree first. `HFY_SQLITE3` names another `sqlite3` executable.
 
 ## What it guarantees
 
-- **Allowlist only.** `src/project.mjs` reads the fields in the design's section 5.2 table and nothing else: years only, no handles, notes, addresses, URLs or attributes. Private objects, and every reference to them, are excluded. Address-grade places collapse to the enclosing settlement. `living` is rule L (`death_ref_index == -1`) and `deathYear` is `null` for the living.
-- **`verify()` before every write.** `src/verify.mjs` validates `schema/family-graph.v1.schema.json` (`additionalProperties: false` everywhere), rejects day-precise dates, e-mail addresses, phone numbers and URLs in any string, and checks year range, coordinate precision and references. A failure is `PRIVACY_VIOLATION` (exit 4) and nothing is written. It names JSON pointers and rules, never the value. When `shared/privacy-guard.mjs` exists and exports `scanText(text)`, that detector runs too.
+- **Allowlist only.** `src/project.mjs` reads the fields in the design's section 5.2 table and nothing else: years only, no handles, notes, addresses, URLs or attributes. Private objects, and every reference to them, are excluded. Address-grade places collapse to the enclosing settlement: by place type, by a home-like custom type, and by a place name that reads as a street address (a leading house number, or a Street/Road/Ave-style word after another word), whatever the type says. `living` is rule L (`death_ref_index == -1`) and `deathYear` is `null` for the living.
+- **`verify()` before every write.** `src/verify.mjs` validates `schema/family-graph.v1.schema.json` (`additionalProperties: false` everywhere), rejects day-precise dates, e-mail addresses, phone numbers and URLs in any string, and checks year range, coordinate precision and references. A failure is `PRIVACY_VIOLATION` (exit 4) and nothing is written. It names JSON pointers and rules, never the value. `verify()` also rejects a person who is their own partner, or a child of a union they are a partner in, and a place name that reads as a street address. When `shared/privacy-guard.mjs` exists and exports `scanText(text)`, that detector runs too; if the file exists but does not load or has no `scanText`, the build fails closed with `PRIVACY_VIOLATION` (a missing file just means the built-in detector runs alone).
 - **Deterministic.** Arrays are ordered by gramps id and keys are sorted, so shuffled input gives a byte-identical file. The one clock input is `generatedAt`.
 - **Atomic.** Every write is a temp file in the target directory, then a rename. A failure leaves the previous file untouched.
 
@@ -37,13 +37,23 @@ node graph/bin/build-graph.mjs --verify <staging>/person/graph.json --verify-aga
 | code | name | meaning |
 |---|---|---|
 | 0 | | done |
-| 2 | `INPUT_MISSING` | no input, an unreadable file or database, an input with no people, bad arguments |
+| 2 | `INPUT_MISSING` | no input, an unreadable file or database, an input with no people, bad arguments, an invalid clock value, a `--verify-against` directory that matches no person |
 | 3 | `SIZE_BUDGET` | the gzipped graph is over the budget |
 | 4 | `PRIVACY_VIOLATION` | `verify()` rejected the graph |
 | 5 | `LIVING_MISMATCH` | `--verify-against` found a differing `living` flag |
 | 6 | `GRAMPS_OPEN` | `<dbdir>/lock` exists |
-| 7 | `SNAPSHOT_SHAPE` | an unknown `_class`, a missing core field, a line that is not JSON, a header schema other than 21 |
+| 7 | `SNAPSHOT_SHAPE` | an unknown `_class`, a missing core field, a line that is not JSON, a header schema other than 21, a `--from-gramps-copy` database whose `metadata.version` is not 21 (or cannot be read) |
 | 8 | `GAZETTEER_CHECKSUM` | reserved for the geocoding task |
+
+## Design notes
+
+Where the build does something the design's section 5.2 table does not spell out. Each is for io or the privacy domain to ratify.
+
+- **Living people keep six event types.** A living person's events are limited to birth, marriage, divorce, education, graduation and degree (the VIZ-D5 keep-list). Residence, custom ("Home") events, Medical Information, Cause of Death, cremation, occupation, military service, emigration and immigration are dropped, and death and burial are dropped with `LIVING_DEATH_EVENT_DROPPED` because they contradict rule L. Other drops are counted as `LIVING_EVENT_DROPPED` (residence stays silent, as before). `keepLivingResidence` still keeps residence on request.
+- **`Family.event_ref_list` is read** to emit marriage and divorce events for each partner (VIZ-D5 says marriages stay). The 5.2 source column names only the person's `event_ref_list`; it needs a one-line amendment to add `Family.event_ref_list`.
+- **`yearApprox` is narrower than the wording.** It is true only when a year was read AND the date's modifier is not NONE or its quality is not REGULAR. A text-only date, or one with no readable year, is not approximate, because there is no year to qualify.
+- **Rule L has no carried-classification hook yet.** `isLiving()` in `src/project.mjs` is the single place `death_ref_index == -1` lives. If the privacy domain moves to a precomputed classification on the record, `isLiving()` is where the override goes, and `--verify-against` still catches drift.
+- **Schema version.** `--from-gramps-copy` reads `metadata.version` (plain digits, JSON text or a small-int pickle) in the same sqlite3 query and rejects anything but 21. The sqlite3 child is killed if the consumer stops early.
 
 ## Not here yet
 

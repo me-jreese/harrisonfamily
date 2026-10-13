@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Warnings, projectRecords } from './project.mjs';
 import { canonicalize } from './canonical.mjs';
+import { GraphError } from './errors.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const BUILDER = `hfy-graph@${pkg.version}`;
@@ -67,6 +68,13 @@ export function computeComponents(people, unions) {
   return { components, of };
 }
 
+/** The clock input as a valid Date, or INPUT_MISSING (exit 2) instead of a RangeError from toISOString. */
+export function resolveNow(now) {
+  const d = now instanceof Date ? now : new Date(now ?? Date.now());
+  if (Number.isNaN(d.getTime())) throw new GraphError('INPUT_MISSING', 'the clock value (now) is not a valid date');
+  return d;
+}
+
 function isoSeconds(d) {
   return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
@@ -76,7 +84,7 @@ function isoSeconds(d) {
  * @param {{ generatedAt?: string, now?: Date|number, sourceKind?: string, keepLivingResidence?: boolean }} [opts]
  */
 export function buildFamilyGraph(objects, opts = {}) {
-  const now = opts.now instanceof Date ? opts.now : new Date(opts.now ?? Date.now());
+  const now = resolveNow(opts.now);
   const generatedAt = opts.generatedAt ?? isoSeconds(now);
   const warnings = new Warnings();
   const { people, unions, places, events } = projectRecords(objects, {

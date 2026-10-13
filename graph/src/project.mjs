@@ -7,7 +7,7 @@
 import { GraphError } from './errors.mjs';
 import {
   enumValue, enumString, GENDER, DATE_MODIFIER, DATE_QUALITY, ROLE_ALLOWLIST, EVENT_ROLE, EVENT_TYPE_NAMES,
-  FAMILY_REL_NAMES, CHILD_REL_NAMES, PLACE_TYPE_NAMES, ADDRESS_GRADE_PLACE_TYPES, HOME_LIKE_CUSTOM,
+  FAMILY_REL_NAMES, CHILD_REL_NAMES, PLACE_TYPE_NAMES, ADDRESS_GRADE_PLACE_TYPES, HOME_LIKE_CUSTOM, ADDRESS_LIKE_NAME, LIVING_EVENT_KEEP,
 } from './gramps-enums.mjs';
 
 /** Known Gramps classes this builder never reads. They are accepted and dropped without inspection. */
@@ -160,7 +160,10 @@ export function projectRecords(objects, opts) {
   const isAddressGrade = (pl) => {
     const t = enumValue(pl.place_type);
     if (ADDRESS_GRADE_PLACE_TYPES.has(t)) return true;
-    return t === 0 && HOME_LIKE_CUSTOM.test(enumString(pl.place_type));
+    if (t === 0 && HOME_LIKE_CUSTOM.test(enumString(pl.place_type))) return true;
+    // A name that reads as a street address is address-grade whatever the type says (City, Locality, Unknown...).
+    const nm = pl.name && typeof pl.name === 'object' ? pl.name.value : pl.name;
+    return typeof nm === 'string' && ADDRESS_LIKE_NAME.test(nm);
   };
   const parentHandle = (pl) => (Array.isArray(pl.placeref_list) && pl.placeref_list[0] ? pl.placeref_list[0].ref : undefined);
 
@@ -295,6 +298,7 @@ export function projectRecords(objects, opts) {
     };
     const father = parentOf(f.father_handle);
     const mother = parentOf(f.mother_handle);
+    if (father && mother && father.out.id === mother.out.id) warnings.add('SELF_UNION_REF_DROPPED', fid);
     const partnerSet = new Map();
     if (father) partnerSet.set(father.out.id, { who: father, key: 'frel' });
     if (mother && !partnerSet.has(mother.out.id)) partnerSet.set(mother.out.id, { who: mother, key: 'mrel' });
@@ -310,6 +314,10 @@ export function projectRecords(objects, opts) {
         continue;
       }
       if (seenChild.has(child.out.id)) continue;
+      if (partnerSet.has(child.out.id)) {
+        warnings.add('SELF_UNION_REF_DROPPED', fid); // a person cannot be their own parent or partner
+        continue;
+      }
       seenChild.add(child.out.id);
       const rel = {};
       for (const pid of partners) {
@@ -346,10 +354,20 @@ export function projectRecords(objects, opts) {
     if (eventSeen.has(key)) return;
     eventSeen.add(key);
     const type = EVENT_TYPE_NAMES.get(enumValue(ev.type)) ?? 'other';
-    if (type === 'residence' && person.out.living && !opts.keepLivingResidence) return; // VIZ-D5
-    if (type === 'death' && person.out.living) {
-      warnings.add('LIVING_DEATH_EVENT_DROPPED', person.out.id);
-      return;
+    if (person.out.living) {
+      // A death or burial contradicts the living flag (rule L): drop it and say so.
+      if (type === 'death' || type === 'burial') {
+        warnings.add('LIVING_DEATH_EVENT_DROPPED', person.out.id);
+        return;
+      }
+      // VIZ-D5: a living person keeps only birth, marriage, divorce, education, graduation and degree events. Residence
+      // (42), custom ("Home"), Medical Information, Cause of Death, cremation and the rest never carry a year or place.
+      if (type === 'residence' && opts.keepLivingResidence) {
+        // kept on request
+      } else if (!LIVING_EVENT_KEEP.has(type)) {
+        if (type !== 'residence') warnings.add('LIVING_EVENT_DROPPED', person.out.id);
+        return;
+      }
     }
     const ctx = { maxYear, warnings, owner: person.out.id };
     const { year } = dateYear(ev.date, ctx);

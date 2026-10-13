@@ -5,8 +5,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { GraphError } from './errors.mjs';
 import { validateSchema } from './schema-validate.mjs';
-import { deriveEdges } from './build.mjs';
+import { deriveEdges, resolveNow } from './build.mjs';
 import { stringify } from './canonical.mjs';
+import { ADDRESS_LIKE_NAME } from './gramps-enums.mjs';
 
 export const SCHEMA_URL = new URL('../schema/family-graph.v1.schema.json', import.meta.url);
 export const SHARED_GUARD_URL = new URL('../../shared/privacy-guard.mjs', import.meta.url);
@@ -76,17 +77,23 @@ function guardFlags(result) {
 /**
  * Loads `shared/privacy-guard.mjs` (privacy-guard-core) when it exists. Contract assumed here:
  * `export function scanText(text)` returns an array of findings (empty when clean) or `{ ok: boolean }`.
- * The built-in detector always runs as well, so a missing or older guard never weakens verify().
+ * A MISSING file gives null (the built-in detector runs alone). A file that exists but fails to import, or has no
+ * `scanText`, throws PRIVACY_VIOLATION (fail closed). The built-in detector always runs as well.
  * @returns {Promise<((text: string) => unknown) | null>}
  */
 export async function loadSharedGuard(url = SHARED_GUARD_URL) {
+  if (!existsSync(url)) return null; // not shipped yet (privacy-guard-core): the built-in detector runs alone
+  // The file is there, so a broken or contract-less guard must not silently vanish: fail closed.
+  let mod;
   try {
-    if (!existsSync(url)) return null;
-    const mod = await import(url.href);
-    return typeof mod.scanText === 'function' ? mod.scanText : null;
+    mod = await import(url.href);
   } catch {
-    return null;
+    throw new GraphError('PRIVACY_VIOLATION', 'shared/privacy-guard.mjs exists but could not be loaded, so the shared detector cannot run');
   }
+  if (typeof mod.scanText !== 'function') {
+    throw new GraphError('PRIVACY_VIOLATION', 'shared/privacy-guard.mjs exists but exports no scanText(text), so the shared detector cannot run');
+  }
+  return mod.scanText;
 }
 
 /**
@@ -95,7 +102,7 @@ export async function loadSharedGuard(url = SHARED_GUARD_URL) {
  * @returns {{ ok: boolean, violations: { pointer: string, rule: string }[] }}
  */
 export function verifyGraph(graph, opts = {}) {
-  const now = opts.now instanceof Date ? opts.now : new Date(opts.now ?? Date.now());
+  const now = resolveNow(opts.now);
   const maxYear = now.getUTCFullYear();
   const violations = [];
   const add = (pointer, rule) => violations.push({ pointer, rule });
@@ -143,10 +150,18 @@ function structuralChecks(graph, maxYear, add) {
   graph.unions.forEach((u, i) => {
     u.partners.forEach((id, j) => {
       if (!people.has(id)) add(`/unions/${i}/partners/${j}`, 'dangling-reference');
+      if (u.partners.indexOf(id) !== j) add(`/unions/${i}/partners/${j}`, 'self-reference');
     });
+    const seen = new Set();
     u.children.forEach((c, j) => {
       if (!people.has(c.id)) add(`/unions/${i}/children/${j}/id`, 'dangling-reference');
+      if (u.partners.includes(c.id) || seen.has(c.id)) add(`/unions/${i}/children/${j}/id`, 'self-reference');
+      seen.add(c.id);
     });
+  });
+  // a place name that reads as a street address is address-grade (rule S) whatever its type says
+  graph.places.forEach((p, i) => {
+    if (ADDRESS_LIKE_NAME.test(p.name)) add(`/places/${i}/name`, 'address-like-place-name');
   });
   if (stringify(graph.edges) !== stringify(deriveEdges(graph.unions))) add('/edges', 'edges-disagree-with-unions');
 }

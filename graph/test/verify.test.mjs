@@ -122,14 +122,51 @@ describe('shared/privacy-guard.mjs', () => {
     assert.equal(typeof fn, 'function');
     assert.deepEqual(fn('BAD'), [1]);
     assert.equal(await loadSharedGuard(pathToFileURL(join(dir, 'none.mjs'))), null);
+  });
+
+  it('fails closed (PRIVACY_VIOLATION, exit 4) when the file exists but does not load or has no scanText', async () => {
+    const dir = scratch();
+    const isClosed = (e) => e instanceof GraphError && e.code === 'PRIVACY_VIOLATION' && e.exitCode === 4;
     writeFileSync(join(dir, 'other.mjs'), 'export const x = 1;\n');
-    assert.equal(await loadSharedGuard(pathToFileURL(join(dir, 'other.mjs'))), null);
+    await assert.rejects(loadSharedGuard(pathToFileURL(join(dir, 'other.mjs'))), isClosed);
+    writeFileSync(join(dir, 'syntax.mjs'), 'export function scanText( {\n');
+    await assert.rejects(loadSharedGuard(pathToFileURL(join(dir, 'syntax.mjs'))), isClosed);
+    writeFileSync(join(dir, 'throws.mjs'), 'throw new Error("boom");\n');
+    await assert.rejects(loadSharedGuard(pathToFileURL(join(dir, 'throws.mjs'))), isClosed);
   });
 
   it('the built-in detector still runs when the shared guard passes everything', () => {
     const g = golden();
     g.people[0].given = 'a@b.invalid';
     assert.equal(verify(g, { guard: () => [] }).ok, false);
+  });
+});
+
+describe('structural checks', () => {
+  it('rejects a person who is their own partner or a child of the union they are a partner in', () => {
+    let g = golden();
+    const u = g.unions.find((x) => x.partners.length === 2);
+    u.partners[1] = u.partners[0];
+    assert.ok(rules(verify(g)).some((r) => r.endsWith('|self-reference')));
+    g = golden();
+    const u2 = g.unions.find((x) => x.partners.length >= 1 && x.children.length >= 1);
+    u2.children[0].id = u2.partners[0];
+    assert.ok(rules(verify(g)).some((r) => r.endsWith('|self-reference')));
+  });
+  it('rejects a place name that reads as a street address, whatever its type', () => {
+    for (const name of ['12 Elm Street', 'Birch Road', '7 Oak', 'Maple Ave', 'Pine St.']) {
+      const g = golden();
+      g.places[0].name = name;
+      g.places[0].type = 'city';
+      assert.ok(rules(verify(g)).includes('/places/0/name|address-like-place-name'), name);
+    }
+    const ok = golden();
+    ok.places[0].name = 'Lane County';
+    assert.equal(verify(ok).ok, true);
+  });
+  it('an invalid clock is INPUT_MISSING, not a RangeError', () => {
+    assert.throws(() => verifyGraph(golden(), { now: new Date('nope') }), (e) => e instanceof GraphError && e.code === 'INPUT_MISSING');
+    assert.throws(() => verifyGraph(golden(), { now: 'nope' }), (e) => e instanceof GraphError && e.code === 'INPUT_MISSING');
   });
 });
 

@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { buildFamilyGraph, deriveEdges } from '../src/build.mjs';
 import { stringify } from '../src/canonical.mjs';
 import { GraphError } from '../src/errors.mjs';
-import { verifyGraph } from '../src/verify.mjs';
+import { assertSizeBudget, verifyGraph } from '../src/verify.mjs';
 import { Tree, messyTree, shuffled, SENTINEL } from './fixtures/gramps.mjs';
 import { GOLDEN, GENERATED_AT, NOW } from './helpers.mjs';
 
@@ -207,6 +207,46 @@ describe('allowlist projection', () => {
       assert.equal(p.living, false);
       assert.equal(p.deathYear, null);
     });
+    describe('a living person keeps only birth, marriage, divorce, education, graduation and degree events (VIZ-D5)', () => {
+      const living = (extra) => {
+        const t = new Tree();
+        t.place('P1', { name: 'Riverton', type: 4 });
+        t.person('I1', { given: 'Liv', surname: 'Ing', birth: { when: { year: 1990 }, place: 'P1' }, extra: extra.map((x) => ({ place: 'P1', when: { year: 2015 }, ...x })) });
+        return build(t.list());
+      };
+      const types = (r) => r.graph.events.map((e) => e.type);
+      it('drops a custom-typed "Home" event, Medical Information and Cause of Death (no year, no place)', () => {
+        const r = living([{ type: 0 }, { type: 32 }, { type: 4 }]); // custom, MEDICAL (32), CAUSE (4)
+        assert.deepEqual(types(r), ['birth']);
+        assert.deepEqual(r.graph.events[0], { person: 'I1', type: 'birth', year: 1990, place: 'P1' });
+        assert.deepEqual(r.report.warnings.find((w) => w.code === 'LIVING_EVENT_DROPPED').ids, ['I1']);
+      });
+      it('drops occupation, military service, emigration, immigration and cremation as well', () => {
+        assert.deepEqual(types(living([{ type: 37 }, { type: 33 }, { type: 28 }, { type: 30 }, { type: 11 }])), ['birth']);
+      });
+      it('keeps marriage, divorce, education, graduation and degree', () => {
+        const r = living([{ type: 1 }, { type: 7 }, { type: 26 }, { type: 31 }, { type: 25 }]);
+        assert.deepEqual(types(r).sort(), ['birth', 'degree', 'divorce', 'education', 'graduation', 'marriage']);
+      });
+      it('drops burial like death, with the same warning, and deathYear stays null', () => {
+        const r = living([{ type: 19 }, { type: 13 }]);
+        assert.deepEqual(types(r), ['birth']);
+        assert.equal(r.graph.people[0].deathYear, null);
+        assert.deepEqual(r.report.warnings.find((w) => w.code === 'LIVING_DEATH_EVENT_DROPPED').ids, ['I1']);
+      });
+      it('a person who is NOT living keeps burial, custom and every other event', () => {
+        const t = new Tree();
+        t.person('I1', { given: 'Gone', surname: 'Away', birth: { when: { year: 1900 } }, death: { when: { year: 1970 } }, extra: [{ type: 19, when: { year: 1970 } }, { type: 0, when: { year: 1930 } }, { type: 37, when: { year: 1920 } }] });
+        assert.deepEqual(build(t.list()).graph.events.map((e) => e.type).sort(), ['birth', 'burial', 'death', 'occupation', 'other']);
+      });
+      it('a living spouse keeps the family marriage event but not family events of other types', () => {
+        const t = new Tree();
+        t.person('I1', { given: 'Liv', surname: 'One', birth: { when: { year: 1990 } } });
+        t.person('I2', { given: 'Liv', surname: 'Two', birth: { when: { year: 1991 } } });
+        t.family('F1', { father: 'I1', mother: 'I2', events: [{ type: 1, when: { year: 2015 } }, { type: 42, when: { year: 2016 } }, { type: 0, when: { year: 2017 } }] });
+        assert.deepEqual([...new Set(build(t.list()).graph.events.map((e) => e.type))].sort(), ['birth', 'marriage']);
+      });
+    });
     it('residence events of living people are dropped by default and kept on request', () => {
       const t = new Tree();
       t.person('I1', { given: 'Liv', surname: 'Ing', birth: { when: { year: 1990 } }, extra: [{ type: 42, when: { year: 2015 } }] });
@@ -276,6 +316,87 @@ describe('allowlist projection', () => {
       const { graph } = build(messyTree().list());
       assert.equal(graph.events.find((e) => e.person === 'I9001' && e.type === 'residence').place, 'P9002');
     });
+  });
+});
+
+describe('self-referencing unions', () => {
+  it('a child who is also a partner of the same family is dropped with a warning', () => {
+    const t = new Tree();
+    t.person('I1', { given: 'Pa', surname: 'One', birth: { when: { year: 1950 } } });
+    t.person('I2', { given: 'Ma', surname: 'Two', birth: { when: { year: 1952 } } });
+    t.person('I3', { given: 'Kid', surname: 'Three', birth: { when: { year: 1980 } } });
+    t.family('F1', { father: 'I1', mother: 'I2', children: [{ id: 'I1' }, { id: 'I3' }] });
+    const { graph, report } = build(t.list());
+    assert.deepEqual(graph.unions[0].children.map((c) => c.id), ['I3']);
+    assert.deepEqual(report.warnings.find((w) => w.code === 'SELF_UNION_REF_DROPPED').ids, ['F1']);
+    assert.equal(verifyGraph(graph, { now: NOW }).ok, true);
+  });
+  it('the same person as father and mother is one partner, with a warning', () => {
+    const t = new Tree();
+    t.person('I1', { given: 'Pa', surname: 'One', birth: { when: { year: 1950 } } });
+    t.person('I3', { given: 'Kid', surname: 'Three', birth: { when: { year: 1980 } } });
+    t.family('F1', { father: 'I1', mother: 'I1', children: [{ id: 'I3' }] });
+    const { graph, report } = build(t.list());
+    assert.deepEqual(graph.unions[0].partners, ['I1']);
+    assert.equal(graph.edges.filter((e) => e.s === e.t).length, 0);
+    assert.ok(report.warnings.some((w) => w.code === 'SELF_UNION_REF_DROPPED'));
+  });
+});
+
+describe('address-like place names', () => {
+  it('collapse to the enclosing settlement whatever the place type says', () => {
+    for (const [name, type] of [['12 Elm Street', 4], ['Birch Road', 6], ['7 Oak', -1], ['Pine Ave', 0]]) {
+      const t = new Tree();
+      t.place('P1', { name: 'Riverton', type: 4 }).place('P2', { name, type, parent: 'P1' });
+      t.person('I1', { given: 'Pl', surname: 'Ace', birth: { when: { year: 1900 }, place: 'P2' } });
+      const r = build(t.list());
+      assert.equal(r.graph.people[0].birthPlace, 'P1', name);
+      assert.deepEqual(r.graph.places.map((p) => p.name), ['Riverton']);
+      assert.ok(r.report.warnings.some((w) => w.code === 'ADDRESS_GRADE_PLACE_COLLAPSED'), name);
+    }
+  });
+  it('an ordinary place that merely contains a street word as its first word stays', () => {
+    const t = new Tree();
+    t.place('P1', { name: 'Lane County', type: 3 });
+    t.person('I1', { given: 'Pl', surname: 'Ace', birth: { when: { year: 1900 }, place: 'P1' } });
+    assert.equal(build(t.list()).graph.people[0].birthPlace, 'P1');
+  });
+});
+
+describe('the clock', () => {
+  it('an invalid now is INPUT_MISSING (exit 2), not a RangeError', () => {
+    for (const now of [new Date('nope'), 'nope', NaN]) {
+      assert.throws(() => build(messyTree().list(), { now }), (e) => e instanceof GraphError && e.code === 'INPUT_MISSING' && e.exitCode === 2);
+    }
+  });
+});
+
+describe('size at 2,000 people', () => {
+  it('a synthetic 2,000-person tree builds, verifies and fits the 150 KiB gzip budget', () => {
+    const t = new Tree();
+    t.place('P1', { name: 'Examplestate', type: 2 }).place('P2', { name: 'Riverton', type: 4, parent: 'P1', lat: '40.01', long: '-100.02' }).place('P3', { name: 'Lakeside', type: 16, parent: 'P1', lat: '41.5', long: '-99.5' });
+    const N = 2000;
+    const idOf = (i) => `I${String(i).padStart(5, '0')}`;
+    for (let i = 0; i < N; i++) {
+      const year = 1800 + (i % 200);
+      t.person(idOf(i), {
+        given: `Given${i % 97}`, surname: `Family${i % 41}`, gender: i % 3,
+        birth: { when: { year }, place: i % 2 ? 'P2' : 'P3' },
+        death: i % 5 === 0 ? undefined : { when: { year: Math.min(year + 60, 2020) }, place: 'P2' },
+        extra: [{ type: 37, when: { year: year + 25 } }, { type: 26, when: { year: year + 18 }, place: 'P3' }],
+      });
+    }
+    // 800 families of two partners and two children each, plus some single-parent ones
+    let child = 1600;
+    for (let f = 0; f < 800; f++) {
+      const kids = child + 2 <= N ? [{ id: idOf(child++) }, { id: idOf(child++) }] : [];
+      t.family(`F${String(f).padStart(5, '0')}`, { father: idOf(f * 2), mother: idOf(f * 2 + 1), children: kids, events: [{ type: 1, when: { year: 1820 + (f % 150) }, place: 'P2' }] });
+    }
+    const { graph } = build(t.list());
+    assert.equal(graph.people.length, N);
+    assert.deepEqual(verifyGraph(graph, { now: NOW }), { ok: true, violations: [] });
+    const gz = assertSizeBudget(stringify(graph)); // throws SIZE_BUDGET over 150 KiB
+    assert.ok(gz > 0 && gz < 150 * 1024, `${gz} bytes gzipped`);
   });
 });
 

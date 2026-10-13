@@ -14,10 +14,31 @@ import { createInterface } from 'node:readline';
 import { GraphError } from './errors.mjs';
 
 /** The tables of Gramps schema v21 whose json_data column is the object. */
+const EXPECTED_SCHEMA = 21;
 export const GRAMPS_TABLES = ['person', 'family', 'event', 'place', 'media'];
 
+/** The first row: the schema version Gramps stores in `metadata`, as hex (the column is a pickle or text). */
+const VERSION_SELECT = `SELECT '{"_class":"HfyMetaVersion","hex":"' || hex(value) || '"}' FROM metadata WHERE setting = 'version'`;
+
 export function grampsSql() {
-  return GRAMPS_TABLES.map((t) => `SELECT json_data FROM ${t}`).join(' UNION ALL ') + ';';
+  return [VERSION_SELECT, ...GRAMPS_TABLES.map((t) => `SELECT json_data FROM ${t}`)].join(' UNION ALL ') + ';';
+}
+
+/** Decodes the `metadata.version` value: plain digits, JSON, or a small-int pickle. Returns null when unreadable. */
+export function decodeSchemaVersion(hex) {
+  if (typeof hex !== 'string' || !/^([0-9a-f]{2})+$/i.test(hex)) return null;
+  const buf = Buffer.from(hex, 'hex');
+  const text = buf.toString('utf8').trim().replace(/^"(\d+)"$/, '$1');
+  if (/^\d{1,6}$/.test(text)) return Number(text);
+  const proto0 = /^I(\d{1,6})\n\./.exec(buf.toString('latin1'));
+  if (proto0) return Number(proto0[1]);
+  let i = 0;
+  if (buf[i] === 0x80) i += 2; // PROTO
+  if (buf[i] === 0x95) i += 9; // FRAME
+  if (buf[i] === 0x4b && buf.length > i + 1) return buf[i + 1]; // BININT1
+  if (buf[i] === 0x4d && buf.length > i + 2) return buf.readUInt16LE(i + 1); // BININT2
+  if (buf[i] === 0x4a && buf.length > i + 4) return buf.readInt32LE(i + 1); // BININT
+  return null;
 }
 
 async function* parseLines(lines, where) {
@@ -96,11 +117,23 @@ export function grampsCopySource(path, opts = {}) {
     child.stderr.resume(); // sqlite3's own messages can quote data: drained, never kept or shown
     const closed = new Promise((res) => child.on('close', (code) => res(code)));
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    let sawVersion = false;
+    let completed = false;
     try {
-      yield* parseLines(rl, 'gramps copy');
-    } catch (e) {
-      child.kill();
-      throw e;
+      for await (const obj of parseLines(rl, 'gramps copy')) {
+        if (obj._class === 'HfyMetaVersion') {
+          // The schema check: anything but 21 (or a value that cannot be read) is rejected, never guessed at.
+          sawVersion = true;
+          if (decodeSchemaVersion(obj.hex) !== EXPECTED_SCHEMA) {
+            throw new GraphError('SNAPSHOT_SHAPE', `the Gramps copy's schema is not ${EXPECTED_SCHEMA}`);
+          }
+          continue;
+        }
+        yield obj;
+      }
+      completed = true;
+    } finally {
+      if (!completed) child.kill(); // the consumer quit early, or a line or the version check failed
     }
     const code = await closed;
     if (spawnError) {
@@ -109,6 +142,7 @@ export function grampsCopySource(path, opts = {}) {
     if (code !== 0) {
       throw new GraphError('INPUT_MISSING', `sqlite3 could not read the Gramps copy (exit ${code})`);
     }
+    if (!sawVersion) throw new GraphError('SNAPSHOT_SHAPE', 'the Gramps copy has no schema version in its metadata');
   })();
 }
 

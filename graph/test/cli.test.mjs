@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { EXIT } from '../src/errors.mjs';
+import { defaultReportPath } from '../src/cli.mjs';
 import { writeAtomic } from '../src/write.mjs';
 import { Tree, messyTree, shuffled } from './fixtures/gramps.mjs';
 import { GENERATED_AT, GOLDEN, run, scratch, writeJsonl } from './helpers.mjs';
@@ -212,6 +213,20 @@ describe('deterministic, atomic writes', () => {
 
 import * as realFs from 'node:fs';
 
+describe('the default report path', () => {
+  it('is <project>/workspace-local/graph-build-report.json, and HFY_PROJECT_DIR names the project', () => {
+    assert.equal(defaultReportPath({ HFY_PROJECT_DIR: '/p/root' }), '/p/root/workspace-local/graph-build-report.json');
+    assert.match(defaultReportPath({}), /\/workspace-local\/graph-build-report\.json$/);
+  });
+  it('the CLI writes there when --report is not given', () => {
+    const dir = scratch();
+    const project = join(dir, 'project');
+    const r = run([writeJsonl(join(dir, 'in.jsonl'), objects()), '--out', join(dir, 'out'), '--generated-at', GENERATED_AT, '--quiet'], { env: { HFY_PROJECT_DIR: project } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(join(project, 'workspace-local', 'graph-build-report.json')));
+  });
+});
+
 describe('--verify and --verify-against', () => {
   it('--verify passes the golden and a freshly built file', () => {
     const dir = scratch();
@@ -257,6 +272,35 @@ describe('--verify and --verify-against', () => {
     const b = run([writeJsonl(join(dir, 'in.jsonl'), objects()), '--verify-against', people, '--generated-at', GENERATED_AT]);
     assert.equal(b.status, 0, b.stderr);
     assert.match(b.stderr, /1 people have no person file/);
+  });
+
+  it('--verify-against with an empty, wrong or unrelated directory fails with INPUT_MISSING (exit 2) instead of comparing nothing', () => {
+    const dir = scratch();
+    const empty = join(dir, 'empty');
+    mkdirSync(empty);
+    const unrelated = join(dir, 'unrelated');
+    mkdirSync(unrelated);
+    writeFileSync(join(unrelated, 'Z0001.json'), JSON.stringify({ isLiving: true }));
+    for (const people of [empty, unrelated]) {
+      let r = run(['--verify', GOLDEN, '--verify-against', people]);
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, /nothing was compared/);
+      r = run([writeJsonl(join(dir, 'in.jsonl'), objects()), '--verify-against', people, '--out', join(dir, 'o'), ...common(dir)]);
+      assert.equal(r.status, 2, r.stderr);
+      assert.equal(existsSync(join(dir, 'o')), false);
+    }
+  });
+
+  it('the report records how many people were compared and how many had no person file', () => {
+    const dir = scratch();
+    const people = personDir(dir);
+    realFs.rmSync(join(people, 'I9001.json'));
+    const out = join(dir, 'out');
+    const r = run([writeJsonl(join(dir, 'in.jsonl'), objects()), '--out', out, '--verify-against', people, ...common(dir)]);
+    assert.equal(r.status, 0, r.stderr);
+    const report = JSON.parse(readFileSync(join(dir, 'report.json'), 'utf8'));
+    assert.equal(report.livingCheck.missing, 1);
+    assert.ok(report.livingCheck.compared > 0);
   });
 
   it('--verify-against fails with LIVING_MISMATCH (exit 5) and lists the ids, sorted', () => {

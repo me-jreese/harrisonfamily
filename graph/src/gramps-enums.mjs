@@ -85,3 +85,10 @@ export const PLACE_TYPES = ['unknown', 'custom', 'country', 'state', 'county', '
 export const ADDRESS_GRADE_PLACE_TYPES = new Set([7, 11, 18, 19, 20]);
 /** A custom place type that names a home or an address is treated the same way (PS-15). */
 export const HOME_LIKE_CUSTOM = /(home|house|address|residence|street|apartment|farm|building|ranch|cabin|estate|lot|neighbo)/i;
+/**
+ * A place NAME that reads as a street address ("12 Elm Street"), whatever its PlaceType says. Conservative on
+ * purpose: a false positive only collapses the place to its parent (with a warning), never leaks it.
+ */
+export const ADDRESS_LIKE_NAME = /^\s*\d{1,6}[a-z]?\s+\S|\S\s+(?:street|road|avenue|lane|drive|boulevard|highway|parkway|terrace|ave|blvd|hwy|rd|ln)\b|\S\s+st\.?\s*$/i;
+/** Event types a LIVING person keeps (VIZ-D5). Every other type is dropped for the living. */
+export const LIVING_EVENT_KEEP = new Set(['birth', 'marriage', 'divorce', 'education', 'graduation', 'degree']);

@@ -27,7 +27,16 @@ const USAGE = `usage:
   Exit codes: 0 ok, 2 input missing, 3 size budget, 4 privacy violation, 5 living mismatch,
               6 Gramps open, 7 snapshot shape, 8 gazetteer checksum.`;
 
-const DEFAULT_REPORT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'workspace-local', 'graph-build-report.json');
+/**
+ * The project convention (docs/reference/repository-operations.md): the checkout sits at <project>/repo, so
+ * <project> is the checkout's parent and the report goes to <project>/workspace-local/graph-build-report.json,
+ * outside the synced staging prefixes. In a worktree or any other layout, set HFY_PROJECT_DIR to the project
+ * root (or pass --report).
+ */
+export function defaultReportPath(env = process.env) {
+  const project = env.HFY_PROJECT_DIR ? resolve(env.HFY_PROJECT_DIR) : resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  return join(project, 'workspace-local', 'graph-build-report.json');
+}
 
 /** graph `living` against person/<id>.json `isLiving`. Returns the mismatching gramps ids. */
 export function livingMismatches(graph, personDir) {
@@ -37,12 +46,14 @@ export function livingMismatches(graph, personDir) {
   const have = new Set(readdirSync(personDir));
   const bad = [];
   let missing = 0;
+  let compared = 0;
   for (const p of graph.people) {
     const file = `${p.id}.json`;
     if (!have.has(file)) {
       missing += 1;
       continue;
     }
+    compared += 1;
     let isLiving;
     try {
       isLiving = JSON.parse(readFileSync(join(personDir, file), 'utf8')).isLiving;
@@ -51,15 +62,19 @@ export function livingMismatches(graph, personDir) {
     }
     if (typeof isLiving !== 'boolean' || isLiving !== p.living) bad.push(p.id);
   }
-  return { bad: bad.sort(), missing };
+  return { bad: bad.sort(), missing, compared };
 }
 
 function assertLivingMatches(graph, personDir) {
-  const { bad, missing } = livingMismatches(graph, personDir);
+  const { bad, missing, compared } = livingMismatches(graph, personDir);
+  if (compared === 0 && graph.people.length > 0) {
+    // An empty, wrong or unrelated directory must not pass the rule L cross-check by comparing nothing.
+    throw new GraphError('INPUT_MISSING', '--verify-against: no person/<id>.json file matches a person in the graph, so nothing was compared');
+  }
   if (bad.length) {
     throw new GraphError('LIVING_MISMATCH', `living differs from person/<id>.json isLiving for ${bad.length} id${bad.length === 1 ? '' : 's'}`, { ids: bad });
   }
-  return missing;
+  return { missing, compared };
 }
 
 function parseGraphFile(path) {
@@ -147,12 +162,14 @@ export async function main(argv, io = {}) {
     assertVerified(graph, { now, guard });
     const text = stringify(graph);
     const gz = assertSizeBudget(text, maxGzip);
-    const missing = o['verify-against'] ? assertLivingMatches(graph, o['verify-against']) : 0;
+    const check = o['verify-against'] ? assertLivingMatches(graph, o['verify-against']) : null;
+    const missing = check ? check.missing : 0;
+    if (check) report.livingCheck = { compared: check.compared, missing: check.missing };
 
     if (o.out !== undefined) {
       const target = join(o.out, 'person', 'graph.json');
       writeAtomic(target, text);
-      writeAtomic(o.report ?? DEFAULT_REPORT, stringify(report));
+      writeAtomic(o.report ?? defaultReportPath(), stringify(report));
       if (!o.quiet) err.write(`wrote ${target}: ${graph.counts.people} people, ${graph.counts.unions} unions, ${text.length} bytes (${gz} gzipped)\n`);
     } else if (!o.quiet) {
       err.write(`dry run (no --out): ${graph.counts.people} people, ${graph.counts.unions} unions, ${text.length} bytes (${gz} gzipped); nothing written\n`);

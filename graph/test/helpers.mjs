@@ -40,11 +40,13 @@ export function run(args, { input, env = {}, cwd } = {}) {
 }
 
 /** A stand-in sqlite3 that records its arguments and prints a prepared output. */
-export function stubSqlite(dir, outputText, exitCode = 0) {
+export function stubSqlite(dir, outputText, exitCode = 0, { version = '21' } = {}) {
   const argsFile = join(dir, 'stub-args.txt');
   const outFile = join(dir, 'stub-out.txt');
   const bin = join(dir, 'sqlite3-stub.sh');
-  writeFileSync(outFile, outputText);
+  // the real query's first row is the metadata schema version, as hex of the stored value
+  const head = version === null ? '' : `${JSON.stringify({ _class: 'HfyMetaVersion', hex: Buffer.from(String(version)).toString('hex') })}\n`;
+  writeFileSync(outFile, head + outputText);
   writeFileSync(bin, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a" >> "${argsFile}"; done\ncat "${outFile}"\nexit ${exitCode}\n`);
   chmodSync(bin, 0o755);
   return { bin, argsFile };
