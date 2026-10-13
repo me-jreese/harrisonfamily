@@ -1,0 +1,7 @@
+{
+  "$comment": "Reviewed licence exceptions for scripts/ci/check-client-licenses.mjs. An override names one package at one exact version; a new version needs a new review. An override never rescues a GPL, AGPL, LGPL, EPL or SSPL licence. When data-navigator@3.0.0 (an MIT LICENSE file, no license field) is adopted, add its entry in the same PR.",
+  "firstPartyScopes": [
+    { "scope": "@io-kit/", "license": "UNLICENSED", "reason": "first-party packages from the private io-kit registry; their package.json says UNLICENSED" }
+  ],
+  "overrides": []
+}
