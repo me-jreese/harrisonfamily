@@ -8,6 +8,7 @@ import { readdirSync, readFileSync, lstatSync, readlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { boundedText, cleanText, isRecord } from "./validate.mjs";
+import "./privacy-guard.test.mjs"; // `node --test shared/` runs only this file (package.json main), so per-module suites hang off it
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const modules = readdirSync(dir).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));
