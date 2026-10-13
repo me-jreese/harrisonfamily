@@ -59,7 +59,7 @@ export function createHandler(deps) {
       createNotifyHandler({ vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id })(event);
     const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, bucket: deps.mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
     const accessRequestCount = () => countPendingAccessRequests({ ddb, cmds, table });
-    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount };
+    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, log };
   }
 
   /** Run a route's own handler for a non-HTTP caller (the MCP tools): same registry, same validation, Q-4 and audit. Returns {status, body}. */

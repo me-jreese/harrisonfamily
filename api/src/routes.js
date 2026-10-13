@@ -62,7 +62,7 @@ const need = (v, field) => {
 export const ROUTES = [
   {
     name: "me.get", method: "GET", path: "/me", summary: "Who you are: id, label, admin, server-computed can.*, and admin badges (no MCP tool)",
-    handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount })),
+    handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount, log: c.log })),
   },
   {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first (cursor), with reactions",
