@@ -53,7 +53,7 @@ export function createHandler(deps) {
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000,
       getPost: (id) => content.get(id),
-      // Without push configured there is nobody to notify: skip the post read and the commenters Query entirely.
+      // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
         const postAuthorId = c.threadId.startsWith("post:") ? (await content.get(c.threadId.slice(5))).author.id : undefined;
         const earlierCommenters = await commenterIds(c.threadId);

@@ -230,7 +230,7 @@ describe("route gate: 404 unless the flag is on or the caller is uat; x-hfy-prev
     expect((await get("/test/dark")).status).toBe(401);
   });
 
-  it("the gate runs before the handler; ungated PLN-001 routes never read the flags", async () => {
+  it("routes without a feature (the PLN-001 routes and the exempt me.get) never read the flags file", async () => {
     const before = calls;
     expect((await w.call("GET", "/api/posts", { token: member })).status).toBe(200);
     expect((await w.call("GET", "/api/me", { token: member })).status).toBe(200);
@@ -308,11 +308,15 @@ describe("uat comes from config/groups.json, subjects only (AC2)", () => {
     expect((await make(async () => { throw new Error("s3 down"); }).call("GET", "/api/test/dark", { token })).status).toBe(404);
   });
 
-  it("a failing uat lookup counts as not uat, logged without detail", async () => {
+  it("a failing uat lookup counts as not uat, and a failing flags source as every feature off, logged without detail", async () => {
     const lines = [];
-    const gate = createFeatureGate({ flags: async () => ({}), isUat: async () => { throw new Error("boom detail"); }, log: { error: (...a) => lines.push(a) } });
+    const log = { error: (...a) => lines.push(a) };
+    const gate = createFeatureGate({ flags: async () => ({}), isUat: async () => { throw new Error("boom detail"); }, log });
     expect(await gate.featureOn("inboxV1", UAT)).toBe(false);
-    expect(JSON.stringify(lines)).not.toContain("boom detail");
+    const broken = createFeatureGate({ flags: async () => { throw new Error("flags detail"); }, isUat: async () => false, log });
+    expect(await broken.featureOn("inboxV1", MEMBER, null)).toBe(false);
+    expect(await broken.allows(requireFeature("inboxV1"), { id: MEMBER })).toBe(false);
+    expect(JSON.stringify(lines)).not.toMatch(/boom detail|flags detail/);
   });
 });
 
@@ -347,12 +351,12 @@ const PLN001_ROUTES = Object.freeze([
   "notifications.vapid-public-key", "notifications.subscribe", "notifications.unsubscribe", "notifications.preferences.get", "notifications.preferences.put",
 ]);
 const EXEMPT = Object.freeze(["me.get"]);
-/** The caps rule: the names of caps.json actions that break it. */
+/** The caps rule: the names of caps.json actions that break it. Only me.get may be exempt; a pre-gate route may stay ungated. */
 function gateViolations(actions) {
   return actions.filter((a) => {
-    if (PLN001_ROUTES.includes(a.name)) return Boolean(a.gate); // the legacy set stays exactly as it was
-    if (a.gate?.exempt) return !EXEMPT.includes(a.name);
-    return !(typeof a.gate?.feature === "string" || SERVER_SWITCHES.includes(a.gate?.switch));
+    if (a.gate?.exempt !== undefined) return !EXEMPT.includes(a.name);
+    if (typeof a.gate?.feature === "string" || SERVER_SWITCHES.includes(a.gate?.switch)) return false;
+    return !PLN001_ROUTES.includes(a.name);
   }).map((a) => a.name);
 }
 
@@ -454,7 +458,7 @@ describe("read path is named: HTTPS through CloudFront, no new S3 grant (AC6)", 
     const index = readFileSync(resolve(here, "../src/index.js"), "utf8");
     expect(index).toMatch(/createFlagSource\(\{ url: env\.FLAGS_URL \?\? DEFAULT_FLAGS_URL \}\)/);
     expect(index).toMatch(/isUat: async \(sub\) => \(await getGroups\(\{ sub \}\)\)\.includes\(UAT_GROUP\)/);
-    expect(index).toMatch(/features,\n/);
+    expect(index).toMatch(/\bfeatures,/);
     const features = readFileSync(resolve(here, "../src/features.js"), "utf8");
     expect(features).not.toMatch(/@aws-sdk/);
   });

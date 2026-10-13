@@ -159,13 +159,18 @@ export function createFeatureGate({ flags, isUat, log = console }) {
       return false;
     }
   }
-  async function featureOn(name, principal, { preview } = {}) {
+  async function featureOn(name, principal, opts) {
     if (typeof name !== "string" || !FLAG_NAME_RE.test(name)) return false;
-    if (await uat(principal)) return parsePreview(preview).get(name) ?? true;
-    return (await flags())[name] === true;
+    if (await uat(principal)) return parsePreview(opts?.preview).get(name) ?? true;
+    try {
+      return (await flags())[name] === true;
+    } catch (e) {
+      log.error?.("flags unavailable (features off)", logSafeError(e)); // createFlagSource never throws; any other source fails closed
+      return false;
+    }
   }
   /** Throws the refusal for `gate` (404 not_found, or a switch's own error); returns when the caller may proceed. */
-  async function check(gate, actor, opts = {}) {
+  async function check(gate, actor, opts) {
     if (gate === undefined || gate === null || gate.type === "exempt") return;
     if (gate.type === "feature") {
       if (await featureOn(gate.name, actor, opts)) return;
