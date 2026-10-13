@@ -17,7 +17,7 @@ const photo = (name) => {
 
 async function stub(page, { shell = true, personV2 = false, hold = null, status = 200 } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
-  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false } }));
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9002", grampsId: "I9002", label: "Sam Example" } }));
   await page.route("**/api/comments**", (r) => r.fulfill({ json: { thread: { id: "person:I9001", topic: "comments", comments: [], reactions: {} } } }));
   await page.route("**/api/**", (r) => r.fallback());

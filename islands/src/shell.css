@@ -196,6 +196,31 @@ html.hfy-shell-v2 .hfy-signin {
 }
 html.hfy-shell-v2 .hfy-signin:hover { color: var(--io-shell-link-hover); border-color: var(--io-shell-link-hover); }
 
+/* The gear (navMe, HFY-TSK-091): a 44 x 44 link to the settings hub before the avatar, signed in only. Its single-weight 24px gear is
+   a currentColor mask like the nav icons (`text`, link-hover on hover), and gold (accent.secondary) on /me/ and its sub-paths. */
+html.hfy-shell-v2 .io-shell .hfy-gear {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--io-shell-tap-min);
+  height: var(--io-shell-tap-min);
+  border-radius: var(--io-shell-radius-pill);
+  color: var(--io-shell-text);
+  text-decoration: none;
+}
+html.hfy-shell-v2 .io-shell .hfy-gear:hover { color: var(--io-shell-link-hover); }
+html.hfy-shell-v2 .io-shell .hfy-gear[aria-current="page"] { color: var(--io-shell-accent-secondary); }
+html.hfy-shell-v2 .hfy-gear__icon {
+  display: block;
+  flex: none;
+  width: var(--io-shell-space-6);
+  height: var(--io-shell-space-6);
+  background: currentColor;
+  -webkit-mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.03 4.66L10.44 2.12L13.56 2.12L13.97 4.66A7.6 7.6 0 0 1 15.8 5.42L17.88 3.91L20.09 6.12L18.58 8.2A7.6 7.6 0 0 1 19.34 10.03L21.88 10.44L21.88 13.56L19.34 13.97A7.6 7.6 0 0 1 18.58 15.8L20.09 17.88L17.88 20.09L15.8 18.58A7.6 7.6 0 0 1 13.97 19.34L13.56 21.88L10.44 21.88L10.03 19.34A7.6 7.6 0 0 1 8.2 18.58L6.12 20.09L3.91 17.88L5.42 15.8A7.6 7.6 0 0 1 4.66 13.97L2.12 13.56L2.12 10.44L4.66 10.03A7.6 7.6 0 0 1 5.42 8.2L3.91 6.12L6.12 3.91L8.2 5.42A7.6 7.6 0 0 1 10.03 4.66Z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+  mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.03 4.66L10.44 2.12L13.56 2.12L13.97 4.66A7.6 7.6 0 0 1 15.8 5.42L17.88 3.91L20.09 6.12L18.58 8.2A7.6 7.6 0 0 1 19.34 10.03L21.88 10.44L21.88 13.56L19.34 13.97A7.6 7.6 0 0 1 18.58 15.8L20.09 17.88L17.88 20.09L15.8 18.58A7.6 7.6 0 0 1 13.97 19.34L13.56 21.88L10.44 21.88L10.03 19.34A7.6 7.6 0 0 1 8.2 18.58L6.12 20.09L3.91 17.88L5.42 15.8A7.6 7.6 0 0 1 4.66 13.97L2.12 13.56L2.12 10.44L4.66 10.03A7.6 7.6 0 0 1 5.42 8.2L3.91 6.12L6.12 3.91L8.2 5.42A7.6 7.6 0 0 1 10.03 4.66Z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+}
+
 /* Kit Sheet titles (account sheet, search palette): display serif at regular weight like every DS heading (the kit sets 600). */
 html.hfy-shell-v2 .io-sheet__title {
   font-family: var(--io-shell-font-display);
@@ -262,8 +287,8 @@ html.hfy-shell-v2 .hfy-account .hfy-account__item {
 html.hfy-shell-v2 .hfy-account .hfy-account__item:hover { background: var(--io-shell-surface); color: var(--io-shell-link-hover); }
 
 /* ------------------------------------------------------------------------------------------------------------ bottom bar */
-/* Under 688px: five 75 x 56 cells, icon over a 16/600 label in text.dim; the active item's label is `text` (see the AAA note at the
-   top-bar links) and its icon gold. */
+/* Under 688px: five 75 x 56 cells (four of about 94 with navMe), icon over a 16/600 label in text.dim; the active item's label is
+   `text` (see the AAA note at the top-bar links) and its icon gold. */
 html.hfy-shell-v2 .io-shell__bar {
   padding: 0 0 var(--io-shell-safe-bottom);
   background: var(--io-shell-nav-tint);
@@ -271,7 +296,8 @@ html.hfy-shell-v2 .io-shell__bar {
   backdrop-filter: blur(var(--io-shell-space-2));
   border-top: 1px solid var(--io-shell-border);
 }
-html.hfy-shell-v2 .io-nav__list--bar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+/* One equal column per item, however many the flags give the bar (lib/nav.js: five, or four with navMe and no familyViz). */
+html.hfy-shell-v2 .io-nav__list--bar { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0; }
 html.hfy-shell-v2 .io-nav__list--bar > li { display: flex; min-width: 0; }
 html.hfy-shell-v2 .io-nav__item--bar {
   flex-direction: column;

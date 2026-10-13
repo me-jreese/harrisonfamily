@@ -24,12 +24,16 @@
         "css": "04cffdda"
       },
       "search": {
-        "js": "497de112",
+        "js": "702513b2",
         "css": "9e007813"
       },
+      "settings": {
+        "js": "6b6449ca",
+        "css": "30ce79f2"
+      },
       "shell": {
-        "js": "0be5d1c0",
-        "css": "89b22c11"
+        "js": "feb6cbc2",
+        "css": "07d64dde"
       },
       "timeline": {
         "js": "e389c11d",
@@ -38,7 +42,7 @@
     },
     "theme": "b8607abf",
     "manifest": "c0f9b5fc",
-    "sw": "6a62c685"
+    "sw": "7bf088c1"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -826,6 +830,12 @@
   resolveFlags().then((flags) => {
     if (flags.notifyV2 !== true || !/^\/me\/notifications\/?$/.test(window.location.pathname)) return;
     loadIsland("notifications", { onError() { /* the page keeps its "not enabled" text */ } });
+  });
+
+  // HFY-TSK-091: navMe mounts the settings hub island on the static /me/ page (the shell's gear and the account sheet open it).
+  resolveFlags().then((flags) => {
+    if (flags.navMe !== true || !/^\/me\/?(index\.html)?$/.test(window.location.pathname)) return;
+    loadIsland("settings", { onError() { /* the page keeps its "not turned on" text */ } });
   });
 
   onReady(applyFeatureVisibility);
