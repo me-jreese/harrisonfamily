@@ -63,6 +63,25 @@ export function parseIp(raw) {
   return { bits: 128, n: b };
 }
 
+/** One spelling per client: dotted IPv4 (an IPv4-mapped IPv6 maps to it), else lowercase IPv6 with the longest zero run as "::". Null when not an IP. */
+export function canonicalIp(raw) {
+  const ip = parseIp(raw);
+  if (!ip) return null;
+  if (ip.bits === 32) return [24n, 16n, 8n, 0n].map((s) => String((ip.n >> s) & 0xffn)).join(".");
+  const g = Array.from({ length: 8 }, (_, i) => Number((ip.n >> BigInt(112 - 16 * i)) & 0xffffn));
+  let best = { at: -1, len: 0 };
+  for (let i = 0; i < 8; ) {
+    if (g[i] !== 0) { i++; continue; }
+    let j = i;
+    while (j < 8 && g[j] === 0) j++;
+    if (j - i > best.len) best = { at: i, len: j - i };
+    i = j;
+  }
+  const hex = g.map((x) => x.toString(16));
+  if (best.len < 2) return hex.join(":");
+  return `${hex.slice(0, best.at).join(":")}::${hex.slice(best.at + best.len).join(":")}`;
+}
+
 const compile = (cidr) => {
   const [addr, len] = cidr.split("/");
   const ip = parseIp(addr);

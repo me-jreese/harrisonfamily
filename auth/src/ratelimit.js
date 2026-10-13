@@ -1,7 +1,7 @@
 // Fixed-window request counters in the hfy-app table (HFY-R58 ruling 5): one item per (key, window), removed by the table TTL.
 // Used to rate-limit POST /auth/password/forgot, the only anonymous route that makes Cognito send an email.
 import { createHash } from "node:crypto";
-import { isCloudflareIp, parseIp } from "./cloudflare-ranges.js";
+import { canonicalIp, isCloudflareIp } from "./cloudflare-ranges.js";
 
 /** Default forgot-password limits: per email+IP (the ruled key) and per IP across emails (stops one client cycling addresses). */
 export const FORGOT_LIMITS = Object.freeze([
@@ -73,7 +73,8 @@ export function clientIp(event) {
     const vip = (i > 0 ? viewer.slice(0, i) : viewer).replace(/^\[|\]$/g, "");
     if (isCloudflareIp(vip)) {
       const cf = h["cf-connecting-ip"]?.trim();
-      if (cf && parseIp(cf)) return cf;
+      const canon = cf ? canonicalIp(cf) : null;
+      if (canon) return canon; // one spelling per client, so equivalent forms share a bucket
     }
     return vip;
   }

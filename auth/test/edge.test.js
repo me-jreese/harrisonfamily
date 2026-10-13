@@ -493,7 +493,7 @@ describe("sign-in pages: manifest theme and copy (design system SignIn + Voice)"
 
 // ---- HFY-R58 review fixes ----
 import { safeReturnTo } from "../src/edge.js";
-import { CLOUDFLARE_IPV4, CLOUDFLARE_IPV6, CLOUDFLARE_RANGES_SOURCE_DATE, isCloudflareIp } from "../src/cloudflare-ranges.js";
+import { CLOUDFLARE_IPV4, CLOUDFLARE_IPV6, CLOUDFLARE_RANGES_SOURCE_DATE, canonicalIp, isCloudflareIp } from "../src/cloudflare-ranges.js";
 import { FORGOT_LIMITS, clientIp, ddbRateLimiter, memoryRateLimiter, rateKey } from "../src/ratelimit.js";
 
 const SITE = "https://harrisonfamily.us";
@@ -674,7 +674,23 @@ describe("forgot-password rate limit (cognito-default-email-quota)", () => {
     expect(clientIp(cf("2001:db8::9:51234", "203.0.113.5"))).toBe("2001:db8::9");
     expect(clientIp(cf("172.63.255.255:443", "203.0.113.5"))).toBe("172.63.255.255"); // just below 172.64.0.0/13
     expect(clientIp(cf("172.72.0.0:443", "203.0.113.5"))).toBe("172.72.0.0"); // just above it
+    expect(clientIp(cf("2a06:98c8::1:443", "203.0.113.5"))).toBe("2a06:98c8::1"); // just above the /29
+    expect(clientIp(cf("2606:4701::1:443", "203.0.113.5"))).toBe("2606:4701::1"); // next to a /32
+    expect(clientIp(cf("2605:ffff::1:443", "203.0.113.5"))).toBe("2605:ffff::1"); // below a /32
     expect(clientIp(ev({ "cf-connecting-ip": "203.0.113.5", "x-forwarded-for": "203.0.113.7" }))).toBe("203.0.113.7"); // no viewer address: header never used
+  });
+  it("clientIp returns one spelling per client, so equivalent forms share a rate-limit bucket", () => {
+    const cf = (ip) => clientIp({ headers: { "cloudfront-viewer-address": "172.64.0.7:443", "cf-connecting-ip": ip }, requestContext: { http: { sourceIp: "130.176.0.1" } } });
+    expect(cf("2001:DB8::5")).toBe("2001:db8::5");
+    expect(cf("2001:db8::0:5")).toBe("2001:db8::5");
+    expect(cf("2001:0db8:0000:0000:0000:0000:0000:0005")).toBe("2001:db8::5");
+    expect(cf("::ffff:203.0.113.5")).toBe("203.0.113.5");
+    expect(cf("203.0.113.5")).toBe("203.0.113.5");
+    expect(canonicalIp("2001:db8:0:1:0:0:0:1")).toBe("2001:db8:0:1::1"); // longest zero run compressed
+    expect(canonicalIp("1:0:0:2:0:0:3:4")).toBe("1::2:0:0:3:4"); // first of equal runs
+    expect(canonicalIp("2001:db8:0:1:1:1:1:1")).toBe("2001:db8:0:1:1:1:1:1"); // a single zero group stays
+    expect(canonicalIp("::")).toBe("::");
+    expect(canonicalIp("nope")).toBeNull();
   });
   it("pins the committed Cloudflare range list and its source date", () => {
     expect(CLOUDFLARE_RANGES_SOURCE_DATE).toBe("2026-10-13");
