@@ -8,13 +8,15 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
 
+if command -v sha256sum >/dev/null 2>&1; then sha_of() { sha256sum "$1" | cut -d' ' -f1; }; else sha_of() { shasum -a 256 "$1" | cut -d' ' -f1; }; fi
+
 new_repo() {
   R="$TMP/repo-$1"; mkdir -p "$R"
   git -C "$R" init -q
   git -C "$R" config user.email t@example.com; git -C "$R" config user.name t
   mkdir -p "$R/harrisonfamily-frontend/person"
   echo '{"synthetic":true}' > "$R/harrisonfamily-frontend/person/I0001.json"
-  printf '%s  %s\n' "$(shasum -a 256 "$R/harrisonfamily-frontend/person/I0001.json" | cut -d' ' -f1)" \
+  printf '%s  %s\n' "$(sha_of "$R/harrisonfamily-frontend/person/I0001.json")" \
     harrisonfamily-frontend/person/I0001.json > "$R/allow.txt"
   git -C "$R" add -A -f
 }
@@ -38,6 +40,21 @@ new_repo fixture;    add gramps/tests/fixtures/t.gramps x; expect "synthetic fix
 new_repo other;      add docs/a.md x;         expect "ordinary file passes" 0
 new_repo tamper;     echo '{"changed":1}' > "$R/harrisonfamily-frontend/person/I0001.json"; git -C "$R" add -f -A; expect "changed sample hash fails" 1
 new_repo stale;      echo "$(printf '0%.0s' {1..64})  etl-output/gone.json" >> "$R/allow.txt"; expect "stale allowlist entry fails" 1
+
+new_repo upper;     add trees/A.GRAMPS x;    expect "upper-case extension fails" 1
+new_repo upperdir;  add Workspace-Local/a.txt x; expect "mixed-case data dir fails" 1
+new_repo gpkg;      add a/b.gpkg x;          expect "unlisted *.gpkg fails" 1
+new_repo state;     add hfy_sync/s/state.sqlite x; expect "state.sqlite fails" 1
+new_repo backups;   add hfy_sync/s/backups/x.json.gz x; expect "backups dir non-sqlite file fails" 1
+new_repo deepjl;    add graph/a/b/c.jsonl x; expect "nested graph jsonl fails" 1
+new_repo staged;    echo '{"changed":1}' > "$R/harrisonfamily-frontend/person/I0001.json"; git -C "$R" add -f -A; echo '{"synthetic":true}' > "$R/harrisonfamily-frontend/person/I0001.json"; expect "staged change with restored working copy fails" 1
+new_repo missing;   rm "$R/harrisonfamily-frontend/person/I0001.json"; expect "tracked file deleted only in working tree still judged by blob" 0
+new_repo direntry;  echo "$(printf '0%.0s' {1..64})  harrisonfamily-frontend/person" >> "$R/allow.txt"; expect "directory allowlist entry fails" 1
+new_repo crlf;      sed 's/$/\r/' "$R/allow.txt" > "$R/a2" && mv "$R/a2" "$R/allow.txt"; expect "CRLF allowlist still works" 0
+
+# Real repo and the pre-commit wiring.
+if HFY_GUARD_ROOT="$HERE/../../.." bash "$GUARD" >/dev/null 2>&1; then pass=$((pass+1)); echo "ok   real repo passes with the real allowlist"; else fail=$((fail+1)); echo "FAIL real repo"; fi
+if grep -q 'check-no-family-data.sh' "$HERE/../../git-hooks/pre-commit"; then pass=$((pass+1)); echo "ok   pre-commit invokes the guard"; else fail=$((fail+1)); echo "FAIL pre-commit wiring"; fi
 
 echo "check-no-family-data tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

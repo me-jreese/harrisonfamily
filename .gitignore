@@ -86,6 +86,8 @@ islands/playwright-report/
 /graph/out/
 *.gazetteer/
 
+# Case variants (Family.GRAMPS) and mixed-case directories are not matched by gitignore on all platforms;
+# the guard is case-insensitive and is the real enforcement.
 # Gramps and SQLite databases, anywhere, except synthetic test fixtures.
 *.gramps
 *.gpkg
@@ -93,6 +95,5 @@ islands/playwright-report/
 *.db
 sqlite.db
 **/hfy_sync/*/backups/
-**/state.sqlite
 graph/**/*.jsonl
 !gramps/tests/fixtures/**
