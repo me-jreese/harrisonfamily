@@ -12,6 +12,9 @@ export const ERROR_CODES = Object.freeze([
   "too_long", "invalid_handle",
 ]);
 export const MAX_LENGTH = 300;
+/** The member-facing message for a legacy linkedin.com/pub/ address (ruling P2-R17: only /in/<slug> is accepted). */
+export const LINKEDIN_PUB_MESSAGE =
+  "that's an old linkedin address. open your linkedin profile and copy its current linkedin.com/in/ address from there.";
 
 /** Every domain of each platform, profile, short, CDN and corporate hosts alike: the website field refuses all of them (R-17). */
 export const PLATFORM_DOMAINS = Object.freeze({
@@ -69,10 +72,15 @@ const COMMON_TLDS = ["com", "org", "net", "edu", "gov", "mil", "int", "io", "co"
 const CONTACT_INFO_KINDS = KINDS.filter((k) => k !== "dob_heuristic" && k !== "contact_url");
 
 const fail = (code, suggest) => (suggest ? { ok: false, code, suggest } : { ok: false, code });
+// A run of 7 or more digits, the separators . - _ inside it ignored (jane5550100123, jane_555.010.0123): contact-like in a
+// handle or a profile path segment (6.2), whatever the general detector makes of digits joined to letters.
+const JOINED_DIGITS = /[0-9](?:[._\-]*[0-9]){6}/;
 const ownerOf = (host) => Object.keys(PLATFORM_DOMAINS).find((p) => PLATFORM_DOMAINS[p].some((d) => matchesDomain(host, d))) || null;
 const isShort = (host, seg) => SHORT_HOSTS.some((d) => matchesDomain(host, d)) || SHORT_PATHS.some(([d, s]) => seg === s && matchesDomain(host, d));
 /** R-18: a phone number, email, street address or PO box in a handle or path is refused (matched text never leaves here). */
 const hasContactInfo = (text) => scanText(text, { kinds: CONTACT_INFO_KINDS }).length > 0;
+/** A handle or profile path segment that carries contact info or a joined run of 7+ digits. */
+const contactLike = (segment) => hasContactInfo(segment) || JOINED_DIGITS.test(segment);
 
 function isLocalOrIp(host) {
   if (host.startsWith("[") || /^[0-9]+(?:\.[0-9]+){3}$/.test(host)) return true; // URL has already normalized 0x7f.1 to 127.0.0.1
@@ -102,7 +110,7 @@ function canonical(platform, h) {
 }
 
 function handleResult(platform, h) {
-  if (hasContactInfo(h)) return fail("contact_info");
+  if (contactLike(h)) return fail("contact_info");
   if (!HANDLE[platform].test(h)) return fail("invalid_handle");
   if (RESERVED[platform].includes(h.toLowerCase())) return fail("not_a_profile");
   return { ok: true, url: canonical(platform, h), handle: h };
@@ -118,7 +126,7 @@ function profileResult(platform, segs, params) {
         return /^[0-9]{1,20}$/.test(id) ? { ok: true, url: `https://www.facebook.com/profile.php?id=${id}`, handle: id } : fail("not_a_profile");
       }
       if (segs.length === 3 && segs[0] === "people" && /^[0-9]{1,20}$/.test(segs[2])) {
-        if (hasContactInfo(segs[1])) return fail("contact_info");
+        if (contactLike(segs[1])) return fail("contact_info");
         return { ok: true, url: `https://www.facebook.com/profile.php?id=${segs[2]}`, handle: segs[2] };
       }
       return one ? handleResult(platform, one) : fail("not_a_profile");
@@ -134,12 +142,9 @@ function profileResult(platform, segs, params) {
     case "linkedin": {
       const kind = (segs[0] || "").toLowerCase();
       if (kind === "in" && segs.length === 2) return handleResult(platform, segs[1]);
-      // legacy public profiles: /pub/<name>/<x>/<y>/<z>, the groups being short base-36 ids (never read as a phone number)
-      if (kind === "pub" && segs.length >= 2 && segs.length <= 5 && segs.slice(2).every((s) => /^[0-9a-z]{1,3}$/i.test(s))) {
-        if (hasContactInfo(segs[1])) return fail("contact_info");
-        if (!HANDLE.linkedin.test(segs[1])) return fail("invalid_handle");
-        return { ok: true, url: `https://www.linkedin.com/pub/${segs.slice(1).join("/")}`, handle: segs[1] };
-      }
+      // legacy /pub/ addresses are not accepted (ruling P2-R17): 6.2 canonicalizes only /in/<slug>, and a /pub/ id cannot be
+      // turned into one without fetching it, so the member is told to copy their current /in/ address
+      if (kind === "pub") return { ok: false, code: "not_a_profile", message: LINKEDIN_PUB_MESSAGE };
       return fail("not_a_profile"); // /company/ (SURF-D8), /school/, /feed/, ...
     }
   }
@@ -189,7 +194,8 @@ function urlResult(platform, raw) {
 
 /**
  * One field: `{ ok: true, url, handle }` for a platform, `{ ok: true, url, host }` for the website (host is ASCII, punycode for
- * an IDN), or `{ ok: false, code, suggest? }` with a code from ERROR_CODES; `suggest` names the field a link belongs in.
+ * an IDN), or `{ ok: false, code, suggest?, message? }` with a code from ERROR_CODES; `suggest` names the field a link belongs
+ * in, and `message` is member-facing copy where the code alone does not say what to do (a legacy linkedin.com/pub/ address).
  * @param {string} platform one of PLATFORMS
  * @param {string} input a URL, a bare host, or (platforms only) a handle such as @name
  */
@@ -211,7 +217,7 @@ export function validateLink(platform, input) {
 
 /**
  * Every field of a `{platform: string | null}` map: `{ ok: true, links }` where a null, missing or blank value clears the field
- * (`links[platform] = null`), or `{ ok: false, fields: [{field, code, suggest?}] }` (the API's 422 details.fields).
+ * (`links[platform] = null`), or `{ ok: false, fields: [{field, code, suggest?, message?}] }` (the API's 422 details.fields).
  */
 export function validateLinks(map) {
   if (!isRecord(map)) throw new TypeError("validateLinks: expected an object of platform -> link");
@@ -228,7 +234,7 @@ export function validateLinks(map) {
     }
     const r = validateLink(field, value);
     if (r.ok) links[field] = field === "website" ? { url: r.url, host: r.host } : { url: r.url, handle: r.handle };
-    else fields.push(r.suggest ? { field, code: r.code, suggest: r.suggest } : { field, code: r.code });
+    else fields.push({ field, code: r.code, ...(r.suggest && { suggest: r.suggest }), ...(r.message && { message: r.message }) });
   }
   return fields.length ? { ok: false, fields } : { ok: true, links };
 }

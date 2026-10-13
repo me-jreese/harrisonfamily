@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ERROR_CODES, PLATFORM_DOMAINS, PLATFORMS, SHORTENERS, validateLink, validateLinks } from "./profile-links.mjs";
+import {
+  ERROR_CODES, LINKEDIN_PUB_MESSAGE, PLATFORM_DOMAINS, PLATFORMS, SHORTENERS, validateLink, validateLinks,
+} from "./profile-links.mjs";
 import { CONTACT_HOSTS } from "./privacy-guard.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
@@ -70,6 +72,36 @@ test("validateLinks: a map of fields, null or blank clears, errors carry field, 
   assert.deepEqual(validateLinks(JSON.parse('{"__proto__": "x"}')), { ok: false, fields: [{ field: "__proto__", code: "unknown_platform" }] });
   assert.throws(() => validateLinks(null), TypeError);
   assert.throws(() => validateLinks(["instagram"]), TypeError);
+});
+
+test("a run of 7+ digits in a handle or profile path segment is contact-like, separators . - _ ignored; 6 digits are fine (6.2)", () => {
+  const joined = {
+    facebook: ["facebook.com/jane5550100123", "@jane5550.100", "jane.5550100"],
+    instagram: ["@jane_5550100123", "instagram.com/jane_555.0100", "jane5550100"],
+    tiktok: ["@jane5550100", "tiktok.com/@jane_555_0100"],
+    snapchat: ["@jane5550100", "snapchat.com/add/jane-5550100"],
+    linktree: ["linktr.ee/jane5550100", "@jane_555.0100"],
+    linkedin: ["linkedin.com/in/jane5550100123", "jane-555-0100", "linkedin.com/in/jane-5550-100"],
+  };
+  for (const [platform, inputs] of Object.entries(joined)) {
+    for (const input of inputs) assert.deepEqual(validateLink(platform, input), { ok: false, code: "contact_info" }, `${platform} ${input}`);
+  }
+  const fine = { facebook: "jane.123456", instagram: "@jane_12.34.56", tiktok: "@jane.1985", snapchat: "@jane123456",
+    linktree: "@jane_123456", linkedin: "jane-example-123456" };
+  for (const [platform, input] of Object.entries(fine)) assert.equal(validateLink(platform, input).ok, true, `${platform} ${input}`);
+  // the numeric profile ids facebook defines are ids, not handles
+  assert.equal(validateLink("facebook", "facebook.com/profile.php?id=100012345678901").ok, true);
+  assert.equal(validateLink("facebook", "facebook.com/people/Jane-Example/100012345678901/").ok, true);
+});
+
+test("a legacy linkedin.com/pub/ address is refused with a pointer to the member's /in/ address (ruling P2-R17)", () => {
+  assert.match(LINKEDIN_PUB_MESSAGE, /linkedin\.com\/in\//);
+  for (const input of ["linkedin.com/pub/jane-doe/555/010/123", "https://uk.linkedin.com/pub/jane-example/1a/2b3/4c5/", "linkedin.com/pub"]) {
+    assert.deepEqual(validateLink("linkedin", input), { ok: false, code: "not_a_profile", message: LINKEDIN_PUB_MESSAGE }, input);
+  }
+  assert.deepEqual(validateLinks({ linkedin: "linkedin.com/pub/jane-doe/555/010/123", instagram: "@jane.example" }), {
+    ok: false, fields: [{ field: "linkedin", code: "not_a_profile", message: LINKEDIN_PUB_MESSAGE }],
+  });
 });
 
 test("validateLink input handling", () => {
