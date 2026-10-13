@@ -20,11 +20,11 @@
         "css": "56799f74"
       },
       "person": {
-        "js": "4ecb3471",
+        "js": "5aada4dc",
         "css": "d416dda8"
       },
       "posts": {
-        "js": "8e72a880",
+        "js": "c8e2412c",
         "css": "04cffdda"
       },
       "search": {
