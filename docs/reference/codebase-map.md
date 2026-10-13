@@ -32,7 +32,7 @@ Each capability has a section below with its paths, the facts that change how yo
 | [Legacy sign-in](#legacy-sign-in) | `lambda/`, `functions/`, `gcloud/` | [Identity services](identity-services.md) |
 | [Infrastructure](#infrastructure) | `infrastructure/`, `scripts/infra/`, `cloudfront/` | [Architecture](architecture.md) |
 | [CI and repo operations](#ci-and-repo-operations) | `ci.manifest.yaml`, `.github/`, `scripts/ci/`, `scripts/git-hooks/`, the workspace helpers in `scripts/` | [Repository operations](repository-operations.md) |
-| [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
+| [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `gramps/tests/unit/`, `shared/*.test.mjs`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
 | [Sanitized samples](#sanitized-samples) | `allowlist/`, `harrisonfamily-frontend/`, `etl-output/`, `gramps_exports/`, `cloudfront/` | [Private data and secrets](private-data-and-secrets.md) |
 | [Outside the repository](#outside-the-repository) | `<eleventy-source>`, `<project>/scripts/`, `<project>/workspace-local/` | [Private data and secrets](private-data-and-secrets.md) |
 
@@ -609,9 +609,10 @@ The reverse lookup: from a directory to the capability sections above.
 | `edge-gate/` | Private data gate |
 | `functions/`, `gcloud/`, `lambda/` | Legacy sign-in |
 | `graph/` | Family graph builder |
+| `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (not CI-gated yet) |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
-| `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. |
+| `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. |
 | `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests |
 | `tests/` (`client/`, `login-flow/`) | Tests |
 | `workspace/` | Static site output (the stray `featureFlags.js` only) |
