@@ -32,8 +32,8 @@
         "css": "b1550e24"
       },
       "shell": {
-        "js": "cde650d5",
-        "css": "07d64dde"
+        "js": "87aed6ae",
+        "css": "53cdeb03"
       },
       "timeline": {
         "js": "e389c11d",
@@ -42,7 +42,7 @@
     },
     "theme": "b8607abf",
     "manifest": "c0f9b5fc",
-    "sw": "68ab0760"
+    "sw": "53f9df02"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
