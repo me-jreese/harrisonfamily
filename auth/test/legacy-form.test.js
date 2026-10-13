@@ -8,7 +8,7 @@ const form = {
   birthYear: "1990", currentPlace: "Madison, WI", movedYear: "2015", university: "Example State University", graduationYear: "2012",
   otherDegrees: "MBA", otherDegreeYears: "2016", forSelf: true, company: "",
 };
-const opts = { year: 2026 };
+const opts = { year: 2026, storeCurrentCity: true };
 
 describe("shared/legacy-form.mjs from the auth edge packaging path (src/shared/)", () => {
   it("exports FIELDS with the required flags", () => {
@@ -18,6 +18,7 @@ describe("shared/legacy-form.mjs from the auth edge packaging path (src/shared/)
 
   it("validates and reports {field, code} only", () => {
     expect(validateForm(form, opts).ok).toBe(true);
+    expect(validateForm({ ...form, company: "x" }, opts)).toEqual({ ok: false, honeypot: true, fields: [] });
     expect(validateForm({ ...form, gender: "other", birthYear: "1890" }, opts)).toEqual({
       ok: false, fields: [{ field: "gender", code: "invalid" }, { field: "birthYear", code: "year_format" }],
     });
@@ -38,8 +39,8 @@ describe("shared/legacy-form.mjs from the auth edge packaging path (src/shared/)
     expect(JSON.stringify(m)).not.toContain("@");
   });
 
-  it("female is 0, and Residence is dropped when Q2-11(a) is no", () => {
-    const m = mapToGramps({ ...form, gender: "female" }, { ...opts, storeCurrentCity: false });
+  it("female is 0, and Residence is dropped unless storeCurrentCity is true", () => {
+    const m = mapToGramps({ ...form, gender: "female" }, { year: 2026 });
     expect(m.person.gender).toBe(0);
     expect(m.events.some((e) => e.type.value === 42)).toBe(false);
   });

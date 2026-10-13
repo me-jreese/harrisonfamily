@@ -2,7 +2,7 @@
 // auth/test/legacy-form.test.js runs the golden mapping from src/shared/. Synthetic data only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ERROR_CODES, FIELDS, GRAMPS, hasDigitRun, looksLikeStreet, mapToGramps, parsePlace, validateForm } from "./legacy-form.mjs";
+import { ERROR_CODES, FIELDS, GRAMPS, hasDigitRun, isHoneypotTripped, looksLikeStreet, mapToGramps, parsePlace, validateForm } from "./legacy-form.mjs";
 
 const YEAR = 2026;
 const base = () => ({
@@ -75,16 +75,43 @@ test("name charset, single spaces and length", () => {
 });
 
 test("place fields reject runs of 3+ digits and street-suffix patterns; city and state pass", () => {
-  for (const p of ["Springfield, IL", "St. Louis, MO", "East St Louis, IL", "Hartford CT", "Hartford, CT", "Saint Paul, MN", "Circle, AK", "Salt Lake City, UT"]) {
+  for (const p of ["Springfield, IL", "St. Louis, MO", "East St Louis, IL", "Hartford CT", "Hartford, CT", "Saint Paul, MN", "Circle, AK", "Salt Lake City, UT",
+    "Grand Terrace, CA", "Park Place, NY", "Lake Court, IA", "Grand Terrace, California"]) {
     assert.deepEqual(codes({ ...base(), birthPlace: p }), [], p);
   }
   for (const p of ["Springfield 62704", "123", "Springfield, IL 627", "٦٢٧٠٤ Cairo"]) assert.deepEqual(codes({ ...base(), currentPlace: p }), ["currentPlace:digits_not_allowed"], p);
-  for (const p of ["Oak Street, Springfield", "Oak St, Springfield", "Oak St., Springfield", "Elm Avenue", "Elm ave", "Pine Rd", "Maple Court, Town", "Lake Dr", "Main Hwy", "river lane", "Cedar Ct"]) {
+  for (const p of ["Oak Street, Springfield", "Oak St, Springfield", "Oak St., Springfield", "Elm Avenue", "Elm ave", "Pine Rd", "Maple Court, Town", "Lake Dr", "Main Hwy", "river lane", "Cedar Ct", "Main Street, Springfield, IL", "Park Place, Springfield", "Mount Pleasant Route"]) {
     assert.deepEqual(codes({ ...base(), currentPlace: p }), ["currentPlace:street_not_allowed"], p);
   }
   assert.equal(hasDigitRun("ab12cd"), false);
   assert.equal(looksLikeStreet("Springfield"), false);
   assert.deepEqual(codes({ ...base(), birthPlace: "x".repeat(101) }), ["birthPlace:too_long"]);
+});
+
+test("state is optional in a place: a bare city passes and parsePlace gives state ''", () => {
+  assert.deepEqual(codes({ ...base(), birthPlace: "Austin" }), []);
+  assert.equal(parsePlace("Austin").state, "");
+  const m = mapToGramps({ ...base(), birthPlace: "Austin" }, { year: YEAR });
+  assert.deepEqual(m.placeQueries[0], { eventKey: "birth", role: "birth", raw: "Austin", city: "Austin", state: "" });
+});
+
+test("each field's Legacy Form section is pinned (inferred split; surfaces.md 7.3 gives none)", () => {
+  assert.deepEqual(Object.fromEntries(FIELDS.map((f) => [f.key, f.section])), {
+    email: 1, givenNames: 1, maidenSurname: 1, gender: 1, nickname: 1, birthPlace: 1, birthYear: 1, currentPlace: 1, movedYear: 1,
+    everMarried: 1, university: 2, graduationYear: 2, otherDegrees: 2, otherInstitutions: 2, otherDegreeYears: 2, forSelf: 2,
+  });
+});
+
+test("Q2-11(a): Residence only when storeCurrentCity is exactly true; false also stops collecting currentPlace", () => {
+  assert.equal(GRAMPS.MOD_FROM, 7);
+  const noCity = { ...base() }; delete noCity.currentPlace;
+  assert.deepEqual(codes(noCity), ["currentPlace:required"]);
+  assert.deepEqual(codes(noCity, { year: YEAR, storeCurrentCity: false }), []);
+  assert.equal(validateForm({ ...base(), currentPlace: "Madison, WI" }, { year: YEAR, storeCurrentCity: false }).value.currentPlace, undefined);
+  for (const o of [{}, { storeCurrentCity: false }, { storeCurrentCity: undefined }]) {
+    assert.equal(mapToGramps(base(), { year: YEAR, ...o }).events.some((e) => e.type.value === 42), false);
+  }
+  assert.equal(mapToGramps(base(), { year: YEAR, storeCurrentCity: true }).events.some((e) => e.type.value === 42), true);
 });
 
 test("the shared R-18 detector runs on every free-text field", () => {
@@ -108,7 +135,11 @@ test("email, confirmation and honeypot", () => {
   assert.deepEqual(codes({ ...base(), forSelf: false }), ["forSelf:required"]);
   assert.deepEqual(codes({ ...base(), forSelf: "no" }), ["forSelf:must_be_true"]);
   assert.deepEqual(codes({ ...base(), forSelf: "true" }), []);
-  assert.deepEqual(codes({ ...base(), company: "Acme" }), ["company:not_empty"]);
+  // honeypot: a distinct result with no field error, so the edge can fake success
+  assert.deepEqual(validateForm({ ...base(), company: "Acme" }, { year: YEAR }), { ok: false, honeypot: true, fields: [] });
+  assert.equal(isHoneypotTripped({ company: " x " }), true);
+  assert.equal(isHoneypotTripped({ company: "  " }), false);
+  assert.equal(isHoneypotTripped(null), false);
   assert.deepEqual(codes({ ...base(), everMarried: "maybe" }), ["everMarried:invalid"]);
 });
 
@@ -119,7 +150,7 @@ test("parsePlace expands state abbreviations", () => {
 });
 
 test("mapToGramps golden: person, events and place queries", () => {
-  const m = mapToGramps(base(), { year: YEAR });
+  const m = mapToGramps(base(), { year: YEAR, storeCurrentCity: true });
   const date = (y, modifier = 0) => ({ _class: "Date", calendar: 0, modifier, quality: 0, dateval: [0, 0, y, false], text: "", sortval: 0, newyear: 0, format: null });
   const ev = (hfyKey, type, d, description = "", extra = {}) => ({ _class: "Event", hfyKey, type: { _class: "EventType", value: type }, date: d, description, place: "", ...extra });
   assert.deepEqual(m.person, {
@@ -149,16 +180,16 @@ test("mapToGramps: gender codes, undated forms, Q2-11 switch, no email, no month
   assert.equal(GRAMPS.GENDER.female, 0);
   assert.equal(mapToGramps({ ...base(), gender: "male" }, { year: YEAR }).person.gender, 1);
   const min = { email: "a@b.test", givenNames: "Pat", maidenSurname: "Sample", gender: "male", birthPlace: "Springfield, IL", birthYear: 2001, currentPlace: "Madison, WI", forSelf: true };
-  const m = mapToGramps(min, { year: YEAR });
+  const m = mapToGramps(min, { year: YEAR, storeCurrentCity: true });
   assert.equal("nick" in m.person.primary_name, false);
   assert.deepEqual(m.events.map((e) => [e.type.value, e.date.modifier, e.date.dateval[2]]), [[12, 0, 2001], [42, 0, 0]]);
-  const off = mapToGramps(min, { year: YEAR, storeCurrentCity: false });
+  const off = mapToGramps(min, { year: YEAR });
   assert.deepEqual(off.events.map((e) => e.type.value), [12]);
   assert.equal(off.placeQueries.length, 1);
   const undatedDegree = mapToGramps({ ...min, otherDegrees: "BSc" }, { year: YEAR });
   assert.deepEqual(undatedDegree.events.at(-1).date.dateval, [0, 0, 0, false]);
   // no output holds an email, and every dateval has month 0 and day 0
-  for (const out of [m, mapToGramps(base(), { year: YEAR })]) {
+  for (const out of [m, mapToGramps(base(), { year: YEAR, storeCurrentCity: true })]) {
     const text = JSON.stringify(out);
     assert.equal(text.includes("@"), false);
     for (const [, d, mo, y] of text.matchAll(/"dateval":\[(\d+),(\d+),(\d+),false\]/g).map((x) => [x[0], x[1], x[2], x[3]])) {

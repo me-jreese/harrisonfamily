@@ -6,6 +6,13 @@
 // Privacy (R-18, R-19): the form asks for a birth YEAR only. Nothing here can produce a birth month or day: every date the
 // mapping emits is {dateval: [0, 0, YEAR, false]}. Free-text fields run through the shared detector, and the place fields also
 // refuse runs of 3+ digits and street-suffix patterns (the residence is city and state only, SURF-D16).
+// Two edge contracts. (1) Honeypot: a filled `company` must be answered with a fake success and no action (7.5), so the edge calls
+// isHoneypotTripped(body) BEFORE validateForm; validateForm also returns {ok:false, honeypot:true, fields:[]} (never a field
+// error naming `company`) so a forgotten check cannot leak the trap. (2) Q2-11(a) (store the living requester's current city?)
+// has no recorded io answer: mapToGramps emits the Residence event only when opts.storeCurrentCity === true, and validateForm
+// stops requiring currentPlace when opts.storeCurrentCity === false. The submit task passes the recorded answer explicitly.
+// Places are "City, ST": the state is optional by design; parsePlace() returns state "" for a bare city and the admin place
+// matching must handle that (match by city, flag as ambiguous).
 // The gender question is male or female, required, as on the Legacy Form (BRD2 11.4, Q2-17 line 9): no 'other', no free text.
 
 import { rejectContactInfo } from "./privacy-guard.mjs";
@@ -17,6 +24,8 @@ export const GRAMPS = Object.freeze({
   ROLE_PRIMARY: 1,
   NAME_BIRTH: 2,
   MOD_NONE: 0,
+  // gramps.gen.lib.date.Date: MOD_NONE 0, BEFORE 1, AFTER 2, ABOUT 3, RANGE 4, SPAN 5, TEXTONLY 6, FROM 7, TO 8 (the design,
+  // surfaces.md 7.3, also says 7). Not checkable here (no Gramps in this repo): the admin-UI task verifies it against 6.0.6.
   MOD_FROM: 7,
 });
 
@@ -69,14 +78,26 @@ const STREET_ABBR = "st|ave|blvd|rd|dr|ln|ct|pl|hwy|pkwy|cir|ter|trl|rt|ste";
 const STREET_WORD_RE = new RegExp(`[\\p{L}\\p{M}][\\p{L}\\p{M}'’.-]*\\s+(?:${STREET_WORDS})\\b`, "iu");
 const STREET_ABBR_RE = new RegExp(`[\\p{L}\\p{M}][\\p{L}\\p{M}'’.-]*\\s+(${STREET_ABBR})\\.?(?=\\s*(?:,|$))`, "giu");
 
-/** True when `text` reads like a street address. */
+/**
+ * True when `text` reads like a street address. A street word only counts when the text is address-shaped: it has a digit, or three
+ * or more comma parts ("Main Street, Springfield, IL"), or no recognizable state as the last part. So real places such as
+ * "Grand Terrace, CA" and "Park Place, NY" pass; "Main Street, Springfield" and a bare "Oak Street" are refused. Known false
+ * positive: a state-less "Mount Pleasant Route" or "Hartford Ct" (mixed case); the user can add the state ("Hartford, CT").
+ */
 export function looksLikeStreet(text) {
-  if (STREET_WORD_RE.test(text)) return true;
-  for (const m of text.matchAll(STREET_ABBR_RE)) {
-    if (m[1] === "CT") continue; // Connecticut, not "court"
-    return true;
+  let hit = STREET_WORD_RE.test(text);
+  if (!hit) {
+    for (const m of text.matchAll(STREET_ABBR_RE)) {
+      if (m[1] === "CT") continue; // Connecticut, not "court"
+      hit = true;
+      break;
+    }
   }
-  return false;
+  if (!hit) return false;
+  if (/\p{Nd}/u.test(text)) return true;
+  const parts = text.split(",").map((x) => x.trim()).filter(Boolean);
+  if (parts.length >= 3) return true;
+  return !(parts.length === 2 && isState(parts[1]));
 }
 
 /** True when `text` holds a run of 3 or more decimal digits (any script: the detector folds Unicode digits the same way). */
@@ -92,6 +113,11 @@ const STATES = Object.freeze({
   TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia",
   WI: "Wisconsin", WY: "Wyoming",
 });
+
+const isState = (t) => {
+  const bare = t.replace(/\./g, "").trim();
+  return (bare.length === 2 && Object.hasOwn(STATES, bare.toUpperCase())) || Object.values(STATES).some((n) => n.toLowerCase() === bare.toLowerCase());
+};
 
 /**
  * "City, ST" or "City, State" to {raw, city, state}; state abbreviations are expanded. A string with no comma is all city.
@@ -118,12 +144,15 @@ function currentYear(opts) {
   return d.getUTCFullYear();
 }
 
+/** True when the hidden `company` field is filled. The edge checks this first and returns a fake success with no action (7.5). */
+export const isHoneypotTripped = (form) => form !== null && typeof form === "object" && !Array.isArray(form) && !isBlank(form.company);
+
 /**
  * Validates a submitted form. Returns `{ ok: true, value }` with the normalized form (trimmed strings, lower-cased email, years
  * as numbers, otherDegreeYears as an array; unknown keys dropped), or `{ ok: false, fields: [{ field, code }] }` with one entry
- * per bad field (the first failing rule), in FIELDS order and no matched text. `opts.year` / `opts.now` set the clock.
+ * per bad field (a tripped honeypot is `{ ok: false, honeypot: true, fields: [] }`: answer it with a fake success) (the first failing rule), in FIELDS order and no matched text. `opts.year` / `opts.now` set the clock.
  * @param {object} form
- * @param {{ year?: number, now?: Date | number }} [opts]
+ * @param {{ year?: number, now?: Date | number, storeCurrentCity?: boolean }} [opts]
  */
 export function validateForm(form, opts = {}) {
   const f = form !== null && typeof form === "object" && !Array.isArray(form) ? form : {};
@@ -133,7 +162,7 @@ export function validateForm(form, opts = {}) {
   const fail = (field, code) => { errors.push({ field, code }); };
 
   // honeypot
-  if (!isBlank(f.company)) fail("company", "not_empty");
+  if (isHoneypotTripped(f)) return { ok: false, honeypot: true, fields: [] };
 
   const scan = (key, text) => {
     const r = rejectContactInfo(text);
@@ -195,7 +224,8 @@ export function validateForm(form, opts = {}) {
   const birthYear = yearField("birthYear", f.birthYear, year - MAX_AGE, year, true);
   if (birthYear !== undefined) value.birthYear = birthYear;
 
-  textField(FIELDS[7], f.currentPlace);
+  // Q2-11(a): when io's answer is an explicit no, the city is not collected at all.
+  if (opts.storeCurrentCity === false) { /* not asked, not kept */ } else textField(FIELDS[7], f.currentPlace);
 
   // The lower bounds depend on the birth year; when it is missing or bad they fall back to the widest legal range.
   const lowBound = birthYear !== undefined ? birthYear : year - MAX_AGE;
@@ -262,8 +292,9 @@ const makeEvent = (key, type, date, description = "", extra = {}) => ({
  * a bad form throws an Error whose `fields` carry the validateForm() entries, so an unvalidated form can never be mapped. The
  * email, everMarried and forSelf are not mapped. Dates are years only.
  *
- * `opts.storeCurrentCity` (default true, the Q2-11(a) default: city and state only, with the year moved) controls the Residence
- * event; pass false when io's recorded answer is no. `opts.year` / `opts.now` set the clock for validation.
+ * `opts.storeCurrentCity` (Q2-11(a), no recorded answer yet) controls the Residence event: it is emitted only when this is exactly
+ * true (city and state only, with the year moved). Omitted or false means no Residence event, so a caller that forgets the option
+ * never stores a living person's city. Pass the recorded answer explicitly. `opts.year` / `opts.now` set the clock for validation.
  * @param {object} form
  * @param {{ storeCurrentCity?: boolean, year?: number, now?: Date | number }} [opts]
  */
@@ -288,7 +319,7 @@ export function mapToGramps(form, opts = {}) {
   addEvent(makeEvent("birth", GRAMPS.EVENT.BIRTH, yearDate(x.birthYear)));
   placeQueries.push({ eventKey: "birth", role: "birth", ...parsePlace(x.birthPlace) });
 
-  if (opts.storeCurrentCity !== false) {
+  if (opts.storeCurrentCity === true) {
     const date = x.movedYear !== undefined ? yearDate(x.movedYear, GRAMPS.MOD_FROM) : noDate();
     addEvent(makeEvent("residence", GRAMPS.EVENT.RESIDENCE, date));
     placeQueries.push({ eventKey: "residence", role: "residence", ...parsePlace(x.currentPlace) });
