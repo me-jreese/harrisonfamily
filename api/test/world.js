@@ -29,7 +29,7 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
  * `intercept(cmd)` runs before every DynamoDB command reaches the fake (throw to simulate a store failure, or await another
  * request to simulate a race). The returned `ddb` is the raw fake, for assertions.
  */
-export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel } = {}) {
+export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel, log = { warn() {}, error() {} } } = {}) {
   const raw = createFakeDdb();
   const ddb = intercept ? { send: async (cmd) => { await intercept(cmd); return raw.send(cmd); } } : raw;
   const now = ticker();
@@ -47,7 +47,7 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept,
     ddb, cmds, table: TABLE, authenticate, ulid: createUlidFactory(), now, subscriptions, preferences,
     ...(audit ? { audit } : {}),
     presignPut: async (a) => { presigned.push(a); return `https://presign.test/${a.bucket}/${a.key}?sig=x`; },
-    vapidPublicKey: "vapid-public", log: { warn() {}, error() {} },
+    vapidPublicKey: "vapid-public", log,
     ...(withPush ? { vapid: { subject: "mailto:test@example.test", publicKey: "vapid-public", privateKey: "x" }, webpush: { async sendNotification(sub, payload) { sent.push({ sub, payload: JSON.parse(payload) }); } } } : {}),
   });
   const ev = (method, path, { token, body, query, ct = "application/json" } = {}) => ({

@@ -4,7 +4,7 @@
 import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, commentTarget, computeCan, canWrite, isEmoji } from "@io-kit/comments";
 import { ContentError } from "@io-kit/content";
 import { HttpError } from "./http.js";
-import { auditItem, transact, versionGuard } from "./txn.js";
+import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -76,7 +76,9 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     try {
       await transact(ddb, cmds, table, { puts, deletes });
     } catch (e) {
-      if (e?.name === "TransactionCanceledException") throw new HttpError(409, "conflict", "comment changed concurrently");
+      // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
+      if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
+      if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "conflict", "comment changed concurrently");
       throw new CommentError("server", "store unavailable");
     }
     if (self.audit) await self.audit(entry);
