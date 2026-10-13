@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Thread } from "@io-kit/comments/react";
 import { api, getSession } from "./api.js";
 import { createHfyCommentSource } from "./comment-source.js";
+import { canModerate, getMe } from "./me.js";
 import { formatTime, watchTimeTitles } from "./time.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable.
@@ -127,7 +128,7 @@ export function guardCommentDeletes(root, labels = LABELS) {
 
 export function Comments({ subject }) {
   const [session, setSession] = useState(undefined);
-  const [admin, setAdmin] = useState(false);
+  const [moderator, setModerator] = useState(false);
   const [ping, setPing] = useState("");
   const timer = useRef(null);
   const root = useRef(null);
@@ -138,12 +139,18 @@ export function Comments({ subject }) {
   useEffect(() => watchDeleteButtons(root.current), []);
   useEffect(() => guardCommentDeletes(root.current), []);
   const sid = session?.authenticated ? session.sub : null;
-  // The API does not expose roles; a moderator is whoever can delete someone else's comment (server-computed can.delete).
+  // HFY-TSK-298 (BRD2 D2-12): moderator rights come only from the shared GET /api/me (admin, or can.moderate when present); a 401 or a
+  // failure means not a moderator. The kit gates each delete control on that comment's server-computed can.* itself.
+  useEffect(() => {
+    if (!sid) return undefined;
+    let live = true;
+    getMe().then((me) => { if (live) setModerator(canModerate(me)); });
+    return () => { live = false; };
+  }, [sid]);
   const source = useMemo(() => createHfyCommentSource(api, {
-    onList: (cs) => { if (sid && cs.some((c) => c.author.id !== sid && c.can.delete)) setAdmin(true); },
     onAdded: () => { clearTimeout(timer.current); setPing("posted"); timer.current = setTimeout(() => setPing(""), 3000); },
-  }), [sid]);
-  const viewer = sid ? { id: sid, label: session.label, ...(admin ? { roles: ["admin"] } : {}) } : null;
+  }), []);
+  const viewer = sid ? { id: sid, label: session.label, ...(moderator ? { roles: ["admin"] } : {}) } : null;
   const returnTo = encodeURIComponent(location.pathname + location.search);
   return (
     <section className="hfy-comments" aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
