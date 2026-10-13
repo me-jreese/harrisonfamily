@@ -38,7 +38,7 @@ islands/playwright-report/
 !.github/actions/io-kit-ci/build/
 
 # Family-data protection (HFY-PLN-002 D-03)
-# Real family data never enters this repo. Each data directory is ignored except the 14 tracked synthetic samples.
+# Real family data never enters this repo. Each data directory is ignored except the tracked synthetic samples on the allowlist.
 # scripts/ci/check-no-family-data.sh (CI and pre-commit) fails on any other tracked file there.
 # To add a new synthetic sample, add its negation here and its path + sha256 to scripts/ci/data-sample-allowlist.txt.
 /etl-output/*
@@ -88,7 +88,7 @@ islands/playwright-report/
 
 # Case variants (Family.GRAMPS) and mixed-case directories are not matched by gitignore on all platforms;
 # the guard is case-insensitive and is the real enforcement.
-# Gramps and SQLite databases, anywhere, except synthetic test fixtures.
+# Gramps and SQLite databases, anywhere.
 *.gramps
 *.gpkg
 *.sqlite
@@ -96,4 +96,8 @@ islands/playwright-report/
 sqlite.db
 **/hfy_sync/*/backups/
 graph/**/*.jsonl
-!gramps/tests/fixtures/**
+# The synthetic Gramps fixture tree (HFY-TSK-228): its data-shaped files are ignored like any other
+# (JSONL too, as the guard checks it there), except the two allowlisted goldens.
+/gramps/tests/fixtures/**/*.jsonl
+!/gramps/tests/fixtures/synthetic-tree.gramps
+!/gramps/tests/fixtures/synthetic-tree.jsonl

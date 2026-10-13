@@ -1,0 +1,279 @@
+{
+  "attribute_age": [
+    "I0012"
+  ],
+  "attribute_father_age": [
+    "I0012"
+  ],
+  "attribute_id": [
+    "I0012"
+  ],
+  "attribute_merged_id": [
+    "I0012"
+  ],
+  "attribute_mother_age": [
+    "I0012"
+  ],
+  "attribute_ssn": [
+    "I0012"
+  ],
+  "attribute_time": [
+    "I0012"
+  ],
+  "baptism_deceased_with_day": [
+    "I0005"
+  ],
+  "birth_citation_full_date": [
+    "I0008"
+  ],
+  "birth_full_date": [
+    "I0001",
+    "I0002",
+    "I0003",
+    "I0006",
+    "I0008",
+    "I0010",
+    "I0011",
+    "I0012",
+    "I0013",
+    "I0014",
+    "I0015"
+  ],
+  "birth_name_with_date": [
+    "I0008"
+  ],
+  "birth_retype_target": [
+    "I0003"
+  ],
+  "blessing_event": [
+    "I0009"
+  ],
+  "building_place": [
+    "P0007"
+  ],
+  "child_ref_to_held_person": [
+    "F0005"
+  ],
+  "christening_event": [
+    "I0009"
+  ],
+  "citation_ref_to_private_citation": [
+    "E0002"
+  ],
+  "custom_birth_like_event": [
+    "I0009"
+  ],
+  "custom_home_place": [
+    "P0004"
+  ],
+  "custom_non_birth_event": [
+    "I0009"
+  ],
+  "event_dob_attributes": [
+    "E0002",
+    "E0003"
+  ],
+  "event_ref_dob_attributes": [
+    "I0013"
+  ],
+  "family_custom_relation_type": [
+    "F0005"
+  ],
+  "family_events": [
+    "F0001"
+  ],
+  "family_every_father_relation": [
+    "all"
+  ],
+  "family_every_mother_relation": [
+    "all"
+  ],
+  "family_relation_types": [
+    "all"
+  ],
+  "farm_place": [
+    "P0003"
+  ],
+  "free_text_with_exact_dob": [
+    "N0010"
+  ],
+  "lds_ordinance": [
+    "I0012"
+  ],
+  "marriage_and_divorce_events": [
+    "F0001"
+  ],
+  "media_birth_certificate_pdf": [
+    "O0004"
+  ],
+  "media_jpeg_with_gps": [
+    "O0002"
+  ],
+  "media_ref_on_family": [
+    "F0001"
+  ],
+  "media_ref_to_private_media": [
+    "I0015"
+  ],
+  "media_zero_byte_placeholder": [
+    "O0003"
+  ],
+  "note_with_dob_prose": [
+    "N0006"
+  ],
+  "note_with_email": [
+    "N0003"
+  ],
+  "note_with_phone": [
+    "N0002"
+  ],
+  "note_with_po_box": [
+    "N0009"
+  ],
+  "note_with_street_address": [
+    "N0005"
+  ],
+  "number_place": [
+    "P0010"
+  ],
+  "other_event_on_full_birth_date": [
+    "I0012"
+  ],
+  "person_address": [
+    "I0012"
+  ],
+  "person_association": [
+    "I0012"
+  ],
+  "place_six_decimal_coordinates": [
+    "P0005"
+  ],
+  "placeref_to_private_place": [
+    "P0009"
+  ],
+  "private_address": [
+    "I0012"
+  ],
+  "private_alternate_name": [
+    "I0008"
+  ],
+  "private_attribute": [
+    "I0012"
+  ],
+  "private_child_ref": [
+    "F0001"
+  ],
+  "private_citation": [
+    "C0003"
+  ],
+  "private_event": [
+    "E0017",
+    "E0018"
+  ],
+  "private_event_ref": [
+    "F0001"
+  ],
+  "private_family": [
+    "F0006"
+  ],
+  "private_lds_ord": [
+    "I0012"
+  ],
+  "private_media": [
+    "O0005",
+    "O0006"
+  ],
+  "private_media_ref": [
+    "I0013"
+  ],
+  "private_note": [
+    "N0007",
+    "N0008"
+  ],
+  "private_person": [
+    "I0010"
+  ],
+  "private_person_exclusive_event_note_photo": [
+    "I0010"
+  ],
+  "private_person_ref": [
+    "I0012"
+  ],
+  "private_place": [
+    "P0008"
+  ],
+  "private_primary_name": [
+    "I0011"
+  ],
+  "private_repo_ref": [
+    "S0001"
+  ],
+  "private_repository": [
+    "R0002"
+  ],
+  "private_source": [
+    "S0002"
+  ],
+  "private_src_attribute": [
+    "S0001"
+  ],
+  "private_url": [
+    "I0012"
+  ],
+  "range_birth_date": [
+    "I0006"
+  ],
+  "rect_float": [
+    "I0015"
+  ],
+  "rect_full_frame_0_0_100_100": [
+    "I0014"
+  ],
+  "repo_ref_to_private_repository": [
+    "S0001"
+  ],
+  "repository_address": [
+    "R0001"
+  ],
+  "shared_child_of_private_family": [
+    "I0026"
+  ],
+  "shared_family_with_held_parent": [
+    "F0007"
+  ],
+  "shared_family_with_private_parent": [
+    "F0008"
+  ],
+  "span_date": [
+    "I0009"
+  ],
+  "stillbirth_event": [
+    "I0004"
+  ],
+  "street_place_with_alt_loc_fields": [
+    "P0006"
+  ],
+  "styled_note_tags": [
+    "N0001"
+  ],
+  "tag_objects_in_use": [
+    "F0005",
+    "I0003",
+    "I0012"
+  ],
+  "textonly_birth_date": [
+    "I0007"
+  ],
+  "two_tags_of_one_person_in_one_photo": [
+    "I0013"
+  ],
+  "url_contact_channel": [
+    "I0012"
+  ],
+  "url_email_type": [
+    "I0012"
+  ],
+  "url_shared_search": [
+    "I0012"
+  ]
+}

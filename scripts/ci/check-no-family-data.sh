@@ -5,7 +5,10 @@
 #   - anything under a data directory (etl-output/, harrisonfamily-frontend/, workspace/,
 #     workspace-local/, gramps_exports/, graph/out/, any *.gazetteer/, any hfy_sync/*/backups/), or
 #   - any *.gramps, *.gpkg, *.sqlite, *.db or graph/**/*.jsonl file.
-# Synthetic test fixtures under gramps/tests/fixtures/ are exempt, matching .gitignore.
+# Under gramps/tests/fixtures/ (the synthetic Gramps fixture tree) only the data-shaped files are
+# guarded: *.gramps, *.gpkg, *.sqlite, *.db and *.jsonl must be on the allowlist with their hash like
+# any other sample, and .gitignore re-includes only the two allowlisted goldens. The generator there,
+# the census, the manifest and the media files are not guarded.
 # The allowlist, scripts/ci/data-sample-allowlist.txt, holds "<sha256>  <path>" lines. A listed
 # file must exist, be tracked, and match its hash; an unlisted one fails.
 #
@@ -40,6 +43,8 @@ is_guarded() {
   local p
   p="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   case "$p" in
+    gramps/tests/fixtures/*.gramps|gramps/tests/fixtures/*.gpkg|gramps/tests/fixtures/*.sqlite) return 0 ;;
+    gramps/tests/fixtures/*.db|gramps/tests/fixtures/*.jsonl) return 0 ;;
     gramps/tests/fixtures/*) return 1 ;;
     etl-output/*|harrisonfamily-frontend/*|workspace/*|workspace-local/*|gramps_exports/*|graph/out/*) return 0 ;;
     *.gazetteer/*) return 0 ;;
