@@ -10,7 +10,7 @@ You edit the samples in the repository, by hand, with invented values. Nothing c
 ## Before you start
 
 - **Invented records only.** The data and allowlist samples hold synthetic values: invented names and dates, `example.com` addresses and placeholder IDs. Never copy a file from `<project>/workspace-local/`, or any real Gramps record, into the repository.
-- **Know the guard.** Samples under `etl-output/`, `harrisonfamily-frontend/`, `workspace/` and `gramps_exports/` are ignored by default. The 14 tracked samples are the exceptions. A new sample file needs a negation in `.gitignore` and a line in `scripts/ci/data-sample-allowlist.txt`.
+- **Know the guard.** Samples under `etl-output/`, `harrisonfamily-frontend/`, `workspace/` and `gramps_exports/` are ignored by default. The 14 tracked samples are the exceptions. A new sample file needs a negation in `.gitignore` and a line in `scripts/ci/data-sample-allowlist.txt`. The Gramps fixture tree under `gramps/tests/fixtures/` is a separate case: `.gitignore` already exempts that directory, its `.gramps` and `.jsonl` goldens are allowlisted too, and its generator rewrites those allowlist lines. See [`gramps/README.md`](../../gramps/README.md).
 - **Enable the hooks.** `git config core.hooksPath scripts/git-hooks` runs the guard on every commit.
 
 ## Steps
