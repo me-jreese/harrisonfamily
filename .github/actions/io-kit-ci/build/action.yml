@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:873b799bd0e273511788262b629472a276336469b15b86dc37fcde3900911671
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:a91a628ab61a5e48ce5440a5bd24b44163c2e6fb93fcfa11cd07b7bfb7d676a3
 name: io-kit build
 description: Run the manifest build command and verify the output directory exists.
 inputs:
@@ -10,7 +10,7 @@ inputs:
     default: 11ty
   node-version:
     description: Node version for actions/setup-node.
-    default: "20"
+    default: "22"
 runs:
   using: composite
   steps:

@@ -1,6 +1,6 @@
 stack: static
 branch: main
-node_version: "20"
+node_version: "22"
 build:
   cmd: bash scripts/ci/patch-client-id.sh && bash scripts/ci/package-lambda.sh
   out: 11ty
@@ -8,6 +8,10 @@ build:
     HFY_GOOGLE_CLIENT_ID: {secret: HFY_GOOGLE_CLIENT_ID}
 artifacts:
   - dist/hfy-check-allowed.zip
+tests:
+  - bash scripts/ci/check-no-family-data.sh
+  - bash scripts/infra/test/run.sh
+  - if [ -d gramps/tests/unit ]; then python3 -m unittest discover gramps/tests/unit; else echo "no gramps/tests/unit yet; skipped"; fi
 parity:
   mode: report
 secrets_scan: trufflehog
