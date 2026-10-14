@@ -33,7 +33,7 @@ import {
   BUDGET_TTL_SECONDS, CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, budgetBucket, budgetKey,
   getBatchReceipt, getGid, getRecordItem, getSyncHead, gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
-import { completeAssignments, isAssignment, mintIds, policyOf, WEB_ORIGINS } from "./id-policy.js";
+import { completeAssignments, isAssignment, isWebAssignment, mintIds, policyOf, WEB_ORIGINS } from "./id-policy.js";
 import { defaultValidate, isFullValidator } from "./validator.js";
 import { createStoreView } from "./view.js";
 
@@ -238,6 +238,7 @@ function planGids(ops, heads, head, gids, { policy, origin }) {
       const prev = item && item.deleted !== true ? item.gramps_id : undefined;
       // The desktop's first assignment under assign mode (empty to an id) is neither a renumber nor a release: it only claims the new id.
       // Any other change of an empty id is a renumber, and a Person renumber is refused.
+      if (isWebAssignment(policy, origin, op, prev)) throw new SyncError(409, "assign_desktop_only", "only the desktop assigns a gramps_id to an ID-less object", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });
       const assigning = isAssignment(policy, origin, op, prev);
       if (prev !== undefined && prev !== op.gramps_id && !assigning) {
         if (isPermanentIdClass(op.class) && op.renumber !== true) throw new SyncError(409, "renumber_blocked", "a person's gramps_id cannot change", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });

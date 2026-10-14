@@ -46,8 +46,30 @@ export function idPolicyFromEnv(env = process.env) {
   return createIdPolicy({ mode: raw === undefined || raw === "" ? undefined : raw });
 }
 
-/** The policy of a ctx: ctx.idPolicy, else the environment's. */
-export const policyOf = (ctx) => (ctx.idPolicy !== undefined ? createIdPolicy(ctx.idPolicy) : idPolicyFromEnv());
+const resolved = new WeakMap(); // ctx -> its validated policy (a ctx is validated once, not per batch)
+let envCache; // { raw, policy } for the environment path
+
+/**
+ * The policy of a ctx: ctx.idPolicy, else the environment's. It is validated once per ctx (and once per HFY_ID_POLICY value). A bad value
+ * is a configuration error: it is logged as such and answered as 500 id_policy_misconfigured, never as a bare TypeError.
+ * Call it at wiring time (route setup) to fail before the first request.
+ */
+export function policyOf(ctx) {
+  if (ctx.idPolicy !== undefined && resolved.has(ctx)) return resolved.get(ctx);
+  try {
+    if (ctx.idPolicy !== undefined) {
+      const p = createIdPolicy(ctx.idPolicy);
+      resolved.set(ctx, p);
+      return p;
+    }
+    const raw = process.env.HFY_ID_POLICY;
+    if (!envCache || envCache.raw !== raw) envCache = { raw, policy: idPolicyFromEnv() };
+    return envCache.policy;
+  } catch (e) {
+    (ctx.log ?? console).error?.("id_policy_misconfigured", { message: e.message });
+    throw new SyncError(500, "id_policy_misconfigured", "the cloud ID policy is misconfigured");
+  }
+}
 
 /** True for an id inside a class's cloud block (I8000 and I08000-style padding included). */
 export function inBlock(cls, id) {
@@ -82,6 +104,13 @@ export async function mintIds({ policy, origin, ops, head, getGid, rebuild }) {
     if (policy.mode === "mint" && WEB_ORIGINS.includes(origin) && op.op === "create" && !isEmptyId(op) && inBlock(op.class, op.gramps_id)) {
       throw new SyncError(409, "reserved_id_block", "ids from the reserved block are minted by the store, never supplied", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });
     }
+    // A web-origin update may not move an object into the block either: it can only keep an id the store minted for that very object.
+    if (policy.mode === "mint" && WEB_ORIGINS.includes(origin) && op.op === "update" && !isEmptyId(op) && inBlock(op.class, op.gramps_id)) {
+      const claim = await getGid(op.class, op.gramps_id);
+      if (!claim || claim.handle !== op.handle) {
+        throw new SyncError(409, "reserved_id_block", "ids from the reserved block are minted by the store, never supplied", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });
+      }
+    }
     if (!wantsMint(policy, origin, op)) {
       out.push(op);
       continue;
@@ -109,6 +138,13 @@ export async function mintIds({ policy, origin, ops, head, getGid, rebuild }) {
  */
 export const isAssignment = (policy, origin, op, prevId) =>
   policy.mode === "assign" && origin === "desktop" && op.op === "update" && prevId === "" && typeof op.gramps_id === "string" && op.gramps_id !== "" && op.renumber !== true;
+
+/**
+ * True when `op` gives an ID-less live object an id from a non-desktop origin under assign mode, for any class. The desktop assigns once;
+ * the web never does. (A Person is also caught by the validator's renumber_blocked; this covers every other class.)
+ */
+export const isWebAssignment = (policy, origin, op, prevId) =>
+  policy.mode === "assign" && origin !== "desktop" && op.op === "update" && prevId === "" && typeof op.gramps_id === "string" && op.gramps_id !== "";
 
 /** Runs the access-request completion for committed assignments. Never throws: a failure is logged by name and code only. */
 export async function completeAssignments({ policy, assigned, store, log, safe }) {

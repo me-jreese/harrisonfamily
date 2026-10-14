@@ -165,6 +165,41 @@ describe("mint mode (Q2-03 approved)", () => {
   });
 });
 
+describe("review fixes", () => {
+  it("mint: a web-origin update cannot move a non-Person object into the block, but may keep the id the store minted for it", async () => {
+    const w = world({ mode: "mint" });
+    await w.apply([create(family(1, { gramps_id: "F0001" })), create(bare(family(2)))]);
+    await rejects(w.apply([update(family(1, { gramps_id: "F8500" }), 1)]), 409, "reserved_id_block");
+    expect(w.row("GID#Family#F8500", "META")).toBeUndefined();
+    await w.apply([update(family(2, { gramps_id: "F8000" }), 1)]);
+  });
+
+  it("mint: a large stale gap of existing GIDs is skipped", async () => {
+    const w = world({ mode: "mint", head: { id_next: { Person: 8000 } } });
+    for (let n = 8000; n < 8120; n += 1) w.ddb.rows.set(`GID#Person#I${n}\u0000META`, { PK: `GID#Person#I${n}`, SK: "META", entity: "gid", handle: h(5000 + n) });
+    expect((await w.apply([create(bare(person(1)))])).results[0].gramps_id).toBe("I8120");
+  });
+
+  it("assign: a web origin assigning an id to an ID-less non-Person object is assign_desktop_only; the desktop may, under the GID guard", async () => {
+    const w = world({ mode: "assign" });
+    await w.apply([create(bare(family(1))), create(bare(family(2)))]);
+    for (const origin of ["admin", "self", "proposal"]) {
+      await rejects(w.apply([update(family(1, { gramps_id: "F0042" }), 1)], { origin }), 409, "assign_desktop_only");
+    }
+    expect(w.row("GID#Family#F0042", "META")).toBeUndefined();
+    await w.apply([update(family(1, { gramps_id: "F0042" }), 1)], { origin: "desktop" });
+    expect(w.row("GID#Family#F0042", "META")).toMatchObject({ handle: h(1001) });
+    await rejects(w.apply([update(family(2, { gramps_id: "F0042" }), 1)], { origin: "desktop" }), 409, "gramps_id_taken");
+  });
+
+  it("a misconfigured mode is one logged configuration error (500 id_policy_misconfigured)", async () => {
+    const errs = [];
+    const w = world({ idPolicy: { mode: "both" }, log: { warn() {}, error: (m) => errs.push(m) } });
+    await rejects(w.apply([create(person(1))]), 500, "id_policy_misconfigured");
+    expect(errs).toEqual(["id_policy_misconfigured"]);
+  });
+});
+
 describe("assign mode (Q2-03 declined)", () => {
   const accessWorld = () => {
     const done = [];
