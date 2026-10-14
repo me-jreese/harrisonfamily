@@ -315,13 +315,15 @@ The scan needs `dynamodb:Scan` on the table and prints only a number. `0` means 
 | `POST /auth/password` | `403 {"code":"AUTH_FORBIDDEN","detail":"challenge_unsupported"}` | Cognito wants a new password, because the user was created with a temporary one outside the edge. |
 | `POST /auth/password/forgot` | `429 {"code":"AUTH_FORBIDDEN","detail":"rate_limited"}` and a `Retry-After` header | Too many reset requests. The edge allows 3 an hour for one email from one IP address, and 10 a day from one IP address ([`auth/src/ratelimit.js`](../../auth/src/ratelimit.js)). |
 | `POST /auth/password/forgot` | `503 {"code":"AUTH_NETWORK"}` | No email was sent. The rate limiter could not write to the stack's table, and the edge logs `forgot-password rate limiter unavailable` ([`auth/src/edge.js`](../../auth/src/edge.js)). |
-| `POST /auth/password/forgot` | `502 {"code":"AUTH_NETWORK"}` | No email was sent. Cognito was unreachable, answered with a 5xx, or refused the call with `TooManyRequestsException` or `LimitExceededException`. One such limit is the default email sender's quota of about 50 emails a day for the whole account. The edge logs nothing for this case. |
-| `POST /auth/password/forgot` | `200 {"ok":true}`, but no email arrives | The answer is the same whether or not a pool user exists, and Cognito sends nothing when there is none. Check the pool user (below). |
+| `POST /auth/password/forgot` | `502 {"code":"AUTH_NETWORK"}` | No email was sent. Cognito was unreachable, answered with a 5xx, or refused the call with `TooManyRequestsException` or `LimitExceededException`. One such limit is the default email sender's quota of about 50 emails a day for the whole account. The edge logs nothing for this case, except when `FIRST_PASSWORD` is on and the failing call was the first-password provisioning: then it logs `first-password provisioning failed` with the error name only. |
+| `POST /auth/password/forgot` | `200 {"ok":true}`, but no email arrives | The answer is the same whether or not a pool user exists, and Cognito sends nothing when there is none. With `FIRST_PASSWORD` on, an allowlisted member's user is created by this very request, so a missing email there points at mail delivery, not the pool. Check the pool user (below). |
 | `POST /auth/link` | `400 {"code":"AUTH_FORBIDDEN","detail":"weak_password"}` | The password is shorter than 8 characters. |
 | `POST /auth/link` | `503 {"code":"AUTH_NETWORK"}` | A Cognito admin call failed, and the edge logs nothing. Most often the password passed the edge's 8-character check but not the pool's policy: at least 12 characters, with upper case, lower case and a number. |
 | `POST /auth/verify` | `410 {"code":"AUTH_FORBIDDEN","detail":"signup_disabled"}` | Expected. Self-service sign-up is off, so there is no sign-up to confirm. |
 
 **Cause.** The pool accepts no self-service sign-up (`AllowAdminCreateUserOnly` in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)). The edge creates a member's pool user only when the member, already signed in, sets a password at `/auth/link` ([`auth/src/cognito.js`](../../auth/src/cognito.js)). A member who has only ever used Google or a passkey has no password to sign in with or reset.
+
+There is a second way in, for approved members without Google (SURF-D18, io's decision Q2-12). While the stack parameter `FirstPassword` is `on` (env `FIRST_PASSWORD`), `POST /auth/password/forgot` for an allowlisted email that has no pool user creates the user with a random permanent password nobody sees, and then the kit mails the reset code, so the member sets their first password at `/auth/password/reset`. A non-allowlisted email triggers no Cognito admin call. While the parameter is `off` (the default), nothing is created there and the cases below apply as written.
 
 **Check the pool user.** This reads the user's status only:
 
@@ -334,7 +336,7 @@ aws cognito-idp admin-get-user --user-pool-id "$POOL" --username '<email>' \
 
 | Output | Meaning |
 | --- | --- |
-| `UserNotFoundException` | The member has never set a password. |
+| `UserNotFoundException` | The member has never set a password and has not used forgot-password since `FirstPassword` was turned on (or it is still off, or the email is not on the allowlist). |
 | `"status": "CONFIRMED"` | The user exists, so the password is wrong. |
 | `"status": "UNCONFIRMED"` | A self sign-up from before the pool was locked down. |
 | `"status": "FORCE_CHANGE_PASSWORD"` | The user was created with a temporary password outside the edge. |
@@ -342,7 +344,7 @@ aws cognito-idp admin-get-user --user-pool-id "$POOL" --username '<email>' \
 
 **Fix.**
 
-- **No user, `UNCONFIRMED` or `FORCE_CHANGE_PASSWORD`.** The member signs in with Google or a passkey, opens `/auth/link` and sets a password that meets the pool policy. The edge then creates the user, or confirms it and marks its email verified, and sets the password as permanent.
+- **No user, `UNCONFIRMED` or `FORCE_CHANGE_PASSWORD`.** With `FirstPassword` on and the email allowlisted, the member can use "forgot password" at `/auth/password/forgot` and the code sets their first password (a `FORCE_CHANGE_PASSWORD` user is repaired by that same request). Otherwise the member signs in with Google or a passkey, opens `/auth/link` and sets a password that meets the pool policy. The edge then creates the user, or confirms it and marks its email verified, and sets the password as permanent. An `UNCONFIRMED` user is repaired only through `/auth/link`.
 - **`CONFIRMED`.** The member resets the password at `/auth/password/forgot`.
 - **`429`.** Wait the number of seconds in `Retry-After`. Nothing else resets the counters.
 - **`503` from `/auth/password/forgot`.** Read the edge log for `forgot-password rate limiter unavailable`. Its `error` names the cause. The limiter writes with `dynamodb:UpdateItem`, which the `RefreshAndLinkStore` statement in `app-stack.yaml` grants the edge's role on the table. If the error says the role is not authorized to perform `dynamodb:UpdateItem`, deploy the stack.

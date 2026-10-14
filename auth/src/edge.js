@@ -209,10 +209,12 @@ function jsonBodyOf(event) {
 /**
  * `limiter` ({hit(key, {limit, windowSeconds})}, see ratelimit.js) rate-limits POST /auth/password/forgot per `forgotLimits`;
  * without one the route is not limited (unit tests). A limiter failure fails closed (503): no email is sent.
+ * `firstPassword` ({isOpen(), provision(email)}, see cognito.js cognitoFirstPassword; SURF-D18) provisions an allowlisted member's Cognito user
+ * on POST /auth/password/forgot, after the limiter and before the kit sends the code; it does nothing unless `isOpen()` (env FIRST_PASSWORD=on).
  * `accessRequests` ({handle(rel, event)}, see access-request.js) serves the anonymous /auth/access-request/* routes behind ACCESS_REQUESTS;
  * without it those paths fall through to the kit's 404.
  */
-export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, accessRequests, log = console }) {
+export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, accessRequests, firstPassword, log = console }) {
   const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}), ...(passkeys ? { passkeys, ...(passkeyClientScript ? { passkeyClientScript } : {}) } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
   const siteOrigin = String(manifest.authOrigin ?? `https://${manifest.site}`).replace(/\/+$/, "");
@@ -238,6 +240,31 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     const denied = results.filter((r) => !r.allowed);
     if (!denied.length) return undefined;
     return json(429, { code: "AUTH_FORBIDDEN", detail: "rate_limited" }, { "retry-after": String(Math.max(...denied.map((r) => r.retryAfter))) });
+  }
+
+  /**
+   * SURF-D18 (io's Q2-12): an allowlisted member with no Cognito user gets one, with a random permanent password, so the kit's forgot flow can mail
+   * the code that sets the first password. Runs after forgotLimited, only for requests the kit would act on (same checks), and only while
+   * FIRST_PASSWORD is on. 502 AUTH_NETWORK (the kit's own Cognito-unreachable answer) when Cognito fails: no code is sent. Never logs the address.
+   */
+  async function provisionFirstPassword(event) {
+    try {
+      if (firstPassword?.isOpen?.() !== true) return undefined;
+    } catch {
+      return undefined;
+    }
+    const h = headersOf(event);
+    if (h["x-requested-with"] !== "io-kit") return undefined;
+    if (h.origin && h.origin.replace(/\/+$/, "") !== siteOrigin) return undefined;
+    const b = jsonBodyOf(event);
+    if (typeof b.email !== "string" || !b.email.trim()) return undefined;
+    try {
+      await firstPassword.provision(b.email);
+    } catch (e) {
+      log.error?.(JSON.stringify({ msg: "first-password provisioning failed", error: e instanceof Error ? e.name : "error" }));
+      return json(502, { code: "AUTH_NETWORK" });
+    }
+    return undefined;
   }
 
   /** /auth/password answers {ok, returnTo}; the page then does location.assign(returnTo). */
@@ -352,9 +379,15 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     // Users are created only by AdminCreateUser (POST /auth/link). ConfirmSignUp only ever confirms a self-service sign-up, which
     // this app never makes; refusing it keeps an account someone else signed up for an email from being confirmed here.
     if (rel === "/verify" && method === "POST") return json(410, { code: "AUTH_FORBIDDEN", detail: "signup_disabled" });
-    if (rel === "/password/forgot" && method === "POST" && limiter) {
-      const limited = await forgotLimited(event);
-      if (limited) return limited;
+    if (rel === "/password/forgot" && method === "POST") {
+      if (limiter) {
+        const limited = await forgotLimited(event);
+        if (limited) return limited;
+      }
+      if (firstPassword) {
+        const failed = await provisionFirstPassword(event);
+        if (failed) return failed;
+      }
     }
     let ev = event;
     const qs = event.queryStringParameters ?? {};

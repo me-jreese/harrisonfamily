@@ -45,6 +45,7 @@ Parameters:
   GraphRenderCodeKey: { Type: String, Default: lambda/hfy-graph-render-placeholder.zip, Description: "Key of the hfy-graph-render package in CodeBucket. The placeholder is a no-op that nothing invokes (review DL-34)" }
   HfyEditing: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Editing routes switch (env HFY_EDITING). While off they answer 404 not_found" }
   AccessRequests: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Access-request intake kill switch on the auth edge (env ACCESS_REQUESTS)" }
+  FirstPassword: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "First password through the forgot-password code for allowlisted members with no Cognito user (env FIRST_PASSWORD; SURF-D18, io Q2-12). While off, POST /auth/password/forgot creates no Cognito user" }
   TurnstileSiteKey: { Type: String, Default: "", Description: "Public Cloudflare Turnstile site key (env TURNSTILE_SITE_KEY); not a secret" }
   SesConfigurationSet: { Type: String, Default: "", Description: "Optional SES configuration set name for the hfy-api notification mail (env SES_CONFIGURATION_SET on hfy-api). Access-request mail from the auth edge uses the Join* parameters below, never this one" }
   # HFY-TSK-195 (ruling P2-R23, review PS-25): access-request mail has its OWN SES identity (the join subdomain, with its own MAIL FROM subdomain),
@@ -452,6 +453,7 @@ Resources:
           ORIGIN_VERIFY: !Sub "{{resolve:secretsmanager:${OriginVerifySecretName}:SecretString}}"
           ADMIN_LIST_KEY: !Ref AdminListKey
           ACCESS_REQUESTS: !Ref AccessRequests
+          FIRST_PASSWORD: !Ref FirstPassword
           TURNSTILE_SITE_KEY: !Ref TurnstileSiteKey
           TURNSTILE_SECRET_NAME: !Ref TurnstileSecretName
           ACCESS_REQUEST_PEPPER_SECRET: !Ref AccessRequestPepperSecretName

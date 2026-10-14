@@ -9,7 +9,7 @@ import { DEFAULT_CLIENT_ID, DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthSto
 import { createMembership } from "./membership.js";
 import { createCompositeResolver } from "./allowlist.js";
 import { forbidden, originVerified } from "./origin.js";
-import { cognitoProvisioner } from "./cognito.js";
+import { cognitoFirstPassword, cognitoProvisioner } from "./cognito.js";
 import { hfyLinkStore } from "./linkstore.js";
 import { hfyPasskeyStore } from "./passkeystore.js";
 import { ddbRateLimiter } from "./ratelimit.js";
@@ -67,6 +67,8 @@ async function init() {
     passwordAuth: cognitoPasswordAuthenticator(cog),
     passwords: await cognitoAdmin(m.idp.userPoolId, resolver),
   });
+  // SURF-D18 (io's Q2-12): first password through the forgot-password code. FIRST_PASSWORD is read per request, so it is dark until the stack parameter is on.
+  const firstPassword = await cognitoFirstPasswordRoute(m.idp.userPoolId, resolver);
   // MCP authorization server (HFY-TSK-076). Redirect URIs and resources come from stack parameters; unset => OAuth routes are off.
   const csv = (v) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   const redirectUris = csv(process.env.MCP_REDIRECT_URIS);
@@ -109,7 +111,7 @@ async function init() {
     readEntries: async () => parseAllowlist(await readObject(m.resolver.bucket, m.resolver.key)),
   });
   return createAuthEdge({
-    manifest: m, identity, accessRequests, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
+    manifest: m, identity, accessRequests, firstPassword, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
     limiter, // POST /auth/password/forgot (HFY-R58 ruling 5) and the access-request routes (surfaces.md 7.5)
     verify: { issuers: [m.session.issuer], audiences: [m.session.audience], jwks: createLocalJWKSet({ keys: [publicJwk] }) },
   });
@@ -186,6 +188,14 @@ async function cognitoAdmin(userPoolId, resolver) {
   const cip = await sdk("@aws-sdk/client-cognito-identity-provider");
   const client = new cip.CognitoIdentityProviderClient({});
   return cognitoProvisioner({ userPoolId, resolver, send: (name, input) => client.send(new cip[`${name}Command`](input)) });
+}
+
+/** SURF-D18: the first-password provisioner behind the FIRST_PASSWORD kill switch (stack parameter FirstPassword, default off). */
+async function cognitoFirstPasswordRoute(userPoolId, resolver, env = process.env) {
+  const cip = await sdk("@aws-sdk/client-cognito-identity-provider");
+  const client = new cip.CognitoIdentityProviderClient({});
+  const p = cognitoFirstPassword({ userPoolId, resolver, send: (name, input) => client.send(new cip[`${name}Command`](input)) });
+  return { isOpen: () => env.FIRST_PASSWORD === "on", provision: p.provision };
 }
 
 let app;

@@ -6,6 +6,7 @@ import { buildResolver, validateManifest } from "@io-kit/auth/edge/deploy";
 import { createIdentityService, memoryLinkStore, memoryRefreshStore } from "@io-kit/auth/server";
 import { createAuthEdge, loadManifest } from "../src/edge.js";
 import { parseSigningSecret } from "../src/index.js";
+import { cognitoFirstPassword } from "../src/cognito.js";
 
 const raw = JSON.parse(readFileSync(new URL("../edge.manifest.json", import.meta.url), "utf8"));
 const ENV = { COGNITO_USER_POOL_ID: "us-west-2_TEST", COGNITO_CLIENT_ID: "client123", GOOGLE_CLIENT_ID: "gis-client.apps.googleusercontent.com" };
@@ -619,7 +620,7 @@ describe("returnTo / next cannot leave the site (login-returnto-tab-open-redirec
 });
 
 /** An edge wired with fakes for the password authenticator, the Cognito lifecycle and the rate limiter. */
-async function fakeEdge({ limiter, forgotLimits } = {}) {
+async function fakeEdge({ limiter, forgotLimits, firstPassword } = {}) {
   const s = await generateKeyPair("RS256", { extractable: true });
   const pub = { ...(await exportJWK(s.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" };
   const calls = { forgot: [], verify: [], reset: [] };
@@ -637,7 +638,7 @@ async function fakeEdge({ limiter, forgotLimits } = {}) {
   const e = createAuthEdge({
     manifest, identity, publicJwk: pub, lifecycle, nonce: () => "n0nce", log: { error: () => {} },
     verify: { issuers: [manifest.session.issuer], audiences: [manifest.session.audience], jwks: createLocalJWKSet({ keys: [pub] }) },
-    ...(limiter ? { limiter } : {}), ...(forgotLimits ? { forgotLimits } : {}),
+    ...(limiter ? { limiter } : {}), ...(forgotLimits ? { forgotLimits } : {}), ...(firstPassword ? { firstPassword } : {}),
   });
   return { edge: e, calls };
 }
@@ -660,6 +661,115 @@ describe("self-service sign-up confirmation is closed (cognito-self-signup-enabl
     expect(res.statusCode).toBe(410);
     expect(JSON.parse(res.body)).toEqual({ code: "AUTH_FORBIDDEN", detail: "signup_disabled" });
     expect(calls.verify).toEqual([]);
+  });
+});
+
+describe("first password through the forgot-password code (SURF-D18, io's Q2-12)", () => {
+  /** A fake Cognito behind cognitoFirstPassword, over the same allowlist as the edge (ana and bo are members). */
+  function fakeCognito({ users = {}, fail } = {}) {
+    const calls = [];
+    const send = async (name, input) => {
+      calls.push([name, input]);
+      if (fail === name) throw Object.assign(new Error("boom"), { name: "InternalErrorException" });
+      if (name === "AdminGetUser") {
+        if (!users[input.Username]) throw Object.assign(new Error("none"), { name: "UserNotFoundException" });
+        return users[input.Username];
+      }
+      return {};
+    };
+    const resolver = buildResolver(manifest.resolver, { readObject: async () => JSON.stringify(ALLOW) });
+    const events = [];
+    const p = cognitoFirstPassword({ userPoolId: "us-west-2_TEST", send, resolver, password: () => "Aa1-random-for-test" });
+    return { calls, names: () => calls.map((c) => c[0]), events, firstPassword: { isOpen: () => true, provision: async (e) => { events.push("provision"); return p.provision(e); } } };
+  }
+  const forgot = (email) => post("/auth/password/forgot", { email });
+
+  it("allowlisted with no Cognito user: AdminCreateUser then AdminSetUserPassword, then the kit sends the code (200)", async () => {
+    const c = fakeCognito();
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    const res = await e(forgot(" Ana@Example.com "));
+    expect(res.statusCode).toBe(200);
+    expect(c.names()).toEqual(["AdminGetUser", "AdminCreateUser", "AdminSetUserPassword"]);
+    expect(c.calls[1][1]).toMatchObject({ Username: "ana@example.com", MessageAction: "SUPPRESS", UserAttributes: expect.arrayContaining([{ Name: "email_verified", Value: "true" }]) });
+    expect(c.calls[2][1]).toMatchObject({ Username: "ana@example.com", Permanent: true });
+    expect(calls.forgot).toHaveLength(1); // the kit's flow still runs, after provisioning
+  });
+  it("allowlisted with a Cognito user: no create, no password, the kit sends the code", async () => {
+    const c = fakeCognito({ users: { "ana@example.com": { UserStatus: "CONFIRMED" } } });
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    expect((await e(forgot("ana@example.com"))).statusCode).toBe(200);
+    expect(c.names()).toEqual(["AdminGetUser"]);
+    expect(calls.forgot).toEqual(["ana@example.com"]);
+  });
+  it("not allowlisted: no Cognito admin call at all, and the answer is the same 200 as for a member", async () => {
+    const c = fakeCognito();
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    const res = await e(forgot("stranger@example.com"));
+    expect(res.statusCode).toBe(200);
+    expect(c.calls).toEqual([]);
+    expect(calls.forgot).toEqual(["stranger@example.com"]);
+  });
+  it("a Cognito failure answers 502 AUTH_NETWORK, sends no code and logs no address", async () => {
+    for (const fail of ["AdminGetUser", "AdminCreateUser", "AdminSetUserPassword"]) {
+      const c = fakeCognito({ fail });
+      const logged = [];
+      const s = await generateKeyPair("RS256", { extractable: true });
+      const pub = { ...(await exportJWK(s.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" };
+      const forgots = [];
+      const e = createAuthEdge({
+        manifest, publicJwk: pub, nonce: () => "n0nce", limiter: memoryRateLimiter(), firstPassword: c.firstPassword, log: { error: (m) => logged.push(m) },
+        identity: createIdentityService({
+          resolver: buildResolver(manifest.resolver, { readObject: async () => JSON.stringify(ALLOW) }), links: memoryLinkStore(),
+          sessions: { issuer: manifest.session.issuer, audience: manifest.session.audience, kid: "hfy-session-1", privateKey: s.privateKey, store: memoryRefreshStore(), defaultProfile: "installed" },
+        }),
+        lifecycle: { forgot: async (x) => { forgots.push(x); }, verify: async () => {}, reset: async () => {} },
+        verify: { issuers: [manifest.session.issuer], audiences: [manifest.session.audience], jwks: createLocalJWKSet({ keys: [pub] }) },
+      });
+      const res = await e(forgot("ana@example.com"));
+      expect(res.statusCode, fail).toBe(502);
+      expect(JSON.parse(res.body)).toEqual({ code: "AUTH_NETWORK" });
+      expect(forgots, fail).toEqual([]);
+      expect(logged.join(" "), fail).not.toMatch(/ana@|example\.com/);
+    }
+  });
+  it("runs after the rate limiter: a limited request provisions nothing", async () => {
+    const c = fakeCognito();
+    const { edge: e } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    for (let i = 0; i < 3; i++) expect((await e(forgot("ana@example.com"))).statusCode).toBe(200);
+    c.calls.length = 0; c.events.length = 0;
+    expect((await e(forgot("ana@example.com"))).statusCode).toBe(429);
+    expect(c.events).toEqual([]);
+    expect(c.calls).toEqual([]);
+    const down = fakeCognito();
+    const { edge: e2 } = await fakeEdge({ limiter: { hit: async () => { throw new Error("ddb down"); } }, firstPassword: down.firstPassword });
+    expect((await e2(forgot("ana@example.com"))).statusCode).toBe(503);
+    expect(down.calls).toEqual([]);
+  });
+  it("requests the kit refuses (no X-Requested-With, foreign Origin, no email) provision nothing", async () => {
+    const c = fakeCognito();
+    const { edge: e } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    const noHdr = forgot("ana@example.com"); delete noHdr.headers["x-requested-with"];
+    expect((await e(noHdr)).statusCode).toBe(403);
+    expect((await e({ ...forgot("ana@example.com"), headers: { ...forgot("ana@example.com").headers, origin: "https://evil.example" } })).statusCode).toBe(403);
+    await e(post("/auth/password/forgot", {}));
+    await e(post("/auth/password/forgot", { email: 42 }));
+    expect(c.calls).toEqual([]);
+  });
+  it("is dark while the switch is off, and for other routes and methods", async () => {
+    const c = fakeCognito();
+    const off = { ...c.firstPassword, isOpen: () => false };
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: off });
+    expect((await e(forgot("ana@example.com"))).statusCode).toBe(200);
+    expect(calls.forgot).toEqual(["ana@example.com"]);
+    const { edge: on } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    await on(get("/auth/password/forgot"));
+    await on(post("/auth/password/reset", { email: "ana@example.com", code: "123456", password: "pw-123456789012" }));
+    await on(post("/auth/password", { email: "ana@example.com", password: "pw-123456789" }));
+    expect(c.calls).toEqual([]);
+    // without a wired provisioner the edge behaves exactly as before
+    const { edge: plain, calls: pc } = await fakeEdge({ limiter: memoryRateLimiter() });
+    expect((await plain(forgot("ana@example.com"))).statusCode).toBe(200);
+    expect(pc.forgot).toHaveLength(1);
   });
 });
 
