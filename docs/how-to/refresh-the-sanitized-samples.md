@@ -1,6 +1,6 @@
 # How to refresh the sanitized samples
 
-Use this page to update the synthetic samples that the repository carries in place of private files, so that collaborators see the current shape of the data and configuration without any real content. Do this when the shape changes, for example when the ETL adds a field. A family-data refresh does not need it ([Refresh the family data](refresh-the-family-data.md)), and neither does the site's Eleventy output in `11ty/` ([Refresh the Eleventy output](refresh-the-eleventy-output.md)).
+Use this page to update the synthetic samples that the repository carries in place of private files, so that collaborators see the current shape of the data and configuration without any real content. Do this when the shape changes, for example when the ETL adds a field. A family-data refresh does not need it ([Sync Gramps with the website](sync-gramps-with-the-website.md)), and neither does the site's Eleventy output in `11ty/` ([Refresh the Eleventy output](refresh-the-eleventy-output.md)).
 
 You edit the samples in the repository, by hand, with invented values. Nothing copies workspace data into a checkout: the export script that did this was removed under D-03, because one default run could carry real family records into a commit. Two guards now stand behind that rule: `.gitignore` ignores every data directory except the tracked samples, and `scripts/ci/check-no-family-data.sh` fails when a tracked file in a data directory is not on the allowlist.
 
@@ -57,4 +57,4 @@ Read the whole staged diff. It must contain no real names, dates or Gramps recor
 
 - [Private data and secrets](../reference/private-data-and-secrets.md#in-repo-sanitized-samples): each sample and what it mirrors.
 - [The privacy model for family data](../explanation/family-data-privacy.md): why the repository carries samples.
-- [Refresh the family data](refresh-the-family-data.md): publish real data to the site.
+- [Sync Gramps with the website](sync-gramps-with-the-website.md): publish real data to the site.

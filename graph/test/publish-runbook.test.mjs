@@ -6,9 +6,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HERE } from './helpers.mjs';
 
-const DOC = readFileSync(join(HERE, '..', '..', 'docs', 'how-to', 'refresh-the-family-data.md'), 'utf8');
+const DOC = readFileSync(join(HERE, '..', '..', 'docs', 'how-to', 'sync-gramps-with-the-website.md'), 'utf8');
 
-describe('refresh-the-family-data.md step 2b (AC1)', () => {
+describe('sync-gramps-with-the-website.md step 2b (AC1)', () => {
   const at = (h) => DOC.indexOf(h);
   it('sits between step 2 (Trees) and step 3 (Search)', () => {
     const [trees, graph, search, sync] = ['### 2. Build the family trees', '### 2b. Build the family graph', '### 3. Build the search manifests', '### 4. Sync the data'].map(at);
