@@ -258,6 +258,25 @@ describe("GET /api/sync/snapshot (AC1)", () => {
     expect(s.body).not.toContain("Testwood");
   });
 
+  it("S19b: an expunge that bumps SYNC#HEAD.expunge_epoch without advancing seq invalidates the cached snapshot", async () => {
+    const w = world();
+    const a = person(1);
+    await w.push([create(a)]);
+    await w.call("GET", "/sync/snapshot");
+    expect(readSnapshot(w.s3, 1).lines[0]).toMatchObject({ handle: a.handle, deleted: false });
+    const logRow = w.rows("SYNC#LOG")[0];
+    w.ddb.rows.set(`${logRow.PK}\u0000${logRow.SK}`, { ...logRow, obj_json: null, expunged: true });
+    const hd = w.row("SYNC#HEAD");
+    w.ddb.rows.set("SYNC#HEAD\u0000META", { ...hd, expunge_epoch: 1 });
+    w.reset();
+    const before = w.s3.puts().length;
+    const r = await w.call("GET", "/sync/snapshot");
+    expect(r.body.seq).toBe(1);
+    expect(w.s3.puts().length).toBeGreaterThan(before); // rebuilt, not served from cache
+    expect(readSnapshot(w.s3, 1).lines[0]).toMatchObject({ handle: a.handle, deleted: true, obj: null });
+    expect(readSnapshot(w.s3, 1).body).not.toContain("Testwood");
+  });
+
   it("S08: a store or S3 failure is 503 retryable, and the next call recovers", async () => {
     const w = world();
     await w.push([create(person(1))]);
@@ -389,6 +408,21 @@ describe("POST /api/sync/conflicts/:id/decision (AC3)", () => {
     expect(w.rows("AUDIT#conflict:")).toHaveLength(1);
     expect((await w.call("GET", "/sync/conflicts")).body.conflicts).toHaveLength(0); // it left the open queue
     expect((await w.call("GET", "/sync/conflicts", { query: { state: "resolved" } })).body.conflicts.map((c) => c.id)).toEqual([CID(1)]);
+  });
+  it("a cloud head that moves between the read and the write fails the decision as 503 retryable and leaves the conflict open", async () => {
+    const w = world();
+    await seedOne(w);
+    const send = w.ddb.send.bind(w.ddb);
+    w.ddb.send = async (cmd) => {
+      if (cmd.constructor.name === "TransactWriteCommand") {
+        const k = "REC#Person#" + person(1).handle + "\u0000HEAD";
+        const row = w.ddb.rows.get(k);
+        if (row) w.ddb.rows.set(k, { ...row, version: row.version + 1 });
+      }
+      return send(cmd);
+    };
+    expect(err(await decide(w))).toEqual({ status: 503, error: "retryable" });
+    expect(w.row(`SYNC#CONFLICT#${CID(1)}`)).toMatchObject({ state: "open" });
   });
   it("the hash is tied to the cloud values the admin saw: another cloud value gives another hash", () => {
     const a = cloudValueHash([{ path: "/x", cloud: "one", desktop: "d" }]);

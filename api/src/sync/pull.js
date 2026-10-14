@@ -12,6 +12,15 @@
 // carries no mtime, so the same heads always give the same bytes. The object is cached per seq at snapshots/<seq>.jsonl.gz; its S3 metadata holds
 // body_sha256, count and generated_at, so a cache hit costs one HeadObject. The heads come from the store view (records/index.js): the stored objects
 // are already redacted, and nothing is read from a GSI.
+//
+// Cache validity: a hit needs the metadata to match the CURRENT tree_id, REDACTION_VERSION, SCHEMA_VERSION and SYNC#HEAD.expunge_epoch (absent = 0).
+// DEPENDENCY on privacy-expunge (BRD2 11.1, SI-18, S19): an expunge rewrites log entries and heads and may not advance seq, so it MUST increment
+// SYNC#HEAD.expunge_epoch in the same transaction; the next snapshot call then misses the cache and rebuilds without the old value. Old cached
+// objects at the same seq are overwritten by the rebuild. Memory: the view, the joined body and the gzip are all held in memory (fine for the
+// current tree size; stream the build if the Lambda memory limit ever becomes the constraint).
+//
+// Conflict queue reads: sync.md 7.2 also lists an hfy-admin cookie as able to read the queue. Here the queue is served on the sync bearer only;
+// the cookie-readable list belongs to the phase B admin page task (sync-admin-status-page, RG-7). The decision needs owner plus step-up (PS-22).
 import { gzipSync } from "node:zlib";
 import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { HttpError, logSafeError } from "../http.js";
@@ -20,7 +29,7 @@ import { HANDLE_SHAPE } from "../records/ops.js";
 import { storeView } from "../records/index.js";
 import { TxnCancelled, auditItem, transact } from "../txn.js";
 import { requireConflictDecision } from "./auth.js";
-import { CLASSES, REDACTION_VERSION, SCHEMA_VERSION, getRecordItem, sha256 } from "./store.js";
+import { CLASSES, REDACTION_VERSION, SCHEMA_VERSION, getRecordItem, recKey, sha256 } from "./store.js";
 
 const ok = (body, status = 200) => ({ status, body });
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -69,11 +78,13 @@ export async function syncSnapshot(c) {
   const key = snapshotKey(seq);
   const heads = [...view.heads.values()];
 
+  const epoch = String(Number.isInteger(head?.expunge_epoch) ? head.expunge_epoch : 0);
   let meta;
   try {
     const r = await store.s3.send(new HeadObjectCommand({ Bucket: store.syncBucket, Key: key }));
     const m = r?.Metadata ?? {};
-    if (/^[0-9a-f]{64}$/.test(m.body_sha256 ?? "") && Number.isInteger(Number(m.count)) && typeof m.generated_at === "string" && m.tree_id === (head?.tree_id ?? "")) {
+    if (/^[0-9a-f]{64}$/.test(m.body_sha256 ?? "") && Number.isInteger(Number(m.count)) && typeof m.generated_at === "string" && m.tree_id === (head?.tree_id ?? "")
+      && m.expunge_epoch === epoch && m.redaction === String(REDACTION_VERSION) && m.schema === String(SCHEMA_VERSION)) {
       meta = { body_sha256: m.body_sha256, count: Number(m.count), generated_at: m.generated_at };
     }
   } catch (e) {
@@ -88,9 +99,10 @@ export async function syncSnapshot(c) {
     try {
       await store.s3.send(new PutObjectCommand({
         Bucket: store.syncBucket, Key: key, Body: built.gz, ContentType: "application/gzip", CacheControl: "private, no-store",
-        Metadata: { body_sha256: built.body_sha256, count: String(built.count), generated_at: generatedAt, tree_id: head?.tree_id ?? "" },
+        Metadata: { body_sha256: built.body_sha256, count: String(built.count), generated_at: generatedAt, tree_id: head?.tree_id ?? "", expunge_epoch: epoch, redaction: String(REDACTION_VERSION), schema: String(SCHEMA_VERSION) },
       }));
-      // The checkpoint the store views start from; a failure here costs nothing but a longer cold start.
+      // The checkpoint the store views start from; a failure here costs nothing but a longer cold start. Concurrent builds at different seqs can
+      // regress latest.json to an older seq; that is accepted, since a view replays the log from the checkpoint seq and so stays correct.
       await store.s3.send(new PutObjectCommand({
         Bucket: store.syncBucket, Key: LATEST_KEY, Body: JSON.stringify({ seq, key, body_sha256: built.body_sha256, count: built.count, generated_at: generatedAt }), ContentType: "application/json", CacheControl: "private, no-store",
       })).catch((e) => store.log?.warn?.("snapshot checkpoint not written", logSafeError(e, { route: "sync.snapshot" })));
@@ -172,7 +184,11 @@ function statusBody(body) {
   };
 }
 
-/** POST /api/sync/status: one SYNC#CLIENT#<instance> item, replaced on each run. 204; no paused-store refusal (a paused store still wants the heartbeat). */
+/**
+ * POST /api/sync/status: one SYNC#CLIENT#<instance> item, replaced on each run. 204. The route is not a write route (no pause refusal: a paused
+ * store still wants the heartbeat). An existing item written by a different principal is never overwritten (409). Items are one per desktop
+ * instance and callers are gramps-owner only, so no TTL is set; the admin status page (RG-7) lists and can prune them.
+ */
 export async function syncStatus(c) {
   c.sync.checkTree();
   const { store } = c.sync;
@@ -182,7 +198,11 @@ export async function syncStatus(c) {
   await store.ddb.send(new store.cmds.PutCommand({
     TableName: store.table,
     Item: { ...clientKey(instance), entity: "syncclient", client_instance_id: instance, ...rest, principal: c.actor.id, updated_at: at },
-  }));
+    ConditionExpression: "attribute_not_exists(PK) OR principal = :p", ExpressionAttributeValues: { ":p": c.actor.id },
+  })).catch((e) => {
+    if (e?.name === "ConditionalCheckFailedException") throw new HttpError(409, "conflict", "this client instance belongs to another principal");
+    throw e;
+  });
   return { status: 204, body: undefined };
 }
 
@@ -257,6 +277,11 @@ export async function syncConflictDecision(c) {
   const at = new Date(store.now()).toISOString();
   try {
     await transact(store.ddb, store.cmds, store.table, {
+      // The check fails the decision (retryable) when the cloud head moved after it was read, so cloud_version always names the head decided against.
+      checks: [{
+        key: recKey(item.class, item.handle), tag: "conflict:head",
+        ...(cloudVersion === null ? { condition: "attribute_not_exists(PK)" } : { condition: "#v = :v", names: { "#v": "version" }, values: { ":v": cloudVersion } }),
+      }],
       updates: [{
         key, tag: "conflict:decide", condition: "#s = :open",
         update: "SET #s = :resolved, #d = :d, #cv = :cv, #ch = :ch, #ra = :at, #by = :by, #g = :gpk",
@@ -266,7 +291,11 @@ export async function syncConflictDecision(c) {
       puts: [{ item: { ...auditItem({ op: "sync.conflict.decide", id: `conflict:${id}`, principalId: c.actor.id, at, before: { state: "open" }, after: { state: "resolved", decision, cloud_version: cloudVersion } }, store.uid(), store.table), origin: "desktop" } }],
     }, store.txnOpts);
   } catch (e) {
-    if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "already_resolved", "this conflict is already resolved");
+    if (e instanceof TxnCancelled && e.conditionFailed) {
+      const again = (await store.ddb.send(new store.cmds.GetCommand({ TableName: store.table, Key: key, ConsistentRead: true }))).Item;
+      if (again?.state === "open") throw retryable(); // the cloud head moved, not a racing decision
+      throw new HttpError(409, "already_resolved", "this conflict is already resolved");
+    }
     if (e instanceof TxnCancelled) throw retryable();
     throw e;
   }
