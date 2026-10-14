@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { auditItem } from "../txn.js";
 import { FIXED_TXN_ITEMS, MAX_OPS as MAX_BATCH_OBJECTS } from "../sync/store.js";
 import { contentHash } from "./ops.js";
+import { get } from "./index.js";
 
 export const PROPOSAL_STATES = Object.freeze(["pending", "needs_changes", "stale", "approved", "declined", "withdrawn", "superseded"]);
 /** The states in which a proposal is still waiting on someone. */
@@ -64,12 +65,32 @@ export const proposalEtag = (p) => contentHash({ id: p.id, rev: p.rev, state: p.
  * A new proposal document (editing design 5.2). `subject` is the page it is about ({cls, handle, gramps_id}) or null; `targets` are the stored
  * objects it touches ("Class:handle"), sorted. `warnings` are the semantic warnings that do not block.
  */
-export function newProposal({ id, actor, origin, kind, subject, targets, base_versions, ops, summary, note, warnings, at }) {
+export function newProposal({ id, actor, origin, kind, subject, targets, base_versions, ops, summary, note, warnings, at, owners, requestId }) {
   const p = {
-    id, rev: 1, state: "pending", kind, proposer: { id: actor.id, label: actor.label }, origin, subject, targets, base_versions, ops, summary,
-    ...(note ? { note } : {}), warnings: warnings ?? [], created_at: at, updated_at: at,
+    id, rev: 1, state: "pending", kind, proposer: { id: actor.id, label: actor.label }, origin, subject, targets, owners: ownersList(owners), base_versions, ops, summary,
+    ...(note ? { note } : {}), ...(requestId ? { request_id: requestId } : {}), warnings: warnings ?? [], created_at: at, updated_at: at,
   };
   return { ...p, etag: proposalEtag(p) };
+}
+
+/** `owners[]`: the gramps ids of the owners of every targeted page (contrib-read's default proposalVisible reads it), sorted and unique. */
+export const ownersList = (owners) => [...new Set((owners ?? []).filter((x) => typeof x === "string" && x))].sort();
+
+/** The same proposal in another state (withdraw, decide, stale, supersede): `rev` stays, the etag follows the state. `patch` may add decision fields. */
+export function withState(p, state, at, patch = {}) {
+  const next = { ...p, ...patch, state, updated_at: at };
+  delete next.etag;
+  return { ...next, etag: proposalEtag(next) };
+}
+
+/** The proposal after an amend: rev + 1, back to pending, the new ops, targets and summary. The id, proposer, origin and created_at stay. */
+export function amendedProposal(p, { kind, subject, targets, owners, base_versions, ops, summary, note, warnings, at }) {
+  const next = {
+    ...p, kind, subject, targets, owners: ownersList(owners), base_versions, ops, summary, warnings: warnings ?? [], rev: p.rev + 1, state: "pending", updated_at: at,
+  };
+  if (note !== undefined) { if (note) next.note = note; else delete next.note; }
+  delete next.etag;
+  return { ...next, etag: proposalEtag(next) };
 }
 
 /** What `can` the viewer do with a proposal. A proposer amends and withdraws while it is open; an admin decides; comments are for the circle. */
@@ -92,6 +113,25 @@ export function proposalPuts(p) {
     { item: { PK: `PROP#${p.id}`, SK: "IDX#BY", GSI1PK: `PROPBY#${p.proposer.id}`, GSI1SK: p.id, ...base }, ...guard },
     ...p.targets.map((k) => ({ item: { PK: `PROP#${p.id}`, SK: `IDX#REC#${k}`, GSI1PK: `PROPREC#${k}`, GSI1SK: p.id, ...base }, ...guard })),
   ];
+}
+
+/**
+ * The writes of a state change (AC3): META moves to its new PROPQ#<state> partition and IDX#BY and every IDX#REC copy follow in the same
+ * transaction, so no copy ever shows an older state than META. META is written only if it still holds `prev` (compare-and-set on the etag, tag
+ * "proposal:cas"); a target the new document no longer has loses its IDX#REC item.
+ */
+export function proposalRewrite(prev, next) {
+  const base = { entity: "proposal", proposal: next };
+  const cas = { condition: "attribute_exists(PK) AND #p.#e = :etag", names: { "#p": "proposal", "#e": "etag" }, values: { ":etag": prev.etag }, tag: "proposal:cas" };
+  const exists = { condition: "attribute_exists(PK)", tag: "proposal:copy" };
+  const puts = [
+    { item: { ...proposalKeys(next.id), GSI1PK: `PROPQ#${next.state}`, GSI1SK: next.id, ...base }, ...cas },
+    { item: { PK: `PROP#${next.id}`, SK: "IDX#BY", GSI1PK: `PROPBY#${next.proposer.id}`, GSI1SK: next.id, ...base }, ...exists },
+    ...next.targets.map((k) => ({ item: { PK: `PROP#${next.id}`, SK: `IDX#REC#${k}`, GSI1PK: `PROPREC#${k}`, GSI1SK: next.id, ...base } })),
+  ];
+  const keep = new Set(next.targets);
+  const deletes = prev.targets.filter((k) => !keep.has(k)).map((k) => ({ PK: `PROP#${next.id}`, SK: `IDX#REC#${k}` }));
+  return { puts, deletes };
 }
 
 /** The AUDIT#proposal:<ulid> item for a state change; `op` is proposal.create | .amend | .withdraw | .decide | .stale | .supersede. */
@@ -126,3 +166,58 @@ export function approvalActions({ created = 0, updated = 0, deleted = 0, targets
 
 /** True when an approval could not commit in one transaction. */
 export const proposalTooLarge = (counts) => counts.created + counts.updated + counts.deleted > MAX_APPROVAL_OBJECTS || approvalActions(counts) > MAX_TXN_ACTIONS;
+
+// ---- owners -----------------------------------------------------------------------------------------------------------------
+const MAX_OWNER_PEOPLE = 60;
+const gidOf = (head) => (typeof head?.obj?.gramps_id === "string" && head.obj.gramps_id ? head.obj.gramps_id : null);
+
+/**
+ * The gramps ids of the owners of every page `targets` ("Class:handle") names (the same circle pendingFor and GET use): a targeted Person is its own
+ * owner, and a targeted Family is owned by its spouses and children. Any other target class (a shared Event, Place, Source...) has no owner. `known`
+ * maps keys already loaded ({obj}) so the common case reads nothing; the rest is bounded (MAX_OWNER_PEOPLE people).
+ */
+export async function ownersOf(ctx, targets, known = new Map()) {
+  const load = async (cls, handle) => known.get(`${cls}:${handle}`) ?? (await get(ctx, cls, handle));
+  const ids = new Set();
+  const people = new Set();
+  for (const k of targets ?? []) {
+    const i = typeof k === "string" ? k.indexOf(":") : -1;
+    if (i < 0) continue;
+    const cls = k.slice(0, i);
+    const handle = k.slice(i + 1);
+    if (cls === "Person") people.add(handle);
+    else if (cls === "Family") {
+      const f = await load("Family", handle);
+      if (!f) continue;
+      for (const h of [f.obj.father_handle, f.obj.mother_handle, ...(Array.isArray(f.obj.child_ref_list) ? f.obj.child_ref_list : []).map((r) => r?.ref)]) {
+        if (typeof h === "string" && h) people.add(h);
+      }
+    }
+  }
+  for (const h of [...people].slice(0, MAX_OWNER_PEOPLE)) {
+    const gid = gidOf(await load("Person", h));
+    if (gid) ids.add(gid);
+  }
+  return ownersList([...ids]);
+}
+
+// ---- system proposals (the access-request flow) ----------------------------------------------------------------------------
+/** The proposer of a system proposal. It is not a member and never an email; admins decide it like any other proposal. */
+export const SYSTEM_PROPOSER = Object.freeze({ id: "system:access_request", label: "the site" });
+export const SYSTEM_ORIGIN = "access_request";
+
+/** The access request a proposal came from, or null (a web or MCP proposal). */
+export const accessRequestOf = (p) => (p?.origin === SYSTEM_ORIGIN && typeof p.request_id === "string" && p.request_id ? p.request_id : null);
+
+/**
+ * The completeAccessRequest step of an approval (surfaces 7.4). `ctx.completeAccessRequest({ requestId, proposal, grampsId })` is the access-request
+ * domain's link transaction as a transact() fragment { puts, updates, checks, deletes }, which the approval merges into its `extra`, so the link
+ * commits or fails with the approval. Null for a proposal that is not from an access request.
+ */
+export async function approvalHookFragment(ctx, proposal, { grampsId } = {}) {
+  const requestId = accessRequestOf(proposal);
+  if (!requestId) return null;
+  if (typeof ctx.completeAccessRequest !== "function") return null; // the flow is not wired: io links by hand (surfaces 7.4)
+  const fragment = await ctx.completeAccessRequest({ requestId, proposal, grampsId });
+  return fragment ?? null;
+}

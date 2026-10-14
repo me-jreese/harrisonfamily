@@ -128,6 +128,23 @@ export const relationView = (ctx) => ({
 });
 
 /**
+ * True when one of `targets` ("Class:handle") is about the viewer: their own Person, or a Family they are a spouse or child of. `own` is
+ * { handle } (the viewer's Person) or null; `related` memoises the Family checks of one request. Fails closed without an own Person.
+ */
+export async function targetsAboutMe(own, targets, view, related = new Map()) {
+  if (!own) return false;
+  for (const t of arr(targets)) {
+    if (typeof t !== "string") continue;
+    if (t === `Person:${own.handle}`) return true;
+    if (t.startsWith("Family:")) {
+      if (!related.has(t)) related.set(t, (await relationOf(own, t, view)) === "own");
+      if (related.get(t)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * The proposals the viewer may see on record `key`, from the per-record index (GSI1 PROPREC#<key>): { proposalId, state, paths }. Own proposals,
  * every proposal for an admin, and proposals whose targets include the viewer's own Person or a Family they are in. Only open states are listed.
  * A read failure propagates (the bundle fails closed with 503 rather than showing a partial list).
@@ -135,18 +152,7 @@ export const relationView = (ctx) => ({
 export async function pendingFor(ctx, actor, key, own, view) {
   const out = [];
   const related = new Map();
-  const aboutMe = async (targets) => {
-    if (!own) return false;
-    for (const t of arr(targets)) {
-      if (typeof t !== "string") continue;
-      if (t === `Person:${own.handle}`) return true;
-      if (t.startsWith("Family:")) {
-        if (!related.has(t)) related.set(t, (await relationOf(own, t, view)) === "own");
-        if (related.get(t)) return true;
-      }
-    }
-    return false;
-  };
+  const aboutMe = (targets) => targetsAboutMe(own, targets, view, related);
   let start;
   for (let page = 0; page < MAX_PENDING_PAGES; page++) {
     const res = await ctx.ddb.send(new ctx.cmds.QueryCommand({

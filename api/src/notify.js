@@ -82,6 +82,8 @@ const GID = /^[A-Za-z0-9_-]{1,32}$/;
 /** The default admin review destination; the proposals domain overrides it per call with `navigate`. */
 export const PROPOSALS_REVIEW_PATH = "/admin/proposals/";
 export const INBOX_PATH = "/me/inbox/";
+/** Where a proposal thread notification lands (editing design 7.4: the review page, one proposal). */
+export const proposalPath = (id) => `/me/review/?id=${encodeURIComponent(id)}`;
 
 /** A same-origin path the server generates: starts with one "/" and carries no scheme, backslash or control character. */
 export const safePath = (p, fallback = INBOX_PATH) => (typeof p === "string" && /^\/(?!\/)[^\\\u0000-\u001f]*$/.test(p) ? p : fallback);
@@ -196,13 +198,20 @@ export function createNotifier(deps) {
 
   return {
     notify,
-    /** After a comment is stored: reply > mention > comment_on_my_record, one notification per recipient. */
-    onComment: guarded("comment notification", async (c, { parent } = {}, { postAuthorId, earlierCommenters = [] } = {}) => {
-      const navigate = c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : `/person/?id=${c.threadId.slice(7)}`;
+    /**
+     * After a comment is stored: reply > mention > comment_on_my_record, one notification per recipient. A `proposal:<ulid>` thread links to the review
+     * page and its owner is the proposer (`postAuthorId`); `visibleTo` (a Set of principal ids: the proposal's visibility set) limits every recipient of
+     * a reply, a mention or the owner notice to it, so a mention cannot tell an outsider that a suggestion exists (PS-09). A proposal thread with no
+     * `visibleTo` notifies nobody (fail closed).
+     */
+    onComment: guarded("comment notification", async (c, { parent } = {}, { postAuthorId, earlierCommenters = [], visibleTo } = {}) => {
+      const onProposal = c.threadId.startsWith("proposal:");
+      const navigate = onProposal ? proposalPath(c.threadId.slice(9)) : c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : `/person/?id=${c.threadId.slice(7)}`;
       const base = { navigate, actorLabel: c.author.label };
       const grouped = { ...base, group: `thread:${c.threadId}` }; // comment types coalesce per thread
+      const allowed = onProposal ? (visibleTo instanceof Set ? visibleTo : new Set()) : null;
       const done = new Set([c.author.id]);
-      const take = (ids) => ids.filter((i) => !done.has(i) && done.add(i));
+      const take = (ids) => ids.filter((i) => !done.has(i) && (allowed === null || allowed.has(i)) && done.add(i));
       // reply_to_me: the parent's author plus everyone who commented earlier on the same subject.
       await notify("reply_to_me", take([...(parent ? [parent.author.id] : []), ...earlierCommenters]), grouped);
       await notify("mention", take(mentionsOf(c.body)), base);
