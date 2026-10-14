@@ -1,0 +1,35 @@
+{
+  "$comment": "Reviewed licence exceptions for scripts/ci/check-client-licenses.mjs. An override names one third-party package at one exact version; a new version needs a new review. licenseFile is the evidence the reviewer read (advisory; the gate does not open it). An override or a first-party scope never rescues a GPL, AGPL, LGPL, EPL or SSPL licence. firstPartyScopes (architect ruling P2-R29): a package in the scope passes with the scope's licence at any version, but only when its lockfile 'resolved' URL starts with the registry prefix; a package in the scope resolved from anywhere else, or with no resolved URL, fails whatever its licence. @io-kit/* version bumps need no entry here. shippedDevDependencies lists devDependencies that are copied into the build output; they and their closure are checked like production packages. When data-navigator@3.0.0 (an MIT LICENSE file, no license field) is adopted, add its entry here in the same PR.",
+  "firstPartyScopes": [
+    {
+      "scope": "@io-kit/",
+      "license": "UNLICENSED",
+      "registry": "https://io-356364570033.d.codeartifact.us-west-2.amazonaws.com/npm/io-kit/"
+    }
+  ],
+  "shippedDevDependencies": [
+    "@fontsource-variable/source-code-pro",
+    "@fontsource-variable/source-sans-3",
+    "@fontsource/libre-caslon-text"
+  ],
+  "overrides": [
+    {
+      "package": "@fontsource-variable/source-code-pro",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "licenseFile": "LICENSE in the package (SIL Open Font License 1.1)"
+    },
+    {
+      "package": "@fontsource-variable/source-sans-3",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "licenseFile": "LICENSE in the package (SIL Open Font License 1.1)"
+    },
+    {
+      "package": "@fontsource/libre-caslon-text",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "licenseFile": "LICENSE in the package (SIL Open Font License 1.1)"
+    }
+  ]
+}
