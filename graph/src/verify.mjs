@@ -159,6 +159,15 @@ function structuralChecks(graph, maxYear, add) {
       seen.add(c.id);
     });
   });
+  // photoEdges (minor 2): optional; when present every person exists, and media and people are unique and sorted, so the
+  // block is the same bytes for any input order
+  (graph.photoEdges ?? []).forEach((e, i) => {
+    if (i > 0 && !(graph.photoEdges[i - 1].media < e.media)) add(`/photoEdges/${i}/media`, 'photo-edge-order');
+    e.people.forEach((id, j) => {
+      if (!people.has(id)) add(`/photoEdges/${i}/people/${j}`, 'dangling-reference');
+      if (j > 0 && !(e.people[j - 1] < id)) add(`/photoEdges/${i}/people/${j}`, 'photo-edge-order');
+    });
+  });
   // a place name that reads as a street address is address-grade (rule S) whatever its type says
   graph.places.forEach((p, i) => {
     if (ADDRESS_LIKE_NAME.test(p.name)) add(`/places/${i}/name`, 'address-like-place-name');

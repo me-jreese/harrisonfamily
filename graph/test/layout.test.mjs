@@ -113,8 +113,8 @@ describe('the layout block (ADR 4.7)', () => {
     assert.equal(layout.engine, 'd3-dag 1.2.2');
     assert.equal(layout.engine, ENGINE);
     assert.deepEqual(layout.params, { layering: 'simplex+rank', decross: 'twoLayer', coord: 'greedy', nodeSize: [180, 90] });
-    assert.equal(MINOR, 2); // main was at 1
-    assert.equal(graph.minor, 2);
+    assert.equal(MINOR, 3); // main was at 2 (photoEdges)
+    assert.equal(graph.minor, 3);
     assert.equal(graph.schemaVersion, 1);
   });
 
@@ -511,7 +511,7 @@ describe('the CLI writes the block', () => {
     const r = run([input, '--out', out, '--generated-at', GENERATED_AT, '--report', join(dir, 'report.json')]);
     assert.equal(r.status, 0, r.stderr);
     const written = JSON.parse(readFileSync(join(out, 'person', 'graph.json'), 'utf8'));
-    assert.equal(written.minor, 2);
+    assert.equal(written.minor, 3);
     assert.equal(written.layout.engine, 'd3-dag 1.2.2');
     assert.equal(run(['--verify', join(out, 'person', 'graph.json')]).status, 0);
   });
