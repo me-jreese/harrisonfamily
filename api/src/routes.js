@@ -6,6 +6,7 @@ import { buildMe } from "./me.js";
 import { describeGate, gateExempt, requireFeature } from "./features.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
+import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
@@ -77,7 +78,7 @@ export const ROUTES = defineRoutes([
   {
     name: "me.get", method: "GET", path: "/me", summary: "Who you are: id, label, admin, server-computed can.*, and admin badges (no MCP tool)",
     gate: gateExempt("identity route: every surface reads it before it knows which flags are on (BRD2 10.1, io-approved)"),
-    handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount, log: c.log })),
+    handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount, log: c.log, extras: meEditingExtras(c.store, { log: c.log }) })),
   },
   {
     name: "links.get", method: "GET", path: "/people/:id/links", summary: "A person's profile links, their version and whether you can edit them (no MCP tool)",
@@ -220,6 +221,16 @@ export const ROUTES = defineRoutes([
   {
     name: "records.get", method: "GET", path: "/records/:class/:handle", summary: "One record by class and handle: {class, handle, gramps_id, version, obj} with ETag \"v<version>\"; 404 for a tombstone or unknown handle (no MCP tool)",
     gate: recordsGate(), handler: recordGet,
+  },
+  // The editing API core (HFY-TSK-182; editing.md 7.2): the edit bundle and the schema route, behind HFY_EDITING (404 for everyone while it is off).
+  // The schema route is listed first so /edit/schema/:cls is not read as /edit/:cls/:ref. Not MCP tools (hfy_records_get is edit-mcp-tools').
+  {
+    name: "edit.schema", method: "GET", path: "/edit/schema/:cls", summary: "The generated JSON Schema of one editable class: {class, schema, sha256, schemaHash}; 404 for a class with no schema (no MCP tool)",
+    gate: editingGate(), handler: schemaGet,
+  },
+  {
+    name: "edit.get", method: "GET", path: "/edit/:cls/:ref", summary: "The edit bundle for a record (ref = gramps_id or h:<handle>): {key, version, etag, obj, related, relation, viewer, policy, pending, customTypes, schemaHash}, through publishView and applyModOverlay; pending[] only what the viewer may see (no MCP tool)",
+    gate: editingGate(), handler: bundleGet,
   },
 ]);
 
