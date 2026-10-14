@@ -3,12 +3,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { decodeJwt } from "jose";
-import { DEV_OWNER_SUB, HELP, MEDIA_BUCKET, SYNC_BUCKET, createLocalS3, parseArgs, startDevServer } from "../scripts/sync-dev-server.mjs";
+import { DEV_OWNER_SUB, HELP, OWNED_DIR, MEDIA_BUCKET, SYNC_BUCKET, createLocalS3, parseArgs, startDevServer } from "../scripts/sync-dev-server.mjs";
 import { SYNC_CLIENT_ID } from "../src/sync/auth.js";
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
@@ -86,18 +87,98 @@ describe("the process around the handler", () => {
     expect(existsSync(dir)).toBe(false);
   });
 
-  it("keeps a caller-supplied data directory, empties its s3 folder at start, and writes the log mode 0600", async () => {
+  it("keeps a caller-supplied data directory, uses only its own folder in it, and writes the log mode 0600", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hfy-dev-test-"));
     dirs.push(dir);
+    mkdirSync(join(dir, "s3"));
+    writeFileSync(join(dir, "s3", "precious.txt"), "mine"); // the caller's own s3 folder and files are not the server's to touch
+    writeFileSync(join(dir, "requests.jsonl"), "mine");
     const first = await server({ dataDir: dir });
+    expect(first.dataDir).toBe(join(dir, OWNED_DIR));
     await first.s3.send(new PutObjectCommand({ Bucket: MEDIA_BUCKET, Key: "media/x.jpg", Body: "x" }));
     expect(await first.s3.list(MEDIA_BUCKET)).toEqual(["media/x.jpg"]);
     expect(statSync(first.logFile).mode & 0o777).toBe(0o600);
     await first.close();
     started.pop();
     expect(existsSync(dir)).toBe(true);
-    const second = await server({ dataDir: dir });
+    const second = await server({ dataDir: dir }); // its own store starts empty again
     expect(await second.s3.list(MEDIA_BUCKET)).toEqual([]);
+    expect(readFileSync(join(dir, "s3", "precious.txt"), "utf8")).toBe("mine");
+    expect(readFileSync(join(dir, "requests.jsonl"), "utf8")).toBe("mine");
+  });
+
+  it("refuses an hfy-sync-dev folder it did not make, and a log file that already holds something", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hfy-dev-test-"));
+    dirs.push(dir);
+    mkdirSync(join(dir, OWNED_DIR, "s3"), { recursive: true });
+    writeFileSync(join(dir, OWNED_DIR, "s3", "precious.txt"), "mine");
+    await expect(startDevServer({ dataDir: dir })).rejects.toThrow(/not a sync dev server folder/);
+    expect(readFileSync(join(dir, OWNED_DIR, "s3", "precious.txt"), "utf8")).toBe("mine");
+
+    const log = join(dir, "other.log");
+    writeFileSync(log, "keep me");
+    await expect(startDevServer({ logFile: log })).rejects.toThrow(/will not overwrite/);
+    expect(readFileSync(log, "utf8")).toBe("keep me");
+    await expect(startDevServer({ logFile: dir })).rejects.toThrow(/will not overwrite/); // a directory is not a log either
+    writeFileSync(log, ""); // an empty file is fine
+    const dev = await server({ logFile: log });
+    await fetch(`${dev.origin}/_dev/health`);
+    expect(logLines(dev)).toHaveLength(1);
+  });
+
+  it("a refused start leaves no temp directory and no flag behind", async () => {
+    const before = readdirSync(tmpdir()).filter((n) => n.startsWith("hfy-sync-dev-")).length;
+    const flag = process.env.SYNC_API_ENABLED;
+    const dir = mkdtempSync(join(tmpdir(), "hfy-dev-test-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "full.log"), "x");
+    await expect(startDevServer({ logFile: join(dir, "full.log") })).rejects.toThrow();
+    expect(readdirSync(tmpdir()).filter((n) => n.startsWith("hfy-sync-dev-")).length).toBe(before);
+    expect(process.env.SYNC_API_ENABLED).toBe(flag);
+  });
+
+  it("SYNC_API_ENABLED is reference-counted: servers may close in any order and the original value comes back", async () => {
+    const original = process.env.SYNC_API_ENABLED;
+    const a = await server();
+    const b = await server();
+    expect(process.env.SYNC_API_ENABLED).toBe("1");
+    await a.close(); // not the last one started
+    started.splice(started.indexOf(a), 1);
+    expect(process.env.SYNC_API_ENABLED).toBe("1"); // b is still running
+    expect((await api(b, undefined, "GET", "/sync/meta")).status).toBe(401); // the gate is open: it reaches authentication, not a 404
+    await b.close();
+    started.splice(started.indexOf(b), 1);
+    expect(process.env.SYNC_API_ENABLED).toBe(original);
+    await a.close(); // closing twice changes nothing
+    expect(process.env.SYNC_API_ENABLED).toBe(original);
+  });
+
+  it("refuses a declared oversize body before reading it, and drops the connection after answering", async () => {
+    const dev = await server();
+    const status = await new Promise((ok, fail) => {
+      const req = http.request({ host: "127.0.0.1", port: dev.port, path: "/api/sync/bind", method: "POST", headers: { "content-length": String(40 * 1024 * 1024), "content-type": "application/json" } }, (res) => {
+        res.resume();
+        ok({ code: res.statusCode, close: res.headers.connection });
+      });
+      req.on("error", fail);
+      req.write("{"); // one byte of a 40 MiB body: the answer must not wait for the rest
+    });
+    expect(status).toEqual({ code: 413, close: "close" });
+    expect(logLines(dev).find((l) => l.path === "/api/sync/bind")).toMatchObject({ status: 413, error: "batch_too_large" });
+  });
+
+  it("closes a connection that stalls mid-body", async () => {
+    const dev = await server({ requestTimeoutMs: 300 });
+    const closed = await new Promise((ok) => {
+      const sock = net.connect(dev.port, "127.0.0.1", () => {
+        sock.write(`POST /api/sync/bind HTTP/1.1\r\nHost: 127.0.0.1:${dev.port}\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{`);
+      });
+      sock.resume(); // read the 408 so the close is seen
+      sock.on("close", () => ok(true));
+      sock.on("error", () => ok(true));
+      setTimeout(() => ok(false), 3000);
+    });
+    expect(closed).toBe(true);
   });
 
   it("unknown routes are 404 and /api answers with the real handler's errors", async () => {
@@ -198,6 +279,29 @@ describe("the dev authorization endpoints", () => {
     // ...and the family is dead, the newest token included.
     expect((await tokenPost(dev, { grant_type: "refresh_token", refresh_token: second.refresh_token, client_id: SYNC_CLIENT_ID })).status).toBe(400);
     expect((await tokenPost(dev, { grant_type: "refresh_token", refresh_token: "hfyrt_unknown", client_id: SYNC_CLIENT_ID })).status).toBe(400);
+  });
+
+  it("an authorization code shown again is refused and revokes the family it produced", async () => {
+    const dev = await server();
+    const s = await signIn(dev);
+    const code = new URL(s.location).searchParams.get("code");
+    const fields = { grant_type: "authorization_code", code, redirect_uri: s.redirect, code_verifier: s.verifier, client_id: SYNC_CLIENT_ID, resource: s.resource };
+    const first = await (await tokenPost(dev, fields)).json();
+    expect(first.refresh_token).toBeTruthy();
+    const again = await tokenPost(dev, fields);
+    expect(again.status).toBe(400);
+    expect((await again.json()).error).toBe("invalid_grant");
+    // the refresh token the first redemption produced no longer works
+    const refresh = await tokenPost(dev, { grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: SYNC_CLIENT_ID });
+    expect(refresh.status).toBe(400);
+    expect((await refresh.json()).error_description).toMatch(/revoked/);
+    // a code that never produced anything (wrong verifier) revokes nothing
+    const other = await login(dev);
+    const s2 = await signIn(dev);
+    const code2 = new URL(s2.location).searchParams.get("code");
+    await tokenPost(dev, { ...fields, code: code2, code_verifier: "x".repeat(43) });
+    await tokenPost(dev, { ...fields, code: code2, code_verifier: s2.verifier });
+    expect((await tokenPost(dev, { grant_type: "refresh_token", refresh_token: other.refresh_token, client_id: SYNC_CLIENT_ID })).status).toBe(200);
   });
 
   it("the dev knobs set the access lifetime and revoke every family", async () => {
@@ -433,6 +537,16 @@ describe("the directory standing in for S3", () => {
     await expect(s3.send(new HeadObjectCommand({ Bucket: "bkt.test", Key: "a/b.bin" }))).rejects.toMatchObject({ name: "NotFound", $metadata: { httpStatusCode: 404 } });
     await expect(s3.send(new GetObjectCommand({ Bucket: "bkt.test", Key: "nope" }))).rejects.toMatchObject({ name: "NoSuchKey" });
     await expect(s3.send(new CopyObjectCommand({ Bucket: "bkt.test", Key: "d", CopySource: "bkt.test/nope" }))).rejects.toMatchObject({ name: "NoSuchKey" });
+  });
+
+  it("writes through <root>/tmp and renames, so listings and readers never see a partial file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hfy-dev-s3-"));
+    dirs.push(dir);
+    const s3 = createLocalS3(dir);
+    await Promise.all(Array.from({ length: 8 }, (_, i) => s3.send(new PutObjectCommand({ Bucket: "bkt.test", Key: `k/${i}`, Body: Buffer.alloc(64 * 1024, i), ContentType: "application/x-test" }))));
+    expect(await s3.list("bkt.test")).toEqual(Array.from({ length: 8 }, (_, i) => `k/${i}`));
+    expect(readdirSync(join(dir, "tmp"))).toEqual([]); // every temporary file was renamed away
+    expect((await s3.read("bkt.test", "k/3")).contentType).toBe("application/x-test");
   });
 
   it("refuses keys that would leave the bucket directory", async () => {

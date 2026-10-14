@@ -4,7 +4,13 @@
              config.json; then the cloud bind with what the sidecar recorded (POST /api/sync/bind through the addon's own transport).
     status   `hfy-sync status` exits 0 and reports the tree bound; the cloud's handshake says the same.
     check    the empty check: the cloud holds nothing, and a snapshot of it verifies the way the addon will (gzip, header, hash, count 0).
-    log      the dev server's log holds every request, and nothing of the tree's content or any credential.
+             This is a TRANSPORT-level check: the addon has no `check` command yet, so the scenario reads the cloud snapshot through the
+             addon's transport and verifies it itself. FOLLOW-UP (addon-pull-apply): replace it with the addon's own `check` run against the
+             server, so the addon, not the test, does the verifying.
+    log      the dev server's log holds every request, and nothing of the tree's content or any credential. The "no tree content" grep is
+             meaningful for THIS scenario only: a bind sends ids and hashes. The log embeds JSON bodies as written, so a scenario that pushes
+             objects would log them by design; when push scenarios arrive (addon-push), redact tree objects in the log or move the negative
+             grep to a scenario about redaction. The credential grep holds for every scenario.
 
 Fictional data only. The names searched for in the log are read from the committed fixture at run time and never printed.
 """

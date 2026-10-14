@@ -486,6 +486,8 @@ gramps/tests/e2e/run.sh                          # all of them
 gramps/tests/e2e/run.sh scenario_smoke.py        # bind, status, the empty check, and the request-log greps
 ```
 
+The smoke scenario's "empty check" reads the cloud's snapshot through the addon's transport and verifies it in the test, because the addon has no `check` command yet; the addon-pull-apply task replaces it with the addon's own `check` run against this server.
+
 `run.sh` is [the Gramps lane's runner](install-the-gramps-sync-addon.md) with this folder as the lane. It makes a throwaway `GRAMPSHOME` and `HOME`, imports the fixture once into a template tree, copies the template for each scenario file, and runs the file inside the bundled Python under the audit hook that forbids the real Gramps and Pictures folders. It exits `1` when any scenario or any of its negative controls fails. The login Keychain is never used: the scenarios sign in through a Keychain held in memory.
 
 Each scenario test starts its own server, [`api/scripts/sync-dev-server.mjs`](../../api/scripts/sync-dev-server.mjs), on an ephemeral `127.0.0.1` port and stops it at the end, so no test sees another's cloud state. The server serves the real `/api/sync/*` handler over an in-memory table, a temporary directory in place of S3, and a development sign-in server that issues short-lived tokens for a synthetic owner. To run it by hand:
@@ -495,9 +497,13 @@ node api/scripts/sync-dev-server.mjs --port 0         # prints one JSON line wit
 node api/scripts/sync-dev-server.mjs --help
 ```
 
-It writes every request to `requests.jsonl` in its data directory (`--log-file` moves it) before it answers: one JSON object per line, a JSON body embedded as written, so a test can `grep` for `"dbid":"…"` and for the absence of a name. The `Authorization` header is never logged, and the sign-in endpoint's body is logged as field names only. `/_dev/head` (`PATCH`) sets the store's switches (`writes_enabled`, `seeded`, `merges_enabled`, `min_client`) in place of `sync-admin`, and `/_dev/auth` (`PATCH`) sets the access-token lifetime or revokes every sign-in.
+It writes every request to `requests.jsonl` in its data directory (`--log-file` moves it) before it answers: one JSON object per line, a JSON body embedded as written, so a test can `grep` for `"dbid":"…"` and for the absence of a name. The `Authorization` header is never logged, and the sign-in endpoint's body is logged as field names only. Because bodies are logged as written, the "no tree content in the log" grep means something only for requests that carry ids and hashes, as the bind scenario's do. A scenario that pushes objects needs those redacted in the log first, or its negative grep moved to a redaction scenario. The credential grep holds for every scenario.
 
-The server is a development tool: it binds loopback only, refuses a request whose `Host` is not its own address, and keeps nothing after it exits. It has no deployed route; [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) leaves `api/scripts/` out of the Lambda package.
+`--data-dir DIR` keeps `DIR` and uses only a folder the server owns inside it, `DIR/hfy-sync-dev/`, whose `s3/` store it empties at every start (the table is in memory, so a leftover object would be an orphan). It never touches anything else in `DIR`, refuses an existing `hfy-sync-dev/` it did not make, and refuses a `--log-file` that names a file that already has content. With no `--data-dir` the server makes a temporary directory and removes it on exit.
+
+`/_dev/head` (`PATCH`) sets the store's switches (`writes_enabled`, `seeded`, `merges_enabled`, `min_client`) in place of `sync-admin`, and `/_dev/auth` (`PATCH`) sets the access-token lifetime or revokes every sign-in. These switches, the presigned `PUT`/`GET` store under `/_s3/` and the token-lifetime knob are reserved for the later scenarios (push conflicts, media, step-up, lost-response replay); the smoke and sign-in scenarios do not use them, and only the server's own vitest suite does.
+
+The server is a development tool: it binds loopback only, refuses a request whose `Host` is not its own address, and keeps nothing after it exits. Its `/auth/authorize` endpoint has no sign-in page and approves any well-formed sign-in request for the synthetic owner at once, for any loopback port, so any process on the machine can obtain an owner token for the synthetic data. Run it only on a machine you trust, and never point it at real data. It has no deployed route; [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) leaves `api/scripts/` out of the Lambda package.
 
 ### 14. Run the graph builder tests (offline)
 

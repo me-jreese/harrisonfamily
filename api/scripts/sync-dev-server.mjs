@@ -6,7 +6,8 @@
 //                                        [--id-policy mint|assign] [--keep]
 //
 //   /api/*                   createHandler() from src/handler.js with the in-memory table (test/fake-ddb.js), the sync-bearer authenticator
-//                            (src/sync/auth.js) and the production routes, unchanged. SYNC_API_ENABLED is set to 1 for this process only.
+//                            (src/sync/auth.js) and the production routes, unchanged. SYNC_API_ENABLED is set to 1 for this process only
+//                            (reference-counted, so several servers in one process each restore it correctly in any close order).
 //   /auth/authorize          the dev authorization endpoint: validates the PKCE request the addon sends and, with no sign-in page, approves it
 //                            at once for the dev owner (a synthetic gramps-owner subject) and redirects to the loopback callback with code,
 //                            state and iss. `prompt=login` is a step-up: the token then carries amr "mfa" and a fresh auth_time.
@@ -17,22 +18,34 @@
 //                            handler's own S3 client (Head, Get, Put, Copy, Delete) is the same directory. A signed PUT is refused unless the
 //                            Content-Type, Content-Length and x-amz-checksum-sha256 it was signed for arrive with matching bytes.
 //   /_dev/*                  health, state, the SYNC#HEAD switches (writes_enabled, seeded, merges_enabled, min_client, ...) and the auth knobs.
+//                            These switches, the presigned PUT/GET store and the token-lifetime knob are reserved for the later scenarios (push
+//                            conflicts, media, step-up, lost-response replay: addon-push, addon-media); the scenarios of this task do not use them.
 //
 // REQUEST LOG. Every request is appended to <data-dir>/requests.jsonl (--log-file) BEFORE its response is sent, so a test that has the response can
 // grep the log for the request: one JSON object per line with method, path, query, status, the error code, byte counts, the body's sha256 and the
 // body itself: a JSON body as an embedded JSON value (grep for "gramps_id":"I0001" as written, no escaping), any other text as `body_text`, a binary
 // body (a blob PUT) as its hash and size only. The Authorization header is never logged. The bodies of /auth/token, which carry codes and refresh
 // tokens, are logged as the names of their fields only. The file is mode 0600 and lives in the data directory, which holds only synthetic data.
+// The log embeds tree content as written (a push body holds the objects it sends), so a "tree content is absent from the log" assertion is
+// meaningful only for runs whose requests carry ids and hashes (bind, status); a scenario that pushes needs redaction first.
+//
+// DATA DIRECTORY. The server owns one folder: a fresh temporary directory, or <data-dir>/hfy-sync-dev/ when --data-dir is given. It empties only that
+// folder's s3/ store at start (the table is in memory, so a leftover object would be an orphan); anything else in a caller's directory is never
+// touched, and an existing hfy-sync-dev/ that does not carry this server's marker file is refused rather than emptied. A --log-file that names
+// an existing non-empty file is refused, not truncated.
 //
 // SCOPE. 127.0.0.1 (or ::1) only; a request whose Host header is not the server's own address is refused (421), so a web page cannot reach it by DNS
-// rebinding. The table, the key and the refresh tokens live in memory; the S3 directory and the log are removed on exit unless --keep or a
-// caller-supplied --data-dir is given. Nothing here is deployed: scripts/ci/package-api.sh drops api/scripts from the Lambda zip.
+// rebinding. /auth/authorize is unauthenticated BY DESIGN: it has no sign-in page and approves any well-formed PKCE request for the dev owner
+// at once, for any loopback port, so any local process (or any page that can send a request to this port) can obtain an owner token for the
+// synthetic data. That is why the server is loopback-only, holds only synthetic data and lives only as long as one test run. Do not point it at
+// anything real. The table, the key and the refresh tokens live in memory; the S3 directory and the log are removed on exit unless --keep or a
+// caller-supplied --data-dir is given (then only its hfy-sync-dev/ folder is left, as the caller asked). Nothing here is deployed: scripts/ci/package-api.sh drops api/scripts from the Lambda zip.
 //
 // In-process use (the vitest suite, api/test/sync-dev-server.test.js): `const dev = await startDevServer({...}); ... await dev.close()`.
 import http from "node:http";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -111,13 +124,21 @@ export function createLocalS3(root) {
     }
     return { bytes, contentType: meta.contentType ?? "application/octet-stream", metadata: meta.metadata ?? {}, cacheControl: meta.cacheControl };
   };
+  // Each file is written to <root>/tmp and renamed into place, so a reader never sees half a file; the description goes first, so an object
+  // that exists always has the description it was written with (and a crash leaves at most a description with no object).
+  const tmp = join(resolve(root), "tmp");
+  const put = async (file, data) => {
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+    await mkdir(tmp, { recursive: true, mode: 0o700 });
+    const t = join(tmp, randomUUID());
+    await writeFile(t, data, { mode: 0o600 });
+    await rename(t, file);
+  };
   const write = async (bucket, key, bytes, { contentType, metadata, cacheControl } = {}) => {
     const file = where(objects, bucket, key);
-    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-    await writeFile(file, bytes, { mode: 0o600 });
     const m = where(metas, bucket, key, ".json");
-    await mkdir(dirname(m), { recursive: true, mode: 0o700 });
-    await writeFile(m, JSON.stringify({ contentType, metadata: metadata ?? {}, cacheControl }), { mode: 0o600 });
+    await put(m, JSON.stringify({ contentType, metadata: metadata ?? {}, cacheControl }));
+    await put(file, bytes);
   };
   const toBytes = (body) => (typeof body === "string" ? Buffer.from(body, "utf8") : Buffer.from(body ?? []));
   return {
@@ -193,6 +214,7 @@ export function createDevAuth({ origin, ownerSub = DEV_OWNER_SUB, accessTtlSecon
   const issuer = `${origin}/auth`;
   const audience = `${origin}/api/sync`;
   const codes = new Map(); // code -> request
+  const redeemed = new Map(); // code -> the refresh family it produced (a code shown again revokes that family: RFC 6749 4.1.2, BCP 9700)
   const refreshTokens = new Map(); // token -> { family, used }
   const families = new Map(); // family -> { revoked, authTime, amr }
   const state = { accessTtlSeconds };
@@ -245,6 +267,10 @@ export function createDevAuth({ origin, ownerSub = DEV_OWNER_SUB, accessTtlSecon
     if (f.grant_type === "authorization_code") {
       const req = codes.get(f.code ?? "");
       codes.delete(f.code ?? ""); // one use, whatever the outcome
+      if (!req && redeemed.has(f.code ?? "")) {
+        families.get(redeemed.get(f.code)).revoked = true; // a used code shown again: whoever holds the tokens it produced is not trusted
+        return bad("the code was already used");
+      }
       if (!req || req.expires < now()) return bad("the code is unknown, used or expired");
       if (f.redirect_uri !== req.redirectUri) return bad("redirect_uri does not match");
       if (!f.code_verifier || !safeEq(b64u(createHash("sha256").update(f.code_verifier).digest()), req.challenge)) return bad("the PKCE verifier does not match");
@@ -252,6 +278,7 @@ export function createDevAuth({ origin, ownerSub = DEV_OWNER_SUB, accessTtlSecon
       const authTime = Math.floor(now() / 1000);
       const amr = req.stepUp ? ["pwd", "mfa"] : ["pwd"];
       families.set(family, { revoked: false, authTime, amr });
+      redeemed.set(f.code, family);
       return { status: 200, body: await tokenBody(family) };
     }
     if (f.grant_type === "refresh_token") {
@@ -313,14 +340,19 @@ function createSigner(origin, now) {
 // ---- the server -------------------------------------------------------------------------------------------------------------
 
 const readBody = (req, limit) => new Promise((resolveBody, reject) => {
+  const declared = Number(req.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > limit) { // refused before one byte is read
+    reject(Object.assign(new Error("body too large"), { status: 413, unread: true }));
+    return;
+  }
   const chunks = [];
   let size = 0;
   req.on("data", (c) => {
     size += c.length;
     if (size > limit) {
-      reject(Object.assign(new Error("body too large"), { status: 413 }));
-      req.destroy();
-    } else chunks.push(c);
+      reject(Object.assign(new Error("body too large"), { status: 413 })); // the rest is read and dropped; the answer closes the connection
+      chunks.length = 0;
+    } else if (size - c.length <= limit) chunks.push(c);
   });
   req.on("end", () => resolveBody(Buffer.concat(chunks)));
   req.on("error", reject);
@@ -339,9 +371,35 @@ const header = (req, name) => {
   return Array.isArray(v) ? v[v.length - 1] : v;
 };
 
+// SYNC_API_ENABLED is process-global (syncGate() reads it on each call), so servers sharing a process share it: the first one in sets it to 1 and
+// remembers what it was, the last one out puts that back, in whatever order they close.
+const syncFlag = { users: 0, before: undefined };
+function holdSyncFlag() {
+  if (syncFlag.users === 0) {
+    syncFlag.before = process.env.SYNC_API_ENABLED;
+    process.env.SYNC_API_ENABLED = "1";
+  }
+  syncFlag.users += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    syncFlag.users -= 1;
+    if (syncFlag.users === 0) {
+      if (syncFlag.before === undefined) delete process.env.SYNC_API_ENABLED; else process.env.SYNC_API_ENABLED = syncFlag.before;
+    }
+  };
+}
+
+export const OWNED_DIR = "hfy-sync-dev"; // the folder inside a caller-supplied --data-dir that the server owns
+const OWNED_MARKER = ".hfy-sync-dev";
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 /**
- * Starts the server. Options: port (0 = any), dataDir (default a fresh temp directory, removed at close unless keep), logFile, ownerSub,
- * accessTtlSeconds, idPolicy ("mint"|"assign"), keep, now. Returns { origin, port, dataDir, logFile, auth, ddb, s3, close() }.
+ * Starts the server. Options: port (0 = any), dataDir (default a fresh temp directory, removed at close unless keep; a supplied one is kept, and
+ * only its hfy-sync-dev/ folder is used), logFile (refused when it names an existing non-empty file), ownerSub, accessTtlSeconds,
+ * idPolicy ("mint"|"assign"), keep, requestTimeoutMs, now. Returns { origin, port, dataDir, logFile, auth, ddb, s3, close() }, where dataDir is
+ * the folder the server owns (s3/ and requests.jsonl live there).
  */
 export async function startDevServer(opts = {}) {
   const cleanup = [];
@@ -353,17 +411,25 @@ export async function startDevServer(opts = {}) {
   }
 }
 
-async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, ownerSub = DEV_OWNER_SUB, accessTtlSeconds = DEFAULT_ACCESS_TTL_S, idPolicy, keep = false, now = () => Date.now() }, cleanup) {
+async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, ownerSub = DEV_OWNER_SUB, accessTtlSeconds = DEFAULT_ACCESS_TTL_S, idPolicy, keep = false, requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, now = () => Date.now() }, cleanup) {
   if (!LOOPBACK_HOSTS.has(host)) throw new Error("the sync dev server binds a loopback address only");
-  const envBefore = process.env.SYNC_API_ENABLED;
-  process.env.SYNC_API_ENABLED = "1"; // syncGate() reads it on each call; restored at close
   const ownsDir = dataDir === undefined;
-  const dir = resolve(dataDir ?? mkdtempSync(join(tmpdir(), "hfy-sync-dev-")));
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (ownsDir) cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
-  cleanup.push(() => { if (envBefore === undefined) delete process.env.SYNC_API_ENABLED; else process.env.SYNC_API_ENABLED = envBefore; });
-  rmSync(join(dir, "s3"), { recursive: true, force: true }); // a fresh store: the table is in memory, so a leftover object would be an orphan
+  const root = resolve(dataDir ?? mkdtempSync(join(tmpdir(), "hfy-sync-dev-")));
+  const dir = ownsDir ? root : join(root, OWNED_DIR);
+  if (ownsDir) cleanup.push(() => rmSync(dir, { recursive: true, force: true })); // before any refusal below, so a refused start leaves nothing behind
+  if (!ownsDir && existsSync(dir) && !existsSync(join(dir, OWNED_MARKER))) {
+    throw new Error(`${dir} exists and is not a sync dev server folder; remove it or name another --data-dir`);
+  }
+  if (!ownsDir && existsSync(root) && !statSync(root).isDirectory()) throw new Error(`${root} is not a directory`);
   const logPath = resolve(logFile ?? join(dir, "requests.jsonl"));
+  if (logFile !== undefined && existsSync(logPath) && (!statSync(logPath).isFile() || statSync(logPath).size > 0)) {
+    throw new Error(`${logPath} exists and is not empty; the sync dev server will not overwrite it`);
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!ownsDir) writeFileSync(join(dir, OWNED_MARKER), "owned by api/scripts/sync-dev-server.mjs: its s3/ store is emptied at every start\n", { mode: 0o600 });
+  const releaseSyncFlag = holdSyncFlag(); // syncGate() reads SYNC_API_ENABLED on each call
+  cleanup.push(releaseSyncFlag);
+  rmSync(join(dir, "s3"), { recursive: true, force: true }); // a fresh store: the table is in memory, so a leftover object would be an orphan
   mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
   closeSync(openSync(logPath, "w", 0o600));
 
@@ -374,7 +440,9 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
   const log = { warn() {}, error: (m, d) => process.stderr.write(`sync-dev-server: ${m} ${JSON.stringify(d ?? {})}\n`) };
 
   // The server needs its own address before the handler is built (the issuer and the audience carry it), and the address needs the port.
-  const server = http.createServer();
+  const server = http.createServer({
+    requestTimeout: requestTimeoutMs, headersTimeout: Math.min(10_000, requestTimeoutMs), connectionsCheckingInterval: Math.min(1000, requestTimeoutMs),
+  });
   cleanup.push(() => new Promise((ok) => { server.close(() => ok()); server.closeAllConnections?.(); }));
   await new Promise((ok, fail) => {
     server.once("error", fail);
@@ -520,8 +588,8 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
         out = await route(req, res, url, body);
       }
     } catch (e) {
-      out = e.status === 413 ? json(413, { error: "batch_too_large", message: "the request body is too large" }) : json(500, { error: "internal", message: "internal error" });
-      if (e.status !== 413) log.error("unhandled", { name: e?.name });
+      out = e.status === 413 ? { ...json(413, { error: "batch_too_large", message: "the request body is too large" }), close: true } : json(500, { error: "internal", message: "internal error" });
+      if (e.status !== 413 && !req.destroyed) log.error("unhandled", { name: e?.name }); // a client that went away mid-body is not news
     }
     // The log line first, then the response: a client that has its answer can already grep the log.
     entry.status = out.status;
@@ -555,7 +623,7 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       log.error("request log write failed", { name: e?.name });
     }
     const payload = Buffer.isBuffer(out.body) ? out.body : Buffer.from(out.body ?? "", "utf8");
-    res.writeHead(out.status, { "content-length": String(payload.length), ...out.headers });
+    res.writeHead(out.status, { "content-length": String(payload.length), ...out.headers, ...(out.close ? { connection: "close" } : {}) });
     res.end(req.method === "HEAD" ? undefined : payload);
   });
 
@@ -566,7 +634,7 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
         server.close(() => ok());
         server.closeAllConnections?.();
       });
-      if (envBefore === undefined) delete process.env.SYNC_API_ENABLED; else process.env.SYNC_API_ENABLED = envBefore;
+      releaseSyncFlag();
       if (ownsDir && !keep) rmSync(dir, { recursive: true, force: true });
     },
   };
@@ -576,7 +644,9 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
 
 export const HELP = `usage: node api/scripts/sync-dev-server.mjs [--port N] [--data-dir DIR] [--log-file FILE] [--owner-sub ID]
                                             [--access-ttl SECONDS] [--id-policy mint|assign] [--keep]
-Serves /api/sync/*, the dev /auth endpoints and the presigned-URL store on 127.0.0.1. Prints one JSON line when it is listening. Stop it with SIGTERM.`;
+Serves /api/sync/*, the dev /auth endpoints and the presigned-URL store on 127.0.0.1. Prints one JSON line when it is listening. Stop it with SIGTERM.
+--data-dir DIR keeps DIR and uses only DIR/${OWNED_DIR}/ in it (its s3/ store is emptied at start). --log-file FILE must not name a non-empty file.
+/auth/authorize signs in the synthetic owner with no prompt: run this server only on a machine you trust, for synthetic data.`;
 
 export function parseArgs(argv) {
   const o = {};
