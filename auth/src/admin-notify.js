@@ -13,14 +13,16 @@ export const INBOX_TTL = Object.freeze({ unreadTtlDays: null, readTtlDays: 90 })
  * - `principals()` returns the admin principals (createAdminDirectory).
  * - `featureOn(name)` returns whether a flag is on (createFlagReader); omitted means the inbox is off.
  * - `store` is a NotificationStore; by default a DynamoNotificationStore on `ddb`, `cmds` and `table`.
+ * The inbox write is gated on the `inboxV1` flag (BRD2 D2-28), failing closed: inboxV1 must be on BEFORE ACCESS_REQUESTS is flipped (RG-4
+ * flip checklist), or the admin inbox item will not appear and the admin email is the only notice.
  * `notifyNewRequest()` resolves to { stored, failed } and never rejects.
  */
 export function createAdminInbox({ principals, featureOn, ddb, cmds, table, store, log = console }) {
   const inbox = store ?? new DynamoNotificationStore(ddb, cmds, table, { ...INBOX_TTL });
   const deliver = createDelivery({
     registry: TEMPLATE_REGISTRY, store: inbox,
-    // fixed labels only: the kit's log data holds a feature name and an error name, but nothing is forwarded beyond the label
-    log: (event) => log.error?.(JSON.stringify({ msg: "admin inbox", event })),
+    // the kit calls log(name, data): forward the label and data.error (an error name) only, never the rest of the data
+    log: (event, data) => log.error?.(JSON.stringify({ msg: "admin inbox", event, error: typeof data?.error === "string" ? data.error : undefined })),
   });
   return {
     async notifyNewRequest() {

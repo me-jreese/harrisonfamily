@@ -33,10 +33,12 @@ export const REQUEST_TTL_SECONDS = 90 * 86400;
 /** The most admin addresses one request mails. */
 export const MAX_ADMIN_MAILS = 10;
 /**
- * Q2-11(a), living people's current city: the default is yes (city and state only, the year moved). io has not recorded an answer, so
- * the submit passes it to validateForm explicitly (shared/legacy-form.mjs). A "no" is this one value: the form then never collects it.
+ * Q2-11(a), living people's current city: io has not recorded an answer, so this defaults to the privacy-preserving no: the form never collects it.
+ * Flip to true (city and state only, the year moved) only when io answers yes; that answer is a precondition of RG-4.
+ * The submit passes it to validateForm explicitly (shared/legacy-form.mjs).
+ * Bad, expired or used tickets answer 403 {detail:"ticket_expired"} (AC and BRD2), not the 401 that surfaces.md 7.2 still shows; join-page code against 403.
  */
-export const STORE_CURRENT_CITY = true;
+export const STORE_CURRENT_CITY = false;
 
 /**
  * Surfaces.md 7.5, in the order they are applied. They run one after the other and stop at the first denial, so a request that a narrow

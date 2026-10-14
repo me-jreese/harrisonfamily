@@ -427,7 +427,9 @@ describe("one transaction", () => {
     expect(req.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(req.PK).toBe(requestKey(req.id).PK);
     expect(req.GSI1SK).toBe(req.id);
-    expect(req.form).toEqual({ ...FORM });
+    // Q2-11(a) is unanswered, so the current city is not stored (STORE_CURRENT_CITY = false)
+    const { currentPlace: _dropped, ...STORED } = FORM;
+    expect(req.form).toEqual(STORED);
     expect(req.form.email).toBeUndefined();
     expect(REQUEST_TTL_SECONDS).toBe(90 * 86400);
     const guard = m.doc.rows.get(keyOf(requestEmailKey(hash(EMAIL))));
@@ -439,7 +441,7 @@ describe("one transaction", () => {
     const m = setup();
     await m.submit(submitBody({ form: { ...FORM, birthDate: "1980-03-04", birthMonth: 3, extra: "x" } }));
     const [[, req]] = m.rowsWith("ACCESSREQ#");
-    expect(Object.keys(req.form).sort()).toEqual(Object.keys(FORM).sort());
+    expect(Object.keys(req.form).sort()).toEqual(Object.keys(FORM).filter((k) => k !== "currentPlace").sort());
     expect(JSON.stringify(req)).not.toMatch(/1980-03|birthMonth|birthDate/);
   });
 
