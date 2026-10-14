@@ -66,15 +66,18 @@ describe("field-policy.md", () => {
   });
 });
 
+// Error codes are a smoke check only (any three-digit code in the last column); they are not verified against the handlers.
+const EXPECTED_ROUTES = ["changes.post", "edit.get", "edit.schema", "me.get", "proposals.amend", "proposals.decide", "proposals.get", "proposals.list", "proposals.withdraw", "relationships.post", "relationships.preview"];
 describe("api.md editing routes", () => {
   const routes = [...read("api/src/routes.js").matchAll(/name: "([a-zA-Z.]+)", method: "([A-Z]+)", path: "([^"]+)"/g)]
     .map(([, name, method, path]) => ({ name, method, path }))
-    .filter((r) => /^(edit|changes|relationships|proposals)\./.test(r.name));
+    .filter((r) => /^(me|edit|changes|relationships|proposals)\./.test(r.name));
   const api = read("docs/reference/api.md");
   const glance = api.slice(api.indexOf("## Editing routes at a glance"), api.indexOf("## Editing API core"));
 
   it("finds the editing routes", () => {
-    assert.ok(routes.length >= 10, `found ${routes.length}`);
+    // The exact set: a new or removed editing route must be added here and to the table. The route regex needs one entry per line.
+    assert.deepEqual(routes.map((r) => r.name).sort(), EXPECTED_ROUTES, "editing route set changed");
   });
 
   for (const r of routes) {

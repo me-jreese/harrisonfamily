@@ -5,7 +5,9 @@
 //
 // For each inline link `[text](target)` outside a code block, a relative target must name an existing file or directory, and a
 // `#fragment` on a Markdown target must match a heading of that page (GitHub's slug rule). External links, mailto: and bare
-// fragments of the same page are checked too (the page's own headings). Exit 1 and one line per broken link on any failure.
+// fragments of the same page are checked too (the page's own headings).
+// Known limits: a target containing parentheses ends at the first ')', link text containing ']' is skipped, reference-style links and
+// HTML anchors are not checked, and duplicate headings are not numbered the way GitHub does. Exit 1 and one line per broken link on any failure.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

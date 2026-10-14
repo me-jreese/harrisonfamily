@@ -1131,7 +1131,7 @@ One `GID#` write per distinct id decides the batch as a whole, so a swap or a ro
 
 ## Editing routes at a glance
 
-Every route below is behind the `HFY_EDITING` switch (`404 not_found` to everyone while the stack parameter `HfyEditing` is not `on`, the gate running before the `401`), is not an MCP tool, and needs a signed-in session (`401 unauthenticated`). Errors use the [error shape](#error-shape). The sections after this table hold the rules; this table is the lookup. For who may save which field, see [Field policy](field-policy.md); for how it fits together, see [How editing and suggested changes work](../explanation/editing-and-proposals.md).
+Every route below except `GET /api/me` is behind the `HFY_EDITING` switch (`404 not_found` to everyone while the stack parameter `HfyEditing` is not `on`, the gate running before the `401`), is not an MCP tool, and needs a signed-in session (`401 unauthenticated`). Errors use the [error shape](#error-shape). The sections after this table hold the rules; this table is the lookup. For who may save which field, see [Field policy](field-policy.md); for how it fits together, see [How editing and suggested changes work](../explanation/editing-and-proposals.md).
 
 | Route | Request | Success | Error codes |
 | --- | --- | --- | --- |

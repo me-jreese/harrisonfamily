@@ -40,11 +40,11 @@ Approval writes the records, the audit entry and the proposer's credit in one tr
 
 ## Relationships get their own wizard
 
-Adding a parent, a child or a spouse is the hardest edit in Gramps: it takes a family record with two-sided links, child order and sometimes a new person. Members describe an intent ("add this person as my child") and the server compiles the operations ([Relationship compiler](../reference/api.md#relationship-compiler)). The compile reports likely duplicates and asks the member to confirm that a new name is a different person, and it refuses a change that would make someone their own ancestor. Because a relationship touches other people's pages, a member's relationship is always a suggestion.
+Adding a parent, a child or a spouse is the hardest edit in Gramps: it takes a family record with two-sided links, child order and sometimes a new person. The routes are available now. The wizard page ships in a later task, behind its own default-off flag, `relationshipWizard`. Members will describe an intent ("add this person as my child") and the server compiles the operations ([Relationship compiler](../reference/api.md#relationship-compiler)). The compile reports likely duplicates and asks the member to confirm that a new name is a different person, and it refuses a change that would make someone their own ancestor. Because a relationship touches other people's pages, a member's relationship is always a suggestion.
 
 ## Mistakes can be undone
 
-A direct save returns the inverse operations against the new versions, and the editor offers `undo` for ten minutes. Everything is audited with counts and field names, never values. A deletion cannot be undone from the web, because Gramps IDs are never reused; that is also why a delete is destructive for the step-up rule. A bad approval is corrected with a new change or by io in Gramps.
+A direct save returns the inverse operations against the new versions, and the editor offers `undo` for ten minutes (the client timer `UNDO_WINDOW_MS` in `islands/src/lib/editor-save.js`). Everything is audited with counts and field names, never values. A deletion cannot be undone from the web, because Gramps IDs are never reused; that is also why a delete is destructive for the step-up rule. A bad approval is corrected with a new change or by io in Gramps.
 
 ## Why it ships dark
 

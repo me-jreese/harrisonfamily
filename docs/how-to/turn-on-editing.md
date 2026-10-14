@@ -50,7 +50,7 @@ Use a test person or a synthetic page for this; undo what you change.
 
 ### 4. Check the page audits
 
-Before the flip, confirm the editor meets the interface checks (16 px inputs, 44 px targets, no horizontal scroll at 375 px wide, and the installed phone app) as recorded by the end-to-end audit task. This page does not repeat them.
+Before the flip, confirm the editor meets the interface checks (16 px inputs, 44 px targets, no horizontal scroll at 375 px wide, and the installed phone app) as recorded by the end-to-end editing audit (`edit-e2e-core`, the D-11 checklist in the PLN-002 task list). This page does not repeat them.
 
 ### 5. Flip the flags for everyone, in this order
 
@@ -58,7 +58,8 @@ With io's approval for each, change `11ty/_data/flags.json` and deploy ([Turn a 
 
 1. `proposalReview` first: only admins get the tab.
 2. `recordEdit` next: everyone gets the editor.
-3. `photoTagEdit` later, with its own approval; it needs `recordEdit`.
+3. `relationshipWizard` joins the order here once its island task lands. That flag is not in `11ty/_data/flags.json` yet; until it is, the wizard routes exist but have no page.
+4. `photoTagEdit` separately, with its own approval and its own audit. The design requires `recordEdit` to be live first (BRD2 flag table, `photoTagEdit` row).
 
 ### 6. Check it for everyone
 
