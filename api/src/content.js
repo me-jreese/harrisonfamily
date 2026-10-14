@@ -106,7 +106,10 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
    * `updated_at` that `before` was read with, so a concurrent change cancels this write (409 conflict) instead of being
    * silently overwritten, and the audit `before` is exactly the state this write replaced.
    */
-  /** The post credit (D2-17): 1 for the post plus 1 per image. Counted once per post: the caller stores `post.contrib` from the result. */
+  /**
+   * The post credit (D2-17): 1 for the post plus 1 per image, counted once per post at its first publish: the caller stores `post.contrib`
+   * from the result. Photos added by a later edit are not credited, and a delete revokes the stored event, so it returns exactly what was credited.
+   */
   const creditPost = (post, at) =>
     contribOps({
       actor: { id: post.author.id, label: post.author.label }, kind: "post", ref: { type: "post", id: post.id },
@@ -235,7 +238,10 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
         ops = creditPost(next, next.updated_at);
         next.contrib = { id: ops.event.id };
       } else if (current.contrib && (visibility === "published") !== (current.visibility === "published")) {
-        ops = hideOps({ actor: current.author, id: current.contrib.id }, visibility !== "published");
+        // Hide only an event that exists: a post whose event is missing (an orphan link the backfill repairs) must still withdraw and
+        // republish, not fail with a 409 on the hide's condition.
+        const event = await getEvent({ ddb, cmds, table }, current.author.id, current.contrib.id);
+        if (event) ops = hideOps({ actor: current.author, id: current.contrib.id }, visibility !== "published");
       }
       await commit("visibility", id, before, next, next.updated_at, ops ? { ops } : {});
       return view(next);

@@ -221,23 +221,41 @@ export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), ui
       if (e) events.set(c.id, e);
     }));
   }
+  // Each batch entry keeps its row, so a retry can rebuild the revokes from fresh events.
+  const opsFor = (row) => (events.has(row.comment?.id) ? revokeOps(events.get(row.comment.id)) : emptyOps());
+  const refresh = async (batchRows) => {
+    for (const row of batchRows.filter((r) => r.SK.startsWith("C#") && r.comment?.contrib)) {
+      const e = await getEvent({ ddb, cmds, table }, row.comment.author.id, row.comment.contrib.id);
+      if (e) events.set(row.comment.id, e);
+      else events.delete(row.comment.id);
+    }
+  };
   let batch = [];
+  const build = () => mergeOps(...batch.flatMap(({ frag, row }) => [frag, opsFor(row)]));
   const flush = async () => {
-    if (batch.length > 0) await transact(ddb, cmds, table, mergeOps(...batch));
+    if (batch.length === 0) return;
+    try {
+      await transact(ddb, cmds, table, build());
+    } catch (e) {
+      // A revoke deletes its event only if it still exists. If the comment's author deleted it between our read and this batch, the
+      // condition fails and the whole batch is cancelled. Re-read the batch's events (the vanished one has already been revoked by that
+      // delete, so it drops out) and commit once more. Busy and store failures are not retried here: transact() already did.
+      if (!(e instanceof TxnCancelled) || e.kind !== "condition") throw e;
+      await refresh(batch.map(({ row }) => row));
+      await transact(ddb, cmds, table, build());
+    }
     batch = [];
   };
   let removed = 0;
   for (const row of rows) {
     const isComment = row.SK.startsWith("C#") && row.comment;
     const frag = { puts: [], deletes: [{ PK: row.PK, SK: row.SK }] };
-    let ops = emptyOps();
     if (isComment) {
       const at = new Date(now()).toISOString();
       frag.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
-      if (events.has(row.comment.id)) ops = revokeOps(events.get(row.comment.id));
     }
-    if (batch.length > 0 && mergedSize(...batch, frag, ops) > 100) await flush();
-    batch.push(frag, ops);
+    if (batch.length > 0 && mergedSize(...batch.flatMap((b) => [b.frag, opsFor(b.row)]), frag, opsFor(row)) > 100) await flush();
+    batch.push({ frag, row });
     if (isComment) removed += 1;
   }
   await flush();

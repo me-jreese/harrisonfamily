@@ -112,7 +112,8 @@ export function buildEvent({ actor, kind, ref, subject, photos = 0, at, via = "u
 }
 
 /**
- * Credits a contribution: the event Put (condition attribute_not_exists(PK)) and the five counter updates. For `self_edit` it also
+ * Credits a contribution: the event Put (condition attribute_not_exists(PK)) and the five counter updates (six writes; the caller's own
+ * write of the `contrib: { id }` link on its item is the seventh, and a self_edit adds the CAP marker Put). For `self_edit` it also
  * puts the daily `CAP#` marker (no condition: a race can at worst count twice, which is benign), so the caller reads the marker first
  * with selfEditCapped() and skips the call when it exists. Returns `{ event, puts, deletes, updates, checks }`; store `event.id` on the
  * written item as `contrib: { id }` so a later delete can revoke it.

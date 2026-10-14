@@ -114,12 +114,17 @@ const sameRow = (have, want) => {
  * Reads the table and returns the plan: the events to create (with the stored items to link), and the counter rows to set. Writes nothing.
  *   events:     [{ event, links: [{ PK, SK, path }] }]   (path is the attribute holding the item: "post" or "comment")
  *   counters:   [{ row, have }]                         (row is the full item to Put)
- *   skipped:    { draftPosts, linked, orphanLinks }
+ *   skipped:    { draftPosts, linked, orphanLinks, invalid, invalidIds }   (invalid: an item whose time or fields cannot make an event;
+ *               it is counted and named by id, and never stops the plan)
  */
 export async function planBackfill({ ddb, cmds, table, now = () => Date.now() }) {
   const existing = new Map((await byGsi(ddb, cmds, table, GSI_CONTRIBS)).map((e) => [`${e.PK}|${e.SK}`, e]));
   const events = [];
-  const skipped = { draftPosts: 0, linked: 0, orphanLinks: 0 };
+  const skipped = { draftPosts: 0, linked: 0, orphanLinks: 0, invalid: 0, invalidIds: [] };
+  const invalid = (what, id) => {
+    skipped.invalid += 1;
+    skipped.invalidIds.push(`${what}:${id}`);
+  };
   const plan = (event, links) => {
     const key = `${event.PK}|${event.SK}`;
     if (existing.has(key) || events.some((p) => p.event.PK === event.PK && p.event.SK === event.SK)) return;
@@ -129,22 +134,27 @@ export async function planBackfill({ ddb, cmds, table, now = () => Date.now() })
   for (const item of await byGsi(ddb, cmds, table, "POSTS")) {
     const post = item.post;
     if (!post?.id || !post.author?.id) continue;
-    if (post.contrib?.id) {
-      skipped.linked += 1;
-      if (!existing.has(`CONTRIB#${post.author.id}|E#${post.contrib.id}`)) {
-        // Linked but the event is gone (never revoked while the post exists): recreate it under the same id.
-        skipped.orphanLinks += 1;
-        const at = firstPublish(post, await byPk(ddb, cmds, table, `AUDIT#${post.id}`)) ?? post.created_at;
-        plan(postEvent(post, at, post.contrib.id), postLinks(post));
+    try {
+      if (post.contrib?.id) {
+        skipped.linked += 1;
+        if (!existing.has(`CONTRIB#${post.author.id}|E#${post.contrib.id}`)) {
+          // Linked but the event is gone (never revoked while the post exists): recreate it under the same id.
+          skipped.orphanLinks += 1;
+          const at = firstPublish(post, await byPk(ddb, cmds, table, `AUDIT#${post.id}`)) ?? post.created_at;
+          plan(postEvent(post, at, post.contrib.id), postLinks(post));
+        }
+        continue;
       }
-      continue;
+      const at = firstPublish(post, await byPk(ddb, cmds, table, `AUDIT#${post.id}`));
+      if (!at) {
+        skipped.draftPosts += 1; // never published: nothing to credit yet
+        continue;
+      }
+      plan(postEvent(post, at), postLinks(post));
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+      invalid("post", post.id); // a malformed created_at or audit time: reported, and the rest of the plan still runs
     }
-    const at = firstPublish(post, await byPk(ddb, cmds, table, `AUDIT#${post.id}`));
-    if (!at) {
-      skipped.draftPosts += 1; // never published: nothing to credit yet
-      continue;
-    }
-    plan(postEvent(post, at), postLinks(post));
   }
 
   for (const item of await byGsi(ddb, cmds, table, "COMMENTS")) {
@@ -154,12 +164,17 @@ export async function planBackfill({ ddb, cmds, table, now = () => Date.now() })
       skipped.linked += 1;
       continue;
     }
-    const ref = { type: "comment", id: c.id, thread: c.threadId };
-    const event = buildEvent({
-      actor: c.author, kind: "comment", ref, subject: c.threadId, photos: Math.min(Array.isArray(c.attachments) ? c.attachments.length : 0, 10),
-      at: c.created_at, via: "ui", id: eventIdFor(c.created_at, "comment", ref),
-    });
-    plan(event, [{ PK: item.PK, SK: item.SK, path: "comment" }]);
+    try {
+      const ref = { type: "comment", id: c.id, thread: c.threadId };
+      const event = buildEvent({
+        actor: c.author, kind: "comment", ref, subject: c.threadId, photos: Math.min(Array.isArray(c.attachments) ? c.attachments.length : 0, 10),
+        at: c.created_at, via: "ui", id: eventIdFor(c.created_at, "comment", ref),
+      });
+      plan(event, [{ PK: item.PK, SK: item.SK, path: "comment" }]);
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+      invalid("comment", c.id);
+    }
   }
 
   const all = [...existing.values(), ...events.map((p) => p.event)];
@@ -237,7 +252,8 @@ export function describePlan(plan) {
   lines.push(
     `plan: ${plan.events.length} event(s) to create (${Object.entries(kinds).map(([k, n]) => `${k} ${n}`).join(", ") || "none"}), ${plan.counters.length} counter row(s) to set; ` +
       `${plan.existingEvents} event(s) already in the ledger, ${plan.skipped.linked} item(s) already linked, ${plan.skipped.draftPosts} draft post(s) not credited` +
-      (plan.skipped.orphanLinks ? `, ${plan.skipped.orphanLinks} linked item(s) whose event is missing (recreated)` : ""),
+      (plan.skipped.orphanLinks ? `, ${plan.skipped.orphanLinks} linked item(s) whose event is missing (recreated)` : "") +
+      (plan.skipped.invalid ? `, ${plan.skipped.invalid} item(s) skipped as invalid (${plan.skipped.invalidIds.join(" ")})` : ""),
   );
   return lines;
 }

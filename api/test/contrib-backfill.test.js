@@ -183,6 +183,20 @@ describe("--apply", () => {
     expect(ddb.all().find((r) => r.PK === "CSTAT#site" && r.SK === "TOTAL").n).toBe(7);
   });
 
+  it("an item with a malformed time is skipped and named, and does not stop the plan or the apply", async () => {
+    const ddb = await legacy();
+    await putComment(ddb, comment("01J0000000000000000000C009", "I0003", "person:I0009", "not-a-time"));
+    await putComment(ddb, comment("01J0000000000000000000C010", "I0003", "person:I0009", undefined));
+    await seedPosts({ ddb, cmds, table: TABLE }, [post("01J0000000000000000000P009", "I0003", "published", "garbage")]);
+    const lines = [];
+    const { plan, written } = await run(ctx(ddb, { apply: true, log: (l) => lines.push(l) }));
+    expect(plan.skipped.invalid).toBe(3);
+    expect([...plan.skipped.invalidIds].sort()).toEqual(["comment:01J0000000000000000000C009", "comment:01J0000000000000000000C010", "post:01J0000000000000000000P009"]);
+    expect(written.events).toBe(4); // the four good items are still credited
+    expect(lines.join("\n")).toContain("3 item(s) skipped as invalid (");
+    expect(ddb.all().find((r) => r.PK === "CSTAT#site" && r.SK === "TOTAL").n).toBe(7);
+  });
+
   it("an empty table plans nothing", async () => {
     const plan = await planBackfill(ctx(createFakeDdb()));
     expect(plan).toMatchObject({ events: [], counters: [] });

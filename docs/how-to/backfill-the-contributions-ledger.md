@@ -24,6 +24,7 @@ This is a scripted write to the app table. Run `--apply` only after io's go-ahea
 2. Read the plan.
    - A post is credited at its first publish, taken from its audit history, and a post that is not published now gets a hidden event. A draft that was never published is not credited.
    - A comment is credited at its `created_at`.
+   - An item with a missing or malformed time cannot be credited. It is counted in the `plan:` summary as `skipped as invalid` with its id, and the rest of the plan still runs. Fix or remove that item and plan again.
    - `already linked` items already carry an event. They are left alone.
 3. After io's go-ahead, apply:
 
@@ -36,6 +37,8 @@ This is a scripted write to the app table. Run `--apply` only after io's go-ahea
 
 ## Notes
 
+- The script lives at `api/scripts/contrib-backfill.mjs`, not in the repo-root `scripts/` folder, because it needs the `api` package's AWS SDK.
+- Run it with a single writer. Counters are set as absolute values from the events it reads, so another process crediting at the same time can be overwritten. The dry run after `--apply` catches any drift.
 - Event ids are derived from the time and the item, so a run that stopped part way resumes without crediting anything twice, and a second `--apply` changes nothing.
 - The `LINE` cache row is not touched. `D#` day rows older than 800 days are not rebuilt, because they would already have expired.
 - A counter row that nothing supports any more is set to 0, once.

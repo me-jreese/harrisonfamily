@@ -292,6 +292,30 @@ describe("posts earn credit once, hide with withdraw, and lose it on delete", ()
     expect(JSON.stringify(ledger(w))).toBe(before);
   });
 
+  it("the photo credit is fixed at first publish: photos added by a later edit earn nothing, and the delete returns exactly what was credited", async () => {
+    const w = makeApi();
+    const t = await signToken("I0001");
+    const p = (await publish(w, t)).body; // published with no photos: weight 1
+    expect(total(w)).toBe(1);
+    await w.call("PATCH", `/api/posts/${p.id}`, { token: t, body: { attachments: [upload(1), upload(2)] } });
+    expect(total(w)).toBe(1); // the two photos added later are not credited
+    expect(ledger(w).events[0]).toMatchObject({ weight: 1, photos: 0 });
+    expect((await w.call("DELETE", `/api/posts/${p.id}`, { token: t })).status).toBe(204);
+    for (const row of Object.values(ledger(w).counters)) expect(row.n, `${row.PK} ${row.SK}`).toBe(0); // never negative
+  });
+
+  it("a post whose event is missing (an orphan link) still withdraws and republishes", async () => {
+    const w = makeApi();
+    const t = await signToken("I0001");
+    const p = (await publish(w, t)).body;
+    const [event] = ledger(w).events;
+    await w.ddb.send(new cmds.DeleteCommand({ TableName: TABLE, Key: { PK: event.PK, SK: event.SK } }));
+    const vis = (visibility) => w.call("POST", `/api/posts/${p.id}/visibility`, { token: t, body: { visibility } });
+    expect((await vis("withdrawn")).status).toBe(200);
+    expect((await vis("published")).status).toBe(200);
+    expect(ledger(w).events).toEqual([]); // nothing recreated here: the backfill repairs the orphan
+  });
+
   it("the post write and its credit are one transaction: a failure leaves neither", async () => {
     const w = makeApi();
     w.ddb.failNext("ThrottlingError", 1);
@@ -331,6 +355,38 @@ describe("purgeThread revokes the thread's credits with merged counter updates",
     expect(sizes.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(35 * 3 + 10);
     expect(sizes.length).toBeLessThanOrEqual(2);
     expect(admin).toBeTruthy();
+  });
+
+  it("a comment its author deletes while the purge is running does not cancel the purge: the batch is re-read and committed once more", async () => {
+    const w = makeApi();
+    const [ann, olive] = await Promise.all(["I0001", "I0002"].map((s) => signToken(s)));
+    const p = (await w.call("POST", "/api/posts", { token: ann, body: { body: "news", visibility: "published" } })).body;
+    const subject = `post:${p.id}`;
+    const ids = [];
+    for (let i = 0; i < 4; i += 1) ids.push((await w.call("POST", "/api/comments", { token: olive, body: { subject, body: `c${i}` } })).body.id);
+    expect(total(w, "I0002")).toBe(4);
+    let raced = false;
+    let sends = 0;
+    const spy = {
+      send: async (cmd) => {
+        if (cmd.constructor.name === "TransactWriteCommand") {
+          sends += 1;
+          if (!raced) {
+            raced = true; // the author deletes one comment after the purge read its event, before the purge commits
+            expect((await w.call("DELETE", `/api/comments/${ids[1]}`, { token: olive, query: { subject } })).status).toBe(204);
+          }
+        }
+        return w.ddb.send(cmd);
+      },
+    };
+    const ulid = createUlidFactory();
+    const now = ticker();
+    expect(await purgeThread({ ddb: spy, cmds, table: TABLE, now, uid: () => ulid(now()) }, subject, "I0099")).toBe(4);
+    expect(sends).toBe(2); // the cancelled batch, then the retry
+    expect(w.ddb.all().filter((r) => r.PK === `THREAD#${subject}`)).toEqual([]);
+    expect(total(w, "I0002")).toBe(0); // revoked once each, not twice
+    expect(total(w)).toBe(1);
+    expect(ledger(w).events.map((e) => e.kind)).toEqual(["post"]);
   });
 
   it("deleting the post through the API purges the discussion and its credits", async () => {

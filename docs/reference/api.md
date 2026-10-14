@@ -416,13 +416,13 @@ Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<i
 | Post delete, by its author or an admin | Revoke the event of the post's author. |
 | Post delete, for each comment removed with the post | Revoke each comment's event. The revokes of one transaction are merged, so 30 comments by one author in one month are one decrement per counter key. |
 
-Not counted: edits of posts and comments, reactions, drafts, and desktop pushes. A comment made through an MCP tool is credited like any other and its event carries `via: "mcp"`; HTTP calls carry `via: "ui"`. An MCP post is always a draft, so it earns nothing until a person publishes it.
+Not counted: edits of posts and comments (so photos added to a published post by a later edit earn nothing: the photo credit is fixed at first publish, and a delete returns exactly what was credited), reactions, drafts, and desktop pushes. A comment made through an MCP tool is credited like any other and its event carries `via: "mcp"`; HTTP calls carry `via: "ui"`. An MCP post is always a draft, so it earns nothing until a person publishes it.
 
 An event is `{ entity: "contrib", id, kind, actor: { id, label }, at, weight, photos, via, ref: { type, id, thread? }, subject?, hidden? }`. It copies no body text. `weight` is what the event adds to `n`: 1 for the kind plus `photos`. The counter rows hold `n`, `n_<kind>` for `post`, `comment`, `proposal_accepted`, `self_edit`, `tag` and `photo_to_record`, `n_photo`, and on `TOTAL` rows `first_at`. Readers clamp a negative value to 0, because revoking a credit whose `D#` row has already expired leaves a negative row that expires within days.
 
-The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. They return `{ puts, deletes, updates, checks }` fragments that a caller merges into its own `transact()` call. Credits for proposals, self-edits, tags and photo graduation are added by the code that owns those writes, through the same builders.
+The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. `contribOps` yields six writes for one credit: the event Put and the five counter updates. The caller adds the seventh, the `contrib: { id }` link on the item it writes, and a `self_edit` adds a daily `CAP#` marker Put. They return `{ puts, deletes, updates, checks }` fragments that a caller merges into its own `transact()` call. Credits for proposals, self-edits, tags and photo graduation are added by the code that owns those writes, through the same builders.
 
-Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
+A withdraw or republish hides or shows the event only if it exists, so a post whose event is missing still changes visibility; the backfill repairs that orphan. If a comment's author deletes it while a thread purge is running, the purge re-reads its events and commits the batch once more, so the revoke happens once. Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
 
 ## Audit records
 
