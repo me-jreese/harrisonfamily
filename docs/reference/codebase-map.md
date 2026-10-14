@@ -200,6 +200,7 @@ Paths:
   - `presign.js`: the presigned S3 PUT.
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
   - `records/semantics.js`, `records/gcalendar.js`: the Gramps rules for edited records (dates and `sortval`, references, two-sided family links, ancestry cycles, derived birth and death indexes) and the port of Gramps' calendar arithmetic. Pure, and no route reaches them yet.
+  - `records/relationships.js`, `records/duplicates.js`: the relationship intent compiler (parents, children, spouse and unlink intents to Gramps Family and ChildRef EditOps, checked with `semantics.js`) and the accent-stripped duplicate-name matcher. Pure, and no route reaches them yet.
   - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
 - [`api/scripts/scan-contact-info.mjs`](../../api/scripts/scan-contact-info.mjs): the one-off, read-only scan of existing posts and comments for contact information; counts only ([API: Contact-information guard](api.md#contact-information-guard)).
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
@@ -488,7 +489,7 @@ Facts:
 Paths:
 
 - [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers` and `txn`. `fake-ddb.js` and `world.js` are helpers.
-- [`api/test/records/`](../../api/test/records/): `node:test` suites `ops.node-test.js` (the EditOp engine) and `semantics.node-test.js` (the Gramps rules, run against `fixtures/gramps-semantics.golden.json`, the values Gramps 6.0.6 computed). Run by `npm test` after Vitest.
+- [`api/test/records/`](../../api/test/records/): `node:test` suites `ops.node-test.js` (the EditOp engine), `semantics.node-test.js` (the Gramps rules, run against `fixtures/gramps-semantics.golden.json`, the values Gramps 6.0.6 computed) and `relationships.node-test.js` (the relationship compiler and the duplicate matcher, run against `fixtures/gramps-relationships.golden.json`, the objects Gramps 6.0.6 left after each scenario). Run by `npm test` after Vitest.
 - [`auth/test/`](../../auth/test/): Vitest. The suites are `cognito`, `edge`, `linkstore`, `oauth`, `origin`, `passkey`, `passkeystore` and `userinfo`. `fake-table.js` is a helper.
 - [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs): a Playwright end-to-end passkey test.
 - [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs): a Playwright end-to-end test of the styled sign-in pages.
@@ -506,7 +507,7 @@ Paths:
   - `test_privacy_terms_pages.py`: `11ty/privacy/index.html` and `11ty/terms/index.html` carry each required section of the approved privacy and terms amendment, `docs/drafts/privacy-terms-2026-10-update.md` (HFY-TSK-239).
   - `stub/aws`, `cf-echo.jq`, `fixtures/live-like.json` and `fixtures/live-with-uploads.json`: test doubles.
 - [`tests/login-flow/`](../../tests/login-flow/): Playwright specs `login-flow.spec.ts` and `auth-v2.spec.ts`.
-- [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py): `unittest`, standard library only. It runs [`scripts/records/check_gramps_goldens.py`](../../scripts/records/check_gramps_goldens.py) over the committed Gramps goldens and checks that tampering is caught.
+- [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py): `unittest`, standard library only. They run [`scripts/records/check_gramps_goldens.py`](../../scripts/records/check_gramps_goldens.py) and [`check_relationship_goldens.py`](../../scripts/records/check_relationship_goldens.py) over the committed Gramps goldens and check that tampering is caught.
 - [`scripts/mcp/token-smoke.sh`](../../scripts/mcp/token-smoke.sh): a live MCP token check.
 
 Facts:
