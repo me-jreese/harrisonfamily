@@ -1,13 +1,17 @@
 // Shared harrisonfamily API client (HFY-TSK-066). Same-origin, session cookie from the auth edge, JSON in and out, typed errors.
 // Later islands (posts, notify) reuse createApi/api; errors carry the server's {error, message, details.field} body.
 export class ApiError extends Error {
-  /** `details` is the body's `details`: `fields` is its per-field error list (a 422) and `current` the stored item (a 409). */
-  constructor(status, code, message, field, details) {
+  /**
+   * `details` is the body's `details`: `fields` is its per-field error list (a 422) and `current` the stored item (a 409). `errors` is the
+   * body's top-level `errors[]` (positions and codes, never values: POST /api/changes answers its 400, 403 and 422 with it).
+   */
+  constructor(status, code, message, field, details, errors) {
     super(message || code);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     if (field !== undefined) this.field = field;
+    if (Array.isArray(errors)) this.errors = errors;
     if (details && typeof details === "object") {
       this.details = details;
       if (Array.isArray(details.fields)) this.fields = details.fields;
@@ -53,7 +57,7 @@ export function createApi({ base = "/api", fetchImpl, skipWhenSignedOut = base =
     if (res.status === 204) return undefined;
     let data;
     try { data = await res.json(); } catch { data = undefined; }
-    if (!res.ok) throw new ApiError(res.status, (data && typeof data.error === "string" && data.error) || codeForStatus(res.status), data?.message, data?.details?.field, data?.details);
+    if (!res.ok) throw new ApiError(res.status, (data && typeof data.error === "string" && data.error) || codeForStatus(res.status), data?.message, data?.details?.field, data?.details, data?.errors);
     return data;
   }
   return {
