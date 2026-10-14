@@ -68,9 +68,9 @@ describe("tools/list per principal (073 AC4 smoke)", () => {
     const { rpc } = setup();
     expect(names(await rpc(await token("I0999", { extra: { groups: ["mcp-authors", "hfy-admin", "admins"] } }), "tools/list"))).toEqual([]);
   });
-  it("member: read + draft-create tools, deletes absent", async () => {
+  it("member: read, draft-create and editing tools, deletes absent", async () => {
     const { rpc } = setup();
-    expect(names(await rpc(await token("I0044"), "tools/list"))).toEqual(["hfy_comments_create", "hfy_comments_list", "hfy_posts_create", "hfy_posts_get", "hfy_posts_list"]);
+    expect(names(await rpc(await token("I0044"), "tools/list"))).toEqual(["hfy_changes_submit", "hfy_comments_create", "hfy_comments_list", "hfy_posts_create", "hfy_posts_get", "hfy_posts_list", "hfy_proposals_get", "hfy_proposals_list", "hfy_records_get"]);
   });
   it("member by allowlisted email (verified) is an author", async () => {
     const groups = createGroupResolver({ load: async () => GROUPS });
@@ -81,7 +81,7 @@ describe("tools/list per principal (073 AC4 smoke)", () => {
   it("hfy-admin is exactly I0113: delete tools are listed but disabled without a fresh step-up, enabled with one", async () => {
     const { rpc } = setup();
     const stale = (await rpc(await token("I0113"), "tools/list")).result.tools;
-    expect(stale).toHaveLength(7);
+    expect(stale).toHaveLength(11);
     expect(stale.filter((t) => t.disabled).map((t) => [t.name, t.reason.code]).sort()).toEqual([["hfy_comments_delete", "step_up_required"], ["hfy_posts_delete", "step_up_required"]]);
     const fresh = (await rpc(await token("I0113", { amr: ["passkey", "hwk", "mfa"], authTime: nowS() - 30 }), "tools/list")).result.tools;
     expect(fresh.filter((t) => t.disabled)).toEqual([]);

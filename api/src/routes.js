@@ -66,6 +66,27 @@ const MCP = {
   "posts.create": { tool: "hfy_posts_create", description: "Create a post as a DRAFT. Publishing is a human action in the site UI; there is no visibility argument.",
     input: schema({ type: { enum: ["post", "article", "document"] }, subject: str("Record id the post is about"), title: { type: "string", maxLength: 200 }, body: str("Post body") }, ["body"]),
     args: (a) => ({ body: { ...pick(a, ["type", "subject", "title", "body"]), visibility: "draft" } }) },
+  // HFY-TSK-211 (edit-mcp-tools; editing.md 7.6): the editing reads and the one write. There is NO decide tool in v1 (DEC-E5): approving is a human action in the
+  // site UI, so proposals.decide, proposals.amend and proposals.withdraw carry no `mcp` member and no policy row. `problem` hands a failing call's status and
+  // error list back as the tool error text (a 422 from the privacy guard stays a 422). `preview` is the agent dry run: the route's own dry_run, so an agent gets the plan.
+  // hfy_changes_submit's description states what the live server does: the shipped @io-kit/mcp 0.1.0 edge makes every caller type "human", so the policy's
+  // agentMode dry_run never applies and a call without mode submits. Revisit it when the kit mints agent principals (test "the live edge today").
+  "edit.get": { tool: "hfy_records_get", description: "Get the edit bundle of one record (ref = gramps_id or h:<handle>) as you may see it: {key, version, etag, obj, related, relation, viewer, policy, pending, customTypes, schemaHash}. Hidden items are left out and non-birth dates are year-only unless you are an admin or the page owner; pending lists only suggestions you may see.",
+    input: schema({ cls: { enum: ["Person", "Family", "Event", "Place", "Source", "Citation", "Repository", "Media", "Note"], description: "Record class" }, ref: str("gramps_id (for example I0001) or h:<handle>") }, ["cls", "ref"]),
+    args: (a) => ({ params: { cls: a.cls, ref: a.ref } }), problem: true },
+  "changes.post": { tool: "hfy_changes_submit", description: "Submit edits to records: {target, base_versions, ops, note?, route?}. The fields you may edit save now and the rest becomes one suggestion for an admin to decide; there is no tool to approve. This call WRITES unless you set mode to \"dry_run\": without mode (or with mode \"execute\") it submits for real and needs an idempotency_key. With mode \"dry_run\" it writes nothing and returns the plan: {plan: {direct, review}, warnings, errors}, or planError. Preview with mode \"dry_run\" first.",
+    input: schema({
+      target: str("Record key such as Person:<handle>"), base_versions: { type: "object", description: "Record key to the version your edit is based on" },
+      ops: { type: "array", items: { type: "object" }, description: "EditOps, each {id, op, obj, ...}: set {path, base, value}, add {path, value}, remove {path, base}, move {path}, delete {base}, create (see docs/reference/mcp-server.md for each shape)" }, note: { type: "string", maxLength: 1000 },
+      route: { enum: ["auto", "review"], description: "review is for admins" }, idempotency_key: str("1 to 128 visible characters; required to submit"),
+    }, ["ops"]),
+    args: (a) => ({ body: pick(a, ["target", "base_versions", "ops", "note", "route", "idempotency_key"]) }), problem: true,
+    preview: (a) => ({ body: { ...pick(a, ["target", "base_versions", "ops", "note", "route"]), dry_run: true } }) },
+  "proposals.list": { tool: "hfy_proposals_list", description: "List suggestions: view=queue (admins), mine (default) or about-me; state, cursor, limit 1-50. Only suggestions you may see.",
+    input: schema({ view: { enum: ["queue", "mine", "about-me"] }, state: str("pending, stale, approved, denied, needs_changes or withdrawn"), cursor: str("Opaque cursor from a previous page"), limit: { type: "integer", minimum: 1, maximum: 50 } }),
+    args: (a) => ({ query: pick(a, ["view", "state", "cursor", "limit"]) }), problem: true },
+  "proposals.get": { tool: "hfy_proposals_get", description: "Get one suggestion (state, ops, rebase status) if you proposed it, are an admin or own a page it targets; otherwise not found.",
+    input: schema({ id: str("Proposal id") }, ["id"]), args: (a) => ({ params: { id: a.id } }), problem: true },
   "posts.delete": { tool: "hfy_posts_delete", description: "Delete any post and its discussion. Requires hfy-admin and a fresh step-up (a user-verified sign-in, amr mfa, within 5 minutes).",
     input: schema({ id: str("Post id") }, ["id"]), args: (a) => ({ params: { id: a.id } }) },
 };
@@ -218,7 +239,7 @@ export const ROUTES = defineRoutes([
   // The desktop sync API (HFY-TSK-172; sync.md 7): bearer auth, gramps-owner, behind SYNC_API_ENABLED. Defined in src/sync/routes.js; the push and pull routes join it.
   ...SYNC_ROUTES,
   // The read-only records API (HFY-TSK-175; sync.md 7.2, BRD2 D2-34): the stored, redacted object through publishView and applyModOverlay, behind
-  // the HFY_EDITING switch (admins and a member's own record excepted). No `mcp` member: hfy_records_get is edit-mcp-tools'. by-id is listed first.
+  // the HFY_EDITING switch (admins and a member's own record excepted). No `mcp` member. by-id is listed first.
   {
     name: "records.byGrampsId", method: "GET", path: "/records/Person/by-id/:gramps_id", summary: "A person by gramps_id: {class, handle, gramps_id, version, obj} with ETag \"v<version>\"; read-only, year-only non-birth dates and no hidden items for non-admins (no MCP tool)",
     gate: recordsGate(), handler: recordByGrampsId,
@@ -228,19 +249,19 @@ export const ROUTES = defineRoutes([
     gate: recordsGate(), handler: recordGet,
   },
   // The editing API core (HFY-TSK-182; editing.md 7.2): the edit bundle and the schema route, behind HFY_EDITING (404 for everyone while it is off).
-  // The schema route is listed first so /edit/schema/:cls is not read as /edit/:cls/:ref. Not MCP tools (hfy_records_get is edit-mcp-tools').
+  // The schema route is listed first so /edit/schema/:cls is not read as /edit/:cls/:ref. edit.get is the MCP tool hfy_records_get (HFY-TSK-211); the schema route is not a tool.
   {
     name: "edit.schema", method: "GET", path: "/edit/schema/:cls", summary: "The generated JSON Schema of one editable class: {class, schema, sha256, schemaHash}; 404 for a class with no schema (no MCP tool)",
     gate: editingGate(), handler: schemaGet,
   },
   {
-    name: "edit.get", method: "GET", path: "/edit/:cls/:ref", summary: "The edit bundle for a record (ref = gramps_id or h:<handle>): {key, version, etag, obj, related, relation, viewer, policy, pending, customTypes, schemaHash}, through publishView and applyModOverlay; pending[] only what the viewer may see (no MCP tool)",
+    name: "edit.get", method: "GET", path: "/edit/:cls/:ref", summary: "The edit bundle for a record (ref = gramps_id or h:<handle>): {key, version, etag, obj, related, relation, viewer, policy, pending, customTypes, schemaHash}, through publishView and applyModOverlay; pending[] only what the viewer may see (MCP tool hfy_records_get)",
     gate: editingGate(), handler: bundleGet,
   },
   // POST /api/changes (HFY-TSK-183; editing.md 7.3): direct groups and a proposal in one transaction, or a dry-run plan. Behind HFY_EDITING like the
-  // routes above. No `mcp` member: hfy_changes_submit (agentMode dry_run) is edit-mcp-tools'.
+  // routes above. MCP tool hfy_changes_submit (policy agentMode dry_run, HFY-TSK-211).
   {
-    name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (no MCP tool)",
+    name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (MCP tool hfy_changes_submit)",
     gate: editingGate(), handler: changesPost,
   },
   // The relationship wizard's routes (HFY-TSK-210; editing.md 8.2): an intent is compiled to EditOps. Preview writes nothing; a submit is a proposal of
@@ -254,14 +275,14 @@ export const ROUTES = defineRoutes([
     gate: editingGate(), handler: relationshipsPost,
   },
   // The proposal store (HFY-TSK-184; editing.md 7.4): lists, one proposal, amend, withdraw. Behind HFY_EDITING like the routes above. Decide is
-  // proposal-decision-api's; no `mcp` member (hfy_proposals_list and hfy_proposals_get are edit-mcp-tools'). A proposal outside the viewer's
+  // proposal-decision-api's; only list and get are MCP tools (HFY-TSK-211); there is no decide, amend or withdraw tool (DEC-E5). A proposal outside the viewer's
   // visibility set is 404 (the proposer, admins and the owners of the targeted pages see it), and view=queue is 403 for a non-admin.
   {
-    name: "proposals.list", method: "GET", path: "/proposals", summary: "List suggestions: ?view=queue (admins, oldest first; pending and stale unless ?state=), mine (newest first) or about-me (suggestions about your own page or family); state, cursor, limit 1-50 (default 25): {items: ProposalView[], cursor} (no MCP tool)",
+    name: "proposals.list", method: "GET", path: "/proposals", summary: "List suggestions: ?view=queue (admins, oldest first; pending and stale unless ?state=), mine (newest first) or about-me (suggestions about your own page or family); state, cursor, limit 1-50 (default 25): {items: ProposalView[], cursor} (MCP tool hfy_proposals_list)",
     gate: editingGate(), handler: proposalsList,
   },
   {
-    name: "proposals.get", method: "GET", path: "/proposals/:id", summary: "One suggestion as a ProposalView (can, stale) plus rebase {status: current|clean|conflict, conflicts}; 404 outside the proposer, admins and the owners of the targeted pages (no MCP tool)",
+    name: "proposals.get", method: "GET", path: "/proposals/:id", summary: "One suggestion as a ProposalView (can, stale) plus rebase {status: current|clean|conflict, conflicts}; 404 outside the proposer, admins and the owners of the targeted pages (MCP tool hfy_proposals_get)",
     gate: editingGate(), handler: proposalsGet,
   },
   {

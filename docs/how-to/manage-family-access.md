@@ -127,8 +127,8 @@ If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-a
 
 An MCP client, such as Claude, acts on the site as the member who connects it. The allowlist decides whether the member can connect at all. `config/groups.json` decides which tools the server lists for them. It has two groups ([MCP server: Groups](../reference/mcp-server.md#groups)):
 
-- **`mcp-authors`** gets the three read tools and the two create tools. Name the member by Gramps ID in `subjects`, or by email in `emails`. An `emails` entry matches only the verified `email` claim in the member's access token, which is the address they signed in with. A `subjects` entry works whichever address they use.
-- **`hfy-admin`** gets the same five tools and the two delete tools. It takes `subjects` only, and an email there does nothing. A delete also needs a recent sign-in with a passkey that verified the member ([Connect an MCP client](connect-an-mcp-client.md#before-you-start)).
+- **`mcp-authors`** gets nine tools: the three read tools and the two create tools for posts and comments, and the four record editing tools. Name the member by Gramps ID in `subjects`, or by email in `emails`. An `emails` entry matches only the verified `email` claim in the member's access token, which is the address they signed in with. A `subjects` entry works whichever address they use.
+- **`hfy-admin`** gets the same nine tools and the two delete tools. It takes `subjects` only, and an email there does nothing. A delete also needs a recent sign-in with a passkey that verified the member ([Connect an MCP client](connect-an-mcp-client.md#before-you-start)).
 
 `config/admins.json` plays no part here, and a member in neither group can connect but sees no tools.
 
@@ -173,7 +173,7 @@ An MCP client, such as Claude, acts on the site as the member who connects it. T
 
    Each API container keeps the file for 60 s, so the change takes effect within a minute. Removing a member from the groups takes their tools away within that minute, even while their access token is still valid.
 
-**Verify.** Have the member list the server's tools in their client, as in [Connect an MCP client: Check what you can do](connect-an-mcp-client.md#2-check-what-you-can-do). In `mcp-authors` they see five tools. In `hfy-admin` they also see `hfy_posts_delete` and `hfy_comments_delete`, disabled with `step_up_required` until a fresh passkey sign-in. If the member is in neither group, the list is empty. If the client still shows an old list, have the member reconnect it.
+**Verify.** Have the member list the server's tools in their client, as in [Connect an MCP client: Check what you can do](connect-an-mcp-client.md#2-check-what-you-can-do). In `mcp-authors` they see nine tools, the editing tools among them even while record editing is switched off. In `hfy-admin` they also see `hfy_posts_delete` and `hfy_comments_delete`, disabled with `step_up_required` until a fresh passkey sign-in. If the member is in neither group, the list is empty. If the client still shows an old list, have the member reconnect it.
 
 ## Give a member UAT access to flagged API routes
 
