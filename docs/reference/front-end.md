@@ -125,11 +125,13 @@ In `<head>`, block A's early-hint script runs before any stylesheet. In the body
 
 ### Build-time values
 
-[`11ty/_data/flags.json`](../../11ty/_data/flags.json) is served at `/_data/flags.json`. It defines twelve flags: `aboutCta`, `authV2`, `commentPhotosV1`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `photoTags`, `postsV2`, `profileLinks`, `searchV2` and `shellV2`. In the committed file seven are `true`; `aboutCta`, `commentPhotosV1`, `inboxV1`, `photoTags` and `profileLinks` are `false` (they shipped default-off with HFY-TSK-136, HFY-TSK-257, HFY-TSK-185, HFY-TSK-169 and HFY-TSK-217). Six were set by PR #8 (HFY-TSK-069). `navMe` shipped default-off with HFY-TSK-091 (HFY-R8) and was turned on on 2026-10-13 with io's approval (HFY-TSK-223); setting it back to `false` is that flip's rollback. The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67): the site with the flip deployed first, and the data gate attached after it. To see what the site serves now:
+[`11ty/_data/flags.json`](../../11ty/_data/flags.json) is served at `/_data/flags.json`. It defines thirteen flags: `aboutCta`, `authV2`, `commentPhotosV1`, `contribV1`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `photoTags`, `postsV2`, `profileLinks`, `searchV2` and `shellV2`. In the committed file seven are `true`; `aboutCta`, `commentPhotosV1`, `contribV1`, `inboxV1`, `photoTags` and `profileLinks` are `false` (they shipped default-off with HFY-TSK-136, HFY-TSK-257, HFY-TSK-190, HFY-TSK-185, HFY-TSK-169 and HFY-TSK-217). Six were set by PR #8 (HFY-TSK-069). `navMe` shipped default-off with HFY-TSK-091 (HFY-R8) and was turned on on 2026-10-13 with io's approval (HFY-TSK-223); setting it back to `false` is that flip's rollback. The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67): the site with the flip deployed first, and the data gate attached after it. To see what the site serves now:
 
 ```sh
 curl -s https://<site>/_data/flags.json | jq .
 ```
+
+Under `contribV1` (HFY-TSK-190) the homepage timeline and `/posts/` show a `p.hfy-contrib-line` ("x contributions in the past y unit") read from `GET /api/contributions/stats`, for signed-in visitors only.
 
 `resolveFlags()` fetches the file with `cache: "no-store"`, once per page load. A network error, a non-2xx status or a body that is not JSON all produce an empty object. Every build-time flag then reads as off, and only the override can turn a flag on. A flag is on only when its merged value is exactly `true`. While the data gate is attached, a page whose `flags.json` load fails therefore runs the legacy data path, and the gate refuses its person-data requests.
 
