@@ -223,7 +223,8 @@ async function clearOpenSession(store, id) {
 }
 
 /**
- * POST /api/sync/sessions/:id/abort (owner bearer, audited). 200 {session_id, state: "aborted"}. Idempotent for an aborted session; an expired
+ * POST /api/sync/sessions/:id/abort (owner bearer, audited: the audit item holds the opener and the aborting principal). Any gramps-owner may abort any
+ * session, not only the one that opened it: there is one owner group and an abandoned session's opener may be a laptop that is gone. 200 {session_id, state: "aborted"}. Idempotent for an aborted session; an expired
  * one can be aborted too; a complete one is 409 session_closed. Nothing already pushed is undone.
  */
 export const sessionsAbort = guarded(async (c) => {
@@ -238,7 +239,7 @@ export const sessionsAbort = guarded(async (c) => {
     try {
       await transact(store.ddb, store.cmds, store.table, {
         updates: [{ key: sessionKey(id), update: "SET #st = :a, #ab = :at, #by = :by", condition: "#st = :o", names: { "#st": "state", "#ab": "aborted_at", "#by": "aborted_by" }, values: { ":a": "aborted", ":o": "open", ":at": at, ":by": c.actor.id }, tag: "session:state" }],
-        puts: [{ item: sessionAudit(c, "sync.session.abort", id, at, { state }, { state: "aborted" }), tag: "session:audit" }],
+        puts: [{ item: sessionAudit(c, "sync.session.abort", id, at, { state, opened_by: session.principal ?? null }, { state: "aborted" }), tag: "session:audit" }],
       }, store.txnOpts);
     } catch (e) {
       if (e instanceof TxnCancelled && e.conditionFailed) throw closed(session, "closed"); // completed or aborted by someone else a moment ago

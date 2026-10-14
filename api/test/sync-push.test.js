@@ -1,6 +1,8 @@
 // HFY-TSK-173 (sync-push-routes): /api/sync/sessions, /complete, /abort, /batches and /media/presign on the sync-bearer middleware.
 // In-memory DynamoDB fake, a local JWKS, a fake S3, synthetic objects and subjects only. Cloud catalog rows S01-S08 and S20 are covered by
-// name below; S19 (privacy-expunge), S21 (the render schedule) and S22 (the daily reconcile) have no push-side behaviour.
+// name below; S19 (privacy-expunge) and S21 (the render schedule) have no push-side behaviour. S22 (mass deletes) touches push only through the
+// destructive budget and the step-up that a desktop delete needs: "S22: a delete-heavy desktop batch" below covers that; the daily reconcile
+// and the withdraw-driven deletes are not push routes.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SignJWT, importPKCS8 } from "jose";
 import { createHash } from "node:crypto";
@@ -279,6 +281,21 @@ describe("POST /api/sync/batches: desktop batches through applyBatch (AC2)", () 
     expect(w.row(`REC#Person#${h(1)}`, "HEAD")).toMatchObject({ deleted: true, version: 2 });
   });
 
+  it("S22: a delete-heavy desktop batch needs the step-up (stale auth is 403 step_up_required, nothing written); with it the deletes commit and count against the budget", async () => {
+    const w = world();
+    const people = Array.from({ length: 12 }, (_, i) => person(i + 1));
+    await w.push(people.map((p) => create(p)));
+    const dels = people.map((p) => del("Person", p.handle, 1));
+    const stale = await token({ authTime: nowS - 4000 });
+    const refused = await w.push(dels, { call: { tok: stale } });
+    expect(err(refused)).toEqual({ status: 403, error: "step_up_required" });
+    expect(refused.body.details).toMatchObject({ reason: "delete" });
+    expect(w.rows("REC#Person#").every((r) => r.SK !== "HEAD" || r.deleted === false)).toBe(true);
+    expect(w.rows("SYNC#BUDGET")).toHaveLength(0);
+    expect((await w.push(dels)).status).toBe(200); // fresh step-up: the route does not bypass it, and does not need a second one
+    expect(w.rows("SYNC#BUDGET").reduce((n, r) => n + r.count, 0)).toBe(12);
+  });
+
   it("S08: a throttled store read is 503 retryable, nothing is written, and the retry with the same key commits once", async () => {
     const t = await throttled();
     expect(t.first.status).toBe(503);
@@ -358,6 +375,8 @@ describe("push sessions (AC2, AC3)", () => {
     expect(w.row(`SYNC#SESSION#${a.body.session_id}`)).toMatchObject({ state: "aborted", aborted_at: new Date(NOW).toISOString(), aborted_by: OWNER });
     expect(w.headNow().open_session).toBeUndefined();
     expect(w.rows("AUDIT#sync:session:").map((x) => x.op).sort()).toEqual(["sync.session.abort", "sync.session.open"]);
+    // the audit names the opener (before) and the aborting principal, so a cross-check is possible even though any owner may abort
+    expect(w.rows("AUDIT#sync:session:").find((x) => x.op === "sync.session.abort")).toMatchObject({ principal: OWNER, before: { state: "open", opened_by: OWNER }, after: { state: "aborted" } });
     const b = await w.open();
     expect(b.status).toBe(201);
     expect(b.body.session_id).not.toBe(a.body.session_id);
@@ -628,6 +647,78 @@ describe("media: staging, finalize and the orphaned key (AC4, fake S3)", () => {
     const copies = w.s3.names().filter((n) => n === "CopyObjectCommand").length;
     expect((await w.push([create(m, { blob: claim })], { idem: "blob-1" })).status).toBe(200);
     expect(w.s3.names().filter((n) => n === "CopyObjectCommand").length).toBe(copies);
+  });
+
+  it("a replay of a held-blob update over a present blob is the same request: 200 replayed, not 422 idempotency_key_reused", async () => {
+    const w = world();
+    const m = media(1);
+    const a = await upload(w, m.handle, BYTES);
+    await w.push([create(m, { blob: a.claim })]);
+    const before = structuredClone(w.row(`REC#Media#${m.handle}`, "HEAD").blob);
+    const ops = [update(media(1, { path: "held.jpg" }), 1, { blob: { state: "missing" } })];
+    const first = await w.push(ops, { idem: "held-1" });
+    expect(first.status).toBe(200);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD").blob).toEqual(before); // the good cloud blob is kept
+    const again = await w.push(structuredClone(ops), { idem: "held-1" }); // the lost-response retry
+    expect([again.status, again.headers["idempotent-replayed"], again.body]).toEqual([200, "true", first.body]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD").blob).toEqual(before);
+  });
+
+  it("a pending item that expired between a commit whose copy failed and the replay: the replay still copies the staged blob into place", async () => {
+    const w = world();
+    const m = media(1);
+    const { claim } = await upload(w, m.handle, BYTES);
+    w.s3.failNext("CopyObjectCommand");
+    expect(err(await w.push([create(m, { blob: claim })], { idem: "blob-ttl" }))).toEqual({ status: 503, error: "retryable" });
+    expect(w.s3.objects.has(`media/${m.handle}.jpg`)).toBe(false);
+    // the pending ttl was pushed out at verify time, and the row can still vanish (TTL delete, a parallel finalize)
+    expect(w.row(uploadKey(m.handle, claim.sha256).PK, claim.sha256).ttl).toBe(nowS + 3600);
+    w.ddb.rows.delete(`${uploadKey(m.handle, claim.sha256).PK}\u0000${claim.sha256}`);
+    const second = await w.push([create(m, { blob: claim })], { idem: "blob-ttl" });
+    expect([second.status, second.headers["idempotent-replayed"]]).toEqual([200, "true"]);
+    expect(w.s3.objects.get(`media/${m.handle}.jpg`).bytes).toEqual(BYTES);
+    expect(w.s3.objects.has(stagingKey(m.handle, claim.sha256))).toBe(false);
+  });
+
+  it("a replay with no pending item never copies a staged blob over a newer one the head no longer names", async () => {
+    const w = world();
+    const m = media(1);
+    const a = await upload(w, m.handle, BYTES);
+    w.s3.failNext("CopyObjectCommand");
+    expect(err(await w.push([create(m, { blob: a.claim })], { idem: "old" }))).toEqual({ status: 503, error: "retryable" });
+    // a later batch puts another blob in place (the head names it now), then the old pending row is gone
+    const b = await upload(w, m.handle, BYTES2);
+    expect((await w.push([update(m, 1, { blob: b.claim })])).status).toBe(200);
+    w.ddb.rows.delete(`${uploadKey(m.handle, a.claim.sha256).PK}\u0000${a.claim.sha256}`);
+    expect((await w.push([create(m, { blob: a.claim })], { idem: "old" })).status).toBe(200);
+    expect(w.s3.objects.get(`media/${m.handle}.jpg`).bytes).toEqual(BYTES2);
+  });
+
+  it("a pending item deleted while the batch verifies is 422 blob_not_uploaded and no stub item is left behind", async () => {
+    const w = world();
+    const m = media(1);
+    const { claim } = await upload(w, m.handle, BYTES);
+    const send = w.s3.send.bind(w.s3);
+    w.s3.send = async (cmd) => {
+      const r = await send(cmd);
+      if (cmd.constructor.name === "HeadObjectCommand") w.ddb.rows.delete(`${uploadKey(m.handle, claim.sha256).PK}\u0000${claim.sha256}`);
+      return r;
+    };
+    expect(err(await w.push([create(m, { blob: claim })]))).toEqual({ status: 422, error: "blob_not_uploaded" });
+    expect(w.rows("SYNC#UPLOAD#")).toHaveLength(0);
+    expect(w.rows("REC#")).toHaveLength(0);
+  });
+
+  it("a 403 from S3 on the staging key (no s3:ListBucket) reads as a missing blob and is logged at warn", async () => {
+    const w = world();
+    const m = media(1);
+    const { claim } = await upload(w, m.handle, BYTES);
+    const send = w.s3.send.bind(w.s3);
+    w.s3.send = async (cmd) => {
+      if (cmd.constructor.name === "HeadObjectCommand") throw Object.assign(new Error("AccessDenied"), { name: "AccessDenied", $metadata: { httpStatusCode: 403 } });
+      return send(cmd);
+    };
+    expect(err(await w.push([create(m, { blob: claim })]))).toEqual({ status: 422, error: "blob_not_uploaded" });
   });
 
   it("a crash after the copy but before the staging delete is finished by the replay without a second loss", async () => {

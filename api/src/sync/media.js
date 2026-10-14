@@ -14,7 +14,7 @@ import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-
 import { HttpError, logSafeError } from "../http.js";
 import { HANDLE_SHAPE } from "../records/ops.js";
 import { transact } from "../txn.js";
-import { getUpload, uploadKey } from "./store.js";
+import { getRecordItem, getUpload, uploadKey } from "./store.js";
 
 /** Content types the sync presign accepts, and the extension each gets in media/<handle><ext>. HEIC and WebP are not accepted (sync.md 9). */
 export const MEDIA_TYPES = Object.freeze({ "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/tiff": ".tif", "application/pdf": ".pdf" });
@@ -98,7 +98,20 @@ export function blobDescriptor(handle, claim, at = "blob") {
 }
 
 const s3Status = (e) => e?.$metadata?.httpStatusCode;
-const notFound = (e) => e?.name === "NotFound" || e?.name === "NoSuchKey" || s3Status(e) === 404 || s3Status(e) === 403; // without s3:ListBucket a missing key is a 403
+const isNotFound = (e) => e?.name === "NotFound" || e?.name === "NoSuchKey" || s3Status(e) === 404;
+/**
+ * A missing key. The hfy-api role has s3:GetObject but not s3:ListBucket on the media bucket, so S3 answers 403 for a key that does not exist; a
+ * 403 is therefore read as "missing" here, and logged at warn so an IAM or bucket-policy fault (the post-cutover deny) shows up in the logs
+ * instead of looking like a client that never uploaded.
+ */
+function notFound(store, e, what) {
+  if (isNotFound(e)) return true;
+  if (s3Status(e) === 403) {
+    store.log?.warn?.("s3 answered 403, read as a missing key (no s3:ListBucket); check the role and the bucket policy if this repeats", logSafeError(e, { route: "sync.batches", what }));
+    return true;
+  }
+  return false;
+}
 
 /**
  * Turns the Media ops' `blob` claims into stored descriptors (in place) and returns the plan finalizeBlobs() runs after the commit.
@@ -122,14 +135,15 @@ export async function prepareBlobs(store, ops, { head, replay }) {
     if (typeof op.handle !== "string" || !HANDLE_SHAPE.test(op.handle)) continue; // applyBatch's 400
     const at = `ops[${i}].blob`;
     const descriptor = blobDescriptor(op.handle, op.blob, at);
-    const prior = replay ? undefined : await head("Media", op.handle);
-    const priorBlob = prior && prior.deleted !== true ? prior.blob : undefined;
     if (descriptor.state === "missing") {
-      if (priorBlob?.state === "present") delete op.blob; // never replace a good cloud blob with a missing one: the head keeps its descriptor
-      else op.blob = descriptor;
+      // A held blob. The op keeps {state: "missing"} whatever the head holds, so a replay builds the same request (and the same hash) as the
+      // first attempt; applyBatch keeps the head's descriptor when it is a present blob, so a good cloud blob is never replaced by a missing one.
+      op.blob = descriptor;
       continue;
     }
     op.blob = descriptor;
+    const prior = replay ? undefined : await head("Media", op.handle);
+    const priorBlob = prior && prior.deleted !== true ? prior.blob : undefined;
     const sha = descriptor.sha256;
     const item = { op_id: typeof op.op_id === "string" ? op.op_id : String(i + 1), handle: op.handle, sha256: sha, descriptor, staging: stagingKey(op.handle, sha), orphan: undefined };
     if (!replay) {
@@ -144,16 +158,39 @@ export async function prepareBlobs(store, ops, { head, replay }) {
       }
       await verifyStaged(store, item);
       const old = priorBlob?.state === "present" && typeof priorBlob.s3_key === "string" ? priorBlob.s3_key : undefined;
-      if (old && old !== descriptor.s3_key && BINARY_KEY.test(old) && old.startsWith(`media/${op.handle}.`)) {
-        item.orphan = old;
-        await store.ddb.send(new store.cmds.UpdateCommand({
-          TableName: store.table, Key: uploadKey(op.handle, sha), UpdateExpression: "SET #r = :o", ExpressionAttributeNames: { "#r": "replaces" }, ExpressionAttributeValues: { ":o": old },
-        }));
-      }
+      if (old && old !== descriptor.s3_key && BINARY_KEY.test(old) && old.startsWith(`media/${op.handle}.`)) item.orphan = old;
+      await holdPending(store, item);
     }
     plan.push(item);
   }
   return plan;
+}
+
+/**
+ * Once the staged object is verified: push the pending item's ttl out by another UPLOAD_PENDING_SECONDS, so it outlives the commit and a retry
+ * of a failed finalize, and record the key an extension change orphaned. Conditional on the item still existing: a parallel batch that
+ * finalized the same blob deleted it, and an unconditional update would upsert a stub with no ttl that a later finalize takes for a pending upload.
+ */
+async function holdPending(store, item) {
+  const names = { "#t": "ttl" };
+  const values = { ":t": Math.floor(store.now() / 1000) + UPLOAD_PENDING_SECONDS };
+  let expr = "SET #t = :t";
+  if (item.orphan) {
+    expr += ", #r = :o";
+    names["#r"] = "replaces";
+    values[":o"] = item.orphan;
+  }
+  try {
+    await store.ddb.send(new store.cmds.UpdateCommand({
+      TableName: store.table, Key: uploadKey(item.handle, item.sha256), UpdateExpression: expr, ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+    }));
+  } catch (e) {
+    if (e?.name === "ConditionalCheckFailedException") {
+      throw new HttpError(422, "blob_not_uploaded", "the pending upload for this blob is gone; request a presigned URL and upload it again", { op_id: item.op_id, handle: item.handle });
+    }
+    throw e;
+  }
 }
 
 /** HeadObject in checksum mode on the staged object: it must exist and have the claimed size, SHA-256 and content type. */
@@ -162,7 +199,7 @@ async function verifyStaged(store, item) {
   try {
     r = await store.s3.send(new HeadObjectCommand({ Bucket: store.mediaBucket, Key: item.staging, ChecksumMode: "ENABLED" }));
   } catch (e) {
-    if (notFound(e)) throw new HttpError(422, "blob_not_uploaded", "the blob is not at its staging key yet", { op_id: item.op_id, handle: item.handle });
+    if (notFound(store, e, "staging")) throw new HttpError(422, "blob_not_uploaded", "the blob is not at its staging key yet", { op_id: item.op_id, handle: item.handle });
     store.log?.warn?.("blob head failed", logSafeError(e, { route: "sync.batches" }));
     throw retryable();
   }
@@ -192,23 +229,46 @@ export async function finalizeBlobs(store, plan) {
 async function finalizeOne(store, item) {
   const { s3, mediaBucket: bucket } = store;
   const pending = await getUpload(store, item.handle, item.sha256);
-  if (!pending) return; // already finalized (or nothing was staged): the pending item goes last
   const d = item.descriptor;
   const expect = b64OfHex(d.sha256);
+  const headOf = async (Key, what) => {
+    try {
+      return await s3.send(new HeadObjectCommand({ Bucket: bucket, Key, ChecksumMode: "ENABLED" }));
+    } catch (e) {
+      if (notFound(store, e, what)) return undefined;
+      throw e;
+    }
+  };
+  if (!pending) {
+    // No pending item: either an earlier attempt finished (it deletes the item last), or the item's ttl ran out between a commit whose copy
+    // failed and this replay. Telling them apart needs the objects, not the item: the blob is in place when the final key carries its checksum.
+    const final = await headOf(d.s3_key, "final");
+    if (final && final.ChecksumSHA256 === expect) {
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: item.staging })); // a leftover of a crash before this delete; a no-op otherwise
+      return;
+    }
+    if (!(await headOf(item.staging, "staging"))) {
+      store.log?.warn?.("blob is neither in place nor staged (a later batch replaced it, or it is lost)", { handle: item.handle, route: "sync.batches" });
+      return;
+    }
+    // Staged, not in place. Copy only while the Media head still names this blob: a replay of an old batch must not overwrite a newer one.
+    const cur = await getRecordItem(store, "Media", item.handle);
+    if (!cur || cur.deleted === true || cur.blob?.sha256 !== d.sha256 || cur.blob?.s3_key !== d.s3_key) return;
+  }
   try {
     const r = await s3.send(new CopyObjectCommand({ Bucket: bucket, Key: d.s3_key, CopySource: `${bucket}/${item.staging}`, ChecksumAlgorithm: "SHA256" }));
     const got = r?.CopyObjectResult?.ChecksumSHA256;
     if (got !== undefined && got !== expect) throw Object.assign(new Error("copy checksum mismatch"), { name: "BlobCopyMismatch" });
   } catch (e) {
-    if (!notFound(e)) throw e;
+    if (!notFound(store, e, "copy")) throw e;
     // The staging object is gone: a previous attempt copied and deleted it. The final key must carry the checksum, else this is a real loss.
     const h = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: d.s3_key, ChecksumMode: "ENABLED" }));
     if (h.ChecksumSHA256 !== expect) throw Object.assign(new Error("blob missing"), { name: "BlobMissing" });
   }
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: item.staging }));
-  const orphan = item.orphan ?? pending.replaces;
+  const orphan = item.orphan ?? pending?.replaces;
   if (typeof orphan === "string" && orphan !== d.s3_key && BINARY_KEY.test(orphan) && orphan.startsWith(`media/${item.handle}.`)) {
     await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: orphan }));
   }
-  await transact(store.ddb, store.cmds, store.table, { deletes: [uploadKey(item.handle, item.sha256)] }, store.txnOpts);
+  if (pending) await transact(store.ddb, store.cmds, store.table, { deletes: [uploadKey(item.handle, item.sha256)] }, store.txnOpts);
 }

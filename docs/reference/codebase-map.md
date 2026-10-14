@@ -423,6 +423,7 @@ Paths:
 - [`infrastructure/mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml): the us-east-1 stack for the MCP 401-restore function. It sits in `infrastructure/`, not `infrastructure/cloudformation/`. See [MCP server](#mcp-server).
 - [`infrastructure/cloudformation/github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml): the OIDC role that GitHub Actions assumes.
 - [`infrastructure/cloudformation/site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json): the site bucket's whole CORS configuration, for browser photo uploads. It is not a CloudFormation template: [How to stand up the static site](../how-to/stand-up-the-static-site.md#1-create-the-site-bucket) applies it with `put-bucket-cors`.
+- [`infrastructure/cloudformation/site-bucket-lifecycle.json`](../../infrastructure/cloudformation/site-bucket-lifecycle.json): the lifecycle rule that expires leftover `media/.staging/` blobs of the desktop sync (HFY-TSK-173) after 2 days. Not a CloudFormation template either: [How to stand up the static site](../how-to/stand-up-the-static-site.md#1-create-the-site-bucket) applies it with `put-bucket-lifecycle-configuration`.
 - [`scripts/infra/`](../../scripts/infra/):
   - `create-session-key.sh`: the session signing key.
   - `create-origin-verify.sh`: the origin-verify secret.
