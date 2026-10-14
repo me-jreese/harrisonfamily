@@ -60,7 +60,7 @@ grep -rlE 'gsi/client|/api/check-allowed|/js/auth\.js|/js/search-navbar\.js|/js/
 for f in js/auth.js js/search-navbar.js js/search-results.js js/islands; do test ! -e "$SRC/public/$f" || echo "remove $SRC/public/$f"; done
 ```
 
-The mirror is done when the loop prints `mirrored` for all 20 files, the first `grep` prints `1`, and nothing else is printed: the second `grep` lists no source template that still names a retired script or endpoint, and no `remove` line appears. Otherwise, do only the parts that are missing:
+The mirror is done when the loop prints `mirrored` for all 22 files, the first `grep` prints `1`, and nothing else is printed: the second `grep` lists no source template that still names a retired script or endpoint, and no `remove` line appears. Otherwise, do only the parts that are missing:
 
 - A file reported as `missing or different`: mirror steps 1 and 2 below.
 - A `grep` count of `0`, or a file listed by the second `grep`: mirror step 3.
