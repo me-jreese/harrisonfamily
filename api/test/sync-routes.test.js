@@ -28,6 +28,11 @@ const token = (sub = OWNER, o = {}) =>
     .setSubject(sub).setIssuer(o.iss ?? ISSUER).setAudience(o.aud ?? SYNC_AUDIENCE)
     .setIssuedAt(o.iat ?? nowS - 5).setExpirationTime(o.exp ?? nowS + 600).sign(key);
 
+/** A signed token with no exp claim (jose validates exp only when present). */
+const tokenNoExp = () =>
+  new SignJWT({ client_id: SYNC_CLIENT_ID, token_use: "access", amr: ["mfa"], auth_time: nowS - 10 })
+    .setProtectedHeader({ alg: "RS256", kid: "hfy-session-1" }).setSubject(OWNER).setIssuer(ISSUER).setAudience(SYNC_AUDIENCE).setIssuedAt(nowS - 5).sign(key);
+
 let envBefore;
 beforeEach(() => { envBefore = process.env.SYNC_API_ENABLED; process.env.SYNC_API_ENABLED = "1"; });
 afterEach(() => { if (envBefore === undefined) delete process.env.SYNC_API_ENABLED; else process.env.SYNC_API_ENABLED = envBefore; });
@@ -97,6 +102,8 @@ describe("sync-bearer authentication (AC2)", () => {
       no_client: await token(OWNER, { claims: { client_id: undefined } }),
       id_token: await token(OWNER, { claims: { token_use: "id" } }),
       expired: await token(OWNER, { exp: nowS - 120, iat: nowS - 900 }),
+      no_exp: await tokenNoExp(),
+      no_token_use: await token(OWNER, { claims: { token_use: undefined } }),
     };
     for (const [why, tok] of Object.entries(bad)) expect(err(await w.call("GET", "/sync/meta", { tok })), why).toEqual({ status: 401, error: "unauthenticated" });
     expect((await w.call("GET", "/sync/meta", { tok: await token(OWNER, { aud: ["x", SYNC_AUDIENCE] }) })).status).toBe(200); // aud may be a list that includes ours
@@ -272,6 +279,25 @@ describe("GET /api/sync/meta (AC4)", () => {
     expect(JSON.stringify(r.body)).not.toContain(NAME_HASH); // the tree-name hash is never returned
     w.ddb.rows.set("SYNC#HEAD\u0000META", { ...w.head(), merges_enabled: true });
     expect((await w.call("GET", "/sync/meta", { tok: await token() })).body.merges_enabled).toBe(true);
+  });
+
+  it("reads the retired list once per head seq (cached), and again after seq moves", async () => {
+    const w = world({ head: { seq: 5 } });
+    let queries = 0;
+    const send = w.ddb.send.bind(w.ddb);
+    w.ddb.send = async (c) => { if (c.input?.IndexName === "GSI1") queries += 1; return send(c); };
+    await w.call("GET", "/sync/meta", { tok: await token() });
+    await w.call("GET", "/sync/meta", { tok: await token() });
+    expect(queries).toBe(1);
+    w.ddb.rows.set("SYNC#HEAD\u0000META", { ...w.head(), seq: 6 });
+    await w.call("GET", "/sync/meta", { tok: await token() });
+    expect(queries).toBe(2);
+  });
+
+  it("a non-owner is 403 before the handshake: no 426 body, no head read", async () => {
+    const w = world({ head: { seq: 1 } });
+    const r = await w.call("GET", "/sync/meta", { tok: await token(OTHER), headers: {} });
+    expect(err(r)).toEqual({ status: 403, error: "not_owner" });
   });
 
   it("only the literal true turns merges_enabled on", async () => {

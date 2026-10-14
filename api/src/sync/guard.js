@@ -87,16 +87,16 @@ export function checkHandshake(event, terms) {
 /**
  * Runs the middleware for one sync-bearer request and returns the `c.sync` context the route handler gets:
  *   { head, terms, handshake, treeId, checkTree(), requireStepUp(reason), writesEnabled }
- * Order: body size -> handshake -> gramps-owner -> pause (writes only). The bearer was verified before this (handler.js).
+ * Order: gramps-owner -> body size -> handshake -> pause (writes only). The bearer was verified before this (handler.js).
  * @param {{ctx: {ddb, cmds, table}, event, actor, route, now?: () => number}} a
  */
 export async function syncContext({ ctx, event, actor, route, now = () => Date.now() }) {
+  requireOwner(actor); // before the head read and the handshake: a non-owner learns nothing from the 426 body
   const head = await getSyncHead(ctx);
   const terms = handshakeTerms(head);
   const body = event?.body;
   if (typeof body === "string" && Buffer.byteLength(body, event.isBase64Encoded ? "base64" : "utf8") > MAX_BODY_BYTES) throw new HttpError(413, "batch_too_large", `the request body is over ${MAX_BODY_BYTES} bytes`);
   const handshake = checkHandshake(event, terms);
-  requireOwner(actor);
   const writesEnabled = head?.writes_enabled !== false;
   if (route.write && !route.pausedOk && !writesEnabled) throw new HttpError(503, "sync_paused", "sync is paused");
   const treeId = headerOf(event, HEADERS.tree);

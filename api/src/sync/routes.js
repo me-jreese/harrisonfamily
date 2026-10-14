@@ -28,7 +28,22 @@ const MAX_RETIRED_PAGES = 200;
  * before it sends (D44). The index is eventually consistent and the server stays the authority, so a lag costs one 409, not a reuse.
  * Renumbers are blocked in this release (renumber_blocked); when they ship, the list must also read the retired GID# items.
  */
-export async function retiredPersonIds({ ddb, cmds, table }) {
+const retiredCaches = new WeakMap();
+/** Cached per table and head seq: the list only changes when a batch commits, which moves seq. Bounded to a few tables. */
+export async function retiredPersonIds(store, seq) {
+  let retiredCache = retiredCaches.get(store.ddb);
+  if (!retiredCache) retiredCaches.set(store.ddb, (retiredCache = new Map()));
+  const ck = Number.isInteger(seq) ? `${store.table}#${seq}` : null;
+  const hit = ck ? retiredCache.get(ck) : undefined;
+  if (hit) return [...hit];
+  const out = await readRetiredPersonIds(store);
+  if (ck) {
+    if (retiredCache.size >= 8) retiredCache.delete(retiredCache.keys().next().value);
+    retiredCache.set(ck, out);
+  }
+  return [...out];
+}
+async function readRetiredPersonIds({ ddb, cmds, table }) {
   const ids = new Set();
   let key;
   for (let page = 0; page < MAX_RETIRED_PAGES; page += 1) {
@@ -52,7 +67,7 @@ async function renderedSeq({ ddb, cmds, table }) {
 /** GET /api/sync/meta: the handshake document (sync.md 7.2). */
 export async function syncMeta(c) {
   const { head, terms, store } = c.sync;
-  const [rendered, retired] = await Promise.all([renderedSeq(store), retiredPersonIds(store)]);
+  const [rendered, retired] = await Promise.all([renderedSeq(store), retiredPersonIds(store, head?.seq)]);
   return ok({
     api_version: API_VERSION,
     min_client: terms.min_client,

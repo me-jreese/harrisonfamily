@@ -63,7 +63,7 @@ export function createSyncAuthenticator({ issuer = SYNC_ISSUER, audience = SYNC_
     if (!token) throw unauthenticated();
     let claims;
     try {
-      ({ payload: claims } = await jwtVerify(token, await getJwks(), { issuer, algorithms: ["RS256"], clockTolerance: CLOCK_TOLERANCE_SECONDS, currentDate: new Date(now()) }));
+      ({ payload: claims } = await jwtVerify(token, await getJwks(), { issuer, algorithms: ["RS256"], clockTolerance: CLOCK_TOLERANCE_SECONDS, requiredClaims: ["exp", "iat", "sub"], currentDate: new Date(now()) }));
     } catch (e) {
       log.warn?.("sync token rejected", logSafeError(e));
       throw unauthenticated();
@@ -73,7 +73,7 @@ export function createSyncAuthenticator({ issuer = SYNC_ISSUER, audience = SYNC_
       log.warn?.("sync token rejected", { name: "SyncTokenBinding" });
       throw unauthenticated();
     }
-    if (claims.token_use !== undefined && claims.token_use !== "access") throw unauthenticated();
+    if (claims.token_use !== "access") throw unauthenticated();
     let groups = [];
     try {
       groups = await getGroups({ sub: claims.sub });
