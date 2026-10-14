@@ -7,8 +7,8 @@ import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
-import { createSystem } from "../src/records/proposal-store.js";
-import { GUARD_SYSTEM_REASON, grampsIdFor } from "../src/records/proposal-decision.js";
+import { QUEUE_STATES, createSystem } from "../src/records/proposal-store.js";
+import { DECIDABLE_STATES, GUARD_SYSTEM_REASON, grampsIdFor } from "../src/records/proposal-decision.js";
 import { sha256Hex } from "../src/records/proposals.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
@@ -301,6 +301,68 @@ describe("an overlapping change (AC2)", () => {
     expect(w.stored(p.id).proposal.state).toBe("superseded");
     expect(w.rows(`AUDIT#proposal:${p.id}`).map((x) => x.op)).toContain("proposal.supersede");
     expect(w.afters).toEqual([]);
+  });
+});
+
+describe("a stale proposal stays in the admin queue (HFY-TSK-209 review)", () => {
+  const queue = async (w, query = {}) => {
+    const r = await w.call("GET", "/api/proposals", ADMIN, { query: { view: "queue", ...query } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return r.body.items;
+  };
+  const rename = (w) => w.bump({ ...w.me, primary_name: { ...w.me.primary_name, first_name: "Alden" } }, 1); // the same field, to another value
+  const amendNow = { base_versions: { [`Person:${h(1)}`]: 2 }, ops: [{ id: "e1", op: "set", obj: `Person:${h(1)}`, path: "/primary_name/first_name", base: "Alden", value: "Aldric" }] };
+
+  it("every state an admin can decide is a state the default queue shows", () => {
+    for (const s of DECIDABLE_STATES) expect(QUEUE_STATES).toContain(s);
+    expect(DECIDABLE_STATES).toContain("stale");
+  });
+
+  it("a member's proposal: after a 409 rebase_conflict it is still in the queue (and under state=stale), and an admin decides it from there", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "sq-1");
+    expect((await queue(w)).map((x) => [x.id, x.state])).toEqual([[p.id, "pending"]]);
+    await rename(w);
+    expect(err(await w.decide(ADMIN, p, { verdict: "approve" }))).toEqual({ status: 409, error: "rebase_conflict" });
+    expect(w.stored(p.id).GSI1PK).toBe("PROPQ#stale");
+    const listed = await queue(w);
+    expect(listed.map((x) => [x.id, x.state, x.stale, x.can.decide])).toEqual([[p.id, "stale", true, true]]);
+    expect((await queue(w, { state: "stale" })).map((x) => x.id)).toEqual([p.id]);
+    // edit then approve, from the queue entry (its etag) with the version the admin reads now
+    const ok = await w.decide(ADMIN2, listed[0], { verdict: "approve", amend: amendNow }, { idem: "sq-1b" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(w.heads("Person", w.me.handle).primary_name.first_name).toBe("Aldric");
+    expect(await queue(w)).toEqual([]);
+  });
+
+  it("an access-request proposal: after a 409 rebase_conflict it is still in the queue, and approving it from there completes the request", async () => {
+    const calls = [];
+    const w = await world({ completeAccessRequest: async (a) => { calls.push({ requestId: a.requestId, grampsId: a.grampsId }); return { puts: [{ item: { PK: `ACCESSREQ#${a.requestId}`, SK: "META", state: "active", sub: a.grampsId } }] }; } });
+    const sys = { ...w.sctx, uid: (() => { let n = 0; return () => `01J${String(++n).padStart(23, "0")}`; })() };
+    const doc = await createSystem(sys, { kind: "edit", origin: "access_request", requestId: "req-0002", base_versions: { [key(w.me)]: 1 }, ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldric", "e")] });
+    expect((await queue(w)).map((x) => [x.id, x.state])).toEqual([[doc.id, "pending"]]);
+    await rename(w);
+    expect(err(await w.decide(ADMIN, doc, { verdict: "approve" }))).toEqual({ status: 409, error: "rebase_conflict" });
+    expect(calls).toEqual([]);
+    const listed = await queue(w);
+    expect(listed.map((x) => [x.id, x.state, x.origin, x.request_id, x.can.decide])).toEqual([[doc.id, "stale", "access_request", "req-0002", true]]);
+    expect((await queue(w, { state: "stale" })).map((x) => x.id)).toEqual([doc.id]);
+    const ok = await w.decide(ADMIN2, listed[0], { verdict: "approve", amend: amendNow }, { idem: "sq-2b" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(calls).toEqual([{ requestId: "req-0002", grampsId: ME }]);
+    expect(w.ddb.rows.get("ACCESSREQ#req-0002\u0000META")).toMatchObject({ state: "active", sub: ME });
+    expect(await queue(w)).toEqual([]);
+  });
+
+  it("a relationship proposal moved to stale by its read_versions is still in the queue", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "sq-3");
+    const doc = { ...w.stored(p.id).proposal, read_versions: { [key(w.fam)]: 1 } };
+    for (const row of w.rows(`PROP#${p.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: doc });
+    await w.bump({ ...w.fam, private: true }, 1);
+    expect(err(await w.decide(ADMIN, doc, { verdict: "approve" }))).toEqual({ status: 409, error: "rebase_conflict" });
+    expect((await queue(w)).map((x) => [x.id, x.state])).toEqual([[p.id, "stale"]]);
+    expect((await queue(w, { state: "stale" })).map((x) => x.id)).toEqual([p.id]);
   });
 });
 

@@ -30,8 +30,13 @@ export const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 export const LIST_VIEWS = Object.freeze(["queue", "mine", "about-me"]);
 export const DEFAULT_LIMIT = 25;
 export const MAX_LIMIT = 50;
-/** The states a queue shows when no `state` is asked for: what an admin can decide. */
-export const QUEUE_STATES = Object.freeze(["pending"]);
+/**
+ * The states a queue shows when no `state` is asked for: what an admin can decide (proposal-decision.js reads this list as its DECIDABLE_STATES).
+ * `stale` is a stored state: the decision route writes it when an approval's rebase meets a conflict (editing design 7.4 step 3, HFY-TSK-209), and an
+ * admin can still decide it, so it stays in the queue. HFY-TSK-184's review had dropped it while nothing wrote the state; HFY-TSK-209's review put it back.
+ * The `stale` flag of a ProposalView is a different thing: it is computed on read (staleOf) and never stored.
+ */
+export const QUEUE_STATES = Object.freeze(["pending", "stale"]);
 const MAX_ABOUT_FAMILIES = 30;
 const BODY_FIELDS = new Set(["ops", "base_versions", "note"]);
 
@@ -163,8 +168,8 @@ export async function proposalsList(c) {
   const { actor } = c;
   const view = c.query.view ?? "mine";
   if (!LIST_VIEWS.includes(view)) throw problem(400, "validation", "view is queue, mine or about-me", { errors: [{ pointer: "/view", detail: "view is queue, mine or about-me" }] });
+  // `state=stale` lists the stored state (what a conflicting approval left), not the computed `stale` flag: a pending proposal whose page moved stays under pending.
   const state = c.query.state;
-  if (state === "stale") throw problem(400, "validation", "stale is a flag on a suggestion, not a state: filter on `stale`", { errors: [{ pointer: "/state", detail: "stale is computed on read; ask for pending and filter on the stale flag" }] });
   if (state !== undefined && state !== "" && !PROPOSAL_STATES.includes(state)) throw problem(400, "validation", "that state is not known", { errors: [{ pointer: "/state", detail: "state is not known" }] });
   if (view === "queue" && actor.admin !== true) throw new HttpError(403, "not_admin", "only an admin can see the queue");
   const limit = limitOf(c.query.limit);

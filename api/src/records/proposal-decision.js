@@ -14,6 +14,7 @@
 //   approve               the rebase (7.5): the proposal's ops are applied to the objects as they are NOW (a different field changed in the
 //                         meantime is clean; an overlapping change is not), with the same engine, Gramps rules, schema and guard as POST /api/changes.
 //                           - an overlap persists `stale` (audit proposal.stale), tells the proposer (proposal_stale) and answers 409 rebase_conflict;
+//                             a stale proposal stays in the admin queue (PROPQ#stale is one of QUEUE_STATES) and can be decided again;
 //                             a target that is gone persists `superseded` the same way
 //                           - the guard failing now (the rules may have tightened since) moves the proposal to needs_changes with a system reason;
 //                             the matched text is never echoed, logged or stored
@@ -45,10 +46,13 @@ import {
 import {
   SYSTEM_PROPOSER, approvalHookFragment, idemKeys, idemPut, ownersList, ownersOf, proposalAuditItem, proposalRewrite, proposalView, sha256Hex, withState,
 } from "./proposals.js";
-import { ifMatchOf, loadProposal, preconditionFailed, rebaseOf, replyHeaders } from "./proposal-store.js";
+import { QUEUE_STATES, ifMatchOf, loadProposal, preconditionFailed, rebaseOf, replyHeaders } from "./proposal-store.js";
 
-/** The states an admin can decide (a needs_changes proposal waits for its proposer). */
-export const DECIDABLE_STATES = Object.freeze(["pending", "stale"]);
+/**
+ * The states an admin can decide (a needs_changes proposal waits for its proposer): pending and stale. It is the admin queue's own list, so every
+ * proposal an admin can decide is one the queue shows, a stale one included (HFY-TSK-209 review).
+ */
+export const DECIDABLE_STATES = QUEUE_STATES;
 /** The verdict names the route takes; `decline` is read as `deny` (the stored verdict and gates' word). */
 const VERDICTS = Object.freeze({ approve: "approve", deny: "deny", decline: "deny", needs_changes: "needs_changes" });
 /** What the proposer is told when the privacy rules rejected their text at approval time. It names no matched text. */
