@@ -6,7 +6,7 @@ Paths are relative to the repository root and link to the code. For why a releas
 
 ## Placeholders
 
-Identifiers that belong to the live environment are written as placeholders. The shared list is in [private data and secrets](private-data-and-secrets.md#placeholders). Three placeholders in the table below are defined only on this page: `<gcp-project>`, `<allowlist-secret>` and `<parent>`.
+Identifiers that belong to the live environment are written as placeholders. The shared list is in [private data and secrets](private-data-and-secrets.md#placeholders). One placeholder in the table below is defined only on this page: `<parent>`.
 
 | Placeholder | Stands for |
 |---|---|
@@ -19,8 +19,6 @@ Identifiers that belong to the live environment are written as placeholders. The
 | `<config-bucket>` | The S3 bucket that holds the access configuration under `config/`, including `config/groups.json`. |
 | `<github-owner>` | The GitHub user or organization that owns the repository (the `GitHubOrg` parameter of `github-roles.yaml`). |
 | `<github-repo>` | The GitHub repository name (the `GitHubRepo` parameter of `github-roles.yaml`). |
-| `<gcp-project>` | The Google Cloud project of the legacy allowlist function. |
-| `<allowlist-secret>` | The Secret Manager secret that the legacy allowlist function reads. |
 | `<project>` | The directory that contains the checkout. See the [codebase map](codebase-map.md). |
 | `<eleventy-source>` | The Eleventy project that builds `11ty/`, at `<project>/workspace/11ty-dev`. It is not under Git. See the [codebase map](codebase-map.md). |
 | `<parent>` | The checkout's parent directory when the checkout is not at `<project>/repo`, as in a standalone clone or a Git worktree. |
@@ -35,10 +33,11 @@ Inside quoted messages, file names and artifact names, other angle-bracket words
 |---|---|---|---|---|
 | [`io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml) | io-kit CI | `pull_request`, `workflow_dispatch` | Builds, reports pipeline drift, scans for secrets. | Rendered from `ci.manifest.yaml` |
 | [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) | io-kit deploy | `push` to `main`, `workflow_dispatch` | Builds and packages a release, syncs `11ty/` to `<site-bucket>`, invalidates CloudFront, runs smoke checks, and rolls back after a failed smoke check. | Rendered from `ci.manifest.yaml` |
-| [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) | Deploy GCF (legacy) | `workflow_dispatch` only | Deploys the legacy `getAllowlist` Google Cloud Function when started by hand. It does not run on a push (HFY-TSK-317). | Hand-maintained |
 | [`post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml) | post-deploy checks | `workflow_run` of `io-kit deploy` on `main` (completed; its job runs only when that run succeeded), `workflow_dispatch` | Checks the site bucket's CORS rule with preflight requests ([`check-site-bucket-cors.sh`](#check-site-bucket-corssh)). Deploys nothing and rolls nothing back. | Hand-maintained |
 
 A push to `main` starts `io-kit-deploy.yml`. When the `io-kit-deploy.yml` run succeeds, `post-deploy-checks.yml` starts. The drift check and the secret scan run only in `io-kit-ci.yml`, so they run on pull requests and manual runs, not on a push to `main`. `io-kit-ci.yml` runs the CodeArtifact-free suites in its `test` job on pull requests (the `tests` key; see [Run the tests](../how-to/run-the-tests.md#where-each-suite-runs)), and no workflow runs the islands build or the other suites. See [what no workflow ships or runs](#what-no-workflow-ships-or-runs).
+
+`deploy-gcf-legacy.yml`, which deployed the legacy `getAllowlist` Google Cloud Function when started by hand, is gone. With io's approval, the function and its secret were deleted on 2026-10-14, and HFY-TSK-325 removed the workflow and the function source, so nothing in the repository can redeploy it ([Identity services](identity-services.md#getallowlist-deleted)).
 
 ### Kit manifest: `ci.manifest.yaml`
 
@@ -130,7 +129,7 @@ The reasoning is in [static files and versioned URLs](../explanation/edge-and-or
 | `missing_header` | A file in `.github/actions/io-kit-ci/` or a `.github/workflows/io-kit-*` file has no rendered header. |
 | `deploy_outside_kit` | Another workflow runs `aws s3 sync`, a Lambda code, configuration, version or alias update, or a CloudFront invalidation or function update. |
 
-`deploy-gcf-legacy.yml` and `post-deploy-checks.yml` have no header and run no AWS deploy command, so they report no drift. The `parity` job runs in `block` mode, so any drift fails the pull request.
+`post-deploy-checks.yml` has no header and runs no AWS deploy command, so it reports no drift. The `parity` job runs in `block` mode, so any drift fails the pull request.
 
 ### Rendered and hand-maintained files
 
@@ -144,26 +143,7 @@ Rendered files are not edited by hand. A pipeline change is made in `ci.manifest
 
 | Rendered | Hand-maintained |
 |---|---|
-| `.github/workflows/io-kit-ci.yml`, `.github/workflows/io-kit-deploy.yml`, every file under `.github/actions/io-kit-ci/` | `ci.manifest.yaml`, `.github/workflows/deploy-gcf-legacy.yml`, `.github/workflows/post-deploy-checks.yml`, every script under `scripts/ci/` |
-
-### `deploy-gcf-legacy.yml`
-
-Workflow **Deploy GCF (legacy)**, one job, `deploy`, on `ubuntu-latest`, with permissions `contents: read` and `id-token: write`. It has no concurrency group. Its only trigger is `workflow_dispatch` (HFY-TSK-317 removed the `push` trigger), so it runs only when started by hand from the Actions tab; its first lines say so.
-
-| Variable | Value |
-|---|---|
-| `GCP_PROJECT_ID` | `<gcp-project>` |
-| `GCF_REGION` | `us-west2` |
-| `GCF_FUNCTION` | `getAllowlist` |
-| `GCF_ENV_VARS` | `HFY_ALLOWLIST_SECRET=<allowlist-secret>,GCP_PROJECT=<gcp-project>` |
-
-| # | Step | What it runs |
-|---|---|---|
-| 1 | Checkout | `actions/checkout@v4` |
-| 2 | Authenticate to Google Cloud | `google-github-actions/auth@v2` with `credentials_json: secrets.GCP_SERVICE_ACCOUNT_KEY`, a long-lived service-account JSON key, not workload identity federation |
-| 3 | Setup gcloud CLI | `google-github-actions/setup-gcloud@v2` with `project_id: <gcp-project>` |
-| 4 | Verify gcloud authentication | `gcloud config set project`, `gcloud auth list` |
-| 5 | Deploy Google Cloud Function | `gcloud functions deploy getAllowlist --region=us-west2 --gen2 --runtime=python311 --source=functions/get-allowlist --entry-point=get_allowlist --trigger-http --no-allow-unauthenticated --set-env-vars=$GCF_ENV_VARS`, which deploys [`functions/get-allowlist/`](../../functions/get-allowlist/) as a 2nd-gen HTTP function for authenticated callers only |
+| `.github/workflows/io-kit-ci.yml`, `.github/workflows/io-kit-deploy.yml`, every file under `.github/actions/io-kit-ci/` | `ci.manifest.yaml`, `.github/workflows/post-deploy-checks.yml`, every script under `scripts/ci/` |
 
 ## Deploy role: `github-roles.yaml`
 
@@ -187,7 +167,7 @@ The role has no CloudFormation, IAM or Secrets Manager permissions, no CloudFron
 | Secret | Used by | Holds |
 |---|---|---|
 | `AWS_DEPLOY_ROLE_TO_ASSUME` | `io-kit-deploy.yml` jobs `deploy`, `invalidate` and `rollback_on_smoke_fail` | The ARN of the OIDC deploy role, the `DeployRoleArn` output of [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml). |
-| `GCP_SERVICE_ACCOUNT_KEY` | `deploy-gcf-legacy.yml`, when started by hand | A Google service-account JSON key, used only for the legacy Cloud Function. |
+| `GCP_SERVICE_ACCOUNT_KEY` | No workflow since HFY-TSK-325 removed `deploy-gcf-legacy.yml` | A Google service-account JSON key. That key was deleted on the service account on 2026-10-14, so the secret no longer authenticates and can be deleted ([Private data and secrets](private-data-and-secrets.md#google-cloud-legacy-deleted)). |
 
 ### `post-deploy-checks.yml`
 
@@ -583,7 +563,7 @@ These scripts predate the E5 release. They assume the checkout sits at `<project
 
 | Script | Reads | Writes | Options |
 |---|---|---|---|
-| [`check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh) | Staged file names. For staged `11ty/*`: `<eleventy-source>/_site` against `11ty/`, with the excludes listed below. For staged `lambda/*`: `<project>/scripts/auth/check-allowed-lambda` against `lambda/hfy-check-allowed`, excluding `node_modules/` (kept while the retired Lambda's source stays, P2-R42; drop it with the Lambda). For staged `functions/*`: `<project>/workspace/gcloud/allowlist-fn` against `functions/get-allowlist`. | Nothing | `SKIP_DEPLOYMENT_SYNC_CHECK=1` |
+| [`check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh) | Staged file names. For staged `11ty/*`: `<eleventy-source>/_site` against `11ty/`, with the excludes listed below. For staged `lambda/*`: `<project>/scripts/auth/check-allowed-lambda` against `lambda/hfy-check-allowed`, excluding `node_modules/` (kept while the retired Lambda's source stays, P2-R42; drop it with the Lambda). HFY-TSK-325 removed the `functions/*` comparison with the deleted `getAllowlist` source. | Nothing | `SKIP_DEPLOYMENT_SYNC_CHECK=1` |
 | [`validate_build.sh`](../../scripts/validate_build.sh) | `<eleventy-source>/_site/index.html` | Nothing | None |
 | [`promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh) | A session-log JSON whose `changes[]` entries have `promote: true`, `workspace_path` (relative to `<project>`), `repo_path` (relative to the checkout) and `notes` | The listed paths in this checkout | `--log FILE` (required, relative to the current directory), `--dry-run` or `-n`, `-h` |
 | [`sync_sanitized_assets.py`](../../scripts/sync_sanitized_assets.py) | `<project>/workspace-local/allowlist/`, `<project>/workspace-local/cloudfront/`, `<project>/workspace-local/coming-soon-index.html` | Placeholders under `<project>/workspace/` (with `--sync`) | `--sync` |
@@ -600,7 +580,7 @@ How each behaves when the parent directory is `<parent>` rather than `<project>`
 
 | Script | Behavior |
 |---|---|
-| `check-deployment-sync.sh` | Exits 0 when no `11ty/`, `lambda/` or `functions/` file is staged. Otherwise the sources under `<parent>` are missing, so it exits 1 and blocks the commit unless `SKIP_DEPLOYMENT_SYNC_CHECK=1` is set. |
+| `check-deployment-sync.sh` | Exits 0 when no `11ty/` or `lambda/` file is staged. Otherwise the sources under `<parent>` are missing, so it exits 1 and blocks the commit unless `SKIP_DEPLOYMENT_SYNC_CHECK=1` is set. |
 | `validate_build.sh` | Exits 1 because the build directory under `<parent>` is not found. |
 | `promote_workspace_assets.sh` | Reads workspace paths from `<parent>`. Missing paths are skipped with a warning, and anything found is written into this checkout. |
 | `sync_sanitized_assets.py` | When `<parent>` has no `workspace-local/`, it skips every entry and prints `[OK] Sanitized workspace mirrors workspace-local for tracked assets.`, an OK that checked nothing. |
@@ -658,7 +638,6 @@ About the artifacts:
 - A rollback restores the earlier artifact's `11ty/_data/flags.json` too. If that artifact still has `authV2` off while the data gate is attached, the restored client cannot read gated data. Such a rollback is paired with `add-data-gate-behaviors.sh --remove --app-stack <app-stack>` ([cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md)).
 
 - The repository has no root `package.json`. `@io-kit/parity` is a dev dependency of `api/` only, and the `parity-report` action runs at the checkout root, where nothing installs it, so `npx --no-install io-kit-parity` has nothing to run there. That step runs only when `parity.baseline` is set, and none is set.
-- `deploy-gcf-legacy.yml` authenticates with a long-lived service-account JSON key.
 - The drift check and the secret scan run on pull requests and manual runs of `io-kit-ci.yml` only. A push straight to `main` deploys without them.
 - The `@io-kit/mcp` conformance corpus embeds `$fixture:` references inside header values, such as `Bearer $fixture:<path>`, but the packaged `resolveRefs` replaces only a reference that is the whole string. [`api/test/mcp-conformance.test.js`](../../api/test/mcp-conformance.test.js) expands the references in header values itself. A harness that relies on `resolveRefs` alone would send the literal reference.
 

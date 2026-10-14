@@ -21,14 +21,12 @@ fi
 
 needs_eleventy_check=0
 needs_lambda_check=0
-needs_gcf_check=0
 
 IFS=$'\n'
 for file in $STAGED_FILES; do
   case "$file" in
     11ty/*) needs_eleventy_check=1 ;;
     lambda/*) needs_lambda_check=1 ;;
-    functions/*) needs_gcf_check=1 ;;
   esac
 done
 unset IFS
@@ -119,9 +117,5 @@ if [ "$needs_lambda_check" -eq 1 ]; then
     --exclude 'node_modules/'
 fi
 
-if [ "$needs_gcf_check" -eq 1 ]; then
-  run_rsync_check \
-    "GCF get-allowlist (workspace/gcloud/allowlist-fn -> functions/get-allowlist)" \
-    "$PROJECT_ROOT/workspace/gcloud/allowlist-fn" \
-    "$REPO_ROOT/functions/get-allowlist"
-fi
+# There is no Cloud Function check: getAllowlist, its source (functions/get-allowlist/) and its secret were deleted on 2026-10-14
+# (HFY-TSK-325).

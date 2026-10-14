@@ -466,7 +466,7 @@ To run the scan on every commit, enable the repository's hooks:
 git config core.hooksPath scripts/git-hooks
 ```
 
-The [pre-commit hook](../../scripts/git-hooks/pre-commit) then runs the deployment sync check and this scan. It blocks the commit when the sync check fails, for example because `rsync` is missing or staged `11ty/`, `lambda/` or `functions/` files differ from their sources, when the scan finds something, or when `trufflehog` is not on `PATH`. [Repository operations](../reference/repository-operations.md#git-hook-scriptsgit-hookspre-commit) describes the sync check.
+The [pre-commit hook](../../scripts/git-hooks/pre-commit) then runs the deployment sync check and this scan. It blocks the commit when the sync check fails, for example because `rsync` is missing or staged `11ty/` or `lambda/` files differ from their sources, when the scan finds something, or when `trufflehog` is not on `PATH`. [Repository operations](../reference/repository-operations.md#git-hook-scriptsgit-hookspre-commit) describes the sync check.
 
 ### 14. Run the graph builder tests (offline)
 

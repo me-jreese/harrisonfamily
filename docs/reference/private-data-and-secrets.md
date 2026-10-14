@@ -277,7 +277,7 @@ HFY_PERSON_DIR=DIR node <project>/scripts/search/build_search_index.js
 
 - Takes no arguments. Reads `<project>/docs/dev/userGrampsID.json` and `<project>/docs/dev/harrisonfamily-allowlist.json`, and stops if either is missing.
 - In order, it uploads the map to `config/userGrampsID.json`, reads `HFY_ALLOWLIST_HMAC_SECRET` from Secrets Manager, hashes each email in the array (trimmed and lowercased) into a temporary directory, uploads `config/allowed_hashes.json`, and adds a version of the array to the Google secret `harrisonfamily-allowlist` with whichever gcloud configuration is active.
-- The Google Cloud write is vestigial: no sign-in path reads that secret. It runs last, so if it fails, the S3 objects are already updated.
+- The Google Cloud write now always fails: the `harrisonfamily-allowlist` secret was deleted on 2026-10-14 with io's approval (HFY-TSK-325), and no sign-in path ever read it. It runs last, so when it fails the S3 objects are already updated, but the script never reaches its `[DONE]` line. Removing the step from the script, which is outside this repository, ends the failure.
 - Both uploads use `aws s3 cp --acl private`, so the caller needs `s3:PutObjectAcl` as well as `s3:PutObject`.
 - It does not write `config/admins.json` or `config/groups.json`, and it keeps no audit log.
 
@@ -289,7 +289,7 @@ HFY_PERSON_DIR=DIR node <project>/scripts/search/build_search_index.js
 | `HFY_USER_GRAMPS_KEY` | `config/userGrampsID.json` |
 | `HFY_ALLOWED_HASHES_KEY` | `config/allowed_hashes.json` |
 | `HFY_HMAC_SECRET_NAME` | `HFY_ALLOWLIST_HMAC_SECRET` |
-| `HFY_GCP_SECRET_NAME` | `harrisonfamily-allowlist` |
+| `HFY_GCP_SECRET_NAME` | `harrisonfamily-allowlist` (deleted on 2026-10-14) |
 
 ### mint_test_id_token.py
 
@@ -347,13 +347,13 @@ Every path below is outside the repository. Docs name these files and directorie
 | Family data | `<project>/workspace-local/harrisonfamily-frontend/` | `<site-bucket>` data prefixes, by `sync_to_s3.py` |
 | ETL working output | `<project>/workspace-local/etl-output/`, by convention | Not published directly |
 | Raw Gramps exports and inspection bundles | `<project>/reports/`, the default `--glob-root` of `export_person_bundle.py` when run from `<project>`. It also holds Gramps metadata reports. | Never published |
-| Email-to-Gramps-ID map and email array | `<project>/docs/dev/userGrampsID.json`, `<project>/docs/dev/harrisonfamily-allowlist.json`; a second copy of the array in `<project>/workspace-local/docs-dev/` | `config/userGrampsID.json`, `config/allowed_hashes.json` and the Google secret, by `publish_allowlists.sh` (from `<project>/docs/dev/` only) |
+| Email-to-Gramps-ID map and email array | `<project>/docs/dev/userGrampsID.json`, `<project>/docs/dev/harrisonfamily-allowlist.json`; a second copy of the array in `<project>/workspace-local/docs-dev/` | `config/userGrampsID.json` and `config/allowed_hashes.json`, by `publish_allowlists.sh` (from `<project>/docs/dev/` only). Its write to the Google secret fails, because that secret was deleted. |
 | Member email CSV | `<project>/docs/dev/initial_allowlist.csv` | Not read by any script |
 | Local digest array | `<project>/workspace-local/allowlist/allowed_hashes.json` | Not written or read by any script. `publish_allowlists.sh` hashes into a temporary directory. |
 | Admin list | None | `config/admins.json`, by hand |
 | MCP groups config | None | `config/groups.json`, by hand |
 | OAuth client files | `oauth_harrisonfamily*.json` and `oauth_harrisonfamily*.txt`, in both `<project>/docs/dev/` and `<project>/workspace-local/docs-dev/` | Not published |
-| Google service account key | `<project>/docs/dev/github-actions-service-account.json`, a JSON key file that contains a private key | By its name, the local copy of the `GCP_SERVICE_ACCOUNT_KEY` repository secret |
+| Google service account key | `<project>/docs/dev/github-actions-service-account.json`, a JSON key file that contains a private key | By its name, the local copy of the `GCP_SERVICE_ACCOUNT_KEY` repository secret. If it holds a key of the `github-actions` service account, as its name says, that key no longer works: the account's only user-managed key was deleted on 2026-10-14. Remove the file. |
 | gcloud CLI configuration | `<project>/workspace-local/gcloud-config/`, which includes `credentials.db`, `access_tokens.db` and `legacy_credentials/`. gcloud uses it only when `CLOUDSDK_CONFIG` points at it, and no script sets that. | Not published |
 | Exported distribution configurations | `<project>/workspace-local/cloudfront/` (`original-config.json`, `updated-config.json` and a text file). An export taken after the origin-verify header was added holds that secret's value. | Not published |
 | Pre-change distribution backups | `${HFY_CF_BACKUP_DIR:-${XDG_STATE_HOME:-~/.local/state}/hfy-infra/cloudfront}/<distribution-id>-<timestamp>-before.json`, written mode 600 by the `scripts/infra/add-*-behavior.sh` scripts and `add-data-gate-behaviors.sh` ([`lib/cf-common.sh`](../../scripts/infra/lib/cf-common.sh)) before each real update. Each is a whole distribution configuration, so each holds the origin-verify value. [`publish-append-index.sh`](../../scripts/infra/publish-append-index.sh) saves the function code it replaces in the same directory, mode 600: `HFYAppendIndex-LIVE-<timestamp>-before.js`, and a `-DEVELOPMENT-` copy when that stage held other code. Those hold function code only, no secret. | Not published |
@@ -376,16 +376,16 @@ All are expected in `us-west-2`, the region the stack and the scripts default to
 - The API, the MCP server and the data gate never read the signing key. They verify sessions and access tokens against the public JWKS that the edge publishes at `/auth/.well-known/jwks.json`.
 - The resolved origin-verify value sits in each Lambda's environment configuration, in the distribution's origin configuration, and in every pre-change backup that the `add-*-behavior.sh` scripts and `add-data-gate-behaviors.sh` save (see [Where the private source copies live](#where-the-private-source-copies-live)). Anyone who can read any of these can read it. The scripts redact it from the diffs they print. A new secret value reaches the Lambdas only through a stack update that resolves the reference again; see the rotation how-to.
 
-## Google Cloud (legacy, retiring)
+## Google Cloud (legacy, deleted)
 
-| Name | Kind | Written by | Read by |
-| --- | --- | --- | --- |
-| `harrisonfamily-allowlist` | Google Secret Manager secret: a JSON array of emails | `publish_allowlists.sh` (`gcloud secrets versions add`) | The `getAllowlist` Cloud Function ([`functions/get-allowlist/main.py`](../../functions/get-allowlist/main.py)), deployed with `--no-allow-unauthenticated`. No sign-in path calls it. |
-| `GCP_SERVICE_ACCOUNT_KEY` | GitHub repository secret: a Google service account key | Set by hand in the repository settings | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml), to authenticate `gcloud` and deploy `getAllowlist` |
+With io's approval, the Google Cloud pieces of the legacy allowlist were deleted on 2026-10-14 in the legacy Google Cloud project: the `getAllowlist` Cloud Function with its Cloud Run service, the Secret Manager secret below, and the only user-managed key of the `github-actions` service account that deployed the function. HFY-TSK-325 removed `deploy-gcf-legacy.yml` and the function source from the repository. No sign-in path ever used any of them.
 
-The service account key is a long-lived credential and the only one stored in CI: the AWS side uses OIDC, and the client ID is public. It exists only to deploy a function that nothing calls. `deploy-gcf-legacy.yml` is headed "retired by HFY-TSK-062", but it still runs on every push to `main` and on manual dispatch.
+| Name | Kind | State |
+| --- | --- | --- |
+| `harrisonfamily-allowlist` | Google Secret Manager secret: a JSON array of emails, which `getAllowlist` read | Deleted. `publish_allowlists.sh` still tries to add a version to it, and that step fails. |
+| `GCP_SERVICE_ACCOUNT_KEY` | GitHub repository secret: a JSON key of the `github-actions` service account, which `deploy-gcf-legacy.yml` used to deploy `getAllowlist` | The key is deleted on the service account, and no workflow reads the secret. |
 
-The key exists in more places than the repository secret: on the Google service account it belongs to, and in `<project>/docs/dev/github-actions-service-account.json`. Deleting the repository secret leaves the key valid. Retiring it also takes disabling the key on the service account, removing the local key file, and clearing the gcloud credential stores in `<project>/workspace-local/gcloud-config/`.
+With that key deleted, CI holds no working long-lived credential: the AWS side uses OIDC, and the client ID is public. The `github-actions` service account itself still exists, with no user-managed key. What is left are copies of the dead key: the `GCP_SERVICE_ACCOUNT_KEY` repository secret, which can be deleted in the repository settings, the local key file `<project>/docs/dev/github-actions-service-account.json`, and the gcloud credential stores in `<project>/workspace-local/gcloud-config/`.
 
 ## GitHub repository secrets
 
@@ -393,7 +393,7 @@ The key exists in more places than the repository secret: on the Google service 
 | --- | --- | --- | --- |
 | `AWS_DEPLOY_ROLE_TO_ASSUME` | The ARN of the OIDC deploy role | [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml): the `deploy`, `invalidate` and `rollback_on_smoke_fail` jobs, through `aws-actions/configure-aws-credentials`. Named by `deploy.aws_role_secret` in `ci.manifest.yaml`. | The `DeployRoleArn` output of [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml). The role trusts only the repository's `main` branch. |
 | `HFY_GOOGLE_CLIENT_ID` | `<google-web-client-id>`, the public web client ID | No workflow. The build jobs read it until HFY-TSK-317 removed the client-ID patch step; the repository secret can stay or be deleted, because the `GoogleClientId` stack parameter is the copy that matters. | The Google Cloud console. The same value goes into the `GoogleClientId` stack parameter. |
-| `GCP_SERVICE_ACCOUNT_KEY` | See [Google Cloud](#google-cloud-legacy-retiring) | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) | A key created on a Google service account in the Google Cloud console. `<project>/docs/dev/github-actions-service-account.json` is the on-disk copy. |
+| `GCP_SERVICE_ACCOUNT_KEY` | A Google service account key that no longer works. See [Google Cloud](#google-cloud-legacy-deleted). | No workflow. Its only reader, `deploy-gcf-legacy.yml`, was removed (HFY-TSK-325), so the repository secret can be deleted. | A key created on the `github-actions` service account, deleted there on 2026-10-14. `<project>/docs/dev/github-actions-service-account.json` is the on-disk copy. |
 
 The deployed site, its Lambdas and CI use no Google client secret, and the Cognito app client is created without one. The only Google client secret in the system is `HFY_GOOGLE_CLIENT_SECRET`, which the test-token helper reads from a local shell. The rollback job also uses `github.token`, GitHub's per-run token, to download the previous release artifact. It is not a repository secret.
 
@@ -433,8 +433,7 @@ An `mcp.audit` line names a real member, so `hfy-api` log output is private in t
 | Path | Mirrors | Notes |
 | --- | --- | --- |
 | [`allowlist/allowed_hashes.json`](../../allowlist/allowed_hashes.json) | `config/allowed_hashes.json` | Two 32-character hex strings. Real digests are 64 characters, so these never match. |
-| [`allowlist/harrisonfamily-allowlist.json`](../../allowlist/harrisonfamily-allowlist.json) | The email array: the publish input and the legacy Google secret's format | `example.com` addresses. |
-| [`gcloud/allowlist-fn/`](../../gcloud/allowlist-fn/) | The `getAllowlist` function source | `main.py` is identical to [`functions/get-allowlist/main.py`](../../functions/get-allowlist/main.py), the copy `deploy-gcf-legacy.yml` deploys. |
+| [`allowlist/harrisonfamily-allowlist.json`](../../allowlist/harrisonfamily-allowlist.json) | The email array: the publish input, and the format of the deleted Google secret | `example.com` addresses. |
 | [`harrisonfamily-frontend/`](../../harrisonfamily-frontend/) | `<project>/workspace-local/harrisonfamily-frontend/` | One synthetic record per prefix, plus manifests. The shape predates the ETL: the person sample has `lifespanSummary` and `familyTree.families` in place of `lifespan`, `parentFamilies` and `spouseFamilies`; the media sample uses `mimeType` in place of `mime`; `person/index.json` is a bare array. It is not a valid fixture for the current contract. |
 | [`etl-output/`](../../etl-output/), including `sample_bundle/` | `<project>/workspace-local/etl-output/` | READMEs only. No data. |
 | [`cloudfront/distribution.json`](../../cloudfront/distribution.json) | The live distribution configuration before the `add-*-behavior.sh` scripts | A template with `example.com` aliases, the S3 origin with an empty OAI and no OAC, and a placeholder API Gateway origin behind the legacy `/api/*` behavior. It has no `hfy-api`, `/auth/*`, `/api/check-allowed*`, `/uploads/*`, `/mcp*` or data-gate behavior, no Lambda@Edge association and no `X-Origin-Verify` header. |
