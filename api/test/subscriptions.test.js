@@ -175,7 +175,7 @@ describe("onRecordChanged fan-out rules", () => {
     await notifier.onRecordChanged(ids.map((i) => ch(i)));
     expect((await types(inbox, "P200")).sort()).toEqual(["record_updated_mine", "records_updated_followed_digest"]);
     const digest = (await items(inbox, "P200")).find((x) => x.type === "records_updated_followed_digest");
-    expect(digest.count).toBe(ids.length - 1); // every page but their own
+    expect(digest.count).toBe(1); // one grouped digest row, as in the follower case above
     expect(await types(inbox, "F1")).toEqual(["records_updated_followed_digest"]);
   });
 
