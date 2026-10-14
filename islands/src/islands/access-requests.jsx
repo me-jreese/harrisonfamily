@@ -270,7 +270,8 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
 
 // ---- removing access ----------------------------------------------------------------------------------------------------------------------
 // Revoking is keyed by the member's ALLOW# entries (ruling P2-R60, HFY-TSK-331): POST /api/allow-grants/revoke { grampsId, confirmedOutside },
-// which works after the request itself has been deleted. The member is the Gramps ID the request was linked to.
+// which works after the request itself has been deleted. The member is the Gramps ID the request was linked to. It ends ALLOW# grants only, not
+// an address that only io's S3 allowlist file lists, so the prompt and the result line say such an email may still work.
 function Revoke({ detail, name, onDone, onProblem, onReload, problem, busy, setBusy }) {
   const base = useId();
   const [open, setOpen] = useState(false);

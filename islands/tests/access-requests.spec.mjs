@@ -243,13 +243,14 @@ for (const [name, viewport] of VIEWPORTS) {
       const s = await open(page, {}, "?tab=done&id=req4");
       await act(page, "remove-open").click();
       await expect(page.locator('[data-hfy-confirm="revoke"]')).toContainText("remove Tessa Example's access?");
+      await expect(page.locator('[data-hfy-confirm="revoke"]')).toContainText("if the owner of the site let them in by hand too, that email may still work.");
       await page.getByRole("button", { name: "keep" }).click();
       await expect(page.locator('[data-hfy-confirm="revoke"]')).toHaveCount(0);
       await act(page, "remove-open").click();
       await expect(act(page, "remove")).toBeDisabled();
       await page.getByLabel("confirmed with this person outside the site").check();
       await act(page, "remove").click();
-      await expect(page.locator("[data-hfy-result]")).toHaveText("done. their access is removed. 1 way in was removed.");
+      await expect(page.locator("[data-hfy-result]")).toHaveText("done. 1 way in was removed. if the owner of the site let them in by hand too, that email may still work. ask the owner to check.");
       expect(s.posts[0].path).toBe("/api/allow-grants/revoke");
       expect(s.posts[0].body).toEqual({ grampsId: "I9001", confirmedOutside: true });
       expect(s.calls.some((c) => /\/access-requests\/req4\/revoke/.test(c.path))).toBe(false);
@@ -263,12 +264,14 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(s.posts.length).toBe(0);
     });
 
-    test("done tab: a held second email's person is the one removed", async ({ page }) => {
-      const s = await open(page, { requests: [request("req6", "active", { rest: { decision: {}, hold: { until: "2030-01-01", grampsId: "I9002" } } })] }, "?tab=done&id=req6");
+    test("done tab: a held second email removes its linked person, and the words say an earlier email may still work", async ({ page }) => {
+      // the detail route's shape: hold is {until, noticed} only; the link put the member on decision.grampsId
+      const s = await open(page, { requests: [request("req6", "active", { rest: { decision: { grampsId: "I9002" }, hold: { until: "2030-01-01T00:00:00Z", noticed: true } } })] }, "?tab=done&id=req6");
       await act(page, "remove-open").click();
+      await expect(page.locator('[data-hfy-confirm="revoke"]')).toContainText("that email may still work.");
       await page.getByLabel("confirmed with this person outside the site").check();
       await act(page, "remove").click();
-      await expect(page.locator("[data-hfy-result]")).toBeVisible();
+      await expect(page.locator("[data-hfy-result]")).toContainText("ask the owner to check.");
       expect(s.posts[0].body).toEqual({ grampsId: "I9002", confirmedOutside: true });
     });
 

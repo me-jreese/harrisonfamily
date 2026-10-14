@@ -24,7 +24,9 @@ export const COPY = Object.freeze({
   done: "done. we emailed them.",
   doneNoEmail: "done, but the email didn't send. let them know yourself.",
   doneNoMail: "done. we didn't email them for this one.",
-  doneRemoved: "done. their access is removed.",
+  doneRemoved: "done. the access their requests gave them is removed.",
+  // revokeGrant ends ALLOW# grants only: an address that only io's S3 allowlist file lists still signs in, so the words never claim every email goes.
+  byHand: "if the owner of the site let them in by hand too, that email may still work. ask the owner to check.",
   letThemIn: "let them in",
   notYet: "not yet",
   remove: "remove",
@@ -32,12 +34,12 @@ export const COPY = Object.freeze({
 });
 
 export const giveAccessPrompt = (name, person) => `give ${name} access as ${person}?`;
-export const removePrompt = (name) => `remove ${name}'s access? this removes all of their ways in, every email they use.`;
+export const removePrompt = (name) => `remove ${name}'s access? this removes every email a family request let them in with. if the owner of the site let them in by hand too, that email may still work.`;
 export const NO_MEMBER_ID = "this request isn't linked to a person in the tree, so there is no access to remove here.";
-/** The member to remove: the person the request was linked to, or the one a held second email belongs to. Null when neither is known. */
+/** The member to remove: the person the request was linked to (every link, a held second email's included, sets decision.grampsId). Null when unknown. */
 export const revokeTarget = (detail) => {
-  const id = [detail?.decision?.grampsId, detail?.hold?.grampsId].find((x) => typeof x === "string" && x.trim());
-  return id ? id.trim() : null;
+  const id = detail?.decision?.grampsId;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 };
 
 /** The tabs: the list `state` the API takes, and the plain words. */
@@ -363,7 +365,7 @@ export function takeStepUp(id, storage = store()) {
 export function resultLine(answer, { revoke = false } = {}) {
   if (revoke) {
     const n = Array.isArray(answer?.revoked) ? answer.revoked.length : 0;
-    return n > 0 ? `${COPY.doneRemoved} ${n === 1 ? "1 way in was" : `${n} ways in were`} removed.` : COPY.doneRemoved;
+    return `${n > 0 ? `done. ${n === 1 ? "1 way in was" : `${n} ways in were`} removed.` : COPY.doneRemoved} ${COPY.byHand}`;
   }
   if (answer && answer.emailSent === false) return COPY.doneNoEmail;
   if (answer && answer.emailSent === true) return COPY.done;
