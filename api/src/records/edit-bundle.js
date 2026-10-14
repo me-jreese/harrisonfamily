@@ -31,6 +31,16 @@ export const SCHEMA_CLASSES = Object.freeze(["Person", "Family", "Event", "Place
 const MAX_RELATED = 200;
 const CHUNK = 25;
 const MAX_PENDING = 100;
+const MAX_PENDING_PAGES = 10;
+
+/**
+ * Contract for the proposal writers (proposal-store-api, edit-api-changes), which own PROP# and IDEM# writes. pendingFor reads items on GSI1 with
+ * GSI1PK = PROPREC#<class>:<handle> and an `proposal` attribute { id, state, proposer: { id }, targets: ["Class:handle"], ops: [{ obj, path }] }.
+ */
+export const PROPREC_CONTRACT = Object.freeze({
+  index: "GSI1", keyAttr: "GSI1PK", keyPrefix: "PROPREC#", attr: "proposal",
+  fields: Object.freeze(["id", "state", "proposer.id", "targets[]", "ops[].obj", "ops[].path"]),
+});
 const OPEN_STATES = new Set(["pending", "needs_changes", "stale"]);
 const LIVING_YEARS = 110;
 
@@ -93,6 +103,7 @@ const displayName = (p) => {
   return [n.first_name, surname].filter((x) => typeof x === "string" && x).join(" ");
 };
 
+/** Deliberately bypasses viewRecord (editing.md 7.2): name, gender and a year-only lifespan only, never a day or month. isLiving is a display-only hint. A Person hidden by the mod overlay is still stubbed. */
 /** A Person reduced to what a picker needs: name, gender, a year-only lifespan and a living hint (a display hint; the server never decides on it). */
 async function personStub(ctx, obj, nowYear) {
   const yearAt = async (idx) => {
@@ -137,7 +148,7 @@ export async function pendingFor(ctx, actor, key, own, view) {
     return false;
   };
   let start;
-  for (;;) {
+  for (let page = 0; page < MAX_PENDING_PAGES; page++) {
     const res = await ctx.ddb.send(new ctx.cmds.QueryCommand({
       TableName: ctx.table, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk", ExpressionAttributeValues: { ":pk": `PROPREC#${key}` },
       Limit: 50, ...(start ? { ExclusiveStartKey: start } : {}),
@@ -154,9 +165,10 @@ export async function pendingFor(ctx, actor, key, own, view) {
     if (!res.LastEvaluatedKey) return out;
     start = res.LastEvaluatedKey;
   }
+  return out; // page budget spent: a bounded list beats an unbounded read
 }
 
-/** `ref` is a gramps_id or h:<handle>. Returns the handle; 404 for none, 409 ambiguous_id for two or more (candidates for admins only). */
+/** `ref` is a gramps_id or h:<handle>. Returns the handle; 404 for none, 409 ambiguous_id for two or more (candidates for admins only; members get no candidates, by design). */
 async function resolveRef(ctx, actor, cls, ref) {
   if (ref.startsWith("h:")) {
     const h = ref.slice(2);
@@ -221,10 +233,11 @@ export async function buildBundle(ctx, actor, cls, handle, { fieldPolicy = DEFAU
 /** GET /api/edit/:cls/:ref */
 export async function bundleGet(c) {
   const { cls, ref } = c.params;
-  if (!CLASSES.includes(cls)) throw notFound();
+  if (!SCHEMA_CLASSES.includes(cls)) throw notFound();
   const ctx = c.store;
   const handle = await resolveRef(ctx, c.actor, cls, ref);
   const bundle = await buildBundle(ctx, c.actor, cls, handle, { now: ctx.now });
   if (!bundle) throw notFound();
-  return json(200, bundle, { etag: `"${bundle.etag}"`, vary: "Cookie" });
+  // No HTTP ETag: the body differs per viewer (redaction, pending[], relation) without a version bump, so a conditional 304 would be unsafe.
+  return json(200, bundle, { "cache-control": "private, no-store", vary: "Cookie" });
 }

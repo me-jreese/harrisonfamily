@@ -111,7 +111,8 @@ describe("the bundle shape", () => {
     const r = await w.get(`/api/edit/Person/${OTHER}`, ME);
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ key: `Person:${w.other.handle}`, version: 1, etag: `Person:${w.other.handle}@1`, relation: "other", viewer: { admin: false }, pending: [], schemaHash: schemaHash() });
-    expect(r.headers.etag).toBe(`"Person:${w.other.handle}@1"`);
+    expect(r.headers.etag).toBeUndefined();
+    expect(r.headers["cache-control"]).toBe("private, no-store");
     expect(r.body.obj.primary_name.first_name).toBe("Given2");
     expect(Object.keys(r.body.related).sort()).toEqual([`Event:${w.otherDeath.handle}`, `Family:${w.fam.handle}`, `Note:${w.n1.handle}`].sort());
     expect(r.body.policy.rows.length).toBeGreaterThan(10);
@@ -128,6 +129,13 @@ describe("the bundle shape", () => {
     const stub = r.body.related[`Person:${w.me.handle}`];
     expect(stub).toMatchObject({ version: 1, stub: { displayName: "Given1 Synth", gender: 1, isLiving: false, lifespan: "–1990" } });
     expect(stub).not.toHaveProperty("obj");
+    expect(Object.keys(stub.stub).sort()).toEqual(["displayName", "gender", "isLiving", "lifespan"]);
+    expect(stub.stub.lifespan).toMatch(/^\d{0,4}–\d{0,4}$/);
+  });
+
+  it("404s for the Tag class, which has no schema", async () => {
+    const w = await world();
+    expect((await w.get("/api/edit/Tag/T0001", ME)).status).toBe(404);
   });
   it("404 for an unknown record, class, malformed ref or tombstone; 409 ambiguous_id for a shared gramps_id (candidates for admins only)", async () => {
     const w = await world();
