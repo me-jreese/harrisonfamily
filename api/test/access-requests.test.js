@@ -13,7 +13,7 @@ import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
 import { loadProposal, systemProposalOf, withdrawSystem } from "../src/records/proposal-store.js";
 import {
-  AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, SECOND_EMAIL_RULE, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
+  AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, MAX_REVOKE_ITEMS, SECOND_EMAIL_RULE, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
   secondEmailGate, secondEmailPath,
 } from "../src/access-requests.js";
 import { createSesMailer, sendEmailInput } from "../src/mailer.js";
@@ -66,7 +66,10 @@ async function world({ mailFails = false, members = [], inbox: inboxStore } = {}
   const clock = { t: T0 };
   const sent = [];
   const mail = { fail: mailFails };
-  const mailer = { async send(m) { if (mail.fail) throw Object.assign(new Error("mail not sent"), { name: "MessageRejected" }); sent.push(m); } };
+  const channels = []; // which identity took each mail: "general" (the api's own) or "join" (the requester identity, HFY-TSK-331)
+  const mk = (channel) => ({ async send(m) { if (mail.fail) throw Object.assign(new Error("mail not sent"), { name: "MessageRejected" }); sent.push(m); channels.push([channel, m.template]); } });
+  const mailer = mk("general");
+  const requesterMailer = mk("join");
   const hooks = createHookRegistry();
   const inbox = inboxStore ?? new InMemoryNotificationStore();
   const txns = [];
@@ -82,7 +85,7 @@ async function world({ mailFails = false, members = [], inbox: inboxStore } = {}
       if (race.before) { const fn = race.before; race.before = null; await fn(); } // another request commits just before this transaction does
     },
     extraDeps: {
-      syncHooks: hooks, idPolicy: createIdPolicy({ mode: "mint" }), txnOpts: { sleep: async () => {} }, mailer,
+      syncHooks: hooks, idPolicy: createIdPolicy({ mode: "mint" }), txnOpts: { sleep: async () => {} }, mailer, requesterMailer,
       getAdmins: async () => new Set([ADMIN, ADMIN2, OWNER]), isOwner: async (sub) => sub === OWNER,
       personFacts: async (gid) => facts[gid] ?? null, readEntries: async () => fileEntries,
     },
@@ -122,21 +125,22 @@ async function world({ mailFails = false, members = [], inbox: inboxStore } = {}
   const link = (who, id, over = {}, opts) => decide(who, id, { decision: "link", grampsId: LIVING, version: 1, confirmedOutside: true, ...over }, opts);
   const revoke = (who, id, over = {}, opts) => call("POST", `/api/access-requests/${id}/revoke`, who, { body: { version: 2, confirmedOutside: true, ...over }, ...opts });
   const storeCtx = { ddb: w.ddb, cmds, table: TABLE, now: () => clock.t, uid: () => `s${++u}`, log: q, txnOpts: { sleep: async () => {} } };
-  return { ...w, flags, clock, sent, mail, inbox, txns, race, call, token, seed, row, req, allow, audits, decide, link, revoke, fileEntries, facts, storeCtx, hooks };
+  return { ...w, flags, clock, sent, channels, mail, inbox, txns, race, call, token, seed, row, req, allow, audits, decide, link, revoke, fileEntries, facts, storeCtx, hooks };
 }
 const accessAudits = (w) => [...w.audits("accessreq:"), ...w.audits("allow:")];
 const err = (r) => ({ status: r.status, error: r.body?.error });
 const lastTxn = (w) => w.txns.at(-1).TransactItems;
 
 describe("the routes exist and are for admins (AC1)", () => {
-  it("registers the seven routes, the admin ones behind the accessRequests flag and the member's two outside it, with no MCP tool", () => {
-    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.resendNotice", "accessRequests.secondEmails", "accessRequests.secondEmail"];
+  it("registers the eight routes, the admin ones behind the accessRequests flag and the member's two outside it, with no MCP tool", () => {
+    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.revokeGrant", "accessRequests.resendNotice", "accessRequests.secondEmails", "accessRequests.secondEmail"];
     const held = { switch: "ACCESS_REQUESTS", rule: SECOND_EMAIL_RULE }; // open past the flag on purpose, and gated by the held-member rule, which caps.json says
     const caps = buildCaps().actions.filter((a) => names.includes(a.name));
     expect(caps.map((a) => [a.name, a.method, a.path, a.gate])).toEqual([
       ["accessRequests.list", "GET", "/api/access-requests", { feature: "accessRequests" }],
       ["accessRequests.get", "GET", "/api/access-requests/:id", { feature: "accessRequests" }],
       ["accessRequests.decide", "POST", "/api/access-requests/:id/decision", { feature: "accessRequests" }],
+      ["accessRequests.revokeGrant", "POST", "/api/allow-grants/revoke", { feature: "accessRequests" }],
       ["accessRequests.revoke", "POST", "/api/access-requests/:id/revoke", { feature: "accessRequests" }],
       ["accessRequests.resendNotice", "POST", "/api/access-requests/:id/resend-notice", { feature: "accessRequests" }],
       ["accessRequests.secondEmails", "GET", "/api/second-email", held],
@@ -466,6 +470,7 @@ describe("a 'new' decision files a person.create system proposal (AC3)", () => {
     expect(w.req()).toMatchObject({ state: "awaiting_record", version: 2, proposalId: r.body.proposalId, GSI1PK: "ACCESSREQS#awaiting_record", decision: { kind: "new", by: ADMIN, confirmedOutside: true } });
     expect(w.req().ttl).toBe(Math.floor(T0 / 1000) + AWAITING_TTL_SECONDS);
     expect(w.sent.map((m) => [m.template, m.to])).toEqual([["awaiting_record", EMAIL]]);
+    expect(w.channels).toEqual([["join", "awaiting_record"]]);
     const [decide] = w.audits(`accessreq:${ID1}`);
     expect(decide).toMatchObject({ op: "accessreq.decide", after: { state: "awaiting_record", decision: "new", proposalId: r.body.proposalId, confirmedOutside: true } });
     expect(w.allow()).toBeUndefined(); // nobody can sign in yet
@@ -736,7 +741,7 @@ describe("a 'new' decision files a person.create system proposal (AC3)", () => {
     const proposal = await loadProposal(w.storeCtx, made.body.proposalId);
     const personKey = "Person:forced-handle-0001";
     w.ddb.rows.set(`PROP#${proposal.id}\u0000META`, { ...w.ddb.rows.get(`PROP#${proposal.id}\u0000META`), proposal: { ...proposal, state: "approved", decision: { verdict: "approve", applied: { [personKey]: 1 } } } });
-    const domain = createAccessRequests({ ddb: w.ddb, cmds, table: TABLE, now: () => w.clock.t, uid: (() => { let n = 0; return () => `u${++n}`; })(), mailer: { send: async (m) => { w.sent.push(m); } }, log: q });
+    const domain = createAccessRequests({ ddb: w.ddb, cmds, table: TABLE, now: () => w.clock.t, uid: (() => { let n = 0; return () => `u${++n}`; })(), mailer: { send: async (m) => { w.sent.push(m); } }, requesterMailer: { send: async (m) => { w.sent.push(m); } }, log: q });
     expect(w2).toBe(w);
     expect(await domain.accessRequestOf({ class: "Person", handle: "forced-handle-0001", store: w.storeCtx })).toBe(ID1);
     expect(await domain.accessRequestOf({ class: "Person", handle: "other-handle", store: w.storeCtx })).toBeUndefined();
@@ -963,6 +968,7 @@ describe("allowSecondEmail (AC7, PS-13)", () => {
     const toOld = w.sent.filter((m) => m.to === OLD_EMAIL);
     expect(toOld).toEqual([{ template: "second_email_notice", to: OLD_EMAIL, vars: {} }]);
     expect(w.sent.find((m) => m.to === EMAIL)).toEqual({ template: "approved_later", to: EMAIL, vars: { when: effectiveAt.slice(0, 10) } });
+    expect(w.channels.sort()).toEqual([["general", "second_email_notice"], ["join", "approved_later"]]);
     expect(w.sent.map((m) => m.to).filter((x) => x === EMAIL)).toHaveLength(1);
   });
 
@@ -1284,7 +1290,7 @@ describe("no leak in the logs", () => {
     const log = { warn: (...a) => logged.push(a), error: (...a) => logged.push(a), info: (...a) => logged.push(a) };
     const w = makeApi({
       admins: [ADMIN], log, flags: { accessRequests: true },
-      extraDeps: { mailer: { send: async () => { throw Object.assign(new Error(`cannot send to ${EMAIL}`), { name: "MessageRejected" }); } }, txnOpts: { sleep: async () => {} } },
+      extraDeps: { mailer: { send: async () => { throw Object.assign(new Error(`cannot send to ${EMAIL}`), { name: "MessageRejected" }); } }, requesterMailer: { send: async () => { throw Object.assign(new Error(`cannot send to ${EMAIL}`), { name: "MessageRejected" }); } }, txnOpts: { sleep: async () => {} } },
     });
     w.ddb.rows.set(`ACCESSREQ#${ID1}\u0000META`, { PK: `ACCESSREQ#${ID1}`, SK: "META", entity: "accessreq", id: ID1, state: "pending", version: 1, email: EMAIL, emailHash: "x", form: FORM, GSI1PK: "ACCESSREQS#pending", GSI1SK: ID1 });
     const t = await signToken(ADMIN);
@@ -1352,5 +1358,121 @@ describe("createPersonFacts: the site's own person record, read for the living c
     }
     await expect(facts(async () => { throw Object.assign(new Error("x"), { name: "InternalError" }); })("I0001")).rejects.toThrow();
     expect(await facts(async () => { throw new Error("must not be asked"); })("../etc/passwd")).toBeNull(); // only the gramps_id shape ever becomes a key
+  });
+});
+
+describe("requester mail uses the Join identity (HFY-TSK-331, P2-R61, Q2-09)", () => {
+  it("approved and declined go through the requester mailer; the member's second-email notice stays on the general one", async () => {
+    const w = await world();
+    w.seed();
+    expect((await w.link(ADMIN, ID1)).body).toEqual({ state: "active", emailSent: true });
+    w.seed({ id: ID2, email: "other@example.test", emailHash: "hash-2" });
+    expect((await w.decide(ADMIN, ID2, { decision: "decline", version: 1 })).body).toEqual({ state: "declined", emailSent: true });
+    expect(w.channels).toEqual([["join", "approved"], ["join", "declined"]]);
+  });
+
+  it("fails closed: with no requester mailer a decision still commits, says emailSent:false and never uses the general identity", async () => {
+    const w = makeApi({ admins: [ADMIN], log: q, flags: { accessRequests: true }, extraDeps: { txnOpts: { sleep: async () => {} }, mailer: { send: async () => { throw new Error("must not be used"); } } } });
+    w.ddb.rows.set(`ACCESSREQ#${ID1}\u0000META`, { PK: `ACCESSREQ#${ID1}`, SK: "META", entity: "accessreq", id: ID1, state: "pending", version: 1, email: EMAIL, emailHash: "x", form: FORM, GSI1PK: "ACCESSREQS#pending", GSI1SK: ID1 });
+    const r = await w.call("POST", `/api/access-requests/${ID1}/decision`, { token: await signToken(ADMIN), body: { decision: "decline", version: 1 } });
+    expect(r.body).toEqual({ state: "declined", emailSent: false });
+  });
+});
+
+describe("revoke by ALLOW# entry (HFY-TSK-331, P2-R60)", () => {
+  const grantRevoke = (w, who, over = {}, opts) => w.call("POST", "/api/allow-grants/revoke", who, { body: { sub: LIVING, confirmedOutside: true, ...over }, ...opts });
+
+  it("works after the request has expired: ALLOW# revoked, audits written, a step-up and the confirmation are required", async () => {
+    const w = await world();
+    w.seed();
+    expect((await w.link(ADMIN, ID1)).status).toBe(200);
+    w.clock.t += (DECIDED_TTL_SECONDS + 86400) * 1000; // past the 30 day retention: the request is gone
+    expect((await w.revoke(ADMIN2, ID1)).status).toBe(404);
+    expect(err(await grantRevoke(w, ADMIN2, {}, { fresh: false }))).toEqual({ status: 401, error: "step_up_required" });
+    expect(err(await grantRevoke(w, ADMIN2, { confirmedOutside: false }))).toEqual({ status: 400, error: "validation" });
+    expect(err(await grantRevoke(w, ADMIN2, { sub: "bad sub!" }))).toEqual({ status: 400, error: "validation" });
+    expect(err(await grantRevoke(w, ADMIN2, { grampsId: LIVING }))).toEqual({ status: 400, error: "validation" }); // sub and grampsId together
+    w.sent.length = 0;
+    const r = await grantRevoke(w, ADMIN2, { reason: "left the family" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ revoked: [{ email: maskEmail(EMAIL) }] });
+    expect(JSON.stringify(r.body)).not.toContain(EMAIL);
+    expect(w.allow()).toMatchObject({ state: "revoked", sub: LIVING, revokedBy: ADMIN2 });
+    expect(w.audits("allow:").map((a) => a.op).sort()).toEqual(["allow.grant", "allow.revoke"]);
+    expect(w.audits(`allowsub:${LIVING}`).map((a) => a.op)).toEqual(["allowgrant.revoke"]);
+    expect(w.sent).toEqual([]);
+    expect(isAllowedNow(w.allow(), w.clock.t)).toBe(false);
+    // a second call finds nothing active
+    expect(err(await grantRevoke(w, ADMIN2))).toEqual({ status: 404, error: "not_found" });
+  });
+
+  it("also accepts grampsId, and moves a request that is still around to revoked in the same transaction", async () => {
+    const w = await world();
+    w.seed();
+    expect((await w.link(ADMIN, ID1)).status).toBe(200);
+    w.txns.length = 0;
+    w.clock.t += 60_000;
+    const r = await w.call("POST", "/api/allow-grants/revoke", ADMIN2, { body: { grampsId: LIVING, confirmedOutside: true } });
+    expect(r.status).toBe(200);
+    expect(w.txns).toHaveLength(1);
+    expect(w.req()).toMatchObject({ state: "revoked", GSI1PK: "ACCESSREQS#revoked", decision: { revoked: { by: ADMIN2, confirmedOutside: true } } });
+    expect(w.audits(`accessreq:${ID1}`).map((a) => a.op).sort()).toEqual(["accessreq.decide", "accessreq.revoke"]);
+  });
+
+  it("R-18 scans the reason before any read: contact info is 422, echoes no text and touches nothing", async () => {
+    const w = await world();
+    w.seed();
+    await w.link(ADMIN, ID1);
+    w.txns.length = 0;
+    for (const reason of ["call 503 555 0100", "write to someone@example.test"]) {
+      w.ddb.calls.length = 0;
+      const r = await grantRevoke(w, ADMIN2, { reason });
+      expect(err(r)).toEqual({ status: 422, error: "contact_info" });
+      expect(JSON.stringify(r.body)).not.toContain(reason);
+      expect(w.ddb.calls).toEqual([]);
+    }
+    expect(w.txns).toHaveLength(0);
+    expect(w.allow().state).toBe("active");
+  });
+
+  it("is admin-only and dark behind the flag", async () => {
+    const w = await world();
+    w.seed();
+    await w.link(ADMIN, ID1);
+    expect(err(await grantRevoke(w, undefined))).toMatchObject({ status: 401 });
+    expect(err(await grantRevoke(w, "member-1"))).toEqual({ status: 403, error: "not_admin" });
+    expect(w.allow().state).toBe("active");
+    w.flags.accessRequests = false;
+    expect((await grantRevoke(w, ADMIN2)).status).toBe(404);
+    expect(w.allow().state).toBe("active");
+  });
+
+  const seedAllows = (w, n, over = {}) => {
+    for (let i = 0; i < n; i++) {
+      const email = `m${i}@example.test`;
+      const item = { ...grantItems({ email, sub: LIVING, source: "admin", at: "2026-01-01T00:00:00.000Z", by: ADMIN2, table: TABLE, ...over }).puts[0].item };
+      w.ddb.rows.set(`ALLOW#${email}\u0000META`, item);
+    }
+  };
+
+  it("more than MAX_REVOKE_ITEMS active entries is 422 too_many and writes nothing; exactly the cap revokes them all", async () => {
+    const w = await world();
+    seedAllows(w, MAX_REVOKE_ITEMS + 1);
+    w.txns.length = 0;
+    expect(err(await grantRevoke(w, ADMIN2))).toEqual({ status: 422, error: "too_many" });
+    expect(w.txns).toHaveLength(0);
+    expect(w.ddb.rows.get(`ALLOW#m0@example.test\u0000META`).state).toBe("active");
+    w.ddb.rows.delete(`ALLOW#m0@example.test\u0000META`);
+    const r = await grantRevoke(w, ADMIN2);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.revoked).toHaveLength(MAX_REVOKE_ITEMS);
+  });
+
+  it("revokes an entry still held by a future effectiveAt too", async () => {
+    const w = await world();
+    seedAllows(w, 1, { effectiveAt: new Date(w.clock.t + HOLD_MS).toISOString() });
+    const r = await grantRevoke(w, ADMIN2);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(w.ddb.rows.get(`ALLOW#m0@example.test\u0000META`).state).toBe("revoked");
   });
 });
