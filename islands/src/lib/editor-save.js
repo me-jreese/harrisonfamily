@@ -5,6 +5,7 @@
 // answer (editing.md 8.3). The server decides on every write: the counts here come from the bundle's policy table and are a hint, the sheet's
 // groups come from the dry run.
 import { sectionValues } from "./editor-model.js";
+import { recordOps, recordSeed } from "./editor-records.js";
 import { LIST_ADAPTERS, draftKey, listDraftIsEmpty, makeLookups, replayListDraft, sameValue, sectionOps } from "./editor-sections.js";
 
 /** The client offers the returned inverse ops for 10 minutes (editing.md 7.3 "Atomicity"). */
@@ -64,22 +65,34 @@ const trimmed = (v) => (typeof v === "string" ? v.trim() : "");
  */
 export function opsFromDrafts({ key, sections, obj, drafts, bundle, viewer }) {
   const b = bundle || { key, obj, related: {} };
-  return sectionOps({ key, bundle: b.obj === undefined ? { ...b, obj } : b, sections, drafts, viewer });
+  const full = b.obj === undefined ? { ...b, obj } : b;
+  const out = sectionOps({ key, bundle: full, sections: sections.filter((s) => !(s.form && s.form.record)), drafts, viewer });
+  // The other classes' record forms (editor-records.js): one form per class, so their temp objects number from new:1 on their own.
+  for (const s of sections) {
+    if (!(s.form && s.form.record) || !isObj(drafts && drafts[s.id])) continue;
+    const r = recordOps({ key, bundle: { ...full, viewer: viewer || full.viewer }, section: s, draft: drafts[s.id] });
+    out.ops.push(...r.ops);
+    Object.assign(out.labels, r.labels);
+    Object.assign(out.units, r.units);
+  }
+  return out;
 }
 
 /**
  * The form values to start from when the member's edits are replayed over a refetched record (a 409): the fresh record's values with only the
  * fields the member changed (against the record they edited) laid over them, so a field somebody else changed meanwhile is neither lost nor
  * silently reverted. `settled` maps an op id to the value the server just took (a save that went through): an edit still equal to it is
- * done and is not laid over the fresh record again, so only what the member typed after the save survives. -> { [sectionId]: args }.
- * (The forms only; replayDrafts below adds the list sections.)
+ * done and is not laid over the fresh record again, so only what the member typed after the save survives. A record form (editor-records.js)
+ * makes several ops per field, so it is judged by `settledUnits` instead, the `<section>/<field>` units whose every op the save stored
+ * (settledUnitsOf). -> { [sectionId]: args }. (The forms only; replayDrafts below adds the list sections.)
  */
-export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = {} }) {
+export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = {}, settledUnits = new Set() }) {
   void key;
   const out = {};
   for (const section of sections) {
     if (!section.form) continue;
     const draft = drafts && drafts[section.id];
+    if (section.form.record) { out[section.id] = recordSeed({ section, oldObj, freshObj, draft, settled: settledUnits }); continue; }
     const values = sectionValues(freshObj, section.form);
     const before = sectionValues(oldObj, section.form);
     if (isObj(draft)) {
@@ -101,7 +114,7 @@ export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = 
  * bundle, minus the units already stored). `settledUnits` is a set of `<section>/<unit>` strings.
  */
 export function replayDrafts({ sections, oldBundle, freshBundle, drafts, settled = {}, settledUnits = new Set(), schemas = {} }) {
-  const out = replaySeed({ sections, key: freshBundle.key, oldObj: oldBundle.obj, freshObj: freshBundle.obj, drafts, settled });
+  const out = replaySeed({ sections, key: freshBundle.key, oldObj: oldBundle.obj, freshObj: freshBundle.obj, drafts, settled, settledUnits });
   const lookups = makeLookups(freshBundle, schemas);
   for (const s of sections) {
     for (const id of s.lists || []) {
