@@ -42,9 +42,14 @@ function Panel({ id, bell, onClose, children }) {
   };
   const [pos, setPos] = useState(place);
   useLayoutEffect(() => {
-    const on = () => setPos(place());
+    const on = () => setPos((cur) => { const n = place(); return n.top === cur.top && n.right === cur.right ? cur : n; });
+    // the bar can reflow without a window resize (a slot fills late, a font loads): follow the bell itself and any scroll
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(on) : null;
+    ro?.observe(bell);
+    ro?.observe(document.documentElement);
     window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
+    window.addEventListener("scroll", on, true);
+    return () => { ro?.disconnect(); window.removeEventListener("resize", on); window.removeEventListener("scroll", on, true); };
   }, []);
   useEffect(() => {
     ref.current?.focus();
