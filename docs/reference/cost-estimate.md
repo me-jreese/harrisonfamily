@@ -29,7 +29,7 @@ Priced:
 
 Not priced:
 
-- **The legacy Google Cloud pieces.** The `getAllowlist` Cloud Function and its Google Secret Manager secret are outside AWS and outside this estimate. Every push to `main` still deploys the function, through its own workflow, [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml).
+- **The legacy Google Cloud pieces.** The `getAllowlist` Cloud Function and its Google Secret Manager secret were outside AWS and outside this estimate. Both were deleted on 2026-10-14 with io's approval (HFY-TSK-325), so they no longer cost anything.
 - **The legacy `hfy-check-allowed` Lambda and the API Gateway in front of it.** They are not in `app-stack.yaml`. No push deploys the Lambda any more (the `lambda` target left [`ci.manifest.yaml`](../../ci.manifest.yaml) with HFY-TSK-317), and no page calls it, but the `/api/check-allowed*` pin that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps still routes to its API Gateway. They stay until io retires the function. Their Secrets Manager secret is counted, because a secret is billed monthly whether or not it is read.
 - **The static site.** S3 storage for the site, the default CloudFront behavior and its CloudFront Function, the self-hosted fonts, invalidations, and the CloudFront requests, data transfer and S3 GETs of the gated data and photo paths are shown separately in [Static-site baseline](#static-site-baseline) and are not in the app-backend total. The gate's own Lambda@Edge charges are in the app-backend total.
 - **Cloudflare.** Cloudflare proxies `<site>` in front of CloudFront. It is outside AWS and outside this estimate.

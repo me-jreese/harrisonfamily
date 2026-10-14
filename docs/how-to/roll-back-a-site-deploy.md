@@ -27,7 +27,7 @@ Its limits decide what you do next:
 - It runs only after a failed smoke check. A failed `build`, `deploy` or `invalidate` job rolls nothing back.
 - It needs an earlier successful run whose artifact still exists. Artifacts are kept for 90 days.
 - It restores the previous release's artifact, not a commit. `main` still holds the change, and the next push to `main` deploys it again.
-- It does not touch the `getAllowlist` Cloud Function, which [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) deploys only when started by hand, with no rollback. It does not touch the app stack, the family data or member uploads either. The sign-in pages are part of the app stack: `hfy-auth-edge` links `/css/auth-edge.css?v=<sha8>` with the hash it was built with. A rollback restores that stylesheet's file but not the link, which changes only when `hfy-auth-edge` is redeployed ([Deploy the app stack](deploy-the-app-stack.md)).
+- It does not touch the app stack, the family data or member uploads. The sign-in pages are part of the app stack: `hfy-auth-edge` links `/css/auth-edge.css?v=<sha8>` with the hash it was built with. A rollback restores that stylesheet's file but not the link, which changes only when `hfy-auth-edge` is redeployed ([Deploy the app stack](deploy-the-app-stack.md)).
 - It restores the previous release's `flags.json` with the rest of `11ty/`, but it never changes the distribution's behaviors or `HFYAppendIndex`, so an attached gate stays attached. A rollback to an artifact with `"authV2": false` then shuts every visitor out of the gated data. A page with `authV2` off never refreshes `io_id`, so the gate refuses its requests once the hour is up, and person pages, search and photos fail. The artifact is whatever the last successful run deployed, so check rather than assume: run [Check authV2 after a failed deploy](#check-authv2-after-a-failed-deploy) after every failed run.
 
 ## Before you start
@@ -122,8 +122,6 @@ A failed `deploy` or `invalidate` job leaves whatever it had already done: part 
 
 - If the cause was outside the change, such as an AWS error, fix it and run `gh run rerun <run-id> --failed`. The rerun deploys the same artifact again, then runs `smoke` and, if that fails, the rollback. When it is green, run [Verify](#verify) with the run's own commit, which `gh run view <run-id> --json headSha --jq .headSha` prints. If its smoke check fails, follow [After an automatic rollback](#after-an-automatic-rollback).
 - If the change itself is at fault, [revert it](#roll-back-by-revert).
-
-For the Cloud Function, a failed `deploy-gcf-legacy.yml` run leaves the previous revision serving. A successful one that deployed a bad change stays until you start the workflow again: revert the change to `functions/get-allowlist/` as below, then start the workflow from the Actions tab (a push no longer deploys it).
 
 ## Roll back by revert
 

@@ -620,7 +620,15 @@ if command -v rsync >/dev/null && command -v git >/dev/null; then
   eq "a drifted workspace-owned file still fails it" "$DS_RC" 1
   contains "...naming the file" "$DS_OUT" "js/app.js"
   lacks "...and not person-page.js" "$DS_OUT" "person-page.js"
+  # HFY-TSK-325: getAllowlist and its source are deleted, so a staged functions/ path no longer starts a Cloud Function
+  # comparison (the old check failed here: there is no workspace/gcloud/allowlist-fn source).
+  cp "$DS/workspace/11ty-dev/_site/js/app.js" "$DS/repo/11ty/js/app.js"
+  mkdir -p "$DS/repo/functions/get-allowlist"; echo '# stray' > "$DS/repo/functions/get-allowlist/main.py"; git -C "$DS/repo" add -A
+  set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
+  eq "a staged functions/ path runs no Cloud Function comparison" "$DS_RC" 0
+  lacks "...and the output names no GCF check" "$DS_OUT" "GCF"
 else echo "  (rsync or git missing: check-deployment-sync.sh run skipped)"; fi
+lacks "check-deployment-sync.sh has no getAllowlist comparison left" "$(cat "$ROOT/scripts/check-deployment-sync.sh")" "needs_gcf_check"
 
 # ---------------------------------------------------------------------------------------------------------------------
 CURRENT="cloudfront function: node --test scripts/cloudfront/test (HFYAppendIndex source, every private-prefix variant)"
