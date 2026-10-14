@@ -13,6 +13,8 @@ import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
 import { createContribReader } from "./contrib-read.js";
+import { unauthenticated } from "./sync/auth.js";
+import { syncContext } from "./sync/guard.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -126,10 +128,23 @@ export function createHandler(deps) {
       }
 
       ctx.route = route.name;
-      const actor = await authenticate(event);
-      // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.
-      await features.check(route.gate, actor, { preview });
-      if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
+      // HFY-TSK-172: a `sync-bearer` route (/api/sync/*) takes the desktop client's bearer token and never the session cookie. Its switch
+      // (SYNC_API_ENABLED) runs before the token is looked at, so a disabled API answers 404 not_enabled to everyone.
+      const bearer = route.auth === "sync-bearer";
+      let actor;
+      let sync;
+      if (bearer) {
+        await features.check(route.gate, undefined, { preview });
+        if (typeof deps.authenticateSync !== "function") throw unauthenticated(); // not wired: closed
+        actor = await deps.authenticateSync(event); // throws the 401
+        sync = await syncContext({ ctx: { ddb, cmds, table }, event, actor, route, now });
+        sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid };
+      } else {
+        actor = await authenticate(event);
+        // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.
+        await features.check(route.gate, actor, { preview });
+        if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
+      }
 
       let body = {};
       const hasBody = method === "POST" || method === "PUT" || method === "PATCH";
@@ -145,7 +160,7 @@ export function createHandler(deps) {
         if (body === null || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "validation", "body must be a JSON object");
       }
 
-      const r = await route.handler({ ...build(actor, event, preview), actor, params, query: event.queryStringParameters ?? {}, body, event });
+      const r = await route.handler({ ...build(actor, event, preview), actor, params, query: event.queryStringParameters ?? {}, body, event, ...(sync ? { sync } : {}) });
       if (r.statusCode !== undefined) return { ...r, headers: { "cache-control": "no-store", ...r.headers } }; // notify handler result
       return json(r.status, r.body);
     } catch (e) {

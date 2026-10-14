@@ -15,6 +15,7 @@ import { configureFeatures, createFeatureGate, createFlagSource, DEFAULT_FLAGS_U
 import { createLabelResolver, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
 import { guardDobFromEnv } from "./guard.js";
+import { createSyncAuthenticator } from "./sync/auth.js";
 import { logSafeError } from "./http.js";
 
 const env = process.env;
@@ -92,6 +93,10 @@ const features = configureFeatures(createFeatureGate({
   isUat: async (sub) => (await getGroups({ sub })).includes(UAT_GROUP),
 }));
 
+// HFY-TSK-172: /api/sync/* takes the desktop client's bearer token (aud https://harrisonfamily.us/api/sync, client_id hfy-sync-desktop), authorized by the
+// gramps-owner group of the same cached, fail-closed groups.json read. The routes answer 404 not_enabled unless SYNC_API_ENABLED=1 (stack parameter SyncApiEnabled).
+const authenticateSync = createSyncAuthenticator({ issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth", getJwks, getGroups });
+
 /** The inbox store (BRD2 D2-15): INBOX#<principal> rows on the app table. Unread items carry no TTL; the 90-day TTL starts when an item is read. */
 export const INBOX_TTL = Object.freeze({ unreadTtlDays: null, readTtlDays: 90 });
 export const createInboxStore = (client = ddb, commands = cmds, tableName = table) => new DynamoNotificationStore(client, commands, tableName, { ...INBOX_TTL });
@@ -103,7 +108,7 @@ export const handler = async (event) => {
   if (!inner) {
     const p = await loadPush();
     inner = createHandler({
-      ddb, cmds, table, authenticate, ulid: createUlidFactory(),
+      ddb, cmds, table, authenticate, authenticateSync, ulid: createUlidFactory(),
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
