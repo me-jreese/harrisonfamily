@@ -1,0 +1,2913 @@
+{
+ "note": "Synthetic corpus shared by the server adapter and the browser mirror (task edit-guard-wiring). Every handle, name and number is made up. Findings compare as obj, path, code, kind and (when present) span.",
+ "phone": "(555) 010-0199",
+ "cases": [
+  {
+   "id": "clean-person",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "text-name-first",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "call (555) 010-0199",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/primary_name/first_name",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-surname-nested",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "call (555) 010-0199"
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/primary_name/surname_list/0/surname",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-alt-name",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [
+      {
+       "_class": "Name",
+       "type": {
+        "_class": "NameType",
+        "value": 2,
+        "string": ""
+       },
+       "first_name": "Ada",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "surname": "Test",
+         "primary": true
+        }
+       ],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "modifier": 0,
+        "quality": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "text": "",
+        "newyear": 0,
+        "sortval": 0
+       },
+       "nick": "call (555) 010-0199"
+      }
+     ],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/alternate_names/0/nick",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-attribute",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [
+      {
+       "_class": "Attribute",
+       "type": {
+        "_class": "AttributeType",
+        "value": 5,
+        "string": ""
+       },
+       "value": "call (555) 010-0199"
+      }
+     ],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/attribute_list/0/value",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-url-desc",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [
+      {
+       "_class": "Url",
+       "type": {
+        "_class": "UrlType",
+        "value": 3,
+        "string": ""
+       },
+       "path": "https://example.org/a",
+       "desc": "call (555) 010-0199"
+      }
+     ],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/desc",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-medialink-attribute",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [
+      {
+       "_class": "MediaRef",
+       "ref": "m1",
+       "attribute_list": [
+        {
+         "_class": "Attribute",
+         "type": {
+          "_class": "AttributeType",
+          "value": 5,
+          "string": ""
+         },
+         "value": "call (555) 010-0199"
+        }
+       ]
+      }
+     ],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/media_list/0/attribute_list/0/value",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-eventref-attribute",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "ref": "e9",
+       "role": {
+        "_class": "EventRoleType",
+        "value": 1,
+        "string": ""
+       },
+       "attribute_list": [
+        {
+         "_class": "Attribute",
+         "type": {
+          "_class": "AttributeType",
+          "value": 5,
+          "string": ""
+         },
+         "value": "call (555) 010-0199"
+        }
+       ]
+      }
+     ],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/event_ref_list/0/attribute_list/0/value",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-note",
+   "kind": "objects",
+   "objects": {
+    "Note:n1": {
+     "_class": "Note",
+     "handle": "n1",
+     "text": {
+      "_class": "StyledText",
+      "string": "call (555) 010-0199",
+      "tags": []
+     },
+     "type": {
+      "_class": "NoteType",
+      "value": 1,
+      "string": ""
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Note:n1",
+     "path": "/text/string",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-event-description",
+   "kind": "objects",
+   "objects": {
+    "Event:e2": {
+     "_class": "Event",
+     "handle": "e2",
+     "type": {
+      "_class": "EventType",
+      "value": 2,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "call (555) 010-0199",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e2",
+     "path": "/description",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-place-name-and-alt",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 4,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "call (555) 010-0199"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": [
+      {
+       "_class": "PlaceName",
+       "value": "call (555) 010-0199"
+      }
+     ]
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/name/value",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    },
+    {
+     "obj": "Place:pl1",
+     "path": "/alt_names/0/value",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "text-citation-source-repo-media",
+   "kind": "objects",
+   "objects": {
+    "Citation:c1": {
+     "_class": "Citation",
+     "handle": "c1",
+     "page": "call (555) 010-0199",
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     }
+    },
+    "Source:s1": {
+     "_class": "Source",
+     "handle": "s1",
+     "title": "call (555) 010-0199",
+     "author": "",
+     "reporef_list": []
+    },
+    "Repository:r1": {
+     "_class": "Repository",
+     "handle": "r1",
+     "name": "call (555) 010-0199"
+    },
+    "Media:m1": {
+     "_class": "Media",
+     "handle": "m1",
+     "desc": "call (555) 010-0199",
+     "path": "x.jpg",
+     "mime": "image/jpeg"
+    }
+   },
+   "expect": [
+    {
+     "obj": "Citation:c1",
+     "path": "/page",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    },
+    {
+     "obj": "Source:s1",
+     "path": "/title",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    },
+    {
+     "obj": "Repository:r1",
+     "path": "/name",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    },
+    {
+     "obj": "Media:m1",
+     "path": "/desc",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "handles-are-not-text",
+   "kind": "objects",
+   "objects": {
+    "Person:55501001995550100199": {
+     "_class": "Person",
+     "handle": "55501001995550100199",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [
+      "55501001995550100199"
+     ],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [
+      "55501001995550100199"
+     ],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "email-and-address-text",
+   "kind": "objects",
+   "objects": {
+    "Event:e2": {
+     "_class": "Event",
+     "handle": "e2",
+     "type": {
+      "_class": "EventType",
+      "value": 2,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "write to a.test@example.org",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e2",
+     "path": "/description",
+     "code": "contact_info",
+     "kind": "email",
+     "span": [
+      9,
+      27
+     ]
+    }
+   ]
+  },
+  {
+   "id": "birth-day-month",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       3,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    },
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-year-only",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "birth-year-text",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "text": "1900",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "birth-text-not-year",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 6,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "May 1900",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/text",
+     "code": "dob_not_allowed",
+     "kind": "birth_date_text"
+    }
+   ]
+  },
+  {
+   "id": "birth-range-second-date",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 4,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false,
+       4,
+       5,
+       1901,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/4",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    },
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/5",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-like-type-adult-christening",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 14,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       7,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-like-type-baptism",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 15,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       7,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-like-type-bless",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 18,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       7,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-like-type-christen",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 22,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       7,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-like-type-stillbirth",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 45,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       7,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "custom-birth-type",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 0,
+      "string": "Geburt"
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       4,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "non-birth-type-keeps-full-date",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 13,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       3,
+       1990,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "type-change-into-birth",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       3,
+       1990,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    },
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-ref-index-fallback",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "ref": "e1",
+       "role": {
+        "_class": "EventRoleType",
+        "value": 1,
+        "string": ""
+       }
+      }
+     ],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": 0,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    },
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 10,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       0,
+       1990,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-ref-index-removed",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "ref": "e1",
+       "role": {
+        "_class": "EventRoleType",
+        "value": 1,
+        "string": ""
+       }
+      }
+     ],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    },
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 10,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       0,
+       1990,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "birth-ref-index-moves-to-context-event",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "ref": "e1",
+       "role": {
+        "_class": "EventRoleType",
+        "value": 1,
+        "string": ""
+       }
+      }
+     ],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": 0,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ],
+   "context": [
+    {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 10,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       0,
+       1990,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   ]
+  },
+  {
+   "id": "citation-of-birth-event",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": [
+      "c1"
+     ]
+    },
+    "Citation:c1": {
+     "_class": "Citation",
+     "handle": "c1",
+     "page": "",
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       2,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     }
+    },
+    "Citation:c2": {
+     "_class": "Citation",
+     "handle": "c2",
+     "page": "",
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       2,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Citation:c1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "citation-on-eventref-of-birth",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "ref": "e1",
+       "role": {
+        "_class": "EventRoleType",
+        "value": 1,
+        "string": ""
+       },
+       "citation_list": [
+        "c1"
+       ]
+      }
+     ],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    },
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 15,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    },
+    "Citation:c1": {
+     "_class": "Citation",
+     "handle": "c1",
+     "page": "",
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       6,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Citation:c1",
+     "path": "/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-name-date",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        1,
+        1,
+        1900,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/primary_name/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/primary_name/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-name-alternate",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [
+      {
+       "_class": "Name",
+       "type": {
+        "_class": "NameType",
+        "value": 2,
+        "string": ""
+       },
+       "first_name": "Ada",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "surname": "Test",
+         "primary": true
+        }
+       ],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "modifier": 0,
+        "quality": 0,
+        "dateval": [
+         0,
+         9,
+         1900,
+         false
+        ],
+        "text": "",
+        "newyear": 0,
+        "sortval": 0
+       }
+      }
+     ],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/alternate_names/0/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "married-name-date-allowed",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [
+      {
+       "_class": "Name",
+       "type": {
+        "_class": "NameType",
+        "value": 3,
+        "string": ""
+       },
+       "first_name": "Ada",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "surname": "Test",
+         "primary": true
+        }
+       ],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "modifier": 0,
+        "quality": 0,
+        "dateval": [
+         4,
+         5,
+         1925,
+         false
+        ],
+        "text": "",
+        "newyear": 0,
+        "sortval": 0
+       }
+      }
+     ],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "place-type-7",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 7,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/place_type",
+     "code": "never_in_cloud",
+     "kind": "place_type"
+    }
+   ]
+  },
+  {
+   "id": "place-type-18",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 18,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/place_type",
+     "code": "never_in_cloud",
+     "kind": "place_type"
+    }
+   ]
+  },
+  {
+   "id": "place-type-19",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 19,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/place_type",
+     "code": "never_in_cloud",
+     "kind": "place_type"
+    }
+   ]
+  },
+  {
+   "id": "place-type-20",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 20,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/place_type",
+     "code": "never_in_cloud",
+     "kind": "place_type"
+    }
+   ]
+  },
+  {
+   "id": "place-custom-home-like",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 0,
+      "string": "Family Residence"
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/place_type",
+     "code": "never_in_cloud",
+     "kind": "place_type"
+    }
+   ]
+  },
+  {
+   "id": "place-city-ok",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 4,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "40.12",
+     "long": "-122.5",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "place-coordinates-too-fine",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 4,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "40.123",
+     "long": "-122.1234",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/lat",
+     "code": "never_in_cloud",
+     "kind": "coordinate"
+    },
+    {
+     "obj": "Place:pl1",
+     "path": "/long",
+     "code": "never_in_cloud",
+     "kind": "coordinate"
+    }
+   ]
+  },
+  {
+   "id": "place-code-below-admin",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 4,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "00000",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    },
+    "Place:pl2": {
+     "_class": "Place",
+     "handle": "pl2",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 1,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "ZZ",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/code",
+     "code": "never_in_cloud",
+     "kind": "place_code"
+    }
+   ]
+  },
+  {
+   "id": "url-email",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [
+      {
+       "_class": "Url",
+       "type": {
+        "_class": "UrlType",
+        "value": 1,
+        "string": ""
+       },
+       "path": "mailto:a@example.org",
+       "desc": ""
+      }
+     ],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/type",
+     "code": "never_in_cloud",
+     "kind": "url_email"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/path",
+     "code": "contact_info",
+     "kind": "contact_url",
+     "span": [
+      0,
+      20
+     ]
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/path",
+     "code": "contact_info",
+     "kind": "email",
+     "span": [
+      7,
+      20
+     ]
+    }
+   ]
+  },
+  {
+   "id": "attribute-3-and-6",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [
+      {
+       "_class": "Attribute",
+       "type": {
+        "_class": "AttributeType",
+        "value": 3,
+        "string": ""
+       },
+       "value": "x"
+      },
+      {
+       "_class": "Attribute",
+       "type": {
+        "_class": "AttributeType",
+        "value": 6,
+        "string": ""
+       },
+       "value": "y"
+      },
+      {
+       "_class": "Attribute",
+       "type": {
+        "_class": "AttributeType",
+        "value": 5,
+        "string": ""
+       },
+       "value": "z"
+      }
+     ],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/attribute_list/0/type",
+     "code": "never_in_cloud",
+     "kind": "attribute"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/attribute_list/1/type",
+     "code": "never_in_cloud",
+     "kind": "attribute"
+    }
+   ]
+  },
+  {
+   "id": "address-list",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [
+      {
+       "_class": "Address",
+       "street": ""
+      }
+     ],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/address_list/0",
+     "code": "never_in_cloud",
+     "kind": "address"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/address_list",
+     "code": "never_in_cloud",
+     "kind": "address"
+    }
+   ]
+  },
+  {
+   "id": "place-alt-loc",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "_class": "Place",
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 4,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": [],
+     "alt_loc": [
+      {
+       "_class": "Location",
+       "street": ""
+      }
+     ]
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/alt_loc/0",
+     "code": "never_in_cloud",
+     "kind": "address"
+    },
+    {
+     "obj": "Place:pl1",
+     "path": "/alt_loc",
+     "code": "never_in_cloud",
+     "kind": "address"
+    }
+   ]
+  },
+  {
+   "id": "note-plain",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": "fixing a typo in the middle name",
+   "expect": []
+  },
+  {
+   "id": "note-phone",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": "call (555) 010-0199",
+   "expect": [
+    {
+     "obj": "proposal.note",
+     "path": "",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "reason-in-object",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": {
+    "reason": "call (555) 010-0199"
+   },
+   "expect": [
+    {
+     "obj": "proposal.note",
+     "path": "/reason",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "stub-fields",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": {
+    "stubs": [
+     {
+      "given": "Ada",
+      "surname": "Test",
+      "place": "call (555) 010-0199",
+      "note": "ok"
+     }
+    ]
+   },
+   "expect": [
+    {
+     "obj": "proposal.note",
+     "path": "/stubs/0/place",
+     "code": "contact_info",
+     "kind": "phone",
+     "span": [
+      5,
+      19
+     ]
+    }
+   ]
+  },
+  {
+   "id": "stub-existing-handle-skipped",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": {
+    "who": [
+     {
+      "existing": "55501001995550100199"
+     }
+    ]
+   },
+   "expect": []
+  },
+  {
+   "id": "dob-text-off",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": "her birthday is May 5th",
+   "expect": []
+  },
+  {
+   "id": "dob-text-on",
+   "kind": "value",
+   "obj": "proposal.note",
+   "value": "her birthday is May 5th",
+   "expect": [
+    {
+     "obj": "proposal.note",
+     "path": "",
+     "code": "dob_not_allowed",
+     "kind": "dob_heuristic",
+     "span": [
+      16,
+      23
+     ]
+    }
+   ],
+   "dob": true
+  }
+ ]
+}

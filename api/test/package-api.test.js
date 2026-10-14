@@ -21,6 +21,8 @@ describe("scripts/ci/package-api.sh", () => {
       cpSync(script, join(root, "scripts/ci/package-api.sh"));
       for (const f of ["src", "scripts", "package.json", "package-lock.json"]) cpSync(join(api, f), join(root, "api", f), { recursive: true });
       cpSync(join(api, "../shared"), join(root, "shared"), { recursive: true });
+      mkdirSync(join(root, "gramps/redaction"), { recursive: true });
+      cpSync(join(api, "../gramps/redaction/redaction-v1.json"), join(root, "gramps/redaction/redaction-v1.json"));
       writeFileSync(join(root, "api/.npmrc"), "# test stub\n");
       const bin = join(tmp, "bin");
       mkdirSync(bin);
@@ -43,6 +45,7 @@ describe("scripts/ci/package-api.sh", () => {
       expect(files).toEqual(expect.arrayContaining(shared.map((f) => `./src/shared/${f}`)));
       expect(files.filter((f) => f.startsWith("./src/shared/") && !shared.includes(f.slice("./src/shared/".length)))).toEqual([]);
       expect(files.filter((f) => f.startsWith("./scripts/") || f === "./.npmrc" || f === "./package-lock.json")).toEqual([]);
+      expect(files).toContain("./gramps/redaction/redaction-v1.json"); // the edit guard reads the policy beside src/
       const caps = JSON.parse(readFileSync(join(root, "api/dist/caps.json"), "utf8"));
       expect(caps).toEqual(JSON.parse(JSON.stringify(buildCaps())));
     } finally {
