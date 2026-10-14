@@ -62,7 +62,7 @@ A delete or withdraw tombstones the head at once, but the log still holds the ve
    | `head_moved` | The head changed after the tombstone, so it is no longer this batch's. |
    | `already_live` | The head is live again, for example because this command already ran. |
    | `withdrawn_private_needs_flag` | The op was a privacy withdraw (reason `private`). Re-creating it puts the record back in the store and the next render republishes it, so it needs `--include-withdrawn` and io's explicit go-ahead for the withdrawn records. The dry run with the flag prints a WARNING naming the count. |
-| `merge` | A person merge. The alias and the survivor are the merge's business. |
+   | `merge` | A person merge. The alias and the survivor are the merge's business. |
    | `media_blob_not_in_log` | A Media's blob descriptor is on the head, not in the log. |
    | `gramps_id_taken` | Another object now holds the id. |
 4. After io's go-ahead, apply:
