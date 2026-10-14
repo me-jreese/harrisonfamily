@@ -136,9 +136,9 @@ describe("inbox routes (AC3)", () => {
 
   it("the list filter is validated: bogus is 400, unread and all are 200", async () => {
     const w = makeApi({ withPush: false, flags: { inboxV1: true }, inbox: new InMemoryNotificationStore() });
-    expect((await get(w, "/api/notifications/inbox?filter=bogus")).status).toBe(400);
-    expect((await get(w, "/api/notifications/inbox?filter=unread")).status).toBe(200);
-    expect((await get(w, "/api/notifications/inbox?filter=all")).status).toBe(200);
+    expect((await get(w, "/api/notifications/inbox", OWNER, { query: { filter: "bogus" } })).status).toBe(400);
+    expect((await get(w, "/api/notifications/inbox", OWNER, { query: { filter: "unread" } })).status).toBe(200);
+    expect((await get(w, "/api/notifications/inbox", OWNER, { query: { filter: "all" } })).status).toBe(200);
   });
 
   it("a signed-out caller gets 401, and an empty read body 400", async () => {
