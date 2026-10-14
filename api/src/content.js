@@ -14,7 +14,7 @@ const hash = (s) => {
 };
 const filterId = (f) => hash(JSON.stringify([f?.subject ?? null, f?.type ?? null, f?.author ?? null, f?.visibility ?? null]));
 
-const MAX_BODY = 20_000; // keeps post item x3 + audit before/after well under the 400KB item limit
+export const MAX_BODY = 20_000; // keeps post item x3 + audit before/after well under the 400KB item limit
 export const MAX_TITLE = 200;
 export const MAX_ATTACHMENTS = 10;
 export const MAX_ALT = 500;
@@ -100,9 +100,16 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     if (!p || !canView(p, actor)) throw new ContentError("not_found", `no post ${id}`, { id });
     return p;
   }
-  function validateBody(body) {
-    if (typeof body !== "string" || body.trim() === "") throw new ContentError("validation", "body is required", { field: "body" });
+  /**
+   * A post is a line, a photo, or both (HFY-TSK-315): the body is a string of at most MAX_BODY characters, and it may be empty or
+   * whitespace only while the post holds at least one attachment. `attachments` is the list the post will hold, already through
+   * normalizeAttachments, so only a real member upload stands in for the body (@io-kit/content 0.3.1, CS-19).
+   */
+  function validateBody(body, attachments) {
+    if (typeof body !== "string") throw new ContentError("validation", "body is required", { field: "body" });
     if (body.length > MAX_BODY) throw new ContentError("validation", "body too long", { field: "body" });
+    const photos = Array.isArray(attachments) ? attachments.length : 0;
+    if (body.trim() === "" && photos === 0) throw new ContentError("validation", "body is required", { field: "body" });
   }
 
   /** Main item + author index + optional subject index; all carry the full post so list reads need no second fetch. */
@@ -224,7 +231,8 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     },
     async createDraft(input) {
       const who = requireActor();
-      validateBody(input.body);
+      const attachments = normalizeAttachments(input.attachments ?? [], mediaPublicBase);
+      validateBody(input.body, attachments);
       if (input.type !== undefined && !POST_TYPES.includes(input.type)) throw new ContentError("validation", "unknown type", { field: "type" });
       if (input.visibility !== undefined && input.visibility !== "draft" && input.visibility !== "published") throw new ContentError("validation", "visibility must be draft or published", { field: "visibility" });
       const present = (v) => v !== undefined && v !== null; // null on create means "not set"
@@ -237,7 +245,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
         ...(present(input.subject) ? { subject: checkSubject(input.subject) } : {}),
         ...(present(input.title) ? { title: checkTitle(input.title) } : {}),
         body: input.body,
-        attachments: normalizeAttachments(input.attachments ?? [], mediaPublicBase),
+        attachments,
         visibility: input.visibility === "published" ? "published" : "draft", // one write, one audit entry (drafts:false hosts)
         created_at: at,
         updated_at: at,
@@ -252,11 +260,12 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     async update(id, patch) {
       const current = await visible(id);
       if (!computeCan(current, actor).edit) throw new ContentError("forbidden", "only the author can edit", { id });
-      if (patch.body !== undefined) validateBody(patch.body);
       const before = structuredClone(current);
       const next = { ...current };
       if (patch.body !== undefined) next.body = patch.body;
       if (patch.attachments !== undefined) next.attachments = normalizeAttachments(patch.attachments, mediaPublicBase);
+      // Judge the post the patch leaves behind: emptying a photo post's body is fine, removing its last photo is not.
+      validateBody(next.body, next.attachments);
       for (const [k, check] of [["title", checkTitle], ["subject", checkSubject]]) {
         const v = patch[k];
         if (v === null) delete next[k];

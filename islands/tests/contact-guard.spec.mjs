@@ -99,7 +99,7 @@ test("post composer: a phone number is marked, the copy shows, post is disabled 
   expect(s.postBodies[0].body).toBe("back from the lake! call me when you're free");
 });
 
-test("post composer: a photo's description is checked too, and an emptied box stays disabled by the kit's own rule", async ({ page }) => {
+test("post composer: a photo's description is checked too, and once its hit is gone a photo alone gets post back (the kit's own rule)", async ({ page }) => {
   const s = await stub(page);
   await page.goto("/person/?id=I9001&hfy_flags=postsV2", { waitUntil: "domcontentloaded" });
   const mine = page.locator("[data-hfy-my-posts]");
@@ -115,7 +115,15 @@ test("post composer: a photo's description is checked too, and an emptied box st
   await alt.fill("the garden");
   await expect(submit).toBeEnabled();
   await box.fill("");
+  await expect(submit).toBeEnabled(); // a photo alone is a post (@io-kit/content 0.3.1, HFY-TSK-315)
+  // a photo-only post whose description holds the hit: disabled, and enabled again with the box still empty once it is removed
+  await alt.fill("outside 42 Example Street");
+  await expect(mine.locator("[data-hfy-guard-mark]")).toHaveText(/42 Example Street/);
   await expect(submit).toBeDisabled();
+  await alt.fill("the garden");
+  await expect(mine.locator("[data-hfy-guard-mark]")).toHaveCount(0);
+  await expect(box).toHaveValue("");
+  await expect(submit).toBeEnabled();
   await box.fill("garden day, again");
   await expect(submit).toBeEnabled();
   await submit.click();
