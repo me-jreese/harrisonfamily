@@ -86,3 +86,22 @@ export function createLabelResolver({ load, ttlMs = 3_600_000, missTtlMs = 60_00
     return (await pending) ?? fallbackLabel(sub);
   };
 }
+
+/**
+ * HFY-TSK-254: does the site have a person record for this gramps_id (person/<id>.json)? `load(id)` is the same S3 read as the label resolver's.
+ * An absent key is false (S3 answers 403 AccessDenied for a missing key without s3:ListBucket, so that counts as absent too); any other failure throws,
+ * so the caller can answer 503 instead of a wrong 404. Only ids of the gramps_id shape ever become a key.
+ */
+export function createPersonExists({ load }) {
+  return async (grampsId) => {
+    if (typeof grampsId !== "string" || !ID_RE.test(grampsId)) return false;
+    try {
+      const rec = await load(grampsId);
+      return rec !== null && rec !== undefined;
+    } catch (e) {
+      const status = e?.$metadata?.httpStatusCode;
+      if (e?.name === "NoSuchKey" || e?.Code === "NoSuchKey" || e?.name === "AccessDenied" || e?.Code === "AccessDenied" || status === 404 || status === 403) return false;
+      throw e;
+    }
+  };
+}

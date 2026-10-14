@@ -58,8 +58,10 @@ export const PUSH_ONLY_TYPES = new Set(Object.entries(TEMPLATE_REGISTRY.features
 
 /** More followed pages than this in one batch collapse into one digest per recipient (social.md section 5). */
 export const DIGEST_OVER = 3;
-/** Fan-out bound for one onRecordChanged call: a batch larger than this is truncated (the digest rule makes the rest redundant). */
-export const MAX_CHANGES = 500;
+/** More distinct subjects than this in one non-silent call degrade to one digest per recipient (D2-16, review IF-17); the call is never refused. */
+export const BATCH_DIGEST_OVER = 50;
+/** Hard ceiling on subjects read from one call (memory bound); beyond it the rest of the batch is ignored. */
+export const MAX_SUBJECTS = 5000;
 /** Concurrent follower lookups per onRecordChanged call (the kit's fan-out bound). */
 export const LOOKUP_CONCURRENCY = 8;
 /** Run `fn` over `items` with at most `n` in flight; results keep input order. */
@@ -254,12 +256,14 @@ export function createNotifier(deps) {
      * The owner (a member, per `listMembers`) gets record_updated_mine unless they are the actor; followers (per `followersOf`) get record_updated_followed,
      * never the actor and never the owner twice; a follower with more than DIGEST_OVER pages in one call gets one records_updated_followed_digest instead.
      * Idempotency across redelivery (dedupe key rec:<seq>:<subject>) is the consumer's; within a call a subject counts once.
-     * Budget: at most MAX_CHANGES subjects, follower Queries LOOKUP_CONCURRENCY at a time; the consumer should chunk large passes and must dedupe before redelivery.
+     * `silent:true`, `import:true` or `seed:true` (SYNC#SESSION.seed) send nothing. More than BATCH_DIGEST_OVER distinct subjects: one digest per follower, one record_updated_mine per owner.
+     * Budget: at most MAX_SUBJECTS subjects, follower Queries LOOKUP_CONCURRENCY at a time; the consumer should chunk large passes and must dedupe before redelivery.
      */
-    onRecordChanged: guarded("record change notification", async (changes, { silent = false } = {}) => {
-      if (silent === true || !Array.isArray(changes)) return;
+    onRecordChanged: guarded("record change notification", async (changes, { silent = false, import: isImport = false, seed = false } = {}) => {
+      // Seeds (SYNC#SESSION.seed=true, passed by the consumer as `seed`), explicit imports and backfills send nothing and read nothing.
+      if (silent === true || isImport === true || seed === true || !Array.isArray(changes)) return;
       const subjects = new Map();
-      for (const ch of changes.slice(0, MAX_CHANGES)) {
+      for (const ch of changes.slice(0, MAX_SUBJECTS)) {
         const gid = personIdOf(ch?.subject);
         if (!gid) continue;
         const prev = subjects.get(ch.subject);
@@ -268,6 +272,8 @@ export function createNotifier(deps) {
         subjects.set(ch.subject, { gid, actor: ch.actor ?? null, subjectLabel: ch.subjectLabel });
       }
       if (!subjects.size) return;
+      // A large batch is never refused: every follower gets one digest and every member owner one record_updated_mine.
+      const bulk = subjects.size > BATCH_DIGEST_OVER;
       const members = deps.listMembers ? await deps.listMembers() : new Set();
       const followed = new Map(); // recipient -> [subject]
       const entries = [...subjects];
@@ -283,7 +289,7 @@ export function createNotifier(deps) {
       }
       const perSubject = new Map(); // subject -> recipients (small lists)
       for (const [recipient, subs] of followed) {
-        if (subs.length > DIGEST_OVER) {
+        if (bulk || subs.length > DIGEST_OVER) {
           await notify("records_updated_followed_digest", [recipient], { navigate: INBOX_PATH, count: subs.length, group: "recdigest" });
         } else for (const subject of subs) (perSubject.get(subject) ?? perSubject.set(subject, []).get(subject)).push(recipient);
       }
