@@ -15,7 +15,8 @@
 //      with the proposal (PROP# META and IDX# copies, AUDIT#proposal) and the IDEM# receipt as `extra`; a submission with no direct part is one
 //      transact() of the proposal items alone, which touches no record
 //   7. after the commit, and never failing it: onProposalSubmitted tells every admin but the proposer. Record-change notifications for the direct
-//      part come from the render outbox (hfy-record-change-fanout), not from here, and this task adds no contribution op.
+//      part come from the render outbox (hfy-record-change-fanout), not from here, and this task adds no contribution op: the self_edit and tag
+//      credits come from the record contributor inside applyBatch, and the direct part's size check budgets for them (recordContributorActions).
 //
 // `dry_run` runs steps 1 to 5 and returns the plan; nothing is written and no Idempotency-Key is needed.
 import { HttpError } from "../http.js";
@@ -33,10 +34,11 @@ import { backrefs, customTypes, get, invalidateGraph } from "./index.js";
 import { relationView } from "./edit-bundle.js";
 import { viewRecord } from "./read.js";
 import {
-  CONTRIB_RESERVE, MAX_APPROVAL_OBJECTS, MAX_NEW_OBJECTS, MAX_PROPOSAL_BYTES, MAX_PROPOSAL_OPS, MAX_TXN_ACTIONS, PROPOSAL_RATE_LIMIT, idemKeys, idemPut, newProposal, proposalAuditItem, proposalPuts,
+  MAX_APPROVAL_OBJECTS, MAX_NEW_OBJECTS, MAX_PROPOSAL_BYTES, MAX_PROPOSAL_OPS, MAX_TXN_ACTIONS, PROPOSAL_RATE_LIMIT, idemKeys, idemPut, newProposal, proposalAuditItem, proposalPuts,
   proposalTooLarge, proposalView, recentProposalCount,
 } from "./proposals.js";
 import { FIXED_TXN_ITEMS } from "../sync/store.js";
+import { recordContributorActions } from "../record-contributor.js";
 
 /** DEC-E9: an admin's destructive direct change needs a sign-in this fresh. */
 export const STEP_UP_MAX_AGE_SECONDS = 900;
@@ -652,14 +654,17 @@ async function commit(c, req, planned, nowMs) {
     puts.push(proposalAuditItem({ op: "proposal.create", id: proposal.id, principalId: actor.id, at, uid: ctx.uid(), table: ctx.table, after: { state: proposal.state, rev: proposal.rev, targets: proposal.targets.length } }));
   }
 
+  const origin = actor.admin === true ? "admin" : "self";
   if (direct) {
+    // applyBatch adds the record contributor's credit to the same transaction (8 actions for a member's own save that also tags, 6 for an
+    // admin's tag), so the budget holds what it can add for this origin: past 100 actions, assertTxnSize would throw inside applyBatch.
     const { created, updated, deleted } = direct.changes;
-    const items = FIXED_TXN_ITEMS + (deleted.length ? 1 : 0) + created.length * 3 + updated.length * 2 + deleted.length * 3 + puts.length + CONTRIB_RESERVE;
+    const items = FIXED_TXN_ITEMS + (deleted.length ? 1 : 0) + created.length * 3 + updated.length * 2 + deleted.length * 3 + puts.length + recordContributorActions(origin);
     if (items > MAX_TXN_ACTIONS) throw problem(413, "too_large", "split this into smaller changes");
   }
   try {
     if (direct) {
-      await applyBatch(ctx, { principal: actor.id, origin: actor.admin === true ? "admin" : "self", idempotencyKey: req.key, ops: wireOps(direct), extra: { puts } });
+      await applyBatch(ctx, { principal: actor.id, origin, idempotencyKey: req.key, ops: wireOps(direct), extra: { puts } });
       invalidateGraph(ctx);
     } else {
       await transact(ctx.ddb, ctx.cmds, ctx.table, { puts, clientRequestToken: requestTokenFor(batchIdFor(actor.id, req.key), 0) }, ctx.txnOpts);

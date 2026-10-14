@@ -5,7 +5,7 @@ import { createFakeDdb, cmds } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry, defaultHooks } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
-import { createRecordContributor, deriveUlid, registerRecordContributor, tagChanges } from "../src/record-contributor.js";
+import { createRecordContributor, deriveUlid, recordContributorActions, registerRecordContributor, tagChanges } from "../src/record-contributor.js";
 
 const T = "hfy-app";
 const h = (n) => n.toString(16).padStart(28, "0");
@@ -255,6 +255,26 @@ describe("registration and event ids", () => {
 
   it("the process-wide registry stays empty until something registers on it", () => {
     expect(defaultHooks.contributors()).toEqual([]);
+  });
+
+  it("recordContributorActions is the most the contributor adds per origin: 8 for a member's own save that tags, 6 for another web origin's tag, 0 otherwise", async () => {
+    const ddb = createFakeDdb();
+    const contribute = createRecordContributor({ ddb, cmds, table: T, log: { error() {} } });
+    const size = (f) => (f ? f.puts.length + f.deletes.length + f.updates.length + f.checks.length : 0);
+    const batch = (changes, o = {}) => ({ batch_id: "b-1", principal: ME, at: "2026-10-14T10:00:00.000Z", changes, ...o });
+    const plain = { op: "update", class: "Person", handle: h(2), gramps_id: ME, before: person(2), after: person(2, { change: 2 }) };
+    const tagged = { ...plain, after: person(2, { media_list: [ref(1)], change: 2 }) };
+    expect(size(await contribute(batch([tagged]), "self"))).toBe(recordContributorActions("self"));
+    expect(recordContributorActions("self")).toBe(8); // self_edit event, CAP# marker, tag event, five counters (one actor, one instant)
+    expect(size(await contribute(batch([plain]), "self"))).toBe(7);
+    for (const origin of ["admin", "tag", "proposal"]) {
+      expect(size(await contribute(batch([tagged], { on_behalf_of: "I0008" }), origin))).toBe(recordContributorActions(origin));
+      expect(recordContributorActions(origin)).toBe(6);
+    }
+    for (const origin of ["desktop", "seed", "graduation", "moderation"]) {
+      expect(await contribute(batch([tagged]), origin)).toBeUndefined();
+      expect(recordContributorActions(origin)).toBe(0);
+    }
   });
 
   it("deriveUlid is a valid ULID, stable for one seed and different for another", () => {

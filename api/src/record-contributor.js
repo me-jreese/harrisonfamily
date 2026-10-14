@@ -87,6 +87,33 @@ function editedPerson(changes) {
   return undefined;
 }
 
+/** The self_edit credit of a member's save of `edited` (contribOps: the event, its CAP# marker and the five counters). */
+const selfEditCredit = ({ principal, edited, at, atMs, batchId }) =>
+  contribOps({ actor: { id: principal }, kind: "self_edit", ref: { type: "record", id: edited }, subject: `person:${edited}`, at, id: deriveUlid(atMs, `${batchId}:self_edit`) });
+
+/** The tag credit of one commit, to the tagger (contribOps: the event and the five counters). */
+const tagCredit = ({ taggerId, tagged, at, atMs, batchId }) =>
+  contribOps({ actor: { id: taggerId }, kind: "tag", ref: { type: "tag", id: batchId }, ...(tagged ? { subject: `person:${tagged}` } : {}), at, id: deriveUlid(atMs, `${batchId}:tag`) });
+
+const actionsOf = (f) => f.puts.length + f.deletes.length + f.updates.length + f.checks.length;
+
+// The most transaction actions the contributor adds to one batch, measured on the credits it builds (so they follow contribOps if it changes).
+// origin self: the self_edit credit and a tag credit, both to the principal at the batch time, so mergeOps folds their counters into one set:
+// the two events, the CAP# marker and five counter updates, 8. The other tag origins: the tag credit alone, 6. Every other origin: nothing.
+const MAX_ACTIONS = (() => {
+  const s = { principal: "I0", edited: "I0", taggerId: "I0", tagged: "I0", at: "2000-01-01T00:00:00Z", atMs: Date.parse("2000-01-01T00:00:00Z"), batchId: "bound" };
+  return { self: actionsOf(mergeOps(selfEditCredit(s), tagCredit(s))), tag: actionsOf(mergeOps(tagCredit(s))) };
+})();
+
+/**
+ * The most transaction actions the contributor can add to a batch of `origin`. A caller that sizes its transaction before calling applyBatch
+ * (POST /api/changes) budgets this much for the contributor, because applyBatch adds its items to the same 100-action transaction.
+ */
+export function recordContributorActions(origin) {
+  if (!TAG_ORIGINS.has(origin)) return 0;
+  return origin === "self" ? MAX_ACTIONS.self : MAX_ACTIONS.tag;
+}
+
 /**
  * The contributor function: `(batch, origin) => fragment | undefined`. `store` is { ddb, cmds, table }.
  * `batch` is the applyBatch batch { batch_id, origin, principal, at, changes: [{ op, class, handle, gramps_id, before, after, ... }] }.
@@ -113,19 +140,14 @@ export function createRecordContributor({ ddb, cmds, table, log = console }) {
       } catch (e) {
         log.error?.("self_edit cap read failed (counting the save)", logSafeError(e));
       }
-      if (!capped) {
-        fragments.push(contribOps({ actor, kind: "self_edit", ref: { type: "record", id: edited }, subject, at, id: deriveUlid(atMs, `${batch.batch_id}:self_edit`) }));
-      }
+      if (!capped) fragments.push(selfEditCredit({ principal, edited, at, atMs, batchId: batch.batch_id }));
     }
 
     if (changes.some((c) => tagChanges(c).length > 0)) {
       const tagged = taggedPerson(changes);
       // The tagger: a proposal's author when the batch is an approved proposal (the approver is never credited), else whoever made the commit.
       const taggerId = origin === "proposal" && typeof batch.on_behalf_of === "string" && GID_RE.test(batch.on_behalf_of) ? batch.on_behalf_of : principal;
-      const actor = { id: taggerId };
-      fragments.push(contribOps({
-        actor, kind: "tag", ref: { type: "tag", id: batch.batch_id }, ...(tagged ? { subject: `person:${tagged}` } : {}), at, id: deriveUlid(atMs, `${batch.batch_id}:tag`),
-      }));
+      fragments.push(tagCredit({ taggerId, tagged, at, atMs, batchId: batch.batch_id }));
     }
     if (fragments.length === 0) return undefined;
     const { puts, deletes, updates, checks } = mergeOps(...fragments);
