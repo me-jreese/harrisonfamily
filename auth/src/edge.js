@@ -3,6 +3,7 @@
 // things the kit does not ship: GET /auth/.well-known/jwks.json (HFY-R38), GET /auth/session, and host-only cookies (HFY-R31).
 import { createEdgeApp, validateManifest } from "@io-kit/auth/edge/deploy";
 import { COGNITO_GROUP_CLAIM, claimsToPrincipal, resolveAuth } from "@io-kit/auth/server";
+import { normalizeEmail } from "@io-kit/auth";
 import { FORGOT_LIMITS, clientIp, rateKey } from "./ratelimit.js";
 
 export const MOUNT = "/auth";
@@ -209,10 +210,14 @@ function jsonBodyOf(event) {
 /**
  * `limiter` ({hit(key, {limit, windowSeconds})}, see ratelimit.js) rate-limits POST /auth/password/forgot per `forgotLimits`;
  * without one the route is not limited (unit tests). A limiter failure fails closed (503): no email is sent.
+ * `firstPassword` ({isOpen(), provision(email)}, see cognito.js cognitoFirstPassword; SURF-D18) provisions an allowlisted member's Cognito user
+ * on POST /auth/password/forgot, after the limiter and before the kit sends the code; it does nothing unless `isOpen()` (env FIRST_PASSWORD=on).
+ * `forgotMinMs` (default 0) is a minimum duration for POST /auth/password/forgot while `isOpen()`: the answer waits out the remainder, so response time
+ * does not tell an allowlisted address (which costs the extra Cognito calls) from any other. `sleep` and `now` are injectable for tests.
  * `accessRequests` ({handle(rel, event)}, see access-request.js) serves the anonymous /auth/access-request/* routes behind ACCESS_REQUESTS;
  * without it those paths fall through to the kit's 404.
  */
-export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, accessRequests, log = console }) {
+export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, accessRequests, firstPassword, forgotMinMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, log = console }) {
   const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}), ...(passkeys ? { passkeys, ...(passkeyClientScript ? { passkeyClientScript } : {}) } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
   const siteOrigin = String(manifest.authOrigin ?? `https://${manifest.site}`).replace(/\/+$/, "");
@@ -238,6 +243,38 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     const denied = results.filter((r) => !r.allowed);
     if (!denied.length) return undefined;
     return json(429, { code: "AUTH_FORBIDDEN", detail: "rate_limited" }, { "retry-after": String(Math.max(...denied.map((r) => r.retryAfter))) });
+  }
+
+  const firstPasswordOpen = () => {
+    try {
+      return firstPassword?.isOpen?.() === true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * SURF-D18 (io's Q2-12): an allowlisted member with no Cognito user gets one, with a random permanent password, so the kit's forgot flow can mail
+   * the code that sets the first password. Runs after forgotLimited, only for requests the kit would act on (same checks), and only while
+   * FIRST_PASSWORD is on. Answers {response} (502 AUTH_NETWORK, the kit's own Cognito-unreachable answer) when Cognito fails: no code is sent.
+   * Otherwise answers {event}: the request to hand the kit, with the body's email rewritten to the normalized form that was provisioned, so
+   * a padded or mixed-case address reaches Cognito's forgot-password as the user it just created. Never logs the address.
+   */
+  async function provisionFirstPassword(event) {
+    if (!firstPasswordOpen()) return { event };
+    const h = headersOf(event);
+    if (h["x-requested-with"] !== "io-kit") return { event };
+    if (h.origin && h.origin.replace(/\/+$/, "") !== siteOrigin) return { event };
+    const b = jsonBodyOf(event);
+    if (typeof b.email !== "string" || !b.email.trim()) return { event };
+    const email = normalizeEmail(b.email);
+    try {
+      await firstPassword.provision(email);
+    } catch (e) {
+      log.error?.(JSON.stringify({ msg: "first-password provisioning failed", error: e instanceof Error ? e.name : "error" }));
+      return { response: json(502, { code: "AUTH_NETWORK" }) };
+    }
+    return { event: { ...event, body: JSON.stringify({ ...b, email }), isBase64Encoded: false } };
   }
 
   /** /auth/password answers {ok, returnTo}; the page then does location.assign(returnTo). */
@@ -324,7 +361,7 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     return out;
   }
 
-  return async function handler(event) {
+  async function handle(event) {
     const method = (event.requestContext?.http?.method ?? event.httpMethod ?? "GET").toUpperCase();
     const raw = ((event.rawPath ?? event.requestContext?.http?.path ?? "/").replace(/\/+$/, "")) || "/";
     if (raw === `/.well-known/oauth-authorization-server${MOUNT}`) {
@@ -349,12 +386,20 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
       const r = await oauth.handle(rel, event, () => sessionOf(event));
       if (r) return r;
     }
-    // Users are created only by AdminCreateUser (POST /auth/link). ConfirmSignUp only ever confirms a self-service sign-up, which
-    // this app never makes; refusing it keeps an account someone else signed up for an email from being confirmed here.
+    // Users are created only by AdminCreateUser: at POST /auth/link and, while FIRST_PASSWORD is on, at POST /auth/password/forgot (SURF-D18, io's Q2-12;
+    // cognito.js). ConfirmSignUp only ever confirms a self-service sign-up, which this app never makes; refusing it keeps an account someone else signed up
+    // for an email from being confirmed here.
     if (rel === "/verify" && method === "POST") return json(410, { code: "AUTH_FORBIDDEN", detail: "signup_disabled" });
-    if (rel === "/password/forgot" && method === "POST" && limiter) {
-      const limited = await forgotLimited(event);
-      if (limited) return limited;
+    if (rel === "/password/forgot" && method === "POST") {
+      if (limiter) {
+        const limited = await forgotLimited(event);
+        if (limited) return limited;
+      }
+      if (firstPassword) {
+        const r = await provisionFirstPassword(event);
+        if (r.response) return r.response;
+        event = r.event;
+      }
     }
     let ev = event;
     const qs = event.queryStringParameters ?? {};
@@ -373,6 +418,18 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     const res = adapt(await app({ ...ev, rawPath: kitPath }), rel);
     if (rel === "/password" || rel === "/passkey/login/verify") return sanitizeReturnBody(res); // the kit's own returnTo check lets "/\t/evil.example" through
     if (rel === "/callback" && res.statusCode >= 300 && res.statusCode < 400) return sanitizeLocation(res);
+    return res;
+  }
+
+  return async function handler(event) {
+    const method = (event.requestContext?.http?.method ?? event.httpMethod ?? "GET").toUpperCase();
+    const raw = ((event.rawPath ?? event.requestContext?.http?.path ?? "/").replace(/\/+$/, "")) || "/";
+    if (method !== "POST" || raw !== `${MOUNT}/password/forgot` || !(forgotMinMs > 0) || !firstPasswordOpen()) return handle(event);
+    const started = now();
+    const res = await handle(event);
+    if (res.statusCode === 429 || res.statusCode === 503) return res; // refused before any Cognito call: nothing to hide
+    const wait = forgotMinMs - (now() - started);
+    if (wait > 0) await sleep(wait);
     return res;
   };
 }

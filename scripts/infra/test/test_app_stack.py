@@ -208,7 +208,7 @@ class SyncInfra(unittest.TestCase):
     def test_default_off_parameters_are_pinned(self):
         expected = {
             "SyncApiEnabled": "0", "RenderMode": "off", "RenderCodeKey": "lambda/hfy-sync-render-placeholder.zip",
-            "HfyEditing": "off", "AccessRequests": "off", "TurnstileSiteKey": "", "SesConfigurationSet": "",
+            "HfyEditing": "off", "AccessRequests": "off", "FirstPassword": "off", "TurnstileSiteKey": "", "SesConfigurationSet": "",
             "SesIdentityArn": "", "ChatServicePublicKeys": "", "GraphRenderCodeKey": "lambda/hfy-graph-render-placeholder.zip",
             "SyncBucketName": "harrisonfamily-sync", "AlarmEmail": "",
             # HFY-TSK-195 (P2-R23): the access-request mail identity, configuration set and alarms are separate from Cognito's and the API's
@@ -222,6 +222,7 @@ class SyncInfra(unittest.TestCase):
         self.assertEqual(self.p["RenderMode"]["AllowedValues"], ["off", "shadow", "live"])
         self.assertEqual(self.p["HfyEditing"]["AllowedValues"], ["off", "on"])
         self.assertEqual(self.p["AccessRequests"]["AllowedValues"], ["off", "on"])
+        self.assertEqual(self.p["FirstPassword"]["AllowedValues"], ["off", "on"])
         self.assertNotIn("Default", self.p["BreakGlassPrincipalArn"])  # io's principal never lives in the repo
 
     def test_parameters_reach_the_functions(self):
@@ -230,7 +231,7 @@ class SyncInfra(unittest.TestCase):
         for env, param in [("SYNC_API_ENABLED", "SyncApiEnabled"), ("HFY_EDITING", "HfyEditing"),
                            ("CHAT_SERVICE_PUBLIC_KEYS", "ChatServicePublicKeys"), ("SES_CONFIGURATION_SET", "SesConfigurationSet")]:
             self.assertEqual(api[env], {"Ref": param}, env)
-        for env, param in [("ACCESS_REQUESTS", "AccessRequests"), ("TURNSTILE_SITE_KEY", "TurnstileSiteKey"),
+        for env, param in [("ACCESS_REQUESTS", "AccessRequests"), ("FIRST_PASSWORD", "FirstPassword"), ("TURNSTILE_SITE_KEY", "TurnstileSiteKey"),
                            ("JOIN_FROM_ADDRESS", "JoinFromAddress"), ("JOIN_SES_CONFIGURATION_SET", "JoinSesConfigurationSet")]:
             self.assertEqual(edge[env], {"Ref": param}, env)
         # the edge never sends through the Cognito and API identity or configuration set
