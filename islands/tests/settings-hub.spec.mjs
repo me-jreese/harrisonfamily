@@ -62,8 +62,9 @@ for (const [name, viewport] of [["375", { width: 375, height: 812 }], ["1280", {
     await expect(signIn).toHaveAttribute("href", "/auth/link");
     await expect(signIn).toHaveAccessibleDescription("google, password, face or fingerprint");
     await expect(hub(page).getByRole("button", { name: "sign out", exact: true })).toBeVisible();
-    // only these three (your links and family requests come with their own flags)
+    // only these three (family requests comes with its own flag; "your links" with profileLinks, below)
     await expect(page.locator(".hfy-settings [data-hfy-setting]")).toHaveCount(3);
+    await expect(row(page, "links")).toHaveCount(0);
 
     const rows = await page.locator(".hfy-settings .hfy-settings__row").evaluateAll((els) => els.map((e) => {
       const r = e.getBoundingClientRect();
@@ -193,4 +194,31 @@ test("navMe off: /me/ loads no settings island and keeps its 'not turned on' lin
   expect(requested).toEqual([]);
   await expect(page.locator(".hfy-settings")).toHaveCount(0);
   await expect(page.locator("#hfy-shell-root a.hfy-gear")).toHaveCount(0);
+});
+
+// HFY-TSK-217: the "your links" row is shown only with profileLinks, between notifications and sign-in and devices.
+for (const [name, viewport] of [["375", { width: 375, height: 812 }], ["1280", { width: 1280, height: 800 }]]) {
+  test(`${name} profileLinks on: the "your links" row (56px, /me/links/, dim line) sits after notifications, axe clean`, async ({ page }) => {
+    await hermetic(page);
+    await page.setViewportSize(viewport);
+    await page.goto("/me/?hfy_flags=navMe,profileLinks", { waitUntil: "domcontentloaded" });
+    const links = page.getByRole("link", { name: "your links", exact: true });
+    await expect(links).toBeVisible();
+    await expect(links).toHaveAttribute("href", "/me/links/");
+    await expect(links).toHaveAccessibleDescription("facebook, instagram and the rest, on your page");
+    await expect(page.locator(".hfy-settings [data-hfy-setting]")).toHaveCount(4);
+    expect(await page.locator(".hfy-settings [data-hfy-setting]").evaluateAll((els) => els.map((e) => e.getAttribute("data-hfy-setting")))).toEqual(["notifications", "links", "sign-in", "sign-out"]);
+    expect((await links.boundingBox()).height).toBeGreaterThanOrEqual(55.5);
+    const a = await audit(page);
+    expect(a.small, "targets < 44px").toEqual([]);
+    expect(a.scrollW).toBeLessThanOrEqual(a.innerW);
+    expect(await axeViolations(page)).toEqual([]);
+  });
+}
+
+test("profileLinks off: no \"your links\" row", async ({ page }) => {
+  await hermetic(page);
+  await page.goto("/me/?hfy_flags=navMe,-profileLinks", { waitUntil: "domcontentloaded" });
+  await expect(row(page, "notifications")).toBeVisible();
+  await expect(row(page, "links")).toHaveCount(0);
 });

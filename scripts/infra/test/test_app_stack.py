@@ -448,6 +448,13 @@ class GitHubRoles(unittest.TestCase):
         self.assertEqual(sorted(st["Action"]), ["s3:DeleteObject", "s3:PutObject"])
         self.assertEqual(st["Resource"], ["arn:aws:s3:::harrisonfamily-frontend/uploads/*"])
 
+    def test_deploy_role_names_no_retired_function(self):
+        # hfy-check-allowed, its API Gateway and /api/check-allowed were retired on 2026-10-14 (HFY-TSK-326, ruling P2-R48).
+        role = load("github-roles.yaml")["Resources"]["GitHubDeployRole"]
+        resources = [r["Fn::Sub"] if isinstance(r, dict) else r for r in by_sid(role, "LambdaDeploy")["Resource"]]
+        self.assertFalse([r for r in resources if "hfy-check-allowed" in r], resources)
+        self.assertEqual(sorted({r.split(":function:")[1].split(":")[0] for r in resources}), ["hfy-api", "hfy-auth-edge"])
+
 
 if __name__ == "__main__":
     unittest.main()

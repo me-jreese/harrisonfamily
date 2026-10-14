@@ -69,19 +69,11 @@ The test suites pin several of these values. Examples are `gate.test.mjs`, the a
 
 ### Legacy pieces
 
-The legacy Google sign-in is gone from the pages and the pipeline (HFY-TSK-317): no page loads it, no push deploys `hfy-check-allowed`, and members sign in only through the auth edge once [Deploy the app stack](deploy-the-app-stack.md) has run. One legacy piece remains, the `hfy-check-allowed` Lambda, created outside the repository's IaC, and this page does not set it up. [Identity services](../reference/identity-services.md#retired-legacy-sign-in) describes it, and [The identity model](../explanation/identity-model.md#retirement-order-once-authv2-is-flipped) gives the order in which it retires. The Google Cloud piece, the `getAllowlist` function with its Secret Manager secret and its deploy workflow, was deleted on 2026-10-14 (HFY-TSK-325), so a new environment needs nothing in Google Cloud besides the OAuth client in [step 7](#7-create-the-google-web-client).
+The legacy Google sign-in is gone from the pages and the pipeline (HFY-TSK-317): no page loads it, and members sign in only through the auth edge once [Deploy the app stack](deploy-the-app-stack.md) has run. Its cloud pieces were deleted on 2026-10-14, and their source is gone from the repository: the `hfy-check-allowed` Lambda with its API Gateway (HFY-TSK-326, ruling P2-R48), and the `getAllowlist` Cloud Function with its Secret Manager secret and its deploy workflow (HFY-TSK-325). Once `/api/*` exists, a request to `/api/check-allowed` reaches `hfy-api`, which answers `404`. A new environment needs none of them, and nothing in Google Cloud besides the OAuth client in [step 7](#7-create-the-google-web-client). [Identity services](../reference/identity-services.md#retired-legacy-sign-in) records what they did, and [The identity model](../explanation/identity-model.md#retirement-order-once-authv2-is-flipped) gives the order in which they retired.
 
-A new environment does not need the Lambda for the first deploy in [Verify](#verify) to be green: no workflow deploys it. You need these only if you call `/api/check-allowed` by hand:
+Keep `authV2` set to `true`, as committed. With it off, the pages do not refresh `io_id`, and there is no other sign-in.
 
-| You need | What it is for |
-| --- | --- |
-| The `hfy-check-allowed` Lambda in `us-west-2`, the `HFY_ALLOWLIST_HMAC_SECRET` secret in Secrets Manager and an API Gateway route to the Lambda, reached through CloudFront under `/api/check-allowed` | The retired legacy endpoint. [Deploy the app stack](deploy-the-app-stack.md#add-the-api-behavior-and-the-legacy-pin) keeps that route ahead of `/api/*`. |
-
-If you will not run the legacy Lambda at all:
-
-- Remove `hfy-check-allowed` from the `LambdaDeploy` statement in `github-roles.yaml` (the manifest no longer has a target for it).
-- `add-api-behavior.sh` refuses to run until it knows where `/api/check-allowed` should go. Pass `--legacy-origin` with the ID of the site's S3 origin. The pin then sends that path to the bucket, which answers `403`, and nothing else changes.
-- Keep `authV2` set to `true`, as committed. With it off, the pages do not refresh `io_id`, and there is no other sign-in.
+The allowlist publisher in [Manage family access](manage-family-access.md#2-publish) needs no secret. It uploads `config/userGrampsID.json`, the list the auth edge reads, and nothing else. Its digest list, `config/allowed_hashes.json`, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keyed it were retired on 2026-10-14 (ruling P2-R51), so a new environment creates neither.
 
 ## Steps
 
@@ -196,12 +188,12 @@ aws cloudfront create-response-headers-policy \
 
 Keep the printed `<headers-policy-id>`.
 
-**c. Fill in a copy of the template.** Copy `cloudfront/distribution.json` outside the repository and make these changes. The template also carries the legacy API Gateway origin and the `/api/*` behavior that reaches it. Keep them, with `Origins.Items[1].DomainName` and `OriginPath` set to your legacy API Gateway's domain and stage, only if you keep the retired `/api/check-allowed` endpoint. Otherwise delete that origin and the whole `CacheBehaviors` block, and set `Origins.Quantity` to `1`. Every field in the table sits inside `DistributionConfig`, `CallerReference` included.
+**c. Fill in a copy of the template.** Copy `cloudfront/distribution.json` outside the repository and make these changes. The template has one origin, the S3 origin, and only the default behavior: `CacheBehaviors` has `Quantity` `0`. Later steps add the other origins and behaviors, starting with [Deploy the app stack](deploy-the-app-stack.md). Every field in the table sits inside `DistributionConfig`, `CallerReference` included.
 
 | Field | Template | Set to |
 | --- | --- | --- |
 | `CallerReference` | Absent | Any string unique to this request, such as `site-<yyyymmdd>` |
-| `Comment` | A 189-character note about the sanitized sample | A short description of 128 characters or fewer, such as `Family site`. A longer one makes `create-distribution` fail with `InvalidArgument`. |
+| `Comment` | A note of more than 128 characters about the sanitized sample | A short description of 128 characters or fewer, such as `Family site`. A longer one makes `create-distribution` fail with `InvalidArgument`. |
 | `Aliases.Items` | `example.com`, `www.example.com` | `<site>`, `www.<site>` |
 | `Origins.Items[0].DomainName` | `example-bucket.s3.amazonaws.com` | `<site-bucket>.s3.us-west-2.amazonaws.com` |
 | `Origins.Items[0].OriginAccessControlId` | Absent | `<oac-id>`. Keep `S3OriginConfig` with its empty `OriginAccessIdentity`; an S3 origin that uses OAC needs both. |

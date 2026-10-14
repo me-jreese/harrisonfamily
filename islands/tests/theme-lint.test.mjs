@@ -2,7 +2,8 @@
 // App CSS aliases tokens; it never writes a literal colour, font family, radius or px/rem/em length.
 //
 // Scope: islands/src/**/*.css (src/theme/ and src/auth-edge/ included), plus the inline style attributes and <style> elements of
-// the repo-owned pages (11ty/posts/index.html, 11ty/me/index.html, 11ty/me/notifications/index.html, 11ty/offline.html).
+// the repo-owned pages (11ty/posts/index.html, 11ty/me/index.html, 11ty/me/notifications/index.html, 11ty/me/links/index.html,
+// 11ty/tree/index.html, 11ty/offline.html).
 // Outside var() a declaration value fails on: #hex; rgb()/rgba()/hsl()/hsla(); \d+(px|rem|em); a font-family or font value that
 // names a family; and any var() read of a custom property that is not --io-* or --bs-* (except in src/theme/10-kit-aliases.css,
 // which maps the kit's Enceladus short names, DVP-TSK-A73).
@@ -24,7 +25,7 @@ import { fileURLToPath } from "node:url";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(islandsDir, "..");
-const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/tree/index.html", "11ty/offline.html"];
+const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/me/links/index.html", "11ty/tree/index.html", "11ty/offline.html"];
 const ALIAS_FILE = "src/theme/10-kit-aliases.css";
 const ALLOW_BP = /lint-allow:\s*bp tokens pending/;
 

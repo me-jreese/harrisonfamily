@@ -38,6 +38,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
 | [`comment-photos.js`](../../api/src/comment-photos.js) | Comment photo attachments: `normalizeNew` (the shape check), and `createUploadPhotos` with its `parse`, `owned` and `bind` (the `UPLOAD#` binding, `headUpload` and `checkLocation`). `uploadPhotosFor` wires it over the API's S3 client. See [Comment photos](#comment-photos). |
 | [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
+| [`contrib-read.js`](../../api/src/contrib-read.js) | The contributions read side: `createContribReader` (the `list`, `stats` and `site` behind `/contributions`), the pure feed-line rule `pickLine` with its `CANDIDATES` and `lineText`, `hrefOf`, and the default `proposalVisible`. See [Contributions read API](#contributions-read-api). |
 | [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). `headUpload(bucket, key)`: the `HeadObject` of a comment photo, with a 2 s timeout. See [Comment photos](#comment-photos). |
@@ -171,6 +172,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
 | `uploads.presign` | POST | `/uploads` | body `contentType`, `size`, optional `purpose` (`post` default, or `comment`); a `filename` is ignored | `201` | Presigned S3 PUT under `uploads/posts/`, or `uploads/comments/` for `purpose` `comment` (jpeg, png or webp only; needs `commentPhotosV1`) |
+| `contributions.list` | GET | `/contributions` | query `author` (required), `cursor`, `limit` (1 to 50, default 10) | `200` `{items, cursor}` | Newest first. Not an MCP tool. Behind `requireFeature("contribV1")`. See [Contributions read API](#contributions-read-api). |
+| `contributions.stats` | GET | `/contributions/stats` | query `author` | `200` `{author, total, by_kind, first_at?}` | A member's counters, zeros for an unknown member. Behind `contribV1`. Not an MCP tool. |
+| `contributions.site` | GET | `/contributions/stats` | none (no `author`) | `200` `{total, line, computed_at}` | The site total and the feed line, through the cached `CSTAT#site/LINE` row. Shares its path with `contributions.stats`: `?author=` picks that route. Behind `contribV1`. Not an MCP tool. |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
@@ -184,9 +188,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Five routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, and the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Eight routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get` and `links.put` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put` and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -580,6 +584,60 @@ The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. `contribOp
 
 A withdraw or republish hides or shows the event only if it exists, so a post whose event is missing still changes visibility; the backfill repairs that orphan. If a comment's author deletes it while a thread purge is running, the purge re-reads its events and commits the batch once more, so the revoke happens once. Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
 
+## Contributions read API
+
+[`contrib-read.js`](../../api/src/contrib-read.js) reads what the [ledger](#contributions-ledger) writes (HFY-TSK-256, BRD2 D2-17). The three routes are dark behind `requireFeature("contribV1")`: `404` for everyone, signed in or not, until the flag is on or the caller is in the `uat` group. `contributions.stats` and `contributions.site` share `GET /contributions/stats`; a route's `when(query)` member, which `matchRoute` reads, sends a request with `?author=` to the first and one without to the second.
+
+### List
+
+`GET /contributions?author=<gramps_id>&cursor=&limit=` queries `CONTRIB#<author>` for `E#` items, newest first, and returns `{items, cursor}`. `author` is required (`400 validation` if missing or not a gramps id); `limit` is a whole number from 1 to 50 (default 10, else `400 validation`); a cursor that this route did not issue is `400 cursor_invalid`. An unknown author gives `{items: [], cursor: null}`.
+
+A row is `{id, kind, at, weight, photos, ref: {type, id, thread?}, subject?, href, hidden?}`. It carries no body text, no actor and no origin. `cursor` is opaque and `null` at the end. A page is filled across events the viewer cannot see: the route reads up to five pages of events to find `limit` visible ones, and hands back a cursor to continue when it gives up. `items.length < limit` therefore does not mean the end while `cursor` is not `null`: a client keeps paging until `cursor` is `null`.
+
+Who sees which event:
+
+| Event | Shown to |
+| --- | --- |
+| `hidden` (a withdrawn post, a moderated item) | The author and admins, with `hidden: true`. Nobody else. |
+| A post event, or a comment on a `post:<id>` thread | A viewer for whom `canView` of the current post is true (the author, admins, and everyone while it is published and not hidden by moderation). A withdrawn or deleted post hides the event, and so does a post that could not be read. |
+| A comment on a `proposal:<ulid>` thread | The proposal's visibility set only: the proposer, admins and the owners of the targeted pages. A third member gets nothing, and so does anyone when the proposal is gone. |
+| Anything else (a person-thread comment, a record, tag, accepted proposal or graduated photo) | Every signed-in member. A `proposal` ref event (`proposal_accepted`) is written only when a proposal is accepted, and an accepted proposal is public, so it needs no proposal check. Person pages are not per-viewer in the design, so a person-thread or record event needs no target check either. |
+
+The checks read the current posts and proposals with `BatchGet` in chunks of at most 20 distinct keys (`POST#<id>/META`, `PROP#<ulid>/META`). Unprocessed keys are retried once; an event whose item is still unread is omitted, so the check fails closed. A page with nothing to check makes no `BatchGet`. The default proposal rule is `proposalVisible`: the proposer, the member whose page the proposal is about (`subject.gramps_id`), the members listed in `owners[]` if the proposal store records them, and admins. `proposal-store-api` (or `proposal-decision-api`) has a hard dependency here: it must write `owners[]` for every targeted page, or replace the rule through `createContribReader({proposalVisible})`. Until then the circle is narrower than the design and fails closed.
+
+`href` is computed by the server:
+
+| Ref | `href` |
+| --- | --- |
+| `post` | `/posts/?id=<post id>` |
+| `comment` on a person thread | `/person/?id=<gramps id>#comment-<ulid>` |
+| `comment` on a post thread | `/posts/?id=<post id>#comment-<ulid>` |
+| `comment` on a proposal thread | `/person/?id=<gramps id of the page the proposal is about>#comment-<ulid>` |
+| `proposal`, `record`, `tag` | `/person/?id=<subject>` |
+| `media` | `/person/?id=<subject>#photos` |
+
+`href` is `null` when the page cannot be named.
+
+### Stats
+
+`GET /contributions/stats?author=<gramps_id>` reads `CSTAT#person:<author>/TOTAL` and returns `{author, total, by_kind: {post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}`. Every value is clamped at 0, and an unknown author reads as zeros, not `404`. Hidden events still count (hide and withdraw change no counter), so a withdrawn or moderated contribution still raises the total and `by_kind` that other members see. Only a count leaks, never content; a test pins this.
+
+### Site total and the feed line
+
+`GET /contributions/stats` (no `author`) returns `{total, line, computed_at}`. `line` is `{x, y, unit, window_days, text}`, for example `12 contributions in the past 3 days`, or `null` when no window reaches 3 (the page then shows its no-number line).
+
+The line is cached in `CSTAT#site/LINE`. A read serves the cached row while it is under one hour old (`LINE_TTL_MS`), reading nothing more than the total and the row. Past an hour it reads the `D#` day rows of the last 366 days (and the `M#` month rows when the site is at least 730 days old), recomputes with `pickLine`, and writes the row back with a 2 hour `ttl`. A failed cache write is logged and the computed line is still served. The clock is `deps.now`, so tests inject it.
+
+`pickLine(buckets, today, firstAt, prev?)` is pure:
+
+1. **Windows**, shortest first: 1 to 6 days, 7, 14 and 21 days (weeks), 30, 60, 90 and 180 days (months), then 365 days times 1 to 10 (years). A window is eligible only when the site's history is at least as long, so a young site never claims a long span. Windows over 400 days sum `M#` month buckets (12 per year, the partial current month included), so `window_days` is approximate for them. The years stop at 10 (`MAX_YEARS`); the design sets no upper bound. Concurrent cold requests each recompute and write the row, which is harmless.
+2. **Hot**: the shortest eligible window of 30 days or fewer with `X >= 5` and `X >= P`, where `X` is the sum of the window's buckets, today included, and `P` the same number of buckets before it.
+3. **Volume**: otherwise the shortest eligible window with `X >= 3`.
+4. **Null**: otherwise, so a "1 contribution in the past day" line is never produced.
+5. **Dwell**: a pick cached earlier on the same UTC day is kept, with its current count, while its window is still eligible with `X >= 3` and the fresh pick is within one candidate step of it.
+
+A negative or non-numeric bucket reads as 0. The golden table is in [`contrib-read.test.js`](../../api/test/contrib-read.test.js).
+
 ## Audit records
 
 Every post create, update, visibility change and delete, every comment create, edit and delete, and every profile links write that changes something writes one audit item ([`txn.js`](../../api/src/txn.js), `auditItem`).
@@ -621,7 +679,24 @@ Comments removed with their post are audited too, each in the same transaction a
 | `new_family_post` | Harrison Family | there's a new family post. | {actor} shared a new family post. |
 | `mention` | Harrison Family | you were mentioned. | {actor} mentioned you. |
 
-The text is `TEMPLATE_REGISTRY` in [`notify.js`](../../api/src/notify.js), written in the design system's family voice: every title is the site name, and the bodies are lowercase and say "page", never "record". The lock-screen preview on `/me/notifications/` (the `CATALOG` in [`islands/src/islands/notifications.jsx`](../../islands/src/islands/notifications.jsx)) repeats the same strings word for word. No code or test ties the two together; they are kept equal by hand. [`api.test.js`](../../api/test/api.test.js) and [`producers.test.js`](../../api/test/producers.test.js) check the API's bodies. Pushes carry the text that the deployed `hfy-api` holds, so a change to it reaches members only after an `hfy-api` redeploy ([Packaging and deploy](#packaging-and-deploy)).
+The registry also holds the PLN-002 types. The field whitelist is `actor`, `subject`, `item`, `count`. `new_family_post` and `chat_message` are push-only (`inbox:false`); every other type is stored in the inbox while `inboxV1` is on. `notifyContract()` in `notify.js` is the one source that `hfy-inbox-ui`'s `CATALOG` and the chat routes compare against, and [`notify-producers.test.js`](../../api/test/notify-producers.test.js) pins it.
+
+| Type | Recipients | Producer | Group key |
+| --- | --- | --- | --- |
+| `comment_on_my_record`, `reply_to_me` | as above | `onComment` | `thread:<t>` |
+| `proposal_submitted` | admins except the proposer | `onProposalSubmitted` | `proposals` |
+| `proposal_accepted`, `proposal_declined`, `proposal_needs_changes`, `proposal_stale` | the proposer | `onProposalDecided` | none |
+| `record_updated_mine` | the record's owner, when a member and not the actor | `onRecordChanged` | `rec:<subject>` |
+| `record_updated_followed` | followers, not the actor | `onRecordChanged` | `rec:<subject>` |
+| `records_updated_followed_digest` | a follower with more than 3 pages in one call | `onRecordChanged` | `recdigest` |
+| `moderation_hidden`, `moderation_request`, `moderation_question`, `moderation_unhidden` | the item's author, not the actor | `onModeration` | none |
+| `moderation_resolved` | the admin who asked | `onModeration` | `mod:<target>` |
+| `photo_graduated` | the photo's author, not the actor | `onGraduated` | none |
+| `chat_message` | the chat service's recipient (push only, no message text) | `notify` | none |
+
+Producers run after a commit and never fail the write. `onRecordChanged` is called only by the render-outbox consumer (`hfy-record-change-fanout`) and takes `silent: true` for imports, seeding and backfills. A producer whose source (`getAdmins`, `listMembers`, `followersOf`) is absent notifies nobody. An admin's note is the inbox `detail` and is never pushed.
+
+The text is `TEMPLATE_REGISTRY` in [`notify.js`](../../api/src/notify.js), written in the design system's family voice: every title is the site name, and the bodies are lowercase and say "page", never "record". The lock-screen preview on `/me/notifications/` (the `CATALOG` in [`islands/src/islands/notifications.jsx`](../../islands/src/islands/notifications.jsx)) repeats the same strings word for word. [`notifications-roundtrip.spec.mjs`](../../islands/tests/notifications-roundtrip.spec.mjs) checks that its types are the registry's, less the pinned PLN-002 types that are not in the `CATALOG` yet, and that their strings match. [`api.test.js`](../../api/test/api.test.js) and [`producers.test.js`](../../api/test/producers.test.js) check the API's bodies. Pushes carry the text that the deployed `hfy-api` holds, so a change to it reaches members only after an `hfy-api` redeploy ([Packaging and deploy](#packaging-and-deploy)).
 
 Level 0 carries no content. Level 1 adds the actor's display label, the `author.label` of the comment or post, which is never an email address ([Session verification](#session-verification)). The kit cleans it and cuts it to 80 characters. Each recipient chooses per type in their preferences. A type with no stored preference is enabled at level 0. If a level-1 message cannot be rendered, level 0 is sent.
 
@@ -669,6 +744,16 @@ Notification fan-out runs after the write has committed and never fails the requ
 - **Push on.** Finding the recipients and sending to them are both guarded. A failure is logged (for example `comment notification failed (write already committed)`, `publish notification failed` or `notify failed`) and the response is the write's normal success.
 - A failed send to one recipient does not stop the others.
 
+### Producer notes (HFY-TSK-253)
+
+- The acting admin is excluded from `onProposalDecided` and `onModeration` recipients, so deciding or moderating your own item notifies nobody.
+- Callers must validate an admin `note` with the shared contact-information validator (R-18) before calling a producer. The producer only caps `detail` at 1000 characters, and the inbox UI must render `detail` as text, never HTML.
+- The decline type is `proposal_declined` (editing.md still says `proposal_rejected`; other domains must use `proposal_declined`).
+- Beyond the design table, `many` strings exist for `proposal_submitted`, `record_updated_mine`, `record_updated_followed` and `moderation_resolved`, and `records_updated_followed_digest` has an `inboxText`. `notifyContract()` exposes `many`, `inboxText` and the `groups` templates so the inbox CATALOG comparison test covers them. The CATALOG extension itself belongs to hfy-inbox-ui and hfy-chat-api-service-routes.
+- `comment_on_my_record` and `reply_to_me` share the group `thread:<t>` (social.md); the kit coalesces by recipient and group, so a recipient who gets both types on one thread sees one item that keeps the first type.
+- `onRecordChanged` runs follower lookups 8 at a time and handles at most 500 subjects per call. It has no caller until hfy-record-change-fanout, which must dedupe on `rec:<seq>:<subject>` and pass `silent: true` for seed and import sessions.
+- Member principals come from `config/userGrampsID.json`; the API role's `config/*` `s3:GetObject` grant (app-stack.yaml, AdminList statement) covers it. An empty set logs a warning and fails closed.
+
 ### Notification routes
 
 These responses come from the kit. Kit errors have the shape `{"error": "<text>"}`, with no `message`.
@@ -687,7 +772,7 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 - The three inbox routes exist only when an inbox store is wired, and are 404 outside `uat` while `inboxV1` is off.
 - The kit stores an inbox item whether or not the recipient disabled that type in preferences: preferences gate only the push, and the inbox keeps the item for the recipient (ruling P2-R35).
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
-- `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
+- `PUT` replaces the whole preference record. The kit does not check type names against the registry, so any type name is stored. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
 
 ## Comment photos
@@ -1062,7 +1147,7 @@ The person-record lookups are cached in memory, per container:
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
 | `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
-| `notifications` | `{types: <the four types>, default_level: 0}` |
+| `notifications` | `{types: NOTIFY_TYPES, default_level: 0}`. `NOTIFY_TYPES` is every type in `TEMPLATE_REGISTRY`, in registry order, PLN-002 types included. |
 | `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"]}` |
 
 `actions` and `mcp.tools` are derived from `ROUTES`. The other fields are written by hand in `buildCaps` and differ from the code in two places:
