@@ -783,7 +783,7 @@ Neither route has an MCP entry or a `POLICY_ROWS` row, so both stay off MCP in v
 
 S3 (bucket `harrisonfamily-frontend`):
 
-- `uploads/comments/<ulid>/<name>.jpg` holds comment photos. It is served through the existing gated `/uploads/*` behavior with nosniff and the sandbox CSP (HFY-R58, `scripts/infra/add-uploads-behavior.sh`). The bucket CORS already allows PUT from the site origin (`media-bucket-cors.json`).
+- `uploads/comments/<ulid>/<name>.jpg` holds comment photos. It is served through the existing gated `/uploads/*` behavior with nosniff and the sandbox CSP (HFY-R58, `scripts/infra/add-uploads-behavior.sh`). The bucket CORS already allows PUT from the site origins (`infrastructure/cloudformation/site-bucket-cors.json`), for the whole bucket.
 - `${R_MEDIA_PREFIX}<media handle>.jpg` holds graduated record media. The sync domain names this prefix, and it must be outside every `--delete` sync prefix.
 
 No new GSI. Partition hot spots: `CSTAT#site` (handled by the conflict retry) and `GSI1PK=CONTRIBS` (append-only, low volume).

@@ -1,0 +1,12 @@
+{
+  "CORSRules": [
+    {
+      "ID": "hfy-member-photo-uploads",
+      "AllowedOrigins": ["https://harrisonfamily.us", "https://www.harrisonfamily.us"],
+      "AllowedMethods": ["PUT"],
+      "AllowedHeaders": ["Content-Type"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}

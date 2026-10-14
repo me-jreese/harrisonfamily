@@ -274,7 +274,25 @@ The OAuth routes are listed under [MCP authorization server](#mcp-authorization-
 
 ### Principal resolution
 
-A sign-in turns a verified email into a host principal, whose `sub` is a Gramps ID. The resolver is the kit's `s3_allowlist` (`buildResolver` and `parseAllowlist` in kit `edge/deploy/resolver.js`). It reads the S3 object named in the manifest, `config/userGrampsID.json` in `<config-bucket>`. `resolveHostPrincipal`, linking and the refresh checks are in kit `server/identity.js`.
+A sign-in turns a verified email into a host principal, whose `sub` is a Gramps ID. The resolver is the composite resolver in [`auth/src/allowlist.js`](../../auth/src/allowlist.js) (HFY-TSK-134). `index.js` passes it to `createIdentityService` and to `cognitoProvisioner`. It checks DynamoDB `ALLOW#` items first and the kit's `s3_allowlist` second (`buildResolver` and `parseAllowlist` in kit `edge/deploy/resolver.js`), which reads the S3 object named in the manifest, `config/userGrampsID.json` in `<config-bucket>`. The manifest's resolver stays `s3_allowlist`, so `auth/edge.manifest.json` is unchanged. `resolveHostPrincipal`, linking and the refresh checks are in kit `server/identity.js`.
+
+#### Composite precedence
+
+For one email, the composite resolver decides in this order:
+
+| DynamoDB `ALLOW#<email>` | S3 file | Result |
+| --- | --- | --- |
+| `active` | listed or not | The principal: `sub` from the item, `label` the email, `roles` `["member"]`, `claims` `{}`. The item's `sub` wins over the file's. |
+| `revoked` | listed or not | `null`, so `403 not_allowlisted`. A revoked item beats the file. |
+| any other `state`, or no `sub` | any | `null`. A malformed item denies; it does not fall through. |
+| no item | listed | The file's principal, exactly as before. |
+| no item | not listed | `null` |
+| read fails | listed | The file's principal. |
+| read fails | not listed | `null`. If the file has never loaded either, the lookup throws, which denies. |
+
+The item is read with a strongly consistent `GetItem` on every lookup and is not cached, so a revoke applies to the next sign-in, passkey sign-in, password set and refresh. The S3 file keeps its 300 s cache. With no `ALLOW#` item in the table, the resolver answers exactly as the S3 resolver alone does. A DynamoDB error is logged by error name only, never with an address.
+
+The items, their keys and who writes them are in [Allowlist grants in DynamoDB](../how-to/manage-family-access.md#allowlist-grants-in-dynamodb). The legacy `hfy-check-allowed` Lambda does not read them.
 
 The object is a JSON object that maps an email address to an entry:
 
@@ -346,6 +364,7 @@ The edge uses the DynamoDB table named by `AUTH_TABLE` (`hfy-app` in the stack).
 | `LINK#` | Kit link store, wrapped by `hfyLinkStore` ([`auth/src/linkstore.js`](../../auth/src/linkstore.js)) | The providers linked for that email, passkeys included. The wrapper writes `GSI1SK` (equal to the item's `PK`) on every put, so `GSI1` indexes the item and the lookup by `sub` finds it (HFY-R58). A link item written without `GSI1SK` is repaired, with a conditional put, the next time it is read. |
 | `PASSKEY#` | Kit passkey store, wrapped by `hfyPasskeyStore` ([`auth/src/passkeystore.js`](../../auth/src/passkeystore.js)) | One credential, keyed by its id: host `sub`, email, public key, signature counter, transports, device type, backed-up flag, label, AAGUID, and the created and last-used times. `GSI1PK` is `PASSKEYSUB#<sub>`. The kit writes no `GSI1SK`, and `GSI1` indexes only items that carry both keys, so the wrapper writes `GSI1SK` equal to the item's `PK` on every put (HFY-R67). The kit's `listByPrincipal` queries `GSI1`, and the passkey list, the per-member limit, `excludeCredentials` and `allowCredentials` all depend on it. An item written without `GSI1SK` gets it the next time it is read, by a conditional update that sets only `GSI1SK` and never rewrites the credential, so it cannot undo a concurrent counter update. A failed repair logs `passkey index backfill failed`, and the read still succeeds. |
 | `PASSKEYCHAL#` | Kit challenge store | One challenge: its purpose (`register`, `login` or `stepup`), the `sub` it is bound to (registration and step-up), and its expiry 300 s after issue. Taken with an atomic delete on first use. `ttl` is one hour after expiry. No `GSI1` keys. |
+| `ALLOW#` | Not written by the edge. Read by [`auth/src/allowlist.js`](../../auth/src/allowlist.js) and [`membership.js`](../../auth/src/membership.js); written by `hfy-api` ([`api/src/allowlist-store.js`](../../api/src/allowlist-store.js)) | `sub`, `state` (`active` or `revoked`), `source`, `requestId?`, `at`, `by`, and `revokedAt` and `revokedBy` once revoked. |
 | `RATE#` | [`auth/src/ratelimit.js`](../../auth/src/ratelimit.js) | A request counter `n` for one forgot-password window. No email or IP. |
 | `MCPCODE#` | OAuth | Authorization code binding: client, `redirect_uri`, PKCE challenge, `sub`, resource, scope, expiry, and the sign-in facts: `email`, `amr`, `authTime` (`0` means unknown) and `name` |
 | `MCPRT#` | OAuth | MCP refresh token: client, `sub`, resource, scope, family, expiry, and the same `email`, `amr`, `authTime` and `name` |
@@ -586,11 +605,13 @@ A valid token returns `200 {sub, groups, email_verified: true}`, with `Cache-Con
 
 | Item | Value |
 | --- | --- |
-| Allowlist | The resolver's object (`config/userGrampsID.json`), parsed with the kit's `parseAllowlist`, keyed by `sub` |
+| Allowlist | The composite allowlist: the resolver's object (`config/userGrampsID.json`), parsed with the kit's `parseAllowlist` and keyed by `sub`, plus the DynamoDB `ALLOW#` items of that `sub` (`Query` on `GSI1PK = ALLOWSUB#<sub>`). A `sub` is a member when one of its items is `active`, or when the file lists one of its emails and no `ALLOW#` item exists for that email. A `revoked` item removes the file's entry for that email only. The shared reader is `createCompositeMemberReader` in [`shared/allowlist-store.mjs`](../../shared/allowlist-store.mjs). |
 | Admin list | `ADMIN_LIST_KEY` (default `config/admins.json`) in the resolver's bucket. It is a JSON array of `sub` strings or `{"admins": [...]}`, and entries that are not strings are ignored. The object may be absent: the read fails, and nobody is in `admins`. |
 | Groups | `members`, plus every allowlist role except the default `member`, plus `admins` when the `sub` is on the admin list. Duplicates are removed. A `sub` that is not on the allowlist gets no groups and is refused. |
-| Cache | 60 s. This cache is separate from the resolver's 300 s cache. |
-| Allowlist read failure | If no copy has ever loaded, the call throws and the OAuth route returns `503 server_error` (fail closed). After a successful load, the last good copy stays in use and the read is retried 5 s later. |
+| Roles | From the S3 entries that still count. A DynamoDB grant carries the member role only, so it adds no group beyond `members`. |
+| Cache | 60 s for the file, and 60 s for each `sub`'s `ALLOW#` items. This cache is separate from the resolver's 300 s cache. |
+| Allowlist read failure | If no copy of the file has ever loaded and no active `ALLOW#` item decides it, the call throws and the OAuth route returns `503 server_error` (fail closed). After a successful load, the last good copy stays in use and the read is retried 5 s later. |
+| DynamoDB read failure | Logged as `allowlist table unavailable (the file decides)`. The file alone decides that call: a listed `sub` stays a member, an unlisted one is refused. The failure is not cached. |
 | Admin list read failure | Logged as `admin list unavailable (nobody is admin)`. Nobody is an admin until a read succeeds. |
 
 These groups are the access token's `groups` claim and the `groups` that `/auth/userinfo` returns. The MCP server ignores the `groups` claim: it decides `mcp-authors` and `hfy-admin` from its own `config/groups.json` ([MCP server: Groups](mcp-server.md#groups)).

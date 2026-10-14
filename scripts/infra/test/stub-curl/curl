@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Test double for curl, used only for scripts/infra/check-site-bucket-cors.sh (scripts/infra/test/run.sh puts this directory
+# first on PATH for that script). It never reaches the network. It answers a CORS preflight (OPTIONS) the way S3 does, from
+# the bucket CORS configuration in $STUB_DIR/cors.json (absent: the bucket has none, so every preflight gets 403), and prints
+# the response headers with CRLF line ends, as curl -D - does. $STUB_DIR/curl-mode changes the answer: "down" fails like an
+# unreachable host (exit 7, no output), "no-acao" answers 200 without any Access-Control-* header.
+# Every request is appended to $STUB_DIR/curl.log as: METHOD URL|Origin|Access-Control-Request-Method|Access-Control-Request-Headers
+set -euo pipefail
+: "${STUB_DIR:?STUB_DIR not set}"
+method=GET; url=""; origin=""; acrm=""; acrh=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method=$2; shift ;;
+    -H)
+      name=$(printf '%s' "${2%%:*}" | tr '[:upper:]' '[:lower:]'); value=${2#*:}; value=${value# }
+      case "$name" in
+        origin) origin=$value ;;
+        access-control-request-method) acrm=$value ;;
+        access-control-request-headers) acrh=$value ;;
+      esac
+      shift ;;
+    -o|-D|-w|--max-time|--retry|--retry-delay) shift ;;
+    http://*|https://*) url=$1 ;;
+  esac
+  shift
+done
+printf '%s %s|%s|%s|%s\n' "$method" "$url" "$origin" "$acrm" "$acrh" >> "$STUB_DIR/curl.log"
+mode=$(cat "$STUB_DIR/curl-mode" 2>/dev/null || true)
+if [ "$mode" = down ]; then echo "curl: (7) Failed to connect (curl stub)" >&2; exit 7; fi
+if [ "$method" != OPTIONS ]; then echo "curl stub: only OPTIONS preflights are emulated" >&2; exit 98; fi
+crlf() { printf '%s\r\n' "$@"; }
+if [ "$mode" = no-acao ]; then crlf "HTTP/1.1 200 OK" "Content-Length: 0" ""; exit 0; fi
+rules='{"CORSRules": []}'
+if [ -f "$STUB_DIR/cors.json" ]; then rules=$(cat "$STUB_DIR/cors.json"); fi
+# S3 answers with the first rule that matches the Origin (an AllowedOrigins entry, one * wildcard allowed), holds the requested
+# method in AllowedMethods, and matches every requested header with an AllowedHeaders entry (case-insensitive, * wildcard).
+rule=$(jq -c --arg o "$origin" --arg m "$acrm" --arg h "$acrh" '
+  def glob($p): . as $s | ($p | split("*")) as $parts
+    | if ($parts | length) == 1 then $s == $p
+      else ($s | startswith($parts[0])) and ($s | endswith($parts[-1])) and (($s | length) >= ($p | length) - 1) end;
+  ($h | ascii_downcase | split(",") | map(gsub("^ +| +$"; "")) | map(select(. != ""))) as $req
+  | [.CORSRules[] | . as $rule
+     | select(any(($rule.AllowedOrigins // [])[]; . as $p | $o | glob($p)))
+     | select(any(($rule.AllowedMethods // [])[]; . == $m))
+     | select(all($req[]; . as $r | any(($rule.AllowedHeaders // [])[]; ascii_downcase as $p | $r | glob($p))))]
+  | first // empty' <<< "$rules")
+if [ -z "$rule" ]; then
+  crlf "HTTP/1.1 403 Forbidden" "Content-Type: application/xml" "Transfer-Encoding: chunked" ""
+  exit 0
+fi
+acao=$origin
+if jq -e 'any(.AllowedOrigins[]; . == "*")' <<< "$rule" >/dev/null; then acao="*"; fi
+crlf "HTTP/1.1 200 OK" \
+  "Access-Control-Allow-Origin: $acao" \
+  "Access-Control-Allow-Methods: $(jq -r '.AllowedMethods | join(", ")' <<< "$rule")"
+if [ -n "$acrh" ]; then crlf "Access-Control-Allow-Headers: $(printf '%s' "$acrh" | tr '[:upper:]' '[:lower:]')"; fi
+if jq -e '.ExposeHeaders' <<< "$rule" >/dev/null; then crlf "Access-Control-Expose-Headers: $(jq -r '.ExposeHeaders | join(", ")' <<< "$rule")"; fi
+if jq -e '.MaxAgeSeconds' <<< "$rule" >/dev/null; then crlf "Access-Control-Max-Age: $(jq -r '.MaxAgeSeconds' <<< "$rule")"; fi
+crlf "Vary: Origin, Access-Control-Request-Headers, Access-Control-Request-Method" "Content-Length: 0" ""

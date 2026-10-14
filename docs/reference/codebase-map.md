@@ -194,6 +194,7 @@ Paths:
   - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
+  - `allowlist-store.js`: the `ALLOW#` grant and revoke transaction items (conditional, audited) and the composite member reader that the auth edge and any later allowlist consumer, such as the chat directory route, share (HFY-TSK-134).
   - `notify.js`: push notifications and their templates.
   - `uploads.js`: the upload route and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
@@ -263,7 +264,8 @@ Paths:
   - `index.js`: Lambda entry, which wires the manifest, signing key, Cognito, passkeys and stores.
   - `edge.js`: the `/auth/*` mount over `@io-kit/auth`, plus `/auth/.well-known/jwks.json`, `/auth/session` and `/auth/passkeys`, which redirects to the account page `/auth/link`. It also holds the HTML overrides that `adapt()` applies to the kit's pages.
   - `oauth.js`: the OAuth 2.1 server for MCP clients: metadata, `authorize`, `token`, `register`, `revoke` and `userinfo`.
-  - `membership.js`: the allowlist and admin groups for MCP tokens.
+  - `allowlist.js`: the composite allowlist resolver passed to the identity service and the Cognito provisioner: a DynamoDB `ALLOW#` item wins over io's S3 file (HFY-TSK-134).
+  - `membership.js`: the composite allowlist (S3 file plus `ALLOW#` items) and admin groups for MCP tokens.
   - `cognito.js`: Cognito user provisioning for `POST /auth/link`.
   - `linkstore.js`: the account-link store.
   - `passkeystore.js`: the passkey credential store.
@@ -403,11 +405,12 @@ Paths:
 - [`infrastructure/cloudformation/edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml): the us-east-1 gate stack. See [Private data gate](#private-data-gate).
 - [`infrastructure/mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml): the us-east-1 stack for the MCP 401-restore function. It sits in `infrastructure/`, not `infrastructure/cloudformation/`. See [MCP server](#mcp-server).
 - [`infrastructure/cloudformation/github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml): the OIDC role that GitHub Actions assumes.
-- [`infrastructure/cloudformation/media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json): the site bucket's CORS for browser uploads.
+- [`infrastructure/cloudformation/site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json): the site bucket's whole CORS configuration, for browser photo uploads. It is not a CloudFormation template: [How to stand up the static site](../how-to/stand-up-the-static-site.md#1-create-the-site-bucket) applies it with `put-bucket-cors`.
 - [`scripts/infra/`](../../scripts/infra/):
   - `create-session-key.sh`: the session signing key.
   - `create-origin-verify.sh`: the origin-verify secret.
   - `add-api-behavior.sh`, `add-auth-behavior.sh`, `add-uploads-behavior.sh`, `add-mcp-behavior.sh`, `add-data-gate-behaviors.sh`: CloudFront origins and behaviors.
+  - `check-site-bucket-cors.sh`: the live check of the bucket's CORS rule, by preflight requests without credentials. `post-deploy-checks.yml` runs it.
   - `publish-append-index.sh`: the CloudFront Function. See [CloudFront Function](#cloudfront-function).
 - [`scripts/infra/lib/`](../../scripts/infra/lib/): the behavior scripts share both files, and `publish-append-index.sh` uses `cf-common.sh`.
   - `cf-common.sh`: the fetch, compare and apply plumbing; `UPLOADS_CSP`, the uploads Content-Security-Policy string; and `cf_response_headers_policy`, which finds a custom response headers policy by name and creates it, or puts it back, when it does not force the wanted headers.
@@ -444,7 +447,7 @@ Facts:
 - The `scripts/infra/` scripts are idempotent, accept `--dry-run`, and never print secret values.
 - The behavior scripts skip `update-distribution` when nothing would change. Before a real update, they save the pre-change config outside the repository.
 - `distribution.json` shows the pre-app layout: an S3 origin, plus an API Gateway origin that serves `/api/*`. It shows none of the behaviors that the behavior scripts add, so a gate dry run against it creates all seven gated behaviors, `/uploads/*` included.
-- The comments in `app-stack.yaml` (`UploadsResponseHeadersPolicy`) and `media-bucket-cors.json` describe both `/uploads/*` states and the direct PUT to S3.
+- The comments in `app-stack.yaml` (`UploadsResponseHeadersPolicy`) describe both `/uploads/*` states and the direct PUT to S3. `site-bucket-cors.json` is plain JSON with no comment, because `put-bucket-cors` rejects any key it does not know; [Architecture](architecture.md#site-bucket) documents the rule.
 
 ## CI and repo operations
 
@@ -454,6 +457,7 @@ Paths:
 - [`.github/workflows/io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml), [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml): rendered from `ci.manifest.yaml` by `@io-kit/ci` 0.1.3. Each carries a "do not edit" header.
 - [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/): the composite actions those workflows call. They are `build`, `package`, `deploy-static`, `deploy-lambda`, `invalidate`, `smoke`, `rollback`, `parity-report` and `secret-scan`.
 - [`.github/workflows/deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml): the `getAllowlist` deploy.
+- [`.github/workflows/post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml): checks the kit's smoke job cannot express, run after each successful deploy run. Hand-maintained.
 - [`scripts/ci/`](../../scripts/ci/):
   - `patch-client-id.sh` and `package-lambda.sh` are the manifest build command.
   - `build-islands.sh`, `package-api.sh`, `package-auth.sh` and `package-edge-gate.sh` are local build scripts.
@@ -470,6 +474,7 @@ Facts:
 - The sync excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`, and never deletes the excluded paths.
 - The invalidation covers `/*`, and the job waits for it to complete. Until it does, CloudFront can serve the old object for a new `?v`, because the default behavior's cache policy (CachingOptimized in the sample) leaves the query string out of the cache key.
 - The smoke job requests the home page and `/family-login/`. Any status outside 2xx and 3xx fails it.
+- `post-deploy-checks.yml` runs on `workflow_run` when an `io-kit deploy` run on `main` completes successfully, and by hand. It runs `scripts/infra/check-site-bucket-cors.sh`, the bucket CORS preflights, which the smoke job cannot express: its entries are URLs it requests with `GET`. A failure there rolls nothing back.
 - The rollback strategy is `previous_artifact`. It redeploys the artifact of the last successful `io-kit-deploy.yml` run on the branch. That artifact's `flags.json` comes with it; see [Private data gate](#private-data-gate) for why that matters while the gate is attached.
 - The pipeline builds no islands, and deploys none of `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
 - `build-islands.sh`, `package-api.sh`, `package-auth.sh`, `package-edge-gate.sh`, `mcp-conformance.sh` and `publish-append-index.sh` are not run by any workflow.
@@ -621,10 +626,10 @@ The reverse lookup: from a directory to the capability sections above.
 | `edge-gate/` | Private data gate |
 | `functions/`, `gcloud/`, `lambda/` | Legacy sign-in |
 | `graph/` | Family graph builder |
-| `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (not CI-gated yet) |
+| `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (the `tests` key of `ci.manifest.yaml` runs it on pull requests). `gramps/redaction/redaction-v1.json` is the redaction policy (schema, golden vectors in `gramps/redaction/vectors/`, generators `make_vectors.py` and `render_reference.py`); `gramps/hfygramps/rules.py` loads it and holds `is_birth_like`, the one birth-like predicate. See [Redaction policy v1](redaction-policy.md). |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
-| `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. `shared/legacy-form.mjs` is the join form's schema (`FIELDS`, `validateForm`, `mapToGramps`; surfaces.md 7.3): birth year only, male or female, place fields city and state only, every free-text field through the R-18 detector; `mapToGramps` takes `storeCurrentCity` (Q2-11(a)). It is not reachable from any deployed route yet. |
+| `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/allowlist-store.mjs` is the read side of the DynamoDB allowlist (`ALLOW#` keys, `readAllowEntry`, `listAllowBySub`, `createCompositeMemberReader`); it takes the DynamoDB client and command classes as arguments, so it still imports nothing (HFY-TSK-134). `shared/redaction-rules.mjs` is the JavaScript port of the redaction predicates (`isBirthLike` and the date, place, coordinate, attribute and rect helpers); it takes the parsed `gramps/redaction/redaction-v1.json` as an argument and is tested against the golden vectors by `api/test/redaction-rules.test.js` ([Redaction policy v1](redaction-policy.md)). `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. `shared/legacy-form.mjs` is the join form's schema (`FIELDS`, `validateForm`, `mapToGramps`; surfaces.md 7.3): birth year only, male or female, place fields city and state only, every free-text field through the R-18 detector; `mapToGramps` takes `storeCurrentCity` (Q2-11(a)). It is not reachable from any deployed route yet. |
 | `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests, and the Gramps golden tooling (`scripts/records/`: the bundle shim, the generator and the standard-library check) |
 | `tests/` (`client/`, `login-flow/`) | Tests |
 | `workspace/` | Static site output (the stray `featureFlags.js` only) |

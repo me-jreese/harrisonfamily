@@ -21,7 +21,7 @@ export function createFakeDdb() {
   const injected = []; // failNext() queue
   const applied = new Map(); // ClientRequestToken -> serialized TransactItems of a committed transaction (idempotent replay)
 
-  // Condition subset the API uses: clauses joined by AND, each attribute_exists(path), attribute_not_exists(path) or
+  // Condition subset the API uses: clauses joined by AND (alternatives joined by OR), each attribute_exists(path), attribute_not_exists(path) or
   // `path <op> :value` (= <> < <= > >=), where path is dotted plain names or #placeholders (ExpressionAttributeNames).
   const resolve = (item, path, names = {}) =>
     path.split(".").reduce((o, part) => (o == null ? undefined : o[part.startsWith("#") ? names[part] ?? fail(`unknown name ${part}`) : part]), item);
@@ -33,7 +33,8 @@ export function createFakeDdb() {
   };
   const cond = (expr, existing, names, values = {}) => {
     if (!expr) return true;
-    return expr.split(/\s+AND\s+/).every((clause) => {
+    // OR binds looser than AND (DynamoDB precedence); parentheses are not modelled.
+    return expr.split(/\s+OR\s+/).some((alt) => alt.split(/\s+AND\s+/).every((clause) => {
       let m;
       if ((m = /^attribute_exists\(([#\w.]+)\)$/.exec(clause))) return resolve(existing, m[1], names) !== undefined;
       if ((m = /^attribute_not_exists\(([#\w.]+)\)$/.exec(clause))) return resolve(existing, m[1], names) === undefined;
@@ -43,7 +44,7 @@ export function createFakeDdb() {
         return m[2] === "<>" ? v === undefined || compare(m[2], v, values[m[3]]) : v !== undefined && compare(m[2], v, values[m[3]]);
       }
       return fail(`unsupported condition ${expr}`);
-    });
+    }));
   };
   const condOf = (op, existing) => cond(op.ConditionExpression, existing, op.ExpressionAttributeNames, op.ExpressionAttributeValues);
 
