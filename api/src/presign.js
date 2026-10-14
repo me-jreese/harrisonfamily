@@ -4,7 +4,7 @@
 //    whose Content-Type differs from the validated image type.
 //  - checksums are WHEN_REQUIRED: the SDK default (WHEN_SUPPORTED) signs x-amz-checksum-crc32 of an EMPTY body into the URL,
 //    so every real upload fails with 400 BadDigest.
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /** S3 client options for presigning (exported for tests). */
@@ -23,4 +23,14 @@ export function createPresignPut(clientOptions = {}) {
       signableHeaders: new Set(["content-type", "content-length", ...(checksumSha256 ? ["x-amz-checksum-sha256"] : [])]),
       ...(checksumSha256 ? { unhoistableHeaders: new Set(["x-amz-checksum-sha256"]) } : {}),
     });
+}
+
+/**
+ * Returns `presignGet({ bucket, key, expiresIn, contentType? }) => url`, a presigned GET for the sync pull routes (HFY-TSK-174). `contentType`, when given,
+ * is signed as the response content type so the object is served as the type the cloud recorded. Checksums are WHEN_REQUIRED, as for the PUT.
+ */
+export function createPresignGet(clientOptions = {}) {
+  const s3 = new S3Client({ ...clientOptions, ...PRESIGN_CLIENT_OPTIONS });
+  return ({ bucket, key, expiresIn, contentType }) =>
+    getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key, ...(contentType ? { ResponseContentType: contentType } : {}) }), { expiresIn });
 }
