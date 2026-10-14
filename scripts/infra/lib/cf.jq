@@ -50,46 +50,6 @@ def upsert_behavior($b):
   | .CacheBehaviors.Items = (if $i == null then $items + [$b | drop_nulls] else $items | .[$i] = ((.[$i] + $b) | drop_nulls) end)
   | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length);
 
-# HFY-R58 (1): resolve the behavior that must keep serving $pin.path (the legacy POST /api/check-allowed) after a broader
-# pattern is retargeted. Evaluated on the BEFORE config. $pin = {pattern, path, avoidOrigin, fallbackOrigin, template}:
-#  - an existing $pin.pattern behavior is kept exactly as it is;
-#  - otherwise the first behavior that serves $pin.path today is cloned under $pin.pattern (same origin, policies and
-#    associations), so the path keeps its CURRENT origin;
-#  - only when nothing but $pin.avoidOrigin or the default behavior serves it does $pin.fallbackOrigin (an explicit
-#    --legacy-origin) apply; with no fallback this errors and the caller refuses to touch the distribution.
-def resolve_pin($pin):
-  (.CacheBehaviors.Items // []) as $items
-  | ([$items[] | select(.PathPattern == $pin.pattern)] | first) as $existing
-  | if $existing != null then
-      if $existing.TargetOriginId == $pin.avoidOrigin then
-        error("refusing: the existing \($pin.pattern) behavior targets \($pin.avoidOrigin); it must keep the legacy origin (repair it by hand or with --legacy-origin after deleting it)")
-      else $existing end
-    else
-      ($items | _index_where(.PathPattern != $pin.pattern and (.PathPattern | pattern_matches($pin.path)))) as $m
-      | if $m != null and $items[$m].TargetOriginId != $pin.avoidOrigin then $items[$m] + {PathPattern: $pin.pattern}
-        elif $pin.fallbackOrigin != null then
-          if any((.Origins.Items // [])[]; .Id == $pin.fallbackOrigin) then $pin.template + {PathPattern: $pin.pattern, TargetOriginId: $pin.fallbackOrigin}
-          else error("refusing: --legacy-origin \($pin.fallbackOrigin) is not an origin of this distribution") end
-        elif $m != null then
-          error("refusing: \($pin.path) is already routed to \($pin.avoidOrigin) by \($items[$m].PathPattern) and no \($pin.pattern) behavior exists; pass --legacy-origin <origin id> to pin it back")
-        else
-          error("refusing: no cache behavior serves \($pin.path) today (only the default behavior), so its legacy origin is unknown; pass --legacy-origin <origin id>")
-        end
-    end;
-
-# Put $pinBeh immediately before the first other behavior matching $path, unless it already precedes it.
-def place_pin($pinBeh; $path):
-  (.CacheBehaviors.Items // []) as $items
-  | ($items | _index_where(.PathPattern == $pinBeh.PathPattern)) as $cur
-  | ($items | _index_where(.PathPattern != $pinBeh.PathPattern and (.PathPattern | pattern_matches($path)))) as $anchor
-  | if $cur != null and ($anchor == null or $cur < $anchor) then .
-    else
-      [$items[] | select(.PathPattern != $pinBeh.PathPattern)] as $others
-      | ($others | _index_where(.PathPattern | pattern_matches($path))) as $a
-      | .CacheBehaviors.Items = (if $a == null then $others + [$pinBeh] else $others[:$a] + [$pinBeh] + $others[$a:] end)
-    end
-  | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length);
-
 def redact_origin_verify: (.. | objects | select(.HeaderName? == "X-Origin-Verify") | .HeaderValue) = "<redacted>";
 
 # HFY-TSK-080: keep an existing $pat behavior (merged fields and all) ahead of the first OTHER behavior that would also match

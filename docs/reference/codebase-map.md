@@ -29,7 +29,7 @@ Each capability has a section below with its paths, the facts that change how yo
 | [Private data gate](#private-data-gate) | `edge-gate/`, `infrastructure/cloudformation/edge-gate-stack.yaml`, `scripts/ci/package-edge-gate.sh`, `scripts/infra/add-data-gate-behaviors.sh` | [Identity services](identity-services.md#private-data-gate-hfy-edge-gate), [Architecture](architecture.md#hfy-edge-gate) |
 | [Family graph builder](#family-graph-builder) | `graph/` | [Graph builder README](../../graph/README.md) |
 | [CloudFront Function](#cloudfront-function) | `scripts/cloudfront/`, `scripts/infra/publish-append-index.sh` | [Architecture](architecture.md#hfyappendindex) |
-| [Retired legacy sign-in](#retired-legacy-sign-in) | `lambda/` | [Identity services](identity-services.md) |
+| [Retired legacy sign-in](#retired-legacy-sign-in) | None: its last code was deleted (HFY-TSK-325, HFY-TSK-326) | [Identity services](identity-services.md#retired-legacy-sign-in) |
 | [Infrastructure](#infrastructure) | `infrastructure/`, `scripts/infra/`, `cloudfront/` | [Architecture](architecture.md) |
 | [CI and repo operations](#ci-and-repo-operations) | `ci.manifest.yaml`, `.github/`, `scripts/ci/`, `scripts/git-hooks/`, the workspace helpers in `scripts/` | [Repository operations](repository-operations.md) |
 | [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `gramps/tests/unit/`, `shared/*.test.mjs`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
@@ -384,18 +384,20 @@ Facts:
 
 ## Retired legacy sign-in
 
-HFY-TSK-317 took the legacy Google sign-in out of the code and the pipeline. Nothing was deleted in AWS (ruling P2-R42). The Google Cloud pieces were deleted on 2026-10-14 with io's approval: the `getAllowlist` Cloud Function, its secret and its deploy key. HFY-TSK-325 then removed their repository leftovers: `deploy-gcf-legacy.yml`, the function source in `functions/get-allowlist/` and its sample copy in `gcloud/allowlist-fn/`, and the sync check's comparison of the two.
+HFY-TSK-317 took the legacy Google sign-in out of the code and the pipeline, and deleted nothing in the cloud (ruling P2-R42). The cloud pieces went on 2026-10-14:
 
-Paths:
+- With io's approval, the Google Cloud pieces were deleted: the `getAllowlist` Cloud Function, its secret and its deploy key. HFY-TSK-325 then removed their repository leftovers: `deploy-gcf-legacy.yml`, the function source in `functions/get-allowlist/` and its sample copy in `gcloud/allowlist-fn/`, and the sync check's comparison of the two.
+- Under ruling P2-R48, HFY-TSK-326 deleted the `hfy-check-allowed` Lambda, its API Gateway, its IAM role and its log group. It removed the repository leftovers: the source in `lambda/hfy-check-allowed/`, the `/api/check-allowed*` pin and the `--legacy-origin` option of `add-api-behavior.sh` (with `resolve_pin` and `place_pin` in `cf.jq`), the sync check's `lambda/*` comparison, and the function's grant in `github-roles.yaml`.
 
-- [`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs): the source of the `hfy-check-allowed` Lambda, which stays deployed in AWS until io retires it. No workflow deploys it.
+Paths: none. The last sources are in the Git history.
 
 Facts:
 
 - No page loads Google Identity Services or calls `/api/check-allowed`. `js/auth.js`, `js/search-navbar.js` and `js/search-results.js` are deleted, and `/family-login/` redirects to `/auth/login`.
-- `hfy-check-allowed` verifies a Google ID token and checks an HMAC of the email against the hashed allowlist. `add-api-behavior.sh` still pins `/api/check-allowed*` to the origin that serves it, ahead of the `/api/*` behavior, so the function keeps answering a direct call.
-- `ci.manifest.yaml` has no `lambda` target: a push no longer deploys `hfy-check-allowed`, and a rollback no longer touches it.
-- The pre-commit sync check still compares `lambda/hfy-check-allowed/` with its workspace source when files under it are staged, until the Lambda is deleted (P2-R42). It has no Cloud Function comparison.
+- `hfy-check-allowed` verified a Google ID token and checked an HMAC of the email against the hashed allowlist. Production CloudFront has no `/api/check-allowed*` behavior, so `/api/check-allowed` reaches `hfy-api` through `/api/*` and gets `404`.
+- `ci.manifest.yaml` has no `lambda` target (HFY-TSK-317).
+- The pre-commit sync check compares only `11ty/`. It has no Lambda or Cloud Function comparison.
+- Still in AWS: `config/allowed_hashes.json`, which the allowlist publisher writes and nothing reads, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keys it, which only the publisher reads. The deployed deploy-role stack keeps its grant on the deleted function until the GitHub-roles stack is next updated.
 
 ## Infrastructure
 
@@ -433,11 +435,10 @@ Facts:
 - Each edge stack publishes a new numbered version only when its version resource changes: the gate's through `CodeSha256`, the 401-restore function's through the code hash in its `Description`. Old versions are retained, because CloudFront replicas pin them.
 - `github-roles.yaml` is deployed once by hand.
 - The deploy role denies `s3:PutObject` and `s3:DeleteObject` under `uploads/*` in the site bucket.
-- The deploy role's Lambda permissions cover `hfy-check-allowed` (a grant no target uses any more), `hfy-api` and `hfy-auth-edge` in us-west-2. Its only CloudFront permissions are invalidations on the site's distribution.
+- The deploy role's Lambda permissions cover `hfy-api` and `hfy-auth-edge` in us-west-2. The template dropped `hfy-check-allowed` with HFY-TSK-326; the deployed stack keeps that grant until it is next updated. Its only CloudFront permissions are invalidations on the site's distribution.
 - The deploy role has no permission on `hfy-edge-gate`, `hfy-mcp-edge401`, any CloudFormation stack or any CloudFront Function, so CI can deploy neither edge stack nor `HFYAppendIndex`.
 - `add-auth-behavior.sh` adds the `hfy-auth-edge` origin and two behaviors, `/auth/*` and `/.well-known/oauth-authorization-server*`.
-- `add-api-behavior.sh` adds the `hfy-api` origin and the `/api/*` behavior. Before `/api/*`, it pins a `/api/check-allowed*` behavior, cloned from the one that serves `/api/check-allowed` now. This keeps a direct call to the retired legacy endpoint from being shadowed.
-- It exits with status 3 when it cannot find that origin and no pin exists, unless `--legacy-origin` names the origin.
+- `add-api-behavior.sh` adds the `hfy-api` origin and creates the `/api/*` behavior, or retargets an existing one in place. Since HFY-TSK-326 it adds no `/api/check-allowed*` pin and has no `--legacy-origin` option.
 - `add-uploads-behavior.sh` adds a GET and HEAD `/uploads/*` behavior on the default behavior's S3 origin, with CachingOptimized and the stack's uploads policy: the public state.
 - When `/uploads/*` already carries the gate's association, `add-uploads-behavior.sh` leaves it as it is, prints `/uploads/* is members-only (hfy-edge-gate association, add-data-gate-behaviors.sh): left as it is. add-data-gate-behaviors.sh --remove ungates it.` and then `no change`. `--gate-function-name` (default `hfy-edge-gate`) names the function it looks for.
 - `add-mcp-behavior.sh` adds `/mcp*` and `/.well-known/oauth-protected-resource*` on the `hfy-api` origin. Each carries the `hfy-mcp-edge401` version as its origin-response function, taken from `--edge401-arn`, `$EDGE401_ARN` or the `hfy-mcp-edge401` stack's output.
@@ -450,7 +451,7 @@ Facts:
 - The policy `--remove` restores comes from `--restore-uploads-policy-id`, or else from the `UploadsResponseHeadersPolicyId` output of the `--app-stack` stack, read in the CLI's default region. So while `/uploads/*` is gated, every production `--remove`, `--remove --dry-run` included, passes `--app-stack <app-stack>` with `us-west-2` as the CLI's region, or `--restore-uploads-policy-id`. Without either it exits `1`, prints `pass --restore-uploads-policy-id ID to name the response headers policy /uploads/* gets back` and changes nothing. An offline `--config-file` dry run uses the placeholder `<hfy-app UploadsResponseHeadersPolicyId>`.
 - The `scripts/infra/` scripts are idempotent, accept `--dry-run`, and never print secret values.
 - The behavior scripts skip `update-distribution` when nothing would change. Before a real update, they save the pre-change config outside the repository.
-- `distribution.json` shows the pre-app layout: an S3 origin, plus an API Gateway origin that serves `/api/*`. It shows none of the behaviors that the behavior scripts add, so a gate dry run against it creates all seven gated behaviors, `/uploads/*` included.
+- `distribution.json` shows the pre-app layout: an S3 origin and the default behavior, with no cache behaviors. Its legacy API Gateway origin and `/api/*` behavior were removed with HFY-TSK-326. It shows none of the behaviors that the behavior scripts add, so a gate dry run against it creates all seven gated behaviors, `/uploads/*` included.
 - The comments in `app-stack.yaml` (`UploadsResponseHeadersPolicy`) describe both `/uploads/*` states and the direct PUT to S3. `site-bucket-cors.json` is plain JSON with no comment, because `put-bucket-cors` rejects any key it does not know; [Architecture](architecture.md#site-bucket) documents the rule.
 
 ## CI and repo operations
@@ -479,7 +480,7 @@ Facts:
 - The smoke job requests the home page and `/family-login/`. Any status outside 2xx and 3xx fails it.
 - `post-deploy-checks.yml` runs on `workflow_run` when an `io-kit deploy` run on `main` completes successfully, and by hand. It runs `scripts/infra/check-site-bucket-cors.sh`, the bucket CORS preflights, which the smoke job cannot express: its entries are URLs it requests with `GET`. A failure there rolls nothing back.
 - The rollback strategy is `previous_artifact`. It redeploys the artifact of the last successful `io-kit-deploy.yml` run on the branch. That artifact's `flags.json` comes with it; see [Private data gate](#private-data-gate) for why that matters while the gate is attached.
-- The pipeline builds no islands, and deploys none of `hfy-check-allowed`, `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
+- The pipeline builds no islands, and deploys none of `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
 - `build-islands.sh`, `package-api.sh`, `package-auth.sh`, `package-edge-gate.sh`, `mcp-conformance.sh` and `publish-append-index.sh` are not run by any workflow.
 - The pre-commit hook runs `check-deployment-sync.sh`, then a `trufflehog` filesystem scan. It fails when `trufflehog` is not installed.
 - The hook runs only when `core.hooksPath` is `scripts/git-hooks`.
@@ -565,7 +566,7 @@ Facts:
 - The source's `partials/head.njk` already emits head blocks A and B, with a hard-coded theme `?v` and font file name that the islands build overwrites in the output. The base layout does not emit the `auth-v2.js` tag, and neither the Voice copy nor the asset versions are ported, so `copy.mjs` and `assets.mjs` are still needed. The source's layout still emits the retired Google client, `auth.js`, the navbar search and the `gateway` entry, and its `public/js/` still holds `auth.js`, `search-navbar.js` and `search-results.js`, until it is ported ([Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)).
 - The ETL scripts turn the Gramps export into person JSON and family-tree media.
 - `build_search_index.js` builds the person manifest and search index. The source's `build:search` step runs it.
-- `publish_allowlists.sh` publishes the email-to-gramps_id map and the hashed allowlist to the config bucket. Its last step still writes the allowlist to the Google Secret Manager secret, which was deleted on 2026-10-14, so that step fails after the uploads.
+- `publish_allowlists.sh` publishes the email-to-gramps_id map and the hashed allowlist to the config bucket. Nothing has read the hashed allowlist since `hfy-check-allowed` was deleted, but that step still reads the `HFY_ALLOWLIST_HMAC_SECRET` secret from Secrets Manager, and the script stops there without it. Its last step still writes the allowlist to the Google Secret Manager secret, which was deleted on 2026-10-14, so that step fails after the uploads.
 - `mint_test_id_token.py` mints Google ID tokens for the retired legacy sign-in. Nothing in the repository runs it any more.
 - `workspace-local/` holds the private family data and the real credentials.
 - The workspace sources of the legacy sign-in code are also outside the repository. See [Retired legacy sign-in](#retired-legacy-sign-in).
@@ -619,7 +620,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `cloudfront/` | Infrastructure (sample distribution), sanitized samples |
 | `docs/`, `AGENTS.md` | This documentation. `AGENTS.md` is the entry point for automated agents. |
 | `edge-gate/` | Private data gate |
-| `lambda/` | Retired legacy sign-in |
+| `lambda/` | Infrastructure: `lambda/placeholders/`, the no-op packages for the app stack's `hfy-graph-render` and `hfy-sync-render` (HFY-TSK-247). The legacy `lambda/hfy-check-allowed/` was deleted (HFY-TSK-326). |
 | `graph/` | Family graph builder |
 | `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (the `tests` key of `ci.manifest.yaml` runs it on pull requests). `gramps/hfygramps/render/` is the site renderer, `render_site(objects) -> {s3_key: bytes}`: the D-02-fixed ETL transforms and `build_search_index.js` as pure functions, with no caller yet (HFY-TSK-229). `gramps/tests/fixtures/` holds the synthetic tree and, under `render/`, the renderer's parity inputs, the live ETL's golden output and the expected-delta list. `gramps/redaction/redaction-v1.json` is the redaction policy (schema, golden vectors in `gramps/redaction/vectors/`, generators `make_vectors.py` and `render_reference.py`); `gramps/hfygramps/rules.py` loads it and holds `is_birth_like`, the one birth-like predicate. See [Redaction policy v1](redaction-policy.md). `gramps/hfygramps/projection.py` is the projection `P` (`project_tree`, `project`, the `birthlike_sticky` helpers and the coordinate and rectangle lift rules; HFY-TSK-241) and `gramps/hfygramps/canonical.py` writes the canonical JSON and hash of a stored object; neither is called by anything deployed yet. |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |

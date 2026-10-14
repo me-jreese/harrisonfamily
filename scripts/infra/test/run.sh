@@ -90,20 +90,20 @@ eq "behavior_gated / ungate_behavior only touch a behavior with the gate associa
   | [($c | behavior_gated("/a/*"; "hfy-edge-gate")), ($c | behavior_gated("/b/*"; "hfy-edge-gate")), (g("arn:aws:lambda:us-east-1:1:function:other:7") | behavior_gated("/a/*"; "hfy-edge-gate")),
      ($c | ungate_behavior("/a/*"; "hfy-edge-gate"; "cp"; "rp") | .CacheBehaviors.Items[0] | [.CachePolicyId, .ResponseHeadersPolicyId, .LambdaFunctionAssociations.Quantity]),
      ($c | ungate_behavior("/b/*"; "hfy-edge-gate"; "cp"; "rp") == $c)]')" '[true,false,false,["cp","rp",0],true]'
-eq "CloudFront glob semantics" "$(cfg -c -n 'include "cf"; [("/api/*"|pattern_matches("/api/check-allowed")), ("api/*"|pattern_matches("/api/check-allowed")), ("/api/check-allowed*"|pattern_matches("/api/check-allowed")), ("/api/check-allowed*"|pattern_matches("/api/posts")), ("/API/*"|pattern_matches("/api/x")), ("/a.i/*"|pattern_matches("/api/x")), ("/ap?/*"|pattern_matches("/api/x"))]')" '[true,true,true,false,false,false,true]'
+eq "CloudFront glob semantics" "$(cfg -c -n 'include "cf"; [("/api/*"|pattern_matches("/api/posts")), ("api/*"|pattern_matches("/api/posts")), ("/api/post*"|pattern_matches("/api/posts")), ("/api/post*"|pattern_matches("/api/me")), ("/API/*"|pattern_matches("/api/x")), ("/a.i/*"|pattern_matches("/api/x")), ("/ap?/*"|pattern_matches("/api/x"))]')" '[true,true,true,false,false,false,true]'
 
 # ---------------------------------------------------------------------------------------------------------------------
-CURRENT="api: pins legacy /api/check-allowed to its current origin, before /api/*"
+# The legacy /api/check-allowed* pin is gone (HFY-TSK-326, ruling P2-R48): the hfy-check-allowed Lambda, its API Gateway and that
+# CloudFront behavior and origin were deleted on 2026-10-14, so add-api-behavior.sh only adds the origin and retargets /api/*.
+CURRENT="api: retargets the existing /api/* to hfy-api in place, and adds no pin"
 new_stub
 run add-api-behavior.sh
 eq "exit code" "$RC" 0
 eq "one update-distribution call" "$(updates)" 1
 U=$(last_update)
 eq "update uses the fetched ETag" "$(cat "$STUB_DIR/update-1.etag")" E1LIVEETAG
-eq "behavior order: pin immediately before /api/*" "$(patterns "$U")" '["/person/*","/api/check-allowed*","/api/*"]'
-eq "pin is the old /api/* behavior verbatim except PathPattern" \
-  "$(jq -c --slurpfile f "$FIXTURE" '([.CacheBehaviors.Items[] | select(.PathPattern == "/api/check-allowed*")][0] | del(.PathPattern)) == ([$f[0].DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/api/*")][0] | del(.PathPattern))' "$U")" true
-eq "POST /api/check-allowed still reaches the legacy API Gateway" "$(route "$U" /api/check-allowed)" api-gateway-hfy-check-allowed
+eq "behavior order: /api/* stays where it was, and no /api/check-allowed* pin is added" "$(patterns "$U")" '["/person/*","/api/*"]'
+eq "/api/check-allowed reaches hfy-api like every other /api path" "$(route "$U" /api/check-allowed)" hfy-api-origin
 eq "new routes reach hfy-api" "$(route "$U" /api/posts)" hfy-api-origin
 eq "/person/* untouched" "$(route "$U" /person/I0001.json)" s3-frontend
 eq "/api/* moved in place with the managed policies" \
@@ -111,10 +111,10 @@ eq "/api/* moved in place with the managed policies" \
   '["4135ea2d-6df8-44a3-9df3-4b5a84be39ad","b689b0a8-53d0-40ab-baf2-68738e2966ac","redirect-to-https",false]'
 eq "hfy-api origin host" "$(jq -r '.Origins.Items[] | select(.Id == "hfy-api-origin") | .DomainName' "$U")" api123example.lambda-url.us-west-2.on.aws
 eq "secret header value is the stub secret" "$(SV=$SECRET_VALUE jq -r '.Origins.Items[] | select(.Id == "hfy-api-origin") | .CustomHeaders.Items[0].HeaderValue == env.SV' "$U")" true
-eq "legacy origin kept in place" "$(jq -c '[.Origins.Items[].Id]' "$U")" '["s3-frontend","api-gateway-hfy-check-allowed","hfy-api-origin"]'
+eq "an origin the old /api/* used is left in place (the script never deletes)" "$(jq -c '[.Origins.Items[].Id]' "$U")" '["s3-frontend","legacy-api-origin","hfy-api-origin"]'
 check "Quantity fields match" quantities_ok "$U"
 eq "nothing else changed" "$(jq -c --slurpfile f "$FIXTURE" 'del(.Origins, .CacheBehaviors) == ($f[0].DistributionConfig | del(.Origins, .CacheBehaviors))' "$U")" true
-contains "reports the pin" "$OUT" "legacy /api/check-allowed stays on origin api-gateway-hfy-check-allowed via /api/check-allowed*"
+lacks "no longer reports a legacy pin" "$OUT" "check-allowed"
 contains "diff is redacted" "$OUT" '"HeaderValue": "<redacted>"'
 B=$(find "$STUB_DIR/backups" -name 'E2JCDK3QLQNNYB-*-before.json' | head -1)
 check "pre-change backup saved" test -s "$B"
@@ -144,58 +144,36 @@ contains "explains the refusal" "$OUT" "refusing to update from --config-file"
 new_stub
 run add-api-behavior.sh --dry-run --config-file "$ROOT/cloudfront/distribution.json" --function-url "$API_FURL"
 eq "offline dry run against the repo sample works" "$RC" 0
-contains "sample pin comes from its /api/* behavior" "$OUT" "stays on origin api-gateway-hfy-check-allowed"
+contains "the sample (no cache behaviors) gets /api/* added" "$OUT" '"PathPattern": "/api/*"'
+contains "...on the hfy-api origin" "$OUT" '"TargetOriginId": "hfy-api-origin"'
+lacks "...and no legacy pin" "$OUT" '"PathPattern": "/api/check-allowed*"'
 check "offline dry run makes no AWS call" test ! -s "$STUB_DIR/calls.log"
 
 # ---------------------------------------------------------------------------------------------------------------------
-CURRENT="api: refuses when the legacy origin cannot be determined"
-CLOBBERED="$T/clobbered.json"
-jq '.DistributionConfig.Origins.Items += [{Id:"hfy-api-origin",DomainName:"x.lambda-url.us-west-2.on.aws",CustomOriginConfig:{HTTPPort:80,HTTPSPort:443,OriginProtocolPolicy:"https-only"}}]
-    | .DistributionConfig.Origins.Quantity = 3
-    | (.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/api/*") | .TargetOriginId) = "hfy-api-origin"' "$FIXTURE" > "$CLOBBERED"
-new_stub "$CLOBBERED"
-run add-api-behavior.sh
-eq "exit 3 when /api/* already points at hfy-api and no pin exists" "$RC" 3
+CURRENT="api: --legacy-origin is gone, a default-only distribution gets /api/*, and an /api/* already on hfy-api is a no-op"
+new_stub
+run add-api-behavior.sh --legacy-origin legacy-api-origin
+eq "--legacy-origin is an unknown argument now (exit 2)" "$RC" 2
 eq "no update" "$(updates)" 0
-contains "explains" "$OUT" "refusing: /api/check-allowed is already routed to hfy-api-origin"
-run add-api-behavior.sh --legacy-origin nope
-eq "exit 3 for an unknown --legacy-origin" "$RC" 3
-run add-api-behavior.sh --legacy-origin api-gateway-hfy-check-allowed
-eq "--legacy-origin repairs it" "$RC" 0
-eq "one update" "$(updates)" 1
-eq "pin restored before /api/*" "$(patterns "$(last_update)")" '["/person/*","/api/check-allowed*","/api/*"]'
-eq "legacy route restored" "$(route "$(last_update)" /api/check-allowed)" api-gateway-hfy-check-allowed
-eq "pin uses the uncached API template" "$(jq -r '.CacheBehaviors.Items[] | select(.PathPattern == "/api/check-allowed*") | .CachePolicyId' "$(last_update)")" 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-echo_last
-run add-api-behavior.sh
-eq "afterwards a plain rerun is a no-op" "$(updates)" 1
 DEFAULT_ONLY="$T/default-only.json"
 jq '.DistributionConfig.CacheBehaviors = {Quantity:0}' "$FIXTURE" > "$DEFAULT_ONLY"
 new_stub "$DEFAULT_ONLY"
 run add-api-behavior.sh
-eq "exit 3 when only the default behavior serves /api/check-allowed" "$RC" 3
-contains "explains" "$OUT" "only the default behavior"
-eq "no update" "$(updates)" 0
-
-# ---------------------------------------------------------------------------------------------------------------------
-CURRENT="api: a pin found after /api/* is moved before it, and an existing pin is never retargeted"
-MISORDERED="$T/misordered.json"
-new_stub; run add-api-behavior.sh; echo_last
-jq '.DistributionConfig.CacheBehaviors.Items |= ([.[] | select(.PathPattern != "/api/check-allowed*")] + [.[] | select(.PathPattern == "/api/check-allowed*") | .ResponseHeadersPolicyId = "keep-me"])' "$STUB_DIR/get.json" > "$MISORDERED"
-new_stub "$MISORDERED"
-run add-api-behavior.sh
 eq "exit code" "$RC" 0
 eq "one update" "$(updates)" 1
-eq "pin moved in front" "$(patterns "$(last_update)")" '["/person/*","/api/check-allowed*","/api/*"]'
-eq "pin otherwise untouched" "$(jq -r '.CacheBehaviors.Items[] | select(.PathPattern == "/api/check-allowed*") | [.TargetOriginId, .ResponseHeadersPolicyId] | @tsv' "$(last_update)")" "$(printf 'api-gateway-hfy-check-allowed\tkeep-me')"
+eq "/api/* is the only behavior" "$(patterns "$(last_update)")" '["/api/*"]'
+eq "/api/check-allowed reaches hfy-api" "$(route "$(last_update)" /api/check-allowed)" hfy-api-origin
+check "Quantity fields match" quantities_ok "$(last_update)"
 echo_last; run add-api-behavior.sh
-eq "then a no-op" "$(updates)" 1
-BADPIN="$T/badpin.json"
-jq '(.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/api/check-allowed*") | .TargetOriginId) = "hfy-api-origin"' "$STUB_DIR/get.json" > "$BADPIN"
-new_stub "$BADPIN"
+eq "then a rerun is a no-op" "$(updates)" 1
+ON_API="$T/on-api.json"
+new_stub; run add-api-behavior.sh; echo_last
+cp "$STUB_DIR/get.json" "$ON_API"
+new_stub "$ON_API"
 run add-api-behavior.sh
-eq "a pin pointing at hfy-api is refused, not silently kept" "$RC" 3
+eq "exit 0 when /api/* already points at hfy-api (the old pin refusal is gone)" "$RC" 0
 eq "no update" "$(updates)" 0
+contains "says no change" "$OUT" "no change"
 
 # ---------------------------------------------------------------------------------------------------------------------
 CURRENT="auth + api + uploads: all three applied, then every rerun is a no-op"
@@ -204,8 +182,8 @@ run add-auth-behavior.sh; eq "auth exit" "$RC" 0; eq "auth update" "$(updates)" 
 run add-api-behavior.sh; eq "api exit" "$RC" 0; eq "api update" "$(updates)" 2; echo_last
 run add-uploads-behavior.sh; eq "uploads exit" "$RC" 0; eq "uploads update" "$(updates)" 3; echo_last
 eq "final behavior order" "$(patterns "$STUB_DIR/get.json")" \
-  '["/person/*","/api/check-allowed*","/api/*","/auth/*","/.well-known/oauth-authorization-server*","/uploads/*"]'
-eq "final origins" "$(jq -c '[.DistributionConfig.Origins.Items[].Id]' "$STUB_DIR/get.json")" '["s3-frontend","api-gateway-hfy-check-allowed","hfy-auth-origin","hfy-api-origin"]'
+  '["/person/*","/api/*","/auth/*","/.well-known/oauth-authorization-server*","/uploads/*"]'
+eq "final origins" "$(jq -c '[.DistributionConfig.Origins.Items[].Id]' "$STUB_DIR/get.json")" '["s3-frontend","legacy-api-origin","hfy-auth-origin","hfy-api-origin"]'
 for s in add-auth-behavior.sh add-api-behavior.sh add-uploads-behavior.sh add-auth-behavior.sh; do
   run "$s"; eq "$s rerun exit" "$RC" 0; contains "$s rerun says no change" "$OUT" "no change"
 done
@@ -213,7 +191,7 @@ eq "no update-distribution on any rerun" "$(updates)" 3
 U="$STUB_DIR/get.json"
 eq "/auth routes to the auth edge" "$(route "$U" /auth/login)" hfy-auth-origin
 eq "RFC 8414 discovery routes to the auth edge" "$(route "$U" /.well-known/oauth-authorization-server/auth)" hfy-auth-origin
-eq "legacy check-allowed still on API Gateway" "$(route "$U" /api/check-allowed)" api-gateway-hfy-check-allowed
+eq "/api/check-allowed reaches hfy-api (no legacy pin)" "$(route "$U" /api/check-allowed)" hfy-api-origin
 eq "uploads served from the S3 origin" "$(route "$U" /uploads/posts/01J0000000000000000000000/photo.jpg)" s3-frontend
 check "Quantity fields match" quantities_ok "$U"
 
@@ -455,8 +433,8 @@ run add-data-gate-behaviors.sh
 eq "the cache policy of /uploads/* is put back to CachingDisabled" "$(jq -r '.CacheBehaviors.Items[] | select(.PathPattern == "/uploads/*") | .CachePolicyId' "$(last_update)")" 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
 eq "...in place" "$(patterns "$(last_update)")" "$(patterns "$T/uploads-drift.json")"
 new_stub "$UP_FIXTURE"
-run add-data-gate-behaviors.sh --origin-id api-gateway-hfy-check-allowed
-eq "--origin-id moves the data behaviors" "$(route "$(last_update)" /family/F1.json)" api-gateway-hfy-check-allowed
+run add-data-gate-behaviors.sh --origin-id legacy-api-origin
+eq "--origin-id moves the data behaviors" "$(route "$(last_update)" /family/F1.json)" legacy-api-origin
 eq "...but /uploads/* keeps the origin it already had" "$(route "$(last_update)" /uploads/posts/x/y.jpg)" s3-frontend
 # hfy-uploads-private repaired when it lost nosniff or the CSP, or when Cache-Control drifted
 for BREAK in '.SecurityHeadersConfig.ContentTypeOptions.Override = false' '.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy = "default-src *"' 'del(.SecurityHeadersConfig)' '.CustomHeadersConfig.Items[0].Value = "max-age=60"'; do
@@ -627,8 +605,16 @@ if command -v rsync >/dev/null && command -v git >/dev/null; then
   set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
   eq "a staged functions/ path runs no Cloud Function comparison" "$DS_RC" 0
   lacks "...and the output names no GCF check" "$DS_OUT" "GCF"
+  # HFY-TSK-326: hfy-check-allowed and lambda/hfy-check-allowed/ are deleted, so a staged lambda/ path no longer starts a Lambda
+  # comparison (the old check would fail here: there is no scripts/auth/check-allowed-lambda source).
+  mkdir -p "$DS/repo/lambda/hfy-check-allowed"; echo '// stray' > "$DS/repo/lambda/hfy-check-allowed/index.mjs"; git -C "$DS/repo" add -A
+  set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
+  eq "a staged lambda/ path runs no Lambda comparison" "$DS_RC" 0
+  lacks "...and the output names no hfy-check-allowed check" "$DS_OUT" "hfy-check-allowed"
 else echo "  (rsync or git missing: check-deployment-sync.sh run skipped)"; fi
 lacks "check-deployment-sync.sh has no getAllowlist comparison left" "$(cat "$ROOT/scripts/check-deployment-sync.sh")" "needs_gcf_check"
+lacks "check-deployment-sync.sh has no hfy-check-allowed comparison left" "$(cat "$ROOT/scripts/check-deployment-sync.sh")" "needs_lambda_check"
+check "lambda/hfy-check-allowed/ is gone from the repository (HFY-TSK-326)" test ! -e "$ROOT/lambda/hfy-check-allowed"
 
 # ---------------------------------------------------------------------------------------------------------------------
 CURRENT="cloudfront function: node --test scripts/cloudfront/test (HFYAppendIndex source, every private-prefix variant)"
