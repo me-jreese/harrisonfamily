@@ -889,6 +889,18 @@ describe("size limits: blobs, items and the 100-action budget", () => {
     expect(r.results[0].version).toBe(1);
   });
 
+  it("a Media update that names no blob keeps the head's descriptor (HFY-TSK-173); one that names a blob replaces it; a delete drops it", async () => {
+    const w = world();
+    const m = media(1);
+    await w.apply([blobOp(m, { a: "k" })]);
+    await w.apply([update({ ...m, path: "renamed.jpg" }, 1)]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD")).toMatchObject({ version: 2, blob: { a: "k" } });
+    await w.apply([{ ...update(m, 2), blob: { a: "k2" } }]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD").blob).toEqual({ a: "k2" });
+    await w.apply([del("Media", m.handle, 3)]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD").blob).toBeUndefined();
+  });
+
   it("a blob counts toward the batch byte budget (2 x sum(obj_json) + sum(blob) <= 3.5 MB)", async () => {
     const w = world();
     const base = Buffer.byteLength(objectJson(media(1, { pad: "" })));

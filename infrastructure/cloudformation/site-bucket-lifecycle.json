@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "hfy-sync-staging-expire",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "media/.staging/" },
+      "Expiration": { "Days": 2 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}

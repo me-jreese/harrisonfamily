@@ -230,3 +230,34 @@
   text-decoration: none;
 }
 .hfy-notify .hfy-notify__signin:hover { color: var(--io-notify-accent-text); }
+
+/* "pages you follow" (lib/followed-pages.jsx, HFY-TSK-186, recordSubsV1): a heading, one 56px row per page (name link, 44px "unfollow"),
+   and a 44px "show more". Aliases only. */
+.hfy-followed { margin-top: var(--io-notify-space-6); }
+.hfy-followed .hfy-followed__title { margin: 0 0 var(--io-notify-space-2); color: var(--io-notify-text-dim); font-family: var(--io-notify-font-ui); font-size: var(--io-notify-font-size-sm); font-weight: var(--io-typography-weight-semibold); text-transform: none; }
+.hfy-followed .hfy-followed__empty { margin: 0; color: var(--io-notify-text-dim); font-size: var(--io-notify-font-size-sm); }
+.hfy-followed .hfy-followed__banner { margin: 0 0 var(--io-notify-space-3); padding: var(--io-notify-space-3) var(--io-notify-space-4); border: 1px solid var(--io-notify-danger); border-radius: var(--io-notify-radius-md); background: var(--io-notify-surface-raised); color: var(--io-notify-danger); font-size: var(--io-notify-font-size-sm); }
+.hfy-followed .hfy-followed__list { margin: 0; padding: 0; list-style: none; }
+.hfy-followed .hfy-followed__row { display: flex; align-items: center; justify-content: space-between; gap: var(--io-notify-space-3); min-height: var(--io-notify-control-h-lg); padding: var(--io-notify-space-2) 0; border-bottom: 1px solid var(--io-notify-border); }
+.hfy-followed .hfy-followed__row:last-child { border-bottom: 0; }
+.hfy-followed .hfy-followed__name { min-width: 0; overflow-wrap: anywhere; font-size: var(--io-notify-font-size-sm); }
+.hfy-followed .hfy-followed__unfollow,
+.hfy-followed .hfy-followed__more {
+  box-sizing: border-box;
+  flex: none;
+  min-width: var(--io-notify-tap-min);
+  min-height: var(--io-notify-tap-min);
+  padding: 0 var(--io-notify-space-4);
+  border: 1px solid var(--io-notify-border-strong);
+  border-radius: var(--io-notify-radius-md);
+  background: transparent;
+  color: var(--io-notify-text);
+  font-family: var(--io-notify-font-ui);
+  font-size: var(--io-notify-font-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  cursor: pointer;
+}
+.hfy-followed .hfy-followed__more { margin-top: var(--io-notify-space-3); }
+.hfy-followed .hfy-followed__more:disabled { cursor: default; color: var(--io-notify-text-dim); }
+.hfy-followed .hfy-followed__unfollow:focus-visible,
+.hfy-followed .hfy-followed__more:focus-visible { outline: var(--io-notify-focus-ring) solid var(--io-notify-focus); outline-offset: var(--io-notify-focus-offset); }

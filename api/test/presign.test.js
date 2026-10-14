@@ -42,3 +42,21 @@ describe("presigned upload PUT (real SDK presigner)", () => {
     expect(u.searchParams.get("X-Amz-Expires")).toBe(String(UPLOAD_EXPIRES_SECONDS));
   });
 });
+
+describe("presigned upload PUT with a signed SHA-256 (HFY-TSK-173, sync.md 9)", () => {
+  const b64 = Buffer.alloc(32, 7).toString("base64");
+  const signWith = async (checksumSha256) =>
+    new URL(await presignPut({ bucket: "harrisonfamily-frontend", key: "media/.staging/abc/def", contentType: "image/jpeg", size: 2048, expiresIn: 300, checksumSha256 }));
+
+  it("signs x-amz-checksum-sha256 as a header the client must send, and keeps it out of the query string", async () => {
+    const u = await signWith(b64);
+    expect(u.searchParams.get("X-Amz-SignedHeaders").split(";")).toEqual(expect.arrayContaining(["content-type", "content-length", "host", "x-amz-checksum-sha256"]));
+    expect([...u.searchParams.keys()].map((k) => k.toLowerCase()).filter((k) => k === "x-amz-checksum-sha256" || k === "x-amz-sdk-checksum-algorithm")).toEqual([]);
+  });
+
+  it("the signature depends on the checksum, and a call without one is unchanged", async () => {
+    const other = Buffer.alloc(32, 9).toString("base64");
+    expect((await signWith(b64)).searchParams.get("X-Amz-Signature")).not.toBe((await signWith(other)).searchParams.get("X-Amz-Signature"));
+    expect((await signWith(undefined)).searchParams.get("X-Amz-SignedHeaders")).not.toContain("x-amz-checksum-sha256");
+  });
+});

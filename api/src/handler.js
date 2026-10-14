@@ -140,7 +140,8 @@ export function createHandler(deps) {
         if (typeof deps.authenticateSync !== "function") throw unauthenticated(); // not wired: closed
         actor = await deps.authenticateSync(event); // throws the 401
         sync = await syncContext({ ctx: { ddb, cmds, table }, event, actor, route, now });
-        sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid };
+        // The push routes (HFY-TSK-173) also take the blob wiring (s3, presignPut, the media bucket) and applyBatch's hooks, id policy and test seams.
+        sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid, log, s3: deps.s3, presignPut: deps.presignPut, mediaBucket, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts };
       } else {
         actor = await authenticate(event);
         // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.
@@ -164,7 +165,7 @@ export function createHandler(deps) {
 
       const r = await route.handler({ ...build(actor, event, preview), actor, params, query: event.queryStringParameters ?? {}, body, event, ...(sync ? { sync } : {}) });
       if (r.statusCode !== undefined) return { ...r, headers: { "cache-control": "no-store", ...r.headers } }; // notify handler result
-      return json(r.status, r.body);
+      return json(r.status, r.body, r.headers);
     } catch (e) {
       return errorResponse(e, log, ctx);
     }

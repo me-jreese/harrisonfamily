@@ -129,6 +129,15 @@ aws s3api put-bucket-cors --bucket <site-bucket> --cors-configuration file://inf
 
 The command prints nothing when it succeeds. No stack manages the bucket, and the deploy role cannot change its CORS configuration, so apply the file again by hand whenever it changes. [Verify](#verify) checks the rule with the browser's preflight request, and so does every successful deploy run after that.
 
+Last, expire the desktop sync's leftover staging blobs. The sync push routes upload every photo to `media/.staging/<handle>/<sha256>` first and delete it after the copy into `media/<handle><ext>`; a blob whose Media op was refused, or whose batch was abandoned, stays there, unreferenced and not served. [`site-bucket-lifecycle.json`](../../infrastructure/cloudformation/site-bucket-lifecycle.json) expires that prefix after 2 days and aborts incomplete multipart uploads after 1. `put-bucket-lifecycle-configuration` replaces the bucket's whole lifecycle configuration, so read the current one first and merge its rules into the file if it has any:
+
+```sh
+aws s3api get-bucket-lifecycle-configuration --bucket <site-bucket>
+aws s3api put-bucket-lifecycle-configuration --bucket <site-bucket> --lifecycle-configuration file://infrastructure/cloudformation/site-bucket-lifecycle.json
+```
+
+A new bucket answers the first command with `NoSuchLifecycleConfiguration`. No stack manages the bucket, so apply the file by hand whenever it changes. The rule never touches the served keys: the prefix is `media/.staging/` only.
+
 ### 2. Request the certificate
 
 CloudFront accepts certificates only from `us-east-1`, wherever the bucket is.

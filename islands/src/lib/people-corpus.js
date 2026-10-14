@@ -70,6 +70,25 @@ export function mapPerson(raw) {
   };
 }
 
+let namesPromise = null;
+/**
+ * HFY-TSK-186: `Map<grampsId, displayName>` from the family manifest alone (one GET /person/index.json, shared by every caller on the
+ * page). The "pages you follow" list resolves its names here. A failed load is forgotten so the next call retries and rejects with the
+ * family-facing line.
+ */
+export function personNames() {
+  if (!namesPromise) {
+    namesPromise = (async () => {
+      const manifest = await getJson(MANIFEST_URL, await authInit());
+      const people = Array.isArray(manifest && manifest.people) ? manifest.people : Array.isArray(manifest) ? manifest : [];
+      const names = new Map();
+      for (const p of people) if (p && p.grampsId) names.set(String(p.grampsId), String(p.displayName || ""));
+      return names;
+    })().catch((e) => { namesPromise = null; throw e; });
+  }
+  return namesPromise;
+}
+
 export const peopleSource = {
   id: "hfy-people",
   seqSpaces: [],
