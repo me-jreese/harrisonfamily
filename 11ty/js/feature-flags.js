@@ -12,27 +12,27 @@
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "b37a3c48",
+        "js": "d5cec94a",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "5b7cf4e4",
-        "css": "6a93fa82"
+        "js": "fdd27d14",
+        "css": "d8c9710c"
       },
       "follow": {
         "js": "00d35b3c",
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "98c25e23",
+        "js": "d47e2720",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "45765c99",
+        "js": "b5e3a22a",
         "css": "38a33f05"
       },
       "join": {
-        "js": "8dfbf1b4",
+        "js": "cbbf3cfb",
         "css": "88b160fb"
       },
       "join-entry": {
@@ -44,15 +44,15 @@
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "eac2c809",
+        "js": "57bbf7b1",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "1a56a5ce",
+        "js": "c4dc5277",
         "css": "be703fb4"
       },
       "person": {
-        "js": "c176c286",
+        "js": "4639b798",
         "css": "92f22fd0"
       },
       "person-links": {
@@ -60,7 +60,7 @@
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "402581b6",
+        "js": "4497927a",
         "css": "6226b36b"
       },
       "photo-tags": {
@@ -68,15 +68,19 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "31b34d25",
+        "js": "cf613057",
         "css": "890fde1c"
+      },
+      "review": {
+        "js": "c8427a7c",
+        "css": "d4074f34"
       },
       "search": {
         "js": "cedb25b3",
         "css": "9e007813"
       },
       "settings": {
-        "js": "30aea294",
+        "js": "85849c1f",
         "css": "2ebf2e40"
       },
       "shell": {
@@ -84,7 +88,7 @@
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "5355bb81",
+        "js": "1da01713",
         "css": "8f618380"
       },
       "tree": {
@@ -851,6 +855,16 @@
       loadIsland("edit-entry", { onError() { /* the person page stands without the edit entry */ } });
     } else if (/^\/edit\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("editor", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-259: the review island fills the static /me/review/ page. proposalReview opens the admins' "to review" tab; recordEdit opens "my
+  // suggestions" and "about my page" (the island reads both flags and /api/me itself and shows only the tabs the viewer has). With neither flag on
+  // the bundle is not requested and the page keeps its "not available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.proposalReview !== true && flags.recordEdit !== true) return;
+    if (/^\/me\/review\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("review", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 

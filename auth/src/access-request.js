@@ -33,12 +33,14 @@ export const REQUEST_TTL_SECONDS = 90 * 86400;
 /** The most admin addresses one request mails. */
 export const MAX_ADMIN_MAILS = 10;
 /**
- * Q2-11(a), living people's current city: io has not recorded an answer, so this defaults to the privacy-preserving no: the form never collects it.
- * Flip to true (city and state only, the year moved) only when io answers yes; that answer is a precondition of RG-4.
- * The submit passes it to validateForm explicitly (shared/legacy-form.mjs).
- * Bad, expired or used tickets answer 403 {detail:"ticket_expired"} (AC and BRD2), not the 401 that surfaces.md 7.2 still shows; join-page code against 403.
+ * Q2-11(a), living people's current city: io approved the default (a) (gate q2-11-living-city, HFY-TSK-109): store a requester's city and
+ * state as a Residence event, at city and state level only, with the year moved. The form therefore asks for it (the street address and
+ * the postal code are refused by the form validator, shared/legacy-form.mjs), and the admin preview carries the Residence event.
+ * It stays dark behind ACCESS_REQUESTS. The submit passes it to validateForm explicitly; islands/src/lib/join.js and
+ * api/src/access-requests.js carry the same value (api/test/access-requests.test.js pins the three together).
+ * Bad, expired or used tickets answer 403 {detail:"ticket_expired"} (AC and BRD2), not the 401 that surfaces.md 7.2 once showed; join-page code against 403.
  */
-export const STORE_CURRENT_CITY = false;
+export const STORE_CURRENT_CITY = true;
 
 /**
  * Surfaces.md 7.5, in the order they are applied. They run one after the other and stop at the first denial, so a request that a narrow

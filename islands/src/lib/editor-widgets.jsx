@@ -8,6 +8,7 @@
 // A widget owns the whole value at its pointer. It reads its sibling values and the lookups through FormCtx, which the form's host provides.
 // Markup follows the kit's own (`.io-field`, `.io-label-row`, `.io-adornment`), so the editor's form CSS styles them; the words are lowercase.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { RECORD_COPY } from "./editor-records.js";
 import { SECTION_COPY, MONTHS, MODIFIER, dateFromParts, dateParts, dateText, givenParts, givenTokens, isBirthCode, isWordsDate } from "./editor-sections.js";
 
 /** What a widget reads besides its own value: { live (the form's values now), initial, viewer, lookups, searchPeople, resolvePerson }. */
@@ -308,5 +309,32 @@ export function SourceRef(p) {
   return <PickOrNew p={p} kind="source" items={lookups.sources} none={SECTION_COPY.sourceNone} notListed={SECTION_COPY.sourceNotListed} newLabel={SECTION_COPY.sourceNewLabel} newHint={SECTION_COPY.sourceNewHint} />;
 }
 
+// ---- tags -----------------------------------------------------------------------------------------------------------------------------
+
+/** Tags from the ones that already exist: a checkbox for each, never a typed new one. Value: the array of tag handles. */
+export function TagPick(p) {
+  const { lookups } = useFormCtx();
+  const have = Array.isArray(p.value) ? p.value.filter((t) => typeof t === "string") : [];
+  const items = lookups.tags || [];
+  const known = new Set(items.map((t) => t.handle));
+  const shown = [...items, ...have.filter((h) => !known.has(h)).map((h) => ({ handle: h, name: "a tag" }))];
+  const flip = (handle) => p.onChange(have.includes(handle) ? have.filter((h) => h !== handle) : [...have, handle]);
+  return (
+    <Group p={p} extra={{ "data-hfy-tags": "" }}>
+      <p className="io-description" data-hfy-tags-hint>{shown.length ? RECORD_COPY.tagsHint : RECORD_COPY.tagsNone}</p>
+      <ul className="hfy-tags">
+        {shown.map((t) => (
+          <li key={t.handle}>
+            <label className="hfy-tags__item">
+              <input type="checkbox" checked={have.includes(t.handle)} disabled={p.readOnly || undefined} onChange={() => flip(t.handle)} data-hfy-tag={t.handle} />
+              <span>{t.name}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </Group>
+  );
+}
+
 /** The registry handed to SchemaForm `widgets`. */
-export const EDITOR_WIDGETS = Object.freeze({ givenNames: GivenNames, callName: CallName, grampsDate: GrampsDate, personRef: PersonRef, placeRef: PlaceRef, sourceRef: SourceRef });
+export const EDITOR_WIDGETS = Object.freeze({ tagPick: TagPick, givenNames: GivenNames, callName: CallName, grampsDate: GrampsDate, personRef: PersonRef, placeRef: PlaceRef, sourceRef: SourceRef });

@@ -37,7 +37,7 @@ describe("TEMPLATE_REGISTRY contract", () => {
     "proposal_submitted", "proposal_accepted", "proposal_declined", "proposal_needs_changes", "proposal_stale",
     "record_updated_mine", "record_updated_followed", "records_updated_followed_digest",
     "moderation_hidden", "moderation_request", "moderation_question", "moderation_unhidden", "moderation_resolved",
-    "photo_graduated", "access_request_new", "chat_message",
+    "photo_graduated", "access_request_new", "access_request_decided", "second_email_notice", "chat_message",
   ];
   it("holds exactly the PLN-002 types, and the field whitelist is [actor, subject, item, count]", () => {
     expect(NOTIFY_TYPES).toEqual(EXPECTED);

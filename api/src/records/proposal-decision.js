@@ -19,6 +19,7 @@
 //                           - the guard failing now (the rules may have tightened since) moves the proposal to needs_changes with a system reason;
 //                             the matched text is never echoed, logged or stored
 //                           - a destructive result (an object deleted, a parent, child or spouse link removed) needs auth_time within 900 s (401 step_up_required)
+//                           - so does approving the Person an access request asked for (the link that lets the requester sign in commits with it)
 //                           - ONE applyBatch() transaction (origin "proposal", on behalf of the proposer) carries the record ops AND, through a contributor
 //                             that is local to this call: the proposal META (pinned to etag and state), every IDX# copy, AUDIT#proposal, the IDEM# receipt,
 //                             the completeAccessRequest fragment and contribOps(proposal_accepted, actor = the proposer). A concurrent second approval
@@ -44,7 +45,7 @@ import {
   MAX_NOTE_CHARS, displayName, existingKey, isDestructive, keyParts, parseRequest, pick, planChanges, problem, requireRecentSignIn, sortedUnique, wireOps,
 } from "./changes.js";
 import {
-  SYSTEM_PROPOSER, approvalHookFragment, idemKeys, idemPut, ownersList, ownersOf, proposalAuditItem, proposalRewrite, proposalView, sha256Hex, withState,
+  SYSTEM_PROPOSER, accessRequestOf, approvalHookFragment, idemKeys, idemPut, ownersList, ownersOf, proposalAuditItem, proposalRewrite, proposalView, sha256Hex, withState,
 } from "./proposals.js";
 import { QUEUE_STATES, ifMatchOf, loadProposal, preconditionFailed, rebaseOf, replyHeaders } from "./proposal-store.js";
 
@@ -254,8 +255,11 @@ async function planApproval(c, prev, amend, nowMs, guard) {
   }
   // A relationship proposal also names the objects its decision was based on but its ops leave alone (read_versions, relationship-api): if any of
   // them moved, the suggestion was judged on a page that is no longer there.
+  // With an amend, the keys the edited ops touch are judged by the admin's own base_versions above (effectiveProposal drops them from read_versions).
   const readRows = [];
+  const amendTouched = amend ? new Set(Object.keys(versions)) : new Set();
   for (const [k, v] of Object.entries(isObj(prev.read_versions) ? prev.read_versions : {})) {
+    if (amendTouched.has(k)) continue;
     const [cls, handle] = keyParts(k);
     const head = await get(ctx, cls, handle);
     if (!head || head.version !== v) readRows.push({ opId: null, obj: k, path: "", reason: "read_version_changed" });
@@ -271,8 +275,12 @@ async function effectiveProposal(c, prev, amend, planned) {
   const review = planned.review;
   if (!amend || !review) return prev;
   const touched = sortedUnique(review.ops.map(existingKey).filter(Boolean));
+  // The intent a relationship proposal was compiled from no longer describes the admin's ops, so it is dropped; read_versions is recomputed to the
+  // objects read but not touched by the edited ops (planApproval has just verified each is still at that version; the touched ones it skipped, as the amend's base_versions cover them). The kind follows the ops below.
+  const { intent: _intent, read_versions: prevRead, ...rest } = prev;
+  const read = Object.fromEntries(Object.entries(isObj(prevRead) ? prevRead : {}).filter(([k]) => !touched.includes(k)));
   return {
-    ...prev, kind: review.ops.some((o) => o.op === "create") ? "create" : "edit", targets: review.targets, owners: ownersList(await ownersOf(c.store, review.targets, planned.stored)),
+    ...rest, ...(Object.keys(read).length ? { read_versions: read } : {}), kind: review.ops.some((o) => o.op === "create") ? "create" : "edit", targets: review.targets, owners: ownersList(await ownersOf(c.store, review.targets, planned.stored)),
     base_versions: pick(amend.base_versions, touched), ops: review.ops, summary: planned.plan.review.flatMap((g) => g.summary), warnings: review.warnings ?? [],
   };
 }
@@ -307,10 +315,12 @@ function approvalBuilder(c, prev, eff, input, requestHash, amended) {
       { puts: [...rewrite.puts, audit, receiptFor(c, input, requestHash, { status: 200, body }, at)], deletes: rewrite.deletes, updates: [], checks: [] },
     ];
     const grampsId = grampsIdFor(batch, eff);
+    let linked = null; // the access request this approval linked, for the notice after the commit
     if (grampsId) {
       // The access-request link commits with the approval (surfaces 7.4); with no gramps_id yet (assign mode) the desktop's assignment completes it later.
-      const hook = await approvalHookFragment(ctx, eff, { grampsId });
+      const hook = await approvalHookFragment(ctx, eff, { grampsId, by: actor.id, at });
       if (hook) parts.push({ puts: hook.puts ?? [], deletes: hook.deletes ?? [], updates: hook.updates ?? [], checks: hook.checks ?? [] });
+      linked = hook ? { requestId: accessRequestOf(eff), grampsId } : null;
     }
     if (!isSystemProposer(prev)) {
       // R-25/26: the PROPOSER is credited, never the approver. One event per proposal however many fields it changed. No self_edit or tag op here (DL-18).
@@ -321,7 +331,7 @@ function approvalBuilder(c, prev, eff, input, requestHash, amended) {
         at, via: prev.origin === "mcp" ? "mcp" : "ui", id: deriveUlid(atMs, `${batch.batch_id}:proposal_accepted`),
       }));
     }
-    return { fragment: mergeOps(...parts), next, body, versions };
+    return { fragment: mergeOps(...parts), next, body, versions, linked };
   };
 }
 
@@ -372,6 +382,10 @@ async function approve(c, prev, input, requestHash) {
   const amended = input.amend !== undefined;
   const nowMs = ctx.now();
   const idem = { input, requestHash };
+
+  // Approving the Person an access request asked for also lets the requester sign in (the completeAccessRequest link commits with the approval), so it
+  // needs the same sign-in at most 900 s old as the `link` decision does (401 step_up_required). A stale session cannot activate access by approving.
+  if (accessRequestOf(prev) && [...arr(prev.ops), ...arr(input.amend?.ops)].some((o) => o?.op === "create" && o.cls === "Person")) requireRecentSignIn(actor, nowMs);
 
   let planned;
   for (let round = 0; ; round += 1) {
@@ -434,6 +448,10 @@ async function approve(c, prev, input, requestHash) {
     }
     logDecision(ctx, { verdict: "approve", state: "approved", objects: Object.keys(last.versions).length, amended });
     await notifyProposer(c, prev, "accepted");
+    if (last.linked) {
+      // The access request this approval linked (surfaces 7.4): the requester is told and the other admins hear. Never fails the committed approval.
+      try { await ctx.afterCompleteAccessRequest?.({ ...last.linked, by: actor.id }); } catch { /* a notice is a nicety */ }
+    }
     return { status: 200, body: last.body, headers: replyHeaders(last.next) };
   }
 }

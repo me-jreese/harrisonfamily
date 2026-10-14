@@ -6,7 +6,7 @@ import { dirname, resolve } from "node:path";
 import { makeApi, signToken } from "./world.js";
 import {
   DEFAULT_FLAGS_URL, FLAGS_MAX_STALE_MS, FLAGS_TTL_MS, PREVIEW_HEADER, SERVER_SWITCHES, closedFeatureGate, configureFeatures, createFeatureGate,
-  createFlagSource, currentFeatureGate, featureOn, gateExempt, parsePreview, previewOf, requireFeature, serverSwitch,
+  createFlagSource, currentFeatureGate, describeGate, featureOn, gateExempt, parsePreview, previewOf, requireFeature, serverSwitch,
 } from "../src/features.js";
 import { ROUTES, buildCaps, defineRoutes } from "../src/routes.js";
 import { HttpError } from "../src/http.js";
@@ -155,6 +155,10 @@ describe("declarations", () => {
     expect(serverSwitch("HFY_EDITING", () => true)).toMatchObject({ type: "switch", name: "HFY_EDITING" });
     expect(() => serverSwitch("HFY_EDITING")).toThrow(/check function/); // a declared switch is always enforced
     expect(() => serverSwitch("RENDER_MODE", () => true)).toThrow(/unknown switch/);
+    // a switch whose check is the route's own rule says so, and caps.json publishes the rule beside the name
+    expect(describeGate(serverSwitch("ACCESS_REQUESTS", () => false, { rule: "the held member only" }))).toEqual({ switch: "ACCESS_REQUESTS", rule: "the held member only" });
+    expect(describeGate(serverSwitch("HFY_EDITING", () => true))).toEqual({ switch: "HFY_EDITING" });
+    for (const bad of ["", "  ", 7]) expect(() => serverSwitch("ACCESS_REQUESTS", () => false, { rule: bad })).toThrow(/rule/);
     expect(() => gateExempt("")).toThrow(TypeError);
   });
 

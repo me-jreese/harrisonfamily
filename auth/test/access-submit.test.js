@@ -3,7 +3,7 @@
 // Every address, name, ticket and token in this file is synthetic.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { InMemoryNotificationStore } from "@io-kit/notify/server";
-import { QUEUE_CAP, REQUEST_TTL_SECONDS, SUBMIT_LIMITS, createAccessRequest, emailHash, requestEmailKey, requestKey, ticketKey, ulid } from "../src/access-request.js";
+import { QUEUE_CAP, REQUEST_TTL_SECONDS, STORE_CURRENT_CITY, SUBMIT_LIMITS, createAccessRequest, emailHash, requestEmailKey, requestKey, ticketKey, ulid } from "../src/access-request.js";
 import { createAdminDirectory } from "../src/admins.js";
 import { createAdminInbox } from "../src/admin-notify.js";
 import { createFlagReader } from "../src/flags.js";
@@ -211,6 +211,36 @@ describe("the ticket (valid, unused)", () => {
   it("answers 503 unavailable when the ticket cannot be read", async () => {
     const m = setup({ doc: fakeDoc({ failOn: ["GetCommand"] }) });
     expect([(await m.submit()).statusCode, m.mailer.send.mock.calls.length]).toEqual([503, 0]);
+  });
+});
+
+describe("Q2-11(a): the current city is stored at city and state level only", () => {
+  it("STORE_CURRENT_CITY is true (io approved the default, gate q2-11-living-city) and the request keeps the current city, state and the year moved", async () => {
+    expect(STORE_CURRENT_CITY).toBe(true);
+    const m = setup();
+    expect((await m.submit(submitBody({ form: { ...FORM, movedYear: 2005 } }))).statusCode).toBe(201);
+    const [[, req]] = m.rowsWith("ACCESSREQ#");
+    expect(req.form.currentPlace).toBe("Portland, OR");
+    expect(req.form.movedYear).toBe(2005);
+  });
+
+  it("refuses a street address or a postal code in the current place and writes nothing", async () => {
+    const m = setup();
+    for (const currentPlace of ["12 Main Street, Portland, OR", "Portland, OR 97201", "Portland, 97201", "PO Box 9, Portland, OR"]) {
+      const res = await m.submit(submitBody({ form: { ...FORM, currentPlace } }));
+      expect(res.statusCode, currentPlace).toBe(400);
+      expect(bodyOf(res).fields.map((f) => f.field), currentPlace).toEqual(["currentPlace"]);
+    }
+    expect(m.rowsWith("ACCESSREQ#")).toEqual([]);
+    expect(m.doc.transactions).toEqual([]);
+  });
+
+  it("the stored form keeps only the form's own keys: no street or postal key is ever added", async () => {
+    const m = setup();
+    await m.submit(submitBody({ form: { ...FORM, street: "12 Main Street", postalCode: "97201", zip: "97201", movedYear: 2005 } }));
+    const [[, req]] = m.rowsWith("ACCESSREQ#");
+    expect(Object.keys(req.form).sort()).toEqual([...Object.keys(FORM), "movedYear"].sort());
+    expect(JSON.stringify(req.form)).not.toMatch(/Main Street|97201/);
   });
 });
 
@@ -427,9 +457,8 @@ describe("one transaction", () => {
     expect(req.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(req.PK).toBe(requestKey(req.id).PK);
     expect(req.GSI1SK).toBe(req.id);
-    // Q2-11(a) is unanswered, so the current city is not stored (STORE_CURRENT_CITY = false)
-    const { currentPlace: _dropped, ...STORED } = FORM;
-    expect(req.form).toEqual(STORED);
+    // Q2-11(a) is answered (a): the current city and state are stored (STORE_CURRENT_CITY = true)
+    expect(req.form).toEqual(FORM);
     expect(req.form.email).toBeUndefined();
     expect(REQUEST_TTL_SECONDS).toBe(90 * 86400);
     const guard = m.doc.rows.get(keyOf(requestEmailKey(hash(EMAIL))));
@@ -441,7 +470,7 @@ describe("one transaction", () => {
     const m = setup();
     await m.submit(submitBody({ form: { ...FORM, birthDate: "1980-03-04", birthMonth: 3, extra: "x" } }));
     const [[, req]] = m.rowsWith("ACCESSREQ#");
-    expect(Object.keys(req.form).sort()).toEqual(Object.keys(FORM).filter((k) => k !== "currentPlace").sort());
+    expect(Object.keys(req.form).sort()).toEqual(Object.keys(FORM).sort());
     expect(JSON.stringify(req)).not.toMatch(/1980-03|birthMonth|birthDate/);
   });
 

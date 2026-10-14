@@ -222,3 +222,25 @@ test("profileLinks off: no \"your links\" row", async ({ page }) => {
   await expect(row(page, "notifications")).toBeVisible();
   await expect(row(page, "links")).toHaveCount(0);
 });
+
+// HFY-TSK-259: the "suggestions" row opens /me/review/ with recordEdit or proposalReview (either one); with both off there is no row.
+for (const flags of ["navMe,recordEdit", "navMe,proposalReview"]) {
+  test(`${flags}: the "suggestions" row (56px, /me/review/, dim line) sits before sign-in and devices, axe clean`, async ({ page }) => {
+    await hermetic(page);
+    await page.goto(`/me/?hfy_flags=${flags}`, { waitUntil: "domcontentloaded" });
+    const link = page.getByRole("link", { name: "suggestions", exact: true });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", "/me/review/");
+    await expect(link).toHaveAccessibleDescription("changes you've suggested, and ones about your page");
+    expect(await page.locator(".hfy-settings [data-hfy-setting]").evaluateAll((els) => els.map((e) => e.getAttribute("data-hfy-setting")))).toEqual(["notifications", "review", "sign-in", "sign-out"]);
+    expect((await link.boundingBox()).height).toBeGreaterThanOrEqual(55.5);
+    expect(await axeViolations(page)).toEqual([]);
+  });
+}
+
+test("recordEdit and proposalReview off: no \"suggestions\" row", async ({ page }) => {
+  await hermetic(page);
+  await page.goto("/me/?hfy_flags=navMe,-recordEdit,-proposalReview", { waitUntil: "domcontentloaded" });
+  await expect(row(page, "notifications")).toBeVisible();
+  await expect(row(page, "review")).toHaveCount(0);
+});

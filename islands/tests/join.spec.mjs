@@ -12,7 +12,7 @@ const CODE = "123456";
 const TICKET = "tkT3st".padEnd(43, "x");
 const DRAFT_KEY = "hfy:join-draft";
 const ANSWERS = {
-  givenNames: "Sample Q", maidenSurname: "Example", nickname: "Sammy", birthPlace: "Springfield, IL", birthYear: "1962",
+  givenNames: "Sample Q", maidenSurname: "Example", nickname: "Sammy", birthPlace: "Springfield, IL", birthYear: "1962", currentPlace: "Portland, OR",
   university: "Example State", graduationYear: "1984"
 };
 
@@ -55,7 +55,7 @@ async function stub(page, { flag = true, session = null, config = { status: 200,
     }
     state.submits += 1;
     if (body.ticket !== TICKET) return r.fulfill({ status: 403, json: { detail: "ticket_expired" } });
-    const checked = validateForm({ ...body.form, email: EMAIL }, { storeCurrentCity: false });
+    const checked = validateForm({ ...body.form, email: EMAIL }, { storeCurrentCity: true });
     if (!checked.ok) return r.fulfill({ status: 400, json: { detail: "validation", fields: checked.fields } });
     return r.fulfill({ status: 201, json: { ok: true, state: "pending" } });
   });
@@ -89,6 +89,7 @@ async function fillAnswers(page, a = ANSWERS) {
   await page.getByLabel("what does the family call you?").fill(a.nickname);
   await page.getByLabel("where were you born?").fill(a.birthPlace);
   await page.getByLabel("what year were you born?").fill(a.birthYear);
+  await page.getByLabel("where do you live now?").fill(a.currentPlace);
   await page.getByRole("radio", { name: "never married" }).check();
   await page.getByLabel("if you graduated from a university, which one?").fill(a.university);
   await page.getByLabel("what year did you graduate?").fill(a.graduationYear);
@@ -136,7 +137,8 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.getByRole("group", { name: "your timeline" })).toBeVisible();
       await expect(page.getByRole("radiogroup", { name: "gender" }).getByRole("radio")).toHaveCount(2);
       await expect(page.getByRole("radiogroup", { name: "were you ever married?" }).getByRole("radio")).toHaveCount(5);
-      await expect(page.getByLabel("where do you live now?")).toHaveCount(0);
+      await expect(page.getByLabel("where do you live now?")).toHaveCount(1); // Q2-11(a): city and state only
+      await expect(page.getByLabel("what year did you move to your region?")).toHaveCount(1);
       expect(await axeViolations(page)).toEqual([]);
       await fillAnswers(page);
       // the draft follows the answers, and never holds the code, the ticket or the email
@@ -156,7 +158,7 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(bodyOf(state, "verify")).toEqual([{ email: EMAIL, code: CODE }]);
       const [submit] = bodyOf(state, "submit");
       expect(submit.ticket).toBe(TICKET);
-      expect(submit.form).toMatchObject({ givenNames: "Sample Q", gender: "female", birthYear: "1962", everMarried: "never_married", forSelf: true });
+      expect(submit.form).toMatchObject({ givenNames: "Sample Q", gender: "female", birthYear: "1962", currentPlace: "Portland, OR", everMarried: "never_married", forSelf: true });
       expect(JSON.stringify(submit.form)).not.toContain(EMAIL);
       for (const c of state.calls.filter((x) => x.route !== "config")) {
         expect(c.method).toBe("POST");

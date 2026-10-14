@@ -533,6 +533,63 @@ describe("amend: edit then approve (AC)", () => {
     expect(w.stored(p.id).proposal.ops[0].value).toBe("Aldrich");
   });
 
+  it("an amend of a relationship (spouse) proposal drops the stale intent and recomputes read_versions to the objects the edited ops leave alone", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "a-rel");
+    const doc = { ...w.stored(p.id).proposal, kind: "relationship", intent: { type: "spouse", spouse: { who: "stub" } }, read_versions: { [key(w.fam)]: 1, [key(w.me)]: 1 } };
+    for (const row of w.rows(`PROP#${p.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: doc });
+    const r = await w.decide(ADMIN, doc, { verdict: "approve", amend: { base_versions: { [key(w.me)]: 1 }, ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldrich", "e1")] } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const stored = w.stored(p.id).proposal;
+    expect(stored.intent).toBeUndefined();
+    expect(stored.kind).toBe("edit");
+    expect(stored.read_versions).toEqual({ [key(w.fam)]: 1 });
+  });
+
+  const relDoc = (w, p, extra) => {
+    const doc = { ...w.stored(p.id).proposal, kind: "relationship", intent: { type: "spouse", spouse: { who: "stub" } }, ...extra };
+    for (const row of w.rows(`PROP#${p.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: doc });
+    return doc;
+  };
+  const amendOps = (w, v) => ({ base_versions: { [key(w.me)]: v }, ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldrich", "e1")] });
+
+  it("an amend whose touched read_versions object moved (and carries its current base) is approved, not read_version_changed", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "a-rel2");
+    const doc = relDoc(w, p, { read_versions: { [key(w.fam)]: 1, [key(w.me)]: 1 } });
+    await w.bump({ ...w.me, primary_name: { ...w.me.primary_name, nick: "Ally" } }, 1);
+    const r = await w.decide(ADMIN, doc, { verdict: "approve", amend: amendOps(w, 2) });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(w.stored(p.id).proposal.read_versions).toEqual({ [key(w.fam)]: 1 });
+  });
+
+  it("an amend still blocks on an untouched read_versions object that moved", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "a-rel3");
+    const doc = relDoc(w, p, { read_versions: { [key(w.fam)]: 1 } });
+    await w.bump({ ...w.fam, private: true }, 1);
+    const r = await w.decide(ADMIN, doc, { verdict: "approve", amend: amendOps(w, 1) });
+    expect(r.status).toBe(409);
+    expect(w.stored(p.id).proposal.state).toBe("pending");
+  });
+
+  it("read_versions is omitted when every key is touched; a plain edit proposal gains no intent or read_versions", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "a-rel4");
+    const doc = relDoc(w, p, { read_versions: { [key(w.me)]: 1 } });
+    const r = await w.decide(ADMIN, doc, { verdict: "approve", amend: amendOps(w, 1) });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(w.stored(p.id).proposal).not.toHaveProperty("read_versions");
+    expect(r.body.proposal).toMatchObject({ kind: "edit", state: "approved" });
+    const w2 = await world();
+    const p2 = await w2.propose(OTHER, w2.me, "Aldric", "a-plain");
+    const r2 = await w2.decide(ADMIN, p2, { verdict: "approve", amend: amendOps(w2, 1) });
+    expect(r2.status).toBe(200);
+    const s2 = w2.stored(p2.id).proposal;
+    expect(s2).not.toHaveProperty("intent");
+    expect(s2).not.toHaveProperty("read_versions");
+  });
+
   it("an amend runs the privacy guard (admins are not exempt): 422, and nothing is written", async () => {
     const w = await world();
     const p = await w.propose(OTHER, w.me, "Aldric", "a-2");
@@ -710,25 +767,33 @@ describe("grampsIdFor (Q2-03, AC5)", () => {
     expect(grampsIdFor({}, eff(undefined))).toBe("");
   });
 
-  it("a Person create from an access request is not reachable yet: field policy refuses it at filing (403 derived) and again at approval, with a clear error and nothing written (owned by surf-access-admin-api and relationship-api)", async () => {
+  it("a Person create from an access request is filed by the site, and its approval mints the gramps_id (Q2-03) and hands it to completeAccessRequest (HFY-TSK-141)", async () => {
     const calls = [];
-    const w = await world({ completeAccessRequest: async (a) => { calls.push(a.grampsId); return { puts: [] }; } });
+    const w = await world({ completeAccessRequest: async (a) => { calls.push({ requestId: a.requestId, grampsId: a.grampsId, by: a.by }); return { puts: [] }; } });
     const sys = { ...w.sctx, uid: (() => { let n = 0; return () => `01J${String(++n).padStart(23, "0")}`; })() };
     const mk = (cls, value) => ({ id: "mk", op: "create", obj: "new:1", cls, value });
-    // filing: the system proposer cannot file a Person create today
-    const refused = await createSystem(sys, { kind: "create", origin: "access_request", requestId: "req-0002", base_versions: {}, ops: [mk("Person", personValue())] }).catch((e) => e);
-    expect(refused).toMatchObject({ status: 403, code: "not_allowed" });
-    expect(refused.errors).toEqual([expect.objectContaining({ code: "derived" })]);
-    // approval: a stored Person-create proposal (planted, as a later release that allows it would have filed it) is refused with the same error
-    const doc = await createSystem(sys, { kind: "create", origin: "access_request", requestId: "req-0003", base_versions: {}, ops: [mk("Note", noteValue("Synthetic request note"))] });
-    const planted = { ...structuredClone(doc), ops: [mk("Person", personValue())] };
-    for (const row of w.rows(`PROP#${doc.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: planted });
+    // filing: the derived members of a NEW Person (the indexes, change) are the server's, so the system proposer can file it
+    const doc = await createSystem(sys, { kind: "create", origin: "access_request", requestId: "req-0002", base_versions: {}, ops: [mk("Person", personValue())] });
+    expect(doc).toMatchObject({ state: "pending", kind: "create", origin: "access_request", request_id: "req-0002", proposer: { id: "system:access_request" } });
+    // approval: an admin decides it like any other proposal; the minted id (block 8000-8999) goes to the access-request hook, with the deciding admin
     w.txns.length = 0;
-    const r = await w.decide(ADMIN, planted, { verdict: "approve" });
-    expect(err(r)).toEqual({ status: 403, error: "not_allowed" });
-    expect(w.txns).toEqual([]);
-    expect(calls).toEqual([]);
-    expect(w.stored(doc.id).proposal.state).toBe("pending"); // not moved aside: this is not a rebase conflict
+    const r = await w.decide(ADMIN, doc, { verdict: "approve" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const created = Object.keys(r.body.applied.versions).find((k) => k.startsWith("Person:"));
+    expect(created).toBeTruthy();
+    const minted = w.heads("Person", created.slice("Person:".length)).gramps_id;
+    expect(minted).toMatch(/^I8\d{3}$/);
+    expect(calls).toEqual([{ requestId: "req-0002", grampsId: minted, by: ADMIN }]);
+    expect(w.stored(doc.id).proposal.state).toBe("approved");
+    expect(w.decisionTxn()).toHaveLength(1); // the link rides in the approval's own transaction
+  });
+
+  it("the derived members stay derived for everything but a create: a set of birth_ref_index is still refused, member or admin", async () => {
+    const w = await world();
+    for (const who of [OTHER, ADMIN]) {
+      const r = await w.post(who, { target: key(w.me), base_versions: { [key(w.me)]: 1 }, ops: [set(w.me, "/birth_ref_index", -1, 0, "d")] }, `idx-${who}`);
+      expect([r.status, r.body.error], who).toEqual([403, "not_allowed"]);
+    }
   });
 });
 

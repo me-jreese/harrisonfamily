@@ -3,7 +3,7 @@
 // index from 64rem, an accordion under it) and a mode badge on every field, drawn through the kit's `fieldAdornment` hook: "saves now",
 // "goes to review", or "only an admin can change this", from the policy table in the bundle. The person sections (HFY-TSK-156) are live: the names
 // form, and a list editor each for also-known-as names, life events, facts, notes, the photo order, people connected and sources
-// (lib/editor-lists.jsx, lib/editor-sections.js); the links, family and more sections are still frames. Saving is the save flow (HFY-TSK-213, lib/editor-save-ui.jsx): the forms report their values, a sticky bar counts the
+// (lib/editor-lists.jsx, lib/editor-sections.js); the links, family and more sections are still frames. The other record classes (HFY-TSK-157) are one record form and a list of related pages each (lib/editor-records.js, lib/editor-drill.jsx). Saving is the save flow (HFY-TSK-213, lib/editor-save-ui.jsx): the forms report their values, a sticky bar counts the
 // changes, "review" opens the dry-run confirmation sheet, and the kit's own submit button stays hidden in the CSS.
 // The page loads this bundle only with recordEdit (feature-flags.js), so flag off the page keeps its "not available yet" note.
 import "./editor.css";
@@ -22,6 +22,8 @@ import { replayDrafts } from "../lib/editor-save.js";
 import { ConfirmSheet, SaveDock, useCounts, useSaveFlow } from "../lib/editor-save-ui.jsx";
 import { EDITOR_WIDGETS, FormCtx } from "../lib/editor-widgets.jsx";
 import { ListEditor } from "../lib/editor-lists.jsx";
+import { DrillLinks } from "../lib/editor-drill.jsx";
+import { recordNotes, recordPolicy, recordTitle } from "../lib/editor-records.js";
 import { draftKey, makeLookups, pendingChip } from "../lib/editor-sections.js";
 import { suggestPeople } from "../lib/people-corpus.js";
 
@@ -37,9 +39,9 @@ export function nameOf(obj) {
 }
 
 function SectionForm({ section, schema, bundle, cls, resolver, viewer, seed, onDraft, lookups, env }) {
-  const input = useMemo(() => sectionSchema(schema, section.form), [schema, section]);
   // The record's values, or the member's own values replayed over a refetched record (the save flow's conflict path).
   const initialValues = useMemo(() => seed || sectionValues(bundle.obj, section.form), [bundle, section, seed]);
+  const input = useMemo(() => sectionSchema(schema, section.form, lookups, initialValues), [schema, section, lookups, initialValues]);
   const [live, setLive] = useState(initialValues);
   const onValueChange = useCallback((args) => { setLive(args || {}); onDraft(section.id, args); }, [onDraft, section.id]);
   const ctx = useMemo(() => ({ live, initial: initialValues, viewer, lookups, ...env }), [live, initialValues, viewer, lookups, env]);
@@ -55,7 +57,15 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer, seed, onD
   }, [contract, section, cls]);
   if (!contract) return <p className="hfy-editor__soon">{COPY.soon}</p>;
   const pointerOf = (p) => fieldPointer(section.form, p);
-  const codeOf = (p) => resolver.resolve(cls, pointerOf(p), viewer);
+  // A record form of another class judges each field at the pointer its adapter names (a birth's date, a tag, an enclosing place); the rest by the field's own.
+  const codeOf = (p) => {
+    if (section.form.record) {
+      // A third element is a code the form already knows (a Place's code on a local place is never kept): it outranks the lenient table.
+      const [c, ptr, fixed] = recordPolicy(section.form, String(p).split("/")[1], live, bundle.obj);
+      return fixed || resolver.resolve(c, ptr, viewer, { lenient: true });
+    }
+    return resolver.resolve(cls, pointerOf(p), viewer);
+  };
   const editable = (code) => code === "direct" || code === "proposal";
   // Enter in a field must not submit (a reload or a POST): the sticky bar's review button is the way to save.
   return (
@@ -76,6 +86,9 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer, seed, onD
             </>
           )}
         />
+        {section.form.record && recordNotes(section.form, bundle.obj, live).map((n) => (
+          <p key={n.kind} className="hfy-editor__note" role={n.kind === "warning" ? "status" : undefined} data-hfy-style-note={n.kind}>{n.text}</p>
+        ))}
       </div>
     </FormCtx.Provider>
   );
@@ -145,8 +158,9 @@ function Editor({ route }) {
         // The list sections' choices come from the Event, Note and Citation schemas. They are only labels: one that does not load leaves the
         // choices to the values the record already holds, and the page still edits.
         const more = {};
-        if (secs.some((s) => (s.lists || []).length)) {
-          await Promise.all(["Event", "Note", "Citation"].map(async (c) => { try { more[c] = (await api.get(`/edit/schema/${c}`)).schema; } catch { /* labels only */ } }));
+        // A family lists its events by kind, so it also reads the Event schema for the words.
+        if (secs.some((s) => (s.lists || []).length) || route.cls === "Family") {
+          await Promise.all((route.cls === "Family" ? ["Event"] : ["Event", "Note", "Citation"]).map(async (c) => { try { more[c] = (await api.get(`/edit/schema/${c}`)).schema; } catch { /* labels only */ } }));
         }
         if (live) setState({ phase: "ready", bundle, schema, schemas: { ...more, [route.cls]: schema } });
       } catch (e) {
@@ -203,15 +217,17 @@ function Editor({ route }) {
   const chip = pendingChip(bundle.pending);
   const gid = bundle.obj && typeof bundle.obj.gramps_id === "string" ? bundle.obj.gramps_id : route.ref;
   const name = route.cls === "Person" ? nameOf(bundle.obj) : "";
+  const title = route.cls === "Person" ? "" : recordTitle(route.cls, bundle.obj, lookups);
   return (
     <div className="hfy-editor__layout" data-hfy-editor-ready data-relation={viewer.relation} data-admin={viewer.admin ? "true" : "false"}>
       <div className="hfy-editor__lead">
         <p className="hfy-editor__subject">
-          {route.cls === "Person" ? <PersonName id={gid} name={name || gid} /> : <span>{route.cls.toLowerCase()}</span>}
+          {route.cls === "Person" ? <PersonName id={gid} name={name || gid} /> : <span data-hfy-subject>{route.cls.toLowerCase()}{title ? `: ${title}` : ""}</span>}
         </p>
         <p className="hfy-editor__intro" data-hfy-intro>{introFor(viewer)}</p>
         {chip && <p className="hfy-editor__chip" role="status" data-hfy-pending-chip>{chip.text}</p>}
         {route.cls === "Person" && <a className="hfy-editor__back" href={`/person/?id=${encodeURIComponent(gid)}`}>{COPY.back}</a>}
+        {route.cls !== "Person" && <button type="button" className="hfy-editor__back" onClick={() => history.back()} data-hfy-back>{COPY.backPrev}</button>}
       </div>
       <nav className="hfy-editor__index" aria-label={COPY.sections}>
         <ol>
@@ -231,7 +247,8 @@ function Editor({ route }) {
                 />
               </div>
             ))}
-            {!s.form && !(s.lists || []).length && <p className="hfy-editor__soon">{COPY.soon}</p>}
+            {s.drill && <DrillLinks cls={route.cls} bundle={bundle} lookups={lookups} />}
+            {!s.form && !s.drill && !(s.lists || []).length && <p className="hfy-editor__soon">{COPY.soon}</p>}
           </Section>
         ))}
       </div>
