@@ -70,6 +70,7 @@ For a new environment, for this family or another, in this order. The first page
 
 - [Connect an MCP client and run an admin delete](how-to/connect-an-mcp-client.md) — add the site's MCP server to a client, check your tools, and step up with a passkey before a delete.
 - [Refresh the sanitized samples](how-to/refresh-the-sanitized-samples.md) — update the synthetic samples the repo carries in place of private files.
+- [Backfill the contributions ledger](how-to/backfill-the-contributions-ledger.md) — credit the posts and comments written before the ledger, rebuild the counters, and check a second run changes nothing.
 - [Rotate the session signing key](how-to/rotate-the-session-signing-key.md) — replace the auth edge's signing key, which invalidates every outstanding `io_id` and MCP access token.
 - [Rotate the origin-verify secret](how-to/rotate-the-origin-verify-secret.md) — replace the CloudFront-to-Lambda shared secret with the shortest possible `403` window.
 - [Rotate the Google sign-in client](how-to/rotate-the-google-client.md) — move both sign-in paths to a new Google OAuth web client.
