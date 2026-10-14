@@ -8,27 +8,31 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "9614428e",
+        "js": "83b3d815",
         "css": "11377c0e"
       },
+      "access-requests": {
+        "js": "f51d3683",
+        "css": "ed4e0505"
+      },
       "edit-entry": {
-        "js": "06a58678",
+        "js": "fd4c177e",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "5b3bb056",
+        "js": "9f69f617",
         "css": "d8c9710c"
       },
       "family": {
-        "js": "313dbe9c",
+        "js": "d36fbffd",
         "css": "e52fd206"
       },
       "family-entry": {
-        "js": "95a7131c",
+        "js": "ce2c0389",
         "css": "978fbe15"
       },
       "follow": {
-        "js": "00d35b3c",
+        "js": "6b40bcf2",
         "css": "e58e76cd"
       },
       "inbox": {
@@ -36,39 +40,39 @@
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "b12b15e5",
+        "js": "07422ec5",
         "css": "38a33f05"
       },
       "join": {
-        "js": "cbbf3cfb",
+        "js": "1d776988",
         "css": "88b160fb"
       },
       "join-entry": {
-        "js": "21158723",
+        "js": "4890d79a",
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "e1ec143b",
+        "js": "9636d593",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "b80bb3f1",
+        "js": "c19a5513",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "85d5ae93",
+        "js": "8579e28d",
         "css": "be703fb4"
       },
       "person": {
-        "js": "2df6beaa",
+        "js": "536938a3",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "8515cca2",
+        "js": "e276ff96",
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "fc51901e",
+        "js": "74ccc880",
         "css": "6226b36b"
       },
       "photo-tags": {
@@ -76,37 +80,37 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "27619e11",
+        "js": "37d8b20a",
         "css": "890fde1c"
       },
       "review": {
-        "js": "032b26a2",
+        "js": "a7e28ae5",
         "css": "d4074f34"
       },
       "search": {
-        "js": "84717dde",
+        "js": "4d328c59",
         "css": "9e007813"
       },
       "settings": {
-        "js": "c578c014",
-        "css": "2ebf2e40"
+        "js": "56348826",
+        "css": "be4f0b90"
       },
       "shell": {
-        "js": "77ab0933",
-        "css": "dfe52562"
+        "js": "ef806cea",
+        "css": "f6871411"
       },
       "timeline": {
-        "js": "2cab4fbb",
+        "js": "2007e2f8",
         "css": "8f618380"
       },
       "tree": {
-        "js": "d4f29c0b",
+        "js": "9450e07c",
         "css": "373d5410"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "5171c5b4"
+    "sw": "09742779"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -873,6 +877,15 @@
     if (flags.proposalReview !== true && flags.recordEdit !== true) return;
     if (/^\/me\/review\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("review", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-264: the access-requests island fills the static /me/requests/ page (the admins' queue of requests to join). With accessRequests off the bundle is
+  // not requested and the page keeps its "not available yet" line (HFY-R8); the island asks /api/me itself and shows a non-admin one line.
+  resolveFlags().then((flags) => {
+    if (flags.accessRequests !== true) return;
+    if (/^\/me\/requests\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("access-requests", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 
