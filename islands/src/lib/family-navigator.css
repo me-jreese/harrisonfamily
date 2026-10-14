@@ -1,0 +1,115 @@
+/* <family-navigator> (family-navigator.js, HFY-TSK-145; viz ADR section 9.1) and the cards view around it (tree-chart.jsx). Light DOM, so these
+   rules, the theme tokens and axe all apply to what the element draws. Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
+   --io-radius-*, --io-typography-* (theme-lint no-literal-token-values). The 375 px layout is the base; wider widths are separate tasks. */
+.hfy-tree__chart { box-sizing: border-box; min-width: 0; max-width: 100%; margin-bottom: var(--io-space-5); }
+@media (min-width: 64rem) { .hfy-tree__chart { grid-column: 1 / -1; } }
+
+/* The skip link is out of sight until it has the keyboard. */
+.hfy-tree__skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.hfy-tree__skip:focus { position: static; display: inline-flex; align-items: center; width: auto; height: auto; min-height: var(--io-control-tap-min); clip-path: none; margin-bottom: var(--io-space-2); }
+
+family-navigator { display: block; min-width: 0; max-width: 100%; }
+.hfy-nav { box-sizing: border-box; min-width: 0; max-width: 100%; }
+.hfy-nav__title { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.hfy-tree .hfy-nav__notice { margin: 0 0 var(--io-space-3); padding: var(--io-space-2) var(--io-space-3); border: 1px dashed var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); color: var(--io-color-semantic-text-dim); }
+.hfy-nav__block { margin-top: var(--io-space-4); }
+.hfy-tree .hfy-nav__heading { margin: 0 0 var(--io-space-2); font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-tree .hfy-nav__none { margin: 0; color: var(--io-color-semantic-text-dim); }
+
+/* A person: one button. Strip and row cards stack the avatar over the text; the focus card and the partner card sit the avatar beside it. */
+.hfy-tree .hfy-nav__card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--io-space-2);
+  width: 100%;
+  height: 100%;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.hfy-tree .hfy-nav__card:hover { border-color: var(--io-color-semantic-accent); }
+.hfy-tree .hfy-nav__card--focus, .hfy-tree .hfy-nav__partner .hfy-nav__card { flex-direction: row; align-items: center; gap: var(--io-space-3); }
+.hfy-tree .hfy-nav__card--focus { border-color: var(--io-color-semantic-tree-focus); border-width: var(--io-control-focus-ring); }
+.hfy-nav__avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: var(--io-space-8);
+  height: var(--io-space-8);
+  overflow: hidden;
+  border-radius: var(--io-radius-pill);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-nav__card--focus .hfy-nav__avatar { width: calc(var(--io-space-8) * 1.5); height: calc(var(--io-space-8) * 1.5); font-size: var(--io-typography-size-lg); }
+.hfy-nav__avatar[data-pair="focus"] { background: var(--io-color-semantic-tree-focus); color: var(--io-color-semantic-tree-focus-ink); }
+.hfy-nav__avatar[data-pair="parent"] { background: var(--io-color-semantic-tree-parent); color: var(--io-color-semantic-tree-parent-ink); }
+.hfy-nav__avatar[data-pair="sibling"] { background: var(--io-color-semantic-tree-sibling); color: var(--io-color-semantic-tree-sibling-ink); }
+.hfy-nav__avatar[data-pair="spouse"] { background: var(--io-color-semantic-tree-spouse); color: var(--io-color-semantic-tree-spouse-ink); }
+.hfy-nav__avatar[data-pair="child"] { background: var(--io-color-semantic-tree-child); color: var(--io-color-semantic-tree-child-ink); }
+.hfy-nav__face { display: block; width: 100%; height: 100%; object-fit: cover; }
+.hfy-nav__text { display: flex; flex-direction: column; gap: var(--io-space-1); min-width: 0; }
+.hfy-nav__name { font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-nav__card--focus .hfy-nav__name { font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-lg); font-weight: var(--io-typography-weight-regular); }
+.hfy-nav__role, .hfy-nav__years, .hfy-nav__place { color: var(--io-color-semantic-text-dim); }
+.hfy-nav__badges { display: flex; flex-wrap: wrap; gap: var(--io-space-1); }
+.hfy-nav__badge { padding: 0 var(--io-space-2); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-pill); }
+
+/* The parents strip: up to two cards side by side, a dashed placeholder for the parent who is not recorded. */
+.hfy-nav__strip, .hfy-nav__row { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--io-space-2); }
+.hfy-nav__strip { align-items: stretch; }
+.hfy-nav__strip > .hfy-nav__item { flex: 1 1 0; min-width: 0; }
+.hfy-tree .hfy-nav__missing {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-height: var(--io-control-tap-min);
+  margin: 0;
+  padding: var(--io-space-3);
+  border: 1px dashed var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  color: var(--io-color-semantic-text-dim);
+}
+
+/* Children and siblings: a row that scrolls inside itself, one card snapping into place at a time. The page never scrolls sideways. */
+.hfy-nav__row { align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; padding-bottom: var(--io-space-2); }
+.hfy-nav__row > .hfy-nav__item { flex: 0 0 auto; width: calc(var(--io-space-9) * 2.5); scroll-snap-align: start; }
+
+/* One tab per union. */
+.hfy-nav__tabs { display: flex; gap: var(--io-space-2); margin-bottom: var(--io-space-2); overflow-x: auto; }
+.hfy-tree .hfy-nav__tab {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-tree .hfy-nav__tab[aria-selected="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-surface-raised); font-weight: var(--io-typography-weight-semibold); }
+.hfy-nav__partner { margin-bottom: var(--io-space-2); }
+
+/* The details sheet (the kit Sheet portals to the body, outside .hfy-tree). */
+.hfy-tree-details { color: var(--io-color-semantic-text); font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-normal); }
+.hfy-tree-details h3 { margin: var(--io-space-4) 0 var(--io-space-2); font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-tree-details :is(ul, dl) { margin: 0; padding: 0; list-style: none; }
+.hfy-tree-details li, .hfy-tree-details__fact { margin: 0 0 var(--io-space-2); }
+.hfy-tree-details dt { color: var(--io-color-semantic-text-dim); }
+.hfy-tree-details dd { margin: 0 0 var(--io-space-2); }
+.hfy-tree-details .hfy-tree__dim { color: var(--io-color-semantic-text-dim); }
+.hfy-tree-details .hfy-tree__link { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }

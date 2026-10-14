@@ -507,6 +507,114 @@ describe("review fixes (HFY-TSK-233)", () => {
     });
   });
 
+  describe("Url types: the web writes the link kinds only (editing.md 3.2, HFY-TSK-329)", () => {
+    const url = (type, path = "https://example.test") => ({ _class: "Url", path, desc: "", type });
+    const home = url(typed("UrlType", 2));
+    const search = url(typed("UrlType", 3), "https://search.example.test");
+    const ftp = url(typed("UrlType", 4), "ftp://files.example.test");
+    const unknown = url(typed("UrlType", -1), "https://other.example.test");
+    const insta = url(typed("UrlType", 0, "instagram"), "https://www.instagram.com/example");
+    const oddCustom = url(typed("UrlType", 0, "my diary"), "https://diary.example.test");
+    const worldWith = () => {
+      const w = withLists();
+      w[ME].urls = [mail, home, search, ftp, unknown, insta, oddCustom];
+      return w;
+    };
+    const run1 = async (op, opts) => (await run([{ id: "o1", ...op }], opts))[0];
+    const EXPECT_OTHER = "desk"; // the relation rule does not outrank the desktop-only row for a non-owner
+    it("adding a non-link Url is desktop-only for the owner, another member and an admin; link kinds stay direct", async () => {
+      const as = [{ actor: actorOf("I9001") }, { actor: actorOf("I9999") }, { actor: { id: "I9000", admin: true } }];
+      for (const bad of [search, ftp, unknown, oddCustom]) {
+        for (const o of as) {
+          const r = await run1({ op: "add", obj: ME, path: "/urls", value: bad }, o);
+          assert.equal(r.code, o.actor.id === "I9999" ? EXPECT_OTHER : "desk", `${bad.type.value}/${bad.type.string}`);
+          assert.ok(r.kinds.includes("url_not_link"), `${bad.type.value}/${bad.type.string}`);
+        }
+      }
+      const customTypes = { UrlType: new Set(["instagram"]) };
+      for (const good of [home, insta]) assert.equal(await codeOf({ op: "add", obj: ME, path: "/urls", value: good }, { customTypes }), "direct");
+      assert.equal(await codeOf({ op: "add", obj: ME, path: "/urls", value: home }, { actor: { id: "I9000", admin: true } }), "direct");
+    });
+    it("editing, retyping or removing a stored non-link Url is desktop-only; the stored link kinds stay direct", async () => {
+      const w = worldWith();
+      for (const bad of [search, ftp, unknown, oddCustom]) {
+        const r = await run1({ op: "set", obj: ME, path: `/urls/${k(bad)}/path`, base: bad.path, value: "https://changed.example.test" }, { objects: w });
+        assert.equal(r.code, "desk");
+        assert.deepEqual(r.kinds, ["url_not_link"]);
+        assert.equal(await codeOf({ op: "remove", obj: ME, path: `/urls/${k(bad)}`, base: bad }, { objects: w }), "desk");
+      }
+      assert.equal(await codeOf(set(ME, `/urls/${k(search)}/type`, search.type, typed("UrlType", 2)), { objects: w }), "desk", "retyping away from a non-link type is judged on the stored element");
+      assert.equal(await codeOf(set(ME, `/urls/${k(home)}/type`, home.type, typed("UrlType", 3)), { objects: w }), "desk", "retyping to a non-link type");
+      for (const good of [home, insta]) assert.equal(await codeOf(set(ME, `/urls/${k(good)}/path`, good.path, "https://other.example.test"), { objects: w }), "direct");
+    });
+    it("e-mail stays never, with its own reason, and outranks the desktop-only row", async () => {
+      const w = worldWith();
+      const r = await run1({ op: "set", obj: ME, path: `/urls/${k(mail)}/path`, base: mail.path, value: "b@example.test" }, { objects: w });
+      assert.equal(r.code, "never");
+      assert.deepEqual(r.kinds, ["url_email"]);
+      const add = await run1({ op: "add", obj: ME, path: "/urls", value: url(typed("UrlType", 1), "c@example.test") }, { actor: { id: "I9000", admin: true } });
+      assert.equal(add.code, "never");
+      assert.ok(add.kinds.includes("url_email"));
+    });
+    it("a retype through one field of the type is judged on the Url it produces", async () => {
+      const w = worldWith();
+      const admin = { actor: { id: "I9000", admin: true } };
+      for (const to of [3, 4]) {
+        for (const o of [{}, admin]) {
+          const r = await run1(set(ME, `/urls/${k(home)}/type/value`, 2, to), { objects: w, ...o });
+          assert.equal(r.code, "desk", `Web Home to ${to}`);
+          assert.deepEqual(r.kinds, ["url_not_link"]);
+        }
+      }
+      const s = await run1(set(ME, `/urls/${k(insta)}/type/string`, "instagram", "my diary"), { objects: w });
+      assert.equal(s.code, "desk", "a link-kind custom string renamed to any other string");
+      assert.deepEqual(s.kinds, ["url_not_link"]);
+      const e = await run1(set(ME, `/urls/${k(home)}/type/value`, 2, 1), { objects: w });
+      assert.equal(e.code, "never", "a Web Home retyped to E-mail");
+      assert.deepEqual(e.kinds, ["url_email"]);
+      const bare = await run1({ op: "remove", obj: ME, path: `/urls/${k(home)}/type`, base: home.type }, { objects: w });
+      assert.equal(bare.code, "desk", "a Url left without a type is Unknown");
+      assert.deepEqual(bare.kinds, ["url_not_link"]);
+      // A list position names the element as well as a key does.
+      const links = world();
+      links[ME].urls = [home, insta];
+      assert.equal(await codeOf(set(ME, "/urls/0/type/value", 2, 3), { objects: links }), "desk");
+      // The link kinds stay direct through the same fields.
+      assert.equal(await codeOf(set(ME, `/urls/${k(insta)}/type/string`, "instagram", "tiktok"), { objects: w }), "direct");
+      assert.equal(await codeOf(set(ME, `/urls/${k(insta)}/type/value`, 0, 2), { objects: w }), "direct");
+    });
+    it("a retype split across two ops on one Url is judged on the Url they produce together", async () => {
+      // Alone, each op leaves a link kind (Custom "instagram", or Web Home); together they leave Custom "my diary".
+      const named = url(typed("UrlType", 2, "instagram"), "https://home.example.test");
+      const w = world();
+      w[ME].urls = [named];
+      for (const order of [["v", "s"], ["s", "v"]]) {
+        const ops = {
+          v: { id: "v", ...set(ME, `/urls/${k(named)}/type/value`, 2, 0) },
+          s: { id: "s", ...set(ME, `/urls/${k(named)}/type/string`, "instagram", "my diary") },
+        };
+        const out = await run(order.map((id) => ops[id]), { objects: w });
+        assert.deepEqual(out.map((r) => r.code), ["direct", "desk"], order.join(","));
+        assert.deepEqual(out[1].kinds, ["url_not_link"]);
+        const plan = planOps(order.map((id) => ops[id]), out, { objects: w });
+        assert.deepEqual(plan.refused.map((g) => g.opIds), [[order[1]]], "the op that completes the retype is refused");
+      }
+    });
+    it("a key that matches no stored Url fails closed, with no Url reason (the page is stale, not an e-mail)", async () => {
+      const w = worldWith();
+      const s = await run1(set(ME, "/urls/@k=000000000000/path", "x", "y"), { objects: w });
+      assert.equal(s.code, "never");
+      assert.deepEqual(s.kinds, []);
+      const r = await run1({ op: "remove", obj: ME, path: "/urls/@k=000000000000", base: home }, { objects: w });
+      assert.equal(r.code, "never");
+      assert.deepEqual(r.kinds, []);
+      const e = await run1(set(ME, "/urls/@k=000000000000", home, url(typed("UrlType", 1), "d@example.test")), { objects: w });
+      assert.deepEqual(e.kinds, ["url_email"], "an e-mail Url in the op's own value is still named");
+      const n = await run1(set(ME, "/urls/@k=000000000000", home, search), { objects: w });
+      assert.deepEqual(n.kinds, ["url_not_link"], "so is a non-link Url in the op's own value");
+    });
+  });
+
   it("every group tag in the table has a Q2-15 switch, and every grouped switch is used", () => {
     const tags = new Set(FIELD_POLICY_ROWS.map((r) => r[4]?.group).filter(Boolean));
     const switches = Q2_15_ROWS.filter((r) => r.group);
@@ -529,6 +637,14 @@ describe("review fixes (HFY-TSK-233)", () => {
     });
     it("a key that matches no stored element is not directly writable", async () => {
       assert.equal(await codeOf(set(ME, "/attribute_list/@k=000000000000/value", "x", "y"), { objects: withLists() }), "never");
+    });
+    it("an attribute retyped through one field of its type is judged on the attribute it produces", async () => {
+      const hobby = typedAttr(0, "Hobby");
+      const w = withLists();
+      w[ME].attribute_list.push(hobby);
+      assert.equal(await codeOf(set(ME, `/attribute_list/${k(benign)}/type/value`, 2, 6), { objects: w }), "never");
+      assert.equal(await codeOf(set(ME, `/attribute_list/${k(hobby)}/type/string`, "Hobby", "Merged Gramps ID"), { objects: w }), "desk");
+      assert.equal(await codeOf(set(ME, `/attribute_list/${k(benign)}/type/value`, 2, 4), { objects: w }), "direct");
     });
     it("a Merged Gramps ID attribute is desktop-only (the sync identity key); a member cannot write it", async () => {
       const w = withLists();

@@ -133,7 +133,7 @@ On a scheduled run, at most once every 24 hours (or on `{"reconcile": true}`), t
 
 ## Known limits
 
-- The store view folds the whole `SYNC#LOG` on every pass. Snapshots (`snapshots/<seq>.jsonl.gz`) would bound that, but nothing builds them yet, and a snapshot taken before an expunge would carry what the store has since dropped; the fold is a strongly consistent Query of the log, which stays small for a family tree. Revisit when the log passes a few hundred megabytes.
+- The store view folds the whole `SYNC#LOG` on every pass. The desktop snapshot that `GET /api/sync/snapshot` caches at `snapshots/<seq>.jsonl.gz` in the sync bucket (HFY-TSK-174; [API: The pull routes](api.md#the-pull-routes)) could bound that, but the render pass does not read it: it exists only after a desktop pull, it expires after 30 days, and it is valid only while its metadata matches the current `SYNC#HEAD.expunge_epoch`, tree id, redaction and schema versions, so the pass would need that same check to avoid rendering what an expunge dropped. The fold is a strongly consistent Query of the log, which stays small for a family tree. Revisit when the log passes a few hundred megabytes.
 - The renderer does not read the `MOD#` overlay (see [Guards](#guards)); until `hfy-moderation-record-targets` supplies an `overlay`, a moderation hide does not change what is rendered.
 - `render_site` holds the interim local copy of the redaction rule lists (`gramps/hfygramps/render/policy.py`, `places.py`); replacing them with an import of `gramps/redaction/redaction-v1.json` is still open (the TODO in `policy.py`).
 
