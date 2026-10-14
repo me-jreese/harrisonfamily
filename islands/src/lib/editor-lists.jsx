@@ -173,6 +173,7 @@ export function ListEditor({ sectionId, listId, bundle, schemas, lookups, viewer
                 {gone && <span className="hfy-chip" data-hfy-chip="removed">{SECTION_COPY.removedTag}</span>}
               </div>
               <div className="hfy-row__actions">
+                {!gone && r.href ? <a className="hfy-row__open" href={r.href} aria-label={`${SECTION_COPY.openRecord} ${r.title}`} data-hfy-open>{SECTION_COPY.openRecord}</a> : null}
                 {!gone && <button type="button" onClick={() => toggle(r.id)} aria-expanded={open} aria-label={`${SECTION_COPY.edit} ${r.title}`} data-hfy-edit>{SECTION_COPY.edit}</button>}
                 <button type="button" onClick={() => flipRemoved(r.id)} aria-label={`${gone ? SECTION_COPY.keep : SECTION_COPY.remove} ${r.title}`} data-hfy-remove>{gone ? SECTION_COPY.keep : SECTION_COPY.remove}</button>
               </div>

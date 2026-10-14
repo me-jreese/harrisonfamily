@@ -10,6 +10,7 @@ export const EDIT_CLASSES = Object.freeze({
 });
 
 import { NAME_FIELDS, nameValues } from "./editor-names.js";
+import { recordPointer, recordSchema, recordSections, recordValues } from "./editor-records.js";
 
 const REF = /^(?:h:[A-Za-z0-9_-]{1,64}|[A-Za-z0-9._-]{1,64})$/;
 
@@ -40,6 +41,7 @@ export const COPY = Object.freeze({
   loadFailed: "the editor didn't load. try again in a moment.",
   noRoute: "pick a page to edit from its own page.",
   back: "back to the page",
+  backPrev: "back",
   sections: "sections",
   soon: "editing this part is coming soon.",
   ownIntro: "this is your page. what you change here is saved right away, except a few things that go to review first.",
@@ -149,11 +151,9 @@ export const PERSON_SECTIONS = Object.freeze([
   { id: "more", title: "more", adminOnly: true }
 ]);
 
-const OTHER_SECTIONS = Object.freeze([{ id: "details", title: "details" }]);
-
-/** The sections the viewer sees for a class, in order. */
+/** The sections the viewer sees for a class, in order. The other classes are record forms and their related pages (editor-records.js). */
 export function sectionsFor(cls, viewer = {}) {
-  const all = cls === "Person" ? PERSON_SECTIONS : OTHER_SECTIONS;
+  const all = cls === "Person" ? PERSON_SECTIONS : recordSections(cls);
   return all.filter((s) => !s.adminOnly || viewer.admin === true);
 }
 
@@ -165,7 +165,8 @@ export const introFor = (viewer = {}) => (viewer.admin ? COPY.adminIntro : viewe
  * `surname` field is the Surname definition's own `surname`; `form.widgets` names the host widget of a field. Returns null when the schema
  * lacks the definition (the section then shows the frame only).
  */
-export function sectionSchema(schema, form) {
+export function sectionSchema(schema, form, lookups = null, values = {}) {
+  if (form.record) return recordSchema(schema, form, lookups, values);
   const def = schema && schema.$defs && schema.$defs[form.from];
   if (!def || !def.properties) return null;
   const properties = {};
@@ -181,12 +182,14 @@ export function sectionSchema(schema, form) {
 
 /** The record pointer a form field's policy is read at (`pointer` is the form's own, "/first_name"). */
 export function fieldPointer(form, pointer) {
+  if (form.record) return recordPointer(form, pointer);
   const field = String(pointer).split("/")[1];
   return (form.pointers && form.pointers[field]) || `${form.prefix}${pointer}`;
 }
 
 /** The values for a section form, read from the record at the form's prefix (a string field missing from the record starts empty). */
 export function sectionValues(obj, form) {
+  if (form.record) return recordValues(obj, form);
   if (form.names) return nameValues(obj);
   const base = form.prefix.split("/").filter(Boolean).reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), obj);
   const out = {};
