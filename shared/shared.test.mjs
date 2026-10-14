@@ -13,6 +13,7 @@ import "./profile-links.test.mjs";
 import "./legacy-form.test.mjs";
 import "./edit-guard.test.mjs";
 import "./canonical.test.mjs";
+import "./emails.test.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const modules = readdirSync(dir).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));

@@ -211,6 +211,9 @@ class SyncInfra(unittest.TestCase):
             "HfyEditing": "off", "AccessRequests": "off", "TurnstileSiteKey": "", "SesConfigurationSet": "",
             "SesIdentityArn": "", "ChatServicePublicKeys": "", "GraphRenderCodeKey": "lambda/hfy-graph-render-placeholder.zip",
             "SyncBucketName": "harrisonfamily-sync", "AlarmEmail": "",
+            # HFY-TSK-195 (P2-R23): the access-request mail identity, configuration set and alarms are separate from Cognito's and the API's
+            "JoinSesIdentityArn": "", "JoinFromAddress": "", "JoinSesConfigurationSet": "",
+            "JoinBounceAlarmName": "hfy-access-request-bounce", "JoinComplaintAlarmName": "hfy-access-request-complaint",
         }
         for name, default in expected.items():
             self.assertIn(name, self.p, name)
@@ -228,8 +231,12 @@ class SyncInfra(unittest.TestCase):
                            ("CHAT_SERVICE_PUBLIC_KEYS", "ChatServicePublicKeys"), ("SES_CONFIGURATION_SET", "SesConfigurationSet")]:
             self.assertEqual(api[env], {"Ref": param}, env)
         for env, param in [("ACCESS_REQUESTS", "AccessRequests"), ("TURNSTILE_SITE_KEY", "TurnstileSiteKey"),
-                           ("SES_CONFIGURATION_SET", "SesConfigurationSet")]:
+                           ("JOIN_FROM_ADDRESS", "JoinFromAddress"), ("JOIN_SES_CONFIGURATION_SET", "JoinSesConfigurationSet")]:
             self.assertEqual(edge[env], {"Ref": param}, env)
+        # the edge never sends through the Cognito and API identity or configuration set
+        self.assertNotIn("SES_FROM_ADDRESS", edge)
+        self.assertNotIn("SES_CONFIGURATION_SET", edge)
+        self.assertEqual(edge["JOIN_MAIL_ALARMS"], {"Fn::Sub": "${JoinBounceAlarmName},${JoinComplaintAlarmName}"})
         self.assertEqual(self.r["RenderFunction"]["Properties"]["Environment"]["Variables"]["RENDER_MODE"], {"Ref": "RenderMode"})
 
     # AC1: bucket
@@ -353,20 +360,44 @@ class SyncInfra(unittest.TestCase):
             f"arn:${{AWS::Partition}}:secretsmanager:${{AWS::Region}}:${{AWS::AccountId}}:secret:${{{n}}}-*" for n in ("TurnstileSecretName", "AccessRequestPepperSecretName")))
         self.assertEqual(self.p["TurnstileSecretName"]["Default"], "harrisonfamily/auth-edge/turnstile")
         self.assertEqual(self.p["AccessRequestPepperSecretName"]["Default"], "harrisonfamily/access-request/pepper")
-        for role in ("Role", "AuthRole"):
-            ses = [s for s in statements(self.r[role]) if isinstance(s, dict) and "Fn::If" in s and s["Fn::If"][0] == "HasSes"]
+        # the api role keeps the Cognito and API identity; the edge role sends access-request mail from the JOIN identity only (P2-R23)
+        for role, cond, ident, frm, cset in (("Role", "HasSes", "SesIdentityArn", "SesFromAddress", "SesConfigurationSet"),
+                                              ("AuthRole", "HasJoinSes", "JoinSesIdentityArn", "JoinFromAddress", "JoinSesConfigurationSet")):
+            ses = [s for s in statements(self.r[role]) if isinstance(s, dict) and "Fn::If" in s and s["Fn::If"][0] == cond]
             self.assertEqual(len(ses), 1, role)
+            self.assertEqual(len([s for s in statements(self.r[role]) if isinstance(s, dict) and s.get("Fn::If", [""])[0] in ("HasSes", "HasJoinSes")]), 1, role)
             st = ses[0]["Fn::If"][1]
             self.assertEqual((st["Sid"], st["Action"]), ("SendEmail", "ses:SendEmail"))
-            self.assertEqual(st["Resource"][0], {"Ref": "SesIdentityArn"})
-            self.assertEqual(st["Condition"], {"StringEquals": {"ses:FromAddress": {"Ref": "SesFromAddress"}}}, role)
+            self.assertEqual(st["Resource"][0], {"Ref": ident})
+            cs = st["Resource"][1]
+            if role == "AuthRole":  # required with the identity (rule JoinSesIdentityNeedsConfigurationSet), so no condition around the ARN
+                self.assertNotIn("Fn::If", cs)
+            else:
+                cs = cs["Fn::If"][1]
+            self.assertEqual(sub(cs), f"arn:${{AWS::Partition}}:ses:${{AWS::Region}}:${{AWS::AccountId}}:configuration-set/${{{cset}}}", role)
+            self.assertEqual(st["Condition"], {"StringEquals": {"ses:FromAddress": {"Ref": frm}}}, role)
+            self.assertEqual(ses[0]["Fn::If"][2], {"Ref": "AWS::NoValue"}, role)
+        # the edge reads the state of the bounce and complaint alarms: one read-only action. DescribeAlarms is list-style, so an alarm-ARN
+        # Resource may not be honored by IAM (AccessDenied would fail the gate closed for good); the resource is "*" and the RG-4 smoke checks it
+        alarms = by_sid(self.r["AuthRole"], "JoinMailAlarmState")
+        self.assertEqual((alarms["Effect"], alarms["Action"], alarms["Resource"]), ("Allow", "cloudwatch:DescribeAlarms", "*"))
+        conds = self.t["Conditions"]
+        self.assertEqual(conds["HasJoinSes"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
+        self.assertNotIn("HasJoinSesConfigSet", conds)  # the configuration set is required with the identity, never optional
         rules = self.t["Rules"]  # a config set or identity without its companions would fail at runtime, so the template refuses them
         self.assertEqual(rules["SesConfigurationSetNeedsIdentity"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesIdentityArn"}, ""]}]})
         self.assertEqual(rules["SesConfigurationSetNeedsIdentity"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesConfigurationSet"}, ""]}]})
         self.assertEqual(rules["SesIdentityNeedsFromAddress"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesFromAddress"}, ""]}]})
-        pattern = re.compile(self.p["SesFromAddress"]["AllowedPattern"])
-        self.assertTrue(pattern.match("") and pattern.match("no-reply@example.test"))
-        self.assertIsNone(pattern.match("Site <no-reply@example.test>"))
+        self.assertEqual(rules["JoinSesIdentityNeedsFromAddress"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
+        self.assertEqual(rules["JoinSesIdentityNeedsFromAddress"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinFromAddress"}, ""]}]})
+        self.assertEqual(rules["JoinSesIdentityNeedsConfigurationSet"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
+        self.assertEqual(rules["JoinSesIdentityNeedsConfigurationSet"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesConfigurationSet"}, ""]}]})
+        self.assertEqual(rules["JoinSesConfigurationSetNeedsIdentity"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesConfigurationSet"}, ""]}]})
+        self.assertEqual(rules["JoinSesConfigurationSetNeedsIdentity"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
+        for name in ("SesFromAddress", "JoinFromAddress"):
+            pattern = re.compile(self.p[name]["AllowedPattern"])
+            self.assertTrue(pattern.match("") and pattern.match("no-reply@example.test"), name)
+            self.assertIsNone(pattern.match("Site <no-reply@example.test>"), name)
 
     # AC7: break-glass
     def test_breakglass_role_requires_mfa_and_io_only(self):

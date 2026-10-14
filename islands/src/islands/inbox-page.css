@@ -1,0 +1,26 @@
+/* /me/inbox/ (inbox-page.jsx, HFY-TSK-185). Aliases only (theme-lint no-literal-token-values). The inbox's own look is src/inbox.css. */
+.hfy-inboxpage {
+  box-sizing: border-box;
+  max-width: calc(10 * var(--io-space-9));
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  line-height: var(--io-typography-leading-relaxed);
+}
+.hfy-inboxpage__skeleton { height: calc(3 * var(--io-control-h-lg)); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); }
+.hfy-inboxpage__gate p { margin: 0 0 var(--io-space-3); }
+.hfy-inboxpage__signin,
+.hfy-inboxpage__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  color: var(--io-color-semantic-link);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: none;
+}
+.hfy-inboxpage__signin { padding: 0 var(--io-space-4); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text); }
+.hfy-inboxpage__signin:hover,
+.hfy-inboxpage__link:hover { color: var(--io-color-semantic-link-hover); }
+.hfy-inboxpage__signin:focus-visible,
+.hfy-inboxpage__link:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-inboxpage__settings { margin: var(--io-space-4) 0 0; }

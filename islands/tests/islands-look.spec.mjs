@@ -92,7 +92,8 @@ const expectGoldRing = (r, what) => {
 };
 
 const PAGES = { home: "/", posts: "/posts/", post: `/posts/?id=${FX.posts[0].id}`, person: "/person/?id=I9001", search: "/search/?q=Quillfeather", notifications: "/me/notifications/" };
-const READY = { home: "[data-hfy-timeline] .hfy-posts__item", posts: "[data-hfy-posts] .hfy-posts__item", post: "[data-hfy-comments] .io-comments-comment", person: "[data-hfy-comments] .io-comments-comment", search: "#hfy-search-v2 .hfy-search__row", notifications: ".hfy-notify [role=switch]" };
+// A post row, not a loading skeleton row (also .hfy-posts__item): an audit run while only the skeleton shows sees almost no text.
+const READY = { home: "[data-hfy-timeline] .hfy-posts__item:has(.iok-content-card)", posts: "[data-hfy-posts] .hfy-posts__item:has(.iok-content-card)", post: "[data-hfy-comments] .io-comments-comment", person: "[data-hfy-comments] .io-comments-comment", search: "#hfy-search-v2 .hfy-search__row", notifications: ".hfy-notify [role=switch]" };
 
 for (const width of [375, 1024]) {
   for (const [name, path] of Object.entries(PAGES)) {
@@ -264,8 +265,8 @@ test("notifications at 375: switch 52x32 with a 44 hit area, on = accent with an
   expect(a.knobW).toBe("24px");
   expect(a.knobBg).toBe(RGB.accentText);
   expect((await off.evaluate(sw)).bg).toBe(RGB.borderStrong);
-  const group = await page.locator(".hfy-notify .iok-notify-group > h4").evaluate((h) => { const cs = getComputedStyle(h); return { transform: cs.textTransform, spacing: cs.letterSpacing, size: cs.fontSize, text: h.textContent }; });
-  expect(group).toEqual({ transform: "none", spacing: "normal", size: "16px", text: "family" });
+  const group = await page.locator(".hfy-notify .iok-notify-group > h4").first().evaluate((h) => { const cs = getComputedStyle(h); return { transform: cs.textTransform, spacing: cs.letterSpacing, size: cs.fontSize, text: h.textContent }; });
+  expect(group).toEqual({ transform: "none", spacing: "normal", size: "16px", text: "about me" });
   expect(await page.locator(".hfy-notify .iok-notify-row").first().evaluate((li) => li.getBoundingClientRect().height)).toBeGreaterThanOrEqual(56);
   const chosen = page.locator('.hfy-notify [data-type="mention"] [role=radio][aria-checked=true]');
   expect(await chosen.evaluate((b) => [getComputedStyle(b).backgroundColor, getComputedStyle(b).color])).toEqual([RGB.accent, RGB.accentText]);

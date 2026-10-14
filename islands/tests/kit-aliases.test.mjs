@@ -85,7 +85,7 @@ test("every aliased token exists in the harrisonfamily theme", () => {
 
 test("the root-cause comment names the packages, DVP-TSK-A73 and the deletion condition", () => {
   const src = readFileSync(aliasesPath, "utf8");
-  for (const s of ["DVP-TSK-A73", "@io-kit/shell 0.6.6", "@io-kit/content 0.3.1", "@io-kit/notify 0.4.0", "DELETE"]) assert.ok(src.includes(s), s);
+  for (const s of ["DVP-TSK-A73", "@io-kit/shell 0.6.6", "@io-kit/content 0.3.2", "@io-kit/notify 0.6.0", "DELETE"]) assert.ok(src.includes(s), s);
   const pkg = (p) => JSON.parse(readFileSync(kit(`${p}/package.json`), "utf8")).version;
-  assert.deepEqual([pkg("shell"), pkg("content"), pkg("notify")], ["0.6.6", "0.3.1", "0.4.0"], "kit versions changed: re-check A73 and update the comment");
+  assert.deepEqual([pkg("shell"), pkg("content"), pkg("notify")], ["0.6.6", "0.3.2", "0.6.0"], "kit versions changed: re-check A73 and update the comment");
 });

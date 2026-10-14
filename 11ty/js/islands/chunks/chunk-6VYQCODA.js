@@ -1,1 +1,0 @@
-var t=e=>`/person/?id=${encodeURIComponent(e)}`,a=(e,n)=>/^\/person(\/(index\.html)?)?$/.test(e.pathname)&&new URLSearchParams(e.search).get("id")===n,o=(e,n)=>n&&a(e,n)?t(n):e.pathname;export{t as a,o as b};

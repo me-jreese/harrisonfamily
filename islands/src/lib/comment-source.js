@@ -51,7 +51,8 @@ function refuseContactInfo(body, asPromise = false) {
 export function createHfyCommentSource(api, { onAdded } = {}) {
   const enc = encodeURIComponent;
   return {
-    list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit } }), "list"),
+    // `order` (asc, the default, or desc) goes through as GET /api/comments?order=; a cursor is bound to the order that issued it.
+    list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit, order: opts.order } }), "list"),
     async create(threadId, input) {
       refuseContactInfo(input.body);
       const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");

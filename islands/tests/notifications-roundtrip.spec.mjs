@@ -3,9 +3,8 @@
 // stored preferences shape ({features:{type:{enabled,detail}}}) and back out on GET ({types:{type:{enabled,level}}}): no mapping drift.
 // Synthetic principal only.
 import { test, expect } from "@playwright/test";
-import { readFileSync } from "node:fs";
 import { makeApi, signToken } from "../../api/test/world.js";
-import { TEMPLATE_REGISTRY } from "../../api/src/notify.js";
+import { catalogFor } from "../src/lib/notify-catalog.js";
 
 const ME = "I0001";
 
@@ -83,29 +82,15 @@ test("every payload the page sends is accepted by the handler (200, never invali
   expect(statuses.every((s) => s === 200)).toBe(true);
 });
 
-// HFY-TSK-253 added the PLN-002 types to TEMPLATE_REGISTRY (api/src/notify.js notifyContract()). The island CATALOG gains them in
-// hfy-inbox-ui (chat_message in hfy-chat-api-service-routes); until then they are pinned here, so a registry type that is neither in the
-// CATALOG nor on this list still fails the test. Moving a type into the CATALOG means removing it from this list.
-const REGISTRY_TYPES_NOT_IN_CATALOG = [
-  "proposal_submitted", "proposal_accepted", "proposal_declined", "proposal_needs_changes", "proposal_stale",
-  "record_updated_mine", "record_updated_followed", "records_updated_followed_digest",
-  "moderation_hidden", "moderation_request", "moderation_question", "moderation_unhidden", "moderation_resolved",
-  "photo_graduated", "chat_message",
-];
-
-// Deliberately a source-text check: the island is JSX and not importable from the node/Playwright runner without a build step.
-// If CATALOG is reformatted (4-space entries, `export const CATALOG` / `export const LABELS` markers) update the slice below.
-test("the island catalog and the server registry name the same types (less the pinned PLN-002 types) with the same lock-screen text", async () => {
-  const src = readFileSync(new URL("../src/islands/notifications.jsx", import.meta.url), "utf8");
-  const catalog = src.slice(src.indexOf("export const CATALOG"), src.indexOf("export const LABELS"));
-  const ids = [...catalog.matchAll(/^\s{4}(\w+): \{ group:/gm)].map((m) => m[1]);
-  const registry = Object.keys(TEMPLATE_REGISTRY.features);
-  expect(REGISTRY_TYPES_NOT_IN_CATALOG.filter((id) => !registry.includes(id)), "pinned types missing from the registry").toEqual([]);
-  expect(ids.filter((id) => REGISTRY_TYPES_NOT_IN_CATALOG.includes(id)), "a CATALOG type still on the pinned list").toEqual([]);
-  expect(ids.sort()).toEqual(registry.filter((id) => !REGISTRY_TYPES_NOT_IN_CATALOG.includes(id)).sort());
-  for (const id of ids) {
-    const t = TEMPLATE_REGISTRY.features[id];
-    expect(catalog, `${id} generic`).toContain(`generic: ${JSON.stringify(t.level0)}`);
-    expect(catalog, `${id} detailed`).toContain(`detailed: ${JSON.stringify(t.level1)}`);
-  }
+// The catalog / registry contract (type ids, titles, level 0 and level 1 strings) is pinned by tests/notify-catalog.test.mjs
+// (npm run test:contract), which imports src/lib/notify-catalog.js directly. Here: the toggles the page renders are exactly the catalog's.
+test("the page lists the catalog's types for a member: about me, family, and no moderators group", async ({ page }) => {
+  await wire(page);
+  const root = await open(page);
+  const expected = Object.keys(catalogFor({ admin: false }).types).sort();
+  const shown = await root.locator("[data-type]").evaluateAll((els) => els.map((e) => e.getAttribute("data-type")));
+  expect([...shown].sort()).toEqual(expected);
+  await expect(root.getByRole("heading", { name: "about me" })).toBeVisible();
+  await expect(root.getByRole("heading", { name: "family" })).toBeVisible();
+  await expect(root.getByRole("heading", { name: "for moderators" })).toHaveCount(0);
 });

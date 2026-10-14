@@ -17,7 +17,7 @@ const windowOf = (nowMs, windowSeconds) => {
 
 /** Hashed counter key, so neither the email nor the IP is stored in the table. */
 export function rateKey(name, scope, { email = "", ip = "" }) {
-  const parts = scope.split("+").map((p) => (p === "email" ? `e:${email}` : p === "ip" ? `i:${ip}` : `?:${p}`));
+  const parts = scope.split("+").map((p) => (p === "email" ? `e:${email}` : p === "ip" ? `i:${ip}` : p === "global" ? "g" : `?:${p}`));
   return `${name}:${scope}#${createHash("sha256").update(parts.join("\n")).digest("base64url")}`;
 }
 

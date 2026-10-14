@@ -5,6 +5,7 @@ import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
 import { describeGate, gateExempt, requireFeature } from "./features.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
+import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
@@ -105,6 +106,29 @@ export const ROUTES = defineRoutes([
     gate: requireFeature("contribV1"), when: (q) => !q.author,
     handler: async (c) => ok(await c.contrib.site()),
   },
+  // Record follows (hfy-record-subs-api; social.md section 6, R-12), dark until recordSubsV1 is on (or the caller is uat). No `mcp` member and no
+  // policy row. The remove route is subscriptions.remove, never *.delete, which the policy glob would read as an admin step-up action.
+  // subscriptions.get and subscriptions.list share a path: `?subject=` picks the first, its absence the second.
+  {
+    name: "subscriptions.get", method: "GET", path: "/subscriptions", summary: "Am I following ?subject=person:<id>? {subject, subscribed} (no MCP tool)",
+    gate: requireFeature("recordSubsV1"), when: (q) => q.subject !== undefined,
+    handler: async (c) => ok(await c.subscriptions.get(c.query.subject)),
+  },
+  {
+    name: "subscriptions.list", method: "GET", path: "/subscriptions", summary: "The pages I follow, newest first (cursor, limit 1-100, default 25): {items: [{subject, created_at}], cursor} (no MCP tool)",
+    gate: requireFeature("recordSubsV1"), when: (q) => q.subject === undefined,
+    handler: async (c) => ok(await c.subscriptions.list({ cursor: c.query.cursor || undefined, limit: c.query.limit })),
+  },
+  {
+    name: "subscriptions.put", method: "PUT", path: "/subscriptions/person/:id", summary: "Follow a person's page, idempotent (400 self_subscribe for your own page, 404 for an unknown person; no MCP tool)",
+    gate: requireFeature("recordSubsV1"),
+    handler: async (c) => ok(await c.subscriptions.put(c.params.id)),
+  },
+  {
+    name: "subscriptions.remove", method: "DELETE", path: "/subscriptions/person/:id", summary: "Unfollow a person's page, idempotent: 204 (no MCP tool)",
+    gate: requireFeature("recordSubsV1"),
+    handler: async (c) => { await c.subscriptions.remove(c.params.id); return ok(undefined, 204); },
+  },
   {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first by default or order=desc for newest first (cursor, bound to its order), with reactions",
     handler: async (c) => {
@@ -187,6 +211,16 @@ export const ROUTES = defineRoutes([
   { name: "notifications.preferences.put", method: "PUT", path: "/notifications/preferences", summary: "Save notification preferences", handler: (c) => c.notifyHandler() },
   // The desktop sync API (HFY-TSK-172; sync.md 7): bearer auth, gramps-owner, behind SYNC_API_ENABLED. Defined in src/sync/routes.js; the push and pull routes join it.
   ...SYNC_ROUTES,
+  // The read-only records API (HFY-TSK-175; sync.md 7.2, BRD2 D2-34): the stored, redacted object through publishView and applyModOverlay, behind
+  // the HFY_EDITING switch (admins and a member's own record excepted). No `mcp` member: hfy_records_get is edit-mcp-tools'. by-id is listed first.
+  {
+    name: "records.byGrampsId", method: "GET", path: "/records/Person/by-id/:gramps_id", summary: "A person by gramps_id: {class, handle, gramps_id, version, obj} with ETag \"v<version>\"; read-only, year-only non-birth dates and no hidden items for non-admins (no MCP tool)",
+    gate: recordsGate(), handler: recordByGrampsId,
+  },
+  {
+    name: "records.get", method: "GET", path: "/records/:class/:handle", summary: "One record by class and handle: {class, handle, gramps_id, version, obj} with ETag \"v<version>\"; 404 for a tombstone or unknown handle (no MCP tool)",
+    gate: recordsGate(), handler: recordGet,
+  },
 ]);
 
 /** Normalizes registry entries (MCP member, auth, write, path matcher). Exported so tests can mount extra routes through the same shape. */

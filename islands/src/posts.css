@@ -157,8 +157,9 @@ html.hfy-shell-v2 .hfy-posts { padding-inline: 0; }
   clip-path: inset(50%);
   white-space: nowrap;
 }
-.hfy-posts a:not(.hfy-btn) { color: var(--io-content-link); }
-.hfy-posts a:not(.hfy-btn):hover { color: var(--io-content-link-hover); }
+/* Not the author's name (the kit's a.iok-content-author) nor any other person-name link: those keep the name's own look (below). */
+.hfy-posts a:not(.hfy-btn, .iok-content-author, .hfy-person-name) { color: var(--io-content-link); }
+.hfy-posts a:not(.hfy-btn, .iok-content-author, .hfy-person-name):hover { color: var(--io-content-link-hover); }
 .hfy-posts img { max-inline-size: 100%; block-size: auto; }
 /* On the person page the section shares the page's left gutter with life, family, photos, stories and comments (it was centred,
    so its heading sat 16px / 144px right of theirs at 688 / 1024); it keeps the 68ch reading measure. */
@@ -234,6 +235,27 @@ html.hfy-shell-v2 .hfy-posts { padding-inline: 0; }
 .hfy-posts .iok-content-card { gap: var(--io-content-space-2); padding: 0; border: 0; border-radius: 0; background: transparent; }
 .hfy-posts .iok-content-meta { gap: var(--io-content-space-2); color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); }
 .hfy-posts .iok-content-meta > span:first-child { color: var(--io-content-text); font-weight: var(--io-typography-weight-semibold); }
+/* The author's name links to their person page (HFY-TSK-323, ruling P2-R46; posts-ui CARD_PROPS authorHref) and looks exactly like the
+   plain name: the meta line's text colour and semibold weight in every link state, never underlined, the pointer, and the theme focus
+   ring on keyboard focus. The meta row is a header the reader taps, so the link is a 44px target (tap.min) without growing the 32px
+   row: a transparent band centred on the name, tap.min tall and at least tap.min wide. */
+.hfy-posts a.iok-content-author:is(:link, :visited, :hover, :focus, :active) {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.hfy-posts a.iok-content-author { position: relative; }
+.hfy-posts a.iok-content-author::after {
+  content: "";
+  position: absolute;
+  inset-block: calc(50% - var(--io-content-tap-min) / 2);
+  inset-inline: min(0%, calc(50% - var(--io-content-tap-min) / 2));
+}
+.hfy-posts a.iok-content-author:focus-visible {
+  outline: var(--io-content-focus-ring) solid var(--io-content-focus);
+  outline-offset: var(--io-content-focus-offset);
+}
 .hfy-posts .iok-content-badge { padding: 0 var(--io-content-space-2); border: 1px solid var(--io-content-border-strong); border-radius: var(--io-content-radius-pill); }
 .hfy-posts .iok-content-title { color: var(--io-content-text); font-family: var(--io-content-font-display); font-weight: var(--io-typography-weight-regular); font-size: var(--io-typography-size-lg); line-height: var(--io-typography-leading-snug); }
 .hfy-posts .iok-content-article { gap: var(--io-content-space-3); max-inline-size: 68ch; }
@@ -242,6 +264,14 @@ html.hfy-shell-v2 .hfy-posts { padding-inline: 0; }
    photo is drawn narrower instead of filling the screen. The list is the inline-size container the cap is measured against. */
 .hfy-posts .iok-content-media { gap: var(--io-content-space-2); container-type: inline-size; }
 .hfy-posts .iok-content-media > li { max-inline-size: 100%; }
+/* A photo's caption (ruling P2-R47): what its author typed in the composer's "add a caption" field, under the photo as the kit's
+   <figcaption> (@io-kit/content 0.3.2), in text.dim at the 16px floor. */
+.hfy-posts .iok-content-figure { gap: var(--io-content-space-1); }
+.hfy-posts .iok-content-caption {
+  color: var(--io-content-text-dim);
+  font-size: var(--io-content-font-size-sm);
+  line-height: var(--io-typography-leading-normal);
+}
 .hfy-posts .iok-content-media img {
   display: block;
   inline-size: auto;

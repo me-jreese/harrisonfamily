@@ -133,11 +133,12 @@ for (const width of WIDTHS) {
     const xs = await page.evaluate(() => [...document.querySelectorAll("#person-content h2")].filter((h) => h.getBoundingClientRect().width > 1).map((h) => Math.round(h.getBoundingClientRect().left)));
     expect(xs.length).toBeGreaterThanOrEqual(5); // life, family, photos, stories, share something (+ comments)
     expect(new Set(xs).size, `section heading x: ${xs}`).toBe(1);
-    // attach a photo: thumbnail, a visible alt hint, the done ping
+    // attach a photo: thumbnail, a visible caption hint (P2-R47: "add a caption", its accessible name numbered), the done ping
     await file.setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
     await expect.poll(() => s.uploads).toBe(1);
     await expect(mine.locator(".iok-content-attachment img.hfy-posts__thumb")).toHaveCount(1);
-    await expect(mine.locator(".iok-content-attachment input").first()).toHaveAttribute("placeholder", "describe the photo");
+    await expect(mine.locator(".iok-content-attachment input").first()).toHaveAttribute("placeholder", "add a caption");
+    await expect(mine.getByRole("textbox", { name: "add a caption 1" })).toBeVisible();
     await expect(mine.getByRole("status").filter({ hasText: "got it. it's in the gallery." })).toBeVisible();
     await expect(mine.getByText(/choose file|no file chosen/i)).toHaveCount(0);
   });

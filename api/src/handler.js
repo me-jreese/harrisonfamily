@@ -12,6 +12,7 @@ import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
+import { createSubscriptions } from "./subscriptions.js";
 import { createContribReader } from "./contrib-read.js";
 import { unauthenticated } from "./sync/auth.js";
 import { syncContext } from "./sync/guard.js";
@@ -91,8 +92,9 @@ export function createHandler(deps) {
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
     const links = createLinks(base);
+    const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { content, comments, links, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    return { store: { ddb, cmds, table, now }, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**
@@ -142,7 +144,7 @@ export function createHandler(deps) {
       } else {
         actor = await authenticate(event);
         // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.
-        await features.check(route.gate, actor, { preview });
+        await features.check(route.gate, actor, { preview, params, ctx: { ddb, cmds, table, now } });
         if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
       }
 

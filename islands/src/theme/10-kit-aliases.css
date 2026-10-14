@@ -1,6 +1,6 @@
 /*
- * 10 kit aliases (foundation). KIT ROOT CAUSE, DVP-TSK-A73: @io-kit/shell 0.6.6 (dist/io-kit.css), @io-kit/content 0.3.1
- * (src/content.css) and @io-kit/notify 0.4.0 (src/notify.css) read the Enceladus short variables of @io-kit/tokens/tokens.css
+ * 10 kit aliases (foundation). KIT ROOT CAUSE, DVP-TSK-A73: @io-kit/shell 0.6.6 (dist/io-kit.css), @io-kit/content 0.3.2
+ * (src/content.css) and @io-kit/notify 0.6.0 (src/notify.css) read the Enceladus short variables of @io-kit/tokens/tokens.css
  * (--bg, --fg, --bg-surface, --accent, --space-2, --radius-md, ...) instead of their --io-<prefix>-* skinning contracts, so on
  * harrisonfamily they ignored the theme (the shell ground stayed #0a0a0f). tokens.css is no longer loaded anywhere; this block
  * maps every short variable those three packages read to a harrisonfamily semantic token instead.

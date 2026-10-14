@@ -599,8 +599,9 @@ if command -v rsync >/dev/null && command -v git >/dev/null; then
   contains "...naming the file" "$DS_OUT" "js/app.js"
   lacks "...and not person-page.js" "$DS_OUT" "person-page.js"
   # HFY-TSK-325: getAllowlist and its source are deleted, so a staged functions/ path no longer starts a Cloud Function
-  # comparison (the old check failed here: there is no workspace/gcloud/allowlist-fn source).
-  cp "$DS/workspace/11ty-dev/_site/js/app.js" "$DS/repo/11ty/js/app.js"
+  # comparison (the old check failed here: there is no workspace/gcloud/allowlist-fn source). cp -p keeps the workspace mtime: a plain
+  # cp stamps the restored file with the current time, and rsync -ain reports it (>f..t) once a second has passed since the workspace write.
+  cp -p "$DS/workspace/11ty-dev/_site/js/app.js" "$DS/repo/11ty/js/app.js"
   mkdir -p "$DS/repo/functions/get-allowlist"; echo '# stray' > "$DS/repo/functions/get-allowlist/main.py"; git -C "$DS/repo" add -A
   set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
   eq "a staged functions/ path runs no Cloud Function comparison" "$DS_RC" 0

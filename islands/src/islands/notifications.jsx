@@ -1,26 +1,17 @@
-// /me/notifications: per-type preferences + push opt-in on @io-kit/notify 0.4.0 (HFY-TSK-068, BRD D-08). DS components/Notifications.
+// /me/notifications: per-type preferences + push opt-in on @io-kit/notify (0.4.0 when built, 0.6.0 since HFY-TSK-185; HFY-TSK-068, BRD D-08). DS components/Notifications.
 import "@io-kit/notify/notify.css";
 import "./notifications.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createFetchNotifyApi } from "@io-kit/notify";
 import { NotificationSettings, PushNudge } from "@io-kit/notify/react";
 import { mountIsland } from "../lib/mount.jsx";
-import { edgeSignedOut, signedOutResponse } from "../lib/api.js";
+import { edgeSignedOut } from "../lib/api.js";
+import { notifyApi } from "../lib/notify-api.js";
+import { CATALOG, catalogFor } from "../lib/notify-catalog.js";
+import { getMe } from "../lib/me.js";
 
-// Four HFY types. "generic" is level 0 (content-free, the default); "detailed" is level 1 (may name the actor).
-// Labels and descriptions are the DS catalog copy (lowercase, "my page", never "record"). title / generic / detailed are the lock-screen
-// preview and stay word-for-word what the server sends (api/src/notify.js), so the preview never promises a text it will not get.
-export const CATALOG = {
-  groups: [{ id: "family", label: "family" }],
-  types: {
-    comment_on_my_record: { group: "family", label: "someone comments on my page", desc: "a comment on your page in the family tree.", title: "Harrison Family", generic: "someone commented on your page.", detailed: "{actor} commented on your page." },
-    reply_to_me: { group: "family", label: "someone replies to me", desc: "a reply where you commented.", title: "Harrison Family", generic: "someone replied to you.", detailed: "{actor} replied to you." },
-    new_family_post: { group: "family", label: "family posts something new", desc: "a new post on the family timeline.", title: "Harrison Family", generic: "there's a new family post.", detailed: "{actor} shared a new family post." },
-    mention: { group: "family", label: "someone mentions me", desc: "someone writes @ and your name in a comment.", title: "Harrison Family", generic: "you were mentioned.", detailed: "{actor} mentioned you." }
-  },
-  levels: { generic: "hide the details", detailed: "show who", hint: "hidden details keep names off your lock screen." },
-  sample: { actor: "A family member" }
-};
+// The catalog (lib/notify-catalog.js) holds one entry per type of the API registry, grouped "about me", "family" and "for moderators";
+// the moderators group is shown to an admin only (catalogFor). tests/notify-catalog.test.mjs fails when it drifts from the registry.
+export { CATALOG };
 
 // DS Voice microcopy for every string the kit renders.
 export const LABELS = {
@@ -41,9 +32,8 @@ export const LABELS = {
 const LOAD_FAILED = "that didn't work. try again, or text J.";
 const SIGNED_OUT = "this page is family-only. sign in to see it.";
 
-// Same-origin API (/api/notifications/*), signed session cookie. HFY-TSK-069 (D-11): with authV2 and a signed-out edge session the
-// preferences GET can only answer 401 (a console error on every visit), so it is answered locally with that same 401 and not sent.
-export const api = createFetchNotifyApi("/api", async (url, init) => ((await edgeSignedOut()) ? signedOutResponse() : fetch(url, { ...init, credentials: "include" })));
+// Same-origin API (/api/notifications/*), signed session cookie; the one client the bell and /me/inbox/ share (lib/notify-api.js).
+export const api = notifyApi;
 
 /**
  * Signed out there is nothing to set: the island resolves the edge session once, shows a skeleton while that is pending, and when
@@ -72,11 +62,19 @@ function Settings({ onSignedOut }) {
       throw e;
     }),
   }), [onSignedOut]);
+  // The moderators' group is for admins (/api/me, one shared request per page); the list waits for the answer so it never reflows.
+  const [admin, setAdmin] = useState(null);
+  useEffect(() => {
+    let live = true;
+    getMe().then((me) => { if (live) setAdmin(me.admin === true); });
+    return () => { live = false; };
+  }, []);
+  const catalog = useMemo(() => (admin === null ? null : catalogFor({ admin })), [admin]);
   return (
     <>
       <PushNudge api={api} dismissKey="hfy:notify-nudge" labels={LABELS} />
       {loadError && <p className="hfy-notify__banner" role="alert" data-hfy-banner>{loadError}</p>}
-      <NotificationSettings catalog={CATALOG} api={watched} lockScreenHint banners labels={LABELS} />
+      {catalog ? <NotificationSettings catalog={catalog} api={watched} lockScreenHint banners labels={LABELS} /> : <div className="iok-notify-skeleton" role="status" aria-label="loading" />}
     </>
   );
 }

@@ -8,61 +8,69 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "2b569e77",
-        "css": "531bc57e"
+        "js": "459c3035",
+        "css": "11377c0e"
+      },
+      "inbox": {
+        "js": "fe44d358",
+        "css": "d6605982"
+      },
+      "inbox-page": {
+        "js": "0d12d455",
+        "css": "38a33f05"
       },
       "links-editor": {
-        "js": "05a03f0a",
+        "js": "7c09fba8",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "0708af25",
-        "css": "fb30393e"
+        "js": "07d3bb73",
+        "css": "307f6c65"
       },
       "notifications": {
-        "js": "9ec1c0d9",
+        "js": "cfb46f0e",
         "css": "56799f74"
       },
       "person": {
-        "js": "5c2d9931",
-        "css": "5d714b53"
+        "js": "bc3b6ca7",
+        "css": "92f22fd0"
       },
       "person-links": {
-        "js": "70972ead",
+        "js": "65b1ee44",
         "css": "930bb673"
       },
       "photo-tags": {
-        "js": "72b2d893",
-        "css": "bf6043c1"
+        "js": "3d566647",
+        "css": "b4b1459b"
       },
       "posts": {
-        "js": "e3e633a6",
-        "css": "11461fd8"
+        "js": "e316947d",
+        "css": "890fde1c"
       },
       "search": {
-        "js": "3fa6315b",
+        "js": "3dd13244",
         "css": "9e007813"
       },
       "settings": {
-        "js": "9accb7d2",
+        "js": "f2245553",
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "354abba7",
-        "css": "53cdeb03"
+        "js": "a409229d",
+        "css": "dfe52562"
       },
       "timeline": {
-        "js": "957f36a9",
-        "css": "eade4019"
+        "js": "ab7274dc",
+        "css": "8f618380"
       },
       "tree": {
-        "js": "f2abdefe",
-        "css": "66b35626"
+        "js": "2f729552",
+        "css": "ba6f1885"
       }
     },
-    "theme": "00520cc3",
+    "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "abd09466"
+    "sw": "2944cc78"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -752,6 +760,20 @@
   resolveFlags().then((flags) => {
     if (flags.photoTags !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
     loadIsland("photo-tags", { onError() { /* the gallery stands without tag overlays */ } });
+  });
+
+  // HFY-TSK-185: inboxV1 mounts the notification inbox. The bell island fills the shell's bell slot on every page that has the shell, for a
+  // signed-in member only (the signed-out visitor never loads the bundle); the inbox-page island fills the static /me/inbox/ page.
+  // With the flag off neither bundle is requested and /me/inbox/ keeps its "not available yet" note (HFY-R8).
+  resolveFlags().then((flags) => {
+    if (flags.inboxV1 !== true) return;
+    if (/^\/me\/inbox\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("inbox-page", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+    if (flags.shellV2 !== true) return;
+    edgeSession().then((session) => {
+      if (session && session.authenticated === true && session.sub) loadIsland("inbox", { onError() { /* the bar stands without the bell */ } });
+    }, () => {});
   });
 
   // HFY-TSK-217: profileLinks mounts the links section on the person page (island person-links, under the lifespan line; it fills the person
