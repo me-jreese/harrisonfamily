@@ -52,11 +52,17 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer }) {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     schemaSource: "declared", schemaHash: bundle.schemaHash || "", requiresGovernanceHash: false, dryRun: false, trust: "first-party"
   }), [input, section, bundle]);
+  useEffect(() => {
+    // A form section with no schema falls back to "coming soon"; say so, so a schema/API drift is not silent.
+    if (!contract) console.warn(`[editor] no schema for section "${section.id}" (${cls}.${section.form.from}); showing the frame only`);
+  }, [contract, section, cls]);
   if (!contract) return <p className="hfy-editor__soon">{COPY.soon}</p>;
   const pointerOf = (p) => `${section.form.prefix}${p}`;
   const codeOf = (p) => resolver.resolve(cls, pointerOf(p), viewer);
   const editable = (code) => code === "direct" || code === "proposal";
+  // Saving is editor-save-flow's job; Enter in a field must not submit (reload or POST) in the meantime.
   return (
+    <div onSubmit={(e) => e.preventDefault()}>
     <SchemaForm
       contract={contract}
       initialValues={initialValues}
@@ -70,6 +76,7 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer }) {
         </>
       )}
     />
+    </div>
   );
 }
 
@@ -92,9 +99,28 @@ function Section({ section, open, onToggle, children }) {
 const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 64rem)").matches;
 
 function Editor({ route }) {
+  const [open, setOpen] = useState(null);
+  const [isWide, setIsWide] = useState(wide());
+  const [scrollTo, setScrollTo] = useState(null);
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return undefined;
+    const mq = matchMedia("(min-width: 64rem)");
+    const on = () => setIsWide(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  // After a section opens from an index link, scroll to it (the browser's own jump hit the hidden body).
+  useEffect(() => {
+    if (!scrollTo) return;
+    const el = document.getElementById(`sec-${scrollTo}`);
+    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView();
+    setScrollTo(null);
+  }, [scrollTo, open]);
   const [state, setState] = useState({ phase: "loading" });
   useEffect(() => {
     let live = true;
+    setState({ phase: "loading" });
+    setOpen(null);
     (async () => {
       try {
         const bundle = await api.get(`/edit/${route.cls}/${encodeURIComponent(route.ref)}`);
@@ -115,10 +141,9 @@ function Editor({ route }) {
   const viewer = useMemo(() => bundle && ({ admin: bundle.viewer && bundle.viewer.admin === true, relation: bundle.relation === "own" ? "own" : "other" }), [bundle]);
   const resolver = useMemo(() => createModeResolver(bundle && bundle.policy), [bundle]);
   const sections = useMemo(() => (viewer ? sectionsFor(route.cls, viewer) : []), [viewer, route.cls]);
-  const [open, setOpen] = useState(null);
-  const openSet = open || new Set(wide() ? sections.map((s) => s.id) : sections.slice(0, 1).map((s) => s.id));
+  const openSet = open || new Set(isWide ? sections.map((s) => s.id) : sections.slice(0, 1).map((s) => s.id));
   const toggle = (id) => { const next = new Set(openSet); if (next.has(id)) next.delete(id); else next.add(id); setOpen(next); };
-  const reveal = (id) => { if (!openSet.has(id)) setOpen(new Set([...openSet, id])); };
+  const reveal = (id) => { if (!openSet.has(id)) setOpen(new Set([...openSet, id])); setScrollTo(id); };
 
   if (state.phase === "loading") return <div className="hfy-editor__skeleton" role="status" aria-label={COPY.loading} />;
   if (state.phase === "signedOut") return <SignInGate />;

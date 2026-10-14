@@ -121,6 +121,14 @@ for (const [name, viewport] of VIEWPORTS) {
         await expect(b.locator("svg[aria-hidden='true']")).toHaveCount(1);
         expect((await b.innerText()).trim().length).toBeGreaterThan(3);
       }
+      // Enter in a field is inert: no navigation, no request, the value stays
+      const reqs = [];
+      page.on("request", (r) => { if (r.method() !== "GET") reqs.push(r.url()); });
+      await field(page, "nickname").press("Enter");
+      await page.waitForTimeout(200);
+      expect(reqs).toEqual([]);
+      await expect(page.locator("[data-hfy-editor-ready]")).toBeVisible();
+      await expect(field(page, "nickname")).toHaveValue("Tess");
       // the admin-only section is not offered to a member
       await expect(page.locator('[data-section="more"]')).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);

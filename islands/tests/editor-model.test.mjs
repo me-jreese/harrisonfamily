@@ -59,3 +59,24 @@ test("sections: the admin-only one is hidden from members; the names form is bui
   assert.equal(sectionSchema({}, names.form), null);
   assert.deepEqual(sectionValues({ primary_name: { first_name: "Test", nick: "", title: 3 } }, names.form), { first_name: "Test" });
 });
+
+test("conditional (`when`) rows count as the stricter answer, like the server with no context", () => {
+  const p = { rows: [
+    { cls: "Event", pointer: "/date/**", own: "proposal", other: "proposal", admin: "direct", when: "birthLike" },
+    { cls: "Event", pointer: "/date/dateval", own: "never", other: "never", admin: "never", when: ["birthLike", "dayMonthInValue"] },
+    { cls: "Event", pointer: "/description", own: "direct", other: "proposal", admin: "direct" }
+  ] };
+  const r = createModeResolver(p);
+  assert.equal(r.resolve("Event", "/date/dateval", { relation: "own" }), "never");
+  assert.equal(r.resolve("Event", "/date/other", { relation: "own" }), "proposal");
+  assert.equal(r.resolve("Event", "/description", { relation: "own" }), "direct");
+  assert.equal(badgeFor(r.resolve("Event", "/date/dateval", { relation: "own" })).key, "locked");
+});
+
+test("every listed form field exists in the bundled schema, so no field drops out silently", () => {
+  for (const s of PERSON_SECTIONS.filter((x) => x.form)) {
+    const schema = sectionSchema(EDIT_SCHEMAS.Person, s.form);
+    assert.ok(schema, s.id);
+    assert.deepEqual(Object.keys(schema.properties), s.form.fields.map(([k]) => k), s.id);
+  }
+});

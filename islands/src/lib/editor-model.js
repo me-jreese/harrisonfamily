@@ -67,7 +67,8 @@ export const ENTRY_LABEL = Object.freeze({ own: COPY.entryOwn, suggest: COPY.ent
 // ---- the field mode ---------------------------------------------------------------------------------------------------
 // A client copy of field-policy.js matching (pattern segments: literal, `*` one segment, `**` any run including none, `{a,b}`
 // alternatives; the most restrictive row class wins, then the more specific pattern, then the later row). Conditional rows (`when`)
-// count, like the server does when it cannot judge them: the stricter answer, never the fail-open one.
+// are not judged here (the client has no record context): they match like any row, as findRow() does server-side with no ctx, so the
+// stricter class (never > desk/derived > the rest) outranks a looser one; the badge never says "saves now" where a conditional row says never.
 const SCORE = { any: 0, one: 1, lit: 3, alt: 3 };
 const FIXED = new Set(["never", "desk", "derived"]);
 function seg(s) {

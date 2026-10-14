@@ -29,7 +29,9 @@ function fill(personId) {
   if (!host || !personId) return;
   if (mounted && mounted.host === host && mounted.personId === personId && host.isConnected) return;
   if (mounted) {
-    try { mounted.root.unmount(); } catch { /* the old host is gone with the old hero */ }
+    const old = mounted.root;
+    // Not synchronously: this runs inside the hfy:person-rendered handler, and React warns on a sync unmount during a render.
+    queueMicrotask(() => { try { old.unmount(); } catch { /* the old host is gone with the old hero */ } });
   }
   const root = createRoot(host);
   root.render(<EditEntry personId={personId} />);
@@ -37,4 +39,7 @@ function fill(personId) {
 }
 
 document.addEventListener("hfy:person-rendered", (e) => fill(e.detail && e.detail.personId));
-fill(new URLSearchParams(location.search).get("id"));
+// The first fill uses ?id= only when it is a gramps id; an h:<handle> id never matches the own-page rule, so wait for the render event,
+// whose detail carries the gramps id.
+const first = new URLSearchParams(location.search).get("id");
+if (first && !first.startsWith("h:")) fill(first);
