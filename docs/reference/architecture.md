@@ -353,9 +353,11 @@ Written by `hfy-api`:
 | Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
 | Record follow, one per principal and person | `RSUB#<principal>` | `REC#person:<gramps-id>` | `RECSUB#person:<gramps-id>` | `<principal>` | [`api/src/subscriptions.js`](../../api/src/subscriptions.js) |
 | Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |
-| Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js); not reachable from a route yet |
+| Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js), which the desktop push routes call |
 | Record change log | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | - | `api/src/sync/apply.js` |
-| Record store sequence head | `SYNC#HEAD` | `META` | - | - | `api/src/sync/apply.js` (the seq); the bind and seed routes own the rest |
+| Record store sequence head | `SYNC#HEAD` | `META` | - | - | `api/src/sync/apply.js` (the seq); the bind route and the push routes own the rest (`open_session`, `seeded`) |
+| Record push session | `SYNC#SESSION#<session-id>` | `META` | - | 7 days; treated as expired at `opened_at` + 7 days without waiting for the delete | [`api/src/sync/push.js`](../../api/src/sync/push.js); `SYNC#HEAD.open_session` names the open one |
+| Pending blob upload | `SYNC#UPLOAD#<handle>` | the blob's SHA-256, hex | - | 1 hour after the presign; removed when the blob is finalized | [`api/src/sync/media.js`](../../api/src/sync/media.js) |
 | Record batch receipt | `SYNC#BATCH#<batch-id>` | `META` | `SYNCBATCH` / `<iso-time>#<batch-id>` | - (kept) | `api/src/sync/apply.js` |
 | gramps_id guard | `GID#<Class>#<gramps-id>` | `META` | - | - (a Person item is never deleted) | `api/src/sync/apply.js` |
 | gramps_id alias | `IDALIAS#<Class>#<old-gramps-id>` | `META` | - | - (never deleted) | `api/src/sync/apply.js` |

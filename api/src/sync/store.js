@@ -8,6 +8,8 @@
 //   IDALIAS#<Class>#<old_id>      META   merge / renumber alias, never deleted
 //   AUDIT#records:<batch_id>      one audit item per batch (built with auditItem())
 //   SYNC#BUDGET#<yyyymmddhh>      META  count of delete and withdraw ops committed in that UTC hour (validator-js's destructive budget)
+//   SYNC#SESSION#<session_id>     META  a multi-batch push session (sync-push-routes, HFY-TSK-173); SYNC#HEAD.open_session names the open one
+//   SYNC#UPLOAD#<handle>          <sha256 hex>  a presigned blob upload waiting for its Media op (sync-push-routes), ttl +1 h
 //
 // `expunged`: BRD2 section 4 lists an `expunged` flag on heads and log entries. applyBatch never writes it (the attribute is absent,
 // not false); privacy-expunge sets it when it nulls obj_json, and readers must treat an absent flag as not expunged.
@@ -52,6 +54,10 @@ export const batchKey = (batchId) => ({ PK: `SYNC#BATCH#${batchId}`, SK: "META" 
 export const gidKey = (cls, grampsId) => ({ PK: `GID#${cls}#${grampsId}`, SK: "META" });
 export const aliasKey = (cls, oldId) => ({ PK: `IDALIAS#${cls}#${oldId}`, SK: "META" });
 export const auditId = (batchId) => `records:${batchId}`;
+export const sessionKey = (sessionId) => ({ PK: `SYNC#SESSION#${sessionId}`, SK: "META" });
+export const uploadKey = (handle, sha256Hex) => ({ PK: `SYNC#UPLOAD#${handle}`, SK: sha256Hex });
+/** A push session lives 7 days: it is treated as expired at opened_at + 7 d without waiting for TTL deletion (BRD2 11.1 7.2). */
+export const SESSION_TTL_SECONDS = 7 * 86400;
 /** The UTC hour bucket of a time, `yyyymmddhh`, that SYNC#BUDGET# counters are keyed by. */
 export const budgetBucket = (ms) => new Date(ms).toISOString().slice(0, 13).replace(/[-T]/g, "");
 export const budgetKey = (bucket) => ({ PK: `SYNC#BUDGET#${bucket}`, SK: "META" });
@@ -211,6 +217,8 @@ export const getSyncHead = (ctx) => get(ctx, headKey());
 export const getBatchReceipt = (ctx, batchId) => get(ctx, batchKey(batchId));
 export const getGid = (ctx, cls, grampsId) => get(ctx, gidKey(cls, grampsId));
 export const getAlias = (ctx, cls, oldId) => get(ctx, aliasKey(cls, oldId));
+export const getSession = (ctx, sessionId) => get(ctx, sessionKey(sessionId));
+export const getUpload = (ctx, handle, sha256Hex) => get(ctx, uploadKey(handle, sha256Hex));
 /** The raw head item of one object (tombstones included), or undefined. */
 export const getRecordItem = (ctx, cls, handle) => get(ctx, recKey(cls, handle));
 

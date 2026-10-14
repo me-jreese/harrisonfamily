@@ -444,7 +444,14 @@ export async function applyBatch(ctx, req) {
       }
       const grampsId = live ? op.gramps_id : prev.gramps_id;
       if (live && isAssignment(policy, origin, op, prev && prev.deleted !== true ? prev.gramps_id : undefined)) assigned.push({ class: op.class, handle: op.handle, gramps_id: op.gramps_id });
-      const fields = { class: op.class, handle: op.handle, gramps_id: grampsId, version, seq, deleted: !live, objJson: live ? op.objJson : null, blob: op.blob, reason: live ? undefined : op.reason, at, by: principal, origin };
+      // A Media update that names no blob keeps the one the head already holds: the descriptor is not part of the object, so a
+      // metadata-only edit (a proposal, the web editor) must not erase it. So does one whose blob is {state: "missing"} (a held blob)
+      // over a present one: a good cloud blob is never replaced by a missing one. Decided here, from the head, so the op itself (and
+      // its request hash) is the same on a replay (HFY-TSK-173 review).
+      const prevBlob = live && op.class === "Media" && prev && prev.deleted !== true ? prev.blob : undefined;
+      const keepPrev = op.blob === undefined || (op.blob.state === "missing" && prevBlob?.state === "present");
+      const blob = keepPrev ? prevBlob : op.blob;
+      const fields = { class: op.class, handle: op.handle, gramps_id: grampsId, version, seq, deleted: !live, objJson: live ? op.objJson : null, blob, reason: live ? undefined : op.reason, at, by: principal, origin };
       const cond =
         !prev
           ? { condition: "attribute_not_exists(PK)" }

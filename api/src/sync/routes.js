@@ -1,6 +1,7 @@
 // HFY-TSK-172 (sync-routes; sync.md 7.2): the /api/sync/* route definitions that sit on the sync-bearer middleware (auth.js, guard.js).
-// This task ships the handshake surface, GET /api/sync/meta and POST /api/sync/bind. The push routes (sessions, batches, media) are
-// added by sync-push-routes and the pull routes (snapshot, changes) by sync-pull-routes, as more entries in SYNC_ROUTES.
+// HFY-TSK-172 shipped the handshake surface, GET /api/sync/meta and POST /api/sync/bind. HFY-TSK-173 (sync-push-routes) adds the push routes
+// (push.js, media.js): sessions, complete, abort, batches and media/presign. The pull routes (snapshot, changes) are added by sync-pull-routes,
+// as more entries in SYNC_ROUTES.
 //
 // Every entry is `auth: "sync-bearer"` and gated by the SYNC_API_ENABLED switch (404 not_enabled when off). The handler (handler.js)
 // authenticates the bearer, runs syncContext() and hands the route `c.sync`: { head, terms, store, checkTree, requireStepUp, stepUp }.
@@ -10,6 +11,8 @@ import { TxnCancelled, auditItem, transact } from "../txn.js";
 import { LIMITS, API_VERSION, syncGate } from "./guard.js";
 import { BLOCK_PREFIX } from "./validator.js";
 import { headKey } from "./store.js";
+import { batchesPush, sessionsAbort, sessionsComplete, sessionsOpen } from "./push.js";
+import { syncMediaPresign } from "./media.js";
 
 const ok = (body, status = 200) => ({ status, body });
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -138,4 +141,10 @@ const SYNC_ROUTE_BASE = { auth: "sync-bearer", gate: syncGate() };
 export const SYNC_ROUTES = [
   { ...SYNC_ROUTE_BASE, name: "sync.meta", method: "GET", path: "/sync/meta", summary: "The sync handshake: versions, limits, the bound tree, head and rendered seq, the retired Person ids and merges_enabled (sync bearer, gramps-owner; no MCP tool)", handler: syncMeta },
   { ...SYNC_ROUTE_BASE, name: "sync.bind", method: "POST", path: "/sync/bind", summary: "Bind the desktop tree {dbid, fingerprint, tree_name_sha256}; a rebind ({rebind:true}) needs step-up (sync bearer, gramps-owner; no MCP tool)", handler: syncBind },
+  // HFY-TSK-173: the push routes. All write routes: a paused store (writes_enabled false) answers 503 sync_paused before they run.
+  { ...SYNC_ROUTE_BASE, name: "sync.sessions.open", method: "POST", path: "/sync/sessions", summary: "Open a multi-batch push session {expected?: [\"Class#handle\"]}: 201 {session_id, expires_at, seed}; 409 session_open while another is open; the first session while the store is unseeded is the silent seed (sync bearer, gramps-owner; no MCP tool)", handler: sessionsOpen },
+  { ...SYNC_ROUTE_BASE, name: "sync.sessions.complete", method: "POST", path: "/sync/sessions/:id/complete", summary: "Close a push session: verifies references and person-family symmetry for the whole session (422 integrity_violation), appends a marker log entry, 200 {seq}; idempotent (sync bearer, gramps-owner; no MCP tool)", handler: sessionsComplete },
+  { ...SYNC_ROUTE_BASE, name: "sync.sessions.abort", method: "POST", path: "/sync/sessions/:id/abort", summary: "Abort a push session, audited: 200 {session_id, state: aborted}; what it already pushed stays (sync bearer, gramps-owner; no MCP tool)", handler: sessionsAbort },
+  { ...SYNC_ROUTE_BASE, name: "sync.batches", method: "POST", path: "/sync/batches", summary: "Push a batch of up to 24 ops {tree_id?, session_id?, client_run_id?, ops} with an Idempotency-Key header, through applyBatch with origin desktop (seed inside the seed session): 200 {batch_id, seq_from, seq_to, results}; a replay has Idempotent-Replayed: true (sync bearer, gramps-owner; no MCP tool)", handler: batchesPush },
+  { ...SYNC_ROUTE_BASE, name: "sync.media.presign", method: "POST", path: "/sync/media/presign", summary: "Presigned PUT for a blob {handle, content_type, size, sha256_b64, md5_hex}, staged at media/.staging/<handle>/<sha256> and finalized after the Media op commits (sync bearer, gramps-owner; no MCP tool)", handler: syncMediaPresign },
 ];
