@@ -68,7 +68,7 @@ python3 -m unittest discover gramps/tests/unit      # schema, rules, vectors, or
 
 ## The site renderer
 
-`hfygramps/render/` renders the whole data site from one store view: `render_site(objects) -> {s3_key: bytes}`. It is the live ETL's D-02-fixed transforms (`scripts/etl/transform.py`, `export_person_data.py`) and `scripts/search/build_search_index.js`, ported to pure Python 3.12 functions with the standard library only. It opens no file, SQLite database or socket (a test patches `open` and `socket` to prove it), reads no clock and uses no randomness. Nothing calls it yet: the render Lambda (`render-lambda`) is its first caller.
+`hfygramps/render/` renders the whole data site from one store view: `render_site(objects) -> {s3_key: bytes}`. It is the live ETL's D-02-fixed transforms (`scripts/etl/transform.py`, `export_person_data.py`) and `scripts/search/build_search_index.js`, ported to pure Python 3.12 functions with the standard library only. It opens no file, SQLite database or socket (a test patches `open` and `socket` to prove it), reads no clock and uses no randomness. Its caller is the render Lambda, `lambda/hfy-sync-render/` (HFY-TSK-176; [The render Lambda](../docs/reference/sync-render.md)), which packages `hfygramps/__init__.py`, `scanner.py` and this folder with `scripts/ci/package-render.sh`.
 
 | Piece | What it does |
 | --- | --- |
