@@ -120,3 +120,32 @@ python3 -m unittest discover gramps/tests/unit                                  
 The fixture's float-rect object (listed under `rect_float` in `synthetic-tree.census.json`; `[12.5, ...]`) is a deliberate hostile input for the sync design, and `get_schema()` types a rect as integers, so the schema refuses it. The checkers (`schema_check.py` and the vitest) derive the expected-invalid set from that census key, require each such object to fail with rect errors only, and require every other object to validate. The ruling that "every fixture object validates" is relaxed for this hostile input is an open question for io; the schema stays strict. The float rule relies on the fixture's literal `12.5` style values: JavaScript cannot tell `10.0` from `10` after `JSON.parse`, while Python keeps `10.0` as a float and rejects it.
 
 What the checks prove, and what they do not. Validation is closed-world on keys, not on completeness: every object requires only `_class`, so a missing key is not caught (drift in the serialized key set is caught by the generator's empty-instance proof, on the Gramps host). The validators are small subsets that raise on any keyword they do not implement; swap them for a standard validator when validator-js lands. CI (`ci.manifest.yaml`) runs the unit tests, which check the sha256 manifest, the recorded version and the fixture; that gate does not prove the goldens match what Gramps generates, because hand-edited goldens with a recomputed manifest would pass it. Reproducibility is proven only by `gen-schema.py --check` on a Mac with the Gramps 6.0.6 bundle (`io-mac-gramps`), run by hand or on that host. Commit the three schema files together.
+
+## The projection
+
+`gramps/hfygramps/projection.py` is the desktop side of the policy, `P` of sync.md section 5 (HFY-TSK-241). It is standard library only and imports nothing from Gramps, so it runs in Gramps' bundled Python and in CI.
+
+```python
+from hfygramps.projection import project_tree, project, update_birthlike_sticky
+
+projected, holds = project_tree(objects, base=base, files=files, released=released, sticky=sticky)
+result = project(objects, base=base, files=files, released=released, sticky=sticky)   # + excluded, withdrawn, fired, sticky
+```
+
+`objects` are Gramps `json_data` dicts. `projected` maps every handle to what the cloud receives, or `None` when it must not have the object. `holds` lists `{handle, rule, scope, pointer}` for what was held back (`scope` `"object"` or `"field"`); `hold_reason(rule_id)` is the sentence the preview shows. The context is the sidecar's: `base` (the last synced objects, which a hold falls back to), `files` (what the addon learned from the bytes on disk: `exif_gps`, `md5`, `readable`), `released` (media handles io released) and `sticky` (the `birthlike_sticky` event handles). `result.sticky` is the set to store after the run, and removing a handle from it is io's release in the GUI.
+
+What it does beyond the rule list of the reference page, always in the safe direction:
+
+- A projected object never has Gramps' `change` stamp (derived; the cloud object has none), so `P(lift(C, L)) == C` can hold.
+- `birth_ref_index` and `death_ref_index` follow the same event reference through the filtered `event_ref_list`, and become -1 when it is gone.
+- `dob_exact` checks every `Date` of every class against every local full birth date (also a date without a `_class`), and the text of a date as it checks free text. Free text is folded first (look-alike digits, invisible characters, spacing, case) and holds a full birth date in any listed form, zero-padded, comma-less, day-first or dotted, and the day and month alone within 60 characters of a birth keyword or of that person's given name, call name or nickname.
+- An event in `birthlike_sticky` keeps day and month local, and counts as birth-like for the dates of its citations and for birth-linked media. An event that is birth-like now, was birth-like in the synced base, or shares a local birth date joins the set (`birthlike_sticky_additions`); a Birth retyped to Residence therefore stays sticky.
+- A held `MediaRef` rectangle falls back to the rectangle of the same reference (`ref#n`) in the base, so reordering a list cannot move it.
+- `project_coordinate`, `lift_coordinate`, `project_rect` and `lift_rect` are the two lift rules this module owns (precision comes back while the rounded value is unchanged; the full frame and a held rectangle come back); the rest of lift belongs to the merge engine.
+
+`gramps/hfygramps/canonical.py` writes the canonical JSON and the sha256 of a stored object (`object_json`, `object_hash`; no `change` key; integers only; keys sorted by code point). `shared/canonical.mjs` is the JavaScript original of the same function, and both pass `shared/canonical.vectors.json`, which `gramps/redaction/make_canonical_vectors.py` writes (`--check` compares bytes). `gramps/tests/unit/test_canonical.py` also runs the JavaScript module with `node` when it is installed, over the vectors and over every projected object of the synthetic tree.
+
+```bash
+python3 -m unittest discover gramps/tests/unit     # includes test_projection.py and test_canonical.py
+node --test shared/                                 # includes canonical.test.mjs
+```
