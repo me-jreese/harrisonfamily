@@ -109,8 +109,9 @@ export class FamilyGraph {
       for (const c of this.children(pid)) {
         if (c.id === id || out.has(c.id)) continue;
         const theirs = new Set(this.parents(c.id).map((p) => p.id));
-        const same = theirs.size === myParents.size && [...myParents].every((p) => theirs.has(p));
-        out.set(c.id, { id: c.id, half: !same });
+        const shared = [...myParents].filter((p) => theirs.has(p)).length;
+        // Half only when both people have two recorded parents and share exactly one; with a parent unrecorded the data cannot tell.
+        out.set(c.id, { id: c.id, half: myParents.size === 2 && theirs.size === 2 && shared === 1 });
       }
     }
     return [...out.values()];
@@ -216,7 +217,7 @@ const BY_SEX = {
 const word = (kind, p) => (p && BY_SEX[kind][p.sex]) || { parent: "parent", child: "child", sibling: "sibling", partner: "partner", grandparent: "grandparent", grandchild: "grandchild", uncle: "aunt or uncle", nibling: "niece or nephew" }[kind];
 
 /** What `other` is to `viewer`, for the focus card ("your mother"): "you", parent, child, sibling (half-), partner, grandparent, grandchild,
- *  aunt or uncle, niece or nephew, first cousin. Null when the pair is none of those (the card then shows no label). Unmarried partners
+ *  aunt or uncle, niece or nephew, cousin (anyone sharing a grandparent who is not a sibling; in practice a first cousin). Null when the pair is none of those (the card then shows no label). Unmarried partners
  *  are "partner" and married ones "wife" or "husband". */
 export function relationLabel(graph, viewer, other) {
   if (!graph.has(viewer) || !graph.has(other)) return null;

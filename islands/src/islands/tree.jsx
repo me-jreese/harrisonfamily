@@ -122,7 +122,13 @@ export function TreeApp() {
     if (resolved && resolved.id && resolved.id !== focusParam(location.search)) history.replaceState(null, "", focusUrl(location, resolved.id));
   }, [resolved]);
   const [spoken, setSpoken] = useState("");
-  useEffect(() => { if (graph && resolved?.id) setSpoken(announce(graph, resolved.id)); }, [graph, resolved?.id]);
+  const announced = useRef(null);
+  useEffect(() => {
+    if (!graph || !resolved?.id) return;
+    // Nothing is announced on first paint; only a later re-centre is.
+    if (announced.current !== null && announced.current !== resolved.id) setSpoken(announce(graph, resolved.id));
+    announced.current = resolved.id;
+  }, [graph, resolved?.id]);
 
   if (!online) return <div className="hfy-tree"><State>{COPY.offline}</State></div>;
   if (result === null) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
@@ -140,7 +146,7 @@ export function TreeApp() {
     <div className="hfy-tree">
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
       <FocusStage graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} />
-      <p className="hfy-tree__live" role="status" aria-live="polite" data-tree-live>{spoken}</p>
+      <p className="hfy-tree__live" aria-live="polite" data-tree-live>{spoken}</p>
     </div>
   );
 }

@@ -39,7 +39,7 @@ test("flag on: with no ?focus the page centres on the signed-in member, names th
   await expect(focusName(page)).toHaveText("Ada Example");
   await expect(page.locator("[data-tree-focus]")).toContainText("you");
   await expect(page.locator("[data-tree-focus] a", { hasText: "view page" })).toHaveAttribute("href", "/person/?id=I9003");
-  await expect(page.locator("[data-tree-live]")).toHaveText("centred on Ada Example: 2 parents, 1 partner, 3 children");
+  await expect(page.locator("[data-tree-live]")).toHaveText("", { timeout: 1000 }); // nothing is announced on first paint
   expect(new URL(page.url()).searchParams.get("focus")).toBe("I9003");
 });
 
@@ -51,6 +51,7 @@ test("?focus wins over the session, shows the relation to the viewer, and re-cen
   await page.locator("[data-tree-focus] button[data-person='I9005']").click();
   await expect(focusName(page)).toHaveText("Cal Other");
   await expect(focusName(page)).toBeFocused();
+  await expect(page.locator("[data-tree-live]")).toContainText("centred on Cal Other");
   expect(page.url()).toContain("focus=I9005");
   await page.goBack();
   await expect(focusName(page)).toHaveText("Dina Other");

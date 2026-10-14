@@ -45,9 +45,9 @@ test("unionsOf: one entry per union, partner null for a one-parent union, rel ke
   assert.deepEqual(g.unionsOf("I9011"), []);
 });
 
-test("siblings: full within a union, half across unions", () => {
+test("siblings: full within a union; plain when a parent is unrecorded; half only with two recorded parents each sharing one", () => {
   assert.deepEqual(g.siblings("I9003"), [{ id: "I9004", half: false }]);
-  assert.deepEqual(g.siblings("I9007").sort((a, b) => a.id.localeCompare(b.id)), [{ id: "I9008", half: false }, { id: "I9010", half: true }]);
+  assert.deepEqual(g.siblings("I9007").sort((a, b) => a.id.localeCompare(b.id)), [{ id: "I9008", half: false }, { id: "I9010", half: false }]);
   assert.deepEqual(g.siblings("I9011"), []);
 });
 
@@ -100,7 +100,7 @@ test("relationLabel: direct kin, in-laws of the tree's shape, and null for the r
   assert.equal(L("I9003", "I9007"), "daughter");
   assert.equal(L("I9003", "I9010"), "son");
   assert.equal(L("I9007", "I9008"), "brother");
-  assert.equal(L("I9007", "I9010"), "half-brother");
+  assert.equal(L("I9007", "I9010"), "brother", "I9010 has one recorded parent, so half cannot be told");
   assert.equal(L("I9003", "I9005"), "husband");
   assert.equal(L("I9005", "I9003"), "wife");
   assert.equal(L("I9007", "I9001"), "grandfather");
@@ -112,4 +112,15 @@ test("relationLabel: direct kin, in-laws of the tree's shape, and null for the r
   assert.equal(L("I9007", "I9011"), null);
   assert.equal(L("I9007", "nope"), null);
   assert.equal(L("I9001", "I9006"), null, "a daughter-in-law is not in the namer");
+});
+
+test("half siblings need two recorded parents each and exactly one shared; cousin is not a sibling", () => {
+  const P = (id) => ({ id, name: id });
+  const h = parseGraph({ schemaVersion: 1, people: ["a", "b", "c", "d", "x", "y"].map(P), unions: [
+    { id: "u1", partners: ["a", "b"], children: [{ id: "x", rel: "birth" }] },
+    { id: "u2", partners: ["a", "c"], children: [{ id: "y", rel: "birth" }] }
+  ] });
+  assert.deepEqual(h.siblings("x"), [{ id: "y", half: true }]);
+  assert.equal(relationLabel(h, "x", "y"), "half-sibling");
+  assert.equal(relationLabel(h, "x", "d"), null, "unrelated pair has no label");
 });
