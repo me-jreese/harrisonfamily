@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { edgeSignedOut } from "../lib/api.js";
 import { mountAt } from "../lib/mount.jsx";
+import { ContribLine } from "../lib/contrib-line.jsx";
 import { COPY, PostList, usePosts } from "../lib/posts-ui.jsx";
 
 function Feed() {
@@ -15,6 +16,7 @@ function Feed() {
   return (
     <section className="hfy-posts" aria-labelledby="hfy-timeline-h" data-hfy-timeline>
       <h2 className="hfy-h" id="hfy-timeline-h">latest from the family</h2>
+      <ContribLine />
       <PostList posts={posts} />
     </section>
   );

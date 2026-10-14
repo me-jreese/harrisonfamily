@@ -8,35 +8,39 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "459c3035",
-        "css": "7d6cf784"
+        "js": "bba1b908",
+        "css": "11377c0e"
+      },
+      "follow": {
+        "js": "5936a7e1",
+        "css": "e58e76cd"
       },
       "inbox": {
-        "js": "fe44d358",
+        "js": "e09a6b7f",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "0d12d455",
+        "js": "0b682b2c",
         "css": "38a33f05"
       },
       "links-editor": {
-        "js": "1937a6d0",
+        "js": "384053f9",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "07d3bb73",
-        "css": "5a80e679"
+        "js": "cb3a8e19",
+        "css": "307f6c65"
       },
       "notifications": {
-        "js": "bd9f21b4",
-        "css": "56799f74"
+        "js": "6c363506",
+        "css": "be703fb4"
       },
       "person": {
-        "js": "8581ed5f",
-        "css": "fc1191e0"
+        "js": "83f78f35",
+        "css": "92f22fd0"
       },
       "person-links": {
-        "js": "d07dc3b9",
+        "js": "4f5e63ee",
         "css": "fcacbc39"
       },
       "photo-tags": {
@@ -44,11 +48,11 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "5c3c07af",
-        "css": "dc46d8d9"
+        "js": "ec5ba293",
+        "css": "890fde1c"
       },
       "search": {
-        "js": "3dd13244",
+        "js": "85214b89",
         "css": "9e007813"
       },
       "settings": {
@@ -56,12 +60,12 @@
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "a409229d",
+        "js": "7b7b78aa",
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "347ae61d",
-        "css": "169edbe4"
+        "js": "01faf4e2",
+        "css": "8f618380"
       },
       "tree": {
         "js": "2f729552",
@@ -70,7 +74,7 @@
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "2944cc78"
+    "sw": "1608fbe4"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -785,6 +789,16 @@
       loadIsland("person-links", { onError() { /* the person page stands without the links section */ } });
     } else if (/^\/me\/links\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("links-editor", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-186: recordSubsV1 mounts the follow toggle on the person page (island follow; it fills the person page's [data-slot="follow"]
+  // host and listens to hfy:person-rendered). The "pages you follow" list on /me/notifications/ lives in the notifications island, which
+  // reads the flag itself. With the flag off the bundle is not requested and the person page is as before.
+  resolveFlags().then((flags) => {
+    if (flags.recordSubsV1 !== true) return;
+    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("follow", { onError() { /* the person page stands without the follow toggle */ } });
     }
   });
 

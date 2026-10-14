@@ -313,7 +313,8 @@ class SyncInfra(unittest.TestCase):
     # AC2: IAM
     def test_api_role_gains_only_the_media_and_snapshot_grants(self):
         media = by_sid(self.r["Role"], "MediaBinaries")
-        self.assertEqual(sorted(media["Action"]), ["s3:GetObject", "s3:PutObject"])
+        # HFY-TSK-173: DeleteObject for the finalized staging object and the key an extension change orphaned
+        self.assertEqual(sorted(media["Action"]), ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"])
         self.assertEqual(sub(media["Resource"]), "arn:${AWS::Partition}:s3:::${MediaBucket}/media/*")
         snap = by_sid(self.r["Role"], "SyncSnapshots")
         self.assertEqual(sorted(snap["Action"]), ["s3:GetObject", "s3:PutObject"])

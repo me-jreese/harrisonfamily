@@ -67,7 +67,7 @@ describe("SYNC_API_ENABLED (AC3)", () => {
   it("the switch is declared on every sync route, as a serverSwitch, and caps.json describes the auth mode", () => {
     const caps = buildCaps();
     const sync = caps.actions.filter((a) => a.path.startsWith("/api/sync/"));
-    expect(sync.map((a) => a.name).sort()).toEqual(["sync.bind", "sync.meta"]);
+    expect(sync.map((a) => a.name).sort()).toEqual(["sync.batches", "sync.bind", "sync.media.presign", "sync.meta", "sync.sessions.abort", "sync.sessions.complete", "sync.sessions.open"]);
     for (const a of sync) expect(a).toMatchObject({ auth: "sync-bearer", gate: { switch: "SYNC_API_ENABLED" } });
     expect(caps.auth.sync_bearer).toMatchObject({ audience: SYNC_AUDIENCE, client_id: SYNC_CLIENT_ID, group: "gramps-owner" });
     expect(caps.sync.handshake_headers).toEqual(["x-hfy-sync-client", "x-hfy-gramps-version", "x-hfy-gramps-schema", "x-hfy-redaction-version", "x-hfy-tree-id"]);

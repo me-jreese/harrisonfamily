@@ -2,6 +2,7 @@
   "aboutCta": false,
   "authV2": true,
   "commentPhotosV1": false,
+  "contribV1": false,
   "inboxV1": false,
   "navMe": true,
   "notifyV2": true,
@@ -9,6 +10,7 @@
   "photoTags": false,
   "postsV2": true,
   "profileLinks": false,
+  "recordSubsV1": false,
   "searchV2": true,
   "shellV2": true
 }

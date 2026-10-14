@@ -84,12 +84,13 @@ class HfySyncOptions(tool.ToolOptions):
 
     def __init__(self, name, person_id=None):
         tool.ToolOptions.__init__(self, name, person_id)
-        self.options_dict = {"action": "status", "dry_run": 0, "allow_deletes": 0, "yes": 0, "run_id": ""}
+        self.options_dict = {"action": "status", "dry_run": 0, "allow_deletes": 0, "yes": 0, "step_up": 0, "run_id": ""}
         self.options_help = {
             "action": ("=ACTION", "What to do", ["status", "login", "check", "pull", "push", "sync", "bind"], False),
             "dry_run": ("=0/1", "Report what would change; write nothing to the tree or the website", ["No", "Yes"], True),
             "allow_deletes": ("=0/1", "Allow deletes (never mass deletes)", ["No", "Yes"], True),
             "yes": ("=0/1", "Do not stop at the preview", ["No", "Yes"], True),
+            "step_up": ("=0/1", "For login: ask for a fresh sign-in (prompt=login, max_age=300)", ["No", "Yes"], True),
             "run_id": ("=ID", "Run id the hfy-sync wrapper checks status.json against", "text"),
         }
 
@@ -102,6 +103,7 @@ class HfySyncTool(tool.Tool):
         opts = runner.Options(
             action="status" if gui else str(values.get("action") or "status").strip(),
             dry_run=bool(values.get("dry_run")), allow_deletes=bool(values.get("allow_deletes")), yes=bool(values.get("yes")),
+            step_up=bool(values.get("step_up")),
         )
         run_id = str(values.get("run_id") or "") or None
         try:

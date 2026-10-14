@@ -1,0 +1,45 @@
+/* The follow toggle on the person hero (follow.jsx, HFY-TSK-186). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
+   --io-radius-* and --io-typography-* (theme-lint no-literal-token-values). Under 64rem the toggle is a full-width secondary button
+   below the name; from 64rem the actions host sits inline with the name (the heading becomes a two-column grid while a toggle shows). */
+.person-actions > [data-slot="follow"]:not(:empty) { flex: 1 1 100%; min-width: 0; }
+.hfy-follow { display: grid; gap: var(--io-space-2); }
+.hfy-follow .hfy-follow__btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  cursor: pointer;
+}
+.hfy-follow .hfy-follow__btn:hover { border-color: var(--io-color-semantic-link-hover); color: var(--io-color-semantic-link-hover); }
+.hfy-follow .hfy-follow__btn[aria-pressed="true"] { background: var(--io-color-semantic-surface-raised); border-color: var(--io-color-semantic-border); }
+.hfy-follow .hfy-follow__btn:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-follow .hfy-follow__helper,
+.hfy-follow .hfy-follow__banner { margin: 0; font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); }
+.hfy-follow .hfy-follow__helper { color: var(--io-color-semantic-text-dim); }
+.hfy-follow .hfy-follow__banner {
+  padding: var(--io-space-2) var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-danger);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-danger);
+}
+@media (min-width: 64rem) {
+  .person-heading[data-hfy-follow-row] { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--io-space-4); align-items: center; }
+  .person-heading[data-hfy-follow-row] > * { grid-column: 1 / -1; }
+  .person-heading[data-hfy-follow-row] > h1 { grid-column: 1; grid-row: 1; }
+  .person-heading[data-hfy-follow-row] > [data-slot="hero-actions"] { grid-column: 2; grid-row: 1; }
+  .person-heading[data-hfy-follow-row] > [data-slot="hero-actions"] > [data-slot]:not(:empty) { margin-top: 0; }
+  .person-actions > [data-slot="follow"]:not(:empty) { flex: none; }
+  .hfy-follow .hfy-follow__btn { width: auto; min-width: calc(var(--io-control-tap-min) * 2); }
+  .hfy-follow { justify-items: end; }
+}
