@@ -1,30 +1,17 @@
 {
   "DistributionConfig": {
-    "Comment": "HFY template (sanitized). Mirrors the live topology before scripts/infra/add-*-behavior.sh: the legacy /api/* behavior serves POST /api/check-allowed from the hfy-check-allowed API Gateway.",
+    "Comment": "HFY template (sanitized). The S3 origin and default behavior before scripts/infra/add-*-behavior.sh add the app behaviors. The legacy /api/* behavior and its hfy-check-allowed API Gateway origin were removed when that Lambda was retired (HFY-TSK-326, ruling P2-R48).",
     "Aliases": {
       "Quantity": 2,
       "Items": ["example.com", "www.example.com"]
     },
     "Origins": {
-      "Quantity": 2,
+      "Quantity": 1,
       "Items": [
         {
           "Id": "s3-origin",
           "DomainName": "example-bucket.s3.amazonaws.com",
           "S3OriginConfig": {"OriginAccessIdentity": ""}
-        },
-        {
-          "Id": "api-gateway-hfy-check-allowed",
-          "DomainName": "abc123.execute-api.us-west-2.amazonaws.com",
-          "OriginPath": "/prod",
-          "CustomOriginConfig": {
-            "HTTPPort": 80,
-            "HTTPSPort": 443,
-            "OriginProtocolPolicy": "https-only",
-            "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]},
-            "OriginReadTimeout": 30,
-            "OriginKeepaliveTimeout": 5
-          }
         }
       ]
     },
@@ -35,24 +22,7 @@
       "Compress": true,
       "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6"
     },
-    "CacheBehaviors": {
-      "Quantity": 1,
-      "Items": [
-        {
-          "PathPattern": "/api/*",
-          "TargetOriginId": "api-gateway-hfy-check-allowed",
-          "ViewerProtocolPolicy": "https-only",
-          "AllowedMethods": {
-            "Quantity": 7,
-            "Items": ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
-            "CachedMethods": {"Quantity": 2, "Items": ["GET", "HEAD"]}
-          },
-          "Compress": false,
-          "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-          "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
-        }
-      ]
-    },
+    "CacheBehaviors": {"Quantity": 0},
     "Enabled": true,
     "ViewerCertificate": {
       "ACMCertificateArn": "arn:aws:acm:us-east-1:ACCOUNT:certificate/ID",
