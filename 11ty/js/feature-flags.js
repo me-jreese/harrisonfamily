@@ -8,73 +8,81 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "bba1b908",
+        "js": "c3225327",
         "css": "11377c0e"
       },
+      "edit-entry": {
+        "js": "a98b1e49",
+        "css": "718ffc08"
+      },
+      "editor": {
+        "js": "9e24f12a",
+        "css": "aa79df21"
+      },
       "follow": {
-        "js": "5936a7e1",
+        "js": "82b85f5a",
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "e09a6b7f",
+        "js": "c67f2332",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "0b682b2c",
+        "js": "a9e5d0f1",
         "css": "38a33f05"
       },
       "links-editor": {
-        "js": "384053f9",
+        "js": "4d97c3e3",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "cb3a8e19",
+        "js": "78a2707f",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "6c363506",
+        "js": "0cd98001",
         "css": "be703fb4"
       },
       "person": {
-        "js": "83f78f35",
+        "js": "deb9846a",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "4f5e63ee",
+        "js": "d18d6df5",
         "css": "fcacbc39"
       },
       "photo-tags": {
-        "js": "3d566647",
+        "js": "b5df981d",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "ec5ba293",
+        "js": "847fb1c9",
         "css": "890fde1c"
       },
       "search": {
-        "js": "85214b89",
+        "js": "316407f7",
         "css": "9e007813"
       },
       "settings": {
-        "js": "f2245553",
+        "js": "30aea294",
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "7b7b78aa",
+        "js": "37de354e",
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "01faf4e2",
+        "js": "fde8f811",
         "css": "8f618380"
       },
       "tree": {
-        "js": "e0191291",
+        "js": "570e53c0",
         "css": "632f9762"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "1608fbe4"
+    "sw": "f78c3f3d"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -799,6 +807,18 @@
     if (flags.recordSubsV1 !== true) return;
     if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
       loadIsland("follow", { onError() { /* the person page stands without the follow toggle */ } });
+    }
+  });
+
+  // HFY-TSK-212: recordEdit mounts the record editor. The edit entry island fills the person page's [data-slot="edit"] host in the hero
+  // action slot (and listens to hfy:person-rendered); the editor island fills the static /edit/ page. With the flag off neither bundle is
+  // requested: the person page is as before and /edit/ keeps its "not available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.recordEdit !== true) return;
+    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("edit-entry", { onError() { /* the person page stands without the edit entry */ } });
+    } else if (/^\/edit\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("editor", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 
