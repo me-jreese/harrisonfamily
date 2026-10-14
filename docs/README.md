@@ -19,7 +19,7 @@ The reasoning behind the system. Start here if you want to know *what was built 
 - [Why releases ship through a pipeline and feature flags](explanation/release-model.md) — why a deploy, a flag flip and attaching the private data gate are separate switches, and why their order matters.
 - [The privacy model for family data](explanation/family-data-privacy.md) — what counts as private, how it stays out of git, and how the edge keeps the data and member photos members-only.
 - [Why one CloudFront distribution fronts everything](explanation/edge-and-origin-design.md) — one origin for the browser, the two Lambda@Edge exceptions, and the Cloudflare cache in front that the versioned URLs get past.
-- [How editing and suggested changes work](explanation/editing-and-proposals.md) — why a change saves now, goes to review or is refused, what a suggestion is, and why editing ships behind a server switch and two flags.
+- [How editing and suggested changes work](explanation/editing-and-proposals.md) — why a change saves now, goes to review or is refused, what a suggestion is, and why editing ships behind a server switch and its site flags.
 - [How member content stays accountable](explanation/member-content-design.md) — the rules behind posts, comments, reactions and photos, and the audit record every post and comment change leaves.
 
 ## Reference — find the facts (and the code)
@@ -60,7 +60,7 @@ For a new environment, for this family or another, in this order. The first page
 
 - [Deploy a change to the static site](how-to/deploy-a-site-change.md) — ship `11ty/` or the legacy sign-in functions through the pipeline and confirm the change is live past Cloudflare's cache.
 - [Roll back, or drill a rollback of, a site deploy](how-to/roll-back-a-site-deploy.md) — undo a release or rehearse it, checking `authV2` first while the gate is attached.
-- [Turn on editing](how-to/turn-on-editing.md) — name the approvers, set `HfyEditing`, try the editor in one tab, flip `proposalReview` then `recordEdit`, and turn it off again.
+- [Turn on editing](how-to/turn-on-editing.md) — name the approvers, set `HfyEditing`, try the editor and the relationship wizard in one tab, flip `proposalReview`, `recordEdit` and `relationshipWizard` in that order, and turn it off again.
 - [Review suggested changes](how-to/review-suggested-changes.md) — as an admin, open the queue and approve, ask for changes, decline or edit then approve.
 - [Turn a feature flag on or off, for one tab or for everyone](how-to/toggle-a-feature-flag.md) — preview a flag with the per-tab override, publish it in `flags.json`, and roll it back.
 - [Build and preview the React islands](how-to/build-and-preview-the-islands.md) — rebuild everything the islands build writes, check it against the source, and view it locally with a flag on.

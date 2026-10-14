@@ -15,7 +15,7 @@ const site = process.env.HFY_SITE ? resolve(process.env.HFY_SITE) : join(repo, "
 const out = join(site, "js", "islands");
 
 test("island entry bundles, the theme layer, the sign-in stylesheet and the fonts are present", () => {
-  for (const f of ["shell.js", "shell.css", "search.js", "search.css", "person.js", "my-posts.js", "timeline.js", "posts.js", "notifications.js", "settings.js", "settings.css", "tree.js", "tree.css", "inbox.js", "inbox.css", "inbox-page.js", "inbox-page.css", "edit-entry.js", "edit-entry.css", "editor.js", "editor.css", "review.js", "review.css", "join.js", "join.css", "join-entry.js", "join-entry.css", "notify-sw.js"]) {
+  for (const f of ["shell.js", "shell.css", "search.js", "search.css", "person.js", "my-posts.js", "timeline.js", "posts.js", "notifications.js", "settings.js", "settings.css", "tree.js", "tree.css", "inbox.js", "inbox.css", "inbox-page.js", "inbox-page.css", "edit-entry.js", "edit-entry.css", "editor.js", "editor.css", "family.js", "family.css", "family-entry.js", "family-entry.css", "review.js", "review.css", "access-requests.js", "access-requests.css", "join.js", "join.css", "join-entry.js", "join-entry.css", "notify-sw.js"]) {
     assert.ok(statSync(join(out, f)).size > 0, `js/islands/${f} is empty`);
   }
   for (const f of ["css/hfy-theme.css", "css/auth-edge.css"]) assert.ok(statSync(join(site, f)).size > 0, `${f} is empty`);
@@ -71,4 +71,19 @@ test("HFY-TSK-315: the person and posts islands carry no Cloudscape code or styl
   }
   // The check can see Cloudscape: the search island does load it.
   assert.ok(reachable("search.js").some((abs) => /awsui/.test(readFileSync(abs, "utf8"))), "search.js no longer loads Cloudscape: is the marker still awsui?");
+});
+
+test("HFY-TSK-158: the family-section button is its own small bundle and the wizard loads only on /edit/family/ (the person page never loads it)", () => {
+  // The entry reaches no wizard code (the screens, the model's copy) and no form kit; the wizard bundle carries no Cloudscape.
+  for (const abs of reachable("family-entry.js")) {
+    const code = readFileSync(abs, "utf8");
+    assert.doesNotMatch(code, /data-hfy-wizard-ready|awsui/, `family-entry.js loads wizard or Cloudscape code (${abs.slice(out.length + 1)})`);
+  }
+  assert.ok(statSync(join(out, "family-entry.js")).size < 64 * 1024, "family-entry.js grew past 64 KB");
+  assert.ok(reachable("family.js").some((abs) => /data-hfy-wizard-ready/.test(readFileSync(abs, "utf8"))), "family.js no longer carries the wizard: is the marker still data-hfy-wizard-ready?");
+  for (const abs of reachable("family.js")) assert.doesNotMatch(readFileSync(abs, "utf8"), /awsui/, `family.js loads Cloudscape code (${abs.slice(out.length + 1)})`);
+  // The shell and the person bundles do not reach the wizard either.
+  for (const name of ["shell", "person"]) {
+    for (const abs of reachable(`${name}.js`)) assert.doesNotMatch(readFileSync(abs, "utf8"), /data-hfy-wizard-ready/, `${name}.js loads the wizard (${abs.slice(out.length + 1)})`);
+  }
 });

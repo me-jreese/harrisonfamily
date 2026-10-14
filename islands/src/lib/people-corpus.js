@@ -146,3 +146,13 @@ export async function suggestPeople(text) {
   const eng = await engine();
   return eng.suggest(text, 6).map((r) => ({ id: r.id, title: r.title, subtitle: r.fields.lifespan || undefined, href: personPath(r.id) }));
 }
+
+/**
+ * The relationship wizard's person search (HFY-TSK-158): the same local engine as `suggestPeople`, but each row carries what a big row shows:
+ * the name, the lifespan the site already shows members and the small photo's URL ("" when there is none). Rows are family-index rows, so
+ * `id` is a Gramps id; the records API turns it into the handle the intent names.
+ */
+export async function findPeople(text, limit = 6) {
+  const eng = await engine();
+  return eng.suggest(text, limit).map((r) => ({ id: r.id, title: r.title, lifespan: r.fields.lifespan || "", photo: r.fields.photo || "" }));
+}

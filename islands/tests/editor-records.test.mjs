@@ -1,14 +1,15 @@
 // HFY-TSK-157: the editors of the other record classes (src/lib/editor-records.js). The form of each of the eight classes, the EditOps a change makes
 // (every case runs them through the ops engine, api/src/records/ops.js), the styled-note rule (DEC-E11), the place-type and address rules (DEC-E12,
-// R-18), the place code and coordinate rules, the replay after a save, and the drill-down links. Synthetic records only.
+// R-18), the place code and coordinate rules, the replay after a save, the drill-down links, and that every desk or never row of the live field-policy
+// table is absent from the forms or explained (AC2). Synthetic records only.
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { applyOps } from "../../api/src/records/ops.js";
-import { classifyOps } from "../../api/src/records/field-policy.js";
+import { DEFAULT_FIELD_POLICY, NEVER_TYPE_VALUES, classifyOps } from "../../api/src/records/field-policy.js";
 import { createEditGuard } from "../../shared/edit-guard.mjs";
 import { EDIT_SCHEMAS } from "../src/lib/edit-schemas.js";
-import { PERSON_SECTIONS, createModeResolver, parseRoute, sectionSchema, sectionValues, sectionsFor } from "../src/lib/editor-model.js";
+import { COPY, PERSON_SECTIONS, badgeFor, createModeResolver, parseRoute, sectionSchema, sectionValues, sectionsFor } from "../src/lib/editor-model.js";
 import {
   COORDINATE_POLICY, PLACE_TYPES_ADMINISTRATIVE, RECORD_COPY, RECORD_FIELDS, PLACE_TYPES_SKIPPED, drillLinks, placeCodeOpen, recordNotes, recordOps,
   recordPolicy, recordSchema, recordSeed, recordTitle, roundedCoordinate
@@ -234,6 +235,68 @@ test("the modes: a member's every field goes to review, an admin's saves now; ta
       assert.equal(member, "proposal", `${cls}.${sp.key} for a member`);
       assert.equal(admin, "direct", `${cls}.${sp.key} for an admin`);
     }
+  }
+});
+
+test("desk and never fields are absent or explained, for a member (own and other) and an admin: every desk or never row of the live table (AC2)", () => {
+  const table = DEFAULT_FIELD_POLICY.document();
+  assert.deepEqual(POLICY.rows, table.rows, "the fixture the editor tests serve is the live table");
+  const refused = (code) => code === "desk" || code === "never";
+  const viewers = [["member", { admin: false, relation: "other" }], ["own", { admin: false, relation: "own" }], ["admin", { admin: true, relation: "other" }]];
+  // A desk or never row that reaches a rendered field: the field's record pointer, or the pointer its badge is judged at (a birth or another event).
+  const hits = new Set();
+  for (const cls of CLASSES) {
+    const form = secOf(cls).form;
+    for (const row of table.rows.filter((r) => r.cls === cls)) {
+      const one = createModeResolver({ rows: [row] }); // answers the row's code only where the row's pattern matches
+      for (const [who, v] of viewers) {
+        for (const sp of form.fields) {
+          const ptrs = new Set([sp.ptr, recordPolicy(form, sp.key, { type: "12" })[1], recordPolicy(form, sp.key, { type: "21" })[1]]);
+          for (const p of ptrs) if (refused(one.resolve(cls, p, v))) hits.add(`${who} ${cls}.${sp.key} ${row.pointer}`);
+        }
+      }
+    }
+  }
+  // Only three conditional never rows reach a field the form renders, for every viewer alike, and no desk row reaches one: every other desk or
+  // never row (ids, private flags, LDS ordinances, the place title, alternate locations, addresses, withheld attributes and URL types) is absent.
+  const explained = [["Event.date", "/date"], ["Place.code", "/code"], ["Place.place_type", "/place_type/**"]];
+  assert.deepEqual([...hits].sort(), viewers.flatMap(([who]) => explained.map(([f, row]) => `${who} ${f} ${row}`)).sort());
+  for (const [who, v] of viewers) {
+    // The named desk and never fields: refused by the table for this viewer, and not a property of the form's schema, so nothing renders them.
+    const absent = [
+      ["Family", "/lds_ord_list/0", "desk"], ["Family", "/gramps_id", "desk"], ["Event", "/private", "desk"], ["Place", "/title", "desk"],
+      ["Place", "/alt_loc/0", "never"], ["Repository", "/address_list/0", "never"],
+      ["Source", "/attribute_list/0", "never", { _class: "Attribute", type: typed("AttributeType", 3) }], ["Repository", "/urls/0", "never", { _class: "Url", type: typed("UrlType", 1) }]
+    ];
+    for (const [cls, ptr, code, value] of absent) {
+      const served = DEFAULT_FIELD_POLICY.resolve(cls, ptr, v, value ? { value } : null);
+      assert.equal(served, code, `${who}: ${cls}${ptr} is ${code}`);
+      const b = bundleFor(cls, { admin: v.admin, relation: v.relation });
+      const sec = secOf(cls);
+      const props = Object.keys(sectionSchema(schemas[cls], sec.form, makeLookups(b, schemas), sectionValues(b.obj, sec.form)).properties);
+      const top = ptr.split("/")[1];
+      assert.ok(!props.includes(top) && !sec.form.fields.some((sp) => sp.ptr.split("/")[1] === top), `${who}: ${cls}${ptr} has no field`);
+    }
+    // Explained 1: a birth's day and month (never) are cut from what is sent, and the field says so; the badge is the birth-year row's.
+    const ev = secOf("Event").form;
+    assert.equal(ev.fields.find((sp) => sp.key === "date").hint, RECORD_COPY.dateBirthLike);
+    assert.equal(DEFAULT_FIELD_POLICY.resolve("Event", "/date/dateval/0", v, { value: 14, checks: [{ obj: { ...OBJECTS.Event, type: typed("EventType", 12) }, tree: [] }] }), "never", `${who}: a birth's day`);
+    const birthOp = run("Event", { ...valuesOf("Event"), type: "12", date: date(15, 3, 1991) }, { admin: v.admin }).ops.find((o) => o.path === "/date");
+    assert.deepEqual(birthOp.value.dateval.slice(0, 3), [0, 0, 1991], `${who}: a birth is sent as its year only`);
+    // Explained 2: a place's code below the administrative level (never) is locked, badged "can't be changed on the site", and says why.
+    const pl = secOf("Place").form;
+    const city = OBJECTS.Place; // a city (PlaceType 4)
+    const [, , fixed] = recordPolicy(pl, "code", sectionValues(city, pl), city);
+    assert.equal(fixed, "never");
+    assert.deepEqual(badgeFor(fixed), { key: "locked", text: COPY.modeLocked });
+    assert.equal(COPY.modeLocked, "can't be changed on the site");
+    assert.equal(pl.fields.find((sp) => sp.key === "code").hint, RECORD_COPY.placeCodeHint);
+    assert.equal(run("Place", { ...sectionValues(city, pl), code: "AB1" }, { admin: v.admin }).ops.filter((o) => o.path === "/code").length, 0, `${who}: no code op`);
+    // Explained 3: the never place types are not offered, and the field says so.
+    const b = bundleFor("Place", { admin: v.admin, relation: v.relation });
+    const offered = sectionSchema(schemas.Place, { record: true, cls: "Place", fields: pl.fields }, makeLookups(b, schemas), sectionValues(b.obj, pl)).properties.place_type;
+    for (const t of NEVER_TYPE_VALUES.PlaceType) assert.ok(!offered.oneOf.some((o) => o.const === String(t)), `${who}: place type ${t} is offered`);
+    assert.equal(offered.description, RECORD_COPY.placeStreet);
   }
 });
 

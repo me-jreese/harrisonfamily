@@ -40,7 +40,7 @@ Approval writes the records, the audit entry and the proposer's credit in one tr
 
 ## Relationships get their own wizard
 
-Adding a parent, a child or a spouse is the hardest edit in Gramps: it takes a family record with two-sided links, child order and sometimes a new person. The routes are available now. The wizard page ships in a later task, behind its own default-off flag, `relationshipWizard`. Members will describe an intent ("add this person as my child") and the server compiles the operations ([Relationship compiler](../reference/api.md#relationship-compiler)). The compile reports likely duplicates and asks the member to confirm that a new name is a different person, and it refuses a change that would make someone their own ancestor. Because a relationship touches other people's pages, a member's relationship is always a suggestion.
+Adding a parent, a child or a spouse is the hardest edit in Gramps: it takes a family record with two-sided links, child order and sometimes a new person. So members do not edit families field by field. The relationship wizard, the page `/edit/family/` behind its own flag `relationshipWizard`, asks one question per screen in four flows (my parents, my children, my spouse or partner, and something's wrong), and members open it from `add or fix family connections` on their own page. The member describes an intent ("add this person as my child") and the server compiles the operations ([Relationship compiler](../reference/api.md#relationship-compiler)). The compile reports likely duplicates and asks the member to confirm that a new name is a different person, and it refuses a change that would make someone their own ancestor. Because a relationship touches other people's pages, a member's relationship is always a suggestion.
 
 ## Mistakes can be undone
 
@@ -48,7 +48,7 @@ A direct save returns the inverse operations against the new versions, and the e
 
 ## Why it ships dark
 
-Editing is behind two layers so it can be installed without being visible. The stack parameter `HfyEditing` switches every editing route on or off on the server. Then the site flags `recordEdit` and `proposalReview` decide whether the pages offer the editor and the review tab. Turning it off again is the reverse, and stored suggestions stay stored. The order, and who must approve each step, is in [Turn on editing](../how-to/turn-on-editing.md); the general reasoning for separate switches is in [Why releases ship through a pipeline and feature flags](release-model.md).
+Editing is behind two layers so it can be installed without being visible. The stack parameter `HfyEditing` switches every editing route on or off on the server. Then the site flags `recordEdit`, `proposalReview` and `relationshipWizard` decide whether the pages offer the editor, the review tab and the relationship wizard. Turning it off again is the reverse, and stored suggestions stay stored. The order, and who must approve each step, is in [Turn on editing](../how-to/turn-on-editing.md); the general reasoning for separate switches is in [Why releases ship through a pipeline and feature flags](release-model.md).
 
 ## Related pages
 

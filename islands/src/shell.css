@@ -213,6 +213,20 @@ html.hfy-shell-v2 .io-shell .hfy-gear {
 }
 html.hfy-shell-v2 .io-shell .hfy-gear:hover { color: var(--io-shell-link-hover); }
 html.hfy-shell-v2 .io-shell .hfy-gear[aria-current="page"] { color: var(--io-shell-accent-secondary); }
+/* The admins' dot (HFY-TSK-264): a filled disc at the icon's top right while family requests wait, ringed in the bar's surface so it reads on the icon.
+   The count is in the link's aria-label ("settings, 2 family requests waiting"); the dot is decoration. */
+html.hfy-shell-v2 .io-shell .hfy-gear { position: relative; }
+html.hfy-shell-v2 .hfy-gear__dot {
+  position: absolute;
+  top: var(--io-shell-space-2);
+  right: var(--io-shell-space-2);
+  width: var(--io-shell-space-2);
+  height: var(--io-shell-space-2);
+  box-sizing: content-box;
+  border: var(--io-shell-focus-ring) solid var(--io-shell-surface);
+  border-radius: var(--io-shell-radius-pill);
+  background: var(--io-shell-accent);
+}
 html.hfy-shell-v2 .hfy-gear__icon {
   display: block;
   flex: none;
