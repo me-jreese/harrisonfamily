@@ -13,7 +13,7 @@ import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
 import { loadProposal, systemProposalOf, withdrawSystem } from "../src/records/proposal-store.js";
 import {
-  AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, SECOND_EMAIL_RULE, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
+  AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, MAX_REVOKE_ITEMS, SECOND_EMAIL_RULE, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
   secondEmailGate, secondEmailPath,
 } from "../src/access-requests.js";
 import { createSesMailer, sendEmailInput } from "../src/mailer.js";
@@ -469,6 +469,7 @@ describe("a 'new' decision files a person.create system proposal (AC3)", () => {
     expect(w.req()).toMatchObject({ state: "awaiting_record", version: 2, proposalId: r.body.proposalId, GSI1PK: "ACCESSREQS#awaiting_record", decision: { kind: "new", by: ADMIN, confirmedOutside: true } });
     expect(w.req().ttl).toBe(Math.floor(T0 / 1000) + AWAITING_TTL_SECONDS);
     expect(w.sent.map((m) => [m.template, m.to])).toEqual([["awaiting_record", EMAIL]]);
+    expect(w.channels).toEqual([["join", "awaiting_record"]]);
     const [decide] = w.audits(`accessreq:${ID1}`);
     expect(decide).toMatchObject({ op: "accessreq.decide", after: { state: "awaiting_record", decision: "new", proposalId: r.body.proposalId, confirmedOutside: true } });
     expect(w.allow()).toBeUndefined(); // nobody can sign in yet
@@ -966,6 +967,7 @@ describe("allowSecondEmail (AC7, PS-13)", () => {
     const toOld = w.sent.filter((m) => m.to === OLD_EMAIL);
     expect(toOld).toEqual([{ template: "second_email_notice", to: OLD_EMAIL, vars: {} }]);
     expect(w.sent.find((m) => m.to === EMAIL)).toEqual({ template: "approved_later", to: EMAIL, vars: { when: effectiveAt.slice(0, 10) } });
+    expect(w.channels.sort()).toEqual([["general", "second_email_notice"], ["join", "approved_later"]]);
     expect(w.sent.map((m) => m.to).filter((x) => x === EMAIL)).toHaveLength(1);
   });
 
@@ -1421,9 +1423,39 @@ describe("revoke by ALLOW# entry (HFY-TSK-331, P2-R60)", () => {
     w.seed();
     await w.link(ADMIN, ID1);
     expect(err(await grantRevoke(w, undefined))).toMatchObject({ status: 401 });
-    expect(err(await grantRevoke(w, "member-1"))).toMatchObject({ status: expect.any(Number) });
+    expect(err(await grantRevoke(w, "member-1"))).toEqual({ status: 403, error: "not_admin" });
+    expect(w.allow().state).toBe("active");
     w.flags.accessRequests = false;
     expect((await grantRevoke(w, ADMIN2)).status).toBe(404);
     expect(w.allow().state).toBe("active");
+  });
+
+  const seedAllows = (w, n, over = {}) => {
+    for (let i = 0; i < n; i++) {
+      const email = `m${i}@example.test`;
+      const item = { ...grantItems({ email, sub: LIVING, source: "admin", at: "2026-01-01T00:00:00.000Z", by: ADMIN2, table: TABLE, ...over }).puts[0].item };
+      w.ddb.rows.set(`ALLOW#${email}\u0000META`, item);
+    }
+  };
+
+  it("more than MAX_REVOKE_ITEMS active entries is 422 too_many and writes nothing; exactly the cap revokes them all", async () => {
+    const w = await world();
+    seedAllows(w, MAX_REVOKE_ITEMS + 1);
+    w.txns.length = 0;
+    expect(err(await grantRevoke(w, ADMIN2))).toEqual({ status: 422, error: "too_many" });
+    expect(w.txns).toHaveLength(0);
+    expect(w.ddb.rows.get(`ALLOW#m0@example.test\u0000META`).state).toBe("active");
+    w.ddb.rows.delete(`ALLOW#m0@example.test\u0000META`);
+    const r = await grantRevoke(w, ADMIN2);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.revoked).toHaveLength(MAX_REVOKE_ITEMS);
+  });
+
+  it("revokes an entry still held by a future effectiveAt too", async () => {
+    const w = await world();
+    seedAllows(w, 1, { effectiveAt: new Date(w.clock.t + HOLD_MS).toISOString() });
+    const r = await grantRevoke(w, ADMIN2);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(w.ddb.rows.get(`ALLOW#m0@example.test\u0000META`).state).toBe("revoked");
   });
 });

@@ -48,10 +48,13 @@ export const STORE_CURRENT_CITY = true;
 /** A decided request lives this long (surfaces.md 7.9); an awaiting_record one gets a fresh 90 days when it is set. */
 export const DECIDED_TTL_SECONDS = 30 * 86400;
 export const AWAITING_TTL_SECONDS = 90 * 86400;
-/** The member's objection window for a second email (PS-13). */
-/** Templates sent to a member's existing addresses (the general identity); every other template goes to a requester (the Join identity). */
+/** Templates sent to a member's existing addresses (the general identity). */
 const MEMBER_TEMPLATES = new Set(["second_email_notice"]);
+/** Templates sent to a requester (the Join identity). Any other template name fails closed: it is sent by neither identity. */
+const REQUESTER_TEMPLATES = new Set(["approved", "approved_later", "declined", "awaiting_record"]);
+/** One revoke-by-entry is one transaction, and a DynamoDB transaction holds at most 100 items, so a member's active ALLOW# entries are capped at 10 (a revoke writes up to 5 items per entry). */
 export const MAX_REVOKE_ITEMS = 10;
+/** The member's objection window for a second email (PS-13). */
 export const HOLD_MS = 72 * 3600 * 1000;
 export const MAX_NOTE_CHARS = 500;
 export const MAX_REASON_CHARS = 200;
@@ -409,8 +412,11 @@ export function createAccessRequests(deps) {
    * keeps the general identity (`deps.mailer`).
    */
   async function mailTo(to, template, vars = {}) {
-    const mailer = MEMBER_TEMPLATES.has(template) ? deps.mailer : deps.requesterMailer;
-    if (!mailer) return false;
+    const mailer = MEMBER_TEMPLATES.has(template) ? deps.mailer : REQUESTER_TEMPLATES.has(template) ? deps.requesterMailer : undefined;
+    if (!mailer) {
+      log.warn?.("access request mail not sent: no mailer for this template (requester mail needs the JOIN_* settings)", template);
+      return false;
+    }
     try {
       await mailer.send({ template, to, vars });
       return true;

@@ -157,6 +157,9 @@ const features = configureFeatures(createFeatureGate({
   isUat: async (sub) => (await getGroups({ sub })).includes(UAT_GROUP),
 }));
 
+// Fail closed is silent per request, so say it once at cold start: requester mail stops (emailSent:false) until JoinFromAddress and JoinSesConfigurationSet are set.
+if (!requesterMailer) console.warn("JOIN_FROM_ADDRESS or JOIN_SES_CONFIGURATION_SET is empty: access-request mail to requesters is disabled (decisions still commit with emailSent:false)");
+
 const isOwner = async (sub) => (await getGroups({ sub })).includes(OWNER_GROUP);
 
 // HFY-TSK-141: the access-request domain the desktop's first id assignment (assign mode, Q2-03) completes through: the policy asks which request a created
