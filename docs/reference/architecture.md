@@ -365,6 +365,7 @@ Written by `hfy-api`:
 | Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
+| Inbox item, its unread copy, the unread counter and the coalescing pointer | `INBOX#<principal>` | `N#<ulid>`, `U#<ulid>`, `COUNT`, `G#<group>` | - | none while unread; 90 days after read | `@io-kit/notify` `DynamoNotificationStore` |
 
 Each post, comment and profile links change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
 

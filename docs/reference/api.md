@@ -56,7 +56,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | --- | --- | --- |
 | `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
 | `@io-kit/comments` | 0.2.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
-| `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
+| `@io-kit/notify` (`/server`) | 0.5.0 | The notification routes (five push routes and three inbox routes), the inbox store, persist-first delivery (`createDelivery`), subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
 | `@io-kit/feed` | 1.1.1 | `createUlidFactory`: monotonic ULIDs for record ids and audit sort keys |
@@ -64,7 +64,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `web-push` | 3.6.7 | Push delivery. Imported only when the VAPID keys load. |
 | `@aws-sdk/*` | 3.1000.0 | DynamoDB document client, S3 and the S3 request presigner, Secrets Manager |
 
-[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version. [`api/test/kit-pins.test.js`](../../api/test/kit-pins.test.js) checks that every `@io-kit` pin in `api/` and `islands/` is exact and matches its lockfile.
+[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version, and the lockfile holds the same versions. [`api/test/kit-pins.test.js`](../../api/test/kit-pins.test.js) checks that every `@io-kit` pin in `api/` and `islands/` is exact and matches its lockfile.
 
 `@io-kit/auth` is pinned to the same version here and in [`auth/package.json`](../../auth/package.json). The moves from 2.1.1 to 2.1.2 and then 2.2.0 changed only the kit's edge code, which renders the auth edge's pages: the referrer policy, the theme's font origins and the page styling ([Identity services](identity-services.md)). The `/server` code that the API imports is unchanged, so [Session verification](#session-verification) behaves as it did under 2.1.1.
 
@@ -167,10 +167,13 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
 | `notifications.preferences.get` | GET | `/notifications/preferences` | none | `200` preferences | Kit route |
 | `notifications.preferences.put` | PUT | `/notifications/preferences` | body: preferences | `200` preferences | Kit route |
+| `notifications.inbox.list` | GET | `/notifications/inbox` | query `filter` (`unread` or `all`), `cursor`, `limit` | `200` `{items, next_cursor, has_more}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.count` | GET | `/notifications/inbox/unread-count` | none | `200` `{unread}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.read` | POST | `/notifications/inbox/read` | body `{ids}` or `{all: true}` | `200` `{updated, unread, ...}` | Kit route; dark behind `inboxV1`; no MCP tool and no policy row |
 
-The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
+The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Only `links.get` and `links.put` are behind the [feature gate](#feature-gate), with `requireFeature("profileLinks")`. The comments, posts, uploads and notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Five routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, and the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
 Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get` and `links.put` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
@@ -215,7 +218,7 @@ A `ROUTES` entry may carry `gate`:
 
 `featureOn(name, principal)` applies the same rule outside a route. `principal` is a gramps id or an actor: a `uat` principal gets `true`, anyone else the deployed value. `index.js` configures it with the deployed gate; until then it returns `false`. A route handler gets `c.featureOn(name)` for its caller, which counts the caller's preview header when they are `uat`.
 
-**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires no inbox store yet (`hfy-inbox-delivery-api` adds it), so today the notifier behaves as described in [Notifications](#notifications).
+**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires a `DynamoNotificationStore` on the app table (`INBOX#<principal>` rows, `@io-kit/notify` 0.5.0). Delivery is the kit's `createDelivery`: it stores first, then pushes. Storing needs no `VAPID_SECRET`; only the push does. Unread items have no TTL, and a 90-day TTL starts when an item is read. The three inbox routes are dark behind `inboxV1` too (404 outside `uat`).
 
 ## Subjects
 
@@ -640,7 +643,12 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 | `DELETE /notifications/subscribe` | `{endpoint}` | `{ok: true}` | `400 {"error":"endpoint required"}` |
 | `GET /notifications/preferences` | none | `{enabled: true, types: {<type>: {enabled, level}}, extra: {}}` | |
 | `PUT /notifications/preferences` | `{types: {<type>: {enabled, level}}}`, `enabled` a boolean and `level` 0 or 1 | Same shape as `GET` | `400 {"error":"invalid preferences"}` |
+| `GET /notifications/inbox` | none; query `filter` (`unread` or `all`), `cursor`, `limit` | `{items, next_cursor, has_more}` | `400` on a bad `filter`, `cursor` or `limit` |
+| `GET /notifications/inbox/unread-count` | none | `{unread}` | |
+| `POST /notifications/inbox/read` | `{ids}` (1 to 100 ids) or `{all: true}` | `{updated, unread, ...}` | `400` on an empty or invalid body |
 
+- The three inbox routes exist only when an inbox store is wired, and are 404 outside `uat` while `inboxV1` is off.
+- The kit stores an inbox item whether or not the recipient disabled that type in preferences: preferences gate only the push, and the inbox keeps the item for the recipient (ruling P2-R35).
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
 - `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
