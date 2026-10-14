@@ -4,6 +4,9 @@ import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
 import { describeGate, gateExempt, requireFeature } from "./features.js";
+import { SYNC_ROUTES } from "./sync/routes.js";
+import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
+import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
 export const API_NAME = "hfy-api";
 export const API_VERSION = "0.1.0";
@@ -182,11 +185,13 @@ export const ROUTES = defineRoutes([
   { name: "notifications.inbox.count", method: "GET", path: "/notifications/inbox/unread-count", summary: "Count your unread notifications", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
   { name: "notifications.inbox.read", method: "POST", path: "/notifications/inbox/read", summary: "Mark notifications read: {ids} or {all:true}", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
   { name: "notifications.preferences.put", method: "PUT", path: "/notifications/preferences", summary: "Save notification preferences", handler: (c) => c.notifyHandler() },
+  // The desktop sync API (HFY-TSK-172; sync.md 7): bearer auth, gramps-owner, behind SYNC_API_ENABLED. Defined in src/sync/routes.js; the push and pull routes join it.
+  ...SYNC_ROUTES,
 ]);
 
 /** Normalizes registry entries (MCP member, auth, write, path matcher). Exported so tests can mount extra routes through the same shape. */
 export function defineRoutes(list) {
-  return list.map((r) => ({ ...r, ...(MCP[r.name] ? { mcp: MCP[r.name] } : {}), auth: "session", write: r.method !== "GET", re: new RegExp(`^${r.path.replace(/:[a-z_]+/g, "([^/]+)")}$`), keys: [...r.path.matchAll(/:([a-z_]+)/g)].map((m) => m[1]) }));
+  return list.map((r) => ({ ...r, ...(MCP[r.name] ? { mcp: MCP[r.name] } : {}), auth: r.auth ?? "session", write: r.method !== "GET", re: new RegExp(`^${r.path.replace(/:[a-z_]+/g, "([^/]+)")}$`), keys: [...r.path.matchAll(/:([a-z_]+)/g)].map((m) => m[1]) }));
 }
 
 /**
@@ -211,7 +216,15 @@ export function buildCaps() {
     name: API_NAME,
     version: API_VERSION,
     base_path: BASE_PATH,
-    auth: { scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true },
+    auth: {
+      scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true,
+      // Routes with auth "sync-bearer" (/api/sync/*) take the desktop client's access token instead of the cookie (src/sync/auth.js).
+      sync_bearer: { scheme: "bearer", issuer: SYNC_ISSUER, audience: SYNC_AUDIENCE, client_id: SYNC_CLIENT_ID, group: "gramps-owner", step_up: { amr: "mfa", max_age_seconds: 300 } },
+    },
+    sync: {
+      api_version: 1, enabled_by: "SYNC_API_ENABLED", min_client: DEFAULT_MIN_CLIENT, accepted: { gramps: [...ACCEPTED_GRAMPS], schema: [...DEFAULT_ACCEPTED_SCHEMA] },
+      handshake_headers: Object.values(HEADERS), limits: { ...LIMITS },
+    },
     subjects: SUBJECT_FORMATS,
     actions: ROUTES.map((r) => ({ name: r.name, method: r.method, path: `${BASE_PATH}${r.path}`, auth: r.auth, write: r.write, summary: r.summary, ...(r.gate ? { gate: describeGate(r.gate) } : {}) })),
     content: { source: "posts", capabilities: CONTENT_CAPABILITIES, post_types: ["post", "article", "document"], visibilities: ["draft", "published", "withdrawn"] },

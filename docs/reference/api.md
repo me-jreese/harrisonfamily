@@ -33,7 +33,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`labels.js`](../../api/src/labels.js) | Author labels: `cleanLabel`, `fallbackLabel` and the cached person-record resolver `createLabelResolver` (see [Author label](#author-label)). Used by the cookie path and the MCP path. |
 | [`mcp.js`](../../api/src/mcp.js) | The MCP mount: `isMcpPath`, `loadMcpConfig`, the bearer edge, the tool registry built from `ROUTES`, and the actor a tool runs as. See [MCP server](mcp-server.md). |
 | [`mcp-caps.js`](../../api/src/mcp-caps.js) | Build-time views of the MCP surface for `gen-caps`: the `tools/list` result and the `@io-kit/parity` caps document. |
-| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
+| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups, the feature gate's `uat` group and the `gramps-owner` group of the sync API), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
 | [`comment-photos.js`](../../api/src/comment-photos.js) | Comment photo attachments: `normalizeNew` (the shape check), and `createUploadPhotos` with its `parse`, `owned` and `bind` (the `UPLOAD#` binding, `headUpload` and `checkLocation`). `uploadPhotosFor` wires it over the API's S3 client. See [Comment photos](#comment-photos). |
@@ -51,6 +51,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`sync/checker.js`](../../api/src/sync/checker.js) | The privacy checker inside it: redaction policy v1, detection only, with RFC 6901 pointers, for one object list (`privacyVerdict`) or a batch against the store view (`batchViolations`). |
 | [`sync/schema.js`](../../api/src/sync/schema.js) | The Gramps 6.0.6 JSON Schema per class and the `MediaRef.rect` rule. |
 | [`sync/view.js`](../../api/src/sync/view.js), [`sync/errors.js`](../../api/src/sync/errors.js) | The store view the validator reads (heads, id guard, referrers, destructive budget) and `SyncError`. |
+| [`sync/auth.js`](../../api/src/sync/auth.js), [`sync/guard.js`](../../api/src/sync/guard.js), [`sync/routes.js`](../../api/src/sync/routes.js) | The desktop sync API's front door (HFY-TSK-172): the `sync-bearer` authenticator with `requireOwner`, `requireStepUp` and `requireConflictDecision`; the `SYNC_API_ENABLED` switch, the handshake and the per-request middleware; and the `sync.meta` and `sync.bind` routes. See [The sync API](#the-sync-api). |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation, the server-chosen object key and the `UPLOAD#` binding. |
@@ -100,7 +101,7 @@ Every request goes through these steps in order. The first step that fails decid
 4. **Route match.** `/api` is removed and the rest is matched against `ROUTES`. Path parameters are URL-decoded with `decodeURIComponent`. A path parameter with malformed percent-encoding (for example `%E0%A4%A`) makes it throw, which is `500 internal`, before the session is checked. No path match is `404 not_found`. A path that matches with a different method is `405 method_not_allowed`. That includes `OPTIONS` and `HEAD`: the API does no CORS handling. The exception is a path whose every route is behind a [feature gate](#feature-gate) that is closed to the caller: the session is read, and the answer is `404 not_found`, so the wrong method does not reveal a dark route.
 5. **Session.** The session cookie is verified (see [Session verification](#session-verification)). A missing or invalid cookie is not refused yet.
 6. **Feature gate.** A route that declares a feature or a server switch is refused when it is closed to the caller ([Feature gate](#feature-gate)): `404 not_found`, the same response as a route that does not exist, or a switch's own error. This runs before the session is required, so a signed-out caller also gets `404` from a dark route.
-7. **Session required.** Without a verified session: `401 unauthenticated`. Every route requires a session, reads included.
+7. **Session required.** Without a verified session: `401 unauthenticated`. Every route requires a session, reads included. A route with `auth: "sync-bearer"` (`/api/sync/*`) takes steps 5 to 7 differently: see [The sync API](#the-sync-api).
 8. **Content type**, for `POST`, `PUT` and `PATCH` only. `content-type` must start with `application/json`, ignoring case. Otherwise `415 unsupported_media_type`.
 9. **Body**, for `POST`, `PUT` and `PATCH` only. A base64-encoded body is decoded. An empty body counts as `{}`. A body that does not parse is `400 validation` ("invalid JSON body"). A body that parses to anything other than an object (an array, `null`, a string or a number) is `400 validation` ("body must be a JSON object"). `DELETE` bodies are not read here.
 10. **Route handler.**
@@ -118,6 +119,7 @@ The rest of this page describes the `/api/*` responses. The MCP mount's response
 | JSON responses from the API, including errors and `204` | `content-type: application/json; charset=utf-8`, `cache-control: no-store`, `vary: authorization, cookie` |
 | Notification routes | The kit's `content-type: application/json`, plus `cache-control: no-store` added by the handler. No `vary`. |
 | Origin-check `403` | `content-type: application/json`, `cache-control: no-store` |
+| `401` from a `sync-bearer` route | the JSON headers, plus `www-authenticate: Bearer realm="harrisonfamily.us/api/sync"` (an `HttpError` may carry `headers`) |
 
 A `204` response has an empty body.
 
@@ -155,7 +157,7 @@ Two statuses exist for validation. Checks on the request itself (body parsing, a
 
 ## Routes
 
-All paths are under `/api`, and every route needs a session. Routes ignore body and query fields they do not name. The route names in the first column are the action names in [`caps.json`](#capsjson).
+All paths are under `/api`, and every route needs a session, except the `sync-bearer` routes of [The sync API](#the-sync-api), which need the desktop client's bearer token instead. Routes ignore body and query fields they do not name. The route names in the first column are the action names in [`caps.json`](#capsjson).
 
 | Name | Method | Path | Input | Success | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -1045,6 +1047,78 @@ One `GID#` write per distinct id decides the batch as a whole, so a swap or a ro
 - An after-commit hook, `fn({batch_id, origin, seq_from, seq_to})`, runs once per committed batch, after the commit, and never for a replay or a refused batch. A hook that throws is logged by name and code and never fails the write. If the process dies between the commit and the hook, the hook does not run for that batch.
 - Record-change notifications do not come from here. They come from the render outbox.
 
+## The sync API
+
+`/api/sync/*` is the desktop add-on's door into the cloud record store (HFY-TSK-172; design: HFY-PLN-002 sync.md section 7, BRD2 section 11.1). Its routes have `auth: "sync-bearer"` in `ROUTES` and `caps.json`. This page covers the shared middleware and the routes that need no validator, `GET /api/sync/meta` and `POST /api/sync/bind`. The push routes (`sessions`, `batches`, `media`) and the pull routes (`snapshot`, `changes`) are added by their own tasks as more entries in `SYNC_ROUTES` ([`sync/routes.js`](../../api/src/sync/routes.js)); they inherit everything below.
+
+### What a sync request goes through
+
+The handler runs these steps in place of steps 5 to 7 of the [request pipeline](#request-pipeline). The first that fails decides the response. Errors use the usual `{error, message, details?}` body.
+
+| Step | Check | Failure |
+| --- | --- | --- |
+| 1 | **Switch.** `SYNC_API_ENABLED` must be `1` (stack parameter `SyncApiEnabled`, default `0`). It runs before the token is read, so a closed API answers everyone alike. | `404 not_enabled` |
+| 2 | **Bearer.** `Authorization: Bearer <access token>`. The session cookie is never read here, so an `hfy-admin` cookie alone cannot reach a sync route. RS256 through the auth edge's JWKS; `iss` is the auth edge issuer, `aud` includes `https://harrisonfamily.us/api/sync`, `client_id` is `hfy-sync-desktop` and `token_use` is `access`. Every failure is one answer, so a caller learns nothing about which check failed. | `401 unauthenticated` with a `WWW-Authenticate: Bearer` challenge |
+| 3 | **Body size.** A body over 2 MiB. | `413 batch_too_large` |
+| 4 | **Handshake.** The four `X-HFY-*` headers below, against the terms in `SYNC#HEAD`. | `426 upgrade_required`, `409 redaction_version_mismatch` |
+| 5 | **Owner.** The subject must be in the `gramps-owner` group of `config/groups.json`. The token's own `groups` claim is ignored, and so are emails; an unreadable or malformed file means nobody is the owner. | `403 not_owner` |
+| 6 | **Pause.** A write route while `SYNC#HEAD.writes_enabled` is `false`. (`applyBatch()` repeats the check for every origin.) | `503 sync_paused` |
+| 7 | Content type and body, as for every route. | `415`, `400` |
+
+The route handler then gets `c.sync`: `{head, terms, handshake, treeId, writesEnabled, store, checkTree(), requireStepUp(reason), stepUp()}`. `checkTree()` is `403 tree_mismatch` unless `X-HFY-Tree-Id` equals the bound tree (a store with no bound tree passes); the push and pull routes call it, `meta` and `bind` do not. `stepUp()` is the boolean a push route passes to `applyBatch()` as `stepUp`.
+
+The validation order of sync.md 7.2 puts the handshake before authorization. The implementation authenticates the bearer first (step 2) because the handshake terms live in a table read that an unauthenticated caller should not trigger; the visible order for a valid token is as designed.
+
+### Handshake
+
+Every call carries these headers (any case). A value is never echoed back.
+
+| Header | Accepted | Otherwise |
+| --- | --- | --- |
+| `X-HFY-Sync-Client: hfy_sync/<semver>` | at least `min_client` (`SYNC#HEAD.min_client`, default `0.1.0`) | `426`, `details.reason` `client_header` or `client_too_old` |
+| `X-HFY-Gramps-Version: 6.0.6` | major.minor `6.0` | `426`, `gramps_version` |
+| `X-HFY-Gramps-Schema: 21` | a member of `SYNC#HEAD.accepted_schema` (default `[21]`) | `426`, `schema` |
+| `X-HFY-Redaction-Version: 1` | equal to `SYNC#HEAD.redaction_version` (default `1`) | `409 redaction_version_mismatch`; a missing header is `426`, `redaction_header` |
+| `X-HFY-Tree-Id: <uuid>` | read by `checkTree()` only | `403 tree_mismatch` |
+
+A `426` carries `details: {reason, min_client, accepted: {gramps, schema}, redaction_version}`, so the add-on can tell the owner what to install.
+
+### Step-up
+
+`stepUpFresh` (in [`sync/auth.js`](../../api/src/sync/auth.js)) is true when `amr` includes `mfa` and `auth_time` is at most 300 s old. `passkey`, `hwk` and `swk` alone do not count (HFY-R67). A missing, zero, non-numeric or future `auth_time` is stale (`auth_time` is never refreshed, HFY-R64). The rules that use it:
+
+| Action | Rule | Where |
+| --- | --- | --- |
+| A rebind (`POST /api/sync/bind` with `rebind: true` on a bound store) | fresh step-up, else `403 step_up_required` (`details.reason` `rebind`) | `sync.bind` |
+| Delete ops, and withdraws above the delete/withdraw budget | fresh step-up, else `403 step_up_required`. The route passes `c.sync.stepUp()` as `applyBatch()`'s `stepUp`; [the validator](#the-server-validator) decides whether an op or the budget needs it. | the push route |
+| A conflict decision | `requireConflictDecision(actor)`: gramps-owner **and** step-up. An `hfy-admin` cookie alone is refused (`403 not_owner`), because a cookie actor carries no `sync` member. | the conflict route |
+
+### `GET /api/sync/meta`
+
+Owner bearer, any state of the store. Returns `{api_version: 1, min_client, accepted: {gramps, schema}, redaction_version, tree_id, bound: {dbid, fingerprint} | null, head_seq, rendered_seq, writes_enabled, seeded, merges_enabled, limits: {max_ops, max_obj_bytes, max_body_bytes}, id_block, retired_person_ids}`.
+
+- `merges_enabled` is `true` only when `SYNC#HEAD.merges_enabled` is literally `true`; it stays `false` until `identity-merge-rekey` ships.
+- `retired_person_ids` lists every Person id whose head is a tombstone (deleted, withdrawn or merged away), sorted, from the `RECS#Person` index. The add-on holds a local create that reuses one (D44); the server refuses it anyway with `409 gramps_id_retired`. The index is eventually consistent and the server stays the authority. Renumbers are blocked in this release; when they ship, the list must also read retired `GID#` items.
+- `id_block` is the range the cloud mints from (`I8000-I8999` and the other classes' prefixes); a desktop create may not use it.
+- `bound` never includes the tree-name hash. `rendered_seq` is `SYNC#RENDER.rendered_seq`, `0` before the first render.
+
+### `POST /api/sync/bind`
+
+Body `{dbid, fingerprint, tree_name_sha256, rebind?}`: `dbid` 1 to 128 characters of `A-Za-z0-9._-`, `fingerprint` 8 to 256 characters of `A-Za-z0-9._:-`, `tree_name_sha256` 64 lowercase hex characters, `rebind` a boolean. A bad field is `400 validation` with `details.fields[0].field`.
+
+- **First bind** (nothing bound): mints `tree_id` (a UUID) and stores `tree_id`, `bound: {dbid, fingerprint, tree_name_sha256, bound_at, by}` and `bound_at` on `SYNC#HEAD`, with an `AUDIT#sync:bind` item in the same transaction. Returns `{tree_id}`. It changes no other `SYNC#HEAD` attribute, so the seq counter, `seeded` and `writes_enabled` are untouched.
+- **Already bound**: `409 already_bound` when `rebind` is absent, or when the body names the tree already bound.
+- **Rebind** (`rebind: true`, a different tree): needs a fresh step-up (`403 step_up_required`), keeps the existing `tree_id` and is audited. A `rebind: true` on an unbound store is a plain first bind.
+- The write is conditional on `bound_at`, so two racing binds cannot both win; the loser is `409 already_bound`.
+- While writes are paused (`SYNC#HEAD.writes_enabled` false) a bind is `503 sync_paused`.
+
+The tree marker uuid, the similarity guard and the sidecar are the add-on's side of binding (sync.md 8.3 step 1).
+
+### Switch and group settings
+
+- `SYNC_API_ENABLED` (`0` or `1`) is read from the environment on every request.
+- `gramps-owner` is a group in `config/groups.json` with `subjects` only: `{"groups": {"gramps-owner": {"subjects": ["<gramps_id>"]}}}`. It grants no MCP tool and no feature. Publishing `groups.json` needs io's go-ahead ([AGENTS.md](../../AGENTS.md)).
+
 ## Environment
 
 Read in [`index.js`](../../api/src/index.js) and, for the `MCP_*` variables, in `loadMcpConfig` in [`mcp.js`](../../api/src/mcp.js). A default in code applies only when the variable is absent. [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) sets the variables in the first table, each from a stack parameter.
@@ -1141,7 +1215,8 @@ The person-record lookups are cached in memory, per container:
 | `name` | `hfy-api` |
 | `version` | `0.1.0` (`API_VERSION` in `routes.js`) |
 | `base_path` | `/api` |
-| `auth` | `{scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true}` |
+| `auth` | `{scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true, sync_bearer: {scheme, issuer, audience, client_id, group, step_up}}` |
+| `sync` | `{api_version, enabled_by: "SYNC_API_ENABLED", min_client, accepted, handshake_headers, limits}` |
 | `subjects` | `["person:<gramps_id>", "post:<ulid>"]` |
 | `actions` | One per route: `{name, method, path, auth: "session", write, summary}`, plus `gate` when the route declares one: `{feature}`, `{switch}` or `{exempt}` ([Feature gate](#feature-gate)). `write` is true for every method except GET. |
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |

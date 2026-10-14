@@ -7,7 +7,8 @@
 //     "groups": {
 //       "mcp-authors": { "emails": ["io-curated@example.org"], "subjects": [] },   // may be empty: nobody can author yet
 //       "uat":         { "subjects": ["<gramps-id>"] },                              // api-feature-gate (HFY-TSK-238): sees dark routes; may be empty
-//       "hfy-admin":   { "subjects": ["I0113"] }                                  // exactly the subject bound to gramps_id I0113
+//       "hfy-admin":   { "subjects": ["I0113"] },                                 // exactly the subject bound to gramps_id I0113
+//       "gramps-owner": { "subjects": ["<gramps-id>"] }                           // HFY-TSK-172: the tree owner; authorizes /api/sync/* (src/sync/auth.js)
 //     }
 //   }
 // `subjects` are gramps_ids (the token `sub`). `emails` resolve to a subject through the family allowlist (ALLOWLIST_KEY, optional) or an
@@ -22,6 +23,8 @@ export const AUTHORS_GROUP = "mcp-authors";
 export const ADMIN_GROUP = "hfy-admin";
 /** HFY-TSK-238: principals who see dark PLN-002 routes and whose x-hfy-preview header counts (src/features.js). No MCP policy row names it. */
 export const UAT_GROUP = "uat";
+/** HFY-TSK-172 (sync-routes): the owner of the Gramps tree. Subjects only; authorizes /api/sync/* and conflict decisions (src/sync/auth.js). No MCP policy row names it. */
+export const OWNER_GROUP = "gramps-owner";
 export const STEP_UP_MAX_AGE_SECONDS = 300;
 /**
  * HFY-R67: step-up means user verification was performed, so ONLY "mfa" counts. The auth edge's passkeys run with userVerification "preferred":
@@ -47,7 +50,17 @@ export const policyDocument = () => ({ version: 1, defaultGroup: AUTHORS_GROUP, 
 const strs = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim() !== "").map((x) => x.trim()) : []);
 const lower = (s) => s.toLowerCase();
 
-/** raw JSON -> { authors: {emails:Set, subjects:Set}, admins: Set, uat: Set }. Unknown shapes yield empty sets (fail closed). */
+/**
+ * The subjects of any group in a raw groups.json, as a Set. A group that is missing, malformed or lists no strings is empty (fail closed).
+ * Email entries never count: the generic lookup reads `subjects` only.
+ */
+export function groupSubjects(raw, name) {
+  const g = raw && typeof raw === "object" && raw.groups && typeof raw.groups === "object" ? raw.groups : {};
+  const entry = Object.hasOwn(g, name) ? g[name] : undefined;
+  return new Set(strs(entry?.subjects));
+}
+
+/** raw JSON -> { authors: {emails:Set, subjects:Set}, admins: Set, uat: Set, owners: Set }. Unknown shapes yield empty sets (fail closed). */
 export function parseGroupsConfig(raw) {
   const g = raw && typeof raw === "object" ? raw.groups ?? {} : {};
   const a = g[AUTHORS_GROUP] ?? {};
@@ -55,6 +68,7 @@ export function parseGroupsConfig(raw) {
     authors: { emails: new Set(strs(a.emails).map(lower)), subjects: new Set(strs(a.subjects)) },
     admins: new Set(strs(g[ADMIN_GROUP]?.subjects)),
     uat: new Set(strs(g[UAT_GROUP]?.subjects)),
+    owners: groupSubjects(raw, OWNER_GROUP),
   };
 }
 
@@ -87,6 +101,7 @@ export function createGroupResolver({ load, emailsFor, ttlMs = 60_000, now = () 
     if (author) out.push(AUTHORS_GROUP);
     if (c.admins.has(sub)) out.push(ADMIN_GROUP);
     if (c.uat.has(sub)) out.push(UAT_GROUP);
+    if (c.owners.has(sub)) out.push(OWNER_GROUP);
     return out;
   };
 }
