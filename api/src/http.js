@@ -13,10 +13,12 @@ export function json(statusCode, body, extra = {}) {
 }
 
 export class HttpError extends Error {
-  constructor(status, code, message) {
+  /** `details` (optional) is sent as the body's `details`: `{fields: [{field, code, suggest?}]}` on a 422, `{current}` on a 409. */
+  constructor(status, code, message, details) {
     super(message ?? code);
     this.status = status;
     this.code = code;
+    if (details !== undefined) this.details = details;
   }
 }
 
@@ -39,8 +41,16 @@ export function logSafeError(e, ctx = {}) {
 
 /** Maps any thrown value to a JSON error response. Unknown errors are 500 with no detail, logged as `logSafeError` only. */
 export function errorResponse(e, log = console, ctx = {}) {
-  // `errors` is the R-18 guard's [{pointer, kind, span}] (src/guard.js): positions only, never the matched text.
-  if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message, ...(Array.isArray(e.errors) ? { errors: e.errors } : {}) });
+  // `errors` is the R-18 guard's [{pointer, kind, span}] (src/guard.js): positions only, never the matched text. `details` is the
+  // HttpError's own (HFY-TSK-193): `{fields}` on a 422, `{current}` on a 409. An error that carries both sends both.
+  if (e instanceof HttpError) {
+    return json(e.status, {
+      error: e.code,
+      message: e.message,
+      ...(Array.isArray(e.errors) ? { errors: e.errors } : {}),
+      ...(e.details ? { details: e.details } : {}),
+    });
+  }
   if (e instanceof ContentError) {
     return json(e.status, { error: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) });
   }

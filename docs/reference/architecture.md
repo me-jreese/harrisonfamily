@@ -358,13 +358,15 @@ Written by `hfy-api`:
 | Comment | `THREAD#<thread-id>` | `C#<ulid>` | `COMMENTS` / `<ulid>` | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
+| Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
+| Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |
 | Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post attaches the upload | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) |
 | Allowlist grant, one per email | `ALLOW#<email>` | `META` | `ALLOWSUB#<gramps-id>` / `ALLOW#<email>` (its own PK) | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js) (writes), read by `hfy-auth-edge` |
 | Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
 
-Each post and comment change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
+Each post, comment and profile links change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
 
 Written by `hfy-auth-edge`, through the `@io-kit/auth` 2.2.0 stores and the local stores wired in [`auth/src/index.js`](../../auth/src/index.js). `<scope>` is `email+ip` or `ip`, and the hash covers the email and client IP, so neither is stored:
 

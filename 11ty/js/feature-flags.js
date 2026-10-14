@@ -12,15 +12,15 @@
         "css": "24d74883"
       },
       "my-posts": {
-        "js": "c6a16bfe",
+        "js": "37722a8c",
         "css": "24a8cc2d"
       },
       "notifications": {
-        "js": "4dfbbaee",
+        "js": "32ace9c4",
         "css": "56799f74"
       },
       "person": {
-        "js": "54995ab6",
+        "js": "ff38642f",
         "css": "3909ca3c"
       },
       "photo-tags": {
@@ -28,7 +28,7 @@
         "css": "bf6043c1"
       },
       "posts": {
-        "js": "afc8cee5",
+        "js": "e10a2da9",
         "css": "c678e2b1"
       },
       "search": {
@@ -44,7 +44,7 @@
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "301f8ae2",
+        "js": "9bf57891",
         "css": "e839f302"
       }
     },
