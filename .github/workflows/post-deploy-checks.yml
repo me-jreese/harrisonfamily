@@ -1,0 +1,25 @@
+# Hand-maintained, not rendered by @io-kit/ci (HFY-TSK-314). Live checks that the kit's smoke job cannot express, run after
+# every successful io-kit deploy run. The kit's deploy.smoke takes URLs only, requests each with GET and passes 2xx/3xx, and a
+# failure there redeploys the previous release, which cannot repair the bucket's CORS rule. So this check runs on its own,
+# triggered by the rendered deploy workflow's name (ci.manifest.yaml workflows.deploy, default "io-kit deploy"), and a failure
+# here rolls nothing back. It needs no AWS credentials.
+name: post-deploy checks
+on:
+  workflow_run:
+    workflows:
+      - io-kit deploy
+    types:
+      - completed
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  site-bucket-cors:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Site bucket CORS preflights (photo uploads)
+        run: bash scripts/infra/check-site-bucket-cors.sh

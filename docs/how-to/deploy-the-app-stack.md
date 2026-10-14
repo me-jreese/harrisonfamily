@@ -1,6 +1,6 @@
 # How to deploy the app stack and its CloudFront behaviors
 
-Use this page to create or update the app stack, `<app-stack>`, and to put it behind CloudFront: `/auth/*` and `/api/*`, the MCP server at `/mcp*` with its protected-resource metadata (PRM) under `/.well-known/oauth-protected-resource*`, member photos under `/uploads/*`, and the CORS rule that lets browsers upload them. Follow it for a first deploy and for every change to `api/` or `auth/`. That includes [`auth/edge.manifest.json`](../../auth/edge.manifest.json), which holds the sign-in pages' text and, in `theme.cssUrl`, the `?v=` stamp that the islands build writes whenever the sign-in stylesheet changes. Changes to `11ty/` ship another way: see [Deploy a site change](deploy-a-site-change.md).
+Use this page to create or update the app stack, `<app-stack>`, and to put it behind CloudFront: `/auth/*` and `/api/*`, the MCP server at `/mcp*` with its protected-resource metadata (PRM) under `/.well-known/oauth-protected-resource*`, and member photos under `/uploads/*`, with a check of the bucket CORS rule that lets browsers upload them. Follow it for a first deploy and for every change to `api/` or `auth/`. That includes [`auth/edge.manifest.json`](../../auth/edge.manifest.json), which holds the sign-in pages' text and, in `theme.cssUrl`, the `?v=` stamp that the islands build writes whenever the sign-in stylesheet changes. Changes to `11ty/` ship another way: see [Deploy a site change](deploy-a-site-change.md).
 
 The stack, built from [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml), holds the DynamoDB table `hfy-app`, the Cognito user pool `hfy-users`, and two Lambda functions behind Function URLs. `hfy-api` serves the member API and, at `/mcp`, the MCP server. `hfy-auth-edge` handles sign-in with Google, a password or a passkey, the sessions, and the OAuth authorization server that MCP clients use. The secrets, the code packages, the access configuration, the CloudFront behaviors and the bucket CORS rule all live outside the stack, so a first deploy takes eight steps instead of one. [Architecture](../reference/architecture.md#app-stack) lists every resource, parameter and output.
 
@@ -23,7 +23,7 @@ Values in angle brackets, such as `<site>`, `<app-stack>`, `<code-bucket>`, `<co
   - read the configuration of `hfy-api` and `hfy-auth-edge` (`lambda:GetFunctionConfiguration`), for the secret check in step 5.
   - read and update the CloudFront distribution, and list the account's custom response headers policies (`cloudfront:ListResponseHeadersPolicies`) for check 11.
   - for step 8: read the `hfy-mcp-edge401` stack in `us-east-1` (`cloudformation:DescribeStacks`), and associate a Lambda@Edge version with the distribution, which AWS allows only with `lambda:GetFunction` and `lambda:EnableReplication*` on `hfy-mcp-edge401` and, the first time, `iam:CreateServiceLinkedRole`.
-  - read and put the CORS configuration of `<site-bucket>`.
+  - put the CORS configuration of `<site-bucket>` (`s3:PutBucketCORS`), only if step 7 finds the rule missing.
   - read object metadata under `config/` in `<config-bucket>`, for the check below.
 
   Set the region for the shell:
@@ -70,9 +70,9 @@ Run every command on this page from the repository root, in one shell. Steps 3, 
 
 ## Steps
 
-Every step is safe to re-run. The secret scripts report `no change` when the secret exists. Repeating step 4 with the same keys changes nothing: the deploy stops with `No changes to deploy` and leaves no change set to execute. The behavior scripts print `no change` and make no update when the distribution already matches. Re-applying the same CORS file leaves the same rule.
+Every step is safe to re-run. The secret scripts report `no change` when the secret exists. Repeating step 4 with the same keys changes nothing: the deploy stops with `No changes to deploy` and leaves no change set to execute. The behavior scripts print `no change` and make no update when the distribution already matches. Step 7 only reads.
 
-On a code-only update, run steps 2 to 4, then [Verify](#verify). A change to `auth/edge.manifest.json` alone, such as new sign-in text or a new `theme.cssUrl` stamp, is a code-only update, because the manifest ships inside `hfy-auth-edge.zip`. Run step 5 on a first deploy, and again only when a function's URL changes. Run step 6 on a first deploy, and again only when the stack's uploads policy changes. While `/uploads/*` is members-only, step 6 changes nothing. Run step 7 only when the CORS file changes. Run step 8 on a first deploy, once on a distribution that has no `/mcp*` behavior yet, and again when the `hfy-api` Function URL changes. Step 8 depends on step 5, not on steps 6 or 7.
+On a code-only update, run steps 2 to 4, then [Verify](#verify). A change to `auth/edge.manifest.json` alone, such as new sign-in text or a new `theme.cssUrl` stamp, is a code-only update, because the manifest ships inside `hfy-auth-edge.zip`. Run step 5 on a first deploy, and again only when a function's URL changes. Run step 6 on a first deploy, and again only when the stack's uploads policy changes. While `/uploads/*` is members-only, step 6 changes nothing. Run step 7 on a first deploy, and whenever photo uploads fail. Run step 8 on a first deploy, once on a distribution that has no `/mcp*` behavior yet, and again when the `hfy-api` Function URL changes. Step 8 depends on step 5, not on steps 6 or 7.
 
 ### 1. Create the secrets
 
@@ -366,26 +366,15 @@ If the family-data paths are gated but `/uploads/*` is not, photos are still ser
 
 The members-only policy keeps the Content-Security-Policy of the stack's policy, which is held in `UPLOADS_CSP` in [`scripts/infra/lib/cf-common.sh`](../../scripts/infra/lib/cf-common.sh). If you change that header in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml), change `UPLOADS_CSP` with it. `scripts/infra/test/run.sh` fails while the two differ.
 
-### 7. Apply the photo-upload CORS rule
+### 7. Check the photo-upload CORS rule
 
-Browsers upload post photos straight to `<site-bucket>`, using presigned `PUT` URLs that `hfy-api` issues, so the bucket needs a CORS rule. The upload does not pass through CloudFront, so the private data gate does not affect it. No stack manages the bucket. The rule is in [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json). That file also carries a `_comment` key, which the AWS CLI rejects as an unknown parameter, so strip it before you apply the rule.
-
-`put-bucket-cors` replaces the bucket's whole CORS configuration. Look at the current configuration first:
+Browsers upload photos straight to `<site-bucket>`, using presigned `PUT` URLs that `hfy-api` issues, so the bucket needs a CORS rule. The upload does not pass through CloudFront, so the private data gate does not affect it. No stack manages the bucket: the rule in [`site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json) is applied by hand in [step 1 of Stand up the static site](stand-up-the-static-site.md#1-create-the-site-bucket). Check that it is in place:
 
 ```sh
-aws s3api get-bucket-cors --bucket <site-bucket>
+scripts/infra/check-site-bucket-cors.sh
 ```
 
-A `NoSuchCORSConfiguration` error means there is none. If the output shows rules that are not in the file, add them to your stripped copy before you apply it, or they are lost.
-
-```sh
-CORS="$(mktemp)"
-jq 'del(._comment)' infrastructure/cloudformation/media-bucket-cors.json > "$CORS"
-aws s3api put-bucket-cors --bucket <site-bucket> --cors-configuration "file://$CORS"
-rm -f "$CORS"
-```
-
-Photo uploads from the `postsV2` composer depend on this rule ([Toggle a feature flag](toggle-a-feature-flag.md)). Apply it once, and again only when the file changes.
+The script sends the browser's CORS preflight, with no credentials, and its last line ends with `0 failed`. If it prints `expected 200` for a site origin, the bucket has no rule for that origin: apply the file as in that step 1. Photo uploads from the `postsV2` composer depend on this rule ([Toggle a feature flag](toggle-a-feature-flag.md)).
 
 ### 8. Route `/mcp` and the protected-resource metadata
 
@@ -554,14 +543,7 @@ Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None p
       - When `curl` prints anything other than `401`, `/uploads/*` is public. The row ends in `None` and carries the stack's policy ID, which the second command prints. This is the state after a first deploy, before the gate is attached.
       - When `curl` prints `401`, `/uploads/*` is members-only. The row ends in `viewer-request` and carries the `hfy-uploads-private` ID, which the third command prints.
     - Once the private data gate is attached, the six family-data rows (`/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*` and `/media/*`) also end in `viewer-request`, so seven rows do in all. If those six do and `/uploads/*` does not, gate it as described at the end of [step 6](#6-serve-member-photos-under-uploads).
-12. **The CORS rule is in place.**
-
-    ```sh
-    aws s3api get-bucket-cors --bucket <site-bucket> \
-      | jq -c '.CORSRules[] | {AllowedMethods, AllowedOrigins, AllowedHeaders, MaxAgeSeconds}'
-    ```
-
-    One line reads `{"AllowedMethods":["PUT"],"AllowedOrigins":["https://<site>"],"AllowedHeaders":["Content-Type","Content-Length"],"MaxAgeSeconds":3000}`. Any other lines are rules you kept from the earlier configuration.
+12. **The CORS rule is in place.** The check in [step 7](#7-check-the-photo-upload-cors-rule) ends with `0 failed`.
 13. **A signed-in session reports when it expires.** Sign in at `https://<site>/auth/login` in a browser, open DevTools on any page of `https://<site>`, and run this in the console. It logs no identity, only whether you are signed in and how long the session has left:
 
     ```js

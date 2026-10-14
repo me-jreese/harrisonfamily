@@ -828,7 +828,7 @@ In the Network panel, find which request failed.
 | `POST /api/uploads` | `400 validation` | The `message` names the problem: no file name, a type other than JPEG, PNG, WebP or HEIC (including no type at all), a size that is not a positive whole number, or a file over 10 MB. | Use a supported image. |
 | `POST /api/uploads` | `401 unauthenticated`, or no request at all | No valid session. The islands send no `/api` call once the edge session reports signed out. | See [The API returns 401 while you are signed in](#the-api-returns-401-while-you-are-signed-in). |
 | `POST /api/uploads` | `503 unavailable`, "uploads are not configured" | The handler has no presigner. The deployed [`api/src/index.js`](../../api/src/index.js) always supplies one, so the function is not running this repository's code. | Deploy `hfy-api` from `main` ([Deploy the app stack](deploy-the-app-stack.md)). |
-| `PUT` to S3 | The Console reports the request was blocked by CORS policy | The bucket has no CORS rule for `PUT` from the site | Apply the rule (below). |
+| `PUT` to S3 | The Console reports the request was blocked by CORS policy | The bucket has no CORS rule for `PUT` from the page's origin, `https://<site>` or `https://www.<site>` | Apply the rule (below). |
 | `PUT` to S3 | `400` with `BadDigest`, on every upload | `hfy-api` runs a build from before `presign.js`. That build signed a checksum of an empty body into every URL, so no real image matches it. | Deploy `hfy-api` from `main` ([Deploy the app stack](deploy-the-app-stack.md)). |
 | `PUT` to S3 | `403` with `SignatureDoesNotMatch` | The `Content-Type` or the size sent differs from what was signed | A client fault. The client must send the `headers` that `POST /api/uploads` returned, with the same file. |
 | `PUT` to S3 | `403` with "Request has expired" | More than 300 s passed between the presign and the `PUT` | Try again. |
@@ -840,7 +840,7 @@ In the Network panel, find which request failed.
 **Check the CORS rule, the media parameters, the role and the behavior.**
 
 ```bash
-aws s3api get-bucket-cors --bucket <site-bucket>
+scripts/infra/check-site-bucket-cors.sh
 aws cloudformation describe-stacks --stack-name <app-stack> \
   --query "Stacks[0].Parameters[?starts_with(ParameterKey, 'Media')]" --output table
 aws iam get-role-policy --role-name hfy-api-role --policy-name hfy-api \
@@ -857,7 +857,7 @@ aws cloudfront list-response-headers-policies --type custom \
   --query "ResponseHeadersPolicyList.Items[].ResponseHeadersPolicy.[ResponseHeadersPolicyConfig.Name, Id]" --output text
 ```
 
-- The CORS output must include a rule that allows `PUT` from `https://<site>` with the headers `Content-Type` and `Content-Length`. A `NoSuchCORSConfiguration` error means the bucket has no rule at all.
+- The CORS check, which sends the browser's preflight without credentials, must end with `0 failed`. Each `expected 200` line names a site origin whose uploads the bucket blocks; a bucket with no CORS configuration at all blocks both. An `expected 403, got 200` line means the bucket allows more than the committed rule.
 - The role's resource must end in `/uploads/posts/*`, in the bucket that `MediaBucket` names.
 - The `/uploads/*` line must start with `default origin`, the bucket's S3 origin. Then:
   - **Members only:** `viewer-request hfy-edge-gate:<n>`, `4135ea2d-6df8-44a3-9df3-4b5a84be39ad` (CachingDisabled), and the ID that the policy list gives for `hfy-uploads-private`.
@@ -866,7 +866,7 @@ aws cloudfront list-response-headers-policies --type custom \
 
 **Fix.**
 
-- **CORS.** Apply [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json) as in [Deploy the app stack](deploy-the-app-stack.md#7-apply-the-photo-upload-cors-rule). `put-bucket-cors` replaces the bucket's whole CORS configuration, so carry over any other rules first.
+- **CORS.** Apply [`site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json) as in [step 1 of Stand up the static site](stand-up-the-static-site.md#1-create-the-site-bucket). `put-bucket-cors` replaces the bucket's whole CORS configuration, so find out what any other rule is for first.
 - **Role, `MediaBucket` or `MediaPublicBase`.** Correct the parameter and deploy the stack, which also updates the role.
 - **The `/uploads/*` behavior, where the data paths are gated.** Rerun `add-data-gate-behaviors.sh` as in the last Fix item of [the data gate section](#person-search-or-photo-data-is-refused-data-gate). It updates `/uploads/*` in place, keeping its position and origin, or creates it already gated if it is missing. The real run needs io's G-prod approval.
 - **The `/uploads/*` behavior, where the data paths are not gated.** Run `add-uploads-behavior.sh`. It needs no secret, but it reads the policy ID from the stack's `UploadsResponseHeadersPolicyId` output, so pass `--stack <app-stack>`. It adds or updates `/uploads/*` on the default behavior's origin with that policy, and saves a backup first, as in the [403 fix](#every-api-or-auth-request-gets-403-forbidden). The real run needs io's go-ahead.

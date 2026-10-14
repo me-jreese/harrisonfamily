@@ -1,13 +1,13 @@
 # How to stand up the static site and its deploy access
 
-Use this page once per environment to set up the static hosting edge, the CI deploy access and the Google sign-in client. The hosting edge is the site bucket, the certificate, the CloudFront distribution and its default behavior, the `HFYAppendIndex` CloudFront Function, and DNS. The deploy access is the GitHub OIDC deploy role and the repository secrets. It is also the first step when you adapt the repo for another family. For why the edge is shaped this way, read [Edge and origin design](../explanation/edge-and-origin-design.md).
+Use this page once per environment to set up the static hosting edge, the CI deploy access and the Google sign-in client. The hosting edge is the site bucket and its upload CORS rule, the certificate, the CloudFront distribution and its default behavior, the `HFYAppendIndex` CloudFront Function, and DNS. The deploy access is the GitHub OIDC deploy role and the repository secrets. It is also the first step when you adapt the repo for another family. For why the edge is shaped this way, read [Edge and origin design](../explanation/edge-and-origin-design.md).
 
 A full environment is built in this order:
 
 1. This page. Its [Verify](#verify) section runs the first site deploy.
 2. [Deploy the edge functions](deploy-the-edge-functions.md): `hfy-mcp-edge401` and `hfy-edge-gate` in `us-east-1`. You test the gate's published version by invoking it with synthetic viewer-request events. Nothing is attached yet. The app stack page needs `hfy-mcp-edge401` before it can route `/mcp`, and the gate's checks pass before the auth edge exists.
 3. [Manage family access](manage-family-access.md): publish the allowlist, `config/userGrampsID.json`, which the app stack page checks for before it deploys, and the MCP groups, `config/groups.json`. `config/admins.json` may stay absent, which means there are no moderators. That page's sign-in checks work only once the app stack is deployed.
-4. [Deploy the app stack](deploy-the-app-stack.md): `hfy-api`, `hfy-auth-edge`, the `/auth/*`, `/api/*` and `/uploads/*` behaviors, the upload CORS rule, and the MCP routing: `/mcp*` and the protected-resource metadata, with `hfy-mcp-edge401` on origin-response. From then on, members can sign in at `/auth/login`.
+4. [Deploy the app stack](deploy-the-app-stack.md): `hfy-api`, `hfy-auth-edge`, the `/auth/*`, `/api/*` and `/uploads/*` behaviors, a check of the upload CORS rule, and the MCP routing: `/mcp*` and the protected-resource metadata, with `hfy-mcp-edge401` on origin-response. From then on, members can sign in at `/auth/login`.
 5. [Refresh the family data](refresh-the-family-data.md): the private Gramps data under the bucket's six data prefixes.
 6. [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md): attach the gate, which creates the six data behaviors and gates `/uploads/*` in place, then purge Cloudflare's copies of the gated paths. Start from that page's [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point) checks. The committed [`flags.json`](../../11ty/_data/flags.json) sets `authV2` and the other five flags to `true`. Unless your copy changed that, the first deploy already shipped the `authV2` client, and the checks send you to its step 2: confirm the client, then attach the gate.
 7. Optional: [Turn on push notifications](turn-on-push-notifications.md), and [Connect an MCP client](connect-an-mcp-client.md).
@@ -53,7 +53,8 @@ Several files carry this environment's names, so a copy for another family needs
 | [`api/src/index.js`](../../api/src/index.js) defaults | `SESSION_JWKS_URL`, `SESSION_ISSUER` and `MEDIA_PUBLIC_BASE`; `GROUPS_BUCKET` and `ADMIN_LIST_BUCKET`; `MEDIA_BUCKET` | The `https://<site>/...` forms; `<config-bucket>`; `<site-bucket>`. The stack sets each of these as an environment variable except `GROUPS_BUCKET`. The API therefore reads `config/groups.json` from the `GROUPS_BUCKET` default, and its role may read only `<config-bucket>/config/*`. A wrong default leaves every MCP caller with an empty tool list. The other defaults are fallbacks, but keep them in step. |
 | [`api/src/routes.js`](../../api/src/routes.js) and [`auth/src/oauth.js`](../../auth/src/oauth.js) | `MCP_RESOURCE` and `DEFAULT_MCP_RESOURCE` | `https://<site>/mcp`. `MCP_RESOURCE` is the resource the MCP server advertises and the token audience it accepts. The stack does not override it, so it must also be listed in `McpResources`, normally first: the auth edge refuses any other resource with `invalid_target`. `DEFAULT_MCP_RESOURCE` applies only when `McpResources` is empty. The client ID `mcp-harrisonfamily` can stay. To rename it, change `DEFAULT_CLIENT_ID` in `oauth.js` and the `MCP_CLIENT_IDS` default in [`api/src/mcp.js`](../../api/src/mcp.js) together. |
 | `config/userGrampsID.json`, `config/groups.json` and `config/admins.json` in `<config-bucket>`, outside the repository | Your members' `<email>` and `<gramps-id>` values | Your own files, published with [Manage family access](manage-family-access.md). Never start from another environment's copies. `groups.json` takes the shape documented at the top of [`api/src/policy.js`](../../api/src/policy.js). Without it the MCP server fails closed and nobody gets MCP tools. `admins.json` may be absent, which means there are no moderators. |
-| [`media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json) | `AllowedOrigins` | `https://<site>` |
+| [`site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json) | `AllowedOrigins` | `https://<site>` and `https://www.<site>`. Change `SITE_ORIGINS` in [`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) with it: the test fails on any other origin. |
+| [`check-site-bucket-cors.sh`](../../scripts/infra/check-site-bucket-cors.sh) | The `URL` default | `https://<site-bucket>.s3.<region>.amazonaws.com/uploads/posts/smoke/x.jpg`, with the `deploy.region` of `ci.manifest.yaml`. `scripts/infra/test/run.sh` fails while it names another bucket or Region than the manifest. |
 | [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) | The production host name in the `isProductionHost` check | `<site>`. Without it, the production host does not force `enforceAssets`, the guard described in [Family data privacy](../explanation/family-data-privacy.md#gating-the-json). |
 | [`11ty/manifest.webmanifest`](../../11ty/manifest.webmanifest) | `name`, `short_name` | Your family's names for the installed app. Leave `background_color` and `theme_color` alone: the islands build writes them from the theme's surface colour. |
 | [`islands/assets.mjs`](../../islands/assets.mjs) | `SITE_ORIGIN` | `https://<site>`. The build treats absolute URLs on this origin as the site's own files when it adds the `?v=` versions, and it versions `theme.cssUrl` only on this origin. |
@@ -127,7 +128,23 @@ The bucket policy admits only the distribution, through Origin Access Control. I
 }
 ```
 
-The policy grants `s3:GetObject` and nothing else. A path with no object therefore returns `403`, not `404`, through CloudFront as well as directly. The deploy role writes to the bucket with its own IAM permissions, which this policy does not limit. The CORS rule that member photo uploads need is applied in [Deploy the app stack](deploy-the-app-stack.md#7-apply-the-photo-upload-cors-rule), not on this page.
+The policy grants `s3:GetObject` and nothing else. A path with no object therefore returns `403`, not `404`, through CloudFront as well as directly. The deploy role writes to the bucket with its own IAM permissions, which this policy does not limit.
+
+Then apply the bucket's CORS rule. Members' browsers upload the photos they attach to posts and comments straight to the bucket's S3 endpoint, with presigned `PUT` URLs that `hfy-api` issues. That endpoint is a different origin from the site, so without the rule the browser blocks every upload. The rule is in [`site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json): `PUT` only, the `Content-Type` header only, from `https://<site>` and `https://www.<site>`. [Architecture](../reference/architecture.md#site-bucket) explains each part.
+
+`put-bucket-cors` replaces the bucket's whole CORS configuration, so look at the current one first:
+
+```sh
+aws s3api get-bucket-cors --bucket <site-bucket>
+```
+
+A new bucket answers with a `NoSuchCORSConfiguration` error. If an existing bucket prints rules that are not in the file, find out what they are for before you replace them. The file is the bucket's whole CORS configuration, and [`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) fails if it allows any method other than `PUT`, any origin other than the two site origins, or any header other than `Content-Type`. Apply the file as committed:
+
+```sh
+aws s3api put-bucket-cors --bucket <site-bucket> --cors-configuration file://infrastructure/cloudformation/site-bucket-cors.json
+```
+
+The command prints nothing when it succeeds. No stack manages the bucket, and the deploy role cannot change its CORS configuration, so apply the file again by hand whenever it changes. [Verify](#verify) checks the rule with the browser's preflight request, and so does every successful deploy run after that.
 
 ### 2. Request the certificate
 
@@ -406,6 +423,13 @@ The bucket is empty until the first deploy, so run that first.
    ```
 
    The result is `403`.
+6. **Browsers can upload photos to the bucket.**
+
+   ```sh
+   scripts/infra/check-site-bucket-cors.sh
+   ```
+
+   It needs no credentials. It sends the browser's CORS preflight, an `OPTIONS` request, for a `PUT` to `uploads/posts/smoke/x.jpg` on the bucket's S3 endpoint. Its last line ends with `0 failed`: `https://<site>` and `https://www.<site>` each get `200` and their own origin back in `Access-Control-Allow-Origin`, and a foreign origin, a `DELETE` and an extra request header each get `403`. The object need not exist, because S3 answers a preflight from the CORS configuration alone. After every successful deploy run, [`post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml) runs the same check.
 
 | Symptom | Likely cause |
 | --- | --- |
@@ -423,6 +447,8 @@ The bucket is empty until the first deploy, so run that first.
 | `publish-append-index.sh` stops with `refusing (exit 3)` | The function is associated with a behavior other than the default one. Remove that association and run the script again. |
 | No `?v=` URLs in the home page | The committed `11ty/` pages were not built with the islands build, for example after an Eleventy refresh. Build, run `(cd islands && npm run check:islands)`, commit and deploy. |
 | TLS error | The certificate is not issued or does not cover the name, or DNS still points elsewhere |
+| `check-site-bucket-cors.sh` prints `expected 200` for a site origin | The bucket has no CORS rule for that origin, so photo uploads from it fail. Apply the file as in [step 1](#1-create-the-site-bucket). |
+| `check-site-bucket-cors.sh` prints `expected 403, got 200` | The bucket's CORS configuration is wider than the file. Find out what the extra rule is for, then apply the file as in [step 1](#1-create-the-site-bucket). |
 
 ## Related pages
 
