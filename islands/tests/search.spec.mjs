@@ -79,10 +79,10 @@ test("flag on: zero results say what to try; an index error is a banner (count h
   await expect(root.locator(".io-search-zero")).toHaveCount(0);
 });
 
-test("flag off: old Lunr page, no island", async ({ page }) => {
+test("flag off: no island and no legacy page (the Lunr page is gone, HFY-TSK-317): the page body is empty", async ({ page }) => {
   await prep(page);
   await page.goto("/search/?q=Quillfeather&hfy_flags=-searchV2", { waitUntil: "domcontentloaded" });
-  await expect(page.locator("[data-search-page]")).toBeVisible();
-  await expect(page.locator("[data-search-results-list] .search-result-card").first()).toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(500);
   expect(await page.locator("#hfy-search-v2").count()).toBe(0);
+  expect(await page.locator("[data-search-page], [data-search-results-list], script[src*='search-results'], script[src*='search-navbar']").count()).toBe(0);
 });

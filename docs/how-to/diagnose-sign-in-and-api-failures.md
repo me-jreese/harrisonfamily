@@ -66,8 +66,7 @@ To read a function's recent log, run `aws logs tail /aws/lambda/<function> --sin
 | Email and password sign-in fails, a password reset is refused or never arrives, or setting a password fails | [Password sign-in, reset or setup fails](#password-sign-in-reset-or-setup-fails) |
 | Google sign-in on `/auth/login` fails because the origin is not allowed for the client ID | [Google sign-in is refused on /auth/login](#google-sign-in-is-refused-on-authlogin) |
 | The sign-in pages look unstyled, or keep an old look after a restyle | [The sign-in page is unstyled or out of date](#the-sign-in-page-is-unstyled-or-out-of-date) |
-| A legacy Google sign-in at `/family-login/` fails, and `/api/check-allowed` returns `403` | [Legacy sign-in is refused with 403](#legacy-sign-in-is-refused-with-403) |
-| `/api/check-allowed` returns `404` | [Legacy check-allowed returns 404](#legacy-check-allowed-returns-404) |
+| The retired `/api/check-allowed` route returns `404` (nothing on the site calls it any more) | [The retired check-allowed route returns 404](#the-retired-check-allowed-route-returns-404) |
 | `/api/*` returns `401` while you are signed in, or an island acts signed out | [The API returns 401 while you are signed in](#the-api-returns-401-while-you-are-signed-in) |
 | Person pages, search, photos or post photos fail: `401 {"error":"unauthenticated"}` from `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` or `/uploads/*`, a page load sent to `/auth/login?returnTo=...`, or "Your sign-in has expired" on a person page | [Person, search or photo data is refused (data gate)](#person-search-or-photo-data-is-refused-data-gate) |
 | A private path, or a different spelling of one such as `/Person/index.json`, answers `404` with `cache-control: private, no-store` | [A private path answers 404](#a-private-path-answers-404) |
@@ -163,7 +162,7 @@ The `401` on the second line is the correct answer. The request passed CloudFron
   bash scripts/infra/add-api-behavior.sh --stack <app-stack> --secret-name "$NAME" --dry-run
   ```
 
-  When only the header is wrong, a dry run lists the cache behaviors before and after, then prints `(only the X-Origin-Verify header value differs)`. The `X-Origin-Verify` value is redacted in any diff it prints. If it prints `(dry-run) origin-verify secret not read; using a placeholder`, it compared CloudFront with a placeholder, so its diff tells you nothing. Other diff lines mean someone changed that origin or its behaviors by hand. Read them before you apply, because a run resets every field the script manages. If `add-api-behavior.sh` stops with a line that starts with `refusing:` and exit status 3, fix the legacy route first, as in [Legacy check-allowed returns 404](#legacy-check-allowed-returns-404).
+  When only the header is wrong, a dry run lists the cache behaviors before and after, then prints `(only the X-Origin-Verify header value differs)`. The `X-Origin-Verify` value is redacted in any diff it prints. If it prints `(dry-run) origin-verify secret not read; using a placeholder`, it compared CloudFront with a placeholder, so its diff tells you nothing. Other diff lines mean someone changed that origin or its behaviors by hand. Read them before you apply, because a run resets every field the script manages. If `add-api-behavior.sh` stops with a line that starts with `refusing:` and exit status 3, fix the legacy route first, as in [Legacy check-allowed returns 404](#the-retired-check-allowed-route-returns-404).
 
   Then run both scripts without `--dry-run`, one after the other, because each reads the distribution's current ETag. Wait for the edges:
 
@@ -401,52 +400,11 @@ On a healthy site, the first two lines show the same URL, the third shows `200` 
 
 Checks 4 and 5 of [Deploy the app stack: Verify](deploy-the-app-stack.md#verify) confirm the fix.
 
-## Legacy sign-in is refused with 403
+## The retired check-allowed route returns 404
 
-**What you see.** After the Google pop-up on `/family-login/`, the navigation stays signed out. The legacy page posts the Google ID token to `/api/check-allowed`. Find that request in the Network panel and read its body.
+**What you see.** `POST /api/check-allowed` returns `404 {"error":"not_found","message":"no such route"}`. That body comes from `hfy-api` ([`api/src/handler.js`](../../api/src/handler.js)), which has no `check-allowed` route. No page calls this route since HFY-TSK-317, so no visitor sees the failure. It matters because `add-api-behavior.sh` refuses to run until the route is fixed, and because the route is the way to reach the still-deployed legacy function by hand.
 
-The legacy sign-in runs only where `authV2` does not take over the page. That is the case when the published `flags.json` has `authV2` set to `false` (`curl -s "$SITE/_data/flags.json" | jq .authV2`), or when the tab's preview override forces it off (`sessionStorage.getItem("hfy:flags")` shows `-authV2`). It is also the case when `/auth/session` did not answer with JSON, and when the visitor is already signed in at the edge. Otherwise `/family-login/` sends a signed-out visitor to `/auth/login`, and the sections above apply. The legacy pieces still ship with every push to `main`: `hfy-check-allowed` through [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml), and `getAllowlist` through [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml). While the data gate is attached, a legacy sign-in reads no family data and no `/api` route, because both accept only the `io_id` cookie.
-
-| Body | Meaning |
-| --- | --- |
-| `403 {"allowed":false}` | `hfy-check-allowed` refused the email. Continue below. |
-| `403 {"allowed":false,"error":"unverified email"}` | Google reports the account's address as unverified. |
-| `500 {"allowed":false,"error":"server error"}` | The Google token did not verify, or S3 or Secrets Manager failed. The log line `Error verifying request` has the message. |
-| `403 {"error":"forbidden"}` or `404 {"error":"not_found",...}` | The request reached `hfy-api`, not the legacy Lambda. See [Legacy check-allowed returns 404](#legacy-check-allowed-returns-404). |
-
-**Causes.** [`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs) admits an email only when its HMAC digest is in `config/allowed_hashes.json` **and** `config/userGrampsID.json` has a value under the exact lower-case key. The test is `Boolean(mapping[email])`: a missing key or an empty string is refused, but any object passes, even `{"gramps_id":""}`. It loads both files once per instance and never reloads them, so a published fix reaches only new instances.
-
-**Check.**
-
-1. Read the refusal:
-
-   ```bash
-   aws logs tail /aws/lambda/hfy-check-allowed --since 30m \
-     --filter-pattern '"Email not on allowlist or missing Gramps ID"'
-   ```
-
-   The email appears only in redacted form.
-
-   - `hasMapping: false`: the key is missing, its value is an empty string, or the key has capital letters.
-   - `hasMapping: true`: the digest is missing. The email is not in `harrisonfamily-allowlist.json`, or the publish stopped before it uploaded the digests.
-
-2. Check the published files as in [Manage family access](manage-family-access.md#verify-an-addition). If both are correct, the running instances hold older copies.
-
-**Fix.** Correct the files and publish them ([Manage family access](manage-family-access.md#add-a-member)). Then make Lambda start new instances by changing the description, which nothing reads:
-
-```bash
-aws lambda update-function-configuration --function-name hfy-check-allowed \
-  --description "allowlist published <yyyy-mm-dd>" --query LastUpdateStatus --output text
-aws lambda wait function-updated --function-name hfy-check-allowed
-```
-
-A push to `main` has the same effect, because [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) updates the function's code, as the `lambda` target in [`ci.manifest.yaml`](../../ci.manifest.yaml) says.
-
-## Legacy check-allowed returns 404
-
-**What you see.** `POST /api/check-allowed` returns `404 {"error":"not_found","message":"no such route"}`. That body comes from `hfy-api` ([`api/src/handler.js`](../../api/src/handler.js)), which has no `check-allowed` route. The legacy sign-in then fails wherever it runs, and `add-api-behavior.sh` refuses to run until the route is fixed.
-
-**Cause.** CloudFront tries its cache behaviors in list order and uses the first pattern that matches. The legacy sign-in reaches `hfy-check-allowed` through its API Gateway origin, which this repository does not define. [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps that route with a `/api/check-allowed*` behavior placed above `/api/*`. When it creates that pin, it copies whichever behavior serves `/api/check-allowed` at that moment. A 404 means no pin above `/api/*` targets the legacy origin. Someone moved the pin below `/api/*` or deleted it, the pin targets `hfy-api-origin`, or `/api/*` was pointed at `hfy-api` before any pin existed. The script moves a misplaced pin back on its own. In the other cases it refuses, as the check below shows. The rules are in [Repository operations](../reference/repository-operations.md#the-legacy-apicheck-allowed-pin).
+**Cause.** CloudFront tries its cache behaviors in list order and uses the first pattern that matches. The retired endpoint reaches `hfy-check-allowed` through its API Gateway origin, which this repository does not define. [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps that route with a `/api/check-allowed*` behavior placed above `/api/*`. When it creates that pin, it copies whichever behavior serves `/api/check-allowed` at that moment. A 404 means no pin above `/api/*` targets the legacy origin. Someone moved the pin below `/api/*` or deleted it, the pin targets `hfy-api-origin`, or `/api/*` was pointed at `hfy-api` before any pin existed. The script moves a misplaced pin back on its own. In the other cases it refuses, as the check below shows. The rules are in [Repository operations](../reference/repository-operations.md#the-legacy-apicheck-allowed-pin).
 
 **Check.**
 
@@ -459,7 +417,7 @@ A push to `main` has the same effect, because [`io-kit-deploy.yml`](../../.githu
      | jq -r '.DistributionConfig.Origins.Items[] | "\(.Id)\t\(.DomainName)"'
    ```
 
-   The legacy sign-in works only when `/api/check-allowed*` is listed above `/api/*` and targets the origin whose host is an `execute-api` address. That origin's ID is `<legacy-origin-id>`.
+   The retired endpoint works only when `/api/check-allowed*` is listed above `/api/*` and targets the origin whose host is an `execute-api` address. That origin's ID is `<legacy-origin-id>`.
 
 2. Ask the script what it would do. `$NAME` is the stack's origin-verify secret, from step 1 of the [403 check](#every-api-or-auth-request-gets-403-forbidden). The dry run changes nothing:
 
@@ -510,7 +468,7 @@ It prints `{"allowed":false,"error":"missing id_token"}  400`.
 1. **Is the request sent, with the cookie?** In the Network panel, open the failing request and look for `io_id` in the `Cookie` request header.
 
    - **There is no `/api` request at all.** Where `authV2` resolves on, the islands' API client sends no `/api` call once `/auth/session` has answered `authenticated: false`. It treats the call as a `401` without sending it ([`islands/src/lib/api.js`](../../islands/src/lib/api.js)). Go to step 2.
-   - **You signed in only through `/family-login/`.** The legacy sign-in sets no `io_id`, so the API sees no session. Sign in at `/auth/login`.
+   - **The browser holds no edge session** (an old tab from before the retired Google sign-in was removed, or a cleared cookie). Only the edge sign-in sets `io_id`, so the API sees no session until you sign in at `/auth/login`.
    - **You are on another host name.** `io_id` is a host-only cookie for `<site>`. On `www.<site>` or the CloudFront domain, the browser does not send it.
    - **The cookie has expired.** It lasts 3600 s. Where `authV2` resolves on, [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) refreshes it from the `io_rt` refresh cookie: when a page loads and the session is within 120 s of its expiry, or is signed out in a browser that has had an edge session, and when the data gate answers `401`. An `/api/*` call is not retried, so a page left open past the expiry keeps getting `401` until something on it refreshes the session, at the latest when you reload it. In the Network panel, `POST /auth/refresh` answers `200` when the refresh worked. A `401` there means the refresh cookie is gone, expired or revoked, or the member is no longer on the allowlist: sign in again. Where `authV2` resolves off, no site script refreshes `io_id`, so sign in again.
 
@@ -571,7 +529,7 @@ It prints `{"allowed":false,"error":"missing id_token"}  400`.
 
 The person page, `/person/?id=<gramps-id>`, is public and never gated. Every answer from the gate carries `cache-control: private, no-store`.
 
-Where `authV2` resolves on, the client sends these requests with the `io_id` cookie and no `X-HFY-Session` header. On a gate `401` it calls `POST /auth/refresh` once and retries the request once. Only when that fails does a page go to `/auth/login?returnTo=<page>` ([Front end](../reference/front-end.md#authv2-data-fetch-and-session-continuity)). Post photos load as same-origin `<img>` elements, which send the cookie too.
+Where `authV2` resolves on, the client sends these requests with the `io_id` cookie. On a gate `401` it calls `POST /auth/refresh` once and retries the request once. Only when that fails does a page go to `/auth/login?returnTo=<page>` ([Front end](../reference/front-end.md#authv2-data-fetch-and-session-continuity)). Post photos load as same-origin `<img>` elements, which send the cookie too.
 
 **Check, in order.**
 
@@ -581,11 +539,10 @@ Where `authV2` resolves on, the client sends these requests with the `io_id` coo
    curl -s "$SITE/_data/flags.json" | jq .authV2
    ```
 
-   It must print `true`. `false` while the gate is attached is an outage: the legacy client signs in through `/family-login/`, which sets no `io_id`, so the gate refuses its data requests. Go to the first item of Fix at once. A failed site deploy whose automatic rollback restored an older `flags.json` is one way to get there ([Roll back a site deploy](roll-back-a-site-deploy.md#check-authv2-after-a-failed-deploy)). In a single tab, a preview override can force the flag off: in the Console, `sessionStorage.getItem("hfy:flags")` then shows `-authV2`. Open `?hfy_flags=` to clear it.
+   It must print `true`. `false` while the gate is attached is an outage: nothing on the page refreshes `io_id`, so the gate refuses its data requests once the hour is up. Go to the first item of Fix at once. A failed site deploy whose automatic rollback restored an older `flags.json` is one way to get there ([Roll back a site deploy](roll-back-a-site-deploy.md#check-authv2-after-a-failed-deploy)). In a single tab, a preview override can force the flag off: in the Console, `sessionStorage.getItem("hfy:flags")` then shows `-authV2`. Open `?hfy_flags=` to clear it.
 
-2. **The request carries the cookie, and only the cookie.** In the Network panel, open the refused request. Its `Cookie` request header includes `io_id`, and there is no `X-HFY-Session` header. Do not copy the cookie value.
+2. **The request carries the cookie.** In the Network panel, open the refused request. Its `Cookie` request header includes `io_id`. Do not copy the cookie value.
 
-   - `X-HFY-Session` is present: this tab runs the legacy client. See check 1.
    - `io_id` is missing: the browser is not signed in at the edge, or it is on another host name, such as `www.<site>`. The cookie is host-only for `<site>`.
    - `io_id` is missing on a script's own request for a photo: a script that fetches a gated file must pass `credentials: "same-origin"`.
 
@@ -658,8 +615,8 @@ Where `authV2` resolves on, the client sends these requests with the `io_id` coo
   curl -sS -o /dev/null -D - "$SITE/Person/index.json" | grep -iE '^(HTTP|cache-control)'
   ```
 
-  - **Anything but `404` with `cache-control: private, no-store`:** the function runs older code. Remove the gate at once (next item). The legacy client can then read the data.
-  - **`404` with `cache-control: private, no-store`:** the function runs its default-deny code. Removing the gate does not give the legacy client its data back, because the six data paths then fall through to the function, which answers `404` to everyone. Instead, get a release with `"authV2": true` deployed again, by fixing forward or reverting ([Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback)). The other way out is to remove the gate and roll the function back as well ([Publish a change to the CloudFront Function](publish-the-cloudfront-function.md)).
+  - **Anything but `404` with `cache-control: private, no-store`:** the function runs older code. Remove the gate at once (next item). The data is then readable.
+  - **`404` with `cache-control: private, no-store`:** the function runs its default-deny code. Removing the gate does not give that client its data back, because the six data paths then fall through to the function, which answers `404` to everyone. Instead, get a release with `"authV2": true` deployed again, by fixing forward or reverting ([Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback)). The other way out is to remove the gate and roll the function back as well ([Publish a change to the CloudFront Function](publish-the-cloudfront-function.md)).
 - **Remove the gate.** Do this only as the cutover page's [Roll back](cut-over-to-the-private-data-gate.md#roll-back) describes. If a new gate version is at fault, point the behaviors back at a retained earlier version instead, as in [Deploy the edge functions](deploy-the-edge-functions.md#roll-back), and the data stays gated. A real `--remove` needs io's go-ahead:
 
   ```bash
@@ -718,7 +675,7 @@ Any other `refusing:` line names its cause, such as credentials that cannot desc
 - **Every site refresh,** with the same 300 s copy. Where `authV2` resolves on, `feature-flags.js` sends `POST /auth/refresh` when the session nears its expiry and when the gate answers `401`. For a removed member, the refresh fails with `401`, clears both cookies and revokes the session's refresh family. Where `authV2` resolves off, no site script refreshes, so the member keeps the session until `io_id` expires and is refused at the next sign-in.
 - **Every MCP code exchange and refresh grant,** and every `/auth/userinfo` call, with a 60 s copy.
 
-MCP tools follow `config/groups.json`, not the allowlist, so a removed member listed there keeps their tools until their access token expires. The legacy sign-in keeps admitting the member until `hfy-check-allowed` starts new instances. While the data gate is attached, that legacy sign-in reads no family data and no `/api` route. For the full timing, see [The identity model](../explanation/identity-model.md#what-removal-does-and-does-not-do).
+MCP tools follow `config/groups.json`, not the allowlist, so a removed member listed there keeps their tools until their access token expires. The retired `hfy-check-allowed` function keeps its own copy of the allowlist until Lambda starts new instances, but no page calls it, and it mints no session the gate or the API accepts. For the full timing, see [The identity model](../explanation/identity-model.md#what-removal-does-and-does-not-do).
 
 **Check.**
 
@@ -730,13 +687,7 @@ MCP tools follow `config/groups.json`, not the allowlist, so a removed member li
    ```
 
 2. Less than an hour has passed since the removal. Within that hour, continued access with an existing token is expected.
-3. For the legacy path, `hfy-check-allowed` changed after the publish:
-
-   ```bash
-   aws lambda get-function-configuration --function-name hfy-check-allowed --query LastModified --output text
-   ```
-
-4. For MCP, the member is in no group. This prints `false`:
+3. For MCP, the member is in no group. This prints `false`:
 
    ```bash
    aws s3 cp s3://<config-bucket>/config/groups.json - | jq --arg g '<gramps-id>' --arg e '<email>' \
@@ -745,15 +696,14 @@ MCP tools follow `config/groups.json`, not the allowlist, so a removed member li
 
 **Fix.**
 
-- **The legacy path.** Recycle `hfy-check-allowed` as in [Legacy sign-in is refused with 403](#legacy-sign-in-is-refused-with-403).
 - **MCP tools.** Remove the member's Gramps ID and email from `config/groups.json`, as in [Manage family access](manage-family-access.md). `hfy-api` reads the file again within 60 s, and from then on the member's token lists no tools.
 - **Every edge session and MCP token now, instead of within the hour.** [Rotate the session signing key](rotate-the-session-signing-key.md), which recycles the auth edge, and then recycle `hfy-api` as in [The API returns 401 while you are signed in](#the-api-returns-401-while-you-are-signed-in), so that neither its cookie check nor its MCP server keeps the old key. Every `io_id` and MCP access token signed with the old key stops verifying, and the gate drops the old key within 300 s. Where `authV2` resolves on, this does not sign everyone out: members' pages refresh silently from the refresh cookie, and MCP clients refresh their tokens, both under the new key. The removed member's refresh is refused. Where `authV2` resolves off, nothing refreshes `io_id`, so members who signed in at `/auth/login` sign in again. Legacy sign-ins are not affected.
 
-The removal has taken full effect when a sign-in as that member at `/auth/login` is refused as not on the access list. Where the legacy sign-in runs, a sign-in at `/family-login/` must be refused too. Run the checks in [Manage family access](manage-family-access.md#verify-a-removal).
+The removal has taken full effect when a sign-in as that member at `/auth/login` is refused as not on the access list. Run the checks in [Manage family access](manage-family-access.md#verify-a-removal).
 
 ## A flag is on but nothing changes
 
-**What you see.** A flag is on in `flags.json` or in your preview override, and the page still shows the legacy version, or still runs old code after a deploy. The loader in [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) appends the island's stylesheet, `/js/islands/<name>.css?v=<sha8>`, and then its module, `/js/islands/<name>.js?v=<sha8>`. Each `?v` is the start of the file's SHA-256, stamped into `feature-flags.js` by the islands build ([Front end: Asset versions](../reference/front-end.md#asset-versions)). If the module cannot be fetched, the loader clears any preview override, and the page keeps or returns to its legacy version without telling you. Only the shell, search and notifications loaders pass an error handler: the first two restore the legacy parts they hid, and the notifications page keeps its "not enabled" text. The person and posts loaders pass none, so the page simply stays as it was. A parse or runtime error in a bundle that did load triggers no fallback: the error shows in the Console, and the page is left without the island.
+**What you see.** A flag is on in `flags.json` or in your preview override, and the page still shows the version without it, or still runs old code after a deploy. The loader in [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) appends the island's stylesheet, `/js/islands/<name>.css?v=<sha8>`, and then its module, `/js/islands/<name>.js?v=<sha8>`. Each `?v` is the start of the file's SHA-256, stamped into `feature-flags.js` by the islands build ([Front end: Asset versions](../reference/front-end.md#asset-versions)). If the module cannot be fetched, the loader clears any preview override, and the page keeps or returns to its legacy version without telling you. Only the shell, search and notifications loaders pass an error handler: the first two restore the legacy parts they hid, and the notifications page keeps its "not enabled" text. The person and posts loaders pass none, so the page simply stays as it was. A parse or runtime error in a bundle that did load triggers no fallback: the error shows in the Console, and the page is left without the island.
 
 Cloudflare, in front of CloudFront, keeps static files for 4 hours under the URL it first fetched, and CloudFront invalidations do not reach it. It does not cache the HTML or `/_data/flags.json`. So check files under the versioned URLs that the page uses. A bare URL such as `/js/islands/shell.js` can return a copy up to 4 hours old even after a green deploy.
 
@@ -775,7 +725,7 @@ Cloudflare, in front of CloudFront, keeps static files for 4 hours under the URL
    | `notifyV2` | `/me/notifications/` | `notifications` |
    | `navMe` | `/me/` | `settings` |
 
-   `authV2` loads no island. It moves the person, search and photo data requests to the `io_id` cookie as soon as the flag resolves. Once `/auth/session` answers with JSON, it also makes `/family-login/` send a signed-out visitor to `/auth/login?returnTo=<path>`. `<path>` is the page's `next` parameter when that is a same-origin path outside `/auth` and `/family-login`, and `/` otherwise ([`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js)). A visitor already signed in at the edge stays on the legacy page. If `/auth/session` does not answer, the sign-in and navigation stay as they were and the preview override is cleared.
+   `authV2` loads no island. It keeps the edge session alive: once `/auth/session` answers with JSON, the sign-in links point at `/auth/login?returnTo=<this page>` (a same-origin path outside `/auth` and `/family-login`, otherwise `/`, [`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js)), and a lapsed `io_id` is refreshed. `/family-login/` redirects to `/auth/login` whatever the flag says. If `/auth/session` does not answer, the sign-in and navigation stay as they were and the preview override is cleared.
 
 3. **The page uses versioned URLs.** List the page's script and stylesheet references that carry no version. `PAGE` is the page's path, such as `/search/`:
 
@@ -1153,14 +1103,14 @@ The token is read from standard input, so it never appears on the command line. 
      (cd tests/login-flow && rm -rf playwright-report test-results logs)
      ```
 
-     It checks the `/family-login/` redirect, the published JWKS, the signed-out session, and a password sign-in whose `sub` matches `HFY_EXPECT_GRAMPS`. `--grep-invert` leaves out its test of the login page's Google and password paths. That test expects exactly two `section.path` elements, and the passkey-enabled edge renders four, so it fails on a healthy site ([Run the tests: authV2 sign-in](run-the-tests.md#authv2-sign-in)). Its redirect test passes only while the published `flags.json` has `authV2` set to `true`. Where it is `false`, use the legacy spec instead ([Run the tests](run-the-tests.md#legacy-sign-in)).
+     It checks the `/family-login/` redirect page, the published JWKS, the signed-out session, and a password sign-in whose `sub` matches `HFY_EXPECT_GRAMPS`. `--grep-invert` leaves out its test of the login page's Google and password paths. That test expects exactly two `section.path` elements, and the passkey-enabled edge renders four, so it fails on a healthy site ([Run the tests: authV2 sign-in](run-the-tests.md#authv2-sign-in)). It is skipped unless `HFY_AUTH_V2=1`; there is no legacy spec to fall back to any more (HFY-TSK-317).
    - **The sign-in pages' look:** checks 4 and 5 of [Deploy the app stack: Verify](deploy-the-app-stack.md#verify).
    - **The data gate and member photos:** the signed-out and signed-in checks in [Verify](cut-over-to-the-private-data-gate.md#verify) on the cutover page.
    - **MCP:** `token-smoke.sh` with a fresh token, as in check 2 of [The MCP server refuses a client](#the-mcp-server-refuses-a-client), then list the tools from the client.
 
 ## Related pages
 
-- [The identity model](../explanation/identity-model.md): why sign-in resolves to a Gramps ID, why the legacy path is still deployed, why removal is not instant, and why a delete through MCP needs a fresh step-up.
+- [The identity model](../explanation/identity-model.md): why sign-in resolves to a Gramps ID, what is left of the legacy path, why removal is not instant, and why a delete through MCP needs a fresh step-up.
 - [Edge and origin design](../explanation/edge-and-origin-design.md): CloudFront in front of both functions, the origin-verify header, the two Lambda@Edge functions, why `HFYAppendIndex` also denies, and why static URLs carry a version.
 - [The privacy model for family data](../explanation/family-data-privacy.md): why the data paths and member photos are gated at the edge and never stored by a shared cache.
 - [Islands on Eleventy](../explanation/islands-on-eleventy.md) and [The release model](../explanation/release-model.md): why new surfaces load behind flags and fall back.

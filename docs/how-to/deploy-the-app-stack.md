@@ -55,7 +55,7 @@ Values in angle brackets, such as `<site>`, `<app-stack>`, `<code-bucket>`, `<co
   - `config/userGrampsID.json` must be present. The auth edge resolves every sign-in against it. If it is missing, stop and follow [Manage family access](manage-family-access.md).
   - `config/groups.json` holds the MCP groups, `mcp-authors` and `hfy-admin`, in the shape documented at the top of [`api/src/policy.js`](../../api/src/policy.js) and in [MCP server: Groups](../reference/mcp-server.md#groups). Without it the MCP server fails closed: every caller gets an empty tool list and no tool runs. You can deploy without it, but publish it before anyone connects an MCP client. Step 8 says when.
   - `config/admins.json` may be missing. That means there are no moderators: nobody is a site admin, and no MCP token carries the `admins` group. It is not an error. `hfy-api` then logs `admin list unavailable (failing closed)` and the auth edge `admin list unavailable (nobody is admin)`, and both are expected. To add a moderator, follow [Manage family access](manage-family-access.md).
-- **`<google-web-client-id>`.** This is the Google OAuth web client ID, the same value as the `HFY_GOOGLE_CLIENT_ID` repository secret. The stack requires it as `GoogleClientId` and has no default.
+- **`<google-web-client-id>`.** This is the Google OAuth web client ID, the value you created in [step 7 of Stand up the static site](stand-up-the-static-site.md#7-create-the-google-web-client). No repository secret holds it any more (HFY-TSK-317). The stack requires it as `GoogleClientId` and has no default.
 - **A clean checkout of the commit to deploy.** Step 3 names the uploads after the commit, so `git status --short` must print nothing. The `api/` and `auth/` suites should pass ([Run the tests](run-the-tests.md)). If the commit changes the sign-in pages' look, `(cd islands && npm run check:islands)` must pass too, because it fails while the `?v=` in `theme.cssUrl` does not match the committed stylesheet. For such a change, `npm run e2e:theme` in `auth/` can also check those pages in Chrome under their real Content-Security-Policy, against a scratch build of the site ([Identity services: Page theme and HFY overrides](../reference/identity-services.md#page-theme-and-hfy-overrides)).
 - **The commit's site deploy, when the sign-in stylesheet changed.** Compare the stylesheet URL that the commit names with the one the live sign-in page links:
 
@@ -304,7 +304,7 @@ On a first deploy, the dry-run diff only adds `hfy-auth-origin` and its two beha
 
 #### Add the API behavior and the legacy pin
 
-The legacy sign-in is still deployed, and every push to `main` still ships its Lambda, `hfy-check-allowed` ([Deploy a site change](deploy-a-site-change.md)). Its page, `/family-login/`, posts a Google sign-in to `/api/check-allowed` on the `hfy-check-allowed` API Gateway, but only while `authV2` is off. With `authV2` on, `/family-login/` sends a signed-out visitor to `/auth/login` instead. `add-api-behavior.sh` keeps the legacy path where it is, so the legacy sign-in still works if `authV2` is turned off again. Before it points `/api/*` at `hfy-api`, it clones whichever behavior serves `/api/check-allowed` under the pattern `/api/check-allowed*`, and orders the clone ahead of `/api/*` (HFY-R58). [Edge and origin design](../explanation/edge-and-origin-design.md#one-origin-for-the-browser) explains why the path needs its own behavior.
+The legacy Google sign-in is retired from the pages and the pipeline (HFY-TSK-317): no page calls `/api/check-allowed` and no push deploys its Lambda, `hfy-check-allowed`. The function, its `hfy-check-allowed` API Gateway and the CloudFront route to it are still in AWS until io retires them, so a direct call keeps working. `add-api-behavior.sh` keeps the legacy path where it is, so the endpoint is not shadowed by `/api/*`. Before it points `/api/*` at `hfy-api`, it clones whichever behavior serves `/api/check-allowed` under the pattern `/api/check-allowed*`, and orders the clone ahead of `/api/*` (HFY-R58). [Edge and origin design](../explanation/edge-and-origin-design.md#one-origin-for-the-browser) explains why the path needs its own behavior.
 
 ```sh
 scripts/infra/add-api-behavior.sh --stack <app-stack> --distribution <distribution-id> --secret-name "$OV_NAME" --dry-run
@@ -312,7 +312,7 @@ scripts/infra/add-api-behavior.sh --stack <app-stack> --distribution <distributi
 
 Read the dry run:
 
-- A line `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`. `<origin-id>` must be the legacy API Gateway origin, never `hfy-api-origin`. The line's wording names HFY-TSK-069, the cutover task, but the cutover left the legacy Lambda and this pin in place, so keep the pin.
+- A line `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`. `<origin-id>` must be the legacy API Gateway origin, never `hfy-api-origin`. The line's wording names HFY-TSK-069, the cutover task, but neither the cutover nor HFY-TSK-317 removed the legacy Lambda or this pin, so keep the pin.
 - Two `cache behaviors ... (in evaluation order)` lines. In the `after` line, `/api/check-allowed* -> <origin-id>` comes before `/api/* -> hfy-api-origin`.
 - A diff that touches only `hfy-api-origin`, `/api/*` and, on the first run, the new pin.
 
@@ -515,7 +515,7 @@ Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None p
    ```
 
    Both lines print `{"error":"forbidden"} 403`. The Function URLs use AuthType `NONE`, so this header check is the only thing that stops callers from bypassing CloudFront.
-10. **The legacy sign-in route survived.** The legacy sign-in, used whenever `authV2` is off, reaches its Lambda through the pin.
+10. **The legacy endpoint's route survived.** Nothing on the site calls it any more, but the route is kept until io retires the function, and it must not fall through to `hfy-api`.
 
     ```sh
     curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}' \

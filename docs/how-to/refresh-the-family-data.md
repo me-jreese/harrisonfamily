@@ -122,7 +122,7 @@ The script reads every person file in the directory. It writes `person/search-in
 
 Both search surfaces read these two files:
 
-- The legacy search page and navbar: [`11ty/js/search-results.js`](../../11ty/js/search-results.js) and [`11ty/js/search-navbar.js`](../../11ty/js/search-navbar.js). They still ship with the site. When `searchV2` is on, they stop loading data only once the island has mounted, so they keep working if it fails to mount.
+- The legacy search page and navbar search, which read the same files, are gone (HFY-TSK-317): the search island and the shell's launcher are the only readers of the two index files.
 - The `searchV2` island: [`islands/src/lib/people-corpus.js`](../../islands/src/lib/people-corpus.js).
 
 Nothing else rebuilds them from the real data. The Eleventy source's `npm run build` runs this same script without `HFY_PERSON_DIR`, so it rebuilds the sanitized samples instead.
@@ -215,9 +215,9 @@ The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in
    curl -s https://<site>/_data/flags.json | jq '{authV2, searchV2}'
    ```
 
-   If `authV2` is `true`, sign in at `https://<site>/auth/login`, in a window with no preview override, such as a private window. If it is `false`, the site runs the legacy client, and you sign in with Google at `https://<site>/family-login/` instead. If `authV2` is `false` while step 5 printed `401`, members are locked out of the family data: go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point).
+   If `authV2` is `true`, sign in at `https://<site>/auth/login`, in a window with no preview override, such as a private window. If it is `false`, you still sign in at the same address, but the page never refreshes your session. If `authV2` is `false` while step 5 printed `401`, members are locked out of the family data: go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point).
 
-   Open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. Both search surfaces read the same two files. If `searchV2` is `true`, `/search/` shows the island. To check the legacy page as well, open `https://<site>/search/?hfy_flags=-searchV2` ([Force a flag off in one tab](toggle-a-feature-flag.md#force-a-flag-off-in-one-tab)). If it is `false`, preview the island with `?hfy_flags=searchV2` instead ([Turn a flag on in one browser tab](toggle-a-feature-flag.md#turn-a-flag-on-in-one-browser-tab)). Either way, clear the override afterwards with `?hfy_flags=`.
+   Open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. The shell's search launcher reads the same two files. If `searchV2` is `true`, `/search/` shows the island. If it is `false`, preview the island with `?hfy_flags=searchV2` ([Turn a flag on in one browser tab](toggle-a-feature-flag.md#turn-a-flag-on-in-one-browser-tab)) and clear the override afterwards with `?hfy_flags=`.
 
    With the gate attached, a refused data request is a `401 {"error":"unauthenticated"}` from the gate, or a `302` to `/auth/login?returnTo=<path>` for a page navigation. The client refreshes the session and retries once before it sends you to sign in. If you are refused while signed in, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md) and the table in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#if-something-fails).
 5. **The checkout is clean.** `git status` in your checkout shows no changes from this procedure. Any change there means a script wrote into the repository. Find out why before you commit anything.

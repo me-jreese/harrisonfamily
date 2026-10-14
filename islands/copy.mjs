@@ -10,7 +10,7 @@
 // authored prose (the about story, the person data) is content and is never touched, beyond fixing a typo in it. Person names and
 // "Harrison" stay proper nouns.
 //
-// Workspace port (for io; 11ty/README.md): src/index content -> HERO below; the about and family-login headings; partials/footer.njk -> FOOTER;
+// Workspace port (for io; 11ty/README.md): src/index content -> HERO below; the about heading; partials/footer.njk -> FOOTER;
 // each page's `title` front matter -> TITLES (the layout appends " · Harrison Family").
 
 /** The Voice footer (DS Shell anatomy and the Voice microcopy table). */
@@ -32,7 +32,6 @@ export const TITLES = {
   "index.html": { from: ["Harrison Family · Harrison Family Heritage"], title: SITE, og: SITE },
   "about/index.html": { from: ["Harrison Family Heritage - Our Story · Harrison Family Heritage", "Harrison Family Heritage - Our Story"], title: `our story · ${SITE}`, og: "our story" },
   "contact/index.html": { from: ["Contact &amp; Access · Harrison Family Heritage", "Contact &amp; Access"], title: `contact and access · ${SITE}`, og: "contact and access" },
-  "family-login/index.html": { from: ["Family Login · Harrison Family Heritage", "Family Login"], title: `sign in · ${SITE}`, og: "sign in" },
   "logged-out/index.html": { from: ["Logged Out · Harrison Family Heritage", "Logged Out"], title: `signed out · ${SITE}`, og: "signed out" },
   "person/index.html": { from: ["Person Profile · Harrison Family Heritage", "Person Profile"], title: `family member · ${SITE}`, og: "family member" },
   "privacy/index.html": { from: ["Privacy Policy · Harrison Family Heritage", "Privacy Policy"], title: `privacy · ${SITE}`, og: "privacy" },
@@ -64,13 +63,6 @@ export const HERO = {
     ["Honoring the Harrison Family Legacy</h1>", "honoring the Harrison family legacy</h1>"],
     // The one typo in the story: "two hundred twenty (222) years" said the number twice, and "twenty" is not 222.
     ["two hundred twenty (222) years", "two hundred twenty-two years"]
-  ],
-  // The sign-in page is on screen for a moment before /auth/login takes over (authV2): the copy that flashes is in the voice.
-  "family-login/index.html": [
-    ['mb-3">Family Login</h1>', 'mb-3">sign in</h1>'],
-    ["Sign in with your approved Google account to access private family records, search, and media.", "sign in with your Google account to see the family pages."],
-    ["If you need access, reach out to the site administrator.", "not on the list yet? text J."],
-    ["Loading authentication status…", "loading…"]
   ],
   // /logged-out/ is shown after every sign-out. The Eleventy source (src/logged-out.njk) carries the same copy; this puts the old text right
   // after a refresh from a source that has not been ported. "sign in again" goes straight to the edge sign-in.
@@ -107,7 +99,6 @@ export const COPY_PAGES = [
   "index.html",
   "about/index.html",
   "contact/index.html",
-  "family-login/index.html",
   "logged-out/index.html",
   "person/index.html",
   "privacy/index.html",

@@ -30,7 +30,7 @@ Priced:
 Not priced:
 
 - **The legacy Google Cloud pieces.** The `getAllowlist` Cloud Function and its Google Secret Manager secret are outside AWS and outside this estimate. Every push to `main` still deploys the function, through its own workflow, [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml).
-- **The legacy `hfy-check-allowed` Lambda and the API Gateway in front of it.** They are not in `app-stack.yaml`. Every push to `main` still deploys the Lambda, as the `lambda` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), and the `/api/check-allowed*` pin that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps still routes to its API Gateway. They stay until the legacy sign-in path is removed. Their Secrets Manager secret is counted, because a secret is billed monthly whether or not it is read.
+- **The legacy `hfy-check-allowed` Lambda and the API Gateway in front of it.** They are not in `app-stack.yaml`. No push deploys the Lambda any more (the `lambda` target left [`ci.manifest.yaml`](../../ci.manifest.yaml) with HFY-TSK-317), and no page calls it, but the `/api/check-allowed*` pin that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps still routes to its API Gateway. They stay until io retires the function. Their Secrets Manager secret is counted, because a secret is billed monthly whether or not it is read.
 - **The static site.** S3 storage for the site, the default CloudFront behavior and its CloudFront Function, the self-hosted fonts, invalidations, and the CloudFront requests, data transfer and S3 GETs of the gated data and photo paths are shown separately in [Static-site baseline](#static-site-baseline) and are not in the app-backend total. The gate's own Lambda@Edge charges are in the app-backend total.
 - **Cloudflare.** Cloudflare proxies `<site>` in front of CloudFront. It is outside AWS and outside this estimate.
 - **Everything else around the stacks.** DNS and the domain, the public ACM certificate, the app stack's Lambda packages in `<code-bucket>` (a commit-named zip for each function per code deploy), the push requests `hfy-api` sends to browsers' push services, and CI.
@@ -153,10 +153,10 @@ The secrets line is the largest. It counts every Secrets Manager secret the back
 | --- | --- | --- | --- |
 | Session signing key | Always present | `hfy-auth-edge`, once per container | 0.40 |
 | Origin-verify | Always present (HFY-R43, added after the original estimate) | CloudFormation at deploy time, and the behavior scripts; never at runtime | 0.40 |
-| Legacy allowlist HMAC (`HFY_ALLOWLIST_HMAC_SECRET`) | Present while the legacy sign-in path is deployed. Every push to `main` still deploys `hfy-check-allowed`. | `hfy-check-allowed`, once per container | 0.40 |
+| Legacy allowlist HMAC (`HFY_ALLOWLIST_HMAC_SECRET`) | Present while the retired `hfy-check-allowed` Lambda is deployed. No push deploys it any more. | `hfy-check-allowed`, once per container | 0.40 |
 | VAPID key pair (`harrisonfamily/api/vapid` in production) | Present once push has been turned on. `hfy-api` reads it only while the app stack's `VapidSecretName` parameter names it, which turns on push sending; [How to turn on push notifications](../how-to/turn-on-push-notifications.md) shows how to check the parameter. | `hfy-api`, once per container | 0.40 |
 
-So the line is 1.60 a month. When the legacy sign-in path is removed, it drops to 1.20. Neither Lambda@Edge function reads a secret: Lambda@Edge has no environment variables, and the gate verifies sessions against the auth edge's public JWKS. For the secrets' names and handling rules, see [Private data and secrets](private-data-and-secrets.md).
+So the line is 1.60 a month. When the retired Lambda is removed, it drops to 1.20. Neither Lambda@Edge function reads a secret: Lambda@Edge has no environment variables, and the gate verifies sessions against the auth edge's public JWKS. For the secrets' names and handling rules, see [Private data and secrets](private-data-and-secrets.md).
 
 ## Stress check at 5x
 

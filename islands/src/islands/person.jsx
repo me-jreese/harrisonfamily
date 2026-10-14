@@ -27,10 +27,8 @@ async function init() {
   const panel = content.querySelector(".notes-panel");
   try {
     const flags = window.HFYFeatureFlags;
-    const edge = (await flags?.dataFetchInit?.()) ?? null; // authV2: cookie only at the edge data gate (HFY-TSK-080)
-    const token = edge ? null : flags?.requireSessionToken?.();
     const url = `/person/${encodeURIComponent(id)}.json`;
-    const init = edge ?? { credentials: "include", headers: token ? { "X-HFY-Session": token } : {} };
+    const init = { credentials: "same-origin" }; // the io_id cookie is the credential at the edge data gate (HFY-TSK-080)
     // HFY-R66: refresh + one retry on a gate 401; background load (the legacy page already rendered), so it never redirects.
     const res = await (flags?.dataFetch ? flags.dataFetch(url, init, { interactive: false }) : fetch(url, init));
     const person = res.ok ? await res.json() : null;

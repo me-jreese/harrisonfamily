@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:53e3f8d9f4e5cc2333d64d6f8adf684a6dde19c05fb88c38ad6f713914eb1687
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:25ccf7360e1bf1e5e568d4c4c8efc0698b0e08fc54ec458acbe6c224baa882cf
 name: io-kit rollback
 description: Redeploy the release artifact of the previous successful deploy run (strategy previous_artifact). Run after a failed smoke.
 inputs:
@@ -30,9 +30,5 @@ runs:
         gh run download "$run_id" --name "io-kit-release-$sha" --dir .
     - id: rb_static
       uses: ./.github/actions/io-kit-ci/deploy-static
-    - id: rb_lambda
-      uses: ./.github/actions/io-kit-ci/deploy-lambda
-      with:
-        rollback: "true"
     - id: rb_invalidate
       uses: ./.github/actions/io-kit-ci/invalidate

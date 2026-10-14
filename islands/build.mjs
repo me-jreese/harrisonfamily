@@ -12,7 +12,7 @@
 //   css/auth-edge.css        the auth edge's stylesheet, from src/auth-edge/auth-edge.css (skipped with a warning until it exists)
 //   fonts/*                  the self-hosted brand faces (content-hashed woff2) and their OFL licences (fonts.mjs)
 //   */index.html, offline.html   the hfy-theme head blocks (heads.mjs) and, on the 10 Eleventy pages, the DS Voice copy (copy.mjs:
-//                            home hero, about / family-login headings, page titles, the footer)
+//                            home hero, about heading, page titles, the footer)
 //   manifest.webmanifest     theme_color / background_color = the resolved surface token
 //   sw.js, js/feature-flags.js   their hfy-asset-versions marker block (assets.mjs): the content hashes of the files they load
 //   (every page again)       every same-origin script / stylesheet / manifest reference carries ?v=<sha8 of the file>
