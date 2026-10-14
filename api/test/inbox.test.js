@@ -1,4 +1,4 @@
-// HFY-TSK-252 (hfy-inbox-delivery-api): the @io-kit/notify 0.5.0 inbox store behind inboxV1, the three inbox routes, the TTL policy and the pin.
+// HFY-TSK-252 (hfy-inbox-delivery-api): the @io-kit/notify inbox store (0.5.0 server, pinned at 0.6.0 since HFY-TSK-185) behind inboxV1, the three inbox routes, the TTL policy and the pin.
 // Synthetic ids only (I0001 owner, I0002 commenter, I0007 uat).
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -191,11 +191,20 @@ describe("TTL policy (AC4)", () => {
 });
 
 describe("the exact kit pin (AC1)", () => {
-  it("api/package.json pins @io-kit/notify 0.5.0 and the lockfile resolves it", () => {
+  // HFY-TSK-185: api and islands move to @io-kit/notify 0.6.0 together (BRD2 4.3: one notify version on both sides of the wire).
+  const NOTIFY = "0.6.0";
+  it(`api/package.json pins @io-kit/notify ${NOTIFY} and the lockfile resolves it`, () => {
     const pkg = JSON.parse(readFileSync(resolve(here, "../package.json"), "utf8"));
     const lock = JSON.parse(readFileSync(resolve(here, "../package-lock.json"), "utf8"));
-    expect(pkg.dependencies["@io-kit/notify"]).toBe("0.5.0");
-    expect(lock.packages[""].dependencies["@io-kit/notify"]).toBe("0.5.0");
-    expect(lock.packages["node_modules/@io-kit/notify"].version).toBe("0.5.0");
+    expect(pkg.dependencies["@io-kit/notify"]).toBe(NOTIFY);
+    expect(lock.packages[""].dependencies["@io-kit/notify"]).toBe(NOTIFY);
+    expect(lock.packages["node_modules/@io-kit/notify"].version).toBe(NOTIFY);
+  });
+  it("islands/ pins the same @io-kit/notify version, so the client and the server speak one inbox wire contract", () => {
+    const apiPkg = JSON.parse(readFileSync(resolve(here, "../package.json"), "utf8"));
+    const isl = JSON.parse(readFileSync(resolve(here, "../../islands/package.json"), "utf8"));
+    const islLock = JSON.parse(readFileSync(resolve(here, "../../islands/package-lock.json"), "utf8"));
+    expect(isl.dependencies["@io-kit/notify"]).toBe(apiPkg.dependencies["@io-kit/notify"]);
+    expect(islLock.packages["node_modules/@io-kit/notify"].version).toBe(NOTIFY);
   });
 });

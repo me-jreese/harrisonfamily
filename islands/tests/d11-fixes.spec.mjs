@@ -2,6 +2,10 @@
 // stubbed by route interception. Item 1 (auth page stylesheet) is checked by scripts/infra/test/run.sh; item 6 (login continuity) lives in
 // flags-fallback.spec.mjs and tests/client.
 import { test, expect } from "@playwright/test";
+import { catalogFor } from "../src/lib/notify-catalog.js";
+
+// The toggles a member sees: every catalog type except the moderators' group (/api/me reports no admin here).
+const MEMBER_TYPES = Object.keys(catalogFor({ admin: false }).types).length;
 
 const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 const MANIFEST = { people: [
@@ -67,7 +71,7 @@ for (const width of [375, 414, 480, 600, 1280]) {
         below: r.top >= s.closest("li").firstElementChild.getBoundingClientRect().bottom - 1,
       };
     }));
-    expect(segs.length).toBe(4);
+    expect(segs.length, "one detail group per catalog type").toBe(MEMBER_TYPES);
     for (const s of segs) {
       expect(s.scrollW, "group content is not wider than the group").toBeLessThanOrEqual(s.clientW);
       expect(s.left).toBeGreaterThanOrEqual(0);
@@ -89,7 +93,7 @@ for (const flags of ["notifyV2,shellV2", "notifyV2"]) test(`D-11 item 3: /me/not
     const rows = await contrastOf(page, sel);
     for (const r of rows) expect(r.ratio, `${sel} "${r.text}"`).toBeGreaterThanOrEqual(4.5);
   }
-  expect((await contrastOf(page, ".iok-notify-desc")).length).toBe(4);
+  expect((await contrastOf(page, ".iok-notify-desc")).length).toBe(MEMBER_TYPES);
 });
 
 // ---------------------------------------------------------------- item 4 + follow-up 7: /search contrast, install hint at the top
