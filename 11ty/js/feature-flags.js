@@ -8,31 +8,39 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "1a7bca2a",
+        "js": "83b3d815",
         "css": "11377c0e"
       },
       "access-requests": {
-        "js": "afd37082",
+        "js": "f51d3683",
         "css": "ed4e0505"
       },
       "edit-entry": {
-        "js": "5498ac0a",
+        "js": "fd4c177e",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "61e5f5a8",
+        "js": "9f69f617",
         "css": "d8c9710c"
+      },
+      "family": {
+        "js": "d36fbffd",
+        "css": "e52fd206"
+      },
+      "family-entry": {
+        "js": "ce2c0389",
+        "css": "978fbe15"
       },
       "follow": {
         "js": "6b40bcf2",
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "d47e2720",
+        "js": "e1dd5250",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "adede1f4",
+        "js": "07422ec5",
         "css": "38a33f05"
       },
       "join": {
@@ -40,31 +48,31 @@
         "css": "88b160fb"
       },
       "join-entry": {
-        "js": "21158723",
+        "js": "4890d79a",
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "ba7396ae",
+        "js": "9636d593",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "91272f7d",
+        "js": "c19a5513",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "fe0309e4",
+        "js": "8579e28d",
         "css": "be703fb4"
       },
       "person": {
-        "js": "53bc6b2a",
+        "js": "536938a3",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "c62977f3",
+        "js": "e276ff96",
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "1ca839d5",
+        "js": "74ccc880",
         "css": "6226b36b"
       },
       "photo-tags": {
@@ -72,37 +80,37 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "671cf716",
+        "js": "37d8b20a",
         "css": "890fde1c"
       },
       "review": {
-        "js": "4a336128",
+        "js": "a7e28ae5",
         "css": "d4074f34"
       },
       "search": {
-        "js": "bce07c76",
+        "js": "4d328c59",
         "css": "9e007813"
       },
       "settings": {
-        "js": "2ecff626",
+        "js": "56348826",
         "css": "be4f0b90"
       },
       "shell": {
-        "js": "f571729b",
+        "js": "ef806cea",
         "css": "f6871411"
       },
       "timeline": {
-        "js": "1da01713",
+        "js": "2007e2f8",
         "css": "8f618380"
       },
       "tree": {
-        "js": "d4f29c0b",
+        "js": "9450e07c",
         "css": "373d5410"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "d9ee6f28"
+    "sw": "09742779"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -878,6 +886,19 @@
     if (flags.accessRequests !== true) return;
     if (/^\/me\/requests\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("access-requests", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-158: relationshipWizard mounts the relationship wizard. The family-entry island fills a host in the person page's family section
+  // (the "add or fix family connections" button, on the member's own page only; it reads /api/me itself); the family island fills the static
+  // /edit/family/ page. With the flag off neither bundle is requested: the person page is as before and /edit/family/ keeps its "not available
+  // yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.relationshipWizard !== true) return;
+    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("family-entry", { onError() { /* the person page stands without the button */ } });
+    } else if (/^\/edit\/family\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("family", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 
