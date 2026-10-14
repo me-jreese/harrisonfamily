@@ -16,7 +16,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "b95311f5",
+        "js": "b5491b18",
         "css": "6a93fa82"
       },
       "follow": {

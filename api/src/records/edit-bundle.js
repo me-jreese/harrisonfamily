@@ -234,6 +234,7 @@ export async function buildBundle(ctx, actor, cls, handle, { fieldPolicy = DEFAU
   // can name; a place or source the viewer may not see is simply absent. The bundle stays bounded by MAX_RELATED across both levels.
   const second = [];
   for (const [k, v] of Object.entries(related)) {
+    if (refs.length + second.length >= MAX_RELATED) break;
     const o = isObj(v.obj) ? v.obj : null;
     if (!o) continue;
     const next = k.startsWith("Event:") && typeof o.place === "string" ? { cls: "Place", handle: o.place } : k.startsWith("Citation:") && typeof o.source_handle === "string" ? { cls: "Source", handle: o.source_handle } : null;
@@ -242,7 +243,6 @@ export async function buildBundle(ctx, actor, cls, handle, { fieldPolicy = DEFAU
     if (seen.has(nk)) continue;
     seen.add(nk);
     second.push(next);
-    if (refs.length + second.length >= MAX_RELATED) break;
   }
   await load(second);
 

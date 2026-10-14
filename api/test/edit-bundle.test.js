@@ -154,6 +154,23 @@ describe("the bundle shape", () => {
     expect(admin.related[`Place:${place.handle}`].obj.name.date.dateval.slice(0, 3)).toEqual([9, 11, 1971]);
     expect(member.related[`Citation:${cit.handle}`].obj.date.dateval.slice(0, 3)).toEqual([0, 0, 1971]);
   });
+  it("holds at most 200 related objects across both levels: a first level of 200 leaves no room for a place (HFY-TSK-156)", async () => {
+    const w = await world();
+    const places = Array.from({ length: 200 }, (_, i) => ({ _class: "Place", handle: h(6100 + i), gramps_id: `P${String(100 + i).padStart(4, "0")}`, change: 1, private: false, name: { _class: "PlaceName", value: `Synthplace ${i}`, lang: "" }, place_type: typ("PlaceType", 3) }));
+    const evs = places.map((pl, i) => event(100 + i, date(0, 0, 1950), { place: pl.handle }));
+    const full = person(20, { event_ref_list: evs.map(primary) });
+    const short = person(21, { event_ref_list: evs.slice(0, 199).map(primary) });
+    const all = [...places, ...evs, full, short].map(create);
+    for (let i = 0; i < all.length; i += 20) await w.apply(all.slice(i, i + 20));
+    const keys = (b) => Object.keys(b.related);
+    const atCap = (await w.get(`/api/edit/Person/${full.gramps_id}`, ADMIN)).body;
+    expect(keys(atCap)).toHaveLength(200);
+    expect(keys(atCap).some((k) => k.startsWith("Place:"))).toBe(false);
+    // one short of the cap, the second level fills the last place
+    const oneShort = (await w.get(`/api/edit/Person/${short.gramps_id}`, ADMIN)).body;
+    expect(keys(oneShort)).toHaveLength(200);
+    expect(keys(oneShort).filter((k) => k.startsWith("Place:"))).toEqual([`Place:${places[0].handle}`]);
+  });
   it("shows a related Person as a stub with a year-only lifespan and no other fields", async () => {
     const w = await world();
     const r = await w.get(`/api/edit/Family/${w.fam.gramps_id}`, ME);

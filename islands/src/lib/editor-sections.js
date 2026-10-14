@@ -569,7 +569,11 @@ const eventsAdapter = {
       const birth = isBirthCode(type);
       if (type !== r.values.type) e.add(`e:${id}:type`, "kind of event", { op: "set", obj: r.evKey, path: "/type", base: baseOf(ev.type), value: typeObject("EventType", type) });
       let date = isObj(v.date) ? v.date : emptyDate();
-      if (birth) date = birthDate(date);
+      // A birth keeps its year only (DEC-E4), but only a date the member changed is cut down: a birth's date left as it was (its words, a span,
+      // or a day and month stored before) is never rewritten by an edit of the event's other fields. A row that becomes a birth has its date cut
+      // to the year, unless it is kept as words: those are shown read-only, so changing nothing can never drop them.
+      const untouched = sameDate(date, r.values.date);
+      if (birth && !(untouched && (r.birth || isWordsDate(date)))) date = birthDate(date);
       const had = Object.hasOwn(ev, "date") && isObj(ev.date);
       if (!sameDate(date, had ? ev.date : emptyDate())) {
         if (!had) e.add(`e:${id}:date`, "date", { op: "set", obj: r.evKey, path: "/date", base: null, value: date });

@@ -503,6 +503,42 @@ test("dates: a text-only or from-to date is a words date, shown as it is and nev
   assert.deepEqual(r.ops.map((o) => o.path), ["/description"]);
 });
 
+test("events: an edit of a birth's other fields never rewrites its date: words, a from-to span and a stored day and month all stay", () => {
+  const stored = {
+    words: date(0, 0, 0, { modifier: 6, text: "sometime in the spring" }),
+    span: date(0, 0, 1950, { modifier: 5, dateval: [0, 0, 1950, false, 0, 0, 1952, false] }),
+    full: date(14, 3, 1950)
+  };
+  for (const [label, dt] of Object.entries(stored)) {
+    for (const viewer of [{ admin: false, relation: "own" }, { admin: true, relation: "other" }]) {
+      const fx = fixture();
+      fx.bundle.related["Event:he1"].obj.date = dt;
+      fx.objects["Event:he1"] = fx.bundle.related["Event:he1"].obj;
+      const row = LIST_ADAPTERS.events.rows(fx.bundle, fx.lookups)[0];
+      assert.equal(row.birth, true);
+      for (const edit of [{ description: "Born at home" }, { place: { ref: "hl2", name: "" } }]) {
+        const r = run(fx, { events: { edits: { he1: { ...row.values, ...edit } }, removed: [], added: [], order: null } }, viewer);
+        const at = `${label}, ${viewer.admin ? "admin" : "member"}, ${Object.keys(edit)[0]}`;
+        assert.deepEqual(r.ops.map((o) => o.path), [`/${Object.keys(edit)[0]}`], at);
+        assert.ok(r.applied.ok, `${at}: ${JSON.stringify(r.applied.conflicts)}`);
+        assert.deepEqual(r.applied.objects["Event:he1"].date, dt, at);
+      }
+    }
+  }
+  // a row that becomes a birth has its date cut to the year; one kept as words keeps them
+  const fx = fixture();
+  fx.bundle.related["Event:he2"].obj.date = stored.full;
+  fx.objects["Event:he2"] = fx.bundle.related["Event:he2"].obj;
+  const turned = run(fx, { events: { edits: { he2: { type: "12", date: stored.full, place: { ref: "", name: "" }, description: "" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(turned.ops.map((o) => o.path), ["/type", "/date"]);
+  assert.deepEqual(turned.applied.objects["Event:he2"].date.dateval, [0, 0, 1950, false]);
+  fx.bundle.related["Event:he2"].obj.date = stored.words;
+  fx.objects["Event:he2"] = fx.bundle.related["Event:he2"].obj;
+  const kept = run(fx, { events: { edits: { he2: { type: "12", date: stored.words, place: { ref: "", name: "" }, description: "" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(kept.ops.map((o) => o.path), ["/type"]);
+  assert.deepEqual(kept.applied.objects["Event:he2"].date, stored.words);
+});
+
 test("events: a member who changes only the year of a date whose day and month they cannot see keeps the stored day and month", () => {
   const fx = fixture();
   const stored = date(14, 3, 2001);
