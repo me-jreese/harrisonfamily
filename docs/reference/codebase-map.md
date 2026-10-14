@@ -296,7 +296,7 @@ Paths:
   - `oauth.js`: the OAuth 2.1 server for MCP clients: metadata, `authorize`, `token`, `register`, `revoke` and `userinfo`.
   - `allowlist.js`: the composite allowlist resolver passed to the identity service and the Cognito provisioner: a DynamoDB `ALLOW#` item wins over io's S3 file (HFY-TSK-134).
   - `membership.js`: the composite allowlist (S3 file plus `ALLOW#` items) and admin groups for MCP tokens.
-  - `cognito.js`: Cognito user provisioning for `POST /auth/link`.
+  - `cognito.js`: Cognito user provisioning for `POST /auth/link`, and `cognitoFirstPassword`, the first password for an allowlisted member through the forgot-password code (SURF-D18, behind `FIRST_PASSWORD`).
   - `linkstore.js`: the account-link store.
   - `passkeystore.js`: the passkey credential store.
   - `ratelimit.js`: request counters.
@@ -318,7 +318,7 @@ Facts:
 - `theme.cssUrl` is `https://<site>/css/auth-edge.css?v=<sha8>`, which the islands build stamps ([Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions)), and `theme.fontOrigins` is `["self"]`. `@io-kit/auth` 2.2.0 turns `fontOrigins` into the CSP `font-src`, and puts the stylesheet's origin, never its path or query, in `style-src`, so the `?v` passes. The kit also sends `Referrer-Policy: strict-origin-when-cross-origin`, as a header and a meta tag, which Google sign-in needs on `/auth/login`.
 - `adapt()` in `edge.js` applies HFY overrides to the kit's HTML, each with its kit root cause recorded inline: `cspWithFontSrc`, `gisButtonDark`, `gisFocusRing`, `allowlistNotice`, `deniedNotice`, `kitVoice` and `backToSite`. Its `Location` rewrite also mounts the `returnTo` of the kit's signed-out `/link` redirect under `/auth`.
 - A change under `auth/src`, or to `auth/edge.manifest.json` (the `cssUrl` stamp included), reaches production only when `hfy-auth-edge` is redeployed. So does a change to `11ty/css/auth-edge.css`, because it changes the stamp.
-- The user pool allows only admin-created users. `cognito.js` creates a user only on `POST /auth/link`, after the allowlist check.
+- The user pool allows only admin-created users. `cognito.js` creates a user only on `POST /auth/link` and, while `FIRST_PASSWORD` is on, on `POST /auth/password/forgot` (SURF-D18, io's Q2-12), in both cases after the allowlist check.
 - `linkstore.js` writes `GSI1SK` on every `LINK#` item, and `passkeystore.js` on every `PASSKEY#` credential item, so both are found through `GSI1`. Both repair older items when they read them.
 - `ratelimit.js` limits `POST /auth/password/forgot` and the access-request routes with fixed-window counters in `hfy-app`.
 - The OAuth routes are on only when `MCP_REDIRECT_URIS` is set.
