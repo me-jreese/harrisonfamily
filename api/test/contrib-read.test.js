@@ -2,7 +2,7 @@
 // Synthetic ids and data only.
 import { describe, expect, it } from "vitest";
 import { CANDIDATES, LINE_TTL_MS, createContribReader, hrefOf, lineText, pickLine, proposalVisible } from "../src/contrib-read.js";
-import { buildEvent, contribOps } from "../src/contrib.js";
+import { buildEvent, contribOps, hideOps } from "../src/contrib.js";
 import { ROUTES, buildCaps, matchRoute } from "../src/routes.js";
 import { transact } from "../src/txn.js";
 import { TABLE, cmds, makeApi, signToken } from "./world.js";
@@ -279,6 +279,13 @@ describe("contributions.list: who sees what (AC3)", () => {
     expect((await get(w, BEN, "contributions", { author: ANN })).body.items.find((i) => i.id === U(1)).href).toBe(`/person/?id=${BEN}#comment-${U(1)}`);
   });
 
+  it("a proposal_accepted event (proposal ref) is shown to every member and needs no proposal read", async () => {
+    const w = world();
+    await seed(w, { actor: { id: ANN, label: "Ann" }, kind: "proposal_accepted", ref: { type: "proposal", id: U(710) }, subject: `person:${PAGE}`, id: U(1) });
+    for (const who of [ANN, BEN, CAL]) expect((await get(w, who, "contributions", { author: ANN })).body.items.map((i) => i.id), who).toEqual([U(1)]);
+    expect(w.ddb.batchGets).toEqual([]);
+  });
+
   it("omits a proposal-thread event when the proposal is gone", async () => {
     const w = world();
     await seed(w, withComment(1, { ref: { type: "comment", id: U(1), thread: `proposal:${U(701)}` }, subject: `proposal:${U(701)}` }));
@@ -400,6 +407,15 @@ describe("contributions.stats", () => {
     const r = await get(world(), BEN, "contributions/stats", { author: "I7777" });
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ author: "I7777", total: 0, by_kind: { post: 0, comment: 0, photo: 0, self_edit: 0, proposal_accepted: 0, tag: 0, photo_to_record: 0 } });
+  });
+
+  it("hidden events still count: a withdrawn post keeps its credit in the totals others see", async () => {
+    const w = world();
+    const credit = (n, args) => transact(w.ddb, cmds, TABLE, contribOps({ actor: { id: ANN, label: "Ann" }, at: AT, uid: () => U(n), ...args }));
+    const { event } = await credit(1, { kind: "comment", ref: { type: "comment", id: U(51), thread: `person:${PAGE}` }, subject: `person:${PAGE}` });
+    await transact(w.ddb, cmds, TABLE, hideOps(event ?? { actor: { id: ANN }, id: U(1) }, true));
+    expect((await get(w, BEN, "contributions", { author: ANN })).body.items).toEqual([]);
+    expect((await get(w, BEN, "contributions/stats", { author: ANN })).body).toMatchObject({ total: 1, by_kind: { comment: 1 } });
   });
 
   it("clamps negative counters at 0", async () => {

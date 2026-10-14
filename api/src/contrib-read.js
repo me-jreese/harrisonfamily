@@ -80,6 +80,8 @@ const monthKey = (i) => `${String(Math.floor(i / 12)).padStart(4, "0")}-${String
  * Dwell: `prev` is the pick cached earlier, `{ window_days, day }`. If it was made on the same UTC day, its window is still eligible
  * with X >= 3, and the fresh pick is at most one candidate step away, that window is kept (with its current X), so reloads never
  * flicker between neighbours. A missing or unreadable `firstAt` or `today` gives null.
+ * Approximation: a multi-year window is 12 * years whole calendar month buckets (the partial current month included), so the days it
+ * covers differ a little from `window_days`. Windows are capped at MAX_YEARS years; the design lists no upper bound.
  */
 export function pickLine(buckets, today, firstAt, prev) {
   const t = dayNumber(today);
@@ -126,6 +128,8 @@ export function pickLine(buckets, today, firstAt, prev) {
  * Who may see a proposal's thread (editing.md 7.4, D2-13): the proposer, admins, and the owners of the pages it targets. The proposal store
  * (proposal-store-api) records the owners as `owners: [principal]` on the proposal; until it does, the owner of the page the proposal is
  * about (`subject.gramps_id`) counts. Anyone else, and a proposal that is gone, sees nothing. createContribReader takes a replacement.
+ * Hard dependency: proposal-store-api (or proposal-decision-api) must either write `owners[]` for every targeted page or pass its own rule
+ * through createContribReader({ proposalVisible }). Until then the circle is narrower than the design, and it fails closed.
  */
 export function proposalVisible(proposal, viewer) {
   if (!proposal || !viewer?.id) return false;
@@ -145,7 +149,12 @@ function personOf(subject) {
 /** The thread a comment event belongs to (`person:<id>`, `post:<id>`, `proposal:<ulid>`). */
 const threadOf = (e) => (typeof e.ref?.thread === "string" ? e.ref.thread : typeof e.subject === "string" ? e.subject : undefined);
 
-/** What an event depends on for visibility: `{ post }`, `{ proposal }` or nothing (a person thread, a record, a tag, a photo). */
+/**
+ * What an event depends on for visibility: `{ post }`, `{ proposal }` or nothing (a person thread, a record, a tag, a photo). A `proposal`
+ * ref event (kind proposal_accepted) depends on nothing: it is written only when a proposal is accepted, and an accepted proposal is public
+ * (social.md 7.5, PS-09 name proposal-thread comments only). Person pages are not per-viewer in this design, so person-thread and record
+ * events need no target check either.
+ */
 function dependency(e) {
   if (e.ref?.type === "post" && typeof e.ref.id === "string") return { post: e.ref.id };
   if (e.ref?.type === "comment") {

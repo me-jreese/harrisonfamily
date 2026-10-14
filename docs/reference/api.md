@@ -592,7 +592,7 @@ A withdraw or republish hides or shows the event only if it exists, so a post wh
 
 `GET /contributions?author=<gramps_id>&cursor=&limit=` queries `CONTRIB#<author>` for `E#` items, newest first, and returns `{items, cursor}`. `author` is required (`400 validation` if missing or not a gramps id); `limit` is a whole number from 1 to 50 (default 10, else `400 validation`); a cursor that this route did not issue is `400 cursor_invalid`. An unknown author gives `{items: [], cursor: null}`.
 
-A row is `{id, kind, at, weight, photos, ref: {type, id, thread?}, subject?, href, hidden?}`. It carries no body text, no actor and no origin. `cursor` is opaque and `null` at the end. A page is filled across events the viewer cannot see: the route reads up to five pages of events to find `limit` visible ones, and hands back a cursor to continue when it gives up.
+A row is `{id, kind, at, weight, photos, ref: {type, id, thread?}, subject?, href, hidden?}`. It carries no body text, no actor and no origin. `cursor` is opaque and `null` at the end. A page is filled across events the viewer cannot see: the route reads up to five pages of events to find `limit` visible ones, and hands back a cursor to continue when it gives up. `items.length < limit` therefore does not mean the end while `cursor` is not `null`: a client keeps paging until `cursor` is `null`.
 
 Who sees which event:
 
@@ -601,9 +601,9 @@ Who sees which event:
 | `hidden` (a withdrawn post, a moderated item) | The author and admins, with `hidden: true`. Nobody else. |
 | A post event, or a comment on a `post:<id>` thread | A viewer for whom `canView` of the current post is true (the author, admins, and everyone while it is published and not hidden by moderation). A withdrawn or deleted post hides the event, and so does a post that could not be read. |
 | A comment on a `proposal:<ulid>` thread | The proposal's visibility set only: the proposer, admins and the owners of the targeted pages. A third member gets nothing, and so does anyone when the proposal is gone. |
-| Anything else (a person-thread comment, a record, tag, accepted proposal or graduated photo) | Every signed-in member. |
+| Anything else (a person-thread comment, a record, tag, accepted proposal or graduated photo) | Every signed-in member. A `proposal` ref event (`proposal_accepted`) is written only when a proposal is accepted, and an accepted proposal is public, so it needs no proposal check. Person pages are not per-viewer in the design, so a person-thread or record event needs no target check either. |
 
-The checks read the current posts and proposals with `BatchGet` in chunks of at most 20 distinct keys (`POST#<id>/META`, `PROP#<ulid>/META`). Unprocessed keys are retried once; an event whose item is still unread is omitted, so the check fails closed. A page with nothing to check makes no `BatchGet`. The default proposal rule is `proposalVisible`: the proposer, the member whose page the proposal is about (`subject.gramps_id`), the members listed in `owners[]` if the proposal store records them, and admins. `proposal-store-api` replaces it through `createContribReader({proposalVisible})` once the store knows the owners of every targeted page.
+The checks read the current posts and proposals with `BatchGet` in chunks of at most 20 distinct keys (`POST#<id>/META`, `PROP#<ulid>/META`). Unprocessed keys are retried once; an event whose item is still unread is omitted, so the check fails closed. A page with nothing to check makes no `BatchGet`. The default proposal rule is `proposalVisible`: the proposer, the member whose page the proposal is about (`subject.gramps_id`), the members listed in `owners[]` if the proposal store records them, and admins. `proposal-store-api` (or `proposal-decision-api`) has a hard dependency here: it must write `owners[]` for every targeted page, or replace the rule through `createContribReader({proposalVisible})`. Until then the circle is narrower than the design and fails closed.
 
 `href` is computed by the server:
 
@@ -620,7 +620,7 @@ The checks read the current posts and proposals with `BatchGet` in chunks of at 
 
 ### Stats
 
-`GET /contributions/stats?author=<gramps_id>` reads `CSTAT#person:<author>/TOTAL` and returns `{author, total, by_kind: {post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}`. Every value is clamped at 0, and an unknown author reads as zeros, not `404`. Hidden events still count (hide and withdraw change no counter).
+`GET /contributions/stats?author=<gramps_id>` reads `CSTAT#person:<author>/TOTAL` and returns `{author, total, by_kind: {post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}`. Every value is clamped at 0, and an unknown author reads as zeros, not `404`. Hidden events still count (hide and withdraw change no counter), so a withdrawn or moderated contribution still raises the total and `by_kind` that other members see. Only a count leaks, never content; a test pins this.
 
 ### Site total and the feed line
 
@@ -630,7 +630,7 @@ The line is cached in `CSTAT#site/LINE`. A read serves the cached row while it i
 
 `pickLine(buckets, today, firstAt, prev?)` is pure:
 
-1. **Windows**, shortest first: 1 to 6 days, 7, 14 and 21 days (weeks), 30, 60, 90 and 180 days (months), then 365 days times 1 to 10 (years). A window is eligible only when the site's history is at least as long, so a young site never claims a long span. Windows over 400 days sum `M#` month buckets (12 per year).
+1. **Windows**, shortest first: 1 to 6 days, 7, 14 and 21 days (weeks), 30, 60, 90 and 180 days (months), then 365 days times 1 to 10 (years). A window is eligible only when the site's history is at least as long, so a young site never claims a long span. Windows over 400 days sum `M#` month buckets (12 per year, the partial current month included), so `window_days` is approximate for them. The years stop at 10 (`MAX_YEARS`); the design sets no upper bound. Concurrent cold requests each recompute and write the row, which is harmless.
 2. **Hot**: the shortest eligible window of 30 days or fewer with `X >= 5` and `X >= P`, where `X` is the sum of the window's buckets, today included, and `P` the same number of buckets before it.
 3. **Volume**: otherwise the shortest eligible window with `X >= 3`.
 4. **Null**: otherwise, so a "1 contribution in the past day" line is never produced.
