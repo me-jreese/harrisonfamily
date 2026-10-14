@@ -59,7 +59,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `web-push` | 3.6.7 | Push delivery. Imported only when the VAPID keys load. |
 | `@aws-sdk/*` | 3.1000.0 | DynamoDB document client, S3 and the S3 request presigner, Secrets Manager |
 
-[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version except `@io-kit/content` (`^0.1.0`) and `@io-kit/notify` (`^0.4.0`), which the lockfile holds at the versions above.
+[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version, and the lockfile holds the same versions.
 
 `@io-kit/auth` is pinned to the same version here and in [`auth/package.json`](../../auth/package.json). The moves from 2.1.1 to 2.1.2 and then 2.2.0 changed only the kit's edge code, which renders the auth edge's pages: the referrer policy, the theme's font origins and the page styling ([Identity services](identity-services.md)). The `/server` code that the API imports is unchanged, so [Session verification](#session-verification) behaves as it did under 2.1.1.
 
