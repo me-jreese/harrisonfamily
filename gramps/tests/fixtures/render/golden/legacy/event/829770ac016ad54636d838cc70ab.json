@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1870
+  },
+  "description": null,
+  "grampsId": "E0006",
+  "handle": "829770ac016ad54636d838cc70ab",
+  "label": "Stillbirth",
+  "place": null,
+  "type": {
+    "code": 45,
+    "string": "Stillbirth"
+  }
+}

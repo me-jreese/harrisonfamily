@@ -1,0 +1,256 @@
+{
+  "displayName": "Dune4 Fixturely",
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 1766
+      },
+      "description": null,
+      "grampsId": "E0030",
+      "handle": "4afbffff06bd2917a033a1b7da62",
+      "label": "Birth",
+      "place": null,
+      "type": {
+        "code": 12,
+        "string": "Birth"
+      }
+    }
+  ],
+  "familyTree": {
+    "parentFamilies": [
+      {
+        "children": [
+          {
+            "displayName": "Heron0 Testwood",
+            "frel": {
+              "code": 1,
+              "string": "Birth"
+            },
+            "gender": "unspecified",
+            "grampsId": "I0016",
+            "handle": "22ebae2c39ea56276b660307dae3",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1867
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1867\u2013"
+            },
+            "mrel": {
+              "code": 2,
+              "string": "Adopted"
+            }
+          },
+          {
+            "displayName": "Bay1 Samplefield",
+            "frel": {
+              "code": 2,
+              "string": "Adopted"
+            },
+            "gender": "female",
+            "grampsId": "I0017",
+            "handle": "bc5abbbf8cdcf24eb6afe5393881",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1727
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1727\u2013"
+            },
+            "mrel": {
+              "code": 3,
+              "string": "Stepchild"
+            }
+          },
+          {
+            "displayName": "Dune2 Fixturely",
+            "frel": {
+              "code": 3,
+              "string": "Stepchild"
+            },
+            "gender": "unspecified",
+            "grampsId": "I0018",
+            "handle": "b51c9b394854aa3afa59aa7d19de",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1737
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1737\u2013"
+            },
+            "mrel": {
+              "code": 4,
+              "string": "Sponsored"
+            }
+          },
+          {
+            "displayName": "Dune3 Fixturely",
+            "frel": {
+              "code": 4,
+              "string": "Sponsored"
+            },
+            "gender": "male",
+            "grampsId": "I0019",
+            "handle": "50c418f1ed650fcf30dfdf54596e",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1984
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1984\u2013"
+            },
+            "mrel": {
+              "code": 5,
+              "string": "Foster"
+            }
+          },
+          {
+            "displayName": "Dune4 Fixturely",
+            "frel": {
+              "code": 5,
+              "string": "Foster"
+            },
+            "gender": "male",
+            "grampsId": "I0020",
+            "handle": "3e03c22a95e749344ecf98004b1b",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1766
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1766\u2013"
+            },
+            "mrel": {
+              "code": 6,
+              "string": "Unknown"
+            }
+          },
+          {
+            "displayName": "Heron5 Samplefield",
+            "frel": {
+              "code": 6,
+              "string": "Unknown"
+            },
+            "gender": "male",
+            "grampsId": "I0021",
+            "handle": "c961c3460af9e57f56a91f968ac2",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1778
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1778\u2013"
+            },
+            "mrel": {
+              "code": 1,
+              "string": "Birth"
+            }
+          },
+          {
+            "displayName": "Clove6 Fixturely",
+            "frel": {
+              "code": 7,
+              "string": "Godchild"
+            },
+            "gender": "male",
+            "grampsId": "I0022",
+            "handle": "348c3292182f6afd6b0d2764f94d",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1814
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1814\u2013"
+            },
+            "mrel": {
+              "code": 7,
+              "string": "Ward"
+            }
+          }
+        ],
+        "events": [],
+        "father": {
+          "displayName": "Hazel Testwood",
+          "gender": "male",
+          "grampsId": "I0008",
+          "handle": "14de4add7097a12b1896f6636efa",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1871
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1871\u2013"
+          }
+        },
+        "grampsId": "F0002",
+        "handle": "0731c5d8ddafa8cc55b91fe41c2f",
+        "mother": {
+          "displayName": "Iris Samplefield",
+          "gender": "female",
+          "grampsId": "I0009",
+          "handle": "a65743e0b4847e76a32f8785fe1e",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": null
+            },
+            "death": {
+              "year": null
+            },
+            "summary": ""
+          }
+        },
+        "type": {
+          "code": 1,
+          "string": "Unmarried"
+        }
+      }
+    ],
+    "spouseFamilies": []
+  },
+  "gender": "male",
+  "givenName": "Dune4",
+  "grampsId": "I0020",
+  "handle": "3e03c22a95e749344ecf98004b1b",
+  "isLiving": true,
+  "lifespan": {
+    "birth": {
+      "place": null,
+      "year": 1766
+    },
+    "death": {
+      "place": null,
+      "year": null
+    },
+    "summary": "1766\u2013"
+  },
+  "mediaGallery": [],
+  "notes": [],
+  "primaryPhoto": null,
+  "surname": "Fixturely"
+}

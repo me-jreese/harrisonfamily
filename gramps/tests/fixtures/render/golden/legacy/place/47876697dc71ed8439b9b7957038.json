@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "12",
+  "grampsId": "P0010",
+  "handle": "47876697dc71ed8439b9b7957038",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Example Street",
+      "grampsId": "P0006",
+      "handle": "d557fc2fadb8b92bfa96528704c5",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 20,
+    "string": "Number"
+  },
+  "urls": []
+}

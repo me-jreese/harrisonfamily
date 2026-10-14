@@ -1,0 +1,189 @@
+{
+  "children": [
+    {
+      "displayName": "Cedar Testwood",
+      "frel": {
+        "code": 1,
+        "string": "Birth"
+      },
+      "gender": "male",
+      "grampsId": "I0003",
+      "handle": "c674d671cf21b92d98477690162a",
+      "isLiving": true,
+      "lifespan": {
+        "birth": {
+          "year": 1868
+        },
+        "death": {
+          "year": null
+        },
+        "summary": "1868\u2013"
+      },
+      "mrel": {
+        "code": 1,
+        "string": "Birth"
+      }
+    },
+    {
+      "displayName": "Dell Testwood",
+      "frel": {
+        "code": 1,
+        "string": "Birth"
+      },
+      "gender": "unspecified",
+      "grampsId": "I0004",
+      "handle": "7b785ec6873eebab439b8d166846",
+      "isLiving": true,
+      "lifespan": {
+        "birth": {
+          "year": null
+        },
+        "death": {
+          "year": null
+        },
+        "summary": ""
+      },
+      "mrel": {
+        "code": 1,
+        "string": "Birth"
+      }
+    },
+    {
+      "displayName": "Elm Testwood",
+      "frel": {
+        "code": 1,
+        "string": "Birth"
+      },
+      "gender": "female",
+      "grampsId": "I0005",
+      "handle": "3c148b14504b39c91c3475e41d83",
+      "isLiving": false,
+      "lifespan": {
+        "birth": {
+          "year": null
+        },
+        "death": {
+          "year": 1874
+        },
+        "summary": "\u20131874"
+      },
+      "mrel": {
+        "code": 1,
+        "string": "Birth"
+      }
+    },
+    {
+      "displayName": "Fennel Testwood",
+      "frel": {
+        "code": 1,
+        "string": "Birth"
+      },
+      "gender": "male",
+      "grampsId": "I0006",
+      "handle": "445c443fb8e026b74a8e851721bd",
+      "isLiving": true,
+      "lifespan": {
+        "birth": {
+          "year": 1875
+        },
+        "death": {
+          "year": null
+        },
+        "summary": "1875\u2013"
+      },
+      "mrel": {
+        "code": 1,
+        "string": "Birth"
+      }
+    },
+    {
+      "displayName": "Gorse Testwood",
+      "frel": {
+        "code": 1,
+        "string": "Birth"
+      },
+      "gender": "female",
+      "grampsId": "I0007",
+      "handle": "f235b86a28d9db0a9aa803a811d8",
+      "isLiving": true,
+      "lifespan": {
+        "birth": {
+          "year": null
+        },
+        "death": {
+          "year": null
+        },
+        "summary": ""
+      },
+      "mrel": {
+        "code": 1,
+        "string": "Birth"
+      }
+    }
+  ],
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 1866
+      },
+      "description": null,
+      "grampsId": "E0036",
+      "handle": "fc16a4cdc0843ba83ffee9c28fac",
+      "label": "Marriage",
+      "place": {
+        "displayName": "Exampleville",
+        "grampsId": "P0002",
+        "handle": "2274a9f6cb93e7050af9f7b80471",
+        "latitude": null,
+        "longitude": null
+      },
+      "role": {
+        "code": 8,
+        "string": "Family"
+      },
+      "type": {
+        "code": 1,
+        "string": "Marriage"
+      }
+    }
+  ],
+  "father": {
+    "displayName": "Alder Testwood",
+    "gender": "male",
+    "grampsId": "I0001",
+    "handle": "d5be7efca680290bc6c3c8fd6d64",
+    "isLiving": false,
+    "lifespan": {
+      "birth": {
+        "year": 1840
+      },
+      "death": {
+        "year": 1912
+      },
+      "summary": "1840\u20131912"
+    }
+  },
+  "grampsId": "F0001",
+  "handle": "02f2755b6921d0244009c98a60b8",
+  "mother": {
+    "displayName": "Birch Samplefield",
+    "gender": "female",
+    "grampsId": "I0002",
+    "handle": "274c0d1d00d65c6671d0ed6fb29c",
+    "isLiving": false,
+    "lifespan": {
+      "birth": {
+        "year": 1844
+      },
+      "death": {
+        "year": 1920
+      },
+      "summary": "1844\u20131920"
+    }
+  },
+  "type": {
+    "code": 0,
+    "string": "Married"
+  }
+}

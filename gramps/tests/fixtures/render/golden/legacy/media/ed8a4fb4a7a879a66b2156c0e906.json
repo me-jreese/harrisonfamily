@@ -1,0 +1,22 @@
+{
+  "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "grampsId": "O0003",
+  "handle": "ed8a4fb4a7a879a66b2156c0e906",
+  "mime": "image/jpeg",
+  "missing": false,
+  "regions": [
+    {
+      "attributes": [],
+      "notes": [],
+      "person": {
+        "displayName": "Orchid Fixturely",
+        "grampsId": "I0015",
+        "handle": "dc7a86bea5186bd8e33fd5ea683f"
+      },
+      "rect": null
+    }
+  ],
+  "s3Key": "media/ed8a4fb4a7a879a66b2156c0e906.jpg",
+  "size": 0,
+  "title": "Zero-byte placeholder file"
+}

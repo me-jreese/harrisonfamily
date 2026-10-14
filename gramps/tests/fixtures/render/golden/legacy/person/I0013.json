@@ -1,0 +1,306 @@
+{
+  "displayName": "Maple Fixturely",
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 1962
+      },
+      "description": null,
+      "grampsId": "E0021",
+      "handle": "8ff228b67dba628b986befc9291d",
+      "label": "Birth",
+      "place": null,
+      "type": {
+        "code": 12,
+        "string": "Birth"
+      }
+    }
+  ],
+  "familyTree": {
+    "parentFamilies": [],
+    "spouseFamilies": [
+      {
+        "children": [],
+        "events": [],
+        "father": {
+          "displayName": "Laurel Fixturely",
+          "gender": "female",
+          "grampsId": "I0012",
+          "handle": "0bc8e2a3459c41cfab040610b448",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1960
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1960\u2013"
+          }
+        },
+        "grampsId": "F0003",
+        "handle": "638075c0700e89bd54e7f32b5e7e",
+        "mother": {
+          "displayName": "Maple Fixturely",
+          "gender": "male",
+          "grampsId": "I0013",
+          "handle": "f1f7cb7d5d3a1bb2a38b887534a6",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1962
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1962\u2013"
+          }
+        },
+        "type": {
+          "code": 2,
+          "string": "Civil Union"
+        }
+      }
+    ]
+  },
+  "gender": "male",
+  "givenName": "Maple",
+  "grampsId": "I0013",
+  "handle": "f1f7cb7d5d3a1bb2a38b887534a6",
+  "isLiving": true,
+  "lifespan": {
+    "birth": {
+      "place": null,
+      "year": 1962
+    },
+    "death": {
+      "place": null,
+      "year": null
+    },
+    "summary": "1962\u2013"
+  },
+  "mediaGallery": [
+    {
+      "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+      "grampsId": "O0001",
+      "handle": "95c1e2e76d98047b229a3390d414",
+      "mime": "image/jpeg",
+      "missing": false,
+      "region": [
+        10,
+        10,
+        40,
+        40
+      ],
+      "s3Key": "media/95c1e2e76d98047b229a3390d414.jpg",
+      "size": 632,
+      "tags": [
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0013",
+          "isPrimary": true,
+          "name": "Maple Fixturely",
+          "notes": [],
+          "rect": [
+            10,
+            10,
+            40,
+            40
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0013",
+          "isPrimary": false,
+          "name": "Maple Fixturely",
+          "notes": [],
+          "rect": [
+            50,
+            10,
+            90,
+            40
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0014",
+          "isPrimary": true,
+          "name": "Nettle Fixturely",
+          "notes": [],
+          "rect": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0015",
+          "isPrimary": true,
+          "name": "Orchid Fixturely",
+          "notes": [],
+          "rect": null,
+          "source": "gramps"
+        }
+      ],
+      "title": "Group photo (fictional)"
+    },
+    {
+      "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+      "grampsId": "O0001",
+      "handle": "95c1e2e76d98047b229a3390d414",
+      "mime": "image/jpeg",
+      "missing": false,
+      "region": [
+        50,
+        10,
+        90,
+        40
+      ],
+      "s3Key": "media/95c1e2e76d98047b229a3390d414.jpg",
+      "size": 632,
+      "tags": [
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0013",
+          "isPrimary": true,
+          "name": "Maple Fixturely",
+          "notes": [],
+          "rect": [
+            10,
+            10,
+            40,
+            40
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0013",
+          "isPrimary": false,
+          "name": "Maple Fixturely",
+          "notes": [],
+          "rect": [
+            50,
+            10,
+            90,
+            40
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0014",
+          "isPrimary": true,
+          "name": "Nettle Fixturely",
+          "notes": [],
+          "rect": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [],
+          "grampsId": "I0015",
+          "isPrimary": true,
+          "name": "Orchid Fixturely",
+          "notes": [],
+          "rect": null,
+          "source": "gramps"
+        }
+      ],
+      "title": "Group photo (fictional)"
+    }
+  ],
+  "notes": [],
+  "primaryPhoto": {
+    "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+    "grampsId": "O0001",
+    "handle": "95c1e2e76d98047b229a3390d414",
+    "mime": "image/jpeg",
+    "missing": false,
+    "region": [
+      10,
+      10,
+      40,
+      40
+    ],
+    "s3Key": "media/95c1e2e76d98047b229a3390d414.jpg",
+    "size": 632,
+    "tags": [
+      {
+        "attributes": [],
+        "citations": [],
+        "grampsId": "I0013",
+        "isPrimary": true,
+        "name": "Maple Fixturely",
+        "notes": [],
+        "rect": [
+          10,
+          10,
+          40,
+          40
+        ],
+        "source": "gramps"
+      },
+      {
+        "attributes": [],
+        "citations": [],
+        "grampsId": "I0013",
+        "isPrimary": false,
+        "name": "Maple Fixturely",
+        "notes": [],
+        "rect": [
+          50,
+          10,
+          90,
+          40
+        ],
+        "source": "gramps"
+      },
+      {
+        "attributes": [],
+        "citations": [],
+        "grampsId": "I0014",
+        "isPrimary": true,
+        "name": "Nettle Fixturely",
+        "notes": [],
+        "rect": [
+          0,
+          0,
+          100,
+          100
+        ],
+        "source": "gramps"
+      },
+      {
+        "attributes": [],
+        "citations": [],
+        "grampsId": "I0015",
+        "isPrimary": true,
+        "name": "Orchid Fixturely",
+        "notes": [],
+        "rect": null,
+        "source": "gramps"
+      }
+    ],
+    "title": "Group photo (fictional)"
+  },
+  "surname": "Fixturely"
+}

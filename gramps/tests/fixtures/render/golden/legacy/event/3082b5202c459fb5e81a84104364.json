@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1868
+  },
+  "description": "Retype to Residence (review scenario)",
+  "grampsId": "E0005",
+  "handle": "3082b5202c459fb5e81a84104364",
+  "label": "Birth",
+  "place": {
+    "displayName": "The Homestead",
+    "grampsId": "P0004",
+    "handle": "0e1e5d636de2d60b22cca1ad2787",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

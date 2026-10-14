@@ -1,0 +1,22 @@
+{
+  "code": "00000",
+  "displayName": "Exampleville",
+  "grampsId": "P0002",
+  "handle": "2274a9f6cb93e7050af9f7b80471",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Fixtureland",
+      "grampsId": "P0001",
+      "handle": "a151dd8d66f4784636022f6e6d7c",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 4,
+    "string": "City"
+  },
+  "urls": []
+}

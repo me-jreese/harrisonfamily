@@ -1,0 +1,112 @@
+{
+  "displayName": "Jade7 Fixturely",
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 1866
+      },
+      "description": null,
+      "grampsId": "E0033",
+      "handle": "32f5af7d369ca2ce64073a50fda5",
+      "label": "Birth",
+      "place": null,
+      "type": {
+        "code": 12,
+        "string": "Birth"
+      }
+    }
+  ],
+  "familyTree": {
+    "parentFamilies": [],
+    "spouseFamilies": [
+      {
+        "children": [
+          {
+            "displayName": "Lark9 Samplefield",
+            "frel": {
+              "code": 0,
+              "string": "None"
+            },
+            "gender": "unspecified",
+            "grampsId": "I0025",
+            "handle": "8efa0f2b73c0a630b647a139067a",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": 1987
+              },
+              "death": {
+                "year": null
+              },
+              "summary": "1987\u2013"
+            },
+            "mrel": {
+              "code": 0,
+              "string": "None"
+            }
+          }
+        ],
+        "events": [],
+        "father": {
+          "displayName": "Jade7 Fixturely",
+          "gender": "male",
+          "grampsId": "I0023",
+          "handle": "99c7bf090025516be03be86882b6",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1866
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1866\u2013"
+          }
+        },
+        "grampsId": "F0005",
+        "handle": "af90b262010e6155b14fa29cf0bb",
+        "mother": {
+          "displayName": "Glen8 Fixturely",
+          "gender": "female",
+          "grampsId": "I0024",
+          "handle": "bb442ebc2e70e324eb8807d6cd1f",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1873
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1873\u2013"
+          }
+        },
+        "type": {
+          "code": 4,
+          "string": "Fixture partnership"
+        }
+      }
+    ]
+  },
+  "gender": "male",
+  "givenName": "Jade7",
+  "grampsId": "I0023",
+  "handle": "99c7bf090025516be03be86882b6",
+  "isLiving": true,
+  "lifespan": {
+    "birth": {
+      "place": null,
+      "year": 1866
+    },
+    "death": {
+      "place": null,
+      "year": null
+    },
+    "summary": "1866\u2013"
+  },
+  "mediaGallery": [],
+  "notes": [],
+  "primaryPhoto": null,
+  "surname": "Fixturely"
+}
