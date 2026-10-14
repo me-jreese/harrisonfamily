@@ -183,6 +183,25 @@ test("grandparents are a collapsed fold; the outline re-centres and marks the cu
   await expect(outline(page).locator("button[data-person='I9011']")).toHaveAttribute("aria-current", "true");
 });
 
+test("re-centring through several generations and back keeps the focus level open (automatic toggles are not the reader's)", async ({ page }) => {
+  await stub(page);
+  await page.goto("/tree/", { waitUntil: "domcontentloaded" });
+  const level = (i) => outline(page).locator(`details[data-tree-level='${i}']`);
+  await expect(level(1)).toHaveAttribute("open", "");
+  await outline(page).locator("summary", { hasText: "parents' generation" }).click();
+  await outline(page).locator("details[data-tree-level='0'] button[data-person='I9001']").click();
+  await expect(focusName(page)).toHaveText("Gus Example");
+  await expect(level(0)).toHaveAttribute("open", "");
+  await outline(page).locator("summary", { hasText: "children's generation" }).click();
+  await outline(page).locator("details[data-tree-level='1'] button[data-person='I9003']").first().click();
+  await expect(focusName(page)).toHaveText("Ada Example");
+  await expect(level(1)).toHaveAttribute("open", "");
+  await outline(page).locator("details[data-tree-level='0'] button[data-person='I9001']").click();
+  await expect(level(0)).toHaveAttribute("open", "");
+  await outline(page).locator("details[data-tree-level='1'] button[data-person='I9003']").first().click();
+  await expect(level(1)).toHaveAttribute("open", "");
+});
+
 test("a level over 20 people shows 20, then 'show N more'", async ({ page }) => {
   const g = JSON.parse(GRAPH);
   const ids = Array.from({ length: 31 }, (_, i) => `I8${String(i).padStart(3, "0")}`);
@@ -203,7 +222,7 @@ for (const [width, height] of [[375, 812], [768, 1024], [1280, 900]]) {
     await page.setViewportSize({ width, height });
     await page.goto("/tree/", { waitUntil: "domcontentloaded" });
     await expect(focusName(page)).toBeVisible();
-    await outline(page).locator("summary").first().click();
+    for (const d of await outline(page).locator("details").all()) if (!(await d.getAttribute("open"))) await d.locator("summary").first().click();
     expect(await axeViolations(page, { include: ".hfy-tree" })).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const small = await page.locator(".hfy-tree :is(a, button, summary)").evaluateAll((els) => els
@@ -248,7 +267,7 @@ test("keyboard only: re-centre three times, step back with history, focus lands 
   await expect(focusName(page)).toHaveText("Zed Lone");
 });
 
-test("reduced motion: nothing animates or transitions", async ({ page }) => {
+test("reduced motion: the tree defines no transitions or animations, so nothing moves", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await stub(page);
   await page.goto("/tree/", { waitUntil: "domcontentloaded" });

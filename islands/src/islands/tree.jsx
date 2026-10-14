@@ -36,7 +36,7 @@ function State({ children, action }) {
 
 function RelButton({ person, onFocus, current = false }) {
   return (
-    <button type="button" className="hfy-tree__person" data-person={person.id} aria-current={current ? "true" : undefined} aria-label={person.label ? `${person.name}, ${person.label}` : undefined} onClick={() => onFocus(person.id)}>
+    <button type="button" className="hfy-tree__person" data-person={person.id} aria-current={current ? "true" : undefined} onClick={() => onFocus(person.id)}>
       <span className="hfy-tree__name">{person.name}</span>
       {person.label ? <span className="hfy-tree__rel">{person.label}</span> : null}
     </button>
@@ -46,8 +46,8 @@ function RelButton({ person, onFocus, current = false }) {
 function Group({ title, people, onFocus, empty = null }) {
   if (!people.length && !empty) return null;
   return (
-    <section className="hfy-tree__group" aria-label={title}>
-      <h3>{title}</h3>
+    <section className="hfy-tree__group" aria-labelledby={`hfy-tree-g-${title.replace(/\W+/g, "-")}`}>
+      <h3 id={`hfy-tree-g-${title.replace(/\W+/g, "-")}`}>{title}</h3>
       {people.length ? (
         <ul>{people.map((p) => <li key={p.id}><RelButton person={p} onFocus={onFocus} /></li>)}</ul>
       ) : <p className="hfy-tree__dim">{empty}</p>}
@@ -68,7 +68,7 @@ export function FocusNavigator({ graph, focus, viewer, onFocus }) {
   const rel = viewer ? relationLabel(graph, viewer, focus) : null;
   const groups = useMemo(() => focusGroups(graph, focus), [graph, focus]);
   if (!p) return null;
-  const place = placeName(graph, p.birthPlace);
+  const place = p.living ? null : placeName(graph, p.birthPlace);
   return (
     <section className="hfy-tree__focus" aria-labelledby="hfy-tree-focus-name" data-tree-focus={focus}>
       <h2 id="hfy-tree-focus-name" tabIndex={-1} ref={heading}>{p.name}</h2>
@@ -119,21 +119,23 @@ export function GenerationOutline({ graph, focus, onFocus }) {
   const [open, setOpen] = useState(() => new Set());
   const key = (k) => String(k);
   const isOpen = (k, dflt) => (open.has(`+${k}`) ? true : open.has(`-${k}`) ? false : dflt);
-  const toggle = (k) => (e) => {
+  // React sets details.open itself when the controlled state changes, and that fires toggle too: only a change that differs from the state React last rendered is the reader's own.
+  const toggle = (k, dflt) => (e) => {
     const on = e.currentTarget.open;
+    if (on === isOpen(k, dflt)) return;
     setOpen((prev) => { const n = new Set(prev); n.delete(`+${k}`); n.delete(`-${k}`); n.add(`${on ? "+" : "-"}${k}`); return n; });
   };
   return (
     <nav className="hfy-tree__outline" aria-label="generations" data-tree-outline>
       <h2>generations</h2>
       {model.levels.map((l) => (
-        <details key={l.index} className="hfy-tree__level" open={isOpen(key(l.index), l.index === focusLevel)} onToggle={toggle(key(l.index))} data-tree-level={l.index}>
+        <details key={l.index} className="hfy-tree__level" open={isOpen(key(l.index), l.index === focusLevel)} onToggle={toggle(key(l.index), l.index === focusLevel)} data-tree-level={l.index}>
           <summary>{l.label} ({l.ids.length})</summary>
           <PeopleList graph={graph} ids={l.ids} focus={focus} onFocus={onFocus} label={l.label} />
         </details>
       ))}
       {model.unconnected.length ? (
-        <details className="hfy-tree__level" open={isOpen("x", inUnconnected)} onToggle={toggle("x")} data-tree-level="unconnected">
+        <details className="hfy-tree__level" open={isOpen("x", inUnconnected)} onToggle={toggle("x", inUnconnected)} data-tree-level="unconnected">
           <summary>not yet connected to the tree ({model.unconnected.length})</summary>
           <PeopleList graph={graph} ids={model.unconnected} focus={focus} onFocus={onFocus} label="not yet connected" />
         </details>
