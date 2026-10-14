@@ -8,27 +8,35 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "597ab13e",
+        "js": "9614428e",
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "d5cec94a",
+        "js": "06a58678",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "fdd27d14",
+        "js": "5b3bb056",
         "css": "d8c9710c"
+      },
+      "family": {
+        "js": "1b49149e",
+        "css": "e52fd206"
+      },
+      "family-entry": {
+        "js": "2c9e5e76",
+        "css": "978fbe15"
       },
       "follow": {
         "js": "00d35b3c",
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "d47e2720",
+        "js": "e1dd5250",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "b5e3a22a",
+        "js": "b12b15e5",
         "css": "38a33f05"
       },
       "join": {
@@ -36,31 +44,31 @@
         "css": "88b160fb"
       },
       "join-entry": {
-        "js": "4890d79a",
+        "js": "21158723",
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "d530ca6f",
+        "js": "e1ec143b",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "57bbf7b1",
+        "js": "b80bb3f1",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "c4dc5277",
+        "js": "85d5ae93",
         "css": "be703fb4"
       },
       "person": {
-        "js": "4639b798",
+        "js": "2df6beaa",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "a61d6edb",
+        "js": "8515cca2",
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "4497927a",
+        "js": "fc51901e",
         "css": "6226b36b"
       },
       "photo-tags": {
@@ -68,37 +76,37 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "cf613057",
+        "js": "27619e11",
         "css": "890fde1c"
       },
       "review": {
-        "js": "c8427a7c",
+        "js": "032b26a2",
         "css": "d4074f34"
       },
       "search": {
-        "js": "cedb25b3",
+        "js": "84717dde",
         "css": "9e007813"
       },
       "settings": {
-        "js": "85849c1f",
+        "js": "c578c014",
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "1314ffe3",
+        "js": "77ab0933",
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "1da01713",
+        "js": "2cab4fbb",
         "css": "8f618380"
       },
       "tree": {
-        "js": "21674740",
+        "js": "d4f29c0b",
         "css": "373d5410"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "a21a2b35"
+    "sw": "5171c5b4"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -865,6 +873,19 @@
     if (flags.proposalReview !== true && flags.recordEdit !== true) return;
     if (/^\/me\/review\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("review", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-158: relationshipWizard mounts the relationship wizard. The family-entry island fills a host in the person page's family section
+  // (the "add or fix family connections" button, on the member's own page only; it reads /api/me itself); the family island fills the static
+  // /edit/family/ page. With the flag off neither bundle is requested: the person page is as before and /edit/family/ keeps its "not available
+  // yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.relationshipWizard !== true) return;
+    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("family-entry", { onError() { /* the person page stands without the button */ } });
+    } else if (/^\/edit\/family\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("family", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 

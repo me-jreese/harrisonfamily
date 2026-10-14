@@ -15,6 +15,7 @@
   "proposalReview": false,
   "recordEdit": false,
   "recordSubsV1": false,
+  "relationshipWizard": false,
   "searchV2": true,
   "shellV2": true
 }

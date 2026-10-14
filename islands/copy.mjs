@@ -108,7 +108,7 @@ export const COPY_PAGES = [
 ];
 
 /** Repo-owned pages that carry the same footer but have no Eleventy title to rewrite: they get the footer and its links only. */
-export const COPY_EXTRA = ["posts/index.html", "me/index.html", "me/notifications/index.html", "me/links/index.html", "me/inbox/index.html", "tree/index.html", "edit/index.html", "me/review/index.html", "join/index.html"];
+export const COPY_EXTRA = ["posts/index.html", "me/index.html", "me/notifications/index.html", "me/links/index.html", "me/inbox/index.html", "tree/index.html", "edit/index.html", "edit/family/index.html", "me/review/index.html", "join/index.html"];
 
 const OLD_FOOTER = /&copy; \d{4} Harrison Family Heritage\. All rights reserved\./g;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

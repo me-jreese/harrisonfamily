@@ -1,0 +1,9 @@
+/* The "add or fix family connections" button in the person page's family section (family-entry.jsx; HFY-TSK-158). Aliases only (theme-lint). A link
+   that looks like a button, 56px tall (the wizard's target size), with the theme focus ring. */
+[data-slot="family-edit"] { margin-top: var(--io-space-3); }
+.hfy-family-entry {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-h-lg); padding: 0 var(--io-space-5);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text); font-family: var(--io-typography-font-ui); font-weight: var(--io-typography-weight-semibold); text-decoration: none;
+}
+.hfy-family-entry:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
