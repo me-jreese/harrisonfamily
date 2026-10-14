@@ -16,8 +16,8 @@
         "css": "718ffc08"
       },
       "editor": {
-        "js": "b360dd5f",
-        "css": "d7344396"
+        "js": "c910e2bd",
+        "css": "6a93fa82"
       },
       "follow": {
         "js": "00d35b3c",

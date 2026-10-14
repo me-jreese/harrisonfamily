@@ -261,7 +261,8 @@ function PickOrNew({ p, items, none, notListed, newLabel, newHint, kind }) {
   return (
     <Field p={p}>
       <select {...controlProps(p)} value={selected} onChange={(e) => {
-        if (e.target.value === NEW) { setMode("new"); p.onChange({ ref: "", name: value.name || "" }); } else { setMode("pick"); p.onChange({ ref: e.target.value, name: "" }); }
+        // "not listed" keeps the place already chosen until a name is typed: choosing it alone changes nothing.
+        if (e.target.value === NEW) { setMode("new"); p.onChange({ ref: value.ref, name: value.name || "" }); } else { setMode("pick"); p.onChange({ ref: e.target.value, name: "" }); }
       }} data-hfy-ref={kind}>
         <option value="">{none}</option>
         {value.ref && !known ? <option value={value.ref}>{kind === "place" ? "current place" : "current source"}</option> : null}

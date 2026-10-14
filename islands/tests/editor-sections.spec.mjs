@@ -204,6 +204,15 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(again.ops.map((o) => [o.op, o.path, o.value])).toEqual([["set", "/place", "hsynl2"]]);
     });
 
+    test("places: choosing not listed alone keeps the place the event has", async ({ page }) => {
+      await open(page);
+      const p = await openRow(page, "events", "hsyne1");
+      await p.getByLabel("place", { exact: true }).selectOption("__new");
+      await expect(page.locator("[data-hfy-bar-text]")).toHaveCount(0);
+      await p.getByLabel("name of the place", { exact: true }).fill("Newtown");
+      await expect(page.locator("[data-hfy-bar-text]")).toContainText("1 change");
+    });
+
     test("events: adding a birth creates the event and its reference in one change; removing one is a keyed remove", async ({ page }) => {
       const state = await open(page);
       await section(page, "events");

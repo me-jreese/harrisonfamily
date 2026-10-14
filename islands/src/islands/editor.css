@@ -155,7 +155,7 @@ html.hfy-shell-v2:has(.io-shell[data-bp="compact"]) .hfy-editor__dock { bottom: 
   font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere;
 }
 .hfy-editor__list { display: grid; gap: var(--io-space-3); min-width: 0; }
-.hfy-editor__list + .hfy-editor__list, .hfy-editor form + .hfy-editor__list { margin-top: var(--io-space-4); }
+.hfy-editor__body > * + * { margin-top: var(--io-space-4); }
 .hfy-editor__h3 { margin: 0; font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
 .hfy-list { display: grid; gap: var(--io-space-3); min-width: 0; }
 .hfy-list__note, .hfy-list__empty { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
