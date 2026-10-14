@@ -5,6 +5,7 @@ import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, comm
 import { ContentError } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
+import { createGuard, pointer } from "./guard.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -17,7 +18,8 @@ const rKey = (t, target, by) => ({ PK: threadPk(t), SK: `R#${target}#${by}` });
 /** Maps the API actor onto the comments Principal (admin => moderator role). */
 export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: actor.label, ...(actor.admin ? { roles: ["admin"] } : {}) } : null);
 
-export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false }) {
+/** `guard` is src/guard.js createGuard(): the R-18 check on the body of every create and edit (422, nothing stored). */
+export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard() }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
   const view = (c) => ({ ...structuredClone(c), can: computeCan(c, viewer, canOpts) });
@@ -115,6 +117,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       const who = need();
       checkThread(t, true);
       const text = body(input.body);
+      guard("comments", "create", [[pointer("body"), input.body]]); // offsets into the body as submitted
       await checkPostVisible(t); // not_found unless the post exists and is visible
       let parent;
       if (input.parentId !== undefined) {
@@ -136,6 +139,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       await checkPostVisible(t);
       if (!computeCan(c, who, canOpts).edit) throw new CommentError("forbidden", "cannot edit this comment");
       const text = body(input.body);
+      guard("comments", "update", [[pointer("body"), input.body]]); // before the no-op shortcut: an unchanged legacy hit is refused too
       if (text === c.body) return view(c);
       const at = iso();
       const next = { ...c, body: text, edited_at: at };

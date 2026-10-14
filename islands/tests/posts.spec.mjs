@@ -19,7 +19,7 @@ async function stub(page, { signedIn = true } = {}) {
   await page.route("**/api/uploads", (r) => {
     s.uploads += 1;
     const b = r.request().postDataJSON();
-    return r.fulfill({ status: 201, json: { uploadUrl: `https://s3.test/put/${b.filename}`, publicUrl: `http://127.0.0.1:8089/media/posts/${ULID(900)}/${b.filename}`, headers: { "Content-Type": b.contentType } } });
+    return r.fulfill({ status: 201, json: { uploadUrl: `https://s3.test/put/photo.png`, publicUrl: `http://127.0.0.1:8089/media/posts/${ULID(900)}/photo.png`, headers: { "Content-Type": b.contentType } } });
   });
   await page.route(/\/api\/posts(\/[^/?]+)?(\?.*)?$/, (r) => {
     const req = r.request();
