@@ -271,14 +271,18 @@ export function parseRequest(c, guard) {
 }
 const ops_creates = (ops, temp) => ops.some((o) => isObj(o) && o.op === "create" && o.obj === temp);
 
-const requestHashOf = (req) => contentHash({ target: req.target ?? null, base_versions: req.base_versions, ops: req.ops, note: req.note ?? null, route: req.route });
+// A relationship submission (HFY-TSK-210) is keyed by what the member sent (the intent, the confirmed stubs, the note, the route), not by the ops
+// the compile made of it: a retry must replay its receipt without compiling, and the tree may have moved since. /api/changes receipts keep their hash.
+export const requestHashOf = (req) => (req.intent !== undefined
+  ? contentHash({ intent: req.intent, confirm: req.confirm ?? null, note: req.note ?? null, route: req.route })
+  : contentHash({ target: req.target ?? null, base_versions: req.base_versions, ops: req.ops, note: req.note ?? null, route: req.route }));
 
 // ---- idempotency --------------------------------------------------------------------------------------------------------------
-async function readIdem(ctx, principal, key) {
+export async function readIdem(ctx, principal, key) {
   const res = await ctx.ddb.send(new ctx.cmds.GetCommand({ TableName: ctx.table, Key: idemKeys(principal, key), ConsistentRead: true }));
   return res.Item ?? null;
 }
-function replayOf(item, requestHash) {
+export function replayOf(item, requestHash) {
   if (item.requestHash !== requestHash) throw problem(422, "idempotency_mismatch", "that Idempotency-Key was used with a different request");
   return { status: item.result.status, body: item.result.body, headers: { "idempotent-replayed": "true" } };
 }
@@ -623,7 +627,11 @@ export const subjectOf = (req, stored, ops) => {
   return { cls, handle, gramps_id: typeof head.obj.gramps_id === "string" ? head.obj.gramps_id : "" };
 };
 
-async function commit(c, req, planned, nowMs) {
+/**
+ * `extra` (relationship-api): { kind, intent, read_versions, summary } for the proposal document: the kind "relationship", the intent the member
+ * sent, the objects the compile read but did not change (checked for staleness with base_versions) and the compiler's sentences.
+ */
+export async function commit(c, req, planned, nowMs, extra = {}) {
   const { actor } = c;
   const ctx = c.store;
   const at = new Date(nowMs).toISOString();
@@ -636,9 +644,10 @@ async function commit(c, req, planned, nowMs) {
   if (review) {
     const reviewSummary = planned.plan.review.flatMap((g) => g.summary);
     const doc = newProposal({
-      id: ctx.uid(), actor, origin: ctx.via === "mcp" ? "mcp" : "web", kind: review.ops.some((o) => o.op === "create") ? "create" : "edit",
+      id: ctx.uid(), actor, origin: ctx.via === "mcp" ? "mcp" : "web", kind: extra.kind ?? (review.ops.some((o) => o.op === "create") ? "create" : "edit"),
       subject: subjectOf(req, stored, review.ops), targets: review.targets,
-      base_versions: pick(req.base_versions, sortedUnique(review.ops.map(existingKey).filter(Boolean))), ops: review.ops, summary: reviewSummary, note: req.note, warnings: review.warnings, at,
+      base_versions: pick(req.base_versions, sortedUnique(review.ops.map(existingKey).filter(Boolean))), ops: review.ops, summary: extra.summary ?? reviewSummary, note: req.note, warnings: review.warnings, at,
+      ...(extra.intent !== undefined ? { intent: extra.intent } : {}), ...(extra.read_versions !== undefined ? { read_versions: extra.read_versions } : {}),
       owners: await ownersOf(ctx, review.targets, stored), // HFY-TSK-256: contrib-read's proposalVisible reads owners[]
     });
     if (Buffer.byteLength(JSON.stringify(doc)) > MAX_PROPOSAL_BYTES) throw problem(413, "too_large", "the suggestion is too large");

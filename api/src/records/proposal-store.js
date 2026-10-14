@@ -92,7 +92,8 @@ export async function circleIds(p, admins) {
 /** True when any base version is behind the store (the page moved on, or was deleted). Decided proposals are never stale. */
 async function staleOf(ctx, p, memo = new Map()) {
   if (!OPEN_STATES.includes(p.state)) return false;
-  for (const [k, base] of Object.entries(p.base_versions ?? {})) {
+  // read_versions (a relationship proposal): the objects the compile read but its ops leave alone; a proposal built on a view that moved is stale too.
+  for (const [k, base] of [...Object.entries(p.base_versions ?? {}), ...Object.entries(p.read_versions ?? {})]) {
     if (!memo.has(k)) {
       const [cls, handle] = keyParts(k);
       memo.set(k, get(ctx, cls, handle).then((h) => h?.version ?? null));
