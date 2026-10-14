@@ -19,7 +19,7 @@ import { TxnCancelled, TxnTokenMismatch, assertTxnSize, auditItem, mergeUpdates,
 import { canonicalJson, HANDLE_SHAPE } from "../records/ops.js";
 import { defaultHooks } from "./hooks.js";
 import {
-  CLASSES, MAX_BATCH_OBJ_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, getBatchReceipt, getGid, getRecordItem, getSyncHead,
+  CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, getBatchReceipt, getGid, getRecordItem, getSyncHead,
   gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
 
@@ -97,8 +97,18 @@ function normaliseOps(rawOps) {
       norm.objJson = objJson;
       norm.gramps_id = raw.class === "Tag" ? "" : obj.gramps_id;
       if (raw.blob !== undefined) {
+        // The blob descriptor rides on the head item next to obj_json, so it is capped and counted (the item limit is 400 KB).
         if (raw.class !== "Media" || !isObj(raw.blob)) throw bad("validation", `${at}.blob is only for a Media object and must be an object`);
-        norm.blob = raw.blob;
+        let blobJson;
+        try {
+          blobJson = canonicalJson(raw.blob);
+        } catch {
+          throw bad("validation", `${at}.blob is not canonical JSON`);
+        }
+        const bn = Buffer.byteLength(blobJson);
+        if (bn > MAX_BLOB_BYTES) throw new SyncError(413, "batch_too_large", `${at}.blob exceeds ${MAX_BLOB_BYTES} bytes`);
+        bytes += bn;
+        norm.blob = JSON.parse(blobJson);
       }
       if (raw.renumber === true) norm.renumber = true;
     } else if (raw.obj !== undefined && raw.obj !== null) {
@@ -109,14 +119,27 @@ function normaliseOps(rawOps) {
       norm.reason = "private";
     } else if (reason !== undefined) norm.reason = reason;
     if (raw.merged_into !== undefined) {
-      if (raw.op !== "delete" || raw.class !== "Person" || reason !== "merge" || typeof raw.merged_into !== "string" || !raw.merged_into) throw bad("validation", `${at}.merged_into is only for a Person delete with reason merge`);
+      if (raw.op !== "delete" || raw.class !== "Person" || reason !== "merge") throw bad("validation", `${at}.merged_into is only for a Person delete with reason merge`);
+      if (typeof raw.merged_into !== "string" || raw.merged_into.length < 1 || raw.merged_into.length > 64) throw bad("validation", `${at}.merged_into must be a gramps_id of at most 64 characters`);
       norm.merged_into = raw.merged_into;
     }
     if (raw.class === "Person" && raw.op === "delete" && reason === "merge" && !norm.merged_into) throw bad("validation", `${at}.merged_into is required for a Person merge`);
     return norm;
   });
   if (bytes > MAX_BATCH_OBJ_BYTES) throw new SyncError(413, "batch_too_large", "the batch's objects are too large");
+  // Refuse a batch that cannot fit 100 transaction items before any read. A renumbering Person update takes up to 5 items (head,
+  // log, the old id's retire, the new id's claim, the alias), a merge 4, so 24 of them do not fit: clients split these batches.
+  const bound = FIXED_TXN_ITEMS + ops.reduce((n, op) => n + txnItemBound(op), 0);
+  if (bound > 100) throw new SyncError(413, "batch_too_large", `these ops need up to ${bound} transaction items and the limit is 100; split renumber and merge ops into smaller batches`);
   return ops;
+}
+
+/** The most transaction items one op can take: its head and log, plus the GID writes and alias its kind may need. */
+function txnItemBound(op) {
+  if (op.op === "marker") return 1;
+  if (op.op === "create") return 3; // head, log, the id claim
+  if (op.op === "update") return op.renumber === true && op.class === "Person" ? 5 : 4; // + the old id's write (+ an alias for a Person)
+  return op.class === "Person" && op.reason === "merge" ? 4 : 3; // delete or withdraw: head, log, the id write (+ an alias for a merge)
 }
 
 /** Strips the server-only members from an op, leaving what the caller sent: this is what the request hash covers. */
@@ -195,6 +218,11 @@ function planGids(ops, heads, head, gids) {
     const item = heads.get(`${op.class}#${op.handle}`);
     if (op.class === "Tag") continue; // a Tag has no gramps_id
     if (op.op === "create" || op.op === "update") {
+      // A Person's id is permanent and a tombstone keeps it retired, so a create over a deleted, withdrawn or merged Person is refused:
+      // resurrection is operator tooling (sync-admin resurrect), not a batch op. This also closes a create under a different id.
+      if (op.op === "create" && isPermanentIdClass(op.class) && item && item.deleted === true) {
+        throw new SyncError(409, "gramps_id_retired", "that person's gramps_id is retired and the person is not recreated through a batch", { class: op.class, gramps_id: item.gramps_id });
+      }
       const prev = item && item.deleted !== true ? item.gramps_id : undefined;
       if (prev !== undefined && prev !== op.gramps_id) {
         if (isPermanentIdClass(op.class) && op.renumber !== true) throw new SyncError(409, "renumber_blocked", "a person's gramps_id cannot change", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });
@@ -225,12 +253,13 @@ function planGids(ops, heads, head, gids) {
     const prior = gids.get(key);
     const cls = (claim ?? give).cls;
     const grampsId = (claim ?? give).grampsId;
-    if (claim && prior && prior.handle !== claim.handle) {
-      const freed = give && give.handle === prior.handle && !isPermanentIdClass(cls);
-      if (prior.retired === true || (give && give.handle === prior.handle && isPermanentIdClass(cls))) {
+    if (claim && prior) {
+      // A retired id is never claimed again, by anyone, its own person included (an A to B to A renumber is refused too).
+      if (prior.retired === true || (prior.handle !== claim.handle && give && give.handle === prior.handle && isPermanentIdClass(cls))) {
         throw new SyncError(409, "gramps_id_retired", "that gramps_id belongs to a retired person and is never reused", { class: cls, gramps_id: grampsId });
       }
-      if (!freed) throw new SyncError(409, "gramps_id_taken", "that gramps_id is in use", { class: cls, gramps_id: grampsId });
+      const freed = give && give.handle === prior.handle && !isPermanentIdClass(cls);
+      if (prior.handle !== claim.handle && !freed) throw new SyncError(409, "gramps_id_taken", "that gramps_id is in use", { class: cls, gramps_id: grampsId });
     }
     if (claim) writes.push({ key, cls, grampsId, kind: "claim", handle: claim.handle, prior });
     else if (isPermanentIdClass(cls)) writes.push({ key, cls, grampsId, kind: "retire", handle: give.handle, reason: give.reason, prior });
@@ -251,12 +280,18 @@ function priorCondition(prior) {
 /**
  * Applies a batch of ops atomically.
  *
- * @param ctx  { ddb, cmds, table, now?, uid?, log?, validate?, hooks?, maxSeqRetries?, txnOpts? }
- *   `validate({ ops, origin, principal, on_behalf_of, sync_head, record(cls, handle) })` is validator-js's seam: it throws an HttpError
- *   to refuse the batch, and it runs again on the refreshed view after every lost seq race. `hooks` is a createHookRegistry()
+ * @param ctx  { ddb, cmds, table, validate, now?, uid?, log?, hooks?, maxSeqRetries?, txnOpts?, unsafeNoValidate? }
+ *   `validate({ ops, origin, principal, on_behalf_of, sync_head, record(cls, handle) })` is validator-js's seam and is REQUIRED: it
+ *   throws an HttpError to refuse the batch, and it runs again on the refreshed view after every lost seq race. It runs before the
+ *   version check, so a refused caller never sees conflict detail. A call with neither `validate` nor `unsafeNoValidate: true` (the
+ *   seed and tests only) throws a TypeError. `hooks` is a createHookRegistry()
  *   (default: the process-wide one). `txnOpts` goes to transact() (tests inject sleep and random).
  * @param req  { principal, origin, onBehalfOf?, idempotencyKey, ops, extra?, client? }
  *   op:    { op_id?, op: create|update|delete|withdraw|marker, class, handle, base_version, obj?, reason?, renumber?, merged_into?, blob? }
+ *          `renumber` (a Person update that changes its gramps_id), `merged_into` (a Person delete with reason merge: the survivor's
+ *          gramps_id, at most 64 characters) and `blob` (a Media descriptor, at most MAX_BLOB_BYTES) are PROVISIONAL op fields invented
+ *          here to serve the retire-plus-alias contract (AC5). validator-js, sync-push-routes and identity-merge-rekey must match or
+ *          replace them; the renumber_blocked and merges_disabled checks duplicate rules the validator also owns.
  *   extra: transact() items { puts, deletes, updates, checks } committed in the same transaction (proposal state, contribution ops).
  * @returns { batch_id, seq_from, seq_to, results: [{ op_id, class, handle, version, seq, gramps_id }], replayed }
  *   A replay of a stored key returns the stored body with `replayed: true` and runs no hook.
@@ -272,7 +307,13 @@ export async function applyBatch(ctx, req) {
   const maxSeqRetries = ctx.maxSeqRetries ?? MAX_SEQ_RETRIES;
   const { principal, origin, onBehalfOf, idempotencyKey, extra, client } = req ?? {};
 
+  // The version-conflict body returns stored objects, which is safe only because the validator runs first: a caller cannot skip it by omission.
+  if (typeof ctx.validate !== "function" && ctx.unsafeNoValidate !== true) {
+    throw new TypeError("applyBatch needs ctx.validate (the server validator); only the seed and tests may pass ctx.unsafeNoValidate: true");
+  }
   if (typeof principal !== "string" || !principal) throw bad("validation", "principal is required");
+  // batch_id hashes `principal:key`; with no ':' in a principal the pair is unambiguous (principal 'a:b' + key 'c' is not 'a' + 'b:c').
+  if (principal.includes(":")) throw bad("validation", "principal must not contain ':'");
   if (!ORIGINS.includes(origin)) throw bad("validation", "origin is not a known origin");
   if (onBehalfOf !== undefined && (typeof onBehalfOf !== "string" || !onBehalfOf)) throw bad("validation", "onBehalfOf must be a string");
   if (typeof idempotencyKey !== "string" || idempotencyKey.length < 1 || idempotencyKey.length > 200) throw new SyncError(428, "idempotency_key_required", "an Idempotency-Key is required");
@@ -282,7 +323,7 @@ export async function applyBatch(ctx, req) {
   const batchId = batchIdFor(principal, idempotencyKey);
   let requestHash;
   try {
-    requestHash = sha256(canonicalJson(JSON.parse(JSON.stringify({ origin, on_behalf_of: onBehalfOf ?? null, ops: ops.map(wire) }))));
+    requestHash = sha256(canonicalJson(JSON.parse(JSON.stringify({ origin, on_behalf_of: onBehalfOf ?? null, ops: ops.map(wire), extra: extra ?? null }))));
   } catch {
     throw bad("validation", "the batch is not canonical JSON");
   }
@@ -294,11 +335,13 @@ export async function applyBatch(ctx, req) {
   };
 
   for (let attempt = 0; ; attempt += 1) {
-    // 1. Gate on the freshly read SYNC#HEAD, then the idempotency receipt.
+    // 1. The idempotency receipt, then the gate on the freshly read SYNC#HEAD. A replay of a committed batch writes nothing, so a
+    //    client that lost the response gets the stored body even while writes are paused (sync design D23). Provisional: io may
+    //    prefer the pause to refuse replays too; swap these two steps.
     const headItemNow = await getSyncHead(store);
-    checkStoreGate(headItemNow, origin);
     const receipt = await getBatchReceipt(store, batchId);
     if (receipt) return replay(receipt);
+    checkStoreGate(headItemNow, origin);
 
     // 2. Read the view: the head of every object and the GID item of every id the batch touches.
     const heads = new Map();
@@ -397,7 +440,7 @@ export async function applyBatch(ctx, req) {
       tag: "sync:audit",
     });
     const updates = [
-      headUpdate(headItemNow, seqTo, at),
+      headUpdate(headItemNow, seqTo, at, origin),
     ];
 
     // 5. Caller extra items and the registered contributors' items ride in the same transaction.
@@ -427,7 +470,10 @@ export async function applyBatch(ctx, req) {
         if (attempt >= maxSeqRetries) throw new SyncError(503, "retryable", "the store is busy; retry with the same Idempotency-Key");
         continue;
       }
+      // An item over DynamoDB's 400 KB limit is not transient: never answer 503 (the client would retry the same batch for ever).
+      if (e?.name === "ValidationException" && /size/i.test(e.message ?? "")) throw new SyncError(413, "batch_too_large", "the batch holds an item larger than the store allows");
       if (!(e instanceof TxnCancelled)) throw e;
+      if (!e.conditionFailed && e.reasons.includes("ValidationError")) throw new SyncError(413, "batch_too_large", "the batch holds an item larger than the store allows");
       if (e.conditionFailed) {
         const tags = e.failures.map((f) => f.tag);
         const ours = tags.filter((t) => typeof t === "string" && t.startsWith("sync:"));
@@ -452,14 +498,34 @@ export async function applyBatch(ctx, req) {
   }
 }
 
-function headUpdate(headItemNow, seqTo, at) {
+/**
+ * The SYNC#HEAD update. Its condition pins the seq AND the gate state that was read (writes_enabled, and seeded for a non-seed
+ * origin), so a pause or an un-seed between the gate check and the commit fails the transaction; the retry re-reads and re-gates.
+ */
+function headUpdate(headItemNow, seqTo, at, origin) {
   const key = headKey();
   const names = { "#s": "seq", "#u": "updated_at" };
   const base = { key, update: "SET #s = :to, #u = :at", tag: "sync:head" };
   const values = { ":to": seqTo, ":at": at };
   if (!headItemNow) return { ...base, condition: "attribute_not_exists(PK)", names, values };
-  if (headItemNow.seq === undefined) return { ...base, condition: "attribute_not_exists(#s)", names, values };
-  return { ...base, condition: "#s = :old", names, values: { ...values, ":old": headItemNow.seq } };
+  const pins = [];
+  if (headItemNow.seq === undefined) pins.push("attribute_not_exists(#s)");
+  else {
+    pins.push("#s = :old");
+    values[":old"] = headItemNow.seq;
+  }
+  names["#we"] = "writes_enabled";
+  if (headItemNow.writes_enabled === undefined) pins.push("attribute_not_exists(#we)");
+  else {
+    pins.push("#we = :we");
+    values[":we"] = headItemNow.writes_enabled;
+  }
+  if (origin !== "seed") {
+    names["#sd"] = "seeded";
+    pins.push("#sd = :sd");
+    values[":sd"] = true;
+  }
+  return { ...base, condition: pins.join(" AND "), names, values };
 }
 
 async function runContributors(hooks, batch, origin) {

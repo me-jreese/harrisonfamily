@@ -8,6 +8,9 @@
 //   IDALIAS#<Class>#<old_id>      META   merge / renumber alias, never deleted
 //   AUDIT#records:<batch_id>      one audit item per batch (built with auditItem())
 //
+// `expunged`: BRD2 section 4 lists an `expunged` flag on heads and log entries. applyBatch never writes it (the attribute is absent,
+// not false); privacy-expunge sets it when it nulls obj_json, and readers must treat an absent flag as not expunged.
+//
 // GID lifecycle. A Person id is permanent: a delete, withdraw, merge or renumber rewrites GID#Person#<id> as
 // {handle, retired:true, reason} and nothing ever deletes it, so a retired id can never be handed to someone else (409
 // gramps_id_retired). A non-Person id is released on delete or renumber, because no identity is keyed by a non-Person id:
@@ -25,7 +28,11 @@ export const REDACTION_VERSION = 1;
 /** Per-batch limits from the sync design (7.2): the client splits by both. */
 export const MAX_OPS = 24;
 export const MAX_OBJ_BYTES = 204800;
-export const MAX_BATCH_OBJ_BYTES = 3_500_000; // 2 x sum(obj_json bytes): the head and the log entry each hold a copy
+export const MAX_BATCH_OBJ_BYTES = 3_500_000; // 2 x sum(obj_json bytes) + sum(blob bytes): the head and the log entry each hold a copy
+/** A Media op's `blob` descriptor rides on the head item, next to a 200 KB obj_json, under DynamoDB's 400 KB item limit. */
+export const MAX_BLOB_BYTES = 4096;
+/** Transaction items a batch needs besides its ops: the SYNC#HEAD update, the SYNC#BATCH receipt and the audit item. */
+export const FIXED_TXN_ITEMS = 3;
 
 /** The identity class whose ids are permanent. */
 export const PERMANENT_ID_CLASS = "Person";

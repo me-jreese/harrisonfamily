@@ -28,7 +28,7 @@ function world({ head = { seq: 0, seeded: true, writes_enabled: true, merges_ena
   if (head) ddb.rows.set(`SYNC#HEAD\u0000META`, structuredClone({ ...headKey(), ...head }));
   let t = Date.parse("2026-10-14T00:00:00Z");
   let u = 0;
-  const ctx = { ddb, cmds, table: T, now: () => (t += 1000), uid: () => `uid${String(++u).padStart(4, "0")}`, hooks, log: { warn() {}, error() {} }, txnOpts: noSleep, ...rest };
+  const ctx = { ddb, cmds, table: T, now: () => (t += 1000), uid: () => `uid${String(++u).padStart(4, "0")}`, hooks, log: { warn() {}, error() {} }, txnOpts: noSleep, ...(rest.validate ? {} : { unsafeNoValidate: true }), ...rest };
   let k = 0;
   const apply = (ops, o = {}) => applyBatch(ctx, { principal: "svc-test", origin: "desktop", idempotencyKey: `key-${++k}`, ops, ...o });
   const row = (pk, sk) => ddb.rows.get(`${pk}\u0000${sk}`);
@@ -189,7 +189,7 @@ describe("applyBatch(): dense seq, races and the ClientRequestToken", () => {
       before: async (cmd) => {
         if (cmd.constructor.name !== "TransactWriteCommand" || raced) return;
         raced = true;
-        await applyBatch({ ...w.ctx, ddb: raw, validate: undefined }, { principal: "svc-other", origin: "desktop", idempotencyKey: "rival", ops: [create(person(2))] });
+        await applyBatch({ ...w.ctx, ddb: raw, validate: undefined, unsafeNoValidate: true }, { principal: "svc-other", origin: "desktop", idempotencyKey: "rival", ops: [create(person(2))] });
       },
     });
     const r = await w.apply([create(person(1))]);
@@ -216,7 +216,7 @@ describe("applyBatch(): dense seq, races and the ClientRequestToken", () => {
       before: async (cmd) => {
         if (cmd.constructor.name !== "TransactWriteCommand" || raced) return;
         raced = true;
-        await applyBatch({ ...w.ctx, ddb: raw, validate: undefined }, { principal: "svc-other", origin: "desktop", idempotencyKey: "rival", ops: [update({ ...p, gender: 0 }, 1)] });
+        await applyBatch({ ...w.ctx, ddb: raw, validate: undefined, unsafeNoValidate: true }, { principal: "svc-other", origin: "desktop", idempotencyKey: "rival", ops: [update({ ...p, gender: 0 }, 1)] });
       },
     });
     versions.length = 0;
@@ -319,13 +319,18 @@ describe("applyBatch(): version mismatch", () => {
     expect(ex.details.conflicts[0]).toMatchObject({ reason: "exists", current_version: 1 });
     const missing = await rejects(w.apply([update(person(9), 1)]), 409, "version_conflict");
     expect(missing.details.conflicts[0]).toMatchObject({ reason: "not_found", current_version: null, current: null });
-    await w.apply([del("Person", p.handle, 1)]);
-    const gone = await rejects(w.apply([update(p, 2)]), 409, "version_conflict");
+    const n = note(1);
+    await w.apply([create(n)]);
+    await w.apply([del("Note", n.handle, 1)]);
+    const gone = await rejects(w.apply([update(n, 2)]), 409, "version_conflict");
     expect(gone.details.conflicts[0]).toMatchObject({ reason: "deleted", current_version: 2, current: null });
-    await rejects(w.apply([create(p)]), 409, "version_conflict"); // a tombstone needs base_version = its version
-    const r = await w.apply([{ ...create(p), base_version: 2 }]);
+    await rejects(w.apply([create(n)]), 409, "version_conflict"); // a tombstone needs base_version = its version
+    const r = await w.apply([{ ...create(n), base_version: 2 }]);
     expect(r.results[0].version).toBe(3);
-    expect(w.row(`REC#Person#${p.handle}`, "HEAD")).toMatchObject({ deleted: false, version: 3 });
+    expect(w.row(`REC#Note#${n.handle}`, "HEAD")).toMatchObject({ deleted: false, version: 3 });
+    // a Person tombstone does not resurrect through a batch (see "Person ids are permanent")
+    await w.apply([del("Person", p.handle, 1)]);
+    await rejects(w.apply([{ ...create(p), base_version: 2 }]), 409, "gramps_id_retired");
   });
 });
 
@@ -443,12 +448,34 @@ describe("Person ids are permanent", () => {
     else expect(w.row("IDALIAS#Person#I0001", "META")).toBeUndefined();
   });
 
-  it("the same person (same handle) may take its retired id back when it is resurrected", async () => {
+  it.each([
+    ["delete", (p) => del("Person", p.handle, 1)],
+    ["withdraw", (p) => ({ op: "withdraw", class: "Person", handle: p.handle, base_version: 1 })],
+    ["merge", (p) => del("Person", p.handle, 1, { reason: "merge", merged_into: "I0002" })],
+  ])("a create over a %s tombstone is 409 gramps_id_retired: the retired GID and the alias stay as they were (resurrection is operator tooling)", async (_n, mk) => {
     const { w, p } = await seeded();
-    await w.apply([del("Person", p.handle, 1)]);
-    await w.apply([{ ...create(p), base_version: 2 }]);
-    expect(w.row("GID#Person#I0001", "META")).toMatchObject({ handle: p.handle });
-    expect(w.row("GID#Person#I0001", "META").retired).toBeUndefined();
+    await w.apply([create(person(2, "I0002"))]);
+    await w.apply([mk(p)]);
+    const gidBefore = structuredClone(w.row("GID#Person#I0001", "META"));
+    const aliasBefore = structuredClone(w.row("IDALIAS#Person#I0001", "META"));
+    const headBefore = structuredClone(w.row(`REC#Person#${p.handle}`, "HEAD"));
+    // the same id, and a different id (which would bypass the renumber guard and write no alias)
+    for (const obj of [p, { ...p, gramps_id: "I0042" }]) {
+      const e = await rejects(w.apply([{ ...create(obj), base_version: 2 }]), 409, "gramps_id_retired");
+      expect(e.details).toEqual({ class: "Person", gramps_id: "I0001" });
+    }
+    expect(w.row("GID#Person#I0001", "META")).toEqual(gidBefore);
+    expect(w.row("GID#Person#I0001", "META")).toMatchObject({ handle: p.handle, retired: true });
+    expect(w.row("IDALIAS#Person#I0001", "META")).toEqual(aliasBefore);
+    expect(w.row(`REC#Person#${p.handle}`, "HEAD")).toEqual(headBefore);
+    expect(w.row("GID#Person#I0042", "META")).toBeUndefined();
+  });
+
+  it("a person cannot renumber back onto an id it retired (A to B to A)", async () => {
+    const { w, p } = await seeded();
+    await w.apply([update({ ...p, gramps_id: "I0042" }, 1, { renumber: true })]);
+    await rejects(w.apply([update({ ...p, gramps_id: "I0001" }, 2, { renumber: true })]), 409, "gramps_id_retired");
+    expect(w.row("GID#Person#I0001", "META")).toMatchObject({ handle: p.handle, retired: true, reason: "renumbered" });
   });
 
   it("a person's gramps_id cannot change (409 renumber_blocked) unless the op says renumber: then the old id is retired with an alias", async () => {
@@ -471,6 +498,8 @@ describe("Person ids are permanent", () => {
     const { w, p } = await seeded({ merges_enabled: false });
     await rejects(w.apply([del("Person", p.handle, 1, { reason: "merge", merged_into: "I0002" })]), 409, "merges_disabled");
     await rejects(w.apply([del("Person", p.handle, 1, { reason: "merge" })]), 400, "validation"); // merged_into is required
+    await rejects(w.apply([del("Person", p.handle, 1, { reason: "merge", merged_into: "I".repeat(65) })]), 400, "validation"); // and bounded
+    await rejects(w.apply([del("Person", p.handle, 1, { reason: "merge", merged_into: "" })]), 400, "validation");
     expect(w.row("GID#Person#I0001", "META").retired).toBeUndefined();
   });
 
@@ -490,18 +519,19 @@ describe("Person ids are permanent", () => {
     let ok = 0;
     const errs = [];
     for (let i = 0; i < 120; i += 1) {
-      const n = 10 + (next() % 6);
+      const n = 10 + (next() % 40);
       const gid = pool[next() % pool.length];
       const s = st.get(n);
       const kind = next() % 4;
       let op;
       if (!s) op = create(person(n, gid));
-      else if (s.deleted) op = { ...create(person(n, s.gid)), base_version: s.version };
+      else if (s.deleted) op = { ...create(person(n, s.gid)), base_version: s.version }; // refused: a Person tombstone is never recreated
       else if (kind === 0) op = del("Person", h(n), s.version);
       else if (kind === 1) op = { op: "withdraw", class: "Person", handle: h(n), base_version: s.version };
       else op = update(person(n, gid), s.version, { renumber: true });
       try {
         const r = await w.apply([op]);
+        expect(s?.deleted, "a Person tombstone must not resurrect").not.toBe(true);
         ok += 1;
         const dead = op.op === "delete" || op.op === "withdraw";
         st.set(n, { version: r.results[0].version, deleted: dead, gid: dead ? s.gid : op.obj.gramps_id });
@@ -588,11 +618,40 @@ describe("the store gate (503 store_not_seeded, 503 sync_paused) is evaluated in
     expect(checkStoreGate({ seeded: true }, "tag")).toBeUndefined();
   });
 
-  it("a gated replay is refused too: the gate precedes the receipt", async () => {
+  it("a replay of a committed batch returns the stored body even while writes are paused (it writes nothing); a new request is still refused", async () => {
     const w = world();
-    await w.apply([create(person(1))], { idempotencyKey: "k" });
+    const first = await w.apply([create(person(1))], { idempotencyKey: "k" });
     w.ddb.rows.get("SYNC#HEAD\u0000META").writes_enabled = false;
-    await rejects(w.apply([create(person(1))], { idempotencyKey: "k" }), 503, "sync_paused");
+    const before = JSON.stringify(w.ddb.all());
+    expect(await w.apply([create(person(1))], { idempotencyKey: "k" })).toEqual({ ...first, replayed: true });
+    expect(JSON.stringify(w.ddb.all())).toBe(before);
+    await rejects(w.apply([create(person(1))], { idempotencyKey: "k" , origin: "admin" }), 422, "idempotency_key_reused");
+    await rejects(w.apply([create(person(2))], { idempotencyKey: "k2" }), 503, "sync_paused");
+  });
+
+  it("the gate is part of the commit: writes_enabled flipped to false (or seeded to false) after the gate read fails the head condition, and the retry is refused", async () => {
+    for (const [field, value, origin, code] of [["writes_enabled", false, "desktop", "sync_paused"], ["writes_enabled", false, "seed", "sync_paused"], ["seeded", false, "desktop", "store_not_seeded"]]) {
+      const w = world();
+      const raw = w.ctx.ddb;
+      let flipped = false;
+      w.ctx.ddb = wrap(raw, { before: (cmd) => { if (cmd.constructor.name === "TransactWriteCommand" && !flipped) { flipped = true; raw.rows.get("SYNC#HEAD\u0000META")[field] = value; } } });
+      await rejects(w.apply([create(person(1))], { origin }), 503, code);
+      expect(flipped).toBe(true);
+      expect(w.rows("REC#")).toHaveLength(0);
+      expect(w.rows("SYNC#LOG")).toHaveLength(0);
+      expect(w.row("SYNC#HEAD", "META").seq).toBe(0);
+    }
+  });
+
+  it("a writes_enabled that was never set is pinned absent: setting it true between read and commit makes a retry, not a lost gate", async () => {
+    const w = world({ head: { seq: 0, seeded: true } });
+    const raw = w.ctx.ddb;
+    let flipped = false;
+    w.ctx.ddb = wrap(raw, { before: (cmd) => { if (cmd.constructor.name === "TransactWriteCommand" && !flipped) { flipped = true; raw.rows.get("SYNC#HEAD\u0000META").writes_enabled = true; } } });
+    const r = await w.apply([create(person(1))]);
+    expect(r.seq_from).toBe(1);
+    expect(flipped).toBe(true);
+    expect(w.ddb.tokens).toHaveLength(2); // the first attempt failed the pinned condition and the retry committed
   });
 });
 
@@ -776,6 +835,144 @@ describe("the commit-hook registry", () => {
     expect(later).toBe(1);
     expect(logged).toHaveLength(2);
     expect(JSON.stringify(logged)).not.toMatch(/secret/); // name and code only
+  });
+});
+
+describe("size limits: blobs, items and the 100-action budget", () => {
+  const media = (n, extra = {}) => ({ _class: "Media", handle: h(4000 + n), gramps_id: `O${String(n).padStart(4, "0")}`, change: 1700000000, private: false, path: `m${n}.jpg`, mime: "image/jpeg", ...extra });
+  const blobOp = (m, blob) => ({ ...create(m), blob });
+
+  it("a Media blob descriptor is canonicalised, capped and counted; an oversize one is 413 before any read", async () => {
+    const w = world();
+    const sent = [];
+    w.ctx.ddb = wrap(w.ddb, { spy: (c) => sent.push(c) });
+    const m = media(1);
+    await rejects(w.apply([blobOp(m, { s3_key: "k", pad: "x".repeat(4097) })]), 413, "batch_too_large");
+    await rejects(w.apply([blobOp(media(2), "not-an-object")]), 400, "validation");
+    await rejects(w.apply([{ ...create(person(1)), blob: { s3_key: "k" } }]), 400, "validation"); // Media only
+    expect(sent).toHaveLength(0);
+    const r = await w.apply([blobOp(m, { z: 1, a: "k" })]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD").blob).toEqual({ a: "k", z: 1 });
+    expect(r.results[0].version).toBe(1);
+  });
+
+  it("a blob counts toward the batch byte budget (2 x sum(obj_json) + sum(blob) <= 3.5 MB)", async () => {
+    const w = world();
+    const base = Buffer.byteLength(objectJson(media(1, { pad: "" })));
+    const pad = "y".repeat(Math.floor(3_499_000 / 48) - base); // 24 objects: 2 x sum is just under the budget
+    const objs = (from) => Array.from({ length: 24 }, (_, i) => media(from + i, { pad }));
+    await rejects(w.apply(objs(1).map((m) => blobOp(m, { pad: "k".repeat(4000) }))), 413, "batch_too_large"); // 24 x 4000 blob bytes tip it over
+    const ok = await w.apply(objs(100).map((m) => create(m)));
+    expect(ok.results).toHaveLength(24);
+  });
+
+  it("an obj_json at the 200 KB limit plus a maximal blob commits: the head stays under DynamoDB's 400 KB item limit", async () => {
+    const w = world();
+    const m = media(1, { pad: "p".repeat(204_800 - 400) });
+    expect(Buffer.byteLength(objectJson(m))).toBeLessThanOrEqual(204_800);
+    const blob = { pad: "b".repeat(4096 - 12) };
+    await w.apply([blobOp(m, blob)]);
+    const head = w.row(`REC#Media#${m.handle}`, "HEAD");
+    expect(Buffer.byteLength(JSON.stringify(head))).toBeLessThan(400 * 1024);
+  });
+
+  it("an item the store rejects for size is a non-retryable 413, never a 503 retry loop", async () => {
+    const w = world();
+    // a caller's own extra item that is over 400 KB: the fake enforces the item limit like DynamoDB
+    const e = await rejects(w.apply([create(person(1))], { extra: { puts: [{ item: { PK: "X#1", SK: "1", pad: "z".repeat(410 * 1024) } }] } }), 413, "batch_too_large");
+    expect(e).toBeInstanceOf(SyncError);
+    expect(w.rows("REC#")).toHaveLength(0);
+    const w2 = world();
+    w2.ddb.failNext("ValidationError");
+    await rejects(w2.apply([create(person(1))]), 413, "batch_too_large");
+    expect(w2.ddb.tokens).toHaveLength(1); // not retried
+  });
+
+  it("the fake store enforces the 400 KB item and 100 action limits the suite relies on", async () => {
+    const ddb = createFakeDdb();
+    const put = (i) => ({ Put: { TableName: T, Item: { PK: `X#${i}`, SK: "1", pad: "z".repeat(i === 0 ? 410 * 1024 : 10) } } });
+    await expect(ddb.send(new cmds.TransactWriteCommand({ TransactItems: [put(0)] }))).rejects.toMatchObject({ name: "ValidationException" });
+    await expect(ddb.send(new cmds.TransactWriteCommand({ TransactItems: Array.from({ length: 101 }, (_, i) => put(i + 1)) }))).rejects.toMatchObject({ name: "ValidationException" });
+    await ddb.send(new cmds.TransactWriteCommand({ TransactItems: Array.from({ length: 100 }, (_, i) => put(i + 1)) }));
+  });
+
+  it("24 Person renumbers need up to 123 items: refused 413 before any read; 19 fit in 98", async () => {
+    const w = world();
+    const people = Array.from({ length: 24 }, (_, i) => person(i + 1));
+    await w.apply(people.slice(0, 12).map((p) => create(p)));
+    await w.apply(people.slice(12).map((p) => create(p)));
+    const sent = [];
+    w.ctx.ddb = wrap(w.ddb, { spy: (c) => sent.push(c) });
+    const renum = (p, i) => update({ ...p, gramps_id: `I9${String(i).padStart(3, "0")}` }, 1, { renumber: true });
+    const e = await rejects(w.apply(people.map(renum)), 413, "batch_too_large");
+    expect(e.message).toMatch(/split/);
+    expect(sent).toHaveLength(0);
+    await w.apply(people.slice(0, 19).map(renum));
+    const actions = sent.filter((c) => c.constructor.name === "TransactWriteCommand").flatMap(txnActions);
+    expect(actions).toHaveLength(98);
+  });
+
+  it("the conditions sent to DynamoDB: head pins seq and the gate, GIDs pin their prior state, the alias allows only its own handle", async () => {
+    const w = world({ head: { seq: 0, seeded: true, writes_enabled: true, merges_enabled: true } });
+    const p = person(1);
+    await w.apply([create(p), create(person(2, "I0002"))]);
+    const sent = [];
+    w.ctx.ddb = wrap(w.ddb, { spy: (c) => sent.push(c) });
+    await w.apply([update({ ...p, gramps_id: "I0042" }, 1, { renumber: true }), del("Person", h(2), 1, { reason: "merge", merged_into: "I0042" })]);
+    const actions = sent.flatMap(txnActions);
+    const by = (pk) => actions.map((a) => a.Put ?? a.Update ?? a.Delete).find((x) => (x.Item?.PK ?? x.Key?.PK) === pk);
+    expect(by("SYNC#HEAD").ConditionExpression).toBe("#s = :old AND #we = :we AND #sd = :sd");
+    expect(by("SYNC#HEAD").ExpressionAttributeValues).toMatchObject({ ":old": 2, ":we": true, ":sd": true });
+    expect(by("GID#Person#I0042").ConditionExpression).toBe("attribute_not_exists(PK)");
+    expect(by("GID#Person#I0001").ConditionExpression).toBe("#gh = :gh AND attribute_not_exists(#gr)");
+    expect(by("IDALIAS#Person#I0001").ConditionExpression).toBe("attribute_not_exists(PK) OR #ah = :ah");
+    expect(by(`REC#Person#${p.handle}`).ConditionExpression).toBe("#d = :f AND #v = :b");
+    expect(by(`SYNC#BATCH#${batchIdFor("svc-test", "key-2")}`).ConditionExpression).toBe("attribute_not_exists(PK)");
+  });
+});
+
+describe("the validator seam is required", () => {
+  it("a call with neither ctx.validate nor unsafeNoValidate throws a TypeError before anything is read or written", async () => {
+    const w = world();
+    const sent = [];
+    const ctx = { ...w.ctx, ddb: wrap(w.ddb, { spy: (c) => sent.push(c) }), unsafeNoValidate: undefined, validate: undefined };
+    await expect(applyBatch(ctx, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(person(1))] })).rejects.toThrow(TypeError);
+    await expect(applyBatch({ ...ctx, validate: "yes" }, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(person(1))] })).rejects.toThrow(/validate/);
+    expect(sent).toHaveLength(0);
+    // the seed and tests opt out on purpose
+    expect((await applyBatch({ ...ctx, unsafeNoValidate: true }, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(person(1))] })).seq_from).toBe(1);
+  });
+
+  it("a validator refusal fires before any conflict detail: a stale, unauthorised caller learns nothing about the stored object", async () => {
+    const w = world({ validate: async (v) => { if (v.principal === "svc-denied") throw new HttpError(403, "forbidden", "not allowed"); } });
+    const p = person(1, "I0001", { gender: 0 });
+    await w.apply([create(p)]);
+    const e = await rejects(w.apply([update(p, 7)], { principal: "svc-denied" }), 403, "forbidden");
+    expect(e.details).toBeUndefined();
+    expect(JSON.stringify(errorResponse(e).body)).not.toContain(p.handle);
+    // an allowed caller with the same stale version does get the conflict
+    await rejects(w.apply([update(p, 7)]), 409, "version_conflict");
+  });
+});
+
+describe("request identity", () => {
+  it("the same key with different extra items is 422 idempotency_key_reused; the same extra replays", async () => {
+    const w = world();
+    const ops = [create(person(1))];
+    const extraA = { puts: [{ item: { PK: "PROP#1", SK: "META", state: "open" } }] };
+    const first = await w.apply(ops, { idempotencyKey: "x", extra: extraA });
+    expect(await w.apply(ops, { idempotencyKey: "x", extra: extraA })).toEqual({ ...first, replayed: true });
+    await rejects(w.apply(ops, { idempotencyKey: "x", extra: { puts: [{ item: { PK: "PROP#1", SK: "META", state: "closed" } }] } }), 422, "idempotency_key_reused");
+    await rejects(w.apply(ops, { idempotencyKey: "x" }), 422, "idempotency_key_reused");
+    expect(w.row("PROP#1", "META").state).toBe("open");
+  });
+
+  it("a principal with ':' is refused, so (principal, key) pairs cannot collide in batch_id", async () => {
+    const w = world();
+    await rejects(w.apply([create(person(1))], { principal: "a:b", idempotencyKey: "c" }), 400, "validation");
+    expect(batchIdFor("a:b", "c")).toBe(batchIdFor("a", "b:c")); // the collision the guard exists for
+    const one = await w.apply([create(person(1))], { principal: "a", idempotencyKey: "b:c" });
+    expect(one.batch_id).toBe(batchIdFor("a", "b:c"));
   });
 });
 
