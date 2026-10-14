@@ -27,7 +27,7 @@ import sys
 _HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE)))
 
-from hfygramps.addon import consts, paths, status  # noqa: E402
+from hfygramps.addon import consts, paths, preflight, status  # noqa: E402
 
 DEFAULT_GRAMPS = "/Applications/Gramps.app/Contents/MacOS/Gramps"
 
@@ -65,16 +65,24 @@ def parse(argv):
     return action, tree, flags["--yes"], flags["--dry-run"], flags["--allow-deletes"], flags["--json"], force
 
 
+LOCKED = "locked"  # _schema_of: another process (Gramps) holds a write lock on the tree's database
+
+
 def _schema_of(tree_dir):
-    """The database schema version, read straight from the tree's sqlite file, read-only; None when it cannot be read."""
+    """The database schema version, read straight from the tree's sqlite file, read-only.
+
+    None when it cannot be read, LOCKED when sqlite says the database is locked (a Gramps window is writing: that is D01, not D04).
+    """
     try:
         uri = pathlib.Path(os.path.abspath(os.path.join(tree_dir, "sqlite.db"))).as_uri() + "?mode=ro"  # percent-encoded, any path
-        con = sqlite3.connect(uri, uri=True, timeout=5)
+        con = sqlite3.connect(uri, uri=True, timeout=2)
         try:
             row = con.execute("SELECT json_data FROM metadata WHERE setting = 'version'").fetchone()
         finally:
             con.close()
         return int(json.loads(row[0])["value"]) if row else None
+    except sqlite3.OperationalError as exc:
+        return LOCKED if "locked" in str(exc).lower() or "busy" in str(exc).lower() else None
     except (sqlite3.Error, ValueError, KeyError, TypeError):
         return None
 
@@ -91,11 +99,16 @@ def main(argv):
         return _usage(parsed)
     action, tree_name, yes, dry_run, allow_deletes, as_json, force = parsed
     environ = os.environ
-    try:
-        config = paths.read_json(paths.config_path(environ))
-    except ValueError:
-        config = None
-    tree_name = tree_name or environ.get("HFY_SYNC_TREE") or (config or {}).get("tree_name")
+    tree_name = tree_name or environ.get("HFY_SYNC_TREE")
+    if not tree_name:
+        try:
+            config = paths.read_json(paths.config_path(environ))
+            if config is not None and not isinstance(config, dict):
+                raise ValueError("config.json is not an object")
+        except ValueError:
+            print("hfy-sync: config.json is unreadable (config_unreadable). Fix or remove it, or give the tree with --tree NAME.", file=sys.stderr)
+            return consts.EXIT_CONFIG
+        tree_name = (config or {}).get("tree_name")
     if not tree_name:
         return _usage("give the tree with --tree NAME (or set HFY_SYNC_TREE)")
     found = paths.find_tree(tree_name, environ)
@@ -108,18 +121,24 @@ def main(argv):
 
     def refuse(code):
         doc = _refusal_doc(run_id, action or "status", dbid, code)
+        # status.json belongs to the run that holds state.lock: write the refusal only when the lock is free, so a refused
+        # second run (D14 elsewhere) cannot overwrite a running one's file. The exit code is printed and returned either way.
         tp.ensure()
-        status.write(tp, doc)
+        with preflight.StateLock(tp.lock) as lock:
+            if lock.acquired:
+                status.write(tp, doc)
         print(json.dumps(doc, sort_keys=True) if as_json else status.summary_line(doc))
         return doc["exit_code"]
 
     if force:
         return refuse("D02")  # before Gramps could break the lock
+    if os.path.exists(os.path.join(tree_dir, "lock")):
+        return refuse("D01")  # open elsewhere: the remedy is closing it, whatever its schema
     schema = _schema_of(tree_dir)
+    if schema == LOCKED:
+        return refuse("D01")
     if schema not in consts.SUPPORTED_DB_SCHEMAS:
         return refuse("D04")  # before Gramps could upgrade the tree on open
-    if os.path.exists(os.path.join(tree_dir, "lock")):
-        return refuse("D01")
 
     # CLI sync, pull and push only look unless --yes (sync.md 8.2)
     effective_dry = 1 if dry_run or (action in ("sync", "pull", "push", "bind") and not yes) else 0
@@ -132,7 +151,7 @@ def main(argv):
         print("hfy-sync: could not start Gramps (%s)" % type(exc).__name__, file=sys.stderr)
         return consts.EXIT_INTERNAL
     try:
-        doc = status.read(tp)
+        doc = status.read_run(tp, run_id)
     except ValueError:
         doc = None
     code = status.exit_code_for(doc, run_id)

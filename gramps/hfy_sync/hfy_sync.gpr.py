@@ -27,7 +27,6 @@ register(
     status=STABLE,
     fname="hfy_sync_tool.py",
     authors=["harrisonfamily.us"],
-    authors_email=["noreply@example.org"],
     category=TOOL_DBPROC,
     toolclass="HfySyncTool",
     optionclass="HfySyncOptions",

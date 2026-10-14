@@ -90,6 +90,7 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None):
             _Log(tree_paths, run_id).line("internal error %s" % type(exc).__name__)
         except Exception:  # noqa: BLE001
             pass
+        side = outcome.get("side")  # a sidecar opened before the failure is still closed below, and gets the failed run's row
     res, exit_code, next_action, error = result
     doc = status.build(run_id, options.action, mode, tree.dbid, outcome["bound"], res, exit_code, started, status.utc_now(),
                        dry_run=options.dry_run, error=error, next_action=next_action, counts=outcome["counts"],
@@ -103,7 +104,10 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None):
         if side is not None:
             side.close()
     try:
-        status.write(tree_paths, doc)
+        if outcome.get("unlocked") and mode != "cli":
+            pass  # the Gramps window shows the returned document; nothing may touch the running run's status.json
+        else:
+            status.write(tree_paths, doc, holds_lock=not outcome.get("unlocked"))
     except OSError as exc:
         doc = dict(doc, result="failed", exit_code=consts.EXIT_INTERNAL, error={"code": "internal", "message": "status.json could not be written (%s)." % type(exc).__name__})
     return doc
@@ -128,6 +132,7 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome):
     with preflight.StateLock(tp.lock) as lock:
         if not lock.acquired:
             log.line("refused D14")
+            outcome["unlocked"] = True  # status.json is the running run's: this refusal goes to its own file
             return _refused("D14")
         if mode == "cli":
             try:
@@ -139,6 +144,8 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome):
                 return _refused("D01")
         try:
             config = paths.read_json(tp.config)
+            if config is not None and not isinstance(config, dict):
+                raise ValueError("config.json is not an object")
         except ValueError:
             log.line("refused config_unreadable")
             return _refused("config_unreadable")
@@ -151,13 +158,13 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome):
                     side = sidecar.open_checked(tp.sidecar)
                 except sidecar.SidecarError:
                     side = "damaged"
+        if side not in (None, "damaged"):
+            outcome["side"] = side  # run() records the run row and closes it, also when a step below raises
         verdict = binding.check(config, tree, side)
         log.line("binding %s" % (verdict.code or ("bound" if verdict.bound else "unbound")))
-        if side not in (None, "damaged"):
-            if verdict.code is None:
-                outcome["side"] = side  # run() records the run row and closes it
-            else:
-                side.close()
+        if verdict.code and side not in (None, "damaged"):
+            side.close()  # a refused run leaves no row in a sidecar that may belong to another tree
+            outcome.pop("side", None)
         outcome["bound"] = verdict.bound
         if verdict.code:
             return _refused(verdict.code)

@@ -64,7 +64,7 @@ class HomeCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="hfy-addon-unit-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.env = {"HOME": self.tmp, "GRAMPSHOME": os.path.join(self.tmp, "gh"), "HFY_SYNC_PS_CMD": "true"}
+        self.env = {"HOME": self.tmp, "GRAMPSHOME": os.path.join(self.tmp, "gh"), "HFY_SYNC_TEST": "1", "HFY_SYNC_PS_CMD": "true"}
 
     def run_tool(self, tree, action="status", mode="cli", argv=("gramps",), run_id=None, **opts):
         return runner.run(tree, mode, runner.Options(action, **opts), run_id=run_id, argv=list(argv), environ=self.env)
@@ -332,7 +332,10 @@ class Preflight(unittest.TestCase):
         self.assertFalse(preflight.gui_process_running([]))
 
     def test_ps_lines_seam(self):
-        self.assertEqual(preflight.ps_lines({"HFY_SYNC_PS_CMD": "printf 'a b\\nc\\n'"}), ["a b", "c"])
+        self.assertEqual(preflight.ps_lines({"HFY_SYNC_TEST": "1", "HFY_SYNC_PS_CMD": "printf 'a b\\nc\\n'"}), ["a b", "c"])
+        # outside a test the override is ignored: a stray variable cannot turn the GUI scan off
+        self.assertNotEqual(preflight.ps_lines({"HFY_SYNC_PS_CMD": "printf 'a b\\nc\\n'"}), ["a b", "c"])
+        self.assertNotEqual(preflight.ps_lines({"HFY_SYNC_TEST": "0", "HFY_SYNC_PS_CMD": "printf 'a b\\nc\\n'"}), ["a b", "c"])
         self.assertIsInstance(preflight.ps_lines({}), list)  # the real ps
 
     def test_state_lock_is_exclusive(self):
@@ -381,7 +384,15 @@ class RunnerRefusals(HomeCase):
         self.run_tool(tree)
         with preflight.StateLock(self.tp(tree).lock) as held:
             self.assertTrue(held.acquired)
-            self.assert_refused(self.run_tool(tree), "D14", 75, "retry")
+            running = paths.read_json(self.tp(tree).status)
+            doc = self.run_tool(tree, run_id="R2")
+            self.assertEqual((doc["result"], doc["exit_code"], doc["error"]["code"], doc["next_action"]), ("refused", 75, "D14", "retry"))
+            self.assertEqual(paths.read_json(self.tp(tree).status), running, "status.json belongs to the run that holds the lock")
+            self.assertEqual(status.read_run(self.tp(tree), "R2"), doc, "the refusal is in the run's own file")
+            self.assertFalse(os.path.exists(self.tp(tree).status_for("R2")), "read once, then removed")
+            self.assertEqual(self.run_tool(tree, mode="gui", run_id="R3")["exit_code"], 75)
+            self.assertFalse(os.path.exists(self.tp(tree).status_for("R3")), "a Gramps-window refusal leaves no file")
+            self.assertEqual(paths.read_json(self.tp(tree).status), running)
         self.assertEqual(self.run_tool(tree)["exit_code"], 0)
 
     def test_unknown_action_is_usage_64(self):
@@ -393,6 +404,44 @@ class RunnerRefusals(HomeCase):
         with open(self.tp(tree).config, "w") as fh:
             fh.write("{broken")
         self.assert_refused(self.run_tool(tree), "config_unreadable", 78, "none")
+
+    def test_a_config_that_is_not_an_object_is_78_not_a_traceback(self):
+        for text in ("[]", '"x"', "7", "null"):
+            tree = FakeTree()
+            self.tp(tree).ensure()
+            with open(self.tp(tree).config, "w") as fh:
+                fh.write(text)
+            doc = self.run_tool(tree)
+            if text == "null":
+                self.assertEqual(doc["exit_code"], 0, "null is the same as no config")
+            else:
+                self.assert_refused(doc, "config_unreadable", 78, "none")
+
+    def test_a_bug_after_the_sidecar_is_opened_closes_it_and_records_the_run(self):
+        tree = self.bound_tree()
+        opened = []
+        real = sidecar.open_checked
+
+        def spy(path):
+            con = real(path)
+            opened.append(con)
+            return con
+
+        def boom(*a, **k):
+            raise RuntimeError("boom")
+
+        self.addCleanup(setattr, sidecar, "open_checked", real)
+        self.addCleanup(setattr, runner.binding, "check", runner.binding.check)
+        sidecar.open_checked = spy
+        runner.binding.check = boom
+        doc = self.run_tool(tree, run_id="R9")
+        self.assertEqual((doc["result"], doc["exit_code"]), ("failed", 70))
+        self.assertEqual(len(opened), 1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            opened[0].execute("SELECT 1")  # closed
+        con = sqlite3.connect(self.tp(tree).sidecar)
+        self.addCleanup(con.close)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM runs WHERE run_id = 'R9'").fetchone()[0], 1)
 
     def test_a_bug_is_failed_70_not_an_exception(self):
         tree = self.bound_tree()

@@ -69,6 +69,8 @@ class AddonCase(unittest.TestCase):
         with open(cls.ps_file, "w", encoding="utf-8") as fh:
             fh.write("/usr/sbin/cron\n/sbin/launchd\n")  # a process list with no Gramps GUI in it
         cls.old_ps = os.environ.get("HFY_SYNC_PS_CMD")
+        cls.old_test = os.environ.get("HFY_SYNC_TEST")
+        os.environ["HFY_SYNC_TEST"] = "1"  # the process-list override is honoured only under this flag
         os.environ["HFY_SYNC_PS_CMD"] = "cat %s" % cls.ps_file  # never depend on a Gramps window io has open
 
     @classmethod
@@ -78,6 +80,10 @@ class AddonCase(unittest.TestCase):
             os.environ.pop("HFY_SYNC_PS_CMD", None)
         else:
             os.environ["HFY_SYNC_PS_CMD"] = cls.old_ps
+        if cls.old_test is None:
+            os.environ.pop("HFY_SYNC_TEST", None)
+        else:
+            os.environ["HFY_SYNC_TEST"] = cls.old_test
 
     def setUp(self):
         S.reset_config()
@@ -323,12 +329,13 @@ class Refusals(AddonCase):
     def test_a_second_run_while_state_lock_is_held_is_75(self):
         proc, _ = self.cli("action=status")  # creates the folder
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        running = self.status()
         with open(S.tree_paths(self.dbid)["lock"], "a+") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             wrapped = S.run_wrapper(["status", "--tree", self.name])
             self.assertEqual(wrapped.returncode, 75, wrapped.stdout + wrapped.stderr)
-            doc = self.status()
-            self.assertEqual((doc["result"], doc["error"]["code"], doc["next_action"]), ("refused", "D14", "retry"))
+            self.assertIn("D14", wrapped.stdout)
+            self.assertEqual(self.status(), running, "the refused run must not replace the status.json of the run that holds the lock")
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         again = S.run_wrapper(["status", "--tree", self.name])
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)

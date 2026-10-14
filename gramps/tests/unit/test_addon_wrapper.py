@@ -41,13 +41,16 @@ if mode == "locked":
     sys.exit(1)
 if mode == "none":
     sys.exit(0)
-run_id = opts["run_id"] if mode == "ok" else "someone-elses-run"
+run_id = opts["run_id"] if mode in ("ok", "ownfile") else "someone-elses-run"
 code = int(os.environ.get("FAKE_EXIT", "0"))
 doc = status.build(run_id, opts["action"], "cli", dbid, True, "ok" if code == 0 else "partial", code, "t0", "t1",
                    dry_run=opts["dry_run"] == "1", next_action="none")
 tp = paths.TreePaths(dbid)
 tp.ensure()
-status.write(tp, doc)
+if mode == "ownfile":  # a refused run (D14) writes its own file and leaves the running run's status.json alone
+    status.write(tp, dict(doc, result="refused", exit_code=75), holds_lock=False)
+else:
+    status.write(tp, doc)
 '''
 
 
@@ -161,6 +164,55 @@ class Wrapper(WrapperCase):
         proc = self.wrap("status", "--tree", "Fixture Tree", FAKE_MODE="locked")
         self.assertEqual(proc.returncode, 75, proc.stdout + proc.stderr)
         self.assertEqual(self.status_doc()["error"]["code"], "D01")
+
+    def test_a_refused_run_reads_its_own_status_file_not_the_running_ones(self):
+        self.assertEqual(self.wrap("status", "--tree", "Fixture Tree").returncode, 0)
+        before = self.status_doc()
+        proc = self.wrap("status", "--tree", "Fixture Tree", FAKE_MODE="ownfile")
+        self.assertEqual(proc.returncode, 75, proc.stdout + proc.stderr)
+        self.assertEqual(self.status_doc(), before)
+        self.assertEqual([n for n in os.listdir(os.path.dirname(paths.TreePaths(self.dbid, {"HOME": self.home}).status))
+                          if n.startswith("status.") and n != "status.json"], [], "the run file is removed once read")
+
+    def test_a_wrapper_refusal_never_replaces_the_status_of_a_run_that_holds_the_lock(self):
+        import fcntl
+        self.assertEqual(self.wrap("status", "--tree", "Fixture Tree").returncode, 0)
+        before = self.status_doc()
+        open(os.path.join(self.tree_dir, "lock"), "w").close()
+        with open(paths.TreePaths(self.dbid, {"HOME": self.home}).lock, "a+") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            proc = self.wrap("status", "--tree", "Fixture Tree")
+            self.assertEqual(proc.returncode, 75, proc.stdout + proc.stderr)
+            self.assertIn("D01", proc.stdout)
+            self.assertEqual(self.status_doc(), before)
+        proc = self.wrap("status", "--tree", "Fixture Tree")  # lock free again: the refusal is recorded
+        self.assertEqual((proc.returncode, self.status_doc()["error"]["code"]), (75, "D01"))
+
+    def test_a_database_locked_by_a_writer_is_d01_not_d04(self):
+        con = sqlite3.connect(os.path.join(self.tree_dir, "sqlite.db"), isolation_level=None)
+        self.addCleanup(con.close)
+        con.execute("BEGIN EXCLUSIVE")
+        proc = self.wrap("status", "--tree", "Fixture Tree")
+        self.assertEqual(proc.returncode, 75, proc.stdout + proc.stderr)
+        self.assertEqual(self.calls(), [])
+        con.execute("ROLLBACK")
+        self.assertEqual(self.wrap("status", "--tree", "Fixture Tree").returncode, 0)
+
+    def test_a_lock_file_is_d01_even_when_the_schema_is_unsupported(self):
+        d = self.make_tree("ee55ff66", "Newer Tree", schema=22)
+        open(os.path.join(d, "lock"), "w").close()
+        proc = self.wrap("status", "--tree", "Newer Tree")
+        self.assertEqual(proc.returncode, 75, proc.stdout + proc.stderr)
+
+    def test_a_config_that_is_not_an_object_is_78_without_a_traceback(self):
+        for text in ("[]", '"x"', "7", "{broken"):
+            os.makedirs(os.path.dirname(paths.config_path({"HOME": self.home})), exist_ok=True)
+            with open(paths.config_path({"HOME": self.home}), "w") as fh:
+                fh.write(text)
+            proc = self.wrap("status")
+            self.assertEqual(proc.returncode, 78, (text, proc.stdout + proc.stderr))
+            self.assertNotIn("Traceback", proc.stderr)
+            self.assertEqual(self.wrap("status", "--tree", "Fixture Tree").returncode, 0, "an explicit tree does not need the config")
 
     def test_the_tree_comes_from_the_option_the_environment_or_config(self):
         self.assertEqual(self.wrap("status").returncode, 64, "no tree anywhere is a usage error")

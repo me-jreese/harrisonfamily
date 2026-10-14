@@ -39,9 +39,14 @@ def schema_supported(schema_version, gramps_series):
 
 
 def ps_lines(environ=None):
-    """Command lines of the running processes. `HFY_SYNC_PS_CMD` replaces `ps -axo command=` (a test seam; unset in use)."""
+    """Command lines of the running processes.
+
+    `HFY_SYNC_PS_CMD` replaces `ps -axo command=`, but only while `HFY_SYNC_TEST=1` is also set: it is a test seam, and outside a
+    test an environment variable must not be able to switch the GUI-process half of D01 off.
+    """
     environ = os.environ if environ is None else environ
-    cmd = shlex.split(environ.get("HFY_SYNC_PS_CMD", "")) or ["ps", "-axo", "command="]
+    override = environ.get("HFY_SYNC_PS_CMD", "") if environ.get("HFY_SYNC_TEST") == "1" else ""
+    cmd = shlex.split(override) or ["ps", "-axo", "command="]
     out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=10, check=False)
     return out.stdout.splitlines()
 

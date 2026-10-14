@@ -51,6 +51,10 @@ class TreePaths:
         self.cache = os.path.join(self.dir, "cache")
         self.config = os.path.join(self.root, "config.json")
 
+    def status_for(self, run_id):
+        """`<dbid>/status.<run_id>.json`: where a run that does not hold state.lock puts its refusal (None for an odd run id)."""
+        return os.path.join(self.dir, "status.%s.json" % run_id) if valid_dbid(run_id) else None
+
     def ensure(self):
         """Creates the per-tree directories, owner-only: the sidecar holds projected family data."""
         for d in (self.root, self.dir, self.previews, self.backups, self.logs, self.cache):

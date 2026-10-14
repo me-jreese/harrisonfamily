@@ -1,4 +1,5 @@
 """status.json, the contract the CLI wrapper, the gramplet and io read (sync.md 4.3), and the run ids that tie it to a run."""
+import os
 import secrets
 import time
 
@@ -50,15 +51,34 @@ def build(run_id, action, mode, dbid, bound, result, exit_code, started_at, fini
     }
 
 
-def write(tree_paths, doc):
-    """Atomically replaces `<dbid>/status.json`."""
+def write(tree_paths, doc, holds_lock=True):
+    """Atomically replaces `<dbid>/status.json`.
+
+    A run that does not hold state.lock (D14: another run does) writes `status.<run_id>.json` instead, so it can never replace the
+    document of the run that is working; the wrapper looks for that file first.
+    """
     tree_paths.ensure()
-    paths.atomic_write_json(tree_paths.status, doc)
+    target = tree_paths.status if holds_lock else (tree_paths.status_for(doc.get("run_id")) or tree_paths.status)
+    paths.atomic_write_json(target, doc)
 
 
 def read(tree_paths):
     """The parsed status.json, None when absent, ValueError when damaged."""
     return paths.read_json(tree_paths.status)
+
+
+def read_run(tree_paths, run_id):
+    """The document of run `run_id`: its own `status.<run_id>.json` (read once, then removed) or else status.json."""
+    own = tree_paths.status_for(run_id)
+    if own and os.path.exists(own):
+        try:
+            return paths.read_json(own)
+        finally:
+            try:
+                os.unlink(own)
+            except OSError:
+                pass
+    return read(tree_paths)
 
 
 def refusal(code):
