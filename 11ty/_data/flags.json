@@ -7,6 +7,7 @@
   "personV2": true,
   "photoTags": false,
   "postsV2": true,
+  "profileLinks": false,
   "searchV2": true,
   "shellV2": true
 }
