@@ -65,9 +65,10 @@ export const proposalEtag = (p) => contentHash({ id: p.id, rev: p.rev, state: p.
  * A new proposal document (editing design 5.2). `subject` is the page it is about ({cls, handle, gramps_id}) or null; `targets` are the stored
  * objects it touches ("Class:handle"), sorted. `warnings` are the semantic warnings that do not block.
  */
-export function newProposal({ id, actor, origin, kind, subject, targets, base_versions, ops, summary, note, warnings, at, owners, requestId }) {
+export function newProposal({ id, actor, origin, kind, subject, targets, base_versions, ops, summary, note, warnings, at, owners, requestId, intent, read_versions }) {
   const p = {
     id, rev: 1, state: "pending", kind, proposer: { id: actor.id, label: actor.label }, origin, subject, targets, owners: ownersList(owners), base_versions, ops, summary,
+    ...(intent !== undefined ? { intent } : {}), ...(read_versions !== undefined ? { read_versions } : {}),
     ...(note ? { note } : {}), ...(requestId ? { request_id: requestId } : {}), warnings: warnings ?? [], created_at: at, updated_at: at,
   };
   return { ...p, etag: proposalEtag(p) };
