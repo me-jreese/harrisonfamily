@@ -199,6 +199,12 @@ describe("finding the tag a page shows", () => {
     assert.equal(nthOf(tags, 1), 0);
     assert.equal(nthOf(tags, 2), 1);
   });
+  it("nthOf counts a Gramps-sourced and a site-sourced tag together: both are MediaRefs of the person, so both sit in the list findTagElement walks", () => {
+    const tags = [{ grampsId: "I9002", rect: [10, 10, 30, 30], source: "gramps" }, { grampsId: "I9002", rect: [10, 10, 30, 30], source: "site" }];
+    assert.equal(nthOf(tags, 1), 1);
+    const p = person(2, [mref([10, 10, 30, 30]), mref([10, 10, 30, 30])]);
+    assert.equal(findTagElement(p, MEDIA, [10, 10, 30, 30], nthOf(tags, 1)).index, 1);
+  });
 });
 
 describe("buildTagOps against the ops engine", () => {
@@ -231,6 +237,26 @@ describe("buildTagOps against the ops engine", () => {
     const built = buildTagOps(bundleOf(bare), { kind: "add", mediaHandle: MEDIA, rect: [1, 1, 9, 9] });
     assert.deepEqual(built.ops[0], { id: "tag.add", op: "set", obj: keyOf(bare), path: "/media_list", base: null, value: [newMediaRef(MEDIA, [1, 1, 9, 9])] });
     assert.equal(applyOps({ [keyOf(bare)]: bare }, built.ops).ok, true);
+  });
+
+  it("add: a stored rect with reversed corners is the same box, so the same tag again is a duplicate", () => {
+    const p = person(2, [mref([30, 30, 10, 10])]);
+    assert.deepEqual(buildTagOps(bundleOf(p), { kind: "add", mediaHandle: MEDIA, rect: [10, 10, 30, 30] }), { ok: false, reason: "exists" });
+    assert.equal(buildTagOps(bundleOf(p), { kind: "add", mediaHandle: MEDIA, rect: [10, 10, 31, 30] }).ok, true, "a different box still adds");
+  });
+
+  it("a tag with no area (rect null) can be given a box or removed", () => {
+    const p = person(2, [mref(null), mref([50, 50, 70, 70])]);
+    const give = buildTagOps(bundleOf(p), { kind: "move", mediaHandle: MEDIA, from: null, rect: [35, 35, 65, 65] });
+    assert.equal(give.ok, true);
+    assert.equal(give.ops[0].base, null);
+    assert.deepEqual(validateOps(give.ops), []);
+    const applied = applyOps({ [keyOf(p)]: p }, give.ops);
+    assert.equal(applied.ok, true);
+    assert.deepEqual(applied.objects[keyOf(p)].media_list.map((m) => m.rect), [[35, 35, 65, 65], [50, 50, 70, 70]], "only the area-less tag changed");
+    const rm = buildTagOps(bundleOf(p), { kind: "remove", mediaHandle: MEDIA, from: null });
+    assert.equal(rm.ok, true);
+    assert.deepEqual(applyOps({ [keyOf(p)]: p }, rm.ops).objects[keyOf(p)].media_list.map((m) => m.rect), [[50, 50, 70, 70]]);
   });
 
   it("move: a set of rect at the element's key, with the stored rect as base", () => {

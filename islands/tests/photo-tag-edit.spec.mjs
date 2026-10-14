@@ -24,10 +24,13 @@ const GALLERY = {
       { grampsId: "I9002", name: "Sam Example", rect: [10, 20, 30, 50], isPrimary: false, attributes: [], notes: [], citations: [], source: "gramps" },
       { grampsId: "I9012", name: "Father Example", rect: [60, 15, 90, 45], isPrimary: false, attributes: [], notes: [], citations: [], source: "gramps" }
     ] },
-    { handle: "MTAG2", mime: "image/jpeg", title: "Portrait, nobody tagged yet", grampsId: "O2" }
+    { handle: "MTAG2", mime: "image/jpeg", title: "Portrait, nobody tagged yet", grampsId: "O2" },
+    { handle: "MTAG3", mime: "image/jpeg", title: "Photo with an unmarked tag", grampsId: "O3", tags: [
+      { grampsId: "I9002", name: "Sam Example", rect: null, isPrimary: false, attributes: [], notes: [], citations: [], source: "gramps" }
+    ] }
   ]
 };
-const PEOPLE = [{ grampsId: "I9002", displayName: "Sam Example", lifespanSummary: "1970-", isLiving: true }, { grampsId: "I9003", displayName: "Robin Sample", lifespanSummary: "1960-", isLiving: true }, { grampsId: "I9012", displayName: "Father Example", lifespanSummary: "1930-2001", isLiving: false }];
+const PEOPLE = [{ grampsId: "I9002", displayName: "Sam Example" }, { grampsId: "I9003", displayName: "Robin Sample" }, { grampsId: "I9012", displayName: "Father Example" }];
 
 /**
  * The flags, session, /api/me, the edit bundles and /api/changes in memory. `store` maps a Gramps id to { handle, version, obj }; `calls` collects every
@@ -35,7 +38,7 @@ const PEOPLE = [{ grampsId: "I9002", displayName: "Sam Example", lifespanSummary
  */
 async function stub(page, { flag = true, admin = false, editing = true } = {}) {
   const store = {
-    I9002: { handle: "hp2", version: 3, obj: { _class: "Person", handle: "hp2", gramps_id: "I9002", media_list: [ref("MTAG1", [10, 20, 30, 50])] } },
+    I9002: { handle: "hp2", version: 3, obj: { _class: "Person", handle: "hp2", gramps_id: "I9002", media_list: [ref("MTAG1", [10, 20, 30, 50]), ref("MTAG3", null)] } },
     I9012: { handle: "hp12", version: 5, obj: { _class: "Person", handle: "hp12", gramps_id: "I9012", media_list: [ref("MTAG1", [60, 15, 90, 45])] } },
     I9003: { handle: "hp3", version: 1, obj: { _class: "Person", handle: "hp3", gramps_id: "I9003", media_list: [] } }
   };
@@ -194,7 +197,7 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(op.value.rect.every(Number.isInteger)).toBe(true);
       expect(near(op.value.rect, [40, 60, 71, 91], 1), JSON.stringify(op.value.rect)).toBe(true);
       expect(op.value.rect[2] - op.value.rect[0]).toBeGreaterThanOrEqual(1);
-      expect(state.store.I9002.obj.media_list).toHaveLength(2);
+      expect(state.store.I9002.obj.media_list).toHaveLength(3); // the new tag, the one on this photo, and the unmarked one on the third
       // the page's own view of the photo has the new tag without a reload
       await toggle(page).click();
       await expect(page.locator("#mediaLightbox ul.photo-tags__names .photo-tags__name")).toHaveText(["Sam Example", "Father Example", "Sam Example"]);
@@ -304,11 +307,45 @@ for (const [name, viewport] of VIEWPORTS) {
       await mine.focus();
       await page.keyboard.press("ArrowRight");
       await page.keyboard.press("Shift+ArrowDown");
-      await expect(page.locator("#mediaLightboxCounter")).toHaveText("1 of 2"); // the arrows did not step to the next photo
+      await expect(page.locator("#mediaLightboxCounter")).toHaveText("1 of 3"); // the arrows did not step to the next photo
       await panel(page).locator("[data-hfy-tag-save]").click();
       await sheet(page).locator("[data-hfy-save]").click();
       await expect(panel(page).locator("[data-hfy-tag-toast]")).toBeVisible();
       expect(lastRealCall(state).body.ops[0].value).toEqual([11, 25, 31, 55]);
+    });
+
+    test("a tag without a box is listed in the panel: give it a box and the save sets the rect from null", async ({ page }) => {
+      const state = await tagging(page, {}, 2);
+      await expect(layer(page).locator("button.photo-tag-edit__region")).toHaveCount(0);
+      const list = panel(page).locator("[data-hfy-tag-noarea]");
+      await expect(list).toContainText("Sam Example");
+      await list.locator("button").click();
+      await expect(layer(page).locator("button.photo-tag-edit__region")).toHaveCount(1);
+      await expect(panel(page).locator("[data-hfy-tag-save]")).toBeEnabled();
+      await expect(panel(page).locator("[data-hfy-tag-remove]")).toBeVisible();
+      await panel(page).locator("[data-hfy-tag-save]").click();
+      await expect(sheet(page).locator("[data-hfy-group='hfy-sheet-direct']")).toContainText("change where Sam Example is tagged in this photo");
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(panel(page).locator("[data-hfy-tag-toast]")).toBeVisible();
+      const op = lastRealCall(state).body.ops[0];
+      expect(op.op).toBe("set");
+      expect(op.path).toMatch(/^\/media_list\/@ref=MTAG3#0:[0-9a-f]{12}\/rect$/);
+      expect(op.base).toBeNull();
+      expect(op.value).toEqual([35, 35, 65, 65]);
+      expect(state.store.I9002.obj.media_list[1].rect).toEqual([35, 35, 65, 65]);
+    });
+
+    test("drawing a new box does not discard an unsaved change to the tag being edited", async ({ page }) => {
+      await tagging(page, {}, 0);
+      await layer(page).locator("button.photo-tag-edit__region").nth(0).click();
+      await panel(page).locator("[data-move='right']").click();
+      await expect(panel(page).locator("[data-hfy-tag-save]")).toBeEnabled();
+      await page.locator("#mediaLightboxImage").scrollIntoViewIfNeeded(); // the panel's buttons scrolled the photo away on a phone
+      await drag(page, [40, 70], [55, 90]);
+      await expect(panel(page).locator("[data-hfy-tag-toast]")).toContainText("save or cancel");
+      await expect(panel(page).locator("[data-hfy-tag-who]")).toContainText("Sam Example");
+      await expect(panel(page).locator("[data-hfy-tag-save]")).toBeEnabled();
+      await expect(layer(page).locator(".photo-tag-edit__draft")).toHaveCount(0);
     });
 
     test("remove your own tag; a tag of someone else has no remove button", async ({ page }) => {
@@ -327,7 +364,7 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(op.op).toBe("remove");
       expect(op.path).toMatch(/^\/media_list\/@ref=MTAG1#0:[0-9a-f]{12}$/);
       expect(op.base).toMatchObject({ ref: "MTAG1", rect: [10, 20, 30, 50] });
-      expect(state.store.I9002.obj.media_list).toEqual([]);
+      expect(state.store.I9002.obj.media_list.map((m) => m.ref)).toEqual(["MTAG3"]); // the unmarked tag on the third photo stays
       await expect(layer(page).locator("button.photo-tag-edit__region")).toHaveCount(1);
     });
 
@@ -439,7 +476,7 @@ test("the next photo: the editor follows the lightbox, the mode stays on, and an
   await tagging(page, {}, 0);
   await expect(layer(page).locator("button.photo-tag-edit__region")).toHaveCount(2);
   await page.keyboard.press("ArrowRight");
-  await expect(page.locator("#mediaLightboxCounter")).toHaveText("2 of 2");
+  await expect(page.locator("#mediaLightboxCounter")).toHaveText("2 of 3");
   await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
   await expect(layer(page)).toBeVisible();
   await expect(layer(page).locator("button.photo-tag-edit__region")).toHaveCount(0);

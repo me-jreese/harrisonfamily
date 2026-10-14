@@ -223,6 +223,8 @@
   background: var(--io-color-semantic-surface-raised);
 }
 .photo-tag-edit__list[hidden] { display: none; }
+.photo-tag-edit__noarea { display: grid; gap: var(--io-space-2); }
+.photo-tag-edit__noarea-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--io-space-2); }
 .photo-tag-edit__option {
   display: flex;
   align-items: center;

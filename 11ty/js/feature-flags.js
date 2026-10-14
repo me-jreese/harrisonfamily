@@ -60,8 +60,8 @@
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "d1ef02bb",
-        "css": "b812ec37"
+        "js": "402581b6",
+        "css": "6226b36b"
       },
       "photo-tags": {
         "js": "5d8ede95",

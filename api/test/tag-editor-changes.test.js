@@ -9,6 +9,11 @@ import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 import { buildTagOps } from "../../islands/src/lib/photo-tag-edit.js";
+import { InMemoryNotificationStore, DynamoPreferencesStore, DynamoSubscriptionStore } from "@io-kit/notify/server";
+import { createFanoutNotifier, createRecordFanout } from "../src/record-change-fanout.js";
+import { createSubscriptions } from "../src/subscriptions.js";
+import { queryFollowers } from "../src/notify.js";
+import { seqKey } from "../src/sync/store.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -100,6 +105,23 @@ describe("a member tags themselves (their own record): saves now", () => {
   });
 });
 
+describe("a tag without a box (rect null) is given one or removed", () => {
+  it("the set of rect from null saves now with the integer rect; removing the area-less tag leaves the others", async () => {
+    const w = await world();
+    // the stored shape an old Gramps export holds (a MediaRef with no area): put into the head row directly, as a sync would have written it
+    const row = w.ddb.rows.get(`REC#Person#${w.me.handle}\u0000HEAD`);
+    row.obj_json = JSON.stringify({ ...w.head(w.me).obj, media_list: [mref(null), mref([50, 50, 70, 70])] });
+    const give = buildTagOps(bundleOf(w, w.me), { kind: "move", mediaHandle: photo.handle, from: null, rect: [35.2, 35, 65, 65] });
+    expect(give.ok).toBe(true);
+    const r = await w.post(ME, bodyOf(w, w.me, give), { idem: "na1" });
+    expect(r.status).toBe(201);
+    expect(w.head(w.me).obj.media_list.map((m) => m.rect)).toEqual([[35, 35, 65, 65], [50, 50, 70, 70]]);
+    const rm = buildTagOps(bundleOf(w, w.me), { kind: "remove", mediaHandle: photo.handle, from: [50, 50, 70, 70] });
+    expect((await w.post(ME, bodyOf(w, w.me, rm), { idem: "na2" })).status).toBe(201);
+    expect(w.head(w.me).obj.media_list.map((m) => m.rect)).toEqual([[35, 35, 65, 65]]);
+  });
+});
+
 describe("a member tags someone else: a proposal, and nothing changes until it is approved", () => {
   it("the dry run puts it in the review group and the save stores a proposal only", async () => {
     const w = await world();
@@ -169,5 +191,86 @@ describe("a stale key is a conflict that changes nothing", () => {
     expect((await w.post(ME, bad([10.5, 10, 30, 30]), { idem: "b1" })).status).toBe(400);
     expect((await w.post(ME, bad([0, 0, 100, 100]), { idem: "b2" })).status).toBe(400);
     expect(w.head(w.me).obj.media_list).toEqual([]);
+  });
+});
+
+// AC4 (notify half): a web tag that saved now is a log entry with origin "self" (your own page) or "admin"; the render outbox item the renderer
+// writes over that range (SYNC#RENDERED, shaped by hand here as in record-change-fanout.test.js) names the tagged person's page, and the fan-out
+// consumer tells the tagged person's owner and each follower. Add, move and remove all reach the same two inboxes.
+describe("a tag that saved now notifies the tagged person's owner and followers (render-outbox fan-out)", () => {
+  const FOLLOWER = "I0042";
+  const logEntries = (w) => w.rows("SYNC#LOG").filter((r) => /^\d{12}$/.test(r.SK)).sort((a, b) => a.SK.localeCompare(b.SK));
+  const maxSeq = (w) => Math.max(0, ...logEntries(w).map((r) => Number(r.SK)));
+
+  async function fanWorld({ members }) {
+    const w = await world();
+    const inbox = new InMemoryNotificationStore();
+    const clock = { t: Date.parse("2026-10-14T10:00:00Z") };
+    const notifier = createFanoutNotifier({
+      inbox, featureOn: async () => true, listMembers: async () => new Set(members), followersOf: queryFollowers(w.ddb, cmds, TABLE),
+      preferences: new DynamoPreferencesStore(w.ddb, cmds, TABLE), subscriptions: new DynamoSubscriptionStore(w.ddb, cmds, TABLE), log: { error() {} },
+    });
+    const fanout = createRecordFanout({ ddb: w.ddb, cmds, table: TABLE, notifier, now: () => clock.t, log: { error() {}, warn() {} }, labelOf: async (id) => id });
+    await createSubscriptions({ ddb: w.ddb, cmds, table: TABLE, actor: { id: FOLLOWER }, now: () => clock.t, personExists: async () => true }).put(OTHER);
+    const items = async (p) => (await inbox.list(p)).items;
+    /** Process the outbox item the renderer would write over the log entries after `from`. */
+    const render = (from, changed) => {
+      const entries = logEntries(w).filter((r) => Number(r.SK) > from);
+      const seqTo = Number(entries.at(-1).SK);
+      const item = {
+        PK: "SYNC#RENDERED", SK: seqKey(seqTo), entity: "rendered", seq_from: from + 1, seq_to: seqTo, baseline: false, changed_people: [changed], changed_count: 1,
+        deleted_people: [], deleted_count: 0, principals: [...new Set(entries.map((r) => r.principal).filter(Boolean))], origins: [...new Set(entries.map((r) => r.origin))],
+        entries: entries.length, truncated: false, at: new Date(clock.t).toISOString(), ttl: 1,
+      };
+      w.ddb.rows.set(`${item.PK}\u0000${item.SK}`, item);
+      return { item, entries };
+    };
+    return { ...w, items, render, fanout };
+  }
+
+  it("an admin's tag add, move and remove on someone's page: origin admin in the log, and the owner and the follower are told each time", async () => {
+    const f = await fanWorld({ members: [OTHER, FOLLOWER] });
+    for (const [n, step] of [["add", (b) => buildTagOps(b, { kind: "add", mediaHandle: photo.handle, rect: [40, 40, 60, 60] })],
+      ["move", (b) => buildTagOps(b, { kind: "move", mediaHandle: photo.handle, from: [40, 40, 60, 60], rect: [41, 40, 61, 60] })],
+      ["remove", (b) => buildTagOps(b, { kind: "remove", mediaHandle: photo.handle, from: [41, 40, 61, 60] })]]) {
+      const from = maxSeq(f);
+      const built = step(bundleOf(f, f.other));
+      expect(built.ok, n).toBe(true);
+      const r = await f.post(ADMIN, bodyOf(f, f.other, built), { idem: `fan-admin-${n}` });
+      expect(r.status, n).toBe(201);
+      expect(r.body.applied, n).not.toBeNull();
+      const { item, entries } = f.render(from, "I0002");
+      expect(entries.length, n).toBeGreaterThan(0);
+      expect(new Set(entries.map((e) => e.origin)), n).toEqual(new Set(["admin"]));
+      const out = await f.fanout.processRendered(item);
+      expect(out.status, n).toBe("notified");
+      expect(out.delivered, n).toBeGreaterThanOrEqual(1);
+    }
+    // coalesced by page: one owner item and one follower item, counting the three changes
+    expect(await f.items(OTHER)).toEqual([expect.objectContaining({ type: "record_updated_mine", group: "rec:person:I0002", navigate: "/person/?id=I0002", count: 3 })]);
+    expect(await f.items(FOLLOWER)).toEqual([expect.objectContaining({ type: "record_updated_followed", navigate: "/person/?id=I0002" })]);
+    expect(await f.items(ADMIN)).toEqual([]);
+  });
+
+  it("a member tagging themselves: origin self, and a follower of that page is told, the tagger (the owner) is not", async () => {
+    const f = await fanWorld({ members: [ME, FOLLOWER] });
+    await createSubscriptions({ ddb: f.ddb, cmds, table: TABLE, actor: { id: FOLLOWER }, now: () => Date.now(), personExists: async () => true }).put(ME);
+    const from = maxSeq(f);
+    const built = buildTagOps(bundleOf(f, f.me), { kind: "add", mediaHandle: photo.handle, rect: [10, 10, 30, 30] });
+    expect((await f.post(ME, bodyOf(f, f.me, built), { idem: "fan-self-1" })).status).toBe(201);
+    const { item, entries } = f.render(from, ME);
+    expect(new Set(entries.map((e) => e.origin))).toEqual(new Set(["self"]));
+    expect((await f.fanout.processRendered(item)).status).toBe("notified");
+    expect(await f.items(ME)).toEqual([]);
+    expect((await f.items(FOLLOWER)).map((i) => i.type)).toEqual(["record_updated_followed"]);
+  });
+
+  it("someone else's tag is a proposal: no log entry, so nothing is announced until it is approved", async () => {
+    const f = await fanWorld({ members: [OTHER, FOLLOWER] });
+    const before = maxSeq(f);
+    const built = buildTagOps(bundleOf(f, f.other), { kind: "add", mediaHandle: photo.handle, rect: [40, 40, 60, 60] });
+    expect((await f.post(ME, bodyOf(f, f.other, built), { idem: "fan-prop-1" })).status).toBe(201);
+    expect(maxSeq(f)).toBe(before);
+    expect(await f.items(OTHER)).toEqual([]);
   });
 });

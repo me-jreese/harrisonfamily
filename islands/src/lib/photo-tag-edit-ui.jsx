@@ -263,7 +263,8 @@ function TagEditor({ detail, me, person }) {
   const pick = (item) => {
     setToast("");
     const v = item.view;
-    setSel({ kind: "existing", id: item.i, grampsId: v.grampsId, name: v.name, from: v.rect, nth: item.nth, rect: v.rect.slice(), dirty: false });
+    // A tag without a box starts as the default box and is dirty at once: saving it gives the tag its place.
+    setSel({ kind: "existing", id: item.i, grampsId: v.grampsId, name: v.name, from: v.rect, nth: item.nth, rect: v.rect ? v.rect.slice() : [...DEFAULT_RECT], dirty: !v.rect });
   };
   const addNew = (person0 = null) => {
     setToast("");
@@ -289,13 +290,18 @@ function TagEditor({ detail, me, person }) {
     if (layerRef.current && layerRef.current.setPointerCapture) { try { layerRef.current.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ } }
     drag.current = { mode, start: p, orig: sel ? sel.rect : null, id: e.pointerId, prev: sel, ...extra };
   };
-  const onLayerDown = (e) => { if (e.target === e.currentTarget) begin(e, "draw"); };
+  const onLayerDown = (e) => {
+    if (e.target !== e.currentTarget) return;
+    // A real draw replaces the selection, so one with an unsaved change is not drawn over: finish or cancel it first.
+    if (sel && sel.kind === "existing" && sel.dirty) { setToast(TAG_COPY.finishFirst); return; }
+    begin(e, "draw");
+  };
   const onMove = (e) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
     const p = pctAt(e);
     if (!p) return;
-    if (d.mode === "draw") { if (isDrawn(d.start, p)) setSel({ kind: "new", rect: rectBetween(d.start, p), person: null, dirty: true, drawing: true }); }
+    if (d.mode === "draw") { if (isDrawn(d.start, p)) setSel({ kind: "new", rect: rectBetween(d.start, p), person: d.prev && d.prev.kind === "new" ? d.prev.person : null, dirty: true, drawing: true }); }
     else if (d.mode === "move") setRect(moveRect(d.orig, p.x - d.start.x, p.y - d.start.y));
     else if (d.mode === "corner") setRect(dragCorner(d.orig, d.corner, p));
   };
@@ -364,6 +370,8 @@ function TagEditor({ detail, me, person }) {
     return { left: `${c === "nw" || c === "sw" ? b.left : b.left + b.width}px`, top: `${c === "nw" || c === "ne" ? b.top : b.top + b.height}px` };
   };
   const editable = (item) => Boolean(item.view.rect) && isTaggable(item.view.grampsId);
+  const arealess = items.filter((item) => !item.view.rect && isTaggable(item.view.grampsId));
+  const chosen = (item) => Boolean(sel && sel.kind === "existing" && sel.id === item.i);
   const handles = sel && geometry ? CORNERS.map((c) => (
     <button
       key={c} type="button" className="photo-tag-edit__handle" data-corner={c} aria-label={TAG_COPY.handleLabel[c]} style={corner(sel.rect, c)}
@@ -377,7 +385,7 @@ function TagEditor({ detail, me, person }) {
       onPointerDown={onLayerDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
       onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()} onKeyDown={guardSheet} data-hfy-tag-layer
     >
-      {geometry && items.filter(editable).map((item) => {
+      {geometry && items.filter((item) => editable(item) || (chosen(item) && isTaggable(item.view.grampsId))).map((item) => {
         const here = sel && sel.kind === "existing" && sel.id === item.i;
         return (
           <button
@@ -404,6 +412,19 @@ function TagEditor({ detail, me, person }) {
         {!sel && (
           <>
             <p className="photo-tag-edit__hint">{TAG_COPY.intro}</p>
+            {arealess.length > 0 && (
+              <div className="photo-tag-edit__noarea" data-hfy-tag-noarea>
+                <h4 className="photo-tag-edit__h">{TAG_COPY.noAreaHeading}</h4>
+                <p className="photo-tag-edit__hint">{TAG_COPY.noAreaHint}</p>
+                <ul className="photo-tag-edit__noarea-list">
+                  {arealess.map((item) => (
+                    <li key={item.i}>
+                      <button type="button" className="photo-tag-edit__btn" onClick={() => pick(item)} data-hfy-tag-noarea-pick={item.i}>{TAG_COPY.noAreaGive(item.view.name)}</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="photo-tag-edit__row">
               <button type="button" className="photo-tag-edit__btn photo-tag-edit__btn--primary" ref={addRef} onClick={() => addNew(null)} data-hfy-tag-add>{TAG_COPY.addTag}</button>
               {isTaggable(me.id) && <button type="button" className="photo-tag-edit__btn" onClick={() => addNew({ id: me.id, name: text(me.label) || me.id })} data-hfy-tag-me>{TAG_COPY.tagMyself}</button>}

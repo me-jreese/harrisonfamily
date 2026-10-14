@@ -196,7 +196,8 @@ export function buildTagOps(bundle, change) {
   if (change.kind === "add") {
     const rect = toGrampsRect(change.rect);
     if (!rect) return { ok: false, reason: "invalid" };
-    if (mediaRefsOf(obj, change.mediaHandle).some((r) => sameRect(r.rect, rect))) return { ok: false, reason: "exists" };
+    // Compared in normal order, like findTagElement: a stored rect with reversed corners is the same box.
+    if (mediaRefsOf(obj, change.mediaHandle).some((r) => sameRect(normalizeRect(r.rect), rect))) return { ok: false, reason: "exists" };
     const value = newMediaRef(change.mediaHandle, rect);
     const op = Array.isArray(obj.media_list)
       ? { id: OP_IDS.add, op: "add", obj: key, path: "/media_list", value }
@@ -281,6 +282,10 @@ export const TAG_COPY = Object.freeze({
   invalid: "that box can't be saved. try drawing it again.",
   loadFailed: "we couldn't open that person's page to save the tag. try again in a moment.",
   tapHint: "tap a box to change it.",
+  noAreaHeading: "tagged without a box",
+  noAreaHint: "these people are tagged in this photo but no box is marked. give one a box, or remove the tag.",
+  noAreaGive: (name) => `${name}: mark where they are`,
+  finishFirst: "save or cancel the change you are making before you draw a new box.",
   regionLabel: (name) => `${name}: change this tag`,
   handleLabel: Object.freeze({ nw: "resize from the top left corner", ne: "resize from the top right corner", sw: "resize from the bottom left corner", se: "resize from the bottom right corner" }),
   nudgeLabel: (edge, dir) => `move the ${edge} ${dir}`,
