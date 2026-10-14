@@ -71,13 +71,7 @@ islands/playwright-report/
 !/harrisonfamily-frontend/place/P0001.json
 !/harrisonfamily-frontend/place/index.json
 
-/workspace/*
-!/workspace/11ty-dev/
-/workspace/11ty-dev/*
-!/workspace/11ty-dev/src/
-/workspace/11ty-dev/src/*
-!/workspace/11ty-dev/src/_data/
-/workspace/11ty-dev/src/_data/*
+/workspace/
 
 /workspace-local/
 /gramps_exports/*

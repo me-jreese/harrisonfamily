@@ -51,14 +51,11 @@ A push to `main` starts `io-kit-deploy.yml`. When the `io-kit-deploy.yml` run su
 | `node_version` | `"22"` | Node version for `actions/setup-node`. |
 | `build.cmd` | `echo "11ty/ is committed output; nothing to build"` | Build command, run from the checkout root. It builds nothing: `11ty/` is committed output, and HFY-TSK-317 removed the client-ID patch and the Lambda zip. See [build scripts](#build-scripts-scriptsci). |
 | `build.out` | `11ty` | Build output directory. The build fails if it does not exist afterwards. |
-
-
 | `parity.mode` | `block` | Pipeline drift fails the `parity` job and so the pull request check (`pipeline_drift`). No `parity.baseline` is set. |
 | `secrets_scan` | `trufflehog` | Secret scanner for CI. |
 | `deploy.aws_role_secret` | `AWS_DEPLOY_ROLE_TO_ASSUME` | Secret that holds the OIDC deploy role ARN. |
 | `deploy.region` | `us-west-2` | AWS region. |
 | `deploy.targets[0]` | `kind: s3_static`, `bucket: <site-bucket>`, `distribution: <distribution-id>`, `invalidate: ["/*"]`, and seven `exclude` patterns: `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*`, `uploads/*` | Static site target. The sync never deletes or overwrites objects under the excluded patterns: the family data prefixes and member uploads. |
-
 | `deploy.smoke` | `https://<site>/`, `https://<site>/family-login/` | URLs checked after a deploy. Both are HTML pages, and the second is the redirect page to `/auth/login`. |
 | `deploy.rollback.strategy` | `previous_artifact` | Rollback redeploys the release artifact of the previous successful deploy run. |
 
@@ -104,7 +101,6 @@ Each action lives in its own directory under [`.github/actions/io-kit-ci/`](../.
 | `build` | Sets up Node, runs `bash -c "<build.cmd>"`, then checks that `build.out` exists. |
 | `package` | Writes `.io-kit-ci/release.json` (`sha`, `ref`, `run_id`) and uploads `11ty/` and `release.json` as artifact `io-kit-release-<sha>`. It fails if no files are found. Retention is 90 days. |
 | `deploy-static` | For each `s3_static` target: one `aws s3 sync <out>/ s3://<bucket>/ --delete --only-show-errors` with one `--exclude` per pattern. The single sync uploads the HTML pages and the files they reference in no set order. |
-
 | `invalidate` | For each target with a distribution: `create-invalidation` on the target's paths, then `aws cloudfront wait invalidation-completed`. It invalidates CloudFront only. |
 | `smoke` | Runs `curl` on each URL without following redirects (20 s timeout, 3 retries 5 s apart). A 2xx or 3xx status passes. Any other status, or no response, fails. Every URL is checked before the step fails. |
 | `rollback` | Uses `gh run list` with the job's `github.token` to find the most recent successful run of `io-kit-deploy.yml` on the same branch, deletes `11ty/`, and downloads that run's `io-kit-release-<sha>`. It then runs `deploy-static` and `invalidate`. It fails when no earlier successful run exists, as on the first run, or when that run's artifact has expired. |
@@ -191,7 +187,6 @@ The role has no CloudFormation, IAM or Secrets Manager permissions, no CloudFron
 | Secret | Used by | Holds |
 |---|---|---|
 | `AWS_DEPLOY_ROLE_TO_ASSUME` | `io-kit-deploy.yml` jobs `deploy`, `invalidate` and `rollback_on_smoke_fail` | The ARN of the OIDC deploy role, the `DeployRoleArn` output of [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml). |
-
 | `GCP_SERVICE_ACCOUNT_KEY` | `deploy-gcf-legacy.yml`, when started by hand | A Google service-account JSON key, used only for the legacy Cloud Function. |
 
 ### `post-deploy-checks.yml`
@@ -207,7 +202,7 @@ No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the
 | Item | Built or run by | How it reaches production |
 |---|---|---|
 | Islands build output: `11ty/js/islands/`, `11ty/css/hfy-theme.css`, `11ty/css/auth-edge.css`, `11ty/fonts/`, the head blocks, Voice copy and `?v=<sha8>` versions in the pages, the `11ty/manifest.webmanifest` colours, the stamped `11ty/sw.js` and `11ty/js/feature-flags.js`, and `theme.cssUrl` in `auth/edge.manifest.json` | [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh), or `npm run build` in `islands/`, by hand | All of it is committed build output (HFY-R58, see [`.gitignore`](../../.gitignore)). Everything under `11ty/` ships with the `11ty/` sync. The `cssUrl` reaches the sign-in pages only when `hfy-auth-edge` is redeployed (below). No workflow builds any of it or runs `npm run check:islands`, which reports stale output. See [build and preview the islands](../how-to/build-and-preview-the-islands.md) and [theme and asset build](theme-and-asset-build.md). |
-| Lambda `hfy-api` | [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) builds `dist/hfy-api.zip` | By hand. The zip is uploaded to `<code-bucket>` as `lambda/hfy-api-<sha>.zip` and reaches `<app-stack>` through a CloudFormation change set. A change under `api/src/`, such as the push notification copy in [`api/src/notify.js`](../../api/src/notify.js), reaches production only this way. The manifest's only Lambda target is `hfy-check-allowed`, although the deploy role's `LambdaDeploy` statement also covers this function. See [deploy the app stack](../how-to/deploy-the-app-stack.md). |
+| Lambda `hfy-api` | [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) builds `dist/hfy-api.zip` | By hand. The zip is uploaded to `<code-bucket>` as `lambda/hfy-api-<sha>.zip` and reaches `<app-stack>` through a CloudFormation change set. A change under `api/src/`, such as the push notification copy in [`api/src/notify.js`](../../api/src/notify.js), reaches production only this way. The manifest has no Lambda target, although the deploy role's `LambdaDeploy` statement covers this function. See [deploy the app stack](../how-to/deploy-the-app-stack.md). |
 | Lambda `hfy-auth-edge` | [`scripts/ci/package-auth.sh`](../../scripts/ci/package-auth.sh) builds `dist/hfy-auth-edge.zip`, which includes `auth/edge.manifest.json` | Same as `hfy-api`, under the key `lambda/hfy-auth-edge-<sha>.zip`. A change under `auth/src/` or to `auth/edge.manifest.json` reaches production only this way, including the sign-in copy, the HTML overrides and the `theme.cssUrl` that the islands build restamps whenever `11ty/css/auth-edge.css` changes. |
 | App stack ([`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)) and deploy-role stack | CloudFormation, by hand | The deploy role has no CloudFormation or IAM permissions. |
 | Lambda@Edge `hfy-edge-gate` | [`scripts/ci/package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh) builds `dist/hfy-edge-gate.zip` and `dist/hfy-edge-gate.params` | By hand, in `us-east-1`. The zip is uploaded to its content-addressed `CodeKey` in `<edge-code-bucket>`, and stack `hfy-edge-gate` ([`edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml)) is deployed with that `CodeKey` and its `CodeSha256`, which publishes a numbered version. The version is invoked with synthetic viewer-request events before [`add-data-gate-behaviors.sh`](#data-gate-behaviors) attaches it. See [deploy the edge functions](../how-to/deploy-the-edge-functions.md) and [cut over to the private data gate](../how-to/cut-over-to-the-private-data-gate.md). |
@@ -222,8 +217,6 @@ No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the
 
 | Script | Run by | Inputs | Output | Behavior |
 |---|---|---|---|---|
-
-
 | [`build-islands.sh`](../../scripts/ci/build-islands.sh) | Hand | `islands/package.json`, `islands/package-lock.json`, `islands/build.mjs` and its modules, `islands/src/` | Everything the islands build writes, all committed: `11ty/js/islands/`, `11ty/css/hfy-theme.css`, `11ty/css/auth-edge.css`, `11ty/fonts/`, the pages it edits, `11ty/manifest.webmanifest`, `11ty/sw.js`, `11ty/js/feature-flags.js` and `auth/edge.manifest.json`. See [theme and asset build](theme-and-asset-build.md). | Runs `npm ci --ignore-scripts` (output suppressed), which also installs the `@fontsource` dev dependencies the build reads, and `npm run build:islands`. It then requires `11ty/js/islands/shell.js` and `shell.css` to be non-empty and prints `built islands -> 11ty/js/islands`. It checks none of the other outputs. |
 | [`package-api.sh`](../../scripts/ci/package-api.sh) | Hand | `api/src/`, `api/scripts/`, `api/package.json`, `api/package-lock.json`, `api/.npmrc` | `dist/hfy-api.zip` (handler `src/index.handler`); `api/dist/caps.json` | Copies the inputs to a temporary stage and runs `npm ci --omit=dev --ignore-scripts` there. It removes `.npmrc` and the lockfile from the stage, then runs [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs) inside the stage, against the packages just installed, and removes `scripts/`. `gen-caps.mjs` writes `dist/caps.json`, `dist/policy.json` (the permission table, from [`api/src/policy.js`](../../api/src/policy.js)), `dist/mcp/tools.json` and `dist/mcp/parity-caps.json` into the stage, so all four are in the zip. The script exits 1 if `dist/caps.json` is missing or empty. It copies only `caps.json` to `api/dist/`, zips the stage with `-X`, and prints the zip path and size. It does not use `api/node_modules/`. |
 | [`package-auth.sh`](../../scripts/ci/package-auth.sh) | Hand | `auth/src/`, `auth/edge.manifest.json`, `auth/package.json`, `auth/package-lock.json`, `auth/.npmrc` | `dist/hfy-auth-edge.zip` (handler `src/index.handler`) | Same staging and install as `package-api.sh`, with no capabilities step. |
@@ -643,10 +636,7 @@ No workflow runs any of these. For the order to run them in, see [run the tests]
 | Variable | Read by | Default | Effect |
 |---|---|---|---|
 | `HFY_SITE_BASE` | Config | `https://<site>` | Site under test. |
-
-
 | `HFY_EXPECT_GRAMPS` | `auth-v2.spec.ts` | `<gramps-id>` (see [known code issues](#known-code-issues)) | The gramps_id expected in the My Record link and in the session `sub`. |
-
 | `HFY_AUTH_V2` | `auth-v2.spec.ts` | Unset | `1` enables the `auth-v2` spec. Otherwise it is skipped. |
 | `HFY_TEST_EMAIL` | `auth-v2.spec.ts` | Unset | A Cognito user on the allowlist. With `HFY_TEST_PASSWORD`, this enables the password-path test. |
 | `HFY_TEST_PASSWORD` | `auth-v2.spec.ts` | Unset | That user's password. |

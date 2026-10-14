@@ -202,7 +202,6 @@ The same shape appears in a person's `mediaGallery` and `primaryPhoto`.
 | Consumer | Reads | Fields it depends on |
 | --- | --- | --- |
 | [`11ty/js/person-page.js`](../../11ty/js/person-page.js) | `person/<gramps-id>.json`, media binaries, the tree SVG | All person keys. It hides the death details when `isLiving` is `true`, inserts `notes[].html` as-is, and builds media URLs from `s3Key`, else from `handle` and `mime`. |
-
 | Search island: [`islands/src/islands/search.jsx`](../../islands/src/islands/search.jsx) through [`islands/src/lib/people-corpus.js`](../../islands/src/lib/people-corpus.js) | The same two files | The same manifest fields. It derives surname and given name from `displayName`, and years from `lifespanSummary`. |
 | Person island: [`islands/src/islands/person.jsx`](../../islands/src/islands/person.jsx) (`personV2`) | `person/<gramps-id>.json` | `notes[].raw` only, rendered as Markdown under the kit's user-content policy. |
 | `<project>/scripts/search/build_search_index.js` | Every person record in its directory | `handle`, `grampsId`, `displayName`, `givenName`, `surname`, `isLiving`, `lifespan.birth.year`, `lifespan.death.year`, `lifespan.summary`, `primaryPhoto.s3Key`, `primaryPhoto.placeholderImage`. |
@@ -409,7 +408,6 @@ The deployed site, its Lambdas and CI use no Google client secret, and the Cogni
 | `HFY_CF_BACKUP_DIR` | `lib/cf-common.sh`, for every real update by the `add-*-behavior.sh` scripts, `add-data-gate-behaviors.sh` and `publish-append-index.sh` | The directory for pre-change backups. Not a secret, but the distribution backups written there hold the origin-verify value. |
 | `CF_ZONE_ID`, `CF_API_TOKEN` | The optional Cloudflare purge command in [Cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare). No script reads them. | The Cloudflare zone ID, and an API token with the Zone > Cache Purge permission. The token is a credential. The how-to reads it into the shell with `read -rs`, so it is never typed into a command or saved in the shell history, and it is never recorded. `curl` still receives it in its arguments while the purge runs, where other local users can see it in the process list. |
 | `HFY_TEST_EMAIL`, `HFY_TEST_PASSWORD` | [`tests/login-flow/tests/auth-v2.spec.ts`](../../tests/login-flow/tests/auth-v2.spec.ts) | `<test-email>`, `<test-password>` |
-
 | `HFY_GOOGLE_CLIENT_ID`, `HFY_GOOGLE_CLIENT_SECRET`, `HFY_GOOGLE_REFRESH_TOKEN` | `mint_test_id_token.py` (out of repository; nothing in the repository runs it now) | The OAuth client and a refresh token for an allowlisted Google account |
 | `HFY_EXPECT_GRAMPS` | `tests/login-flow/tests/auth-v2.spec.ts` | The test member's `<gramps-id>`. Not a secret, but a real ID. |
 

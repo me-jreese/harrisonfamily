@@ -78,7 +78,7 @@ gh pr create --base main --title "HFY-TSK-<n>: <summary>" --body "<what changed 
 gh pr checks <pr-number> --watch
 ```
 
-The pull request runs [`io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml): the release build (client ID patch and Lambda package), the pipeline drift report and a TruffleHog scan of the commit range. All three must pass. The drift report runs in report mode, so it passes even when it finds drift. Open the `parity` job's summary and confirm that it says `no pipeline_drift`. Drift means a rendered workflow file was edited by hand; see [Change the CI pipeline](change-the-ci-pipeline.md).
+The pull request runs [`io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml): the release build, which only echoes because `11ty/` is committed output, the pipeline drift report and a TruffleHog scan of the commit range. All three must pass. The drift report blocks: drift fails the `parity` job, and its summary lists each `pipeline_drift` file instead of `no pipeline_drift`. Drift means a rendered workflow file was edited by hand; see [Change the CI pipeline](change-the-ci-pipeline.md).
 
 No check runs a test suite or `check:islands`. The other gates are local:
 

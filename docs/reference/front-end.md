@@ -222,14 +222,10 @@ A `next` value is used as the return path only when all of these hold (HFY-TSK-0
 | `updateState(partial)` | Merges `partial` into the default state, then re-applies visibility. |
 | `shouldShow(key, overrides)` | Evaluates component `key`'s `showWhen` rules against the default state, with the edge overlay laid over it when set, merged with `overrides`. |
 | `refresh()` | Re-applies visibility to every `[data-feature]` element, using the default state with the edge overlay laid over it. |
-
-
-
 | `resolveFlags()` | Returns a promise of the merged flags. It is memoized: the first call fetches, and every later call returns the same promise. A change to `flags.json` or to the override therefore takes effect on the next page load. |
 | `loadIsland(name, { onError, onLoad })` | Appends `<link rel="stylesheet" href="/js/islands/<name>.css?v=<sha8>">` to `<head>`, then appends `<script type="module" src="/js/islands/<name>.js?v=<sha8>">` once that stylesheet has fired `load` or `error`, so an island never mounts unstyled. Each `?v` comes from the stamped block, and without a stamp the bare path is used. Runs once per name, and returns the script element. |
 | `assetVersions` | The stamped `hfy-asset-versions` map: each island's `js` and `css` hash, and `theme`, `manifest` and `sw`. The shell island reads `sw` to register the service worker. |
 | `whenIsland(name)` | Resolves `true` once the named island has loaded and run, and `false` if it failed or was never requested on this page. |
-
 | `overrideActive()` | Whether a preview override is in effect on this page. |
 | `clearOverride(reason)` | Removes the override from `sessionStorage` (and any old `localStorage` copy), removes the banner, and logs `reason` when given. The current page keeps the flags it has already resolved. |
 | `flagUnavailable(what)` | Calls `clearOverride` when an override is active. The loader calls it when an island fails, and `auth-v2.js` when `/auth/session` does not answer. |
@@ -271,8 +267,6 @@ Callers and their load mode:
 |---|---|---|---|
 | [`person-page.js`](../../11ty/js/person-page.js) | `/person/<gramps_id>.json` | Interactive | The visitor is sent to sign in. If the bounce guard skips that, the page shows "Your sign-in has expired. Sign in again to see this page.", where "Sign in again" links to `signInUrl()`. Any other failure, such as a 404, shows the page's single error line (`VOICE.error` in `person-page.js`). |
 | `person-page.js` | The family-tree SVG | Background | The tree area shows the same error line in place of the tree. The record stays. |
-
-
 | [`person` island](../../islands/src/islands/person.jsx) | `/person/<gramps_id>.json` | Background | The legacy notes stay. The island never redirects. |
 | [`people-corpus.js`](../../islands/src/lib/people-corpus.js) (search island, shell launcher) | The two index files | Interactive. It passes no options. | The corpus load fails with the signed-out line from `SEARCH_COPY`, which the search island shows in its banner. |
 
@@ -292,20 +286,15 @@ window.HFY_FEATURE_FLAGS = Object.assign(
 );
 ```
 
-The data comes from `src/_data/featureFlags.js` in `<eleventy-source>`. The repository holds a tracked copy at [`workspace/11ty-dev/src/_data/featureFlags.js`](../../workspace/11ty-dev/src/_data/featureFlags.js), which nothing builds from and which still names the retired `gateway` entry.
+The data comes from `src/_data/featureFlags.js` in `<eleventy-source>`, outside the repository. The table gives the values in the committed pages. [Mirror the missing parts](../how-to/refresh-the-eleventy-output.md#mirror-the-missing-parts) lists what the source's data file must drop to match them.
 
 | Field | Rendered value | Meaning |
 |---|---|---|
 | `defaultState` | `loggedIn: false`, `userGrampsID: null`, `hasRecord: false` | The state before the edge session answers. |
-
-
-
-
 | `components` | Three entries, listed below | Visibility rules for `[data-feature]` elements. |
 
 | Component | Shown when | Elements |
 |---|---|---|
-
 | `familyLoginLink` | `loggedIn` is `false`, unknown or `null` | The navbar "FAMILY LOGIN" item and the homepage "sign in" button. |
 | `logoutLink` | `loggedIn` is `true` | The navbar "LOG OUT" item. |
 | `myRecordLink` | `loggedIn` and `hasRecord` are both `true` | The navbar "MY RECORD" item. |
@@ -559,8 +548,6 @@ The keys that the site's scripts and islands, and the auth edge's sign-in page o
 | `hfy:install-dismissed` | `localStorage` | The shell island | `"1"` after "not now" on the add-to-home-screen card. |
 | `hfy:notify-nudge` | `localStorage` | The notifications island, through the kit's push nudge | The nudge's dismissal. |
 | `io-passkey-dismissed` | `localStorage` | The sign-in page that `@io-kit/auth` serves under `/auth/` | `"1"` after the member declines the offer to add a passkey ([Identity services: Passkeys](identity-services.md#passkeys)). |
-
-
 | `HFY_AUTH_ID_TOKEN`, `HFY_AUTH_USER_GRAMPS_ID`, and `HFY_GATEWAY_SESSION_V1` in `sessionStorage` | `localStorage` | Nothing now | Left by the retired Google sign-in (`auth.js`, HFY-TSK-317). `feature-flags.js` deletes them on every page it loads (`HFYFeatureFlags.purgeRetiredKeys()`, which the shell's sign-out also calls); no script writes them. `HFY_SEARCH_DATA_CACHE_V1` in `sessionStorage`, from the retired navbar search, is not deleted and ends with the tab. |
 | `HFY_DEBUG_FEATURES` | `localStorage` | Set by hand | `"true"` turns on the `feature-flags.js` debug logs ([Debug switches](#debug-switches)). |
 

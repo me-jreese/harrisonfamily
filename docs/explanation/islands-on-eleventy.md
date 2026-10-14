@@ -50,9 +50,7 @@ The cost is access. The packages are published to a private AWS CodeArtifact reg
 
 The Eleventy source (templates, data files, public scripts and styles) lives in the private Dropbox project workspace, `<eleventy-source>`, next to the private data it reads. Its data files load person and media data from a sibling directory at build time. Its config also copies that data into `_site/` on every build, not only for local preview, so the build output always contains it and only the exclude lists keep it out of `11ty/` and the bucket. Keeping the source there keeps the private inputs, and the code that reads them, out of Git.
 
-The repository carries the deployable artifact instead: the rendered HTML, CSS and JavaScript that are safe to publish, and the islands build's output, which the deploy pipeline syncs to the bucket. Git therefore records what shipped, with one exception: the pipeline substitutes the Google client ID for a placeholder in the HTML and JavaScript before it packages the release. Apart from that, a reviewer never has to reason about what a template might render.
-
-One file breaks the pattern. [`workspace/11ty-dev/src/_data/featureFlags.js`](../../workspace/11ty-dev/src/_data/featureFlags.js) is a tracked copy of an Eleventy data file. It holds the gateway and visibility config rendered into each page as `window.HFY_FEATURE_FLAGS`. It currently matches its original in `<eleventy-source>`, but nothing in the repository builds from it. It is a stray copy, not a second source, and it can drift without anything noticing.
+The repository carries the deployable artifact instead: the rendered HTML, CSS and JavaScript that are safe to publish, and the islands build's output, which the deploy pipeline syncs to the bucket as committed. The pipeline builds nothing and patches nothing, so Git records what shipped, and a reviewer never has to reason about what a template might render.
 
 ## The consequence: two sources of truth
 
