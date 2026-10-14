@@ -714,7 +714,7 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 - The three inbox routes exist only when an inbox store is wired, and are 404 outside `uat` while `inboxV1` is off.
 - The kit stores an inbox item whether or not the recipient disabled that type in preferences: preferences gate only the push, and the inbox keeps the item for the recipient (ruling P2-R35).
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
-- `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
+- `PUT` replaces the whole preference record. The kit does not check type names against the registry, so any type name is stored. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
 
 ## Comment photos
@@ -1089,7 +1089,7 @@ The person-record lookups are cached in memory, per container:
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
 | `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
-| `notifications` | `{types: <the four types>, default_level: 0}` |
+| `notifications` | `{types: NOTIFY_TYPES, default_level: 0}`. `NOTIFY_TYPES` is every type in `TEMPLATE_REGISTRY`, in registry order, PLN-002 types included. |
 | `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"]}` |
 
 `actions` and `mcp.tools` are derived from `ROUTES`. The other fields are written by hand in `buildCaps` and differ from the code in two places:
