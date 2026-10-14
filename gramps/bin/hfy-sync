@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""hfy-sync: the command-line wrapper of the Gramps website-sync addon (sync.md 8.2, 8.7, 13.2).
+
+    hfy-sync <status|login|check|pull|push|sync|bind> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--json]
+
+It runs `Gramps -O <tree> -a tool -p name=hfy_sync,action=...`, then maps the run's status.json to an exit code. Gramps' own
+cli_tool swallows exceptions and exits 0, so the exit code comes from status.json (the `exit_code` field), and a missing file or
+one with another run's `run_id` is exit 70 (D41). Before Gramps starts it refuses, without opening the tree in Gramps: a
+`--force-unlock` flag (64, D02), a tree whose database schema is not supported (78, D04: Gramps would otherwise upgrade it
+on open) and a tree that is open elsewhere (75, D01: the `lock` file). CLI `sync`, `pull` and `push` are dry runs unless `--yes`.
+
+Environment:
+  HFY_GRAMPS_CMD   the Gramps command, split like a shell line (default /Applications/Gramps.app/Contents/MacOS/Gramps).
+  HFY_SYNC_TREE    the tree name when --tree is not given (otherwise the tree_name in config.json).
+  GRAMPSHOME, HOME  where Gramps keeps its trees and where the sync state lives (tests point both at a temporary directory).
+
+Standard library only; written for Python 3.9 or later (macOS' python3).
+"""
+import json
+import os
+import pathlib
+import shlex
+import sqlite3
+import subprocess
+import sys
+
+_HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE)))
+
+from hfygramps.addon import consts, paths, status  # noqa: E402
+
+DEFAULT_GRAMPS = "/Applications/Gramps.app/Contents/MacOS/Gramps"
+
+
+def _usage(message=None):
+    if message:
+        print("hfy-sync: %s" % message, file=sys.stderr)
+    print("usage: hfy-sync <%s> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--json]" % "|".join(consts.ACTIONS), file=sys.stderr)
+    return consts.EXIT_USAGE
+
+
+def parse(argv):
+    """(action, tree_name, yes, dry_run, allow_deletes, as_json, force_unlock) or an error string."""
+    action = tree = None
+    flags = {"--yes": False, "--dry-run": False, "--allow-deletes": False, "--json": False}
+    force = False
+    it = iter(argv)
+    for tok in it:
+        if tok in ("-u", "--force-unlock") or (tok.startswith("--force") and "--force-unlock".startswith(tok.split("=")[0])):
+            force = True
+        elif tok in flags:
+            flags[tok] = True
+        elif tok == "--tree":
+            tree = next(it, None)
+            if not tree:
+                return "--tree needs a name"
+        elif tok.startswith("-"):
+            return "unknown option %s" % tok
+        elif action is None:
+            action = tok
+        else:
+            return "unexpected argument %s" % tok
+    if action not in consts.ACTIONS and not force:
+        return "unknown or missing action"
+    return action, tree, flags["--yes"], flags["--dry-run"], flags["--allow-deletes"], flags["--json"], force
+
+
+def _schema_of(tree_dir):
+    """The database schema version, read straight from the tree's sqlite file, read-only; None when it cannot be read."""
+    try:
+        uri = pathlib.Path(os.path.abspath(os.path.join(tree_dir, "sqlite.db"))).as_uri() + "?mode=ro"  # percent-encoded, any path
+        con = sqlite3.connect(uri, uri=True, timeout=5)
+        try:
+            row = con.execute("SELECT json_data FROM metadata WHERE setting = 'version'").fetchone()
+        finally:
+            con.close()
+        return int(json.loads(row[0])["value"]) if row else None
+    except (sqlite3.Error, ValueError, KeyError, TypeError):
+        return None
+
+
+def _refusal_doc(run_id, action, dbid, code):
+    exit_code, next_action, error = status.refusal(code)
+    now = status.utc_now()
+    return status.build(run_id, action, "cli", dbid, False, "refused", exit_code, now, now, error=error, next_action=next_action)
+
+
+def main(argv):
+    parsed = parse(argv)
+    if isinstance(parsed, str):
+        return _usage(parsed)
+    action, tree_name, yes, dry_run, allow_deletes, as_json, force = parsed
+    environ = os.environ
+    try:
+        config = paths.read_json(paths.config_path(environ))
+    except ValueError:
+        config = None
+    tree_name = tree_name or environ.get("HFY_SYNC_TREE") or (config or {}).get("tree_name")
+    if not tree_name:
+        return _usage("give the tree with --tree NAME (or set HFY_SYNC_TREE)")
+    found = paths.find_tree(tree_name, environ)
+    if found is None:
+        print("hfy-sync: no Gramps tree with that name under this Gramps home", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    dbid, tree_dir = found
+    tp = paths.TreePaths(dbid, environ)
+    run_id = status.new_run_id()
+
+    def refuse(code):
+        doc = _refusal_doc(run_id, action or "status", dbid, code)
+        tp.ensure()
+        status.write(tp, doc)
+        print(json.dumps(doc, sort_keys=True) if as_json else status.summary_line(doc))
+        return doc["exit_code"]
+
+    if force:
+        return refuse("D02")  # before Gramps could break the lock
+    schema = _schema_of(tree_dir)
+    if schema not in consts.SUPPORTED_DB_SCHEMAS:
+        return refuse("D04")  # before Gramps could upgrade the tree on open
+    if os.path.exists(os.path.join(tree_dir, "lock")):
+        return refuse("D01")
+
+    # CLI sync, pull and push only look unless --yes (sync.md 8.2)
+    effective_dry = 1 if dry_run or (action in ("sync", "pull", "push", "bind") and not yes) else 0
+    options = "name=hfy_sync,action=%s,dry_run=%d,allow_deletes=%d,yes=%d,run_id=%s" % (
+        action, effective_dry, 1 if allow_deletes else 0, 1 if yes else 0, run_id)
+    cmd = shlex.split(environ.get("HFY_GRAMPS_CMD") or DEFAULT_GRAMPS) + ["-O", tree_name, "-a", "tool", "-p", options]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    except OSError as exc:
+        print("hfy-sync: could not start Gramps (%s)" % type(exc).__name__, file=sys.stderr)
+        return consts.EXIT_INTERNAL
+    try:
+        doc = status.read(tp)
+    except ValueError:
+        doc = None
+    code = status.exit_code_for(doc, run_id)
+    if code == consts.EXIT_INTERNAL and (doc is None or doc.get("run_id") != run_id):
+        # Gramps never ran the tool. If it stopped on a lock taken in the meantime, that is D01 and not a bug.
+        if os.path.exists(os.path.join(tree_dir, "lock")) and "lock" in proc.stderr.lower():
+            return refuse("D01")
+        print("hfy-sync: status.json is missing or belongs to another run (D41); Gramps exit %d. See the logs folder of the tree's sync state." % proc.returncode, file=sys.stderr)
+        return consts.EXIT_INTERNAL
+    print(json.dumps(doc, sort_keys=True) if as_json else status.summary_line(doc))
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
