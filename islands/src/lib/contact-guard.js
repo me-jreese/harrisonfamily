@@ -6,7 +6,7 @@
 // gets through (Enter in a one-row comment box, implicit submission) is stopped, and the first span is selected. The text is
 // always kept: nothing here writes a field's value, and the copy stays until the member removes the hit (no override).
 //
-// The kits own the composer DOM (@io-kit/content 0.1.1 PostComposer, @io-kit/comments 0.1.0 Composer) and offer no validation or
+// The kits own the composer DOM (@io-kit/content 0.3.1 PostComposer, @io-kit/comments 0.1.0 Composer) and offer no validation or
 // disabled prop, so this decorates it from outside, as my-posts.jsx and comments-ui.jsx already do for placeholders. Upstream:
 // a composer `validate(text) -> {message, spans}` prop; then delete this module's DOM work and keep precheck().
 // The verdict itself (and the DOB switch the page learns from the API) is lib/contact-precheck.js.

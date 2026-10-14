@@ -26,9 +26,8 @@ import {
 /** An applyBatch failure with an HTTP status and, for a conflict, the per-op detail. Routes pass it through errorResponse(). */
 export class SyncError extends HttpError {
   constructor(status, code, message, details) {
-    super(status, code, message);
+    super(status, code, message, details);
     this.name = "SyncError";
-    if (details !== undefined) this.details = details;
   }
 }
 

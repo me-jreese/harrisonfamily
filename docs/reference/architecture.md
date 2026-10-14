@@ -358,6 +358,8 @@ Written by `hfy-api`:
 | Comment | `THREAD#<thread-id>` | `C#<ulid>` | `COMMENTS` / `<ulid>` | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
+| Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
+| Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |
 | Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js); not reachable from a route yet |
 | Record change log | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | - | `api/src/sync/apply.js` |
 | Record store sequence head | `SYNC#HEAD` | `META` | - | - | `api/src/sync/apply.js` (the seq); the bind and seed routes own the rest |
@@ -371,7 +373,7 @@ Written by `hfy-api`:
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
 
-Each post and comment change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
+Each post, comment and profile links change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
 
 Written by `hfy-auth-edge`, through the `@io-kit/auth` 2.2.0 stores and the local stores wired in [`auth/src/index.js`](../../auth/src/index.js). `<scope>` is `email+ip` or `ip`, and the hash covers the email and client IP, so neither is stored:
 

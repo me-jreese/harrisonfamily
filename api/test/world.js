@@ -6,6 +6,7 @@ import { createFakeDdb, cmds } from "./fake-ddb.js";
 import { createAdminList, createAuthenticator } from "../src/auth.js";
 import { createHandler } from "../src/handler.js";
 import { createFeatureGate } from "../src/features.js";
+import { UPLOAD_BINDING_SECONDS, UPLOAD_PURPOSE_POST, uploadKeys } from "../src/uploads.js";
 
 export const TABLE = "hfy-app";
 export const ISSUER = "https://harrisonfamily.us/auth";
@@ -17,6 +18,28 @@ export function ticker(after = Date.now()) {
   return () => (t += 60_000);
 }
 export { createFakeDdb, cmds, createUlidFactory, ulidTime };
+
+/**
+ * A member-upload image the posts store accepts (normalizeAttachments only takes `/uploads/posts/<ulid>/<name>`), for the kit
+ * contract's photo-only case (@io-kit/content 0.3.1 CS-19, `ContentContractHarness.photo`) and the photo-only post tests.
+ */
+export const UPLOAD_PHOTO = Object.freeze({ kind: "image", url: "/uploads/posts/01J00000000000000000000000/photo-only.png", mime: "image/png", alt: "a photo" });
+
+/**
+ * For the kit contract harnesses, which post the fixed UPLOAD_PHOTO rather than presign: the UPLOAD# binding a presign by `owner`
+ * would have written for it (src/uploads.js), unexpired at `nowMs`, so a post may attach it once (content.js bindUploads), and,
+ * given a makeApi world's `s3`, its clean bytes in the fake bucket for checkLocation. A store built without the handler takes
+ * `checkUploadPhoto` as its checkUpload instead. Other tests presign through POST /api/uploads.
+ */
+export async function bindUploadPhoto(ddb, owner, nowMs, s3) {
+  const key = UPLOAD_PHOTO.url.slice(1);
+  await ddb.send(new cmds.PutCommand({
+    TableName: TABLE,
+    Item: { ...uploadKeys(key.split("/")[2]), entity: "upload", owner, purpose: UPLOAD_PURPOSE_POST, key, contentType: UPLOAD_PHOTO.mime, ttl: Math.floor(nowMs / 1000) + UPLOAD_BINDING_SECONDS },
+  }));
+  s3?.objects.set(key, { bytes: CLEAN_JPEG, contentType: UPLOAD_PHOTO.mime });
+}
+export const checkUploadPhoto = async () => ({ contentType: UPLOAD_PHOTO.mime });
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 export const pem = privateKey.export({ type: "pkcs8", format: "pem" });
