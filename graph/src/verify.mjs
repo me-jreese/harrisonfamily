@@ -164,6 +164,38 @@ function structuralChecks(graph, maxYear, add) {
     if (ADDRESS_LIKE_NAME.test(p.name)) add(`/places/${i}/name`, 'address-like-place-name');
   });
   if (stringify(graph.edges) !== stringify(deriveEdges(graph.unions))) add('/edges', 'edges-disagree-with-unions');
+  if (graph.layout) layoutChecks(graph, add);
+}
+
+/** The layout block names only people and unions the graph has, each once, never a person without a generation. */
+function layoutChecks(graph, add) {
+  const person = new Map(graph.people.map((p) => [p.id, p]));
+  const unions = new Set(graph.unions.map((u) => u.id));
+  const componentIds = new Set(graph.components.map((c) => c.id));
+  const seenPeople = new Set();
+  const seenUnions = new Set();
+  const seenComponents = new Set();
+  graph.layout.components.forEach((c, i) => {
+    const at = `/layout/components/${i}`;
+    if (!componentIds.has(c.component) || seenComponents.has(c.component)) add(`${at}/component`, 'layout-component');
+    seenComponents.add(c.component);
+    c.people.forEach((n, j) => {
+      const p = person.get(n.id);
+      if (!p) add(`${at}/people/${j}/id`, 'dangling-reference');
+      else if (p.generation === null || p.component !== c.component) add(`${at}/people/${j}/id`, 'layout-person-not-placed');
+      if (seenPeople.has(n.id)) add(`${at}/people/${j}/id`, 'layout-duplicate');
+      seenPeople.add(n.id);
+    });
+    c.unions.forEach((n, j) => {
+      if (!unions.has(n.id)) add(`${at}/unions/${j}/id`, 'dangling-reference');
+      if (seenUnions.has(n.id)) add(`${at}/unions/${j}/id`, 'layout-duplicate');
+      seenUnions.add(n.id);
+    });
+    const here = new Set([...c.people, ...c.unions].map((n) => n.id));
+    c.bends.forEach((b, j) => {
+      for (const k of ['s', 't']) if (!here.has(b[k])) add(`${at}/bends/${j}/${k}`, 'dangling-reference');
+    });
+  });
 }
 
 /** 2. deep string scan, over every value and key, whatever the shape (so it also runs on a graph the schema rejected) */

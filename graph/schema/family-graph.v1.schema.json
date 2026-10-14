@@ -46,7 +46,8 @@
       "additionalProperties": false,
       "required": ["geonames"],
       "properties": { "geonames": { "type": "boolean" } }
-    }
+    },
+    "layout": { "$ref": "#/$defs/layout" }
   },
   "$defs": {
     "count": { "type": "integer", "minimum": 0 },
@@ -172,6 +173,56 @@
       "properties": {
         "component": { "type": "integer", "minimum": 0 },
         "levels": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/id" } } }
+      }
+    },
+    "coord": { "type": "integer" },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "params", "components"],
+      "properties": {
+        "engine": { "const": "d3-dag 1.2.2" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["layering", "decross", "coord", "nodeSize"],
+          "properties": {
+            "layering": { "const": "simplex+rank" },
+            "decross": { "const": "twoLayer" },
+            "coord": { "const": "greedy" },
+            "nodeSize": { "const": [180, 90] }
+          }
+        },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/layoutComponent" } }
+      }
+    },
+    "layoutComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "width", "height", "people", "unions", "bends"],
+      "properties": {
+        "component": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 },
+        "people": { "type": "array", "items": { "$ref": "#/$defs/layoutNode" } },
+        "unions": { "type": "array", "items": { "$ref": "#/$defs/layoutNode" } },
+        "bends": { "type": "array", "items": { "$ref": "#/$defs/layoutBend" } }
+      }
+    },
+    "layoutNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "x", "y"],
+      "properties": { "id": { "$ref": "#/$defs/id" }, "x": { "$ref": "#/$defs/coord" }, "y": { "$ref": "#/$defs/coord" } }
+    },
+    "layoutBend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["s", "t", "points"],
+      "properties": {
+        "s": { "$ref": "#/$defs/id" },
+        "t": { "$ref": "#/$defs/id" },
+        "points": { "type": "array", "minItems": 1, "items": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/coord" } } }
       }
     }
   }
