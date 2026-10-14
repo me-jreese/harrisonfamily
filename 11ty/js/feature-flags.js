@@ -20,7 +20,7 @@
         "css": "38a33f05"
       },
       "links-editor": {
-        "js": "7c09fba8",
+        "js": "1937a6d0",
         "css": "a475a3dd"
       },
       "my-posts": {
@@ -28,23 +28,23 @@
         "css": "5a80e679"
       },
       "notifications": {
-        "js": "cfb46f0e",
+        "js": "bd9f21b4",
         "css": "56799f74"
       },
       "person": {
-        "js": "bc3b6ca7",
+        "js": "8581ed5f",
         "css": "fc1191e0"
       },
       "person-links": {
-        "js": "65b1ee44",
-        "css": "930bb673"
+        "js": "d07dc3b9",
+        "css": "fcacbc39"
       },
       "photo-tags": {
         "js": "3d566647",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "931f1e2d",
+        "js": "5c3c07af",
         "css": "dc46d8d9"
       },
       "search": {

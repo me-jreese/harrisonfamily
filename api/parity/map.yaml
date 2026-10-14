@@ -1,6 +1,7 @@
 # MCP tool -> the human route handler that performs the same action (@io-kit/parity map.yaml). Tool names equal the caps.json action names.
 # api:me.get (GET /api/me) is a session-only identity route with no MCP tool, so it has no row here (HFY-TSK-237).
 # api:links.get and api:links.put (GET and PUT /api/people/:id/links, HFY-TSK-193) are session-only member-owned routes with no MCP tool (surfaces.md 6.3), so they have no row here.
+# api:records.get and api:records.byGrampsId (GET /api/records/:class/:handle and /api/records/Person/by-id/:gramps_id, HFY-TSK-175) are session-only reads with no MCP tool (the edit bundle calls the same viewRecord), so they have no row here.
 # api:subscriptions.get, api:subscriptions.list, api:subscriptions.put and api:subscriptions.remove (/api/subscriptions, HFY-TSK-254) are session-only member-owned routes with no MCP tool, so they have no row here.
 # api:contributions.list, api:contributions.stats and api:contributions.site (GET /api/contributions and /api/contributions/stats, HFY-TSK-256) are session-only reads with no MCP tool, so they have no row here.
 surfaces:

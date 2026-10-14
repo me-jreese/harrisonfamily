@@ -16,7 +16,7 @@ const LINKS = {
 };
 
 /** /api/people/:id/links in memory: GET {links, version, can}, PUT with the shared validator, optionally one forced 409. */
-async function stub(page, { flag = true, session = "I9001", links = LINKS, version = 3, conflictOnce = false } = {}) {
+async function stub(page, { flag = true, session = "I9001", links = LINKS, version = 3, conflictOnce = false, admin = false, failPut = false } = {}) {
   const state = { links: { ...links }, version, puts: [], islandRequests: [], apiGets: 0, conflictOnce };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, photoTags: false, profileLinks: flag } }));
@@ -28,7 +28,7 @@ async function stub(page, { flag = true, session = "I9001", links = LINKS, versi
   await page.route("**/media/tree_I9001.svg", (r) => r.fulfill({ contentType: "image/svg+xml", body: readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8") }));
   await page.route(/\/media\/MPHOTO\d\.jpg/, (r) => r.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect width="80" height="60" fill="gray"/></svg>' }));
   await page.route(/\/js\/islands\/(person-links|links-editor)\./, (r) => { state.islandRequests.push(r.request().url()); return r.continue(); });
-  await page.route("**/api/me", (r) => r.fulfill({ json: session ? { id: session, label: "Sam Example", admin: false, can: {} } : { error: "unauthenticated" }, status: session ? 200 : 401 }));
+  await page.route("**/api/me", (r) => r.fulfill({ json: session ? { id: session, label: "Sam Example", admin, can: {} } : { error: "unauthenticated" }, status: session ? 200 : 401 }));
   await page.route("**/api/people/*/links", async (r) => {
     const req = r.request();
     const id = new URL(req.url()).pathname.split("/")[3];
@@ -38,6 +38,8 @@ async function stub(page, { flag = true, session = "I9001", links = LINKS, versi
     }
     const body = req.postDataJSON();
     state.puts.push(body);
+    if (failPut) return r.fulfill({ status: 503, json: { error: "unavailable", message: "x" } });
+    if (session !== id && Object.values(body.links).some((v) => v !== null)) return r.fulfill({ status: 403, json: { error: "forbidden", message: "an admin can only clear links" } });
     if (state.conflictOnce) {
       state.conflictOnce = false;
       state.links = { website: { url: "https://example.net/", host: "example.net" } };
@@ -116,6 +118,63 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(slot(page)).toBeEmpty();
       expect((await slot(page).boundingBox()) === null || (await slot(page).boundingBox()).height === 0).toBe(true);
       await expect(page.getByRole("heading", { name: "links", exact: true })).toHaveCount(0);
+    });
+
+    test("person page: an hfy-admin on someone else's page gets a clear-only control with a confirmation; it sends null per set platform", async ({ page }) => {
+      const state = await openPerson(page, { session: "I9002", admin: true });
+      const section = slot(page).locator("section.hfy-links");
+      await expect(section.locator("a[data-platform]")).toHaveCount(3);
+      await expect(section.locator('[data-hfy-links="edit"]')).toHaveCount(0);
+      const clear = section.getByRole("button", { name: "clear links" });
+      await expect(clear).toBeVisible();
+      expect((await clear.boundingBox()).height).toBeGreaterThanOrEqual(44);
+      await clear.click();
+      await expect(section.getByText("clear all of their links? only they can add them back.")).toBeVisible();
+      expect(state.puts).toEqual([]);
+      for (const name of ["yes, clear them", "cancel"]) expect((await section.getByRole("button", { name }).boundingBox()).height).toBeGreaterThanOrEqual(44);
+      expect(await axeViolations(page)).toEqual([]);
+      await section.getByRole("button", { name: "cancel" }).click();
+      expect(state.puts).toEqual([]);
+      await expect(section.locator("a[data-platform]")).toHaveCount(3);
+      await clear.click();
+      await section.getByRole("button", { name: "yes, clear them" }).click();
+      await expect(section.getByRole("status")).toHaveText("links cleared.");
+      expect(state.puts).toEqual([{ links: { facebook: null, instagram: null, website: null }, version: 3 }]);
+      await expect(section.locator("a[data-platform]")).toHaveCount(0);
+      await expect(section.getByRole("button", { name: "clear links" })).toHaveCount(0);
+      expect(await axeViolations(page)).toEqual([]);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+
+    test("person page: the clear control is for an hfy-admin only (a member and the owner never see it)", async ({ page }) => {
+      await openPerson(page, { session: "I9002", admin: false });
+      await expect(slot(page).locator("a[data-platform]")).toHaveCount(3);
+      await expect(page.locator('[data-hfy-links="clear"]')).toHaveCount(0);
+    });
+
+    test("person page: an admin who owns the page edits, and does not get the clear control", async ({ page }) => {
+      await openPerson(page, { session: "I9001", admin: true });
+      await expect(slot(page).locator('[data-hfy-links="edit"]')).toBeVisible();
+      await expect(page.locator('[data-hfy-links="clear"]')).toHaveCount(0);
+    });
+
+    test("person page: a failed clear says so and keeps the chips", async ({ page }) => {
+      await openPerson(page, { session: "I9002", admin: true, failPut: true });
+      const section = slot(page).locator("section.hfy-links");
+      await section.getByRole("button", { name: "clear links" }).click();
+      await section.getByRole("button", { name: "yes, clear them" }).click();
+      await expect(section.getByRole("status")).toHaveText("that didn't work. try again.");
+      await expect(section.locator("a[data-platform]")).toHaveCount(3);
+    });
+
+    test("person page: a 409 on clear reloads the latest and says so", async ({ page }) => {
+      await openPerson(page, { session: "I9002", admin: true, conflictOnce: true });
+      const section = slot(page).locator("section.hfy-links");
+      await section.getByRole("button", { name: "clear links" }).click();
+      await section.getByRole("button", { name: "yes, clear them" }).click();
+      await expect(section.getByRole("status")).toHaveText("someone changed these a moment ago. here's the latest.");
+      await expect(section.locator("a[data-platform]")).toHaveCount(1);
     });
 
     test("person page: a visitor sees the chips but no edit chip", async ({ page }) => {

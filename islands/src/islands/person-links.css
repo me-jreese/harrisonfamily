@@ -71,3 +71,29 @@
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18'/%3E%3Cpath d='M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18'/%3E%3Cpath d='M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z'/%3E%3C/svg%3E");
 }
+
+/* The hfy-admin's clear-only control (HFY-TSK-329): a 44 px button, a confirmation with the same targets, and a status line. */
+.hfy-links .hfy-links__admin { display: flex; flex-direction: column; align-items: flex-start; gap: var(--io-space-2); margin-top: var(--io-space-3); }
+.hfy-links .hfy-links__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2); }
+.hfy-links .hfy-links__ask { flex: 1 1 100%; margin: 0; color: var(--io-color-semantic-text); }
+.hfy-links .hfy-links__clear {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  font-weight: var(--io-typography-weight-semibold);
+  cursor: pointer;
+}
+.hfy-links .hfy-links__clear:hover { border-color: var(--io-color-semantic-border-strong); }
+.hfy-links .hfy-links__clear:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-links .hfy-links__clear--confirm { border-color: var(--io-color-semantic-danger); color: var(--io-color-semantic-danger); }
+.hfy-links .hfy-links__clear[disabled] { cursor: progress; }
+.hfy-links .hfy-links__note { margin: 0; min-height: var(--io-space-4); color: var(--io-color-semantic-text-dim); }

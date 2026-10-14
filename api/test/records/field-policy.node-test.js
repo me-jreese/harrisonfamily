@@ -507,6 +507,60 @@ describe("review fixes (HFY-TSK-233)", () => {
     });
   });
 
+  describe("Url types: the web writes the link kinds only (editing.md 3.2, HFY-TSK-329)", () => {
+    const url = (type, path = "https://example.test") => ({ _class: "Url", path, desc: "", type });
+    const home = url(typed("UrlType", 2));
+    const search = url(typed("UrlType", 3), "https://search.example.test");
+    const ftp = url(typed("UrlType", 4), "ftp://files.example.test");
+    const unknown = url(typed("UrlType", -1), "https://other.example.test");
+    const insta = url(typed("UrlType", 0, "instagram"), "https://www.instagram.com/example");
+    const oddCustom = url(typed("UrlType", 0, "my diary"), "https://diary.example.test");
+    const worldWith = () => {
+      const w = withLists();
+      w[ME].urls = [mail, home, search, ftp, unknown, insta, oddCustom];
+      return w;
+    };
+    const run1 = async (op, opts) => (await run([{ id: "o1", ...op }], opts))[0];
+    it("adding a non-link Url is desktop-only for the owner, another member and an admin; link kinds stay direct", async () => {
+      const as = [{ actor: actorOf("I9001") }, { actor: actorOf("I9999") }, { actor: { id: "I9000", admin: true } }];
+      for (const bad of [search, ftp, unknown, oddCustom]) {
+        for (const o of as) {
+          const r = await run1({ op: "add", obj: ME, path: "/urls", value: bad }, o);
+          if (o.actor.id === "I9999") assert.notEqual(r.code, "direct");
+          else assert.equal(r.code, "desk", `${bad.type.value}/${bad.type.string}`);
+          if (r.code === "desk") assert.ok(r.kinds.includes("url_not_link"));
+        }
+      }
+      const customTypes = { UrlType: new Set(["instagram"]) };
+      for (const good of [home, insta]) assert.equal(await codeOf({ op: "add", obj: ME, path: "/urls", value: good }, { customTypes }), "direct");
+      assert.equal(await codeOf({ op: "add", obj: ME, path: "/urls", value: home }, { actor: { id: "I9000", admin: true } }), "direct");
+    });
+    it("editing, retyping or removing a stored non-link Url is desktop-only; the stored link kinds stay direct", async () => {
+      const w = worldWith();
+      for (const bad of [search, ftp, unknown, oddCustom]) {
+        const r = await run1({ op: "set", obj: ME, path: `/urls/${k(bad)}/path`, base: bad.path, value: "https://changed.example.test" }, { objects: w });
+        assert.equal(r.code, "desk");
+        assert.deepEqual(r.kinds, ["url_not_link"]);
+        assert.equal(await codeOf({ op: "remove", obj: ME, path: `/urls/${k(bad)}`, base: bad }, { objects: w }), "desk");
+      }
+      assert.equal(await codeOf(set(ME, `/urls/${k(search)}/type`, search.type, typed("UrlType", 2)), { objects: w }), "desk", "retyping away from a non-link type is judged on the stored element");
+      assert.equal(await codeOf(set(ME, `/urls/${k(home)}/type`, home.type, typed("UrlType", 3)), { objects: w }), "desk", "retyping to a non-link type");
+      for (const good of [home, insta]) assert.equal(await codeOf(set(ME, `/urls/${k(good)}/path`, good.path, "https://other.example.test"), { objects: w }), "direct");
+    });
+    it("e-mail stays never, with its own reason, and outranks the desktop-only row", async () => {
+      const w = worldWith();
+      const r = await run1({ op: "set", obj: ME, path: `/urls/${k(mail)}/path`, base: mail.path, value: "b@example.test" }, { objects: w });
+      assert.equal(r.code, "never");
+      assert.deepEqual(r.kinds, ["url_email"]);
+      const add = await run1({ op: "add", obj: ME, path: "/urls", value: url(typed("UrlType", 1), "c@example.test") }, { actor: { id: "I9000", admin: true } });
+      assert.equal(add.code, "never");
+      assert.ok(add.kinds.includes("url_email"));
+    });
+    it("a key that matches no stored Url fails closed", async () => {
+      assert.equal(await codeOf(set(ME, "/urls/@k=000000000000/path", "x", "y"), { objects: worldWith() }), "never");
+    });
+  });
+
   it("every group tag in the table has a Q2-15 switch, and every grouped switch is used", () => {
     const tags = new Set(FIELD_POLICY_ROWS.map((r) => r[4]?.group).filter(Boolean));
     const switches = Q2_15_ROWS.filter((r) => r.group);
