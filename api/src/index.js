@@ -13,6 +13,7 @@ import { createGroupResolver, UAT_GROUP } from "./policy.js";
 import { configureFeatures, createFeatureGate, createFlagSource, DEFAULT_FLAGS_URL } from "./features.js";
 import { createLabelResolver, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
+import { guardDobFromEnv } from "./guard.js";
 import { logSafeError } from "./http.js";
 
 const env = process.env;
@@ -93,6 +94,8 @@ export const handler = async (event) => {
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
+      s3, // checkLocation reads the first 256 KiB of a new post attachment (upload-guard.js; UploadReads in app-stack.yaml)
+      guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
       features,

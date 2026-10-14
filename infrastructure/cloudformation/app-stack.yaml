@@ -17,6 +17,7 @@ Parameters:
   SessionAudience: { Type: String, Default: harrisonfamily-web }
   SessionJwksUrl: { Type: String, Default: "https://harrisonfamily.us/auth/.well-known/jwks.json", Description: Auth-edge JWKS the API verifies sessions with (HFY-R38; the API never holds the signing key) }
   SessionCookie: { Type: String, Default: io_id }
+  GuardDob: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "HFY_GUARD_DOB (privacy-guard-existing-paths): on refuses dob_not_allowed (a birth day or month near a birth word) on posts, comments and their MCP tools. Stays off until io's answer to Q2-17 line 5 is recorded; contact info is refused either way. A flip is a parameter-only change set (UsePreviousValue for every other parameter)" }
   # --- auth edge (HFY-TSK-062) ---
   AuthFunctionName: { Type: String, Default: hfy-auth-edge }
   AuthCodeKey: { Type: String, Default: lambda/hfy-auth-edge.zip, Description: Key of hfy-auth-edge.zip in CodeBucket }
@@ -204,6 +205,7 @@ Resources:
           ADMIN_LIST_KEY: !Ref AdminListKey
           MEDIA_BUCKET: !Ref MediaBucket
           MEDIA_PUBLIC_BASE: !Ref MediaPublicBase
+          HFY_GUARD_DOB: !Ref GuardDob
           VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
           SYNC_API_ENABLED: !Ref SyncApiEnabled
           HFY_EDITING: !Ref HfyEditing

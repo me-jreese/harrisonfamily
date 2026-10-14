@@ -4,7 +4,8 @@ import { ContentError, POST_TYPES, VISIBILITIES, auditEntry, canView, computeCan
 import { HttpError } from "./http.js";
 import { postKeys, gsiPosts, gsiAuthor, gsiSubject } from "./keys.js";
 import { TxnCancelled, auditItem, transact, queryPartition, versionGuard } from "./txn.js";
-import { IMAGE_TYPES, UPLOAD_PREFIX } from "./uploads.js";
+import { IMAGE_TYPES, UPLOAD_PREFIX, UPLOAD_PURPOSE_POST, uploadKeys } from "./uploads.js";
+import { createGuard, pointer } from "./guard.js";
 
 const hash = (s) => {
   let h = 5381;
@@ -26,6 +27,17 @@ const UPLOAD_PATH_RE = new RegExp(`^/${UPLOAD_PREFIX}/${ULID_RE}/[a-z0-9][a-z0-9
 const MIME_RE = /^[a-z]+\/[a-z0-9][a-z0-9.+-]{0,99}$/i;
 const invalid = (field, message) => new ContentError("validation", message, { field });
 const isDim = (v) => Number.isInteger(v) && v > 0 && v <= 100_000;
+/** "/uploads/posts/<ulid>/<name>" for an attachment url normalizeAttachments accepted (absolute on mediaPublicBase, or relative). */
+const uploadPath = (url, base) => (base && url.startsWith(`${base}/`) ? url.slice(base.length) : url);
+const notOwned = () => new HttpError(403, "upload_not_owned", "that photo can't be attached here. add it again.");
+const notUploaded = () => new HttpError(400, "upload_missing", "that photo didn't finish uploading. add it again.");
+
+/** R-18 free-text fields of a post: body, title and every attachment alt, as [pointer, text] (src/guard.js). */
+export const postTextFields = (p, { body = true, title = true, attachments = true } = {}) => [
+  ...(body ? [[pointer("body"), p.body]] : []),
+  ...(title ? [[pointer("title"), p.title]] : []),
+  ...(attachments ? (p.attachments ?? []).map((a, i) => [pointer("attachments", i, "alt"), a.alt]) : []),
+];
 
 /**
  * Attachments may only reference this site's member uploads (`<mediaPublicBase>/uploads/posts/<ulid>/<name>` or the same
@@ -66,7 +78,13 @@ function checkSize(post) {
   if (Buffer.byteLength(JSON.stringify(post), "utf8") > MAX_POST_BYTES) throw invalid("body", "post is too large");
 }
 
-export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us" }) {
+/**
+ * `guard` is src/guard.js createGuard() (the R-18 check on body, title and alt; contact kinds only unless the DOB switch is on).
+ * `checkUpload(key)` is upload-guard.js checkLocation bound to the media bucket: it resolves `{contentType}` or throws 400
+ * photo_has_location / upload_missing. Without it, a post cannot take a new attachment (fail closed).
+ */
+export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload }) {
+  const base = String(mediaPublicBase ?? "").replace(/\/+$/, "");
   const requireActor = () => {
     if (!actor) throw new ContentError("forbidden", "sign in to write");
     return actor;
@@ -100,31 +118,73 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
   const allKeys = (id) => [postKeys(id), { PK: `POST#${id}`, SK: "IDX#AUTHOR" }, { PK: `POST#${id}`, SK: "IDX#SUBJECT" }];
 
   /**
+   * The UPLOAD# binding for every attachment the post did not already hold (privacy-guard-existing-paths): the upload must be
+   * the writer's own post photo, unexpired and not attached to another post, its type must match, and its stored bytes must carry
+   * no location (checkLocation). Returns the transact() updates that attach each one (SET attached, REMOVE ttl) on the same
+   * conditions, so a binding that changes after this read cancels the whole write (403 upload_not_owned).
+   */
+  async function bindUploads(postId, attachments, held = []) {
+    const who = requireActor();
+    const have = new Set(held.map((a) => uploadPath(a.url, base)));
+    const seen = new Set();
+    const updates = [];
+    const nowS = Math.floor(now() / 1000);
+    for (const a of attachments) {
+      const path = uploadPath(a.url, base);
+      if (have.has(path)) continue;
+      if (seen.has(path)) throw invalid("attachments", "each photo can be attached once");
+      seen.add(path);
+      const id = path.split("/")[3];
+      const key = path.slice(1);
+      const up = (await ddb.send(new cmds.GetCommand({ TableName: table, Key: uploadKeys(id) }))).Item;
+      const attachedHere = up?.attached === postId;
+      if (!up || up.owner !== who.id || up.purpose !== UPLOAD_PURPOSE_POST || up.key !== key) throw notOwned();
+      if (up.attached !== undefined && !attachedHere) throw notOwned();
+      if (up.attached === undefined && !(typeof up.ttl === "number" && up.ttl > nowS)) throw notOwned(); // the 24 h binding lapsed
+      if (a.mime !== up.contentType) throw notUploaded();
+      if (!checkUpload) throw new HttpError(503, "unavailable", "uploads are not configured");
+      const stored = await checkUpload(key); // 400 photo_has_location / upload_missing
+      if (stored?.contentType !== undefined && stored.contentType !== up.contentType) throw notUploaded();
+      updates.push({
+        key: uploadKeys(id),
+        update: "SET #att = :post REMOVE #ttl",
+        condition: `#own = :own AND #pur = :pur AND ${attachedHere ? "#att = :post" : "attribute_not_exists(#att)"}`,
+        names: { "#att": "attached", "#ttl": "ttl", "#own": "owner", "#pur": "purpose" },
+        values: { ":post": postId, ":own": who.id, ":pur": UPLOAD_PURPOSE_POST },
+        tag: "upload",
+      });
+    }
+    return updates;
+  }
+
+  /**
    * One TransactWriteItems: the data change plus its D-15 audit item. Non-create writes are guarded on the stored
    * `updated_at` that `before` was read with, so a concurrent change cancels this write (409 conflict) instead of being
    * silently overwritten, and the audit `before` is exactly the state this write replaced.
    */
-  async function commit(op, id, before, after, at, { create = false } = {}) {
+  async function commit(op, id, before, after, at, { create = false, updates = [] } = {}) {
     const who = requireActor();
     const entry = auditEntry(op, id, who.id, before, after, at);
-    const guard = create ? { condition: "attribute_not_exists(PK)" } : versionGuard("post", "updated_at", before.updated_at);
+    const mainCondition = create ? { condition: "attribute_not_exists(PK)" } : versionGuard("post", "updated_at", before.updated_at);
     const puts = [];
     const deletes = [];
     if (after) {
       const items = itemsFor(after);
-      items.forEach((item, i) => puts.push({ item, ...(i === 0 ? guard : {}) }));
+      items.forEach((item, i) => puts.push({ item, ...(i === 0 ? mainCondition : {}) }));
       if (!after.subject) deletes.push({ PK: `POST#${id}`, SK: "IDX#SUBJECT" });
     } else {
       const [main, ...rest] = allKeys(id);
-      deletes.push({ key: main, ...guard }, ...rest);
+      deletes.push({ key: main, ...mainCondition }, ...rest);
     }
     puts.push({ item: auditItem(entry, uid(), table) });
     try {
-      await transact(ddb, cmds, table, { puts, deletes });
+      await transact(ddb, cmds, table, { puts, deletes, updates });
     } catch (e) {
       // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
       // @io-kit/content has no busy code, so busy is the API's HttpError: errorResponse answers it 503 for HTTP, and the MCP core reports any thrown Error's message as the tool error ("busy, try again").
       if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
+      // An UPLOAD# binding changed between the read and the write (attached elsewhere, or not this member's): 403, nothing written.
+      if (e instanceof TxnCancelled && e.conditionFailed && e.failures.every((f) => f.tag === "upload")) throw notOwned();
       if (e instanceof TxnCancelled && e.conditionFailed) throw new ContentError("conflict", "record changed concurrently", { id });
       throw new ContentError("unavailable", "store unavailable", { id });
     }
@@ -183,8 +243,10 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
         updated_at: at,
         ...(present(input.ref) ? { ref: input.ref } : {}),
       };
+      guard("posts", "create", postTextFields(post)); // R-18: 422 contact_info / dob_not_allowed, nothing stored
       checkSize(post);
-      await commit("create", post.id, null, post, at, { create: true });
+      const updates = await bindUploads(post.id, post.attachments);
+      await commit("create", post.id, null, post, at, { create: true, updates });
       return view(post);
     },
     async update(id, patch) {
@@ -201,8 +263,11 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
         else if (v !== undefined) next[k] = check(v);
       }
       next.updated_at = new Date(now()).toISOString();
+      // R-18 on what this edit submits: the body, the title and, when the attachments are replaced, every alt.
+      guard("posts", "update", postTextFields(next, { body: patch.body !== undefined, title: typeof patch.title === "string", attachments: patch.attachments !== undefined }));
       checkSize(next);
-      await commit("update", id, before, next, next.updated_at);
+      const updates = patch.attachments !== undefined ? await bindUploads(id, next.attachments, current.attachments ?? []) : [];
+      await commit("update", id, before, next, next.updated_at, { updates });
       return view(next);
     },
     async setVisibility(id, visibility) {
