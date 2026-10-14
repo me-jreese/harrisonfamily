@@ -46,7 +46,14 @@ Parameters:
   HfyEditing: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Editing routes switch (env HFY_EDITING). While off they answer 404 not_found" }
   AccessRequests: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Access-request intake kill switch on the auth edge (env ACCESS_REQUESTS)" }
   TurnstileSiteKey: { Type: String, Default: "", Description: "Public Cloudflare Turnstile site key (env TURNSTILE_SITE_KEY); not a secret" }
-  SesConfigurationSet: { Type: String, Default: "", Description: "Optional SES configuration set name for the access-request and notification mail (env SES_CONFIGURATION_SET)" }
+  SesConfigurationSet: { Type: String, Default: "", Description: "Optional SES configuration set name for the hfy-api notification mail (env SES_CONFIGURATION_SET on hfy-api). Access-request mail from the auth edge uses the Join* parameters below, never this one" }
+  # HFY-TSK-195 (ruling P2-R23, review PS-25): access-request mail has its OWN SES identity (the join subdomain, with its own MAIL FROM subdomain),
+  # configuration set and bounce and complaint alarms, so abuse of the join flow can never pause Cognito's password-reset mail or the API's mail.
+  JoinSesIdentityArn: { Type: String, Default: "", Description: "Verified SES identity ARN of the join subdomain (same region) that sends the access-request mail from the auth edge (env: none, the grant only). Empty leaves the edge without a SendEmail grant, so the code route answers 503 unavailable" }
+  JoinFromAddress: { Type: String, Default: "", AllowedPattern: "^$|^[^<>\\s]+@[^<>\\s]+$", Description: "Bare From address on the join identity, for example: no-reply@join.example.test (env JOIN_FROM_ADDRESS). Bare because the ses:FromAddress condition on the grant compares it exactly" }
+  JoinSesConfigurationSet: { Type: String, Default: "", Description: "SES configuration set for access-request mail only: no open or click tracking, bounce and complaint feedback (env JOIN_SES_CONFIGURATION_SET)" }
+  JoinBounceAlarmName: { Type: String, Default: hfy-access-request-bounce, Description: "CloudWatch alarm on the join configuration set's bounce rate. The edge reads its state (cloudwatch:DescribeAlarms) and answers 503 unavailable on the code route while it is in ALARM, or if the alarm does not exist" }
+  JoinComplaintAlarmName: { Type: String, Default: hfy-access-request-complaint, Description: "CloudWatch alarm on the join configuration set's complaint rate; read like JoinBounceAlarmName" }
   ChatServicePublicKeys: { Type: String, Default: "", Description: "JSON array of {kid, spki} chat-worker service public keys (env CHAT_SERVICE_PUBLIC_KEYS); public, so not a secret. Empty makes the chat service routes answer 503" }
   AlarmEmail: { Type: String, Default: "", Description: "Address subscribed to the alarm topic (io). Empty creates the topic without a subscription. The subscription is confirmed from the email it sends" }
   BreakGlassPrincipalArn: { Type: String, AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:(user|role)/.+$", Description: "IAM user or role (io) allowed to assume hfy-data-breakglass with MFA. Compared by ARN in a condition, so the role survives the principal being recreated" }
@@ -62,6 +69,16 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref SesFromAddress, ""]]
         AssertDescription: SesIdentityArn requires SesFromAddress (the SendEmail grant is conditioned on it)
+  JoinSesIdentityNeedsFromAddress:
+    RuleCondition: !Not [!Equals [!Ref JoinSesIdentityArn, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref JoinFromAddress, ""]]
+        AssertDescription: JoinSesIdentityArn requires JoinFromAddress (the SendEmail grant is conditioned on it)
+  JoinSesConfigurationSetNeedsIdentity:
+    RuleCondition: !Not [!Equals [!Ref JoinSesConfigurationSet, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref JoinSesIdentityArn, ""]]
+        AssertDescription: JoinSesConfigurationSet requires JoinSesIdentityArn (the SendEmail grant exists only when the join identity is set)
 
 Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
@@ -69,6 +86,8 @@ Conditions:
   HasVapid: !Not [!Equals [!Ref VapidSecretName, ""]]
   HasSes: !Not [!Equals [!Ref SesIdentityArn, ""]]
   HasSesFrom: !And [!Condition HasSes, !Not [!Equals [!Ref SesFromAddress, ""]]]
+  HasJoinSes: !Not [!Equals [!Ref JoinSesIdentityArn, ""]]
+  HasJoinSesConfigSet: !Not [!Equals [!Ref JoinSesConfigurationSet, ""]]
 
 Resources:
   Table:
@@ -355,17 +374,26 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${TurnstileSecretName}-*
                   - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AccessRequestPepperSecretName}-*
+              # HFY-TSK-195: access-request mail is sent only from the JOIN identity and its configuration set. The edge has no grant on the
+              # Cognito and API identity (Cognito sends its own mail through the user pool's EmailConfiguration, not through this role).
               - !If
-                - HasSes
+                - HasJoinSes
                 - Sid: SendEmail
                   Effect: Allow
                   Action: ses:SendEmail
                   Resource:
-                    - !Ref SesIdentityArn
-                    - !If [HasSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${SesConfigurationSet}", !Ref "AWS::NoValue"]
+                    - !Ref JoinSesIdentityArn
+                    - !If [HasJoinSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${JoinSesConfigurationSet}", !Ref "AWS::NoValue"]
                   Condition:
-                    StringEquals: { "ses:FromAddress": !Ref SesFromAddress }
+                    StringEquals: { "ses:FromAddress": !Ref JoinFromAddress }
                 - !Ref "AWS::NoValue"
+              # The code route reads the state of the bounce and complaint alarms and stops while either is in ALARM (review PS-25).
+              - Sid: JoinMailAlarmState
+                Effect: Allow
+                Action: cloudwatch:DescribeAlarms
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${JoinBounceAlarmName}
+                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${JoinComplaintAlarmName}
 
   AuthFunction:
     Type: AWS::Lambda::Function
@@ -395,8 +423,9 @@ Resources:
           TURNSTILE_SITE_KEY: !Ref TurnstileSiteKey
           TURNSTILE_SECRET_NAME: !Ref TurnstileSecretName
           ACCESS_REQUEST_PEPPER_SECRET: !Ref AccessRequestPepperSecretName
-          SES_FROM_ADDRESS: !Ref SesFromAddress
-          SES_CONFIGURATION_SET: !Ref SesConfigurationSet
+          JOIN_FROM_ADDRESS: !Ref JoinFromAddress
+          JOIN_SES_CONFIGURATION_SET: !Ref JoinSesConfigurationSet
+          JOIN_MAIL_ALARMS: !Sub "${JoinBounceAlarmName},${JoinComplaintAlarmName}"
 
   AuthFunctionUrl:
     Type: AWS::Lambda::Url

@@ -200,8 +200,10 @@ function jsonBodyOf(event) {
 /**
  * `limiter` ({hit(key, {limit, windowSeconds})}, see ratelimit.js) rate-limits POST /auth/password/forgot per `forgotLimits`;
  * without one the route is not limited (unit tests). A limiter failure fails closed (503): no email is sent.
+ * `accessRequests` ({handle(rel, event)}, see access-request.js) serves the anonymous /auth/access-request/* routes behind ACCESS_REQUESTS;
+ * without it those paths fall through to the kit's 404.
  */
-export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, log = console }) {
+export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycle, fetch: fetchImpl, nonce, oauth, passkeys, passkeyClientScript, limiter, forgotLimits = FORGOT_LIMITS, accessRequests, log = console }) {
   const app = createEdgeApp(manifest, { identity, verify, ...(lifecycle ? { lifecycle } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(nonce ? { nonce } : {}), ...(passkeys ? { passkeys, ...(passkeyClientScript ? { passkeyClientScript } : {}) } : {}) });
   const jwksBody = JSON.stringify({ keys: [publicJwk] });
   const siteOrigin = String(manifest.authOrigin ?? `https://${manifest.site}`).replace(/\/+$/, "");
@@ -326,6 +328,11 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     // HFY-TSK-078: "Manage passkeys" lives on the kit's account page (lists and removes the caller's own credentials; DELETE /auth/passkey/:id).
     if (rel === "/passkeys") return method === "GET" || method === "HEAD" ? { statusCode: 302, headers: { location: `${MOUNT}/link`, "cache-control": "no-store" }, body: "" } : json(405, { code: "METHOD_NOT_ALLOWED" });
     if (rel === "/session") return method === "GET" ? sessionInfo(event) : json(405, { code: "METHOD_NOT_ALLOWED" });
+    // surfaces.md 7.2: the anonymous access-request routes, before the kit fall-through (they never reach the kit app)
+    if (accessRequests && (rel === "/access-request" || rel.startsWith("/access-request/"))) {
+      const r = await accessRequests.handle(rel, event);
+      if (r) return r;
+    }
     if (oauth) {
       const r = await oauth.handle(rel, event, () => sessionOf(event));
       if (r) return r;
