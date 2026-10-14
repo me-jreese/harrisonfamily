@@ -207,6 +207,7 @@ Paths:
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `allowlist-store.js`: the `ALLOW#` grant and revoke transaction items (conditional, audited) and the composite member reader that the auth edge and any later allowlist consumer, such as the chat directory route, share (HFY-TSK-134).
+  - `access-requests.js`, `mailer.js`: the access-request admin routes (HFY-TSK-141): the queue, the decisions (`link`, `new`, `decline`, `revoke`, a held second email), the `completeAccessRequest` hooks the proposal approval and the id policy call, and the SES sender for their mail.
   - `notify.js`: push notifications and their templates.
   - `uploads.js`: the upload route (`purpose` `post` or `comment`) and the `UPLOAD#` binding.
   - `presign.js`: the S3 presigners: the presigned PUT (photo uploads and the sync blob upload) and the presigned GET (the sync snapshot and blob downloads).

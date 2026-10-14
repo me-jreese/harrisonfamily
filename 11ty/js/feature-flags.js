@@ -48,7 +48,7 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "cf32228f",
+        "js": "f14f204e",
         "css": "be703fb4"
       },
       "person": {

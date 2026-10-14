@@ -18,8 +18,20 @@ export const allowSubKey = (sub) => `${ALLOWSUB_PREFIX}${sub}`;
 /** The normalized email of an ALLOW# item, or undefined for any other item. */
 export const emailOfAllowItem = (item) => (typeof item?.PK === "string" && item.PK.startsWith(ALLOW_PREFIX) ? item.PK.slice(ALLOW_PREFIX.length) : undefined);
 
-/** An item grants access only when it is active and names a principal. */
-export const isActiveAllowItem = (item) => item?.state === "active" && typeof item.sub === "string" && item.sub.length > 0;
+/**
+ * An item grants access at `nowMs` only when it is active, names a principal, and has taken effect. `effectiveAt` (an ISO time) is set on a SECOND
+ * email for a member who already has access (surf-access-admin-api, review PS-13): the grant counts 72 hours after an admin allows it, unless the
+ * member confirms it sooner (the admin API removes `effectiveAt`) or objects (the item is revoked). A malformed `effectiveAt` never grants.
+ */
+export function isAllowedNow(item, nowMs) {
+  if (item?.state !== "active" || typeof item.sub !== "string" || item.sub.length === 0) return false;
+  if (item.effectiveAt === undefined || item.effectiveAt === null) return true;
+  const at = typeof item.effectiveAt === "string" ? Date.parse(item.effectiveAt) : Number.NaN;
+  return Number.isFinite(at) && at <= nowMs;
+}
+
+/** isAllowedNow on the real clock. Safe as a bare callback (`items.filter(isActiveAllowItem)`): it takes the item alone. */
+export const isActiveAllowItem = (item) => isAllowedNow(item, Date.now());
 
 /** The host principal a granted item resolves to (the kit's HostPrincipal shape; DynamoDB grants carry the member role only). */
 export const allowPrincipal = (item, email) => ({ sub: item.sub, label: normalizeAllowEmail(email), roles: ["member"], claims: {} });
@@ -63,6 +75,8 @@ export async function listAllowBySub(ddb, cmds, table, sub) {
  * for `ttlMs`; if a refresh fails the last good copy is served and retried in 5 s, and with no copy at all the call rejects (fail closed)
  * unless an active ALLOW# item already decides it. Each sub's items are cached for `ttlMs` too. A DynamoDB failure falls back to the S3
  * file alone (a hit stays a member, a miss is null) and is not cached. Omit `ddb` for an S3-only reader.
+ *
+ * A held second email (`effectiveAt` still ahead) is not active, so the principal stays a member through its other addresses only.
  *
  * Known limits, kept on purpose (docs/how-to/manage-family-access.md, "Allowlist grants in DynamoDB"):
  *   - Same-sub assumption. Items are found by the caller's sub through GSI1, so a revoked item whose sub differs from the sub the file lists
@@ -116,7 +130,7 @@ export function createCompositeMemberReader({ readEntries, ddb, cmds, table, ttl
     const rows = list ?? [];
     const overridden = new Set(rows.map(emailOfAllowItem));
     const live = (bySub.get(sub) ?? []).filter((x) => !overridden.has(x.email));
-    if (!rows.some(isActiveAllowItem) && live.length === 0) {
+    if (!rows.some((r) => isAllowedNow(r, now())) && live.length === 0) {
       if (error) throw error;
       return null;
     }

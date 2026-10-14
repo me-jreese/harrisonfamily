@@ -32,6 +32,11 @@ export const TEMPLATE_REGISTRY = {
     // Access requests (surf-access-submit, surfaces.md 7.2): the auth edge writes this inbox item for every admin after a request is stored. No requester detail,
     // ever: both levels are the same content-free line, and the item navigates to the admin queue.
     access_request_new: { title: T, level0: "someone asked to join.", level1: "someone asked to join." },
+    // The other admins hear who let a new member in (surf-access-admin-api, surfaces.md 7.4). Level 1 names the admin and the person the request asked to be.
+    access_request_decided: { title: T, level0: "someone was let in.", level1: "{actor} let {subject} in." },
+    // A second sign-in email for a member (surf-access-admin-api, PS-13): the inbox item that opens the 72 hour window in which the member
+    // confirms the new email at once or objects. Content-free: it never names the requester or the address, and it opens the inbox.
+    second_email_notice: { title: T, level0: "someone asked to add an email to your account.", level1: "someone asked to add an email to your account." },
     // Push-only (chat.md section 13, CHAT-D12): content-free, never any message text. Called by hfy-chat-api-service-routes.
     chat_message: { title: T, level0: "you have a new chat message.", level1: "{actor} sent you a chat message.", inbox: false },
   },

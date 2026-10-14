@@ -277,6 +277,29 @@ export const ROUTES = defineRoutes([
     name: "proposals.decide", method: "POST", path: "/proposals/:id/decision", summary: "An admin decides a pending or stale suggestion {verdict: approve|deny|needs_changes, reason? (required for deny and needs_changes), amend?: {ops, base_versions}} with If-Match: the etag and an Idempotency-Key: approve rebases onto the page as it is now and commits the records, the proposal, the audit and the proposer's credit in one transaction; 200 {proposal, applied?: {versions}}; 403 not_admin, 401 step_up_required (a destructive approval needs a sign-in within 900 s), 409 rebase_conflict (the suggestion is now stale), 409 invalid_state, 412 precondition_failed (details.proposal is the fresh view), 422 from the privacy guard (no MCP tool)",
     gate: editingGate(), handler: proposalsDecide,
   },
+  // The access-request admin API (HFY-TSK-141, surf-access-admin-api; surfaces.md 7.4), dark until the accessRequests flag is on (or the caller is uat).
+  // Admin routes are 403 not_admin for a member. Nothing answers with a full requester address, and no route has an MCP tool: approving who may
+  // sign in is a human action in the site UI. secondEmail is the one member route: the member whose account got a second email answers the notice.
+  {
+    name: "accessRequests.list", method: "GET", path: "/access-requests", summary: "The access-request queue, admins only: ?state=pending (default) | awaiting_record | done, cursor, limit 1-50 (default 25): {items: [{id, state, createdAt, givenNames, maidenSurname, birthYear, birthPlace}], cursor}; no email (no MCP tool)",
+    gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.list(c.actor, c.query)),
+  },
+  {
+    name: "accessRequests.get", method: "GET", path: "/access-requests/:id", summary: "One access request, admins only: {id, state, version, createdAt, email (masked: first character plus domain), form, preview (the Gramps mapping), decision?, hold?, proposalId?} (no MCP tool)",
+    gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.get(c.actor, c.params.id)),
+  },
+  {
+    name: "accessRequests.decide", method: "POST", path: "/access-requests/:id/decision", summary: "Decide a request, admins only: {decision: link, grampsId, version, confirmedOutside: true, allowSecondEmail?} | {decision: new, preview, version, confirmedOutside: true} | {decision: decline, note?, sendNote?, version}: 200 {state, emailSent}; link and new need a sign-in within 900 s (401 step_up_required); 403 owner_only (allowSecondEmail), 409 conflict | already_member | second_email, 422 unknown_person | not_living | contact_info (no MCP tool)",
+    gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.decide(c.actor, c.params.id, c.body, { store: c.store })),
+  },
+  {
+    name: "accessRequests.revoke", method: "POST", path: "/access-requests/:id/revoke", summary: "End the access a request gave, admins only: {version, confirmedOutside: true, reason?}: 200 {state: revoked}; needs a sign-in within 900 s (no MCP tool)",
+    gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.revoke(c.actor, c.params.id, c.body)),
+  },
+  {
+    name: "accessRequests.secondEmail", method: "POST", path: "/second-email/:id", summary: "The member answers the notice that a second email was allowed on their account: {response: confirm | object}; 404 for anyone but that member, 409 window_closed after 72 hours (no MCP tool)",
+    gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.respondSecondEmail(c.actor, c.params.id, c.body)),
+  },
 ]);
 
 /** Normalizes registry entries (MCP member, auth, write, path matcher). Exported so tests can mount extra routes through the same shape. */

@@ -105,3 +105,23 @@ export function createPersonExists({ load }) {
     }
   };
 }
+
+/**
+ * `async (grampsId) => null | { isLiving }` from the site's own person record (person/<id>.json, the renderer's output), for the access-request
+ * `link` decision (HFY-TSK-141): null when there is no such person (absent counts like createPersonExists), `isLiving` true only when the record says
+ * so (a missing or odd value is not living: fail closed). Any other failure throws, so the caller answers 503 and not a wrong 422.
+ */
+export function createPersonFacts({ load }) {
+  return async (grampsId) => {
+    if (typeof grampsId !== "string" || !ID_RE.test(grampsId)) return null;
+    try {
+      const rec = await load(grampsId);
+      if (rec === null || rec === undefined) return null;
+      return { isLiving: rec.isLiving === true };
+    } catch (e) {
+      const status = e?.$metadata?.httpStatusCode;
+      if (e?.name === "NoSuchKey" || e?.Code === "NoSuchKey" || e?.name === "AccessDenied" || e?.Code === "AccessDenied" || status === 404 || status === 403) return null;
+      throw e;
+    }
+  };
+}

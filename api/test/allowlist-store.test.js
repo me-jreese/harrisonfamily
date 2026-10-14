@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { createFakeDdb, cmds } from "./world.js";
 import { TxnCancelled, transact } from "../src/txn.js";
 import {
-  ALLOW_SOURCES, allowItem, createCompositeMemberReader, emailHash, grantAllow, grantItems, isActiveAllowItem, listAllowBySub, readAllowEntry, revokeAllow, revokeItems,
+  ALLOW_SOURCES, allowItem, createCompositeMemberReader, emailHash, grantAllow, grantItems, isActiveAllowItem, isAllowedNow, listAllowBySub, readAllowEntry, revokeAllow, revokeItems,
 } from "../src/allowlist-store.js";
 import * as shared from "../src/shared/allowlist-store.mjs";
 
@@ -172,5 +172,38 @@ describe("the composite member reader (against the store's real items)", () => {
     const r = reader(down);
     expect(await r("I0222")).toEqual({ roles: ["editors"] });
     expect(await r("I0999")).toBeNull();
+  });
+});
+
+describe("a held second email (effectiveAt, PS-13)", () => {
+  const HOLD = "2026-03-07T05:06:07.000Z";
+  it("grantItems carries effectiveAt on the item, and nothing else changes", () => {
+    const held = grantItems({ ...grant, effectiveAt: HOLD });
+    expect(held.puts[0].item.effectiveAt).toBe(HOLD);
+    expect(grantItems(grant).puts[0].item).not.toHaveProperty("effectiveAt");
+    expect(() => grantItems({ ...grant, effectiveAt: "" })).toThrow(/effectiveAt/);
+  });
+
+  it("counts only from effectiveAt on; a malformed one never grants; no effectiveAt means now", () => {
+    const base = { state: "active", sub: "I0555" };
+    expect(isAllowedNow({ ...base, effectiveAt: HOLD }, Date.parse(HOLD) - 1)).toBe(false);
+    expect(isAllowedNow({ ...base, effectiveAt: HOLD }, Date.parse(HOLD))).toBe(true);
+    expect(isAllowedNow({ ...base, effectiveAt: "soon" }, Date.parse(HOLD))).toBe(false);
+    expect(isAllowedNow({ ...base, effectiveAt: 5 }, Date.parse(HOLD))).toBe(false);
+    expect(isAllowedNow(base, 0)).toBe(true);
+    expect(isAllowedNow({ ...base, state: "revoked" }, Date.parse(HOLD))).toBe(false);
+    expect(isAllowedNow({ state: "active" }, 0)).toBe(false);
+    // as a bare callback it takes the item alone (the index must not become the clock)
+    expect([{ ...base, effectiveAt: "2000-01-01T00:00:00.000Z" }, { ...base }].filter(isActiveAllowItem)).toHaveLength(2);
+  });
+
+  it("the member reader does not count a held address, and does once the clock passes it", async () => {
+    const ddb = createFakeDdb();
+    await grantAllow(ddb, cmds, T, { ...grant, effectiveAt: HOLD });
+    let t = Date.parse(HOLD) - 1000;
+    const read = createCompositeMemberReader({ readEntries: async () => new Map(), ddb, cmds, table: T, log: quiet, ttlMs: 0, now: () => t });
+    expect(await read("I0555")).toBeNull();
+    t = Date.parse(HOLD);
+    expect(await read("I0555")).toEqual({ roles: [] });
   });
 });
