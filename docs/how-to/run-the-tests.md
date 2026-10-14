@@ -17,7 +17,7 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | Graph builder, [`graph/test/`](../../graph/test/) | Offline | In process, plus child processes of the builder's own command line on synthetic input. One test runs the real `sqlite3` on a database it creates in a temporary directory; the others use a stub. Nothing is read from a real tree. |
 | Client scripts, [`tests/client/`](../../tests/client/) | Offline | In process only: the real `11ty/js/feature-flags.js` and `auth-v2.js` in a `vm` sandbox with stubbed `fetch`, storage and location. |
 | Island `node:test` suites, `islands/tests/*.test.mjs` | Offline | In process only. The content contract drives the real `api/` handler over the DynamoDB fake, and the comments contract uses an in-memory store. The theme, copy, asset-version and bundle tests read the site in `11ty/`, or the scratch site that `HFY_SITE` names, and the bundle test rebuilds every build output in memory to compare. |
-| Island browser tests, `islands/tests/*.spec.mjs` | Local | A static server on `127.0.0.1:<PW_PORT>` (default `8089`) that serves `11ty/`, or the scratch site that `HFY_SITE` names. The specs stub the API, `/auth/*` and data requests they make with synthetic data. The `notifications` and `search` specs let pages request Google's sign-in script. The others block it, and two `d11-fixes` tests answer it with a stub. The `shell` and `settings-hub` specs also run axe-core, a pinned dev dependency injected from `node_modules` by `islands/tests/axe.mjs`, and fail on a serious or critical finding. |
+| Island browser tests, `islands/tests/*.spec.mjs` | Local | A static server on `127.0.0.1:<PW_PORT>` (default `8089`) that serves `11ty/`, or the scratch site that `HFY_SITE` names. The specs stub the API, `/auth/*` and data requests they make with synthetic data. No page requests Google's sign-in script any more (HFY-TSK-317), and a `d11-fixes` test fails if one does; a few specs still abort that request to stay hermetic. The `shell` and `settings-hub` specs also run axe-core, a pinned dev dependency injected from `node_modules` by `islands/tests/axe.mjs`, and fail on a serious or critical finding. |
 | CloudFront Function tests, [`scripts/cloudfront/test/`](../../scripts/cloudfront/test/) | Offline | In process only: the source of `HFYAppendIndex` in a `vm` sandbox, the shared case table, and `git ls-files 11ty`. |
 | MCP conformance gate, [`scripts/ci/mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh) | Offline; needs `CODEARTIFACT_AUTH_TOKEN` | In process only: three files of the API suite, then `io-kit parity diff` over documents it generates in `api/dist/`. When `api/node_modules` is missing, it first installs from the private registry. |
 | Login flow, [`tests/login-flow/`](../../tests/login-flow/) | **Live** | The production site, signed in as a real test account. Get io's go-ahead first. |
@@ -58,7 +58,7 @@ Run the steps that cover your change:
 | `islands/`, a theme partial or an `11ty/` page | Steps 3 and 4. |
 | `edge-gate/` | Step 8. |
 | `graph/` | Step 14. |
-| `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js`, `search-navbar.js` or `search-results.js` | Step 9. |
+| `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js` or `11ty/family-login/index.html` | Step 9. |
 | `scripts/infra/`, `scripts/cloudfront/`, or a file under `11ty/person/` | Step 5. |
 | `11ty/README.md` or `scripts/check-deployment-sync.sh` | Step 5, which checks that both list the same repo-owned `11ty/` files. |
 | [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) | Steps 2 and 5. The auth edge's store tests read the table's key schema from it. |
@@ -70,7 +70,7 @@ Run the steps that cover your change:
 | `scripts/mcp/token-smoke.sh` | Step 7. |
 | `tests/login-flow/` | Step 6, with io's go-ahead. |
 
-No test suite covers the other scripts in `scripts/ci/`. The `build` job of io-kit CI runs `patch-client-id.sh` and `package-lambda.sh` on each pull request.
+No test suite covers the other scripts in `scripts/ci/`. The `build` job of io-kit CI runs the manifest's echo-only build command on each pull request.
 
 Steps 3 and 4 need the `api/` install from step 1. Step 10 needs the `auth/` install from step 2, and its sign-in pages test also needs the `islands/` install from step 3. Run the secret scan, step 13, last.
 
@@ -178,7 +178,7 @@ scripts/infra/test/run.sh
 Some checks compare files that are edited by hand, and fail when the files disagree. Change them together:
 
 - **The uploads sandbox CSP.** The Content-Security-Policy of `UploadsResponseHeadersPolicy` in `app-stack.yaml` must equal `UPLOADS_CSP` in [`scripts/infra/lib/cf-common.sh`](../../scripts/infra/lib/cf-common.sh), the string that `add-data-gate-behaviors.sh` gives `hfy-uploads-private`.
-- **The repo-owned `11ty/` files.** The `11ty/` excludes of `check-deployment-sync.sh` must be exactly the excludes of the refresh `rsync` in [`11ty/README.md`](../../11ty/README.md), apart from `.DS_Store`. Both, and the README's repo-owned files table, must list `js/person-page.js`, `js/auth.js`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`.
+- **The repo-owned `11ty/` files.** The `11ty/` excludes of `check-deployment-sync.sh` must be exactly the excludes of the refresh `rsync` in [`11ty/README.md`](../../11ty/README.md), apart from `.DS_Store`. Both, and the README's repo-owned files table, must list `js/person-page.js`, `family-login/`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`.
 - **The sign-in stylesheet's version.** `theme.cssUrl` in `auth/edge.manifest.json` must be the site's `/css/auth-edge.css`, with `?v=` the hash of `11ty/css/auth-edge.css`, as in step 2.
 
 It needs `bash`, `jq`, `python3` with PyYAML, and `shasum` for the stylesheet version. The `package-edge-gate.sh` checks also need `node`, `zip` and `openssl`, the CloudFront Function checks need `node`, and the sync-check run needs `rsync` and `git`. When those are missing, the script prints `(node, zip or openssl missing: package-edge-gate.sh checks skipped)`, `(node not installed: scripts/cloudfront tests skipped)`, `(node not installed: publish-append-index.sh tests skipped)` or `(rsync or git missing: check-deployment-sync.sh run skipped)` and goes on. `cfn-lint`, on `app-stack.yaml` and the two edge stack templates, and `shellcheck` run when they are installed, and otherwise print `(cfn-lint not installed: skipped)` or `(shellcheck not installed: skipped)`. Every such line ends in `skipped)`. It ends with `scripts/infra tests: <n> passed, <m> failed` and exits non-zero if any check failed. The two `create-*` scripts are not covered: dry-run them as in step 12.
@@ -205,28 +205,22 @@ The suite has no lockfile, so use `npm install`. Every test runs in both the `ch
 
 Rules for every run:
 
-- **Set `HFY_SITE_BASE` explicitly.** When it is unset, the config and both specs fall back to the production site.
+- **Set `HFY_SITE_BASE` explicitly.** When it is unset, the config and the spec fall back to the production site.
 - **Pass credentials as environment variables.** The config does not load a `.env` file. Neither `.gitignore` lists `.env`, so a `.env` file in the checkout would be picked up by `git add`. Never create one there, and never commit one.
 - **Read secrets with `read -rs`**, as below, so that they stay out of your shell history.
 - **Run each block whole, with its parentheses.** The variables then exist only in that subshell. When the block ends, the secrets are gone, and `HFY_AUTH_V2=1` from an authV2 run cannot carry over into a later run.
-- **Name the spec file.** Playwright treats each file argument as a case-insensitive regular expression and matches it against the spec's full path. Both specs sit under `tests/login-flow/tests/`, so a filter such as `login-flow` matches both files.
+- **Name the spec file.** Playwright treats each file argument as a case-insensitive regular expression and matches it against the spec's full path. The spec sits under `tests/login-flow/tests/`.
 
 #### Choose the spec
 
-The `authV2` spec is the default check. The production cutover, on 2026-10-12 (HFY-TSK-069, HFY-R67), turned `authV2` on and then attached the private data gate. The legacy spec applies only where `authV2` is off. Check which sign-in the site runs, and whether the gate is attached, from a shell with no cookies:
+There is one spec, the `authV2` sign-in. The production cutover, on 2026-10-12 (HFY-TSK-069, HFY-R67), turned `authV2` on and then attached the private data gate, and HFY-TSK-317 deleted the legacy Google sign-in spec with the sign-in it drove. Check which state the site is in, and whether the gate is attached, from a shell with no cookies:
 
 ```sh
 curl -s https://<site>/_data/flags.json | jq .authV2
 curl -s -o /dev/null -w '%{http_code}\n' https://<site>/person/index.json
 ```
 
-| `authV2` | Data check | Run |
-| --- | --- | --- |
-| `true` | `401` (gate attached) or `200` | The [authV2 sign-in](#authv2-sign-in) spec. |
-| `false` | `200` | The [legacy sign-in](#legacy-sign-in) spec, for example in a new environment before its cutover, or after a rollback that removed the gate and then turned `authV2` off. |
-| `false` | `401` | Neither. The legacy client cannot read gated data, so members are locked out of the family data. Remove the gate first, as in [Roll back](toggle-a-feature-flag.md#roll-back). |
-
-If the first command prints anything but `true` or `false`, such as `null` or a `jq` error, use the `false` rows. The site treats a missing value, or a `flags.json` that fails to load, as every flag off ([Toggle a feature flag](toggle-a-feature-flag.md)).
+Run the spec when the first command prints `true`. With `false` (or `null`, a `jq` error, or a `flags.json` that fails to load, which the site treats as every flag off, see [Toggle a feature flag](toggle-a-feature-flag.md)), the redirect test of the spec still passes, because `/family-login/` is a static page, but the page does not refresh `io_id`. With `false` and `401` (gate attached), members are locked out of the family data: remove the gate first, as in [Roll back](toggle-a-feature-flag.md#roll-back).
 
 #### authV2 sign-in
 
@@ -242,30 +236,11 @@ If the first command prints anything but `true` or `false`, such as `null` or a 
 )
 ```
 
-The spec checks that `/family-login/` redirects to `/auth/login`; that the login page has exactly two `section.path` elements, with the password form's email and password fields and a Google sign-in element; the published JWKS; the signed-out session; and a password sign-in whose session `sub` and **My Record** link match `HFY_EXPECT_GRAMPS`. It asserts structure, never copy, so the family-voice text of the sign-in pages does not affect it.
+The spec checks that `/family-login/` (the static redirect page) redirects to `/auth/login`; that the login page has exactly two `section.path` elements, with the password form's email and password fields and a Google sign-in element; the published JWKS; the signed-out session; and a password sign-in whose session `sub` and **My Record** link match `HFY_EXPECT_GRAMPS`. It asserts structure, never copy, so the family-voice text of the sign-in pages does not affect it.
 
 Its count of exactly two paths predates passkeys. An edge whose manifest lists the passkey provider, as the committed [`auth/edge.manifest.json`](../../auth/edge.manifest.json) does, renders four `section.path` elements: the Google, password and passkey paths, and the hidden prompt to add a passkey. Against such an edge, that one test fails while the other tests still show whether sign-in works.
 
-#### Legacy sign-in
-
-[`login-flow.spec.ts`](../../tests/login-flow/tests/login-flow.spec.ts) drives the legacy Google sign-in on `/family-login/`. Under `authV2`, that page sends a signed-out visitor to `/auth/login`, so the spec cannot pass there. Its search also reads gated data, which the legacy client cannot do while the gate is attached. Run it only in the `false` and `200` row of [Choose the spec](#choose-the-spec). It needs a Google ID token for an allowlisted test account, from one of two variables:
-
-- `HFY_TEST_ID_TOKEN`: a token you minted beforehand. A Google ID token expires about an hour after it is minted.
-- `HFY_MINT_HELPER`: the path to `<project>/scripts/auth/mint_test_id_token.py`, which lives outside the repository. The spec runs it with `python3` and reads the token from its output. The default path, `../../scripts/auth/mint_test_id_token.py` relative to the current directory, does not reach the helper from the repository or from `<project>/workspace/tests/login-flow`, so always set `HFY_MINT_HELPER` to the helper's absolute path.
-
-```sh
-(
-  cd tests/login-flow
-  export HFY_SITE_BASE=https://<site>
-  export HFY_EXPECT_GRAMPS=<gramps-id>
-  read -rs HFY_TEST_ID_TOKEN && export HFY_TEST_ID_TOKEN   # paste the token; nothing is echoed
-  npx playwright test tests/login-flow.spec.ts
-)
-```
-
-`HFY_EXPECT_GRAMPS` is the test account's record ID. The spec signs in, checks that **My Record** links to `/person/?id=<gramps-id>`, runs a search, checks that `/family-login/` now redirects to that record, and signs out. If the test passes, it writes the browser console log, and any failed-request log, to `logs/`. A failing run writes nothing there.
-
-#### After either run
+#### After a run
 
 Open the report, then delete the report, the failure output and the logs:
 
@@ -274,7 +249,7 @@ Open the report, then delete the report, the failure output and the logs:
 (cd tests/login-flow && rm -rf playwright-report test-results logs)
 ```
 
-`show-report` serves the report until you press Ctrl+C. If you exported any of the variables directly in your shell instead of inside a block, clear them all with `unset HFY_TEST_ID_TOKEN HFY_TEST_PASSWORD HFY_AUTH_V2 HFY_TEST_EMAIL`.
+`show-report` serves the report until you press Ctrl+C. If you exported any of the variables directly in your shell instead of inside a block, clear them all with `unset HFY_TEST_PASSWORD HFY_AUTH_V2 HFY_TEST_EMAIL`.
 
 ### 7. Run the MCP token smoke check (live)
 
@@ -319,7 +294,7 @@ From the repository root:
 node --test tests/client/*.test.mjs
 ```
 
-Nothing to install. Both files load the real [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) into a `vm` sandbox with stubbed `fetch`, storage and location, and record every request it makes. [`data-fetch.test.mjs`](../../tests/client/data-fetch.test.mjs) checks how data requests change with `authV2`. [`auth-continuity.test.mjs`](../../tests/client/auth-continuity.test.mjs) also loads [`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js) and checks the session check, the silent refresh and retry, and the hand-over from `/family-login/?next=` to `returnTo`. The [test suites table](../reference/repository-operations.md#test-suites) has the details.
+Nothing to install. Both files load the real [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) into a `vm` sandbox with stubbed `fetch`, storage and location, and record every request it makes. [`data-fetch.test.mjs`](../../tests/client/data-fetch.test.mjs) checks how data requests change with `authV2`. [`auth-continuity.test.mjs`](../../tests/client/auth-continuity.test.mjs) also loads [`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js) and checks the session check, the silent refresh and retry, and (by running the inline script of the `/family-login/` redirect page) the hand-over from `?next=` to `returnTo`. The [test suites table](../reference/repository-operations.md#test-suites) has the details.
 
 The `auth-continuity` spec in step 4 checks the same session behavior in a browser.
 
@@ -472,7 +447,7 @@ Offline, the API, auth and MCP scripts print `(dry-run) origin-verify secret not
 
 ### 13. Run the secret scan
 
-Delete any login-flow reports and logs first (end of step 6), and any sign-in screenshots you saved with `E2E_SHOTS` inside the repository, because the scan reads them too. From the repository root:
+Delete any login-flow reports first (end of step 6), and any sign-in screenshots you saved with `E2E_SHOTS` inside the repository, because the scan reads them too. From the repository root:
 
 ```sh
 trufflehog --no-update --fail filesystem .
@@ -491,7 +466,7 @@ To run the scan on every commit, enable the repository's hooks:
 git config core.hooksPath scripts/git-hooks
 ```
 
-The [pre-commit hook](../../scripts/git-hooks/pre-commit) then runs the deployment sync check and this scan. It blocks the commit when the sync check fails, for example because `rsync` is missing or staged `11ty/`, `lambda/` or `functions/` files differ from their sources, when the scan finds something, or when `trufflehog` is not on `PATH`. [Repository operations](../reference/repository-operations.md#git-hook-scriptsgit-hookspre-commit) describes the sync check.
+The [pre-commit hook](../../scripts/git-hooks/pre-commit) then runs the deployment sync check and this scan. It blocks the commit when the sync check fails, for example because `rsync` is missing or staged `11ty/` or `lambda/` files differ from their sources, when the scan finds something, or when `trufflehog` is not on `PATH`. [Repository operations](../reference/repository-operations.md#git-hook-scriptsgit-hookspre-commit) describes the sync check.
 
 ### 14. Run the graph builder tests (offline)
 
@@ -548,9 +523,6 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | `scripts/infra/test/run.sh` prints `FAIL [check-deployment-sync.sh: repo-owned 11ty files (person-page-not-repo-owned)]: …` | The `11ty/` excludes of `check-deployment-sync.sh`, the refresh `rsync` in `11ty/README.md` and the README's repo-owned files table no longer agree, or `theme.cssUrl` is stale. The rest of the line names the check. | Make the three agree, as in step 5. For `theme.cssUrl`, rebuild the islands and commit both files ([Build and preview the islands](build-and-preview-the-islands.md)). |
 | The authV2 spec's path test expects 2 `section.path` elements and finds 4 | The spec predates passkeys, and the edge renders the passkey path and the hidden passkey prompt | Not a sign-in fault. Read the other tests' results. |
 | The authV2 spec's redirect test fails | The published `flags.json` does not have `authV2` set to `true` | Run the checks in [Choose the spec](#choose-the-spec). |
-| The legacy spec fails before the page loads, with a `python3` error | `HFY_MINT_HELPER` is unset, so the spec runs the default path, which does not reach the helper | Set `HFY_TEST_ID_TOKEN`, or set `HFY_MINT_HELPER` to the helper's absolute path. |
-| The legacy spec never shows the signed-in navigation | `authV2` is on, so `/family-login/` sent the browser to `/auth/login`; or the token expired, or the account is not on the allowlist | Run the checks in [Choose the spec](#choose-the-spec). Otherwise mint a new token, or see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md). |
-| The legacy spec signs in but fails at its search step | The gate is attached, and the legacy client cannot read gated data | Run the checks in [Choose the spec](#choose-the-spec). |
 | `token-smoke.sh` fails the RS256 check on the key ID | The signing key was rotated to a new key ID | Update the script ([Rotate the session signing key](rotate-the-session-signing-key.md)). |
 | `token-smoke.sh` fails audience verification | The token was issued for a resource other than `https://<site>/mcp` | Pass that resource with `--audience`, or get a token for `https://<site>/mcp`. |
 | An app behavior script stops with `Stack with id hfy-app does not exist` | `--stack <app-stack>` was not passed | Add `--stack <app-stack>` and run it again. |

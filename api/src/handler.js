@@ -7,6 +7,7 @@ import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
 import { createGuard } from "./guard.js";
+import { uploadPhotosFor } from "./comment-photos.js";
 import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
@@ -65,6 +66,7 @@ export function createHandler(deps) {
     const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload });
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
+      photos: uploadPhotosFor({ ddb, cmds, table, bucket: mediaBucket, base: deps.mediaPublicBase, now, s3: deps.s3 }), // HEAD + checkLocation + UPLOAD# binding for comment photos
       getPost: (id) => content.get(id),
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {

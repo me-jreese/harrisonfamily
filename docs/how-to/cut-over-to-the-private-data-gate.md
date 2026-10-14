@@ -33,7 +33,7 @@ curl -sS -o /dev/null -D - https://<site>/Person/index.json | grep -iE '^(HTTP|c
 | Check | Answer | Meaning |
 | --- | --- | --- |
 | `jq .authV2` | `true` | Visitors without a preview override run the `authV2` client. |
-| | `false`, or anything else | They run the legacy client. |
+| | `false`, or anything else | They send plain requests and never refresh `io_id`. |
 | `/person/index.json` | `401` | The gate is attached to the data paths. |
 | | `200` | The gate is not attached. The data is served to anyone. |
 | | `404` | The gate is not attached, and `HFYAppendIndex` runs its default-deny code. That code refuses the data paths to every visitor, members included. |
@@ -125,12 +125,12 @@ If the smoke job fails and `rollback_on_smoke_fail` restores the previous artifa
    ```
 
 2. Open a private window, which has no preview override. Sign in at `https://<site>/auth/login`, then open a person page, `https://<site>/person/?id=<gramps-id>`.
-3. In DevTools > Network, select the `/person/<gramps-id>.json` request. Its request headers carry a `Cookie` header that includes `io_id`, and no `X-HFY-Session` header. Do not copy the cookie value anywhere.
+3. In DevTools > Network, select the `/person/<gramps-id>.json` request. Its request headers carry a `Cookie` header that includes `io_id`. Do not copy the cookie value anywhere.
 4. Search from the navbar, which loads `/person/index.json` and `/person/search-index.json`. Results appear, and the person page's photos load.
 
 If `/person/index.json` answered `404` in [Find your starting point](#find-your-starting-point), the data requests answer `404` here too, so results and photos cannot load. Check only their request headers in substeps 3 and 4.
 
-If the data request has no `io_id` cookie, or still sends `X-HFY-Session`, the page is not running the `authV2` client. Do not attach the gate. See [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
+If the data request has no `io_id` cookie, the page is not running the `authV2` client. Do not attach the gate. See [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
 
 ### 3. Attach the gate
 
@@ -275,7 +275,7 @@ The 2026-10-12 cutover attached the gate in production. So these rules apply to 
 Roll back in reverse order: the gate first, then the flag, and the flag only if it is at fault. Two cases call for something other than a plain gate removal:
 
 - **A bad gate version.** If a new version of the gate refuses members, point the behaviors back at a retained earlier version, as in [Deploy the edge functions](deploy-the-edge-functions.md#roll-back). The data stays gated throughout.
-- **`HFYAppendIndex` runs the default-deny code.** That is the case when `/Person/index.json` answers `404` with `cache-control: private, no-store`. Removing the gate then does not make the family data readable. The six data paths fall through to the default behavior, and the function answers `404` to every request for them, from either client. The exception is a path that a legacy behavior, such as `/person/*`, matches first: that behavior serves it to anyone. Member photos keep their own `/uploads/*` behavior and become public. To make the data readable without the gate, also roll the function back to its earlier code, as in [Publish a change to the CloudFront Function](publish-the-cloudfront-function.md). The `roll back with:` commands that `publish-append-index.sh` printed when it published name the saved copy of that code. A function rollback needs io's go-ahead too.
+- **`HFYAppendIndex` runs the default-deny code.** That is the case when `/Person/index.json` answers `404` with `cache-control: private, no-store`. Removing the gate then does not make the family data readable. The six data paths fall through to the default behavior, and the function answers `404` to every request for them, from every client. The exception is a path that a legacy CloudFront behavior, such as `/person/*`, matches first: that behavior serves it to anyone. Member photos keep their own `/uploads/*` behavior and become public. To make the data readable without the gate, also roll the function back to its earlier code, as in [Publish a change to the CloudFront Function](publish-the-cloudfront-function.md). The `roll back with:` commands that `publish-append-index.sh` printed when it published name the saved copy of that code. A function rollback needs io's go-ahead too.
 
 1. **Remove the gate.** Do a dry run first:
 
@@ -307,12 +307,12 @@ Roll back in reverse order: the gate first, then the flag, and the flag only if 
    ```
 
    That restores the whole configuration as it was before that run, so any distribution change made since then is lost as well. Prefer `--remove`. The backup holds the origin-verify value, so delete it once you no longer need it.
-2. **Only after that, and only if the `authV2` client itself is at fault,** set `authV2` back to `false` and deploy ([Toggle a feature flag](toggle-a-feature-flag.md#roll-back)). Never turn `authV2` off while the gate is attached. The legacy client does not sign in with an `io_id` session, so the gate refuses its data requests, and person pages, search and photos fail. The legacy sign-in still ships with every push to `main`: `io-kit-deploy` deploys `hfy-check-allowed`, and `deploy-gcf-legacy.yml` deploys `getAllowlist`. Under the default-deny `HFYAppendIndex`, the legacy client still cannot read the data until the function is rolled back as well.
+2. **Only after that, and only if the `authV2` client itself is at fault,** set `authV2` back to `false` and deploy ([Toggle a feature flag](toggle-a-feature-flag.md#roll-back)). Never turn `authV2` off while the gate is attached. A page with `authV2` off never refreshes `io_id`, and the legacy Google sign-in that used to be the way back no longer exists (HFY-TSK-317), so the gate refuses its data requests once the hour is up, and person pages, search and photos fail. Under the default-deny `HFYAppendIndex`, no client can read the data until the function is rolled back as well.
 
 > **Warning: an automatic site rollback counts as turning `authV2` off.** While the gate is attached, any deploy that fails its smoke check can do this. `rollback_on_smoke_fail` restores the artifact of the last successful deploy run, with the `flags.json` of the commit that run deployed. After any automatic rollback, run `curl -s https://<site>/_data/flags.json | jq .authV2`. If it does not print `true`:
 >
-> - **If `HFYAppendIndex` runs older code,** remove the gate at once (rollback step 1). The legacy client can then read the data.
-> - **If it runs the default-deny code,** removing the gate does not give the legacy client its data back. Instead, get a release with `"authV2": true` deployed again by fixing forward or reverting, as in [Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback). The other way out is to remove the gate and roll the function back as well.
+> - **If `HFYAppendIndex` runs older code,** remove the gate at once (rollback step 1). The data is then readable.
+> - **If it runs the default-deny code,** removing the gate does not give that client its data back. Instead, get a release with `"authV2": true` deployed again by fixing forward or reverting, as in [Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback). The other way out is to remove the gate and roll the function back as well.
 
 ## If something fails
 

@@ -56,15 +56,15 @@ test("an authenticated session without a gramps id decides nothing (no redirect,
   assert.equal(w.location.replaced, null);
 });
 
-test("authV2 off: the id the legacy sign-in kept, else /family-login/ with next=/private/", async () => {
+test("authV2 off: the edge sign-in with a return to /private/; an id the retired Google sign-in left is never used", async () => {
   const off = { flags: { authV2: false }, session: null };
-  assert.equal(await load(off).HFYFeatureFlags.familyUrl(), "/family-login/?next=%2Fprivate%2F");
-  assert.equal(await load({ ...off, local: { HFY_AUTH_USER_GRAMPS_ID: "I0007" } }).HFYFeatureFlags.familyUrl(), "/person/?id=I0007");
+  assert.equal(await load(off).HFYFeatureFlags.familyUrl(), "/auth/login?returnTo=%2Fprivate%2F");
+  assert.equal(await load({ ...off, local: { HFY_AUTH_USER_GRAMPS_ID: "I0007" } }).HFYFeatureFlags.familyUrl(), "/auth/login?returnTo=%2Fprivate%2F");
 });
 
-test("/auth/session unreachable under authV2: the legacy entry, as the shell's own sign-in link does", async () => {
+test("/auth/session unreachable under authV2: the edge sign-in, as the shell's own sign-in link goes", async () => {
   const w = load({ session: null });
-  assert.equal(await w.HFYFeatureFlags.familyUrl(), "/family-login/?next=%2Fprivate%2F");
+  assert.equal(await w.HFYFeatureFlags.familyUrl(), "/auth/login?returnTo=%2Fprivate%2F");
 });
 
 test("goToFamily replaces the history entry with the resolved URL and resolves it", async () => {

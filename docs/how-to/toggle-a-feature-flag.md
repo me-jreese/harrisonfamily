@@ -41,7 +41,7 @@ Values in angle brackets, such as `<site>`, `<site-bucket>`, `<app-stack>`, `<di
 
 `familyViz` is the viz domain's flag. It is not in `flags.json` yet, but the shell already reads it (HFY-TSK-091) and points "family" at `/tree/`, with or without `navMe`. `/tree/` does not exist until the viz task ships, so do not preview `familyViz`: a `?hfy_flags=familyViz` link turns today's "family" tab, which opens your own page, into a link to a `404`.
 
-> **Warning:** do not flip a flag whose prerequisites fail. A missing island bundle leaves the legacy page, or the placeholder text on `/posts/` and `/me/notifications/`. A missing API shows an error inside the island. An unreachable auth edge stops sign-in and, while the gate is attached, the family data for everyone. [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md#find-your-symptom) lists the symptoms and their fixes.
+> **Warning:** do not flip a flag whose prerequisites fail. A missing island bundle leaves the page without it: `/search/` stays empty (there is no legacy search page any more), and `/posts/` and `/me/notifications/` keep their placeholder text. A missing API shows an error inside the island. An unreachable auth edge stops sign-in and, while the gate is attached, the family data for everyone. [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md#find-your-symptom) lists the symptoms and their fixes.
 
 ### Check the prerequisites
 
@@ -105,7 +105,7 @@ If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-a
 2. Look for the **preview flags on — turn off** banner at the bottom left of the page. It shows on every page while the override is active. When the shell shows its bottom bar, the banner sits just above it.
 3. Name every flag you want in that one value. The value is saved in this tab's `sessionStorage` under `hfy:flags`, and each new value replaces the stored list instead of adding to it. For example, opening `?hfy_flags=searchV2` afterwards leaves only `searchV2` in the override. The resolver still turns `shellV2` on, because `searchV2` implies it. Flags that are already on for everyone stay on as well, because the override is applied over the published values.
 4. Browse normally in the same tab. The override applies to every page you open in it and ends when you close the tab. Other tabs, other browsers and other visitors are not affected.
-5. For `personV2`, `postsV2` and `notifyV2`, sign in at `https://<site>/auth/login`. These islands call the API with the auth edge's session cookie, and the legacy sign-in does not set it.
+5. For `personV2`, `postsV2` and `notifyV2`, sign in at `https://<site>/auth/login`. These islands call the API with the auth edge's session cookie, which only the edge sign-in sets.
 
 Flag names are case-sensitive. An unknown name is stored but does nothing.
 
@@ -113,10 +113,10 @@ If the banner disappears by itself, the override was turned off because somethin
 
 ## Force a flag off in one tab
 
-- **Put a minus sign before the name**, as in `?hfy_flags=-searchV2`. The override wins over the published value, so this works for a flag that is on for everyone. Use it to compare the new surface with the legacy page.
+- **Put a minus sign before the name**, as in `?hfy_flags=-searchV2`. The override wins over the published value, so this works for a flag that is on for everyone. Use it to compare the new surface with the page without it (for `searchV2` that is an empty `/search/` page).
 - **Repeat any other override you want to keep.** The value replaces the whole stored list. `?hfy_flags=shellV2,-postsV2` turns `postsV2` off and keeps `shellV2`; `?hfy_flags=-postsV2` alone drops it.
 - **Combine on and off in one value.** `?hfy_flags=searchV2,-shellV2` shows the search island without the shell. Only an explicit `-shellV2` stops `searchV2` from turning the shell on.
-- **Do not force `authV2` off while the gate is attached** (check 6 prints `401`). The tab then runs the legacy client, which neither signs in at the edge nor refreshes `io_id`. The gate can then refuse its person, search and photo requests with `401`.
+- **Do not force `authV2` off while the gate is attached** (check 6 prints `401`). The tab then never refreshes `io_id`, so the gate refuses its person, search and photo requests with `401` once the hour is up.
 - **To clear the override** and return to the published values, press **turn off** in the banner, or open `?hfy_flags=` with an empty value.
 
 ## Check the result in one tab
@@ -137,21 +137,21 @@ If the banner disappears by itself, the override was turned off because somethin
 
    | Flag | Open | Expect |
    | --- | --- | --- |
-   | `shellV2` | Any page | `<html>` has the class `hfy-shell-v2`, and `/js/islands/shell.js?v=<sha8>` loads with `200`. The page gains `<link rel="manifest" href="/manifest.webmanifest?v=<sha8>">`, and the shell registers `/sw.js?v=<sha8>`. Below 688 px the shell shows a five-item bottom bar (home, family, search, posts, me), or four items (home, search, posts, me) with `navMe`. From 688 px it shows a top bar. If the bundle fails to load, the loader removes the class and the legacy navbar stays. |
-   | `searchV2` | `/search/` | `<html>` has the class `hfy-search-v2`, and `await HFYFeatureFlags.searchV2Live('page')` returns `true`. The `shellV2` checks pass too. |
+   | `shellV2` | Any page | `<html>` has the class `hfy-shell-v2`, and `/js/islands/shell.js?v=<sha8>` loads with `200`. The page gains `<link rel="manifest" href="/manifest.webmanifest?v=<sha8>">`, and the shell registers `/sw.js?v=<sha8>`. Below 688 px the shell shows a five-item bottom bar (home, family, search, posts, me), or four items (home, search, posts, me) with `navMe`. From 688 px it shows a top bar. If the bundle fails to load, the loader removes the class and the Bootstrap navbar stays (without a search field). |
+   | `searchV2` | `/search/` | `/js/islands/search.js?v=<sha8>` loads with `200`, and `#hfy-search-v2` is the first child of the page's `<main>`. The `shellV2` checks pass too. |
    | `personV2` | `/person/?id=<gramps-id>` | `/js/islands/person.js?v=<sha8>` loads with `200`. |
    | `postsV2` | `/`, `/posts/` and `/person/?id=<gramps-id>` | `timeline.js`, `posts.js` and `my-posts.js` respectively load from `/js/islands/` with `200`. Post photos load. While `/uploads/*` is gated, each `/uploads/` response shows `cache-control: private, no-store`. |
    | `notifyV2` | `/me/notifications/` | `/js/islands/notifications.js?v=<sha8>` loads with `200`, and the island replaces the page's "notifications aren't turned on yet." text. |
    | `navMe` | Any page, signed in at the edge, then `/me/` | The bottom bar has four items, and "me" links to `/person/?id=<your gramps id>`. A gear sits before your avatar and opens `/me/`, where `/js/islands/settings.js?v=<sha8>` loads with `200` and the island replaces the page's "settings aren't turned on yet." text with the rows. The account sheet reads "your page", "settings" and "sign out". |
-   | `authV2` | `/family-login/`, signed out at the edge | The browser is redirected to `/auth/login?returnTo=%2F`. A deep link survives: `/family-login/?next=%2Fsearch%2F` goes to `/auth/login?returnTo=%2Fsearch%2F`. `next` must be a same-origin path outside `/auth` and `/family-login`; anything else becomes `/`. Signed in at the edge, the page stays and offers the legacy Google sign-in button, by design, without the One Tap prompt ([Front end](../reference/front-end.md#auth-v2js-behavior)). Then run the `authV2` checks below. |
+   | `authV2` | Any page, signed out at the edge | The sign-in links (`[data-feature="familyLoginLink"]`) point at `/auth/login?returnTo=<this page>`. `/family-login/` is a static redirect page, whatever the flag says: it goes to `/auth/login?returnTo=%2F`, and `/family-login/?next=%2Fsearch%2F` goes to `/auth/login?returnTo=%2Fsearch%2F`. `next` must be a same-origin path outside `/auth` and `/family-login`; anything else becomes `/` ([Front end](../reference/front-end.md#family-login)). Then run the `authV2` checks below. |
 
    To check a class from the console, run `document.documentElement.classList.contains('hfy-shell-v2')`.
 4. For `authV2`, also check the data path and the navigation with a sign-in at the edge only:
-   1. Use a window where the legacy Google sign-in has not run, such as a private window. Sign in at `https://<site>/auth/login`.
-   2. Open `https://<site>/person/?id=<gramps-id>`. In DevTools > Network, select the `/person/<gramps-id>.json` request. Its request headers carry a `Cookie` header that includes `io_id`, and no `X-HFY-Session` header. Do not copy the cookie value anywhere.
-   3. Check that the navbar search shows, although the legacy sign-in never ran. While `shellV2` is on, the shell hides the navbar, so check from the console. `document.querySelector('[data-feature="navbarSearch"]').dataset.featureVisible` returns `"true"`, and `(await HFYFeatureFlags.edgeSession()).authenticated` returns `true`.
+   1. Use a private window, which has no override. Sign in at `https://<site>/auth/login`.
+   2. Open `https://<site>/person/?id=<gramps-id>`. In DevTools > Network, select the `/person/<gramps-id>.json` request. Its request headers carry a `Cookie` header that includes `io_id`. Do not copy the cookie value anywhere.
+   3. Check that the signed-in navigation shows. While `shellV2` is on, the shell hides the navbar, so check from the console. `document.querySelector('[data-feature="myRecordLink"]').dataset.featureVisible` returns `"true"`, and `(await HFYFeatureFlags.edgeSession()).authenticated` returns `true`.
 
-   If the data request has no `io_id` cookie, or still sends `X-HFY-Session`, the page is not running the `authV2` client. See [A flag is on but nothing changes](diagnose-sign-in-and-api-failures.md#a-flag-is-on-but-nothing-changes).
+   If the data request has no `io_id` cookie, the page is not running the `authV2` client. See [A flag is on but nothing changes](diagnose-sign-in-and-api-failures.md#a-flag-is-on-but-nothing-changes).
 
 ## Turn a flag on for everyone
 
@@ -183,7 +183,7 @@ If the banner disappears by itself, the override was turned off because somethin
 5. If you turned `authV2` on:
    - The `authV2` checks in step 3 are the cutover's [Confirm the client](cut-over-to-the-private-data-gate.md#2-confirm-the-client). Attach the gate ([step 3 of the cutover](cut-over-to-the-private-data-gate.md#3-attach-the-gate)) only after they pass.
    - Run the auth-v2 Playwright suite against production ([Run the tests](run-the-tests.md#authv2-sign-in)). It also needs io's go-ahead. It checks:
-     - the `/family-login/` redirect.
+     - the `/family-login/` redirect page.
      - the Google and email-and-password paths on `/auth/login`.
      - the published JWKS and the signed-out session.
      - a password sign-in whose **My Record** link names the expected record.
@@ -209,7 +209,7 @@ Turning a flag off for everyone is a global flip, so it needs io's G-prod approv
 
 ### Turn authV2 off while the gate is attached
 
-Check 6 prints `401` while the gate is attached. Never set `authV2` to `false` then. The legacy client neither signs in at the edge nor refreshes `io_id`, so the gate refuses its person, search and photo requests, for every visitor. Follow these steps in order. Step 1 is the same decision as step 2 of [Check authV2 after a failed deploy](roll-back-a-site-deploy.md#check-authv2-after-a-failed-deploy), and the cutover's [Roll back](cut-over-to-the-private-data-gate.md#roll-back) gives the full order.
+Check 6 prints `401` while the gate is attached. Never set `authV2` to `false` then. A page with `authV2` off never refreshes `io_id`, so the gate refuses its person, search and photo requests once the hour is up, for every visitor. Follow these steps in order. Step 1 is the same decision as step 2 of [Check authV2 after a failed deploy](roll-back-a-site-deploy.md#check-authv2-after-a-failed-deploy), and the cutover's [Roll back](cut-over-to-the-private-data-gate.md#roll-back) gives the full order.
 
 1. **Find out which code `HFYAppendIndex` runs.** Signed out, from a shell with no cookies:
 
@@ -217,8 +217,8 @@ Check 6 prints `401` while the gate is attached. Never set `authV2` to `false` t
    curl -sS -o /dev/null -D - https://<site>/Person/index.json | grep -iE '^(HTTP|cache-control)'
    ```
 
-   - **Anything but `404` with `cache-control: private, no-store`.** The function runs its older code. Removing the gate makes the data readable to the legacy client again. Go on to step 2.
-   - **`404` with `cache-control: private, no-store`.** The function runs its default-deny code, and removing the gate alone does not make the data readable. The six data paths then fall through to the default behavior, where the function answers `404` to every request for them, from either client. Only a path that a broader legacy behavior, such as `/person/*`, matches first is served, to anyone. Member photos become public. Choose one:
+   - **Anything but `404` with `cache-control: private, no-store`.** The function runs its older code. Removing the gate makes the data readable again. Go on to step 2.
+   - **`404` with `cache-control: private, no-store`.** The function runs its default-deny code, and removing the gate alone does not make the data readable. The six data paths then fall through to the default behavior, where the function answers `404` to every request for them, from every client. Only a path that a broader legacy CloudFront behavior, such as `/person/*`, matches first is served, to anyone. Member photos become public. Choose one:
      - Keep the gate attached and `authV2` on, and get a release that works with `"authV2": true` live: fix forward, or revert the change that broke it, as in [Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback). Stop here.
      - Remove the gate in steps 2 and 3, and roll the function back in step 4. The function rollback needs io's go-ahead too.
 2. **Remove the gate.** The real `--remove` run needs io's go-ahead. Do the dry run first:

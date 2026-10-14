@@ -11,7 +11,7 @@
 // "own page" is the member's own /person/?id=<sub> once the edge session names them, and the stable /private/ redirect until then
 // (session pending, signed out, authV2 off): HFYFeatureFlags.goToFamily sends a signed-in member to their own page and a signed-out
 // visitor to the sign-in and back (SURF-D3: /private/ stays that redirect). "settings" is what "me" opened before navMe:
-// /me/notifications/ with notifyV2, else /family-login/. With navMe the settings live at /me/, behind the shell's gear instead.
+// /me/notifications/ with notifyV2, else the account page /auth/link. With navMe the settings live at /me/, behind the shell's gear instead.
 // No route may be a gated data prefix (/family/ above all): family-route.test.mjs asserts it for every combination.
 import { ownRoute } from "./family-route.js";
 
@@ -25,7 +25,7 @@ export const SETTINGS_ROUTE = "/me/";
 /** The registry items for the given flags and session sub: [{ id, label, route, icon, order }]. */
 export function navItems({ navMe = false, familyViz = false, notifyV2 = false, sub = null } = {}) {
   const own = sub ? ownRoute(sub) : OWN_PAGE_REDIRECT;
-  const settings = notifyV2 ? "/me/notifications/" : "/family-login/";
+  const settings = notifyV2 ? "/me/notifications/" : "/auth/link";
   const items = [{ id: "home", label: "home", route: "/" }];
   if (familyViz) items.push({ id: "family", label: "family", route: TREE_ROUTE });
   else if (!navMe) items.push({ id: "family", label: "family", route: own });

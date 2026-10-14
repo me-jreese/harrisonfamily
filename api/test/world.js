@@ -1,4 +1,5 @@
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
+import { CommentError } from "@io-kit/comments";
 import { SignJWT, createLocalJWKSet } from "jose";
 import { createUlidFactory, ulidTime } from "@io-kit/feed";
 import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
@@ -53,16 +54,24 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
 export const CLEAN_JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
 
 /**
- * A fake S3 for checkLocation: GetObject over `objects` (key -> {bytes, contentType}). A Range (bytes=a-b, or the suffix form
+ * A fake S3 for checkLocation and headUpload: HeadObject (ContentLength is `size` when an object sets it) and GetObject over `objects` (key -> {bytes, contentType}). A Range (bytes=a-b, or the suffix form
  * bytes=-n) is honoured and answered with Content-Range "bytes a-b/<size>", as S3 does; a missing key answers like S3 without
  * s3:ListBucket (403 AccessDenied). `gets` records each GetObject input.
  */
 export function createFakeS3(objects = new Map()) {
   const gets = [];
+  const heads = [];
   return {
     objects,
     gets,
+    heads,
     async send(cmd) {
+      if (cmd.constructor.name === "HeadObjectCommand") {
+        heads.push(cmd.input);
+        const o = objects.get(cmd.input.Key);
+        if (!o) throw Object.assign(new Error("Not Found"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
+        return { ContentType: o.contentType, ContentLength: o.size ?? o.bytes.length };
+      }
       if (cmd.constructor.name !== "GetObjectCommand") throw new Error(`fake s3: unsupported ${cmd.constructor.name}`);
       const i = cmd.input;
       gets.push(i);
@@ -132,3 +141,18 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept,
   };
   return { ddb: raw, handler, call, sent, presigned, subscriptions, preferences, now, s3 };
 }
+
+/**
+ * For the kit's CommentSource contract (CC-18, CC-19, CC-22), whose photos are fixed https urls on media.example.test: the same
+ * parse / owned / bind shape as src/comment-photos.js with the upload binding taken out (the production policy has its own tests in
+ * comment-photos.test.js). The attachment id is the file stem, so it is stable per url.
+ */
+export const contractPhotos = {
+  parse(url) {
+    const m = typeof url === "string" ? /^https:\/\/media\.example\.test\/contract\/(p\d+)\.jpg$/.exec(url) : null;
+    if (!m) throw new CommentError("validation", "not a comment photo", "attachments");
+    return { id: m[1], path: url };
+  },
+  async owned() {},
+  async bind() { return []; },
+};

@@ -1,10 +1,10 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:a91a628ab61a5e48ce5440a5bd24b44163c2e6fb93fcfa11cd07b7bfb7d676a3
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:468654ffc6320fc380be8a669a8c5b3fe60d692c556824cd1230cef029a60dcb
 name: io-kit build
 description: Run the manifest build command and verify the output directory exists.
 inputs:
   cmd:
     description: Build command (build.cmd).
-    default: bash scripts/ci/patch-client-id.sh && bash scripts/ci/package-lambda.sh
+    default: echo "11ty/ is committed output; nothing to build"
   out:
     description: Build output directory (build.out).
     default: 11ty

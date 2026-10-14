@@ -1,0 +1,2938 @@
+{
+ "group": "validator-batches",
+ "policy": "redaction-v1",
+ "vectors": [
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.date.daymonth"
+    },
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.date.daymonth"
+    }
+   ],
+   "id": "batch.event.birth_ref_in_store",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": 0,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "A death event a stored person points at as its birth gets a full date: refused"
+  },
+  {
+   "expected": [],
+   "id": "batch.event.not_birth_ref",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": -1,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "The same full date on a death event no person points at as a birth is kept"
+  },
+  {
+   "expected": [
+    {
+     "handle": "evB",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.date.daymonth"
+    },
+    {
+     "handle": "evB",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.date.daymonth"
+    }
+   ],
+   "id": "batch.person.retarget_to_stored_event",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "obj": {
+      "_class": "Person",
+      "address_list": [],
+      "alternate_names": [],
+      "attribute_list": [],
+      "birth_ref_index": 1,
+      "citation_list": [],
+      "death_ref_index": -1,
+      "event_ref_list": [
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [],
+        "note_list": [],
+        "private": false,
+        "ref": "evA",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       },
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [],
+        "note_list": [],
+        "private": false,
+        "ref": "evB",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       }
+      ],
+      "family_list": [],
+      "gender": 1,
+      "gramps_id": "IP1",
+      "handle": "p1",
+      "lds_ord_list": [],
+      "media_list": [],
+      "note_list": [],
+      "parent_family_list": [],
+      "person_ref_list": [],
+      "primary_name": {
+       "_class": "Name",
+       "call": "",
+       "citation_list": [],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "format": null,
+        "modifier": 0,
+        "newyear": 0,
+        "quality": 0,
+        "sortval": 0,
+        "text": ""
+       },
+       "famnick": "",
+       "first_name": "Alder",
+       "nick": "",
+       "note_list": [],
+       "private": false,
+       "suffix": "",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "primary": true,
+         "surname": "Testwood"
+        }
+       ],
+       "title": "",
+       "type": {
+        "_class": "NameType",
+        "string": "",
+        "value": 2
+       }
+      },
+      "private": false,
+      "tag_list": [],
+      "urls": []
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": -1,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "evA",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      },
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "evB",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EVA",
+     "handle": "evA",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 7
+     }
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       9,
+       9,
+       1950,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EVB",
+     "handle": "evB",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "A person's birth_ref_index now targets a stored event that carries a full date: the stored event is refused"
+  },
+  {
+   "expected": [],
+   "id": "batch.person.retarget_away",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "obj": {
+      "_class": "Person",
+      "address_list": [],
+      "alternate_names": [],
+      "attribute_list": [],
+      "birth_ref_index": -1,
+      "citation_list": [],
+      "death_ref_index": -1,
+      "event_ref_list": [
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [],
+        "note_list": [],
+        "private": false,
+        "ref": "ev1",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       }
+      ],
+      "family_list": [],
+      "gender": 1,
+      "gramps_id": "IP1",
+      "handle": "p1",
+      "lds_ord_list": [],
+      "media_list": [],
+      "note_list": [],
+      "parent_family_list": [],
+      "person_ref_list": [],
+      "primary_name": {
+       "_class": "Name",
+       "call": "",
+       "citation_list": [],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "format": null,
+        "modifier": 0,
+        "newyear": 0,
+        "quality": 0,
+        "sortval": 0,
+        "text": ""
+       },
+       "famnick": "",
+       "first_name": "Alder",
+       "nick": "",
+       "note_list": [],
+       "private": false,
+       "suffix": "",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "primary": true,
+         "surname": "Testwood"
+        }
+       ],
+       "title": "",
+       "type": {
+        "_class": "NameType",
+        "string": "",
+        "value": 2
+       }
+      },
+      "private": false,
+      "tag_list": [],
+      "urls": []
+     },
+     "op": "update",
+     "op_id": "1"
+    },
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "update",
+     "op_id": "2"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": 0,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "A birth_ref_index moved off an event frees that event's date in the same batch"
+  },
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.date.daymonth"
+    },
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.date.daymonth"
+    }
+   ],
+   "id": "batch.event.type_becomes_birth",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 12
+      }
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       5,
+       3,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "An event retyped to Birth keeps its full date: refused"
+  },
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.date.daymonth"
+    },
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.date.daymonth"
+    }
+   ],
+   "id": "batch.event.custom_birth_pattern",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "Birth Registration",
+       "value": 0
+      }
+     },
+     "op": "create",
+     "op_id": "1"
+    }
+   ],
+   "store": [],
+   "title": "A custom event type that matches the birth pattern is birth-like"
+  },
+  {
+   "expected": [
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.citation.date"
+    },
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.citation.date"
+    }
+   ],
+   "id": "batch.citation.cited_by_stored_birth_event",
+   "ops": [
+    {
+     "class": "Citation",
+     "handle": "c1",
+     "obj": {
+      "_class": "Citation",
+      "attribute_list": [],
+      "confidence": 2,
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "gramps_id": "CC1",
+      "handle": "c1",
+      "media_list": [],
+      "note_list": [],
+      "page": "",
+      "private": false,
+      "source_handle": "",
+      "tag_list": []
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [
+      "c1"
+     ],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 12
+     }
+    },
+    {
+     "_class": "Citation",
+     "attribute_list": [],
+     "confidence": 2,
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "gramps_id": "CC1",
+     "handle": "c1",
+     "media_list": [],
+     "note_list": [],
+     "page": "",
+     "private": false,
+     "source_handle": "",
+     "tag_list": []
+    }
+   ],
+   "title": "A citation of a stored birth event gets a full date: refused"
+  },
+  {
+   "expected": [],
+   "id": "batch.citation.cited_by_non_birth_event",
+   "ops": [
+    {
+     "class": "Citation",
+     "handle": "c1",
+     "obj": {
+      "_class": "Citation",
+      "attribute_list": [],
+      "confidence": 2,
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "gramps_id": "CC1",
+      "handle": "c1",
+      "media_list": [],
+      "note_list": [],
+      "page": "",
+      "private": false,
+      "source_handle": "",
+      "tag_list": []
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [
+      "c1"
+     ],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    },
+    {
+     "_class": "Citation",
+     "attribute_list": [],
+     "confidence": 2,
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "gramps_id": "CC1",
+     "handle": "c1",
+     "media_list": [],
+     "note_list": [],
+     "page": "",
+     "private": false,
+     "source_handle": "",
+     "tag_list": []
+    }
+   ],
+   "title": "A full date on a citation of a death event is kept"
+  },
+  {
+   "expected": [
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.citation.date"
+    },
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.citation.date"
+    }
+   ],
+   "id": "batch.event.becomes_birth_cites_stored_citation",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [
+       "c1"
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 12
+      }
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [
+      "c1"
+     ],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    },
+    {
+     "_class": "Citation",
+     "attribute_list": [],
+     "confidence": 2,
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       4,
+       6,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "gramps_id": "CC1",
+     "handle": "c1",
+     "media_list": [],
+     "note_list": [],
+     "page": "",
+     "private": false,
+     "source_handle": "",
+     "tag_list": []
+    }
+   ],
+   "title": "Retyping an event to Birth makes its stored citation's full date a violation on the citation"
+  },
+  {
+   "expected": [
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.citation.date"
+    },
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.citation.date"
+    }
+   ],
+   "id": "batch.eventref_citation_added",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "obj": {
+      "_class": "Person",
+      "address_list": [],
+      "alternate_names": [],
+      "attribute_list": [],
+      "birth_ref_index": 0,
+      "citation_list": [],
+      "death_ref_index": -1,
+      "event_ref_list": [
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [
+         "c1"
+        ],
+        "note_list": [],
+        "private": false,
+        "ref": "ev1",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       }
+      ],
+      "family_list": [],
+      "gender": 1,
+      "gramps_id": "IP1",
+      "handle": "p1",
+      "lds_ord_list": [],
+      "media_list": [],
+      "note_list": [],
+      "parent_family_list": [],
+      "person_ref_list": [],
+      "primary_name": {
+       "_class": "Name",
+       "call": "",
+       "citation_list": [],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "format": null,
+        "modifier": 0,
+        "newyear": 0,
+        "quality": 0,
+        "sortval": 0,
+        "text": ""
+       },
+       "famnick": "",
+       "first_name": "Alder",
+       "nick": "",
+       "note_list": [],
+       "private": false,
+       "suffix": "",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "primary": true,
+         "surname": "Testwood"
+        }
+       ],
+       "title": "",
+       "type": {
+        "_class": "NameType",
+        "string": "",
+        "value": 2
+       }
+      },
+      "private": false,
+      "tag_list": [],
+      "urls": []
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 12
+     }
+    },
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": 0,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Citation",
+     "attribute_list": [],
+     "confidence": 2,
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       5,
+       3,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "gramps_id": "CC1",
+     "handle": "c1",
+     "media_list": [],
+     "note_list": [],
+     "page": "",
+     "private": false,
+     "source_handle": "",
+     "tag_list": []
+    }
+   ],
+   "title": "A citation added to an EventRef of a birth-like event is checked"
+  },
+  {
+   "expected": [
+    {
+     "handle": "c1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.citation.date"
+    }
+   ],
+   "id": "batch.family_eventref_citation",
+   "ops": [
+    {
+     "class": "Family",
+     "handle": "f1",
+     "obj": {
+      "_class": "Family",
+      "attribute_list": [],
+      "child_ref_list": [],
+      "citation_list": [],
+      "event_ref_list": [
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [
+         "c1"
+        ],
+        "note_list": [],
+        "private": false,
+        "ref": "ev1",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       }
+      ],
+      "father_handle": null,
+      "gramps_id": "FF1",
+      "handle": "f1",
+      "media_list": [],
+      "mother_handle": null,
+      "note_list": [],
+      "private": false,
+      "tag_list": []
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 15
+     }
+    },
+    {
+     "_class": "Family",
+     "attribute_list": [],
+     "child_ref_list": [],
+     "citation_list": [],
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "father_handle": null,
+     "gramps_id": "FF1",
+     "handle": "f1",
+     "media_list": [],
+     "mother_handle": null,
+     "note_list": [],
+     "private": false,
+     "tag_list": []
+    },
+    {
+     "_class": "Citation",
+     "attribute_list": [],
+     "confidence": 2,
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       3,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "gramps_id": "CC1",
+     "handle": "c1",
+     "media_list": [],
+     "note_list": [],
+     "page": "",
+     "private": false,
+     "source_handle": "",
+     "tag_list": []
+    }
+   ],
+   "title": "The same for a Family's EventRef to a Baptism"
+  },
+  {
+   "expected": [
+    {
+     "handle": "p1",
+     "pointer": "/alternate_names/0/date/dateval/0",
+     "rule": "birth.name.date"
+    },
+    {
+     "handle": "p1",
+     "pointer": "/alternate_names/0/date/dateval/1",
+     "rule": "birth.name.date"
+    }
+   ],
+   "id": "batch.name.birth_type_date",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "obj": {
+      "_class": "Person",
+      "address_list": [],
+      "alternate_names": [
+       {
+        "_class": "Name",
+        "call": "",
+        "citation_list": [],
+        "date": {
+         "_class": "Date",
+         "calendar": 0,
+         "dateval": [
+          5,
+          3,
+          1900,
+          false
+         ],
+         "format": null,
+         "modifier": 0,
+         "newyear": 0,
+         "quality": 0,
+         "sortval": 0,
+         "text": ""
+        },
+        "famnick": "",
+        "first_name": "Alder",
+        "nick": "",
+        "note_list": [],
+        "private": false,
+        "suffix": "",
+        "surname_list": [
+         {
+          "_class": "Surname",
+          "primary": true,
+          "surname": "Testwood"
+         }
+        ],
+        "title": "",
+        "type": {
+         "_class": "NameType",
+         "string": "",
+         "value": 2
+        }
+       },
+       {
+        "_class": "Name",
+        "call": "",
+        "citation_list": [],
+        "date": {
+         "_class": "Date",
+         "calendar": 0,
+         "dateval": [
+          5,
+          3,
+          1900,
+          false
+         ],
+         "format": null,
+         "modifier": 0,
+         "newyear": 0,
+         "quality": 0,
+         "sortval": 0,
+         "text": ""
+        },
+        "famnick": "",
+        "first_name": "Alder",
+        "nick": "",
+        "note_list": [],
+        "private": false,
+        "suffix": "",
+        "surname_list": [
+         {
+          "_class": "Surname",
+          "primary": true,
+          "surname": "Testwood"
+         }
+        ],
+        "title": "",
+        "type": {
+         "_class": "NameType",
+         "string": "",
+         "value": 3
+        }
+       }
+      ],
+      "attribute_list": [],
+      "birth_ref_index": -1,
+      "citation_list": [],
+      "death_ref_index": -1,
+      "event_ref_list": [],
+      "family_list": [],
+      "gender": 1,
+      "gramps_id": "IP1",
+      "handle": "p1",
+      "lds_ord_list": [],
+      "media_list": [],
+      "note_list": [],
+      "parent_family_list": [],
+      "person_ref_list": [],
+      "primary_name": {
+       "_class": "Name",
+       "call": "",
+       "citation_list": [],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "format": null,
+        "modifier": 0,
+        "newyear": 0,
+        "quality": 0,
+        "sortval": 0,
+        "text": ""
+       },
+       "famnick": "",
+       "first_name": "Alder",
+       "nick": "",
+       "note_list": [],
+       "private": false,
+       "suffix": "",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "primary": true,
+         "surname": "Testwood"
+        }
+       ],
+       "title": "",
+       "type": {
+        "_class": "NameType",
+        "string": "",
+        "value": 2
+       }
+      },
+      "private": false,
+      "tag_list": [],
+      "urls": []
+     },
+     "op": "create",
+     "op_id": "1"
+    }
+   ],
+   "store": [],
+   "title": "A Birth-type alternate name with a day or month is refused; another name type is not"
+  },
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/place",
+     "rule": "place.repoint"
+    }
+   ],
+   "id": "batch.event.place_repoint",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "pl1",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "create",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Place",
+     "alt_loc": [],
+     "alt_names": [],
+     "citation_list": [],
+     "code": "",
+     "gramps_id": "PL1",
+     "handle": "pl1",
+     "lat": "",
+     "long": "",
+     "media_list": [],
+     "name": {
+      "_class": "PlaceName",
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "lang": "",
+      "value": "Testville"
+     },
+     "note_list": [],
+     "place_type": {
+      "_class": "PlaceType",
+      "string": "",
+      "value": 7
+     },
+     "placeref_list": [],
+     "private": false,
+     "tag_list": [],
+     "title": "",
+     "urls": []
+    }
+   ],
+   "title": "An event that names a stored Street place must be re-pointed"
+  },
+  {
+   "expected": [],
+   "id": "batch.person_deleted_frees_event",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "op": "delete",
+     "op_id": "1"
+    },
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "update",
+     "op_id": "2"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": 0,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "Deleting the person that points at an event frees its date"
+  },
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/date/text",
+     "rule": "birth.date.text"
+    }
+   ],
+   "id": "batch.text_other_than_year",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": "c. 1900"
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 12
+      }
+     },
+     "op": "create",
+     "op_id": "1"
+    },
+    {
+     "class": "Event",
+     "handle": "ev2",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": "1900"
+      },
+      "description": "",
+      "gramps_id": "EV2",
+      "handle": "ev2",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 12
+      }
+     },
+     "op": "create",
+     "op_id": "2"
+    }
+   ],
+   "store": [],
+   "title": "Birth-like text must be a bare year"
+  },
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/0",
+     "rule": "birth.date.daymonth"
+    },
+    {
+     "handle": "ev1",
+     "pointer": "/date/dateval/1",
+     "rule": "birth.date.daymonth"
+    }
+   ],
+   "id": "batch.both_new",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "obj": {
+      "_class": "Person",
+      "address_list": [],
+      "alternate_names": [],
+      "attribute_list": [],
+      "birth_ref_index": 0,
+      "citation_list": [],
+      "death_ref_index": -1,
+      "event_ref_list": [
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [],
+        "note_list": [],
+        "private": false,
+        "ref": "ev1",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       }
+      ],
+      "family_list": [],
+      "gender": 1,
+      "gramps_id": "IP1",
+      "handle": "p1",
+      "lds_ord_list": [],
+      "media_list": [],
+      "note_list": [],
+      "parent_family_list": [],
+      "person_ref_list": [],
+      "primary_name": {
+       "_class": "Name",
+       "call": "",
+       "citation_list": [],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "format": null,
+        "modifier": 0,
+        "newyear": 0,
+        "quality": 0,
+        "sortval": 0,
+        "text": ""
+       },
+       "famnick": "",
+       "first_name": "Alder",
+       "nick": "",
+       "note_list": [],
+       "private": false,
+       "suffix": "",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "primary": true,
+         "surname": "Testwood"
+        }
+       ],
+       "title": "",
+       "type": {
+        "_class": "NameType",
+        "string": "",
+        "value": 2
+       }
+      },
+      "private": false,
+      "tag_list": [],
+      "urls": []
+     },
+     "op": "create",
+     "op_id": "1"
+    },
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "create",
+     "op_id": "2"
+    }
+   ],
+   "store": [],
+   "title": "A new person and a new event in one batch: the birth_ref makes the event birth-like"
+  },
+  {
+   "expected": [],
+   "id": "batch.stored_person_overridden",
+   "ops": [
+    {
+     "class": "Person",
+     "handle": "p1",
+     "obj": {
+      "_class": "Person",
+      "address_list": [],
+      "alternate_names": [],
+      "attribute_list": [],
+      "birth_ref_index": 0,
+      "citation_list": [],
+      "death_ref_index": -1,
+      "event_ref_list": [
+       {
+        "_class": "EventRef",
+        "attribute_list": [],
+        "citation_list": [],
+        "note_list": [],
+        "private": false,
+        "ref": "ev2",
+        "role": {
+         "_class": "EventRoleType",
+         "string": "",
+         "value": 1
+        }
+       }
+      ],
+      "family_list": [],
+      "gender": 1,
+      "gramps_id": "IP1",
+      "handle": "p1",
+      "lds_ord_list": [],
+      "media_list": [],
+      "note_list": [],
+      "parent_family_list": [],
+      "person_ref_list": [],
+      "primary_name": {
+       "_class": "Name",
+       "call": "",
+       "citation_list": [],
+       "date": {
+        "_class": "Date",
+        "calendar": 0,
+        "dateval": [
+         0,
+         0,
+         0,
+         false
+        ],
+        "format": null,
+        "modifier": 0,
+        "newyear": 0,
+        "quality": 0,
+        "sortval": 0,
+        "text": ""
+       },
+       "famnick": "",
+       "first_name": "Alder",
+       "nick": "",
+       "note_list": [],
+       "private": false,
+       "suffix": "",
+       "surname_list": [
+        {
+         "_class": "Surname",
+         "primary": true,
+         "surname": "Testwood"
+        }
+       ],
+       "title": "",
+       "type": {
+        "_class": "NameType",
+        "string": "",
+        "value": 2
+       }
+      },
+      "private": false,
+      "tag_list": [],
+      "urls": []
+     },
+     "op": "update",
+     "op_id": "1"
+    },
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "update",
+     "op_id": "2"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": 0,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV2",
+     "handle": "ev2",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "A stored person that the batch rewrites no longer counts: the batch's version decides"
+  },
+  {
+   "expected": [
+    {
+     "handle": "ev1",
+     "pointer": "/date/text",
+     "rule": "birth.date.text"
+    },
+    {
+     "handle": "ev1",
+     "pointer": "/date/modifier",
+     "rule": "birth.date.textonly"
+    }
+   ],
+   "id": "batch.textonly_modifier",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev1",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 6,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": "born in the spring of 1900"
+      },
+      "description": "",
+      "gramps_id": "EV1",
+      "handle": "ev1",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 12
+      }
+     },
+     "op": "create",
+     "op_id": "1"
+    }
+   ],
+   "store": [],
+   "title": "A TEXTONLY date on a birth-like event is refused on its modifier"
+  },
+  {
+   "expected": [],
+   "id": "batch.unrelated_birth_in_tree",
+   "ops": [
+    {
+     "class": "Event",
+     "handle": "ev2",
+     "obj": {
+      "_class": "Event",
+      "attribute_list": [],
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        5,
+        3,
+        1900,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "description": "",
+      "gramps_id": "EV2",
+      "handle": "ev2",
+      "media_list": [],
+      "note_list": [],
+      "place": "",
+      "private": false,
+      "tag_list": [],
+      "type": {
+       "_class": "EventType",
+       "string": "",
+       "value": 13
+      }
+     },
+     "op": "update",
+     "op_id": "1"
+    }
+   ],
+   "store": [
+    {
+     "_class": "Person",
+     "address_list": [],
+     "alternate_names": [],
+     "attribute_list": [],
+     "birth_ref_index": 0,
+     "citation_list": [],
+     "death_ref_index": -1,
+     "event_ref_list": [
+      {
+       "_class": "EventRef",
+       "attribute_list": [],
+       "citation_list": [],
+       "note_list": [],
+       "private": false,
+       "ref": "ev1",
+       "role": {
+        "_class": "EventRoleType",
+        "string": "",
+        "value": 1
+       }
+      }
+     ],
+     "family_list": [],
+     "gender": 1,
+     "gramps_id": "IP1",
+     "handle": "p1",
+     "lds_ord_list": [],
+     "media_list": [],
+     "note_list": [],
+     "parent_family_list": [],
+     "person_ref_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "call": "",
+      "citation_list": [],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "format": null,
+       "modifier": 0,
+       "newyear": 0,
+       "quality": 0,
+       "sortval": 0,
+       "text": ""
+      },
+      "famnick": "",
+      "first_name": "Alder",
+      "nick": "",
+      "note_list": [],
+      "private": false,
+      "suffix": "",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "primary": true,
+        "surname": "Testwood"
+       }
+      ],
+      "title": "",
+      "type": {
+       "_class": "NameType",
+       "string": "",
+       "value": 2
+      }
+     },
+     "private": false,
+     "tag_list": [],
+     "urls": []
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV1",
+     "handle": "ev1",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 12
+     }
+    },
+    {
+     "_class": "Event",
+     "attribute_list": [],
+     "citation_list": [],
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "dateval": [
+       5,
+       3,
+       1900,
+       false
+      ],
+      "format": null,
+      "modifier": 0,
+      "newyear": 0,
+      "quality": 0,
+      "sortval": 0,
+      "text": ""
+     },
+     "description": "",
+     "gramps_id": "EV2",
+     "handle": "ev2",
+     "media_list": [],
+     "note_list": [],
+     "place": "",
+     "private": false,
+     "tag_list": [],
+     "type": {
+      "_class": "EventType",
+      "string": "",
+      "value": 13
+     }
+    }
+   ],
+   "title": "A full date on a death event is kept in a tree that has an unrelated birth"
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 # How to deploy a change to the static site
 
-Use this page to ship a change to `11ty/` (the pages, the committed output of the islands build and [`flags.json`](../../11ty/_data/flags.json)), to the legacy `hfy-check-allowed` Lambda or to the legacy `getAllowlist` Cloud Function, and to confirm that it is live.
+Use this page to ship a change to `11ty/` (the pages, the committed output of the islands build and [`flags.json`](../../11ty/_data/flags.json)), and to confirm that it is live. The pipeline deploys the static site only: no Lambda (HFY-TSK-317). The legacy `getAllowlist` Cloud Function and its workflow are gone (deleted on 2026-10-14, HFY-TSK-325).
 
 Some changes do not ship this way:
 
@@ -16,10 +16,7 @@ Values in angle brackets, such as `<site>`, `<repo>`, `<app-stack>`, `<distribut
 
 ## What ships
 
-A push to `main` starts two independent workflow runs, whatever the change touched:
-
-- **[`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml)**, the kit pipeline. It builds a release from the commit, syncs `11ty/` to `<site-bucket>` with `--delete`, updates the code of `hfy-check-allowed`, invalidates `/*` on CloudFront and waits for the invalidation, then requests `https://<site>/` and `https://<site>/family-login/`. If either smoke request fails, it redeploys the release of the previous successful run.
-- **[`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml)**, which deploys `getAllowlist`. Nothing rolls it back.
+A push to `main` starts one workflow run, whatever the change touched: **[`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml)**, the kit pipeline. It builds a release from the commit (the build command only echoes: `11ty/` is committed output), syncs `11ty/` to `<site-bucket>` with `--delete`, invalidates `/*` on CloudFront and waits for the invalidation, then requests `https://<site>/` and `https://<site>/family-login/`. If either smoke request fails, it redeploys the release of the previous successful run.
 
 The sync never writes or deletes the family data prefixes or member uploads: it excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`.
 
@@ -38,7 +35,7 @@ Cloudflare proxies `<site>` in front of CloudFront. It caches scripts, styleshee
 
 ## Before you start
 
-- The repository secrets `AWS_DEPLOY_ROLE_TO_ASSUME`, `HFY_GOOGLE_CLIENT_ID` and `GCP_SERVICE_ACCOUNT_KEY` exist. `gh secret list` shows their names. If one is missing, follow [Stand up the static site](stand-up-the-static-site.md).
+- The repository secret `AWS_DEPLOY_ROLE_TO_ASSUME` exists. `gh secret list` shows its name. If it is missing, follow [Stand up the static site](stand-up-the-static-site.md).
 - The change is on a branch tied to an HFY record, for example `agent/hfy-tsk-<n>-<slug>`, and the record ID leads each commit message (`HFY-TSK-<n>: <summary>`). Agents also follow the lifecycle in [`AGENTS.md`](../../AGENTS.md), including the `CCI-...` value that the PR Commit Gate requires in the pull request body.
 - Any `11ty/` change taken from the Eleventy source followed [Refresh the Eleventy output](refresh-the-eleventy-output.md), including the islands build after it. `11ty/` is build output, and its source lives outside the repository. A refreshed page committed without the islands build keeps unversioned URLs and goes stale at Cloudflare.
 - The islands build ran, and every output it changed is committed with the change, if any of these is true:
@@ -53,7 +50,6 @@ Cloudflare proxies `<site>` in front of CloudFront. It caches scripts, styleshee
   ```
 
   The check rebuilds in memory, so it needs the dependencies that `npm ci` installs with a CodeArtifact token. A `missing`, `stale` or `extra` line means the committed output differs from the source: build again and commit. Never edit a `?v=` value or an `hfy-asset-versions` block by hand.
-- `REPLACE_WITH_GOOGLE_CLIENT_ID` is left as is in the committed files. The pipeline substitutes the real client ID on the runner, so the repository never carries it. `grep -rl REPLACE_WITH_GOOGLE_CLIENT_ID 11ty | wc -l` prints `11`: the ten rendered pages and `js/auth.js`.
 - The suites that cover your change pass locally ([Run the tests](run-the-tests.md)). CI runs only the three CodeArtifact-free suites on a pull request; no workflow runs the others.
 - If the change edits `flags.json`, read [Toggle a feature flag](toggle-a-feature-flag.md) first. A global flip needs io's G-prod approval. Never publish an `authV2` value other than `true` while the data gate is attached. This prints `401` while it is attached:
 
@@ -82,7 +78,7 @@ gh pr create --base main --title "HFY-TSK-<n>: <summary>" --body "<what changed 
 gh pr checks <pr-number> --watch
 ```
 
-The pull request runs [`io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml): the release build (client ID patch and Lambda package), the pipeline drift report and a TruffleHog scan of the commit range. All three must pass. The drift report runs in report mode, so it passes even when it finds drift. Open the `parity` job's summary and confirm that it says `no pipeline_drift`. Drift means a rendered workflow file was edited by hand; see [Change the CI pipeline](change-the-ci-pipeline.md).
+The pull request runs [`io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml): the release build, which only echoes because `11ty/` is committed output, the pipeline drift report and a TruffleHog scan of the commit range. All three must pass. The drift report blocks: drift fails the `parity` job, and its summary lists each `pipeline_drift` file instead of `no pipeline_drift`. Drift means a rendered workflow file was edited by hand; see [Change the CI pipeline](change-the-ci-pipeline.md).
 
 No check runs a test suite or `check:islands`. The other gates are local:
 
@@ -99,7 +95,7 @@ Branch protection is strict, so bring the branch up to date with `origin/main` f
 gh pr merge <pr-number> --merge
 ```
 
-The merge starts both workflows. Only `main` can deploy: the deploy role trusts `ref:refs/heads/main` only ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml)).
+The merge starts the deploy workflow. Only `main` can deploy: the deploy role trusts `ref:refs/heads/main` only ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml)).
 
 `io-kit-deploy.yml` runs one deploy at a time. A run that starts while another is in progress waits for it, and GitHub keeps only the newest waiting run, so if you merge several changes in quick succession, a waiting run can be cancelled in favor of a later one. The run that does go ahead deploys the newest `main`, which includes the cancelled run's commit.
 
@@ -108,7 +104,6 @@ The merge starts both workflows. Only `main` can deploy: the deploy role trusts 
 ```sh
 SHA="$(gh pr view <pr-number> --json mergeCommit --jq .mergeCommit.oid)"
 gh run list --workflow io-kit-deploy.yml --branch main --commit "$SHA" --limit 1
-gh run list --workflow deploy-gcf-legacy.yml --branch main --commit "$SHA" --limit 1
 gh run watch <run-id> --exit-status
 ```
 
@@ -116,15 +111,14 @@ If a `run list` prints nothing, the run has not started yet. Run it again after 
 
 | Failed job | What is live | What to do |
 | --- | --- | --- |
-| `build` | Nothing changed. | Read the log. An unset or empty `HFY_GOOGLE_CLIENT_ID` stops the client ID patch. A value containing `/` or a line break breaks its `sed`. Fix, then `gh run rerun <run-id>`. |
+| `build` | Nothing changed. | Read the log. The build command only echoes, so a failure here is the runner or the missing `11ty/`. Fix, then `gh run rerun <run-id>`. |
 | `deploy`, at the AWS credentials step | Nothing changed. | Check `AWS_DEPLOY_ROLE_TO_ASSUME`, and that the run is on `main`. |
 | `deploy`, at the sync | Possibly part of the new `11ty/`, which can include pages that name files not yet uploaded. Nothing rolls back. | First run the `authV2` check in the warning below. Then fix the cause and `gh run rerun <run-id> --failed`, or [roll back](roll-back-a-site-deploy.md#when-nothing-rolled-back). |
-| `deploy`, at the Lambda update | The new static site with the old `hfy-check-allowed`. | As above. |
 | `invalidate` | The new files and Lambda, but CloudFront can serve cached copies. No smoke check runs. | `gh run rerun <run-id> --failed`. |
 | `smoke` | `rollback_on_smoke_fail` redeployed the previous release, `flags.json` included. `main` still holds your change. | First run the `authV2` check in the warning below. Then follow [Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback). |
 | `rollback_on_smoke_fail` | The new release, which failed its smoke check. | Follow [Roll back a site deploy](roll-back-a-site-deploy.md#if-the-automatic-rollback-fails). |
 
-> **Warning: while the data gate is attached, a release whose `flags.json` does not say `"authV2": true` locks every visitor out of the family data (HFY-R67).** The production cutover ran on 2026-10-12 (HFY-TSK-069): `authV2` went on for everyone, and the gate was attached after it. `rollback_on_smoke_fail` redeploys the previous successful release's `11ty/`, and with it that release's `_data/flags.json`. Every release built before the flip says `"authV2": false`. The legacy client does not send the `io_id` cookie, so the gate refuses its data requests, and person pages, search and photos fail for every visitor. After every automatic rollback, and after a `deploy` job that failed during the sync, run these checks. They need no credentials:
+> **Warning: while the data gate is attached, a release whose `flags.json` does not say `"authV2": true` locks every visitor out of the family data (HFY-R67).** The production cutover ran on 2026-10-12 (HFY-TSK-069): `authV2` went on for everyone, and the gate was attached after it. `rollback_on_smoke_fail` redeploys the previous successful release's `11ty/`, and with it that release's `_data/flags.json`. Every release built before the flip says `"authV2": false`. A client with `authV2` off never refreshes the `io_id` cookie, so the gate refuses its data requests once it lapses, and person pages, search and photos fail for every visitor. After every automatic rollback, and after a `deploy` job that failed during the sync, run these checks. They need no credentials:
 >
 > ```sh
 > curl -s https://<site>/_data/flags.json | jq .authV2
@@ -134,7 +128,7 @@ If a `run list` prints nothing, the run has not started yet. Run it again after 
 >
 > If the first prints `true`, the client and the gate agree. Otherwise, and while the second prints `401`, members are locked out:
 >
-> - **If the third shows `404` with `cache-control: private, no-store`,** `HFYAppendIndex` runs its default-deny code, and removing the gate would not give the legacy client its data back. Get a release with `"authV2": true` deployed again, by fixing forward or reverting ([Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback)), or follow the cutover's [Roll back](cut-over-to-the-private-data-gate.md#roll-back).
+> - **If the third shows `404` with `cache-control: private, no-store`,** `HFYAppendIndex` runs its default-deny code, and removing the gate would not give that client its data back. Get a release with `"authV2": true` deployed again, by fixing forward or reverting ([Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback)), or follow the cutover's [Roll back](cut-over-to-the-private-data-gate.md#roll-back).
 > - **Otherwise remove the gate at once.** You need operator AWS credentials and io's go-ahead; the GitHub deploy role cannot change the distribution. Do a dry run first:
 >
 >   ```sh
@@ -150,8 +144,6 @@ If a `run list` prints nothing, the run has not started yet. Run it again after 
 >   - Once the distribution is deployed, the family data is public again, and so are member photos, to anyone who holds a URL. The policies `hfy-private-no-store` and `hfy-uploads-private` stay in the account, unused. The alternative to `--remove` is restoring the backup that the attaching run saved, with `aws cloudfront update-distribution`, as in the cutover's [Roll back](cut-over-to-the-private-data-gate.md#roll-back).
 >
 > Then make the rollback last ([Roll back a site deploy](roll-back-a-site-deploy.md#after-an-automatic-rollback)). Attach the gate again only after a deploy with `authV2` set to `true` has finished green ([Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#3-attach-the-gate)).
-
-Then watch the `deploy-gcf-legacy.yml` run. If it fails, the previous revision of `getAllowlist` keeps serving. Fix the cause and rerun it. Nothing in any sign-in path calls the function.
 
 ## Verify
 
@@ -183,7 +175,7 @@ Run these checks from the root of an up-to-date `main` checkout.
    done
    ```
 
-   Each line says `same`. Cloudflare does not cache HTML, so this shows the pages CloudFront serves. The client ID patch does not touch the `?v=` values.
+   Each line says `same`. Cloudflare does not cache HTML, so this shows the pages CloudFront serves.
 5. **The island bundles at their versioned URLs are the committed ones.**
 
    ```sh
@@ -196,16 +188,18 @@ Run these checks from the root of an up-to-date `main` checkout.
 
    `$v` is the `?v=` that the island loader and the service worker request. The build stamps each bundle's hash into `js/feature-flags.js`, and the hash of `notify-sw.js` into `sw.js`, and `check:islands` confirmed the stamps. In a browser, `HFYFeatureFlags.assetVersions` in the DevTools console shows the map that the loader uses.
 
-   Each line says `same`. The bundles carry no client ID placeholder, so the deploy does not change them. A `DIFFERENT` line means that the URL serves other bytes. Either the deploy did not ship the committed file, or an edge answered the new URL with the old file while the sync ran, and Cloudflare kept that copy. Cloudflare keeps it for up to 4 h. A Cloudflare purge needs io's go-ahead ([`AGENTS.md`](../../AGENTS.md)).
-6. **The client ID placeholder was replaced.**
+   Each line says `same`. The deploy changes nothing in a bundle. A `DIFFERENT` line means that the URL serves other bytes. Either the deploy did not ship the committed file, or an edge answered the new URL with the old file while the sync ran, and Cloudflare kept that copy. Cloudflare keeps it for up to 4 h. A Cloudflare purge needs io's go-ahead ([`AGENTS.md`](../../AGENTS.md)).
+6. **No page loads the retired Google sign-in or the legacy endpoint (HFY-TSK-317).**
 
    ```sh
-   curl -s "https://<site>/family-login/" | grep -o '"clientId":"[^"]*"'
-   AUTH_JS="$(curl -s "https://<site>/family-login/" | grep -o '/js/auth\.js?v=[0-9a-f]*')"
-   curl -s "https://<site>$AUTH_JS" | grep -c REPLACE_WITH_GOOGLE_CLIENT_ID
+   for p in / /person/ /search/; do
+     curl -s "https://<site>$p" | grep -cE 'gsi/client|/api/check-allowed|/js/auth\.js|/js/search-navbar\.js|/js/search-results\.js'
+   done
+   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://<site>/family-login/"
+   curl -s "https://<site>/family-login/" | grep -c '/auth/login'
    ```
 
-   The first command prints a `clientId` that is neither empty nor the placeholder. The last prints `0`. Its `?v=` hashes the committed file, which still carries the placeholder, so the served bytes do not match that hash. That is expected.
+   The three counts are `0`. `/family-login/` answers `200`, not a server redirect, and its page names `/auth/login` (the inline script and the no-script refresh do the redirect in the browser). In a signed-out private window with DevTools open on the Network tab, the three pages request no `accounts.google.com` and no `/api/check-allowed`.
 7. **Sign-in still works.** Which check applies depends on the published `authV2` value, which `curl -s https://<site>/_data/flags.json | jq .authV2` prints. Use a private window, so that no preview override applies. If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md).
    - **`true`: the `io_id` session and the gate.** The production cutover on 2026-10-12 published this value. Sign in at `https://<site>/auth/login`, then open a person page, `https://<site>/person/?id=<gramps-id>`. In DevTools > Network, the `/person/<gramps-id>.json` request carries a `Cookie` header that includes `io_id`, and no `X-HFY-Session` header. Do not copy the cookie value anywhere. Then, signed out, from a shell with no cookies:
 
@@ -214,7 +208,7 @@ Run these checks from the root of an up-to-date `main` checkout.
      ```
 
      While the gate is attached, the status is `401`, with `cache-control: private, no-store`. A `200` means that the gate is not attached and the data is public. A `404` means that it is not attached and `HFYAppendIndex` refuses the data to everyone, members included. For either, find out why before you go on ([Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#find-your-starting-point)).
-   - **Anything else: the legacy client.** In production, that follows only a rollback, a revert or a deliberate return to the legacy client. In a new environment, it is the state before the cutover. If the `curl` above prints `401`, the gate is attached: remove it now, as in the warning under [Watch the runs](#3-watch-the-runs). Otherwise, open `https://<site>/family-login/` and sign in with an allowlisted Google account. The navigation switches to the signed-in state: **LOG OUT**, plus **MY RECORD** for an account mapped to a record. This check cannot run while `authV2` is on, because `/family-login/` then sends a signed-out visitor to `/auth/login`.
+   - **Anything else: `authV2` off.** In production, that follows only a rollback or a revert. In a new environment, it is the state before the cutover. If the `curl` above prints `401`, the gate is attached: remove it now, as in the warning under [Watch the runs](#3-watch-the-runs). Otherwise `/auth/login` still signs members in, but the pages do not refresh `io_id`, so person data stops loading about an hour after sign-in.
 8. **If the build changed `theme.cssUrl`, the sign-in pages link the new stylesheet.** This check applies after you redeploy `hfy-auth-edge` from a commit that carries the new `auth/edge.manifest.json` ([Deploy the app stack](deploy-the-app-stack.md)). Redeploy only once this deploy is green, so that the file the new URL names is already live. Otherwise an edge can cache the old stylesheet under the new URL.
 
    ```sh
@@ -225,17 +219,6 @@ Run these checks from the root of an up-to-date `main` checkout.
    ```
 
    The first two lines name the same `auth-edge.css?v=<sha8>`. Until the redeploy, the second names the previous version. The last line prints the same `<sha8>`.
-
-If you changed the Lambda or the Cloud Function, confirm the update with operator credentials:
-
-```sh
-aws lambda get-function-configuration --function-name hfy-check-allowed --region us-west-2 \
-  --query '[LastModified,LastUpdateStatus]' --output text
-gcloud functions describe getAllowlist --project <gcp-project> --region us-west2 --gen2 \
-  --format 'value(state,updateTime)'
-```
-
-The Lambda shows a `LastModified` time after the run started and `Successful`. The function shows `ACTIVE` and an `updateTime` after the run started.
 
 ## If the change has to come out
 

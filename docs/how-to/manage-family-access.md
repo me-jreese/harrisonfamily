@@ -1,6 +1,6 @@
 # How to add or remove a family member's access
 
-Use this page to give a family member access to the site, make them an admin, give them MCP access, remove a lost passkey, sign a member out on every device, or take their access away. Site access comes from two private allowlist files: the auth edge reads one, and the legacy sign-in path, which is still deployed, reads both. You edit and publish them, then confirm the change on the auth edge, and on the legacy path too when the deployed site has `authV2` off. Admin rights and MCP access come from two more files in the config bucket, which you edit by hand. A third source, DynamoDB grants written by the API, sits beside the file for the auth edge: read [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb) before you remove anyone.
+Use this page to give a family member access to the site, make them an admin, give them MCP access, remove a lost passkey, sign a member out on every device, or take their access away. Site access comes from two private allowlist files: the auth edge reads one, and the retired legacy Lambda reads both. Nothing on the site calls that Lambda any more (HFY-TSK-317), so you edit and publish the files, then confirm the change on the auth edge. Admin rights and MCP access come from two more files in the config bucket, which you edit by hand. A third source, DynamoDB grants written by the API, sits beside the file for the auth edge: read [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb) before you remove anyone.
 
 For why one allowlist decides membership and why admins and MCP groups are separate lists, see [The identity model](../explanation/identity-model.md). For the file formats, what reads each object and how long each reader caches it, see [Private data and secrets](../reference/private-data-and-secrets.md#access-configuration-in-config-bucketconfig).
 
@@ -9,33 +9,26 @@ Values in angle brackets are placeholders. `<email>` is a member's email address
 ## What you edit
 
 - `userGrampsID.json` maps each email to a Gramps ID. It is the auth edge's allowlist.
-- `harrisonfamily-allowlist.json` lists the emails. The publisher turns it into the digest list that the legacy Lambda checks.
+- `harrisonfamily-allowlist.json` lists the emails. The publisher turns it into the digest list that the retired legacy Lambda checks.
 - `config/admins.json` lists the Gramps IDs of site admins. It has no source file. You edit the S3 object.
 - `config/groups.json` names the members who get MCP tools, and the `uat` members who may use API routes still behind a flag. No script writes it. You upload it by hand.
 - Passkey records in the app stack's table, only to remove a lost passkey for a member who cannot do it themselves.
 - Revocation records in the app stack's table, only to sign a member out on every device, for example when a device that is still signed in is lost.
 - You never edit `ALLOW#` grant items in the app stack's table by hand. The API writes them; the file publisher never touches them. See [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb).
 
-The legacy Lambda admits an email only when its digest is listed **and** it has a mapping ([`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs)), so keep the two source files in step. Do this whatever the `authV2` flag shows. The legacy path stays deployed for one release after the cutover (HFY-R4), and it still serves a page where `authV2` resolves off or `/auth/session` does not answer ([The identity model](../explanation/identity-model.md#the-legacy-path-after-the-cutover)).
+The retired legacy Lambda admits an email only when its digest is listed **and** it has a mapping ([`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs)), so keep the two source files in step: the publisher still uploads both, and a direct call to `/api/check-allowed` still reads them ([Identity services: Retired legacy sign-in](../reference/identity-services.md#retired-legacy-sign-in)).
 
 ## Before you start
 
-- **Which sign-in path the deployed site uses.** Run `curl -s https://<site>/_data/flags.json | jq .authV2`. `true` means members sign in through the auth edge: `/family-login/` sends a signed-out visitor to `/auth/login`, so the checks on this page use the edge. The production cutover set `authV2` to `true` on 2026-10-12 (HFY-TSK-069, HFY-R67). `false` means the legacy Google sign-in on `/family-login/` is the default, and the checks marked "Where `authV2` is off" apply as well. Never turn `authV2` off to run a legacy check: while the data gate is attached, that locks every visitor out of the family data (HFY-R67). A signed-out `curl -s -o /dev/null -w '%{http_code}' https://<site>/person/index.json` prints `401` while the gate is attached and `200` when it is not.
+- **The sign-in the deployed site uses.** Members sign in through the auth edge at `/auth/login`; `/family-login/` redirects there, and the legacy Google sign-in is gone. Run `curl -s https://<site>/_data/flags.json | jq .authV2`: `true` means pages also keep the edge session alive. The production cutover set `authV2` to `true` on 2026-10-12 (HFY-TSK-069, HFY-R67). Never turn `authV2` off to test: while the data gate is attached, that locks every visitor out of the family data once `io_id` lapses (HFY-R67). A signed-out `curl -s -o /dev/null -w '%{http_code}' https://<site>/person/index.json` prints `401` while the gate is attached and `200` when it is not.
 - **io's go-ahead.** Publishing the allowlist or the admin list needs it ([`AGENTS.md`](../../AGENTS.md)). So does a change to `config/groups.json`, and so does any item you write or delete in the app table by hand: an operator's deletion of a member's passkey (`PASSKEY#<credential-id>`), the deletion of a member's link record (`LINK#<email>`), and the revocation records that sign a member out on every device.
 - **The private source files.** `userGrampsID.json` and `harrisonfamily-allowlist.json` are in `<project>/docs/dev`. `<project>` is the directory that contains the repository checkout, as defined in [Placeholders](../reference/private-data-and-secrets.md#placeholders). The repo's [`allowlist/`](../../allowlist/) holds sanitized samples of the email array and of the digest list (see [`allowlist/README.md`](../../allowlist/README.md)). There is no sample of `userGrampsID.json`. Do not edit the samples, and do not copy the real files into the repo. Edit only the copies in `<project>/docs/dev`. A copy kept only in `workspace-local/` is never published.
 - **The publisher.** The script is `<project>/scripts/infra/publish_allowlists.sh`. It is not in this repository. It reads its source files from `docs/dev` two levels above its own location, so run the copy in `<project>`.
 - **AWS credentials** with `s3:GetObject`, `s3:PutObject` and `s3:PutObjectAcl` on `<config-bucket>/config/*`, and `secretsmanager:GetSecretValue` on `HFY_ALLOWLIST_HMAC_SECRET`. The script uploads with `--acl private`, which needs `s3:PutObjectAcl`. It uses `AWS_PROFILE` (default `default`) and `AWS_REGION` (default `us-west-2`). The same S3 permissions cover `admins.json` and `groups.json`.
-- **gcloud authenticated, in the legacy project.** The script's last step adds a version to the legacy Google secret in the active gcloud project, and it fails without gcloud. `<gcp-project>` is the `GCP_PROJECT_ID` value in [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) (see [Repository operations: Placeholders](../reference/repository-operations.md#placeholders)).
-
-  ```sh
-  gcloud auth login
-  gcloud config set project <gcp-project>
-  ```
-
+- **No gcloud login.** The script's last step still adds a version to the legacy Google secret `harrisonfamily-allowlist`, but that secret was deleted on 2026-10-14 with io's approval (HFY-TSK-325). The step now fails in any gcloud project, after both S3 uploads have succeeded (see [2. Publish](#2-publish)), so you do not log in to gcloud or pick a project for it.
 - **Optional, for the Cognito step:** `cloudformation:DescribeStacks` on `<app-stack>`, and `cognito-idp:AdminGetUser` and `cognito-idp:AdminDisableUser` on its user pool.
 - **For a change of Gramps ID or email, or an operator's passkey removal:** `cloudformation:DescribeStacks` on `<app-stack>`, `dynamodb:GetItem` and `dynamodb:DeleteItem` on its table, and `dynamodb:Query` on the table's `GSI1` index.
 - **For signing a member out on every device:** `cloudformation:DescribeStacks` on `<app-stack>`, and `dynamodb:Scan`, `dynamodb:GetItem` and `dynamodb:PutItem` on its table.
-- **For the legacy instance refresh and log checks:** `lambda:UpdateFunctionConfiguration` and `lambda:GetFunctionConfiguration` on `hfy-check-allowed`, and read access to its log group.
 - **`jq`** on your path.
 
 **Every member needs a Gramps ID.** Both paths deny an email whose mapping is missing or empty. Edit the two JSON files directly. No generator produces them, and neither sign-in path admits an email without a Gramps ID ([Private data and secrets](../reference/private-data-and-secrets.md#where-the-private-source-copies-live)).
@@ -53,9 +46,9 @@ In `<project>/docs/dev`:
 - Add `"<email>": "<gramps-id>"` to the object in `userGrampsID.json`.
 - Add `"<email>"` to the array in `harrisonfamily-allowlist.json`.
 
-Write the email in lower case in both files. The edge and the hash step lower-case it, but the legacy Lambda looks up the mapping with the key exactly as stored, so a key with capitals never matches. Use the plain string form. The edge also accepts an object form, `{"gramps_id": ..., "label": ..., "roles": [...]}`, but the legacy Lambda would return that whole object to the browser as the Gramps ID.
+Write the email in lower case in both files. The edge and the hash step lower-case it, but the retired legacy Lambda looks up the mapping with the key exactly as stored, so a key with capitals never matches. Use the plain string form. The edge also accepts an object form, `{"gramps_id": ..., "label": ..., "roles": [...]}`, but the legacy Lambda would return that whole object to a caller as the Gramps ID.
 
-Check both files before you publish. The script uploads `userGrampsID.json` without validating it. If that file is malformed, edge instances that already hold a copy keep using the previous list, so the change silently does not apply. Edge instances that start afterwards deny every sign-in, and new legacy instances answer every sign-in with a 500.
+Check both files before you publish. The script uploads `userGrampsID.json` without validating it. If that file is malformed, edge instances that already hold a copy keep using the previous list, so the change silently does not apply. Edge instances that start afterwards deny every sign-in, and new legacy Lambda instances answer every call with a 500.
 
 ```sh
 cd <project>/docs/dev
@@ -77,25 +70,17 @@ The script runs these steps in order and stops at the first failure:
 
 1. Uploads `userGrampsID.json` to `s3://<config-bucket>/config/userGrampsID.json`, replacing the object.
 2. Reads the HMAC key from Secrets Manager, computes the digest of each email in `harrisonfamily-allowlist.json` (trimmed and lower-cased, blanks skipped), and uploads the digests to `config/allowed_hashes.json`, replacing the object. It fails if the file is not a JSON array.
-3. Runs `gcloud secrets versions add harrisonfamily-allowlist` with the email array, in the active gcloud project.
+3. Runs `gcloud secrets versions add harrisonfamily-allowlist` with the email array, in the active gcloud project. That secret was deleted on 2026-10-14 (HFY-TSK-325), so this step fails on every run.
 
-It prints `[DONE] Allowlist artifacts published.` when all three succeed. The local files are the source of truth: each run overwrites the S3 objects with them.
+It would print `[DONE] Allowlist artifacts published.` only when all three succeed, so until step 3 is removed from the script (outside this repository), a run ends with the step 3 error instead. The local files are the source of truth: each run overwrites the S3 objects with them.
 
-If step 2 fails, the edge already has the new mapping, but the legacy path still denies the new member. If step 3 fails, both S3 objects are current and only the unused Google copy is stale. In either case, fix the cause and run the script again. A re-run is safe.
+If step 2 fails, the edge already has the new mapping, but the retired legacy Lambda still denies the new member: fix the cause and run the script again. A re-run is safe. A failure at step 3 is expected and needs no re-run: both S3 objects are already current, and the Google copy no longer exists.
 
-The script also reads environment overrides for the bucket, the object keys and the secret names. They are listed under [`publish_allowlists.sh`](../reference/private-data-and-secrets.md#publish_allowlistssh). Set one only if the matching reader was configured differently: the resolver in [`auth/edge.manifest.json`](../../auth/edge.manifest.json), or the legacy Lambda's environment.
+The script also reads environment overrides for the bucket, the object keys and the secret names. They are listed under [`publish_allowlists.sh`](../reference/private-data-and-secrets.md#publish_allowlistssh). Set one only if the matching reader was configured differently: the resolver in [`auth/edge.manifest.json`](../../auth/edge.manifest.json), or the retired legacy Lambda's environment.
 
-### 3. Start new legacy Lambda instances
+### 3. Nothing to refresh for the legacy Lambda
 
-`hfy-check-allowed` loads the mapping and the digests once per instance and never reloads them. Until a new instance starts, the legacy path does not see the change. Any configuration update makes Lambda start new instances. Changing only the description is the least intrusive:
-
-```sh
-aws lambda update-function-configuration --function-name hfy-check-allowed --region us-west-2 \
-  --description "allowlist published <yyyy-mm-dd>"
-aws lambda wait function-updated --function-name hfy-check-allowed --region us-west-2
-```
-
-A push to `main` has the same effect, because [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) uploads the Lambda's code on every run.
+This step used to start new instances of `hfy-check-allowed`, which load the mapping and the digests once and never reload them. No page calls that function any more, and no push redeploys it, so there is nothing to do. If you call `/api/check-allowed` by hand, change the function's description first, which makes Lambda start new instances: `aws lambda update-function-configuration --function-name hfy-check-allowed --region us-west-2 --description "allowlist published <yyyy-mm-dd>"`.
 
 ### 4. Optional: make the member an admin
 
@@ -136,14 +121,6 @@ The check prints `true` before the upload runs. If it prints `false` or a parse 
    Use Google for this check. A new member has no password yet: the user pool takes no self-service sign-up, and the edge creates the member's Cognito account only when they set a password at `https://<site>/auth/link` after a Google sign-in ([Identity services](../reference/identity-services.md#cognito-user-pool)). To check the password path too, have the member set one there, sign out, and sign in again at `/auth/login` with the email and password.
 
 3. **The site links the member to their own record.** In that browser, open `https://<site>/`. The account button at the top of the page opens a menu whose link to the member's own page points to `/person/?id=<gramps-id>`. On a site with `shellV2` off, the navigation's my-record link points there instead. If `authV2` is off on the deployed site, open `https://<site>/?hfy_flags=authV2` for this check, and `https://<site>/?hfy_flags=` afterwards to clear the override.
-
-4. **Where `authV2` is off: the legacy path admits them.** Skip this check when the deployed flag is `true`: `/family-login/` then sends the member to `/auth/login`, so checks 2 and 3 cover the sign-in. Otherwise, in a private window with no flag override, have the member sign in at `https://<site>/family-login/`. The browser moves to `/person/?id=<gramps-id>` only after the Lambda admits them. A page that looks signed in proves nothing: it marks the visitor signed in after any Google sign-in, admitted or not. The Lambda logs show the match:
-
-   ```sh
-   aws logs tail /aws/lambda/hfy-check-allowed --region us-west-2 --since 15m --filter-pattern '"Allowlist match"'
-   ```
-
-   If the line shows `Email not on allowlist or missing Gramps ID` instead, check that a new instance started: the `REPORT` line of its first request includes `Init Duration`.
 
 5. **Admin only: the member has admin rights.** The S3 object lists the ID at once:
 
@@ -231,7 +208,7 @@ The `uat` group of `config/groups.json` names the members who test new features 
 
 Since HFY-TSK-134, the auth edge reads approved access from two places: io's S3 file, `userGrampsID.json`, and `ALLOW#<email>` items in the app stack's table. The items are written only by `hfy-api`, through the audited grant and revoke transactions in [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), which the access-request admin routes use. Nothing in this repository writes one yet, so a table with no `ALLOW#` item behaves exactly like the file alone.
 
-**The file publisher never touches them.** `publish_allowlists.sh` overwrites the S3 objects and the legacy secret and nothing else. Republishing the file therefore cannot create, change or delete a grant, and a grant survives every republish. The reverse also holds: editing the file does not change an email that has an `ALLOW#` item.
+**The file publisher never touches them.** `publish_allowlists.sh` overwrites the two S3 objects and nothing else (its write to the legacy Google secret fails, because the secret was deleted). Republishing the file therefore cannot create, change or delete a grant, and a grant survives every republish. The reverse also holds: editing the file does not change an email that has an `ALLOW#` item.
 
 **Precedence: the DynamoDB item wins, active or revoked.**
 
@@ -252,7 +229,7 @@ What follows from it:
 - **Removing an email from the file does not remove a grant.** If the member has an active `ALLOW#` item, they still sign in after you publish the file without them. Revoke the grant too, through the API's revoke transaction. Until the admin routes ship, nothing creates a grant, so there is none to revoke.
 - **A revoked item outlives the file.** Adding the email back to the file does not restore access while a `revoked` item exists. Grant the email again through the API (a grant over a revoked item is allowed), or have io delete the revoked item.
 - **Revocation by DynamoDB works on an email that is still in the file.** That is how an approved request is withdrawn without touching io's files.
-- **The legacy path ignores grants.** `hfy-check-allowed` reads only the digest list and the mapping, so a DynamoDB grant never admits a legacy sign-in, and a revoke never denies one. The legacy path is retired after the authV2 release (HFY-R4).
+- **The retired legacy Lambda ignores grants.** `hfy-check-allowed` reads only the digest list and the mapping, so a DynamoDB grant never admits a call to it, and a revoke never denies one. Nothing on the site calls it any more.
 - **Timing.** The edge reads the item on every lookup with a strongly consistent `GetItem` and does not cache it, so the next sign-in, passkey sign-in, password set or refresh sees a grant or a revoke at once. The S3 file keeps its 300 s cache. The MCP groups find items through the `GSI1` index, which cannot be read consistently, and cache each Gramps ID's items for 60 s. A grant or revoke therefore reaches the groups up to about a minute (plus index lag) after it reaches sign-in. That gap is accepted. A session already issued keeps working until its `io_id` expires, up to 1 h, and its next refresh is refused.
 - **A DynamoDB outage does not lock members out, and does not honor a revoke.** While the table cannot be read, the file decides, so an email that is revoked in DynamoDB and still listed in the file signs in, and joins its MCP groups, until the table is readable again. To close the gap for a revoked member, also remove their email from the file ([Remove a member](#remove-a-member)). The edge logs `allowlist table unavailable (the S3 file decides)` for each fallback, with the error name and no address, so an outage is visible in the logs.
 - **An active item replaces the file's entry for its email.** The principal is built from the item alone: the member role, no extra roles and no label from the file. If the file lists the same email with another Gramps ID or extra roles (`editors`, for example), they are not merged, and the item's Gramps ID is the one used for sign-in and for the MCP groups. Before you grant an email that the file already lists, check that the Gramps IDs match and that no extra role is needed. The roles the groups take from the file are lost for that email.
@@ -290,7 +267,6 @@ First check whether the email has an `ALLOW#` grant, as in [Allowlist grants in 
    Both print `false`.
 
 2. Run the publisher from `<project>`, as in [step 2](#2-publish).
-3. Start new legacy Lambda instances, as in [step 3](#3-start-new-legacy-lambda-instances).
 4. If the member is an admin, remove their Gramps ID from the admin list. The check prints `true` before the upload runs:
 
    ```sh
@@ -315,7 +291,7 @@ First check whether the email has an `ALLOW#` grant, as in [Allowlist grants in 
 
    If `admin-get-user` reports `UserNotFoundException`, there is nothing to disable.
 
-New sign-ins, passkeys included, are refused with `403` within 300 s, once the edge's cached allowlist expires. Wait that long before you test the edge, and make sure step 3 ran before you test the legacy path. The member's current `io_id` and any MCP access token keep working until they expire, up to 1 h after issue, and their next refresh is refused. If an hour is too long, [rotate the session signing key](rotate-the-session-signing-key.md), with io's go-ahead. [The identity model](../explanation/identity-model.md#what-removal-does-and-does-not-do) explains the timing for each kind of access.
+New sign-ins, passkeys included, are refused with `403` within 300 s, once the edge's cached allowlist expires. Wait that long before you test the edge. The member's current `io_id` and any MCP access token keep working until they expire, up to 1 h after issue, and their next refresh is refused. If an hour is too long, [rotate the session signing key](rotate-the-session-signing-key.md), with io's go-ahead. [The identity model](../explanation/identity-model.md#what-removal-does-and-does-not-do) explains the timing for each kind of access.
 
 The member's comments and posts stay. They remain attributed to the Gramps ID. The edge also keeps the member's link record and passkeys. If you add them back with the same Gramps ID, their passkeys work again. If you later add the same email back under a different Gramps ID, remove the link record first, as in [Change a member's record or email](#change-a-members-record-or-email).
 
@@ -334,15 +310,6 @@ The member's comments and posts stay. They remain attributed to the Gramps ID. T
 3. **A fresh edge sign-in is denied.** After 300 s, sign in with Google at `https://<site>/auth/login` in a private window with the removed account. In the network panel, `POST /auth/google` returns `403 {"code":"AUTH_FORBIDDEN","detail":"not_allowlisted"}`, and no session starts. The page shows the `denied_body` text from the `copy` block of [`auth/edge.manifest.json`](../../auth/edge.manifest.json) as a neutral notice, not as an error: the message carries `data-detail="not_allowlisted"`, set by `allowlistNotice` in [`auth/src/edge.js`](../../auth/src/edge.js).
 
 4. **A passkey sign-in is refused.** If the member added a passkey and can try it, have them use the passkey button (the manifest's `passkey_button` text) at `https://<site>/auth/login` after 300 s. The page shows the same notice, `POST /auth/passkey/login/verify` returns `403 {"code":"AUTH_FORBIDDEN","detail":"not_allowlisted"}`, and no session starts.
-
-5. **Where `authV2` is off: a fresh legacy sign-in is denied.** Skip this check when the deployed flag is `true`, because `/family-login/` then sends the visitor to `/auth/login`, which checks 3 and 4 cover. Otherwise, sign in at `https://<site>/family-login/` with the removed account. The page can still look signed in, because it marks the visitor signed in before it asks the Lambda. The removal shows in what is missing: the browser stays on `/family-login/`, and in the network panel the `POST /api/check-allowed` request returns `403`, so no gateway session is created. The Lambda log is the deciding test:
-
-   ```sh
-   aws logs tail /aws/lambda/hfy-check-allowed --region us-west-2 --since 15m \
-     --filter-pattern '"Email not on allowlist or missing Gramps ID"'
-   ```
-
-   The log shows only a redacted form of the email: its first three characters, `***@` and the domain.
 
 6. **Admin only: the ID left the admin list.**
 
@@ -440,7 +407,7 @@ This writes to the app table by hand, so it needs io's go-ahead. Run it from one
    live_families
    ```
 
-   No output means the member has no live session to revoke. A browser signed in only through the legacy sign-in, `/family-login/`, holds no edge session and is not listed. That sign-in grants nothing on the server: the data gate, on every behavior where it is attached, accepts only `io_id`, and no data path checks the legacy token ([Identity services: Legacy client contract](../reference/identity-services.md#legacy-client-contract)).
+   No output means the member has no live session to revoke. A browser with no edge session is not listed, and it reads nothing: the data gate, on every behavior where it is attached, accepts only `io_id`, and no code checks any other token ([Identity services: Retired legacy sign-in](../reference/identity-services.md#retired-legacy-sign-in)).
 
 3. Revoke each family. The record expires through the table's `ttl` 32 days from now, after the longest refresh token it could stop:
 
@@ -504,7 +471,7 @@ This writes to the app table by hand, so it needs io's go-ahead. Run it from one
 The edge records each email's Gramps ID the first time the member signs in, in a link record (`LINK#<email>`) in the app stack's table. It never re-points that record. After you change the mapping, every Google or password sign-in by that member is refused with `403 link_conflict` until you delete the record. Passkeys fail differently: see **Passkeys stay under the old ID** below.
 
 1. Change the value in `userGrampsID.json`, and check the file as in [step 1](#1-edit-the-source-files).
-2. Publish, as in [step 2](#2-publish), and start new legacy instances, as in [step 3](#3-start-new-legacy-lambda-instances).
+2. Publish, as in [step 2](#2-publish).
 3. If the member is an admin, replace the old ID in `admins.json`: run the removal filter from [Remove a member](#remove-a-member) step 4 with the old ID, then the filter from [step 4](#4-optional-make-the-member-an-admin) with the new ID.
 4. If the member is in `groups.json` by Gramps ID, replace the old ID with the new one in every `subjects` list, as in [Give a member MCP access](#give-a-member-mcp-access).
 5. Wait 300 s, so that no edge instance still maps the email to the old ID. A sign-in in that window would write the old link again.
@@ -533,24 +500,17 @@ The member's current edge session keeps the old ID until it next refreshes or ex
 **Verify.**
 
 1. Have the member sign in with Google at `https://<site>/auth/login`, then open `https://<site>/auth/session`. It shows `"sub": "<new-gramps-id>"`. The `get-item` command above now prints `<new-gramps-id>`.
-2. The S3 copy, which the edge and the legacy Lambda both read, holds the new ID:
+2. The S3 copy, which the edge and the retired legacy Lambda both read, holds the new ID:
 
    ```sh
    aws s3 cp s3://<config-bucket>/config/userGrampsID.json - | jq --arg e '<email>' '.[$e]'
    ```
 
    It prints `"<new-gramps-id>"`.
-3. Where `authV2` is off, also have the member sign in at `https://<site>/family-login/`. Skip this when the deployed flag is `true`, because that page then sends the member to `/auth/login`. The legacy log shows the new ID:
-
-   ```sh
-   aws logs tail /aws/lambda/hfy-check-allowed --region us-west-2 --since 15m --filter-pattern '"Allowlist match"'
-   ```
-
-   The line for the member's redacted email carries `<new-gramps-id>` in its `grampsId` field.
 
 ### A new email for the same member
 
-Remove the old address and add the new one with the same Gramps ID, in both files, then publish and start new legacy instances. Their content, their admin rights and any `subjects` entry in `groups.json` carry over, because all of them follow the Gramps ID. Some things do not:
+Remove the old address and add the new one with the same Gramps ID, in both files, then publish. Their content, their admin rights and any `subjects` entry in `groups.json` carry over, because all of them follow the Gramps ID. Some things do not:
 
 - **An `emails` entry in `groups.json`.** Replace the old address with the new one.
 - **A Cognito user, if one exists.** It is keyed by email, so it keeps the old address, and a password sign-in with it is refused with `403 not_allowlisted`. Disable it as in step 6 of [Remove a member](#remove-a-member), with the old address. The member can set a password for the new address at `https://<site>/auth/link` after a Google sign-in with that address, but only once the old address's link record is gone. While it remains, the page offers no password if one is linked under the old address, and otherwise the edge may pick the old address for the password and refuse it with `403 not_allowlisted`. So first delete the old address's link record, with io's go-ahead, as in steps 5 to 7 of [A different Gramps ID for the same email](#a-different-gramps-id-for-the-same-email), with the old address as `<email>`. The lookup prints the member's Gramps ID, which is unchanged.
@@ -559,7 +519,7 @@ Remove the old address and add the new one with the same Gramps ID, in both file
 ## Related pages
 
 - [The identity model](../explanation/identity-model.md): why the allowlist is the authority, why an email is never re-pointed, why admins and MCP groups are separate lists, and why removal is not instant.
-- [Identity services](../reference/identity-services.md): the resolver, the link records, passkeys, the refresh check, the membership groups and the legacy Lambda.
+- [Identity services](../reference/identity-services.md): the resolver, the link records, passkeys, the refresh check, the membership groups and the retired legacy Lambda.
 - [MCP server](../reference/mcp-server.md): the tools, the policy table and how `groups.json` is read.
 - [Private data and secrets](../reference/private-data-and-secrets.md): where the allowlist, the admin list, the MCP groups and the HMAC key live, and the publisher's environment overrides.
 - [Family data privacy](../explanation/family-data-privacy.md): why these files never enter the repository.

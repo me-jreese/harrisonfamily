@@ -43,8 +43,7 @@ Several files carry this environment's names, so a copy for another family needs
 
 | File | Values | Change to |
 | --- | --- | --- |
-| [`ci.manifest.yaml`](../../ci.manifest.yaml) | The `s3_static` target's `bucket` and `distribution`; the `smoke` URLs; the `lambda` target's `name`; `deploy.region` | `<site-bucket>`, `<distribution-id>`, `https://<site>/...`, and your legacy Lambda, or see [Legacy pieces](#legacy-pieces). Then re-render the workflows: [Change the CI pipeline](change-the-ci-pipeline.md). Never edit the rendered files directly. |
-| [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) | `GCP_PROJECT_ID`, `GCF_REGION`, `GCF_FUNCTION`, `GCF_ENV_VARS` | Your legacy names, or delete the workflow (see [Legacy pieces](#legacy-pieces)). It is hand-maintained. |
+| [`ci.manifest.yaml`](../../ci.manifest.yaml) | The `s3_static` target's `bucket` and `distribution`; the `smoke` URLs; `deploy.region` | `<site-bucket>`, `<distribution-id>` and `https://<site>/...`. The manifest has no Lambda target (HFY-TSK-317). Then re-render the workflows: [Change the CI pipeline](change-the-ci-pipeline.md). Never edit the rendered files directly. |
 | [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) | Defaults of `GitHubOrg`, `GitHubRepo` and `OIDCProviderArn` | Pass your own values as `--parameter-overrides` in step 6, or edit the defaults |
 | [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) | Bucket ARNs in `S3SiteSync` and `ProtectMemberUploads`; the distribution in `CloudFrontInvalidation`; the function ARNs in `LambdaDeploy` | `<site-bucket>`, `<distribution-id>`, and your function names and region |
 | [`auth/edge.manifest.json`](../../auth/edge.manifest.json) | `site`, `authOrigin`, `cookieDomain`, `returnOrigins`, `idp.domain`, `session.issuer`, `session.audience`, `session.signingKeySecretName`, `resolver.bucket`, `theme.cssUrl`, `theme.fontOrigins`, the family-voice text of the sign-in pages in `copy`, and the passkey provider's `rpId`, `rpName` and `origins` | Your host name, issuer, audience, secret name, `<config-bucket>` and family name. In `theme.cssUrl`, change only the host, to `https://<site>/css/auth-edge.css`. The islands build stamps the `?v=` and stops while the host differs from `SITE_ORIGIN` in `islands/assets.mjs`. Keep `theme.fontOrigins` as `["self"]`, because the fonts are served from the site itself. Rewrite `copy` in your family's own voice: `subtitle`, `passkey_failed`, `denied_body`, `invalid_credentials`, `unconfirmed` and `generic_error` name this family or one of its contacts. For passkeys, set `rpId` to `<site>`, `rpName` to the family name a member's device shows when it saves a passkey, and `origins` to `https://<site>`. Set them before any member enrols a passkey, because a passkey works only for the `rpId` it was created under. Keep the session values in step with the `app-stack.yaml` parameters and `gate.config.json` below. |
@@ -55,7 +54,6 @@ Several files carry this environment's names, so a copy for another family needs
 | `config/userGrampsID.json`, `config/groups.json` and `config/admins.json` in `<config-bucket>`, outside the repository | Your members' `<email>` and `<gramps-id>` values | Your own files, published with [Manage family access](manage-family-access.md). Never start from another environment's copies. `groups.json` takes the shape documented at the top of [`api/src/policy.js`](../../api/src/policy.js). Without it the MCP server fails closed and nobody gets MCP tools. `admins.json` may be absent, which means there are no moderators. |
 | [`site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json) | `AllowedOrigins` | `https://<site>` and `https://www.<site>`. Change `SITE_ORIGINS` in [`scripts/infra/test/run.sh`](../../scripts/infra/test/run.sh) with it: the test fails on any other origin. |
 | [`check-site-bucket-cors.sh`](../../scripts/infra/check-site-bucket-cors.sh) | The `URL` default | `https://<site-bucket>.s3.<region>.amazonaws.com/uploads/posts/smoke/x.jpg`, with the `deploy.region` of `ci.manifest.yaml`. `scripts/infra/test/run.sh` fails while it names another bucket or Region than the manifest. |
-| [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js) | The production host name in the `isProductionHost` check | `<site>`. Without it, the production host does not force `enforceAssets`, the guard described in [Family data privacy](../explanation/family-data-privacy.md#gating-the-json). |
 | [`11ty/manifest.webmanifest`](../../11ty/manifest.webmanifest) | `name`, `short_name` | Your family's names for the installed app. Leave `background_color` and `theme_color` alone: the islands build writes them from the theme's surface colour. |
 | [`islands/assets.mjs`](../../islands/assets.mjs) | `SITE_ORIGIN` | `https://<site>`. The build treats absolute URLs on this origin as the site's own files when it adds the `?v=` versions, and it versions `theme.cssUrl` only on this origin. |
 | [`islands/copy.mjs`](../../islands/copy.mjs) | `HERO`, `TITLES`, `FOOTER` and `HERO_IMAGES`, and the fallback navbar wordmark in `applyCopy` | Your site name, host, page titles and hero photos. The module rewrites this family's old Eleventy copy on the committed pages until the Eleventy source carries the new copy, and [`copy.test.mjs`](../../islands/tests/copy.test.mjs) checks the result on every page. Change the module and the test together. |
@@ -71,26 +69,19 @@ The test suites pin several of these values. Examples are `gate.test.mjs`, the a
 
 ### Legacy pieces
 
-The legacy sign-in path has not been removed. The pages still carry its code, and every push to `main` deploys both legacy functions, whatever the flags say. Its pieces were created outside the repo's IaC, and this page does not set them up. [Identity services](../reference/identity-services.md#legacy-sign-in-hfy-check-allowed) describes them, and [The identity model](../explanation/identity-model.md#retirement-order-once-authv2-is-flipped) gives the order in which they retire.
+The legacy Google sign-in is gone from the pages and the pipeline (HFY-TSK-317): no page loads it, no push deploys `hfy-check-allowed`, and members sign in only through the auth edge once [Deploy the app stack](deploy-the-app-stack.md) has run. One legacy piece remains, the `hfy-check-allowed` Lambda, created outside the repository's IaC, and this page does not set it up. [Identity services](../reference/identity-services.md#retired-legacy-sign-in) describes it, and [The identity model](../explanation/identity-model.md#retirement-order-once-authv2-is-flipped) gives the order in which it retires. The Google Cloud piece, the `getAllowlist` function with its Secret Manager secret and its deploy workflow, was deleted on 2026-10-14 (HFY-TSK-325), so a new environment needs nothing in Google Cloud besides the OAuth client in [step 7](#7-create-the-google-web-client).
 
-In a new environment, the legacy path matters mainly to the deploy. With `authV2` set to `true`, as committed, members sign in through the auth edge once [Deploy the app stack](deploy-the-app-stack.md) has run. The legacy flow still runs wherever `authV2` resolves off, and on `/family-login/` while `/auth/session` does not answer, which in a new environment is the case until the app stack is deployed. It also runs on `/family-login/` for a visitor who is already signed in at the edge, so that the page does not loop back to `/auth/login`. It cannot read the family data at any point: before the cutover, `HFYAppendIndex` refuses the data paths to everyone, and after it the gate refuses every request without an `io_id` session.
+A new environment does not need the Lambda for the first deploy in [Verify](#verify) to be green: no workflow deploys it. You need these only if you call `/api/check-allowed` by hand:
 
-The first deploy in [Verify](#verify) is green only if these already exist:
-
-| You need | What fails without it |
+| You need | What it is for |
 | --- | --- |
-| The `hfy-check-allowed` Lambda in `us-west-2`. The deploy updates its code only. | The Lambda update in the `deploy` job of `io-kit-deploy.yml` |
-| The `GCP_SERVICE_ACCOUNT_KEY` repository secret, holding a Google service-account JSON key | The "Authenticate to Google Cloud" step of `deploy-gcf-legacy.yml` |
-| The Google Cloud project named by `GCP_PROJECT_ID` in `deploy-gcf-legacy.yml`, with the Secret Manager, Cloud Functions, Cloud Run and Cloud Build APIs enabled (`secretmanager`, `cloudfunctions`, `run` and `cloudbuild`, each `.googleapis.com`), and that service account allowed to deploy Cloud Functions in it | The "Deploy Google Cloud Function" step, which deploys `getAllowlist` as a 2nd-gen function |
+| The `hfy-check-allowed` Lambda in `us-west-2`, the `HFY_ALLOWLIST_HMAC_SECRET` secret in Secrets Manager and an API Gateway route to the Lambda, reached through CloudFront under `/api/check-allowed` | The retired legacy endpoint. [Deploy the app stack](deploy-the-app-stack.md#add-the-api-behavior-and-the-legacy-pin) keeps that route ahead of `/api/*`. |
 
-Legacy sign-in also needs the `HFY_ALLOWLIST_HMAC_SECRET` secret in Secrets Manager and an API Gateway route to the Lambda, reached through CloudFront under `/api/check-allowed`. [Deploy the app stack](deploy-the-app-stack.md#add-the-api-behavior-and-the-legacy-pin) keeps that route ahead of `/api/*`.
+If you will not run the legacy Lambda at all:
 
-If you will not run the legacy path:
-
-- In `ci.manifest.yaml`, remove the `lambda` target, the `artifacts` entry and `&& bash scripts/ci/package-lambda.sh` from `build.cmd`, then re-render ([Change the CI pipeline](change-the-ci-pipeline.md)).
-- Delete `deploy-gcf-legacy.yml`, and remove `hfy-check-allowed` from the `LambdaDeploy` statement in `github-roles.yaml`.
+- Remove `hfy-check-allowed` from the `LambdaDeploy` statement in `github-roles.yaml` (the manifest no longer has a target for it).
 - `add-api-behavior.sh` refuses to run until it knows where `/api/check-allowed` should go. Pass `--legacy-origin` with the ID of the site's S3 origin. The pin then sends that path to the bucket, which answers `403`, and nothing else changes.
-- Members can then sign in only through the auth edge, so keep `authV2` set to `true`, as committed. With `authV2` off, the pages send members to the legacy sign-in, which such a copy no longer has.
+- Keep `authV2` set to `true`, as committed. With it off, the pages do not refresh `io_id`, and there is no other sign-in.
 
 ## Steps
 
@@ -205,7 +196,7 @@ aws cloudfront create-response-headers-policy \
 
 Keep the printed `<headers-policy-id>`.
 
-**c. Fill in a copy of the template.** Copy `cloudfront/distribution.json` outside the repository and make these changes. The template also carries the legacy API Gateway origin and the `/api/*` behavior that reaches it. Keep them, with `Origins.Items[1].DomainName` and `OriginPath` set to your legacy API Gateway's domain and stage, only if you run the legacy path. Otherwise delete that origin and the whole `CacheBehaviors` block, and set `Origins.Quantity` to `1`. Every field in the table sits inside `DistributionConfig`, `CallerReference` included.
+**c. Fill in a copy of the template.** Copy `cloudfront/distribution.json` outside the repository and make these changes. The template also carries the legacy API Gateway origin and the `/api/*` behavior that reaches it. Keep them, with `Origins.Items[1].DomainName` and `OriginPath` set to your legacy API Gateway's domain and stage, only if you keep the retired `/api/check-allowed` endpoint. Otherwise delete that origin and the whole `CacheBehaviors` block, and set `Origins.Quantity` to `1`. Every field in the table sits inside `DistributionConfig`, `CallerReference` included.
 
 | Field | Template | Set to |
 | --- | --- | --- |
@@ -363,18 +354,14 @@ Only runs on `main` can assume the role. It may write to `<site-bucket>` except 
 
 ### 7. Create the Google web client
 
-Both sign-in paths render the Google Identity Services button and post the Google ID token themselves, so Google redirects nowhere and the client needs only authorized JavaScript origins. [The identity model](../explanation/identity-model.md#one-edge-several-methods) explains how each path uses the token.
+The auth edge renders the Google Identity Services button and checks the Google ID token itself, so Google redirects nowhere and the client needs only authorized JavaScript origins. [The identity model](../explanation/identity-model.md#one-edge-several-methods) explains how the edge uses the token.
 
 1. In the Google Cloud console, choose or create a project. Under **Google Auth Platform**, fill in the branding, set the audience to **External**, and publish the app. While it is in **Testing**, only listed test users can sign in.
 2. Under **Clients**, create a client of type **Web application**. Add `https://<site>` and `https://www.<site>` as authorized JavaScript origins. Add both `http://localhost` and `http://localhost:<port>` only if you test sign-in against a local server.
 3. Leave the redirect URIs empty. Nothing uses the client secret that Google generates, so do not store it. The client needs no redirect URIs, no client secret and no other Google API.
-4. Set the client ID as a repository secret:
+4. Keep the client ID, `<google-web-client-id>`, for the `GoogleClientId` parameter in [Deploy the app stack](deploy-the-app-stack.md). No repository secret holds it: the pages carry no client ID (HFY-TSK-317).
 
-   ```sh
-   gh secret set HFY_GOOGLE_CLIENT_ID --repo <github-owner>/<github-repo> --body "<google-web-client-id>"
-   ```
-
-The pipeline's build step writes this value over the placeholder `REPLACE_WITH_GOOGLE_CLIENT_ID` in the committed pages ([Front end](../reference/front-end.md#what-11ty-contains)). Keep `<google-web-client-id>` for the `GoogleClientId` parameter in [Deploy the app stack](deploy-the-app-stack.md). To replace the client later, follow [Rotate the Google sign-in client](rotate-the-google-client.md).
+ To replace the client later, follow [Rotate the Google sign-in client](rotate-the-google-client.md).
 
 ## Verify
 
@@ -388,7 +375,7 @@ The bucket is empty until the first deploy, so run that first.
    gh run watch <run-id> --repo <github-owner>/<github-repo>
    ```
 
-   `build`, `deploy`, `invalidate` and `smoke` succeed. On the first deploy there is no earlier release, so if `smoke` fails, `rollback_on_smoke_fail` fails too, with `no previous successful run`. If the run came from a push to `main`, the `deploy-gcf-legacy.yml` run from that push also succeeds, if you kept the workflow. A run started with `gh workflow run` starts no legacy run.
+   `build`, `deploy`, `invalidate` and `smoke` succeed. On the first deploy there is no earlier release, so if `smoke` fails, `rollback_on_smoke_fail` fails too, with `no previous successful run`.
 2. **The site answers through CloudFront.**
 
    ```sh
@@ -433,10 +420,8 @@ The bucket is empty until the first deploy, so run that first.
 
 | Symptom | Likely cause |
 | --- | --- |
-| The `build` job fails | `HFY_GOOGLE_CLIENT_ID` is missing or empty |
+| The `build` job fails | The runner, or `11ty/` is missing from the checkout (the build command only echoes) |
 | The `deploy` job fails at the AWS credentials step | `AWS_DEPLOY_ROLE_TO_ASSUME` is missing or wrong, the run is not on `main`, or `GitHubOrg`/`GitHubRepo` do not match the repository |
-| The `deploy` job fails at the Lambda update | The `hfy-check-allowed` [legacy piece](#legacy-pieces) is missing. The site sync has already run. |
-| `deploy-gcf-legacy.yml` fails | A Google Cloud [legacy piece](#legacy-pieces) is missing, or the service account cannot deploy in the project |
 | The `smoke` job fails | The site does not answer on the `smoke` URLs in `ci.manifest.yaml`. Check the next rows. |
 | Every path returns `403` | The bucket policy is missing or names the wrong distribution, the origin has no OAC, or the bucket is still empty |
 | `/` works but `/about/` returns `403` | `HFYAppendIndex` is not published to `LIVE` or not attached on viewer-request |

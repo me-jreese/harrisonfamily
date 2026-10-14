@@ -8,7 +8,7 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "4cc3b020",
+        "js": "b2994f56",
         "css": "24d74883"
       },
       "my-posts": {
@@ -20,11 +20,11 @@
         "css": "56799f74"
       },
       "person": {
-        "js": "ff38642f",
+        "js": "1c713f11",
         "css": "3909ca3c"
       },
       "photo-tags": {
-        "js": "145b0d58",
+        "js": "72b2d893",
         "css": "bf6043c1"
       },
       "posts": {
@@ -32,15 +32,15 @@
         "css": "c678e2b1"
       },
       "search": {
-        "js": "76bd1ee9",
+        "js": "ed6d2210",
         "css": "9e007813"
       },
       "settings": {
-        "js": "a84cd46c",
+        "js": "79ac63fd",
         "css": "b1550e24"
       },
       "shell": {
-        "js": "a309d8a6",
+        "js": "36ba7a7b",
         "css": "53cdeb03"
       },
       "timeline": {
@@ -50,7 +50,7 @@
     },
     "theme": "1e33d0e0",
     "manifest": "c0f9b5fc",
-    "sw": "9558bc1e"
+    "sw": "a74a20a3"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -73,23 +73,16 @@
   }
   const config = window.HFY_FEATURE_FLAGS || {};
   const components = config.components || {};
-  const gatewayConfig = config.gateway || {};
-  const SESSION_STORAGE_KEY = "HFY_GATEWAY_SESSION_V1";
   const state = Object.assign(
     {
       loggedIn: false,
-      sessionToken: null,
       userGrampsID: null,
-      hasRecord: false,
-      sessionExpiresAt: null,
-      verifying: false,
-      verifiedAt: null
+      hasRecord: false
     },
     config.defaultState || {}
   );
-  // HFY-R66: {loggedIn, userGrampsID, hasRecord} from an authenticated authV2 edge session (see edgeSession below). It is laid
-  // over the legacy state for [data-feature] visibility only, so the legacy auth.js (which knows nothing of the edge session)
-  // cannot hide the navbar search, My Record or Log out again for an edge-only sign-in.
+  // HFY-R66: {loggedIn, userGrampsID, hasRecord} from an authenticated edge session (see edgeSession below). It is laid over the
+  // page's default state for [data-feature] visibility only: the edge session is the only sign-in there is.
   let edgeOverlay = null;
   function visibilityState() {
     return edgeOverlay ? Object.assign({}, state, edgeOverlay) : state;
@@ -116,19 +109,6 @@
       console.debug(`${LOG_PREFIX} ${message}`, ...args);
     }
   }
-
-  const isProductionHost =
-    typeof window !== "undefined" &&
-    window.location &&
-    window.location.hostname === "harrisonfamily.us";
-  if (isProductionHost && gatewayConfig.enforceAssets !== true) {
-    console.error(
-      `${LOG_PREFIX} Production domain detected but enforceAssets was false. Forcing it to true to protect gated assets.`
-    );
-    gatewayConfig.enforceAssets = true;
-  }
-
-  hydrateSessionState();
 
   function normalizeAllowed(allowed) {
     if (!allowed) {
@@ -188,94 +168,6 @@
     });
   }
 
-  async function verifySession({ googleIdToken } = {}) {
-    if (!gatewayConfig.endpoint) {
-      logDebug("No gateway endpoint configured; treating session as anonymous.");
-      return false;
-    }
-
-    if (!googleIdToken) {
-      logDebug("verifySession called without googleIdToken");
-    }
-
-    try {
-      state.verifying = true;
-      logDebug("POSTing to gateway endpoint", {
-        endpoint: gatewayConfig.endpoint,
-        context: gatewayConfig.context,
-        hasIdToken: Boolean(googleIdToken)
-      });
-      const response = await fetch(gatewayConfig.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          id_token: googleIdToken,
-          context: gatewayConfig.context || "site"
-        }),
-        credentials: "include"
-      });
-
-      if (!response.ok) {
-        throw new Error(`Gateway response ${response.status}`);
-      }
-
-      const payload = await response.json();
-      if (!payload.allowed || !payload.sessionToken) {
-        logDebug("Gateway denied access or omitted session token.", payload);
-        state.loggedIn = false;
-        state.sessionToken = null;
-        state.userGrampsID = null;
-        state.hasRecord = false;
-        clearSessionState();
-        return false;
-      }
-
-      state.loggedIn = true;
-      state.sessionToken = payload.sessionToken;
-      state.userGrampsID = payload.grampsId || null;
-      state.hasRecord = Boolean(payload.grampsId);
-      state.sessionExpiresAt = payload.expiresAt
-        ? Date.parse(payload.expiresAt)
-        : payload.expiresIn
-          ? Date.now() + Number(payload.expiresIn) * 1000
-          : null;
-      state.verifiedAt = Date.now();
-      logDebug("Session verified via gateway.", {
-        verifiedAt: state.verifiedAt,
-        sessionTokenPreview: `${payload.sessionToken.slice(0, 6)}...`,
-        grampsId: payload.grampsId
-      });
-      persistSessionState({
-        token: payload.sessionToken,
-        grampsId: payload.grampsId || null
-      });
-      applyFeatureVisibility();
-      return payload;
-    } catch (error) {
-      console.error(`${LOG_PREFIX} verification failed`, error);
-      state.loggedIn = false;
-      state.sessionToken = null;
-      state.userGrampsID = null;
-      state.hasRecord = false;
-      clearSessionState();
-      return false;
-    } finally {
-      state.verifying = false;
-    }
-  }
-
-  function requireSessionToken() {
-    if (!state.sessionToken) return null;
-    if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) {
-      state.sessionToken = null;
-      clearSessionState();
-      return null;
-    }
-    return state.sessionToken;
-  }
-
   function onReady(callback) {
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", callback, { once: true });
@@ -294,10 +186,6 @@
     },
     updateState(partialState = {}) {
       Object.assign(state, partialState);
-       if (Object.prototype.hasOwnProperty.call(partialState, "sessionToken") && partialState.sessionToken === null) {
-         state.sessionToken = null;
-         clearSessionState();
-       }
       applyFeatureVisibility();
     },
     shouldShow(featureKey, overrides = {}) {
@@ -306,27 +194,7 @@
     },
     refresh() {
       applyFeatureVisibility();
-    },
-    acceptSession(payload) {
-      if (!payload || !payload.sessionToken) {
-        return false;
-      }
-      state.loggedIn = true;
-      state.sessionToken = payload.sessionToken;
-      state.userGrampsID = payload.grampsId || null;
-      state.hasRecord = Boolean(payload.grampsId);
-      state.sessionExpiresAt = payload.expiresAt
-        ? Date.parse(payload.expiresAt)
-        : payload.expiresIn
-          ? Date.now() + Number(payload.expiresIn) * 1000
-          : null;
-      state.verifiedAt = Date.now();
-      persistSessionState({ token: payload.sessionToken, grampsId: payload.grampsId || null });
-      applyFeatureVisibility();
-      return true;
-    },
-    verifySession,
-    requireSessionToken
+    }
   };
 
   window.HFYFeatureFlags = featureAPI;
@@ -455,9 +323,9 @@
 
   // HFY-TSK-080: the private data paths (/person/*.json, /family|event|note|place|media/*) are gated at the edge by the io_id
   // session cookie (Lambda@Edge, edge-gate/). With authV2 on, data fetches therefore send that cookie (credentials
-  // "same-origin") and NOT the legacy X-HFY-Session token, which nothing validates any more. With authV2 off this resolves null
-  // and every caller keeps its legacy request exactly as before. NOTE: once the gate is live, authV2-off visitors cannot read
-  // person data, which is why the gate and the authV2 flip ship together (cloudfront/README.md, "Private data gate").
+  // "same-origin"). The legacy X-HFY-Session token is gone (HFY-TSK-317). With authV2 off this resolves null and callers send a
+  // plain same-origin request. NOTE: once the gate is live, authV2-off visitors cannot read person data, which is why the gate
+  // and the authV2 flip ship together (cloudfront/README.md, "Private data gate").
   let authV2Seen = false;
   featureAPI.dataFetchInit = function dataFetchInit() {
     return resolveFlags().then((flags) => {
@@ -468,7 +336,7 @@
 
   // HFY-R66: authV2 session continuity. io_id (the gate's credential) lives 1 h; the HttpOnly io_rt refresh cookie lives much
   // longer, and POST /auth/refresh (x-requested-with: io-kit) re-sets io_id from it (200) or answers 401 once it is gone.
-  // - edgeSession(): GET /auth/session once per page (shared by auth-v2.js, the navbar and the data fetches). When it reports
+  // - edgeSession(): GET /auth/session once per page (shared by auth-v2.js, the shell and the data fetches). When it reports
   //   signed out or near expiry and this browser has held an edge session before, it refreshes once and asks again.
   // - dataFetch(url, init, {interactive}): before the first data fetch on a page, refresh once if the session is signed out or
   //   near expiry; on a gate 401, refresh once (single-flight, shared by concurrent fetches) and retry the request once. Only
@@ -507,6 +375,17 @@
       return false;
     }
   }
+
+  // What the retired Google sign-in (auth.js, HFY-TSK-317) left in this browser. feature-flags.js is the one script every page loads
+  // (posts/, me/ and me/notifications/ do not load auth-v2.js), so the purge runs here, on every page, and the shared sign-out
+  // (islands/src/lib/sign-out.js) calls it through HFYFeatureFlags.purgeRetiredKeys. Nothing reads these keys any more.
+  const RETIRED_LOCAL_KEYS = ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID"];
+  const RETIRED_SESSION_KEYS = ["HFY_GATEWAY_SESSION_V1"];
+  function purgeRetiredKeys() {
+    RETIRED_LOCAL_KEYS.forEach((k) => storageSet("localStorage", k, null));
+    RETIRED_SESSION_KEYS.forEach((k) => storageSet("sessionStorage", k, null));
+  }
+  purgeRetiredKeys();
 
   function getSessionJSON() {
     return fetch(SESSION_URL, { credentials: "same-origin", cache: "no-store" })
@@ -580,6 +459,7 @@
     });
   }
   featureAPI.edgeSession = edgeSession;
+  featureAPI.purgeRetiredKeys = purgeRetiredKeys;
   // Sign-out: drop the overlay and the "had an edge session" marker so later pages do not try to refresh.
   featureAPI.forgetEdgeSession = function forgetEdgeSession() {
     storageSet("localStorage", EDGE_SEEN_KEY, null);
@@ -624,10 +504,10 @@
   featureAPI.signInUrl = signInUrl;
 
   // "Your family" (the shell's family tab, /private/ and /person/ without an id): familyUrl() resolves where the visitor goes.
-  // Signed in: their own page, /person/?id=<gramps id>, the edge session's sub (authV2 off or /auth/session unreachable: the id the
-  // legacy sign-in kept). Signed out: the sign-in with a return to FAMILY_ROUTE, which lands on the own page afterwards (the edge
-  // /auth/login?returnTo=..., or the legacy /family-login/?next=... when there is no edge session to ask). Null for an
-  // authenticated session without a gramps id: the caller shows its own error, so a broken session cannot bounce in a loop.
+  // Signed in: their own page, /person/?id=<gramps id>, the edge session's sub. Signed out, or when there is no edge session to
+  // ask (authV2 off, /auth/session unreachable): the edge sign-in with a return to FAMILY_ROUTE, which lands on the own page
+  // afterwards. Null for an authenticated session without a gramps id: the caller shows its own error, so a broken session
+  // cannot bounce in a loop.
   // FAMILY_ROUTE is /private/, not /family/: /family/* is a gated data prefix at the edge. goToFamily() replaces the history entry,
   // so Back does not return to the redirecting page.
   const FAMILY_ROUTE = "/private/";
@@ -637,9 +517,7 @@
     return edgeSession()
       .then((s) => {
         if (s && s.authenticated === true) return s.sub ? ownPageUrl(s.sub) : null;
-        if (s) return LOGIN_URL + "?returnTo=" + encodeURIComponent(FAMILY_ROUTE);
-        const legacyId = featureAPI.getUserGrampsID() || storageGet("localStorage", "HFY_AUTH_USER_GRAMPS_ID");
-        return legacyId ? ownPageUrl(legacyId) : "/family-login/?next=" + encodeURIComponent(FAMILY_ROUTE);
+        return LOGIN_URL + "?returnTo=" + encodeURIComponent(FAMILY_ROUTE);
       })
       .catch(() => null);
   };
@@ -693,7 +571,7 @@
     const interactive = !(options && options.interactive === false);
     return resolveFlags().then((flags) => {
       authV2Seen = flags.authV2 === true;
-      if (!authV2Seen) return fetch(url, init); // legacy request, unchanged
+      if (!authV2Seen) return fetch(url, init); // plain same-origin request
       const edgeInit = Object.assign({}, init, { credentials: "same-origin" });
       return preflight().then(() => edgeAttempt(url, edgeInit, interactive));
     });
@@ -765,12 +643,6 @@
     return resolveFlags().then(() => (islands[name] ? islands[name].promise : false));
   }
   featureAPI.whenIsland = whenIsland;
-  // HFY-TSK-065 + HFY-R58: legacy search defers to searchV2 only once the replacement has mounted.
-  // part "page" = the /search/ island, part "launcher" = the shell's SearchLauncher (replaces navbar search).
-  featureAPI.searchV2Live = function searchV2Live(part) {
-    return resolveFlags().then((flags) => (flags.searchV2 === true ? whenIsland(part === "page" ? "search" : "shell") : false));
-  };
-
   resolveFlags().then((flags) => {
     // HFY-TSK-066: personV2 swaps person notes to @io-kit/md and adds the kit comments thread (person page only).
     if (flags.personV2 === true && /^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
@@ -810,29 +682,23 @@
     });
   });
 
-  // HFY-TSK-065 (D-09): searchV2 swaps the Lunr search page for the @io-kit/search island (local tier only).
-  // The legacy section is hidden while the island loads; search-results.js / search-navbar.js stay wired and only stand
-  // down once HFYFeatureFlags.searchV2Live() confirms the island mounted, so a failed island leaves legacy search working.
+  // HFY-TSK-065 (D-09): searchV2 mounts the @io-kit/search island (local tier only) on /search/. It is the only search page: the
+  // old search page and the navbar search are gone (HFY-TSK-317).
+  // With the flag off, or when the island fails to load, the page says so instead of staying empty (there is no older search to fall back to).
   resolveFlags().then((flags) => {
-    if (flags.searchV2 !== true || !/^\/search\/?(index\.html)?$/.test(window.location.pathname)) return;
-    islandEntry("search"); // registered now so searchV2Live("page") waits for the island rather than reporting "not requested"
-    const root = document.documentElement;
-    root.classList.add("hfy-search-v2");
-    const style = document.createElement("style");
-    style.textContent = ".hfy-search-v2 [data-search-page]{display:none!important}";
-    document.head.appendChild(style);
-    onReady(() => {
-      const legacy = document.querySelector("[data-search-page]");
-      if (legacy) legacy.setAttribute("hidden", "");
-      loadIsland("search", {
-        onError() {
-          root.classList.remove("hfy-search-v2");
-          style.remove();
-          if (legacy) legacy.removeAttribute("hidden");
-        }
-      });
-    });
+    if (!/^\/search\/?(index\.html)?$/.test(window.location.pathname)) return;
+    if (flags.searchV2 !== true) { searchUnavailableNote(); return; }
+    loadIsland("search", { onError: searchUnavailableNote });
   });
+  function searchUnavailableNote() {
+    const main = document.querySelector("main:not([data-io-scroller])");
+    if (!main || main.querySelector("[data-search-unavailable]")) return;
+    const p = document.createElement("p");
+    p.setAttribute("data-search-unavailable", "");
+    p.setAttribute("role", "status");
+    p.textContent = "Search is not available right now. Please reload the page in a moment.";
+    main.prepend(p);
+  }
 
   // HFY-TSK-068 (D-08): notifyV2 mounts the notifications island on the static /me/notifications/ page.
   resolveFlags().then((flags) => {
@@ -860,67 +726,4 @@
   });
 
   onReady(applyFeatureVisibility);
-
-  function hydrateSessionState() {
-    if (typeof sessionStorage === "undefined") {
-      return;
-    }
-    try {
-      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (!parsed || !parsed.token) {
-        sessionStorage.removeItem(SESSION_STORAGE_KEY);
-        return;
-      }
-      if (parsed.expiresAt && Number(parsed.expiresAt) < Date.now()) {
-        sessionStorage.removeItem(SESSION_STORAGE_KEY);
-        return;
-      }
-      state.sessionToken = parsed.token;
-      state.userGrampsID = parsed.grampsId || null;
-      state.hasRecord = Boolean(parsed.grampsId);
-      state.sessionExpiresAt = parsed.expiresAt || null;
-      state.loggedIn = true;
-      state.verifiedAt = parsed.verifiedAt || null;
-      logDebug("Restored session token from storage.", {
-        hasToken: true,
-        grampsId: state.userGrampsID
-      });
-    } catch (error) {
-      console.warn(`${LOG_PREFIX} Unable to hydrate session cache`, error);
-    }
-  }
-
-  function persistSessionState({ token, grampsId }) {
-    if (typeof sessionStorage === "undefined" || !token) {
-      return;
-    }
-    try {
-      sessionStorage.setItem(
-        SESSION_STORAGE_KEY,
-        JSON.stringify({
-          token,
-          grampsId: grampsId || null,
-          expiresAt: state.sessionExpiresAt,
-          verifiedAt: state.verifiedAt
-        })
-      );
-    } catch (error) {
-      console.warn(`${LOG_PREFIX} Unable to persist session cache`, error);
-    }
-  }
-
-  function clearSessionState() {
-    if (typeof sessionStorage === "undefined") {
-      return;
-    }
-    try {
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    } catch (error) {
-      console.warn(`${LOG_PREFIX} Unable to clear session cache`, error);
-    }
-  }
 })();

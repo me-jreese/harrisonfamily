@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:7be1eec3576de9002c4a21b92af94a02f127a995b4c25c5383790cdfbce92ea1
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:2a4bfae77c8babb24a42e2f0090537a6d39d432afe069148c2560e8d6a5af07b
 name: io-kit CI
 on:
   pull_request: null
@@ -14,8 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/io-kit-ci/build
-        env: &a1
-          HFY_GOOGLE_CLIENT_ID: ${{ secrets.HFY_GOOGLE_CLIENT_ID }}
   test:
     needs:
       - build
@@ -30,7 +28,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/io-kit-ci/build
-        env: *a1
       - uses: ./.github/actions/io-kit-ci/parity-report
   secret_scan:
     runs-on: ubuntu-latest
