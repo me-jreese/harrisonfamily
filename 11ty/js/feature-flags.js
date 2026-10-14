@@ -44,9 +44,9 @@
         "css": "6b1f4442"
       }
     },
-    "theme": "6f489551",
+    "theme": "1e33d0e0",
     "manifest": "c0f9b5fc",
-    "sw": "d1ed993c"
+    "sw": "7d5118a5"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

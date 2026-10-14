@@ -51,7 +51,7 @@
   <!-- hfy-theme:end A -->
   <link rel="stylesheet" href="/css/main.css?v=6853df92" />
   <!-- hfy-theme:start B -->
-  <link rel="stylesheet" href="/css/hfy-theme.css?v=6f489551" />
+  <link rel="stylesheet" href="/css/hfy-theme.css?v=1e33d0e0" />
   <!-- hfy-theme:end B -->
 </head>
 
@@ -242,59 +242,58 @@
             <td>Shows family history, and family members can add to it.</td>
             <td>It is kept in the site's database (Amazon DynamoDB), in step with the family tree program (3.3), and the family pages are built from it into private S3 storage. Family members add to it and suggest changes; admins approve suggestions. Kept for the family archive; it can be corrected or removed on request (section 7).</td>
           </tr>
+        </tbody>
+      </table>
+      <table class="table table-dark table-striped table-bordered align-middle">
+        <thead>
           <tr>
-            <td>Posts/comments/photos</td>
-            <td>&mdash;</td>
+            <th scope="col">Data Type</th>
+            <th scope="col">Retention</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Posts/<wbr>comments/<wbr>photos</td>
             <td>Kept until you or a moderator removes them; photo files stay in storage until removed on request, see 3.15.</td>
           </tr>
           <tr>
             <td>Change records</td>
             <td>&mdash;</td>
-            <td>&mdash;</td>
           </tr>
           <tr>
             <td>Push addresses</td>
-            <td>&mdash;</td>
             <td>Until you turn notifications off.</td>
           </tr>
           <tr>
             <td>Passkeys</td>
-            <td>&mdash;</td>
             <td>Until you remove them.</td>
           </tr>
           <tr>
             <td>Suggested changes</td>
-            <td>&mdash;</td>
             <td>Kept, including declined and taken-back ones, until removed on request, see 3.6.</td>
           </tr>
           <tr>
             <td>Inbox notifications</td>
-            <td>&mdash;</td>
             <td>Until read, then 90 days.</td>
           </tr>
           <tr>
             <td>Chat</td>
-            <td>&mdash;</td>
             <td>Shown for 30 days, kept with no end date.</td>
           </tr>
           <tr>
             <td>Profile links</td>
-            <td>&mdash;</td>
             <td>Until you remove them.</td>
           </tr>
           <tr>
             <td>Join requests</td>
-            <td>&mdash;</td>
             <td>See 3.12.</td>
           </tr>
           <tr>
             <td>Online status</td>
-            <td>&mdash;</td>
             <td>The current status only, no history.</td>
           </tr>
           <tr>
             <td>Contribution counts</td>
-            <td>&mdash;</td>
             <td>Until the thing counted is deleted.</td>
           </tr>
         </tbody>
@@ -302,7 +301,7 @@
 
       <hr>
       <h2>5. Data Sharing and Disclosure</h2>
-      <p>We do not share, sell, or transmit user data to any third parties. The only external systems involved are:</p>
+      <p>The only external systems involved are:</p>
       <ul>
         <li>Google Identity Services, which handles sign-in and token issuance.</li>
         <li>Amazon Web Services (AWS), which stores the site, family data and what you add.</li>
@@ -313,6 +312,7 @@
         <li>Apple / Google / Mozilla push services (only the push address and a content-free message).</li>
         <li>Anthropic only if a family member connects Claude to the site.</li>
       </ul>
+      <p>Still no selling or sharing beyond these.</p>
       <p>Each provider processes minimal data necessary for website functionality under its own privacy policy.</p>
 
       <hr>

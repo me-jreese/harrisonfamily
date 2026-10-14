@@ -92,6 +92,9 @@ REQUIRED = [
         "For other events, such as deaths, weddings and moves, family members see only the year; admins see the full date, and so do you on events that are yours alone.",
         "If you edit a date that shows only its year, the day and month already stored stay as they were.",
     ]),
+    ("sharing: no selling or sharing beyond the listed providers", "privacy", [
+        "Still no selling or sharing beyond these.",
+    ]),
     ("removal from the cloud, with the 35-day backup tail", "privacy", [
         "To have something removed from the site and its cloud storage (a detail on a family page, a suggestion, a chat message or a photo),",
         "The admin can remove it from every copy we keep in the cloud: the change history, saved snapshots, the chat copy and stored photos.",
@@ -116,6 +119,8 @@ RETIRED = {
         "Accounts for minors are managed by their guardians", "whitelisted", "read-only export of Gramps records",
         "ETL scripts operate in read-only mode", "Family data persists indefinitely", "From Google Sign-In",
         "All data is stored and processed in the United States", "which stores static site and data assets", "[D0T]",
+        # section 5 lists the providers that receive data; "Still no selling or sharing beyond these." replaces the absolute claim
+        "transmit user data to any third parties",
     ],
     "terms": [
         "invitation-only", "whitelist", "Attempt to bypass Google Sign-In", "Google Sign-In is used only for authentication",
@@ -158,6 +163,44 @@ class _PageText(html.parser.HTMLParser):
                 self.heading[1].append(data)
 
 
+class _Tables(html.parser.HTMLParser):
+    """Every <table> in <main>: its header cells and its body rows, each cell's text whitespace-collapsed."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.depth = 0  # inside <main>
+        self.tables, self.section, self.cell = [], None, None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "main":
+            self.depth += 1
+        elif not self.depth:
+            return
+        elif tag == "table":
+            self.tables.append({"head": [], "rows": []})
+        elif tag in ("thead", "tbody"):
+            self.section = tag
+        elif tag == "tr" and self.section == "tbody":
+            self.tables[-1]["rows"].append([])
+        elif tag in ("th", "td"):
+            self.cell = []
+
+    def handle_endtag(self, tag):
+        if tag == "main":
+            self.depth -= 1
+        elif tag in ("th", "td") and self.cell is not None and self.tables:
+            text = squash("".join(self.cell))
+            if self.section == "thead":
+                self.tables[-1]["head"].append(text)
+            else:
+                self.tables[-1]["rows"][-1].append(text)
+            self.cell = None
+
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell.append(data)
+
+
 def squash(text):
     return re.sub(r"\s+", " ", text).strip()
 
@@ -198,6 +241,27 @@ class PrivacyTermsPages(unittest.TestCase):
                 text = self.pages[name][0]
                 self.assertIn(f"{LAST_UPDATED} · Contact: {CONTACT}", text)
                 self.assertNotIn("November 6, 2025", text)
+
+    def test_section_4_has_no_empty_purpose_column(self):
+        # Rows the approved text gives no purpose for sit in a Data Type | Retention table: a Purpose column of dashes squeezed
+        # the labels to a few characters at 375px (HFY-TSK-239 review, finding 2).
+        parser = _Tables()
+        parser.feed(PAGES["privacy"].read_text(encoding="utf-8"))
+        parser.close()
+        tables = parser.tables
+        self.assertEqual([t["head"] for t in tables], [["Data Type", "Purpose", "Retention"], ["Data Type", "Retention"]])
+        for table in tables:
+            for row in table["rows"]:
+                with self.subTest(row=row[0]):
+                    self.assertEqual(len(row), len(table["head"]))
+                    if "Purpose" in table["head"]:
+                        self.assertNotIn(row[table["head"].index("Purpose")], ("", "\u2014", "-"))
+        labels = [row[0] for table in tables for row in table["rows"]]
+        self.assertEqual(len(labels), 15)
+        for label in ("Email", "Family data", "Posts/comments/photos", "Suggested changes", "Inbox notifications", "Chat",
+                      "Profile links", "Join requests", "Online status", "Contribution counts"):
+            with self.subTest(label=label):
+                self.assertIn(label, labels)
 
     def test_replaced_statements_are_gone(self):
         for name, phrases in RETIRED.items():
