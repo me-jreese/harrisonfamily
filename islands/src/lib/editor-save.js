@@ -5,6 +5,7 @@
 // answer (editing.md 8.3). The server decides on every write: the counts here come from the bundle's policy table and are a hint, the sheet's
 // groups come from the dry run.
 import { sectionValues } from "./editor-model.js";
+import { recordOps, recordSeed } from "./editor-records.js";
 import { LIST_ADAPTERS, draftKey, listDraftIsEmpty, makeLookups, replayListDraft, sameValue, sectionOps } from "./editor-sections.js";
 
 /** The client offers the returned inverse ops for 10 minutes (editing.md 7.3 "Atomicity"). */
@@ -64,7 +65,17 @@ const trimmed = (v) => (typeof v === "string" ? v.trim() : "");
  */
 export function opsFromDrafts({ key, sections, obj, drafts, bundle, viewer }) {
   const b = bundle || { key, obj, related: {} };
-  return sectionOps({ key, bundle: b.obj === undefined ? { ...b, obj } : b, sections, drafts, viewer });
+  const full = b.obj === undefined ? { ...b, obj } : b;
+  const out = sectionOps({ key, bundle: full, sections: sections.filter((s) => !(s.form && s.form.record)), drafts, viewer });
+  // The other classes' record forms (editor-records.js): one form per class, so their temp objects number from new:1 on their own.
+  for (const s of sections) {
+    if (!(s.form && s.form.record) || !isObj(drafts && drafts[s.id])) continue;
+    const r = recordOps({ key, bundle: { ...full, viewer: viewer || full.viewer }, section: s, draft: drafts[s.id] });
+    out.ops.push(...r.ops);
+    Object.assign(out.labels, r.labels);
+    Object.assign(out.units, r.units);
+  }
+  return out;
 }
 
 /**
@@ -80,6 +91,7 @@ export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = 
   for (const section of sections) {
     if (!section.form) continue;
     const draft = drafts && drafts[section.id];
+    if (section.form.record) { out[section.id] = recordSeed({ section, oldObj, freshObj, draft }); continue; }
     const values = sectionValues(freshObj, section.form);
     const before = sectionValues(oldObj, section.form);
     if (isObj(draft)) {

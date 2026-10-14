@@ -117,9 +117,17 @@ describe("the bundle shape", () => {
     expect(Object.keys(r.body.related).sort()).toEqual([`Event:${w.otherDeath.handle}`, `Family:${w.fam.handle}`, `Note:${w.n1.handle}`].sort());
     expect(r.body.policy.rows.length).toBeGreaterThan(10);
     expect(r.body.customTypes).toEqual({});
+    expect(r.body.tags).toEqual([]);
     const byHandle = await w.get(`/api/edit/Person/h:${w.other.handle}`, ME);
     expect(byHandle.body).toEqual(r.body);
     expect((await w.get(`/api/edit/Person/${ME}`, ME)).body.relation).toBe("own");
+  });
+  it("lists the tags that exist as { handle, name } by name, for tag assignment (editor-other-records)", async () => {
+    const w = await world();
+    const tag = (n, name) => ({ _class: "Tag", handle: h(7000 + n), change: 1, name, color: "#000000", priority: 0 });
+    await w.apply([tag(2, "Zeta group"), tag(1, "Alpha group")].map(create));
+    const r = await w.get(`/api/edit/Person/${OTHER}`, ME);
+    expect(r.body.tags).toEqual([{ handle: h(7001), name: "Alpha group" }, { handle: h(7002), name: "Zeta group" }]);
   });
   it("also carries the places of the related events and the sources of the related citations, for the editor's pickers (HFY-TSK-156)", async () => {
     const w = await world();

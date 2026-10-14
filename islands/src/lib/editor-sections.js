@@ -18,13 +18,19 @@ export { NAME_FIELDS, givenParts, givenTokens, nameValues, primarySurnameIndex }
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v : []);
 const str = (v) => (typeof v === "string" ? v : "");
-const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+export const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
 const trimmed = (v) => (typeof v === "string" ? v.trim() : "");
 /** True when two JSON values are the same by canonical text (key order does not matter). */
 export const sameValue = (a, b) => {
   if (a === undefined || b === undefined) return a === b;
   try { return canonicalJson(a) === canonicalJson(b); } catch { return false; }
 };
+
+/** The editor URL of a related record: its gramps id when it has one, else `h:<handle>` (the route takes either). */
+export function drillHref(cls, handle, obj = null) {
+  const gid = isObj(obj) && typeof obj.gramps_id === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(obj.gramps_id) ? obj.gramps_id : "";
+  return `/edit/?cls=${String(cls).toLowerCase()}&id=${encodeURIComponent(gid || `h:${handle}`)}`;
+}
 
 // ---- the words ------------------------------------------------------------------------------------------------------------------
 
@@ -79,6 +85,7 @@ export const SECTION_COPY = Object.freeze({
   modBefore: "before",
   modAfter: "after",
   modBetween: "between",
+  openRecord: "open",
   addLabel: Object.freeze({ alt: "add another name", events: "add an event", facts: "add a fact", notes: "add a note", connected: "add a person", sources: "add a source" }),
   listLabel: Object.freeze({ alt: "also known as", events: "life events", facts: "facts", notes: "notes", photos: "photos", connected: "people connected to you", sources: "sources" }),
   never: Object.freeze({ events: "we only keep the birth year on the site.", facts: "we don't keep phone numbers, street addresses, e-mail addresses or id numbers on the site.", notes: "we don't keep phone numbers, street addresses, e-mail addresses or id numbers on the site.", sources: "" }),
@@ -168,7 +175,7 @@ export function makeLookups(bundle, schemas = {}) {
       return o.length ? o : NAME_TYPE_STANDARD.concat(current && !NAME_TYPE_STANDARD.some((x) => x.value === current) ? [{ value: current, label: current }] : []);
     },
     confidence: () => constOptions(schemas.Citation && schemas.Citation.properties && schemas.Citation.properties.confidence, CONFIDENCE_FALLBACK),
-    places, sources, people, placeNames, sourceTitles, selfHandle, selfId, connected
+    places, sources, people, placeNames, sourceTitles, selfHandle, selfId, connected, customs: custom, tags: list(bundle && bundle.tags).filter((t) => isObj(t) && str(t.handle) && str(t.name)).map((t) => ({ handle: str(t.handle), name: str(t.name) }))
   };
 }
 
@@ -317,7 +324,7 @@ function refRowIds(arr) {
   });
 }
 
-function makeEmitter(secKey, temp, { plain = false } = {}) {
+export function makeEmitter(secKey, temp, { plain = false } = {}) {
   const ops = [];
   const units = {};
   const labels = {};
@@ -344,7 +351,7 @@ export const listDraftIsEmpty = (d) => {
 };
 
 const obj2 = (o, k) => (isObj(o) ? o[k] : undefined);
-const baseOf = (stored) => (stored === undefined ? null : stored);
+export const baseOf = (stored) => (stored === undefined ? null : stored);
 
 // ---- the names section: the primary name's own fields ------------------------------------------------------------------------------------
 
@@ -519,7 +526,7 @@ function eventRows(bundle, lookups) {
     const date = isObj(ev.date) ? ev.date : null;
     const detail = [dateText(date, { birth }), lookups.placeNames.get(placeRef) || ""].filter(Boolean).join(", ");
     out.push({
-      id: ids[idx], idx, ref: ref.ref, evKey: `Event:${ref.ref}`, version: rel.version, ev, birth,
+      id: ids[idx], idx, ref: ref.ref, evKey: `Event:${ref.ref}`, href: drillHref("Event", ref.ref, ev), version: rel.version, ev, birth,
       title: type ? type.label : fallback("events", out.length), detail: detail || str(ev.description),
       values: { type: code, date: date ? clone(date) : emptyDate(), place: { ref: placeRef, name: "" }, description: str(ev.description) }
     });
@@ -692,7 +699,7 @@ function noteRows(bundle) {
     const rel = bundle.related && bundle.related[`Note:${h}`];
     if (!rel || !isObj(rel.obj)) return;
     const text = str(isObj(rel.obj.text) ? rel.obj.text.string : "");
-    out.push({ id: h, idx, noteKey: `Note:${h}`, note: rel.obj, title: preview(text) || fallback("notes", out.length), detail: "", values: { text } });
+    out.push({ id: h, idx, noteKey: `Note:${h}`, href: drillHref("Note", h, rel.obj), note: rel.obj, title: preview(text) || fallback("notes", out.length), detail: "", values: { text } });
   });
   return out;
 }
@@ -844,7 +851,7 @@ function sourceRows(bundle, lookups) {
     const c = rel.obj;
     const title = lookups.sourceTitles.get(str(c.source_handle)) || "";
     out.push({
-      id: h, idx, citKey: `Citation:${h}`, cit: c, title: title || fallback("sources", out.length), detail: str(c.page),
+      id: h, idx, citKey: `Citation:${h}`, href: drillHref("Citation", h, c), cit: c, title: title || fallback("sources", out.length), detail: str(c.page),
       values: { source: { ref: str(c.source_handle), name: "" }, page: str(c.page), confidence: Number.isInteger(c.confidence) ? String(c.confidence) : "2" }
     });
   });
