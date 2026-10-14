@@ -9,9 +9,11 @@
 //   IDALIAS#Person#<id>  put for a Person merge or an allowed renumber   (never deleted)
 //   SYNC#BATCH#<id>      put, attribute_not_exists                       (the receipt; the cross-attempt idempotency guard)
 //   AUDIT#records:<id>   put                                              (one audit item per batch)
-//   SYNC#BUDGET#<hour>   update, only for a batch with a delete or withdraw (the destructive budget the validator reads)
+//   SYNC#BUDGET#<hour>   update, only for a batch with a delete or withdraw (the destructive budget the validator reads; it is checked on
+//                        the same view as the SYNC#HEAD seq condition, so concurrent batches cannot both pass it)
 //   + caller `extra` items and registered contributors' items             (proposal state, contribution ops, comment updates)
-// The SYNC#HEAD update also keeps `live_heads`, the count of live heads (the validator's 5 % share of the budget).
+// The SYNC#HEAD update also keeps `live_heads`, the count of live heads (the validator's 5 % share of the budget). It counts only from
+// an empty tree or an existing count; a store filled another way needs a backfill (validator.js header).
 //
 // The server validator (validator.js, HFY-TSK-245) runs on every call, from every origin, before the version check.
 //
@@ -27,7 +29,7 @@ import {
   BUDGET_TTL_SECONDS, CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, budgetBucket, budgetKey,
   getBatchReceipt, getGid, getRecordItem, getSyncHead, gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
-import { defaultValidate } from "./validator.js";
+import { defaultValidate, isFullValidator } from "./validator.js";
 import { createStoreView } from "./view.js";
 
 export { SyncError };
@@ -129,7 +131,9 @@ function normaliseOps(rawOps) {
   if (bytes > MAX_BATCH_OBJ_BYTES) throw new SyncError(413, "batch_too_large", "the batch's objects are too large");
   // Refuse a batch that cannot fit 100 transaction items before any read. A renumbering Person update takes up to 5 items (head,
   // log, the old id's retire, the new id's claim, the alias), a merge 4, so 24 of them do not fit: clients split these batches.
-  const bound = FIXED_TXN_ITEMS + ops.reduce((n, op) => n + txnItemBound(op), 0);
+  // The budget counter is one more item, but only for a batch with a delete or a withdraw (a duplicate op per object is refused above).
+  const destructive = ops.some((op) => op.op === "delete" || op.op === "withdraw");
+  const bound = FIXED_TXN_ITEMS + (destructive ? 1 : 0) + ops.reduce((n, op) => n + txnItemBound(op), 0);
   if (bound > 100) throw new SyncError(413, "batch_too_large", `these ops need up to ${bound} transaction items and the limit is 100; split renumber and merge ops into smaller batches`);
   return ops;
 }
@@ -281,13 +285,14 @@ function priorCondition(prior) {
  * Applies a batch of ops atomically.
  *
  * @param ctx  { ddb, cmds, table, validate?, storeView?, now?, uid?, log?, hooks?, maxSeqRetries?, txnOpts?, unsafeNoValidate? }
- *   `validate(view)` is the server validator's seam. By default (neither `validate` nor `unsafeNoValidate`) applyBatch runs the validator of
- *   validator.js with the policy and schema in the repository; pass `createValidator({...})` to change its options. `view` is
+ *   applyBatch always runs the validator of validator.js with the policy and schema in the repository (the privacy checker, the id rules and
+ *   the integrity rules cannot be wired out). `validate(view)` is an extra layer that runs after it, or, when it is a `createValidator({...})`
+ *   result, the whole validator with other options in its place. `view` is
  *   { ops, origin, principal, on_behalf_of, sync_head: {seq, tree_id, live_heads}, record(cls, handle), store, stepUp, expected }:
  *   `store` is the store view (view.js; `ctx.storeView(store, {now, prefetched})` may supply another one, for example the store-view fold),
  *   `stepUp` and `expected` come from `req`. It throws an HttpError to refuse the batch, runs before the version check (a refused caller
  *   never sees conflict detail) and runs again on the refreshed view after every lost seq race. Only the seed and tests may pass
- *   `unsafeNoValidate: true` to skip it, and a seed that does so must have run the projection's own checks. `hooks` is a
+ *   `unsafeNoValidate: true` to skip the default (a `validate` then runs alone), and a seed that does so must have run the projection's own checks. `hooks` is a
  *   createHookRegistry() (default: the process-wide one). `txnOpts` goes to transact() (tests inject sleep and random).
  * @param req  { principal, origin, onBehalfOf?, idempotencyKey, ops, extra?, client?, stepUp?, expected? }
  *   `stepUp: true` says the route verified a fresh step-up for the caller (amr mfa within its window); the validator asks for it on a
@@ -314,9 +319,12 @@ export async function applyBatch(ctx, req) {
   const { principal, origin, onBehalfOf, idempotencyKey, extra, client, stepUp, expected } = req ?? {};
 
   // The version-conflict body returns stored objects, which is safe only because the validator runs first: a caller cannot skip it by
-  // omission. With no ctx.validate the repository's own validator runs; only the seed and tests may opt out.
-  const validate = typeof ctx.validate === "function" ? ctx.validate : ctx.unsafeNoValidate === true ? undefined : defaultValidate;
+  // omission or by wiring a partial one. The repository's own validator always runs. A plain ctx.validate is an extra layer after it; a
+  // createValidator(...) result is the whole validator with other options and takes its place. Only the seed and tests may opt out.
   if (ctx.validate !== undefined && typeof ctx.validate !== "function") throw new TypeError("ctx.validate must be a function");
+  const validators = [];
+  if (ctx.unsafeNoValidate !== true && !isFullValidator(ctx.validate)) validators.push(defaultValidate);
+  if (ctx.validate !== undefined) validators.push(ctx.validate);
   if (typeof principal !== "string" || !principal) throw bad("validation", "principal is required");
   // batch_id hashes `principal:key`; with no ':' in a principal the pair is unambiguous (principal 'a:b' + key 'c' is not 'a' + 'b:c').
   if (principal.includes(":")) throw bad("validation", "principal must not contain ':'");
@@ -364,9 +372,9 @@ export async function applyBatch(ctx, req) {
     await Promise.all([...gidWanted].map(async ([key, [cls, id]]) => gids.set(key, await getGid(store, cls, id))));
 
     // 3. Validate on this view (it is re-run on the refreshed view after a lost race), then check versions and ids.
-    if (validate) {
+    if (validators.length) {
       const readOnly = { now, prefetched: heads };
-      await validate({
+      const view = {
         ops: ops.map(wire),
         origin,
         principal,
@@ -376,7 +384,8 @@ export async function applyBatch(ctx, req) {
         store: ctx.storeView ? ctx.storeView(store, readOnly) : createStoreView(store, readOnly),
         stepUp: stepUp === true,
         expected: (cls, handle) => expectedKeys.has(`${cls}#${handle}`),
-      });
+      };
+      for (const validate of validators) await validate(view);
     }
     const versions = checkVersions(ops, heads);
     const plan = planGids(ops, heads, headItemNow, gids);
@@ -458,8 +467,12 @@ export async function applyBatch(ctx, req) {
       },
       tag: "sync:audit",
     });
+    // A non-empty tree whose live_heads was never counted (or holds something that is not a number) keeps it as it is (no partial count): the validator then fails closed on
+    // destructive batches until the count is backfilled with the real number.
+    const lh = headItemNow?.live_heads;
+    const countable = typeof lh === "number" || (lh === undefined && (headItemNow?.seq ?? 0) === 0);
     const updates = [
-      headUpdate(headItemNow, seqTo, at, origin, liveDelta),
+      headUpdate(headItemNow, seqTo, at, origin, countable ? liveDelta : 0),
     ];
     if (destructive > 0) {
       updates.push(counterUpdate(budgetKey(budgetBucket(nowMs)), { count: destructive }, { ttl: Math.floor(nowMs / 1000) + BUDGET_TTL_SECONDS, ifNotExists: { entity: "syncbudget" } }));

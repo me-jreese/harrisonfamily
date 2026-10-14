@@ -1,6 +1,8 @@
 // The server validator (HFY-TSK-245; sync design 5.7 and 7.2, BRD2 D2-32, review SI-12): the one gate every write passes before applyBatch()
-// builds its transaction. It is the `ctx.validate` seam of apply.js, and applyBatch() runs it on every call (the seed and tests opt out
-// with ctx.unsafeNoValidate). It reads the batch as it would stand after commit and refuses with a status, a code and pointers, never
+// builds its transaction. applyBatch() runs the default validator on every call, whatever ctx.validate holds (the seed and tests opt out
+// with ctx.unsafeNoValidate); a plain ctx.validate function is an extra layer after it, and only a createValidator(...) result replaces the
+// default (it is the whole validator with other options), so a route cannot skip the privacy checker, the id rules or the integrity rules by
+// wiring a partial validator. It reads the batch as it would stand after commit and refuses with a status, a code and pointers, never
 // with a value.
 //
 // Order (the first family that finds anything answers; each family reports every finding in it):
@@ -8,8 +10,9 @@
 //   2. schema         400 validation           the Gramps 6.0.6 JSON Schema per class; MediaRef.rect null or ordered integers 0-100, never [0,0,100,100]
 //   3. privacy        422 privacy_violation    redaction policy v1 (checker.js): every rule marked `server: detect`, for every origin
 //   4. ids            422 integrity_violation  gramps_id shape and the reserved file names (index, search-index, search-store, graph)
-//                     409 reserved_id_block    a desktop or seed create in the cloud block (<prefix>8000-<prefix>8999)
-//                     409 renumber_blocked     a Person's gramps_id changes (unless ctx.allowRenumber and op.renumber, operator tooling)
+//                     409 reserved_id_block    a desktop or seed create, or an update that changes the id, into the cloud block (<prefix>8000-<prefix>8999)
+//                     409 renumber_blocked     a Person's gramps_id changes, or an op carries the provisional `renumber` flag (never allowed here: the
+//                                              design leaves a renumber to a future io-approved path, sync.md 10)
 //                     409 gramps_id_retired    a create or update claims a retired Person id, or recreates a retired person
 //   5. integrity      422 withdrawn_reference  a web, proposal or graduation op references a withdrawn handle
 //                     422 integrity_violation  a reference resolves in neither the store view, the batch nor the open session's expected set;
@@ -17,8 +20,16 @@
 //                                              father/mother, person.parent_family_list <-> family.child_ref_list) and birth/death_ref_index range
 //
 // Destructive budget. Delete and withdraw ops count together, per batch and over a rolling 24 hours (SYNC#BUDGET# hour counters, kept by
-// applyBatch). More than 10 objects, or more than 5 % of the live heads (SYNC#HEAD.live_heads, when known), needs a step-up: 403.
+// applyBatch). More than 10 objects, or more than 5 % of the live heads (SYNC#HEAD.live_heads), needs a step-up: 403.
 // A desktop `delete` always needs one (D07); a withdraw reduces exposure and needs none below the budget.
+//   - live_heads must be the real count. applyBatch keeps it from the batch that creates the first head, so a store filled any other way
+//     (an old seed, an import) MUST have SYNC#HEAD.live_heads set to the true number of live REC# heads before this ships. Until then
+//     the validator fails closed: a non-empty tree (seq > 0) whose live_heads is absent, negative or not an integer answers every
+//     destructive batch with 403 step_up_required, reason heads_unknown, and applyBatch leaves a missing count missing instead of
+//     counting from a partial number. A too-small positive count cannot be told apart from a real one: the backfill is the control.
+//   - The budget is read on the same view as the SYNC#HEAD it was checked against, and the SYNC#HEAD update is conditional on that
+//     seq. Two destructive batches that both pass the check therefore cannot both commit: the second fails the seq condition, is
+//     re-read and re-validated against the first one's counter. The limit is hard, not soft (tested).
 //
 // `view` is what applyBatch passes: {ops, origin, principal, on_behalf_of, sync_head, record, store, stepUp, expected}. `stepUp` is the
 // route's verdict that the caller presented a fresh step-up (amr mfa within its window). `expected(cls, handle)` is true for a handle the
@@ -94,16 +105,22 @@ export function referencesOf(object) {
 
 // ---- the validator ---------------------------------------------------------------------------------------------------
 
+const FULL = new WeakSet();
+/** True for a function createValidator() returned: the whole validator, which applyBatch accepts in place of the default. */
+export const isFullValidator = (fn) => typeof fn === "function" && FULL.has(fn);
+
 /**
  * Builds `validate(view)` for ctx.validate. Options: `policy` (default: gramps/redaction/redaction-v1.json), `schema` (default: the committed
- * Gramps 6.0.6 schema), `allowRenumber` (default false: operator tooling only), `hardOrigins`.
+ * Gramps 6.0.6 schema), `hardOrigins`. The result is a complete validator (privacy checker, ids, integrity, budget); applyBatch runs it
+ * instead of the default one. Any other ctx.validate function is only an extra layer after the default. A Person renumber is never
+ * allowed here: the design (sync.md 10) leaves it to a future io-approved path.
  */
-export function createValidator({ policy, schema, allowRenumber = false, hardOrigins = HARD_ORIGINS } = {}) {
+export function createValidator({ policy, schema, hardOrigins = HARD_ORIGINS } = {}) {
   const pol = policy ?? loadPolicy();
   const scan = scanKinds(pol);
   const hard = new Set(hardOrigins);
 
-  return async function validate(view) {
+  async function validate(view) {
     const { ops, origin, store } = view;
     const liveOps = ops.filter(live);
     const tag = (ops2, fn) => ops2.flatMap((op) => fn(op).map((v) => ({ ...v, class: op.class, op_id: op.op_id })));
@@ -117,12 +134,14 @@ export function createValidator({ policy, schema, allowRenumber = false, hardOri
     const privacy = await batchViolations({ ops, store, policy: pol, scan });
     if (privacy.length) throw refuse(422, "privacy_violation", "an object holds something that never goes to the cloud", privacy);
 
-    await checkIds(view, liveOps, { allowRenumber });
+    await checkIds(view, liveOps);
     await checkIntegrity(view, ops, liveOps, hard.has(origin));
-  };
+  }
+  FULL.add(validate);
+  return validate;
 }
 
-/** The validator with its defaults: what applyBatch runs when the caller passes no ctx.validate. */
+/** The validator with its defaults: what applyBatch always runs, unless the caller passes a createValidator() result or opts out (seed, tests). */
 let shared = null;
 export const defaultValidate = (view) => (shared ??= createValidator())(view);
 
@@ -135,13 +154,17 @@ async function checkBudget(view, ops) {
   if (view.origin === "desktop" && destructive.some((op) => op.op === "delete")) throw need("delete");
   const rolling = await view.store.destructiveRolling();
   const total = rolling + destructive.length;
+  if (total > DESTRUCTIVE_LIMIT) throw need("budget");
+  // The 5 % share needs the real count of live heads. On a tree that has taken writes (seq > 0) an unusable count fails closed.
   const heads = view.sync_head?.live_heads;
-  if (total > DESTRUCTIVE_LIMIT || (Number.isFinite(heads) && heads > 0 && total > heads * DESTRUCTIVE_SHARE)) throw need("budget");
+  if (Number.isInteger(heads) && heads >= 0) {
+    if (heads > 0 && total > heads * DESTRUCTIVE_SHARE) throw need("budget");
+  } else if ((view.sync_head?.seq ?? 0) > 0) throw need("heads_unknown");
 }
 
 // ---- ids -------------------------------------------------------------------------------------------------------------
 
-async function checkIds(view, liveOps, { allowRenumber }) {
+async function checkIds(view, liveOps) {
   const { store, origin } = view;
   const bad = [];
   for (const op of liveOps) {
@@ -153,17 +176,34 @@ async function checkIds(view, liveOps, { allowRenumber }) {
   if (bad.length) throw refuse(422, "integrity_violation", "a gramps_id is not allowed", bad);
 
   const conflict = (op) => ({ op_id: op.op_id, class: op.class, handle: op.handle });
-  const block = liveOps.filter((op) => op.op === "create" && (origin === "desktop" || origin === "seed") && BLOCK[op.class]?.test(op.obj.gramps_id));
+  const stored = new Map(); // "Class#handle" -> the stored head, read once
+  const headOf = async (op) => {
+    const key = refKey(op.class, op.handle);
+    if (!stored.has(key)) stored.set(key, await store.get(op.class, op.handle));
+    return stored.get(key);
+  };
+  // The cloud block is the website's to mint: a desktop or seed op may neither create an id in it nor move an existing object into it.
+  const block = [];
+  if (origin === "desktop" || origin === "seed") {
+    for (const op of liveOps) {
+      if (!BLOCK[op.class]?.test(op.obj.gramps_id)) continue;
+      if (op.op === "create") block.push(op);
+      else {
+        const prev = await headOf(op);
+        if (prev && !prev.deleted && prev.gramps_id !== op.obj.gramps_id) block.push(op);
+      }
+    }
+  }
   if (block.length) throw new SyncError(409, "reserved_id_block", "ids from the reserved block are minted by the website, not the desktop", { conflicts: block.map(conflict) });
 
   const renumber = [];
   const retired = [];
   for (const op of liveOps) {
     if (op.class !== "Person") continue;
-    const prev = await store.get("Person", op.handle);
+    const prev = await headOf(op);
     const old = prev && !prev.deleted ? prev.gramps_id : undefined;
-    if (old !== undefined && old !== op.obj.gramps_id && !(allowRenumber && op.renumber === true)) renumber.push(op);
-    if (op.renumber === true && !allowRenumber) renumber.push(op);
+    // The provisional `renumber` flag is not a way round the rule: a renumber is refused with or without it.
+    if ((old !== undefined && old !== op.obj.gramps_id) || op.renumber === true) renumber.push(op);
     if (old === op.obj.gramps_id) continue;
     // A retired id is never claimed again, by anyone, its own person included; a recreated tombstone is a retired person.
     const guard = await store.gid("Person", op.obj.gramps_id);
@@ -171,7 +211,7 @@ async function checkIds(view, liveOps, { allowRenumber }) {
   }
   // A retired id is the more specific answer when an update both renumbers and claims one.
   if (retired.length) throw new SyncError(409, "gramps_id_retired", "that gramps_id belongs to a retired person and is never reused", { conflicts: retired.map(conflict) });
-  if (renumber.length) throw new SyncError(409, "renumber_blocked", "a person's gramps_id cannot change", { conflicts: [...new Map(renumber.map((o) => [o.op_id, conflict(o)])).values()] });
+  if (renumber.length) throw new SyncError(409, "renumber_blocked", "a person's gramps_id cannot change", { conflicts: renumber.map(conflict) });
 }
 
 // ---- integrity -------------------------------------------------------------------------------------------------------

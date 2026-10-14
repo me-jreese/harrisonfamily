@@ -5,7 +5,7 @@ import { createFakeDdb, cmds } from "./world.js";
 import { errorResponse, HttpError } from "../src/http.js";
 import { SyncError, applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
-import { BLOCK_PREFIX, DESTRUCTIVE_LIMIT, HARD_ORIGINS, MAX_VIOLATIONS, RESERVED_NAMES, createValidator, referencesOf } from "../src/sync/validator.js";
+import { BLOCK_PREFIX, DESTRUCTIVE_LIMIT, HARD_ORIGINS, MAX_VIOLATIONS, RESERVED_NAMES, createValidator, isFullValidator, referencesOf } from "../src/sync/validator.js";
 import { budgetBucket, budgetKey, headKey } from "../src/sync/store.js";
 
 const T = "hfy-app";
@@ -98,11 +98,31 @@ describe("the validator runs on every op from every origin", () => {
     expect(JSON.stringify(errorResponse(e).body)).not.toContain("current");
   });
 
-  it("an override of ctx.validate replaces it, and unsafeNoValidate skips it (the seed and tests)", async () => {
-    const loose = world({ validate: async () => {} });
-    expect((await loose.apply([create(dirty)])).results).toHaveLength(1);
+  it("a plain ctx.validate is an extra layer after the default, never a replacement; only unsafeNoValidate skips the default (the seed and tests)", async () => {
+    const seen = [];
+    const loose = world({ validate: async (v) => { seen.push(v.ops.length); } });
+    await rejects(loose.apply([create(dirty)]), 422, "privacy_violation"); // the privacy checker still ran
+    expect(seen).toEqual([]); // ...and it ran first: the extra layer was never reached
+    expect((await loose.apply([create(person(2))])).results).toHaveLength(1);
+    expect(seen).toEqual([1]);
+    const strict = world({ validate: async () => { throw new HttpError(403, "forbidden", "no"); } });
+    await rejects(strict.apply([create(person(1))]), 403, "forbidden"); // the extra layer can still refuse
     const seed = world({ unsafeNoValidate: true });
     expect((await seed.apply([create(dirty)])).results).toHaveLength(1);
+    const both = world({ unsafeNoValidate: true, validate: async (v) => { seen.push("only"); } }); // a test's own validator runs alone
+    expect((await both.apply([create(dirty)])).results).toHaveLength(1);
+    expect(seen.at(-1)).toBe("only");
+  });
+  it("a createValidator() result is the whole validator and takes the default's place; its options cannot drop the privacy checker", async () => {
+    const full = createValidator();
+    expect(isFullValidator(full)).toBe(true);
+    expect(isFullValidator(async () => {})).toBe(false);
+    let calls = 0;
+    const w = world({ validate: (v) => { calls += 1; return full(v); } }); // a wrapper is a plain function: default runs too
+    await w.apply([create(person(1))]);
+    expect(calls).toBe(1);
+    const w2 = world({ validate: createValidator({ hardOrigins: [] }) });
+    await rejects(w2.apply([create(dirty)]), 422, "privacy_violation");
   });
 
   it("is re-run on the refreshed view after a lost seq race", async () => {
@@ -217,6 +237,20 @@ describe("ID rules", () => {
       expect((await w.apply([create(o)], { origin: "desktop" })).results).toHaveLength(1);
     }
   });
+  it("a desktop or seed update that moves an object into the block is 409 reserved_id_block; keeping an id already there, or moving out of the block, is fine", async () => {
+    const w = world();
+    const f = family(1);
+    const n = note(1, { gramps_id: "N8001" });
+    await w.apply([create(f)], { origin: "self" });
+    await w.apply([create(n)], { origin: "self" }); // the website minted it
+    for (const origin of ["desktop", "seed"]) {
+      const e = await rejects(w.apply([update({ ...f, gramps_id: "F8123" }, 1)], { origin }), 409, "reserved_id_block");
+      expect(e.details.conflicts).toEqual([{ op_id: "1", class: "Family", handle: f.handle }]);
+    }
+    expect((await w.apply([update({ ...f, gramps_id: "F8123" }, 1)], { origin: "self" })).results).toHaveLength(1); // the website may
+    expect((await w.apply([update({ ...n, text: { ...n.text, string: "edited" } }, 1)], { origin: "desktop" })).results).toHaveLength(1);
+    expect((await w.apply([update({ ...n, gramps_id: "N0042" }, 2)], { origin: "desktop" })).results).toHaveLength(1); // out of the block
+  });
   it("web origins may create in the block (the website mints there), and the desktop may update an object that is already in it", async () => {
     const w = world();
     const p = person(1, { gramps_id: "I8001" });
@@ -261,14 +295,12 @@ describe("ID rules", () => {
     await rejects(w.apply([update(p, 1, { renumber: true })]), 409, "renumber_blocked"); // the flag alone is operator tooling
     expect((await w.apply([update({ ...p, gender: 0 }, 1)])).results).toHaveLength(1); // an update that keeps the id is fine
   });
-  it("operator tooling may allow it: createValidator({allowRenumber: true}) hands the flag on to applyBatch's alias path", async () => {
-    const w = world({ validate: createValidator({ allowRenumber: true }) });
+  it("there is no escape hatch: createValidator() takes no allowRenumber, and the renumber flag is refused with any validator", async () => {
+    const w = world({ validate: createValidator({ allowRenumber: true }) }); // an unknown option changes nothing
     const p = person(1);
     await w.apply([create(p)]);
-    await rejects(w.apply([update({ ...p, gramps_id: "I0777" }, 1)]), 409, "renumber_blocked"); // still needs the flag
-    const r = await w.apply([update({ ...p, gramps_id: "I0777" }, 1, { renumber: true })]);
-    expect(r.results[0]).toMatchObject({ gramps_id: "I0777", version: 2 });
-    expect(w.row("IDALIAS#Person#I0001", "META")).toMatchObject({ current_gramps_id: "I0777", reason: "renumber" });
+    await rejects(w.apply([update({ ...p, gramps_id: "I0777" }, 1, { renumber: true })]), 409, "renumber_blocked");
+    expect(w.row("IDALIAS#Person#I0001", "META")).toBeUndefined();
   });
   it("non-person ids may change", async () => {
     const w = world();
@@ -464,6 +496,23 @@ describe("birth-likeness across the store view and the batch, through applyBatch
   });
 });
 
+describe("the transaction-size bound", () => {
+  it("the budget counter's item is counted only for a batch with a delete or withdraw", async () => {
+    const w = world();
+    // 23 updates (4 items each) and one renumbering Person update (5) plus the 3 fixed items fill the 100 exactly: past the size gate,
+    // the validator answers (renumber_blocked), where a bound that always reserved the counter would answer 413 batch_too_large.
+    const notes = Array.from({ length: 23 }, (_, i) => update(note(i + 1), 1));
+    const ops = [...notes, update(person(1, { gramps_id: "I0777" }), 1, { renumber: true })];
+    await rejects(w.apply(ops), 409, "renumber_blocked");
+    await rejects(w.apply([...notes.slice(0, 22), update(person(1), 1, { renumber: true }), update(person(2, { gramps_id: "I0778" }), 1, { renumber: true })]), 413, "batch_too_large"); // 22*4 + 2*5 + 3 = 101
+  });
+  it("two ops on one object in a batch are refused, so a handle is never counted twice toward the budget", async () => {
+    const w = world();
+    await w.apply([create(person(1))]);
+    await rejects(w.apply([withdraw("Person", h(1), 1), del("Person", h(1), 1)]), 400, "duplicate_object");
+  });
+});
+
 describe("the destructive budget and step-up", () => {
   const people = async (w, n) => {
     for (let i = 0; i < n; i += 24) await w.apply([...Array(Math.min(24, n - i)).keys()].map((k) => create(person(i + k + 1))));
@@ -524,6 +573,49 @@ describe("the destructive budget and step-up", () => {
     await rejects(w.apply([withdraw("Person", h(1), 1), withdraw("Person", h(2), 1), withdraw("Person", h(3), 1)], { origin: "self" }), 403, "step_up_required"); // 3 > 2
     await w.apply([withdraw("Person", h(1), 1), withdraw("Person", h(2), 1)], { origin: "self" }); // 2 = 5 % of 40
     expect(w.row("SYNC#HEAD", "META").live_heads).toBe(38);
+  });
+  it("a non-empty tree whose live_heads is missing, negative or not an integer fails closed: every destructive batch needs a step-up (heads_unknown)", async () => {
+    for (const bad of [undefined, -3, 2.5, "40"]) {
+      const w = world({ head: { seq: 0, seeded: true, writes_enabled: true } });
+      await people(w, 3);
+      const head = w.ddb.rows.get("SYNC#HEAD\u0000META");
+      if (bad === undefined) delete head.live_heads;
+      else head.live_heads = bad;
+      const e = await rejects(w.apply([withdraw("Person", h(1), 1)], { origin: "self" }), 403, "step_up_required");
+      expect(e.details).toEqual({ reason: "heads_unknown" });
+      expect((await w.apply([withdraw("Person", h(1), 1)], { origin: "self", stepUp: true })).results).toHaveLength(1);
+    }
+  });
+  it("a missing live_heads is not counted from a partial number: applyBatch leaves it missing until the backfill sets the real count", async () => {
+    const w = world({ head: { seq: 7, seeded: true, writes_enabled: true } }); // a tree filled without the counter
+    await w.apply([create(person(1)), create(person(2))]);
+    expect(w.row("SYNC#HEAD", "META").live_heads).toBeUndefined();
+    await rejects(w.apply([withdraw("Person", h(1), 1)], { origin: "self" }), 403, "step_up_required");
+    w.row("SYNC#HEAD", "META").live_heads = 400; // the backfill
+    expect((await w.apply([withdraw("Person", h(1), 1)], { origin: "self" })).results).toHaveLength(1);
+    expect(w.row("SYNC#HEAD", "META").live_heads).toBe(399);
+  });
+  it("an empty tree (seq 0) with no live_heads counts from its first create, and the 10-object rule alone applies to a batch before any head exists", async () => {
+    const w = world({ head: null });
+    await w.apply([create(person(1))], { origin: "seed" });
+    expect(w.row("SYNC#HEAD", "META").live_heads).toBe(1);
+  });
+  it("concurrent destructive batches cannot together pass the 10-object budget: the second loses the seq race and is re-checked against the first", async () => {
+    const w = world();
+    await people(w, 16);
+    const eight = (from) => Array.from({ length: 8 }, (_, i) => withdraw("Person", h(from + i), 1));
+    const real = w.ctx.ddb;
+    let raced = false;
+    w.ctx.ddb = { ...real, send: async (cmd) => {
+      if (!raced && cmd.constructor.name === "TransactWriteCommand") {
+        raced = true; // another writer commits its 8 after this batch passed the budget check and before it commits
+        await applyBatch({ ...w.ctx, ddb: real }, { principal: "svc-rival", origin: "self", idempotencyKey: "rival", ops: eight(9) });
+      }
+      return real.send(cmd);
+    } };
+    await rejects(w.apply(eight(1), { origin: "self" }), 403, "step_up_required");
+    const counted = w.ddb.all().filter((r) => r.PK.startsWith("SYNC#BUDGET#")).reduce((n, r) => n + r.count, 0);
+    expect(counted).toBe(8);
   });
   it("live_heads follows creates, deletes, withdraws and a create over a tombstone", async () => {
     const w = world();

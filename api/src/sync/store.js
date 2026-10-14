@@ -32,8 +32,9 @@ export const MAX_OBJ_BYTES = 204800;
 export const MAX_BATCH_OBJ_BYTES = 3_500_000; // 2 x sum(obj_json bytes) + sum(blob bytes): the head and the log entry each hold a copy
 /** A Media op's `blob` descriptor rides on the head item, next to a 200 KB obj_json, under DynamoDB's 400 KB item limit. */
 export const MAX_BLOB_BYTES = 4096;
-/** Transaction items a batch needs besides its ops: the SYNC#HEAD update, the SYNC#BATCH receipt, the audit item and the budget counter. */
-export const FIXED_TXN_ITEMS = 4;
+/** Transaction items a batch needs besides its ops: the SYNC#HEAD update, the SYNC#BATCH receipt and the audit item. A batch with a delete or
+ *  withdraw needs one more, the SYNC#BUDGET# counter (apply.js adds it). */
+export const FIXED_TXN_ITEMS = 3;
 
 /** The identity class whose ids are permanent. */
 export const PERMANENT_ID_CLASS = "Person";
