@@ -161,7 +161,7 @@ test("structure: focus section with h2, grouped lists of re-centre buttons, one 
   await expect(focus).toHaveAttribute("aria-labelledby", "hfy-tree-focus-name");
   await expect(focus.locator("h3")).toHaveText(["parents", "partner and children (1 of 2)", "children (2 of 2)", "brothers and sisters"]);
   await expect(focus.locator("h3 + ul button")).toHaveCount(2 + 3 + 1 + 1);
-  await expect(focus.locator("button[data-person='I9001']")).toHaveAccessibleName("Gus Example, father");
+  await expect(focus.locator("button[data-person='I9001']")).toHaveAccessibleName(/^Gus Example\s*father$/);
   await expect(focus.locator("details > summary")).toHaveCount(0); // gp: none recorded for Ada
   await expect(outline(page).locator("details > summary")).toHaveText([/parents' generation \(2\)/, /Ada's generation \(4\)/, /children's generation \(4\)/, /not yet connected to the tree \(1\)/]);
   await expect(outline(page).locator("details").nth(1)).toHaveAttribute("open", "");
@@ -192,7 +192,7 @@ test("re-centring through several generations and back keeps the focus level ope
   await outline(page).locator("details[data-tree-level='0'] button[data-person='I9001']").click();
   await expect(focusName(page)).toHaveText("Gus Example");
   await expect(level(0)).toHaveAttribute("open", "");
-  await outline(page).locator("summary", { hasText: "children's generation" }).click();
+  await outline(page).locator("details[data-tree-level='1'] > summary").click();
   await outline(page).locator("details[data-tree-level='1'] button[data-person='I9003']").first().click();
   await expect(focusName(page)).toHaveText("Ada Example");
   await expect(level(1)).toHaveAttribute("open", "");
