@@ -41,6 +41,11 @@ export const POLICY_ROWS = [
   { action: "posts.get", show: BOTH, execute: BOTH },
   { action: "comments.create", show: BOTH, execute: BOTH, agentMode: "dry_run" },
   { action: "posts.create", show: BOTH, execute: BOTH, agentMode: "dry_run" },
+  // HFY-TSK-211 (editing.md 7.6): the editing tools. Only these four; there is no policy row for proposals.decide (DEC-E5), so no decide tool can be listed.
+  { action: "edit.get", show: BOTH, execute: BOTH },
+  { action: "proposals.list", show: BOTH, execute: BOTH },
+  { action: "proposals.get", show: BOTH, execute: BOTH },
+  { action: "changes.post", show: BOTH, execute: BOTH, agentMode: "dry_run" },
   { action: "*.delete", show: [ADMIN_GROUP], execute: [ADMIN_GROUP], minAssurance: "step_up", agentMode: "dry_run" },
 ];
 export const POLICY = { rows: POLICY_ROWS, defaultGroup: AUTHORS_GROUP };

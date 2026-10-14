@@ -157,6 +157,10 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 | `hfy_posts_get` | `posts.get` | `GET /api/posts/:id` | false | readOnly, idempotent | |
 | `hfy_posts_create` | `posts.create` | `POST /api/posts` | true | none | Always a draft: the tool sets `visibility: "draft"` and has no visibility argument. Publishing is a person's action in the site. No `attachments` argument. |
 | `hfy_posts_delete` | `posts.delete` | `DELETE /api/posts/:id` | true | destructive, idempotent | Admin with a fresh step-up only. Also removes the post's comment thread. |
+| `hfy_records_get` | `edit.get` | `GET /api/edit/:cls/:ref` | false | readOnly, idempotent | The edit bundle, through `publishView` and `applyModOverlay`; `pending[]` lists only suggestions the caller may see. 404 while `HFY_EDITING` is off. |
+| `hfy_changes_submit` | `changes.post` | `POST /api/changes` | true | none | Submits EditOps. An agent call returns the plan and writes nothing (see [Editing tools](#editing-tools)). A real submission needs an `idempotency_key`. |
+| `hfy_proposals_list` | `proposals.list` | `GET /api/proposals` | false | readOnly, idempotent | Only suggestions the caller may see; `view=queue` is 403 for a non-admin. |
+| `hfy_proposals_get` | `proposals.get` | `GET /api/proposals/:id` | false | readOnly, idempotent | 404 outside the proposer, admins and the owners of the targeted pages. |
 
 No other route is a tool: comment edits and reactions, post edits and visibility changes, uploads, notification settings and profile links are reachable only from the site. [`api/parity/map.yaml`](../../api/parity/map.yaml) pairs each tool with the route handler a person uses for the same action, and [`api/parity/routes.yaml`](../../api/parity/routes.yaml) lists the site pages that call those handlers.
 
@@ -175,6 +179,10 @@ Every input schema is an object with `additionalProperties: false`. The `require
 | `hfy_posts_get` | `["id"]` | none | param `id` |
 | `hfy_posts_create` | `["body"]` | `type` (`post`, `article`, `document`), `subject`, `title` (`maxLength` 200) | body `type`, `subject`, `title`, `body`, plus `visibility: "draft"` |
 | `hfy_posts_delete` | `["id"]` | none | param `id` |
+| `hfy_records_get` | `["cls", "ref"]` | `cls` is a record class, `ref` a gramps_id or `h:<handle>` | params `cls`, `ref` |
+| `hfy_changes_submit` | `["ops"]` | `target`, `base_versions`, `note` (`maxLength` 1000), `route` (`auto`, `review`), `idempotency_key` | body, the same names |
+| `hfy_proposals_list` | `[]` | `view` (`queue`, `mine`, `about-me`), `state`, `cursor`, `limit` (integer, 1 to 50) | query, the same names |
+| `hfy_proposals_get` | `["id"]` | none | param `id` |
 
 - `@io-kit/mcp` 0.1.0 does not validate arguments against the schema. `args` keeps only the properties it names and drops any whose value is `undefined` or an empty string. The route handler's own checks then apply: a missing `subject`, for example, comes back as an `isError` result with the text `subject is required`, and a `limit` above 100 is not refused: the API clamps it to 1 through 200 ([API: Listing](api.md#listing)).
 - `mode` is reserved for [dry runs](#dry-runs) and is removed before `args` runs.
@@ -202,6 +210,10 @@ Every input schema is an object with `additionalProperties: false`. The `require
 | `posts.get` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | none |
 | `comments.create` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | `dry_run` |
 | `posts.create` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | `dry_run` |
+| `edit.get` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | none |
+| `proposals.list` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | none |
+| `proposals.get` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | none |
+| `changes.post` | `mcp-authors`, `hfy-admin` | `mcp-authors`, `hfy-admin` | none (session) | `dry_run` |
 | `*.delete` | `hfy-admin` | `hfy-admin` | `step_up` | `dry_run` |
 
 - `POLICY` is `{rows: POLICY_ROWS, defaultGroup: "mcp-authors"}`. `defaultGroup` names the group an empty tool list asks for.
@@ -298,6 +310,15 @@ A tool runs as the actor `{id, label, admin}`, the shape the HTTP path builds fr
 - `admin` comes from `hfy-admin`, so an `hfy-admin` caller is an API admin for the call: `hfy_posts_list` and `hfy_posts_get` show other members' drafts and withdrawn posts, and a `reason` on `hfy_comments_delete` is recorded when the comment is someone else's.
 - Audit items record the actor's `id` as `principal`. Comments removed with a deleted post are audited with that `id` and the reason `post deleted`.
 - `hfy_posts_create` makes drafts only, so it never sends `new_family_post`. `hfy_comments_create` sends the usual comment notifications when push is configured.
+
+### Editing tools
+
+HFY-TSK-211 (editing design 7.6). The four editing tools are listed to `mcp-authors` and `hfy-admin` and hidden from everyone else, and the routes behind them answer 404 while the `HFY_EDITING` stack switch is off.
+
+- **There is no decide tool** (DEC-E5). Approving, denying, amending and withdrawing a suggestion are people's actions in the site: `proposals.decide`, `proposals.amend` and `proposals.withdraw` have no `mcp` member and no policy row, and a `tools/call` naming a decide tool is `-32602`.
+- **`hfy_changes_submit` for an agent.** A principal of type `agent` defaults to `dry_run` and is denied `execute` with `agent_dry_run_only`. The dry run adds the route's own plan to the ResolvedCall: `plan` (`{direct, review}`), `warnings` and `errors`, or `planError` (`{status, error, message, errors}`) when the route refuses the submission. It runs the planning steps of `POST /api/changes` with `dry_run: true`, which write nothing (no receipt, `PROP#`, `IDX#` or `THREAD#` row). The shipped edge builds every principal as `human`, so for a person's session the plan comes from an explicit `mode: "dry_run"`, and a call without `mode` submits.
+- **Failures keep their status.** A tool with `mcp.problem` set in `routes.js` returns a failing route as `isError: true` whose text is JSON, `{status, error, message, errors?, details?}`: the HTTP body, so a privacy-guard refusal reads as `422` with positions and codes only, never the matched text.
+- **Reads go through the record views.** `hfy_records_get` hides moderated items from callers who are not an admin or the page owner and shows non-birth dates as the year only, and `pending` lists only the caller's own suggestions, those about their page and, for an admin, all of them.
 
 ## Dry runs
 
