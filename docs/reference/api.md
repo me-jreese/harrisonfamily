@@ -43,6 +43,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
 | [`sync/store.js`](../../api/src/sync/store.js) | The cloud record store's keys and items (`REC#`, `SYNC#LOG`, `SYNC#HEAD`, `SYNC#BATCH#`, `GID#`, `IDALIAS#`), the batch id and request token, and the reads `applyBatch` needs. See [The cloud record store](#the-cloud-record-store). |
 | [`sync/apply.js`](../../api/src/sync/apply.js) | `applyBatch()`, the one write path into the record store, and `SyncError`. No route calls it yet. See [The cloud record store](#the-cloud-record-store). |
+| [`records/index.js`](../../api/src/records/index.js) | Read accessors over the record store: `get`, `byGrampsId` (GSI1, tombstones excluded), `backrefs`, `graph` (cached up to 60 s) and `customTypes`, on a store view (snapshot plus `SYNC#LOG` fold). No route calls it yet. |
 | [`sync/hooks.js`](../../api/src/sync/hooks.js) | The commit-hook registry: `registerContributor` and `registerAfterCommit`. |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
