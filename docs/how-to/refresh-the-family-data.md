@@ -16,6 +16,7 @@ All local output goes to `<project>/workspace-local/harrisonfamily-frontend/`. T
 | --- | --- | --- |
 | 1. Export | `scripts/etl/export_person_data.py` | `person/<gramps-id>.json`; `family/`, `event/`, `note/` and `place/` records named by Gramps handle; media binaries and `media/<handle>.json`; the manifests `person/index.json`, `media/index.json` and `place/index.json` |
 | 2. Trees | `scripts/etl/build_family_tree_media.py` | `media/tree_<gramps-id>.svg`. With `--attach`, also a `familyTreeMedia` field in each person file |
+| 2b. Graph | `graph/bin/build-graph.mjs` (in the checkout) | `person/graph.json` and `media/faces/<gramps-id>-<sha8>.webp` |
 | 3. Search | `scripts/search/build_search_index.js` | `person/search-index.json`, and a new `person/index.json` in the form `{count, generatedAt, people}` |
 | 4. Sync | `scripts/etl/sync_to_s3.py` | The `person/`, `event/`, `family/`, `note/`, `place/` and `media/` prefixes of `<site-bucket>`. Never `uploads/` |
 | 5. Invalidate | AWS CLI | CloudFront cache entries for those prefixes. They matter only while the private data gate is not attached |
@@ -40,7 +41,8 @@ The refresh does not touch the synthetic samples in the repository. If the shape
   ```
 
 - **Graphviz.** `dot -V` prints a version.
-- **Node.** `node --version` prints a version. The search script uses only Node's built-in modules.
+- **Node.** `node --version` prints a version. The search script uses only Node's built-in modules. Step 2b needs Node 22 or later, the `sqlite3` command-line tool, and `npm ci` run once in `graph/` of the checkout (`sharp` and `d3-dag` live there).
+- **A fresh copy of the Gramps tree, for step 2b only.** Close Gramps, then copy the whole tree directory to a scratch location outside the checkout. Step 2b reads that copy with `sqlite3 -readonly`. Never point it at the live database: the repository allows direct SQL only against a copy.
 - **AWS CLI credentials.** The credentials must be able to list `<site-bucket>`, put and delete objects under the six data prefixes, create invalidations on `<distribution-id>`, and read invalidation status (`cloudfront:GetInvalidation`) for the wait in step 5. The two CloudFront permissions are needed only while the gate is not attached. The GitHub deploy role does not work here, because its trust policy accepts only `main` ([Architecture](../reference/architecture.md#harrisonfamily-github-roles)). If you use a named profile, add `--profile <aws-profile>` to each `sync_to_s3.py` and `aws` command.
 - **Reviewed data.** The export treats anyone without a death event as living. It copies notes and media exactly as they are in Gramps, and it ignores Gramps's per-record private flag. Before you export, remove from Gramps anything that signed-in members must not see:
   - Confirm that no living person has a death event recorded. The export treats anyone with one as not living.
@@ -111,6 +113,42 @@ Always pass both directories. Their defaults point at `<project>/workspace/harri
 - `--only <gramps-id> …` renders a subset.
 
 The script logs `Generated tree_<gramps-id>.svg` for each person and ends with `Rendered <n> SVG tree(s).`. That count should equal the number of people. A Graphviz failure for one person logs an `[ERROR]` line and the run moves on, so a lower count means some trees are missing.
+
+### 2b. Build the family graph
+
+The graph is the one static file, `person/graph.json`, that the family-tree page will read, plus the face crops it shows. Nothing reads it yet, so publishing it changes nothing a member sees. The builder is in the checkout, not in `<project>/scripts/`, and it runs after steps 1 and 2 because it crops faces from the media files that step 1 staged. Run it from `<project>` with a fresh copy of the Gramps tree (see [Before you start](#before-you-start)):
+
+```sh
+node <project>/repo/graph/bin/build-graph.mjs --from-gramps-copy <gramps-copy>/sqlite.db \
+  --out workspace-local/harrisonfamily-frontend \
+  --verify-against workspace-local/harrisonfamily-frontend/person
+```
+
+- `--out` writes `person/graph.json` (a temp file, then a rename) and `media/faces/` under the staging directory. Without `--out` the run is a dry run that projects and verifies and writes nothing, so start with that.
+- `--verify-against` compares each person's `living` flag with the `isLiving` in the `person/<gramps-id>.json` that step 1 wrote. A mismatch stops the build (exit `5`) and writes nothing. It also fails (exit `2`) if no person file matches, so run step 1 first.
+- The size ceiling is the builder's default, 150 KiB gzipped. Over it the build exits `3` and writes nothing. The design target is 25 KB gzipped at about 230 people ([`graph/README.md`](../../graph/README.md)), so the dry run's summary is the check: note the gzipped size and the number of people, and record both on the HFY record. If the size is near 25 KB, add `--max-gzip-bytes 25600` to hold that target on later runs. This flag is an addition to the design's reference command, there to hold the target, not a requirement. Do not set it below what your tree needs.
+- The build uses the offline gazetteer when `$HFY_GAZETTEER_DIR` holds one ([`graph/README.md`](../../graph/README.md#geocoding)). Without it, the build continues with Gramps coordinates only. It never touches the network.
+- The run writes a local report to `<project>/workspace-local/graph-build-report.json`. The report names Gramps IDs, so keep it local: it sits outside the synced staging directory.
+- The exit codes are in the [graph README](../../graph/README.md). Exit `4` means the privacy check refused the graph, `6` means Gramps is open on the copy.
+
+Then check the staged file again on its own, before anything is synced:
+
+```sh
+node <project>/repo/graph/bin/build-graph.mjs --verify workspace-local/harrisonfamily-frontend/person/graph.json \
+  --verify-against workspace-local/harrisonfamily-frontend/person
+```
+
+It must exit `0`. Stop on any other code: the file is not syncable. `sync_to_s3.py` needs no change, because step 4 already syncs `person/` and `media/`, and the site deploy already excludes both ([`ci.manifest.yaml`](../../ci.manifest.yaml)). Step 3 globs the person files, and `graph.json` sits in the same directory, so after step 3 run the check below before step 4. Step 4's dry run should show `person/graph.json` and the files under `media/faces/` as the only new uploads beyond your changes.
+
+Check that step 3 left the graph out of both search files (run it after step 3, before step 4). Both counts must be `0`. Record the result on the HFY record under the HFY-R16 prefix:
+
+```sh
+grep -ciE 'graph\.json|"graph"' workspace-local/harrisonfamily-frontend/person/index.json workspace-local/harrisonfamily-frontend/person/search-index.json
+```
+
+Any other count means `graph.json` was indexed as a person: stop, and do not sync.
+
+Repeat step 2b after every export, because a new export changes who is living and which media exist.
 
 ### 3. Build the search manifests
 
@@ -220,7 +258,30 @@ The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in
    Open `https://<site>/person/?id=<gramps-id>`. The page shows the updated details and renders the family tree. Then open `https://<site>/search/` and search for the person's name. The person is listed. Both search surfaces read the same two files. If `searchV2` is `true`, `/search/` shows the island. To check the legacy page as well, open `https://<site>/search/?hfy_flags=-searchV2` ([Force a flag off in one tab](toggle-a-feature-flag.md#force-a-flag-off-in-one-tab)). If it is `false`, preview the island with `?hfy_flags=searchV2` instead ([Turn a flag on in one browser tab](toggle-a-feature-flag.md#turn-a-flag-on-in-one-browser-tab)). Either way, clear the override afterwards with `?hfy_flags=`.
 
    With the gate attached, a refused data request is a `401 {"error":"unauthenticated"}` from the gate, or a `302` to `/auth/login?returnTo=<path>` for a page navigation. The client refreshes the session and retries once before it sends you to sign in. If you are refused while signed in, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md) and the table in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#if-something-fails).
-5. **The checkout is clean.** `git status` in your checkout shows no changes from this procedure. Any change there means a script wrote into the repository. Find out why before you commit anything.
+5. **The graph is published, and private.** First verify the copy in the bucket, then probe it from outside.
+
+   ```sh
+   scratch=$(mktemp -d); trap 'rm -rf "$scratch"' EXIT
+   aws s3 cp s3://<site-bucket>/person/graph.json "$scratch/graph.json" \
+     && node <project>/repo/graph/bin/build-graph.mjs --verify "$scratch/graph.json"
+   ```
+
+   The trap removes the private copy when the shell exits, even if a step fails.
+
+   It must exit `0`, as it did on the staged file. Then probe the live site from a shell with no cookies. These probes apply with the data gate attached. If it is not attached, the site is ungated: expect `200` on the plain probe, and go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point) before you go on.
+
+   ```sh
+   curl -sS -o /dev/null -D - https://<site>/person/graph.json | grep -iE '^(HTTP|cache-control)'
+   curl -sS -o /dev/null -w '%{http_code}\n' 'https://<site>/person/graph.json?x=1' https://<site>/Person/graph.json
+   curl -sS -o /dev/null -w '%{http_code}\n' https://<site>/tree/
+   curl -sS https://<site>/tree/ | grep -c schemaVersion
+   ```
+
+   - Signed out, `/person/graph.json` returns `401` with `cache-control: private, no-store`. Any `200` means the data is public: stop, and go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point).
+   - Signed out, the two variants (a query string, a different case) must not print `200`. A `200` is a gate bypass: stop, as above.
+   - Signed out, `/tree/` returns `200` or `404`, and the last probe, which counts `schemaVersion` in its body, prints `0` (no graph content). It is `404` until the tree page ships.
+   - Signed in, a fetch of `/person/graph.json` returns `200` with `schemaVersion` `1`. In a browser window signed in to the site, run `fetch('/person/graph.json', {credentials: 'include'}).then(async r => [r.status, (await r.json()).schemaVersion])` in the console. It prints `[200, 1]`. Do not save the response or paste any of it anywhere.
+6. **The checkout is clean.** `git status` in your checkout shows no changes from this procedure. Any change there means a script wrote into the repository. Find out why before you commit anything.
 
 ## Troubleshooting
 
@@ -232,6 +293,9 @@ The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in
 | Many `Media binary missing` warnings | Gramps stores relative media paths, which are resolved from the current directory | Convert the paths to absolute in Gramps (**Tools > Utilities > Media Manager**). Or run step 1 from the directory they are relative to, with the script and `--output` both given as absolute paths: `python3 <project>/scripts/etl/export_person_data.py --output <project>/workspace-local/harrisonfamily-frontend`. Then return to `<project>` for steps 2 to 5 |
 | `[ERROR] No person files found in <dir>` | `--person-dir` names the wrong directory | Point it at `workspace-local/harrisonfamily-frontend/person` |
 | A person page shows no tree | Step 1 ran after step 2, or step 2 ran without `--attach` or with the default directories | Repeat step 2, then steps 4 and 5 |
+| `build-graph` exits `5` (`LIVING_MISMATCH`) | The copy of the tree differs from the one step 1 exported, or step 1 is older than the copy | Copy the tree again, rerun step 1, then step 2b |
+| `build-graph` exits `3` (`SIZE_BUDGET`) | The graph is over the size ceiling (150 KiB by default, or the `--max-gzip-bytes` you passed) | Do not raise the number to get past it. The budget is a design decision: raise it on the HFY record |
+| `build-graph` exits `4` (`PRIVACY_VIOLATION`) | The privacy check refused the graph. The message names JSON pointers and rules, never values | Fix the record in Gramps, copy the tree and rerun. Never sync a graph that failed |
 | A new person is missing from search | Step 3 was skipped or ran against the default directory, or, without the gate, the invalidation has not finished | Repeat step 3, then steps 4 and 5 |
 | A changed tree or photo still shows the old version | Cloudflare serves a copy of the `/media/` file that it cached while the gate was not attached. Neither the gate nor the CloudFront invalidation removes it | With io's go-ahead, purge the data prefixes in Cloudflare, as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) |
 | New posts or comments still carry a member's old name | Each API container caches a found label for 1 h. Or the member's allowlist entry carries its own usable label, which the API prefers to `displayName`. Older posts and comments keep the label they were stored with | Wait an hour for new posts and comments. If the entry carries a label, use the plain string form that [Manage family access](manage-family-access.md#1-edit-the-source-files) asks for. Stored labels do not change |
@@ -240,6 +304,7 @@ The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in
 
 - [The privacy model for family data](../explanation/family-data-privacy.md): living-person classification, the shared bucket and its three writers.
 - [Architecture](../reference/architecture.md#site-bucket): the bucket prefixes and who writes each one.
+- [The family graph builder](../../graph/README.md): the flags, exit codes and what the file holds.
 - [Private data and secrets](../reference/private-data-and-secrets.md): where the real data lives and what never goes in the repository.
 - [Codebase map](../reference/codebase-map.md): the scripts outside the repository and the sanitized sample directories.
 - [Front end](../reference/front-end.md): the person page and both search surfaces.

@@ -344,7 +344,7 @@ Paths:
 
 Facts:
 
-- It is a private Node 22 package with no runtime dependencies. It runs by hand on io's machine, on a copy of the Gramps tree or on JSON lines. No workflow builds the graph or runs its tests, and nothing publishes `person/graph.json` yet.
+- It is a private Node 22 package. Its build-time dependencies are `sharp` and `d3-dag`, installed with `npm ci` in `graph/`. It runs by hand on io's machine, on a copy of the Gramps tree or on JSON lines. No workflow builds the graph or runs its tests. The refresh runbook publishes `person/graph.json` by hand, through steps 2b and 4 of [`refresh-the-family-data.md`](../how-to/refresh-the-family-data.md), and nothing reads it yet.
 - Nothing reads the live Gramps database. `--from-gramps-copy` refuses when the copy's `lock` file exists, opens the copy read-only and streams the rows over a pipe, so no unredacted JSON lines reach a file.
 - The projection copies only the allowlisted fields, as years and ids. `verify()` runs before every write, and a failure writes nothing.
 - The output is deterministic and written by temp file and rename, so a failed run leaves the previous `graph.json` as it was.
