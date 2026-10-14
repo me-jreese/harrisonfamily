@@ -7,6 +7,7 @@ import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator, loadPass
 import { createAuthEdge, loadManifest } from "./edge.js";
 import { DEFAULT_CLIENT_ID, DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthStore, desktopClient } from "./oauth.js";
 import { createMembership } from "./membership.js";
+import { createCompositeResolver } from "./allowlist.js";
 import { forbidden, originVerified } from "./origin.js";
 import { cognitoProvisioner } from "./cognito.js";
 import { hfyLinkStore } from "./linkstore.js";
@@ -42,7 +43,9 @@ async function init() {
   const ddb = ddbFromDocumentClient(doc, lib);
   const s3 = new S3Client({});
   const readObject = async (bucket, key) => (await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }))).Body.transformToString();
-  const resolver = buildResolver(m.resolver, { readObject });
+  // The composite resolver (HFY-TSK-134): a DynamoDB ALLOW# item wins over io's S3 file, active or revoked; no item means the file decides,
+  // exactly as before, and a DynamoDB error falls back to the file. The manifest's resolver stays s3_allowlist.
+  const resolver = createCompositeResolver({ s3: buildResolver(m.resolver, { readObject }), ddb: doc, cmds: lib, table: tableName });
   const privateKey = await importPKCS8(pem, "RS256");
   const cog = { region: m.idp.userPoolId.split("_")[0], clientId: m.idp.clientId };
   const gis = m.providers.find((p) => p.kind === "google" && p.mode === "gis_id_token");
@@ -78,6 +81,7 @@ async function init() {
         groupsFor: createMembership({
           readAllowlist: () => readObject(m.resolver.bucket, m.resolver.key),
           readAdmins: () => readObject(m.resolver.bucket, process.env.ADMIN_LIST_KEY ?? "config/admins.json"),
+          ddb: doc, cmds: lib, table: tableName,
         }),
       })
     : undefined;
