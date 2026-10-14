@@ -141,7 +141,7 @@ export function createHandler(deps) {
         actor = await deps.authenticateSync(event); // throws the 401
         sync = await syncContext({ ctx: { ddb, cmds, table }, event, actor, route, now });
         // The push routes (HFY-TSK-173) also take the blob wiring (s3, presignPut, the media bucket) and applyBatch's hooks, id policy and test seams.
-        sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid, log, s3: deps.s3, presignPut: deps.presignPut, mediaBucket, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts };
+        sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid, log, s3: deps.s3, presignPut: deps.presignPut, presignGet: deps.presignGet, syncBucket: deps.syncBucket, mediaBucket, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts };
       } else {
         actor = await authenticate(event);
         // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.

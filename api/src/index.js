@@ -9,7 +9,7 @@ import { createMemberSet } from "./notify.js";
 import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
-import { createPresignPut } from "./presign.js";
+import { createPresignGet, createPresignPut } from "./presign.js";
 import { createGroupResolver, UAT_GROUP } from "./policy.js";
 import { configureFeatures, createFeatureGate, createFlagSource, DEFAULT_FLAGS_URL } from "./features.js";
 import { createLabelResolver, createPersonExists, PERSON_KEY } from "./labels.js";
@@ -121,6 +121,8 @@ export const handler = async (event) => {
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
       getAdmins, listMembers, personExists,
+      presignGet: createPresignGet(), // the sync pull routes: snapshot and blob downloads, 300 s
+      syncBucket: env.SYNC_BUCKET ?? "harrisonfamily-sync",
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
       s3, // checkLocation reads the first 256 KiB of a new post attachment (upload-guard.js; UploadReads in app-stack.yaml)
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
