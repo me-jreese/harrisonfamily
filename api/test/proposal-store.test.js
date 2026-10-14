@@ -515,3 +515,81 @@ describe("the routes are registered (caps)", () => {
     expect(caps.subjects).toContain("proposal:<ulid>");
   });
 });
+
+describe("review fixes (HFY-TSK-184 R1)", () => {
+  const ulid = "01J00000000000000000000077";
+  const seedDoc = async (w, targets) => {
+    const doc = newProposal({
+      id: ulid, actor: { id: OTHER, label: "Other" }, origin: "web", kind: "edit", subject: null, targets, base_versions: {},
+      ops: [{ id: "o1", op: "set", obj: key(w.me), path: "/primary_name/first_name", base: "Alder", value: "Aldric" }], summary: [], warnings: [], at: "2026-10-14T00:00:00.000Z", owners: [ME],
+    });
+    for (const x of proposalPuts(doc)) await w.ddb.send(new cmds.PutCommand({ TableName: TABLE, Item: x.item }));
+    return doc;
+  };
+  it("the amend guard refuses a birth-like date whatever the HFY_GUARD_DOB flag says", async () => {
+    const ev = event(5, 12, [0, 0, 1950, false]);
+    const dead = person(5, { event_ref_list: [eref(ev)], birth_ref_index: 0, death_ref_index: -1 });
+    const w = await world({ seedExtra: [dead, ev], guardDob: false });
+    const first = await w.post(OTHER, { target: key(dead), base_versions: versions(w, [dead]), ops: [set(dead, "/primary_name/first_name", "Alder", "Aldwin", "n")] }, { idem: "r-1" });
+    const p = first.body.proposal;
+    const r = await w.patch(OTHER, p.id, {
+      base_versions: { [key(dead)]: 1, [key(ev)]: 1 },
+      ops: [set(dead, "/primary_name/first_name", "Alder", "Aldwin", "n"), { id: "d", op: "set", obj: key(ev), path: "/date", base: ev.date, value: date([14, 3, 1950, false]) }],
+    }, p.etag);
+    expect(r.body.error).toBe("dob_not_allowed");
+    expect(r.status).toBe(422);
+  });
+  it("an amend that would exceed the transaction size is 413 too_large with zero writes", async () => {
+    const w = await world();
+    const targets = Array.from({ length: 99 }, (_, i) => `Note:${h(9000 + i)}`);
+    const doc = await seedDoc(w, targets);
+    const before = w.ddb.all().length;
+    w.txns.length = 0;
+    const r = await w.patch(OTHER, doc.id, { base_versions: versions(w, [w.me]), ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldric", "n")] }, doc.etag);
+    expect(err(r)).toEqual({ status: 413, error: "too_large" });
+    expect(w.txns).toEqual([]);
+    expect(w.ddb.all().length).toBe(before);
+  });
+  it("an amend that drops targets deletes their IDX#REC copies and adds the new one in one transaction", async () => {
+    const w = await world();
+    const doc = await seedDoc(w, [`Note:${h(9001)}`, `Note:${h(9002)}`]);
+    w.txns.length = 0;
+    const r = await w.patch(OTHER, doc.id, { base_versions: versions(w, [w.me]), ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldric", "n")] }, doc.etag);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(w.txns).toHaveLength(1);
+    expect(propRows(w, doc.id).map((x) => x.SK).sort()).toEqual(["IDX#BY", `IDX#REC#${key(w.me)}`, "META"].sort());
+  });
+  it("state=stale is a 400 (stale is a flag), and the default queue shows pending suggestions with their stale flag", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "r-2");
+    expect(err(await w.list(ADMIN, { view: "queue", state: "stale" }))).toEqual({ status: 400, error: "validation" });
+    await bump(w, w.me, 1, { gender: 0 });
+    const q = await w.list(ADMIN, { view: "queue" });
+    expect(q.body.items.map((x) => [x.id, x.stale])).toEqual([[p.id, true]]);
+  });
+  it("createSystem repeats beyond the IDEM# receipt's life return the first proposal (PROPREQ# is durable)", async () => {
+    const w = await world();
+    const noteValue = { _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: "A synthetic welcome note", tags: [] }, format: 0, type: typ("NoteType", 1) };
+    const input = { kind: "create", origin: "access_request", requestId: "req-0009", ops: [{ id: "mk", op: "create", obj: "new:1", cls: "Note", value: noteValue }] };
+    const doc = await createSystem(sysCtx(w), input);
+    for (const [k] of [...w.ddb.rows]) if (k.startsWith("IDEM#")) w.ddb.rows.delete(k); // the receipt expired
+    const again = await createSystem(sysCtx(w), input);
+    expect(again.id).toBe(doc.id);
+    expect(w.ddb.all().filter((r) => r.SK === "META" && r.PK.startsWith("PROP#"))).toHaveLength(1);
+  });
+  it("approvalHookFragment returns deep-equal output for the same inputs (a retried approval builds the same extra)", async () => {
+    const w = await world();
+    const doc = await createSystem(sysCtx(w), { kind: "create", origin: "access_request", requestId: "req-0010", ops: [{ id: "mk", op: "create", obj: "new:1", cls: "Note", value: { _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: "Another synthetic note", tags: [] }, format: 0, type: typ("NoteType", 1) } }] });
+    const ctx = { ...w.sctx, completeAccessRequest: async (a) => ({ puts: [{ item: { PK: `ACCESSREQ#${a.requestId}`, SK: "META", state: "active", sub: a.grampsId } }] }) };
+    expect(await approvalHookFragment(ctx, doc, { grampsId: "I8000" })).toEqual(await approvalHookFragment(ctx, doc, { grampsId: "I8000" }));
+  });
+  it("a targeted member who is not the proposer does not see owners[] or request_id; the proposer and admins do", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "r-3");
+    const asMe = (await w.getP(ME, p.id)).body;
+    expect(asMe).not.toHaveProperty("owners");
+    expect(asMe).not.toHaveProperty("request_id");
+    expect((await w.getP(OTHER, p.id)).body.owners).toEqual([ME]);
+    expect((await w.getP(ADMIN, p.id)).body.owners).toEqual([ME]);
+  });
+});

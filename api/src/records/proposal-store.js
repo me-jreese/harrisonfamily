@@ -22,7 +22,7 @@ import { ownPerson } from "./read.js";
 import { relationView, targetsAboutMe } from "./edit-bundle.js";
 import { existingKey, headerOf, keyParts, parseRequest, pick, planChanges, problem, sortedUnique, subjectOf } from "./changes.js";
 import {
-  MAX_PROPOSAL_BYTES, OPEN_STATES, PROPOSAL_STATES, SYSTEM_ORIGIN, SYSTEM_PROPOSER, amendedProposal, idemKeys, idemPut, newProposal, ownersOf, proposalAuditItem,
+  MAX_PROPOSAL_BYTES, MAX_TXN_ACTIONS, OPEN_STATES, PROPOSAL_STATES, SYSTEM_ORIGIN, SYSTEM_PROPOSER, amendedProposal, idemKeys, idemPut, newProposal, ownersOf, proposalAuditItem,
   proposalKeys, proposalPuts, proposalRewrite, proposalView, withState,
 } from "./proposals.js";
 
@@ -31,7 +31,7 @@ export const LIST_VIEWS = Object.freeze(["queue", "mine", "about-me"]);
 export const DEFAULT_LIMIT = 25;
 export const MAX_LIMIT = 50;
 /** The states a queue shows when no `state` is asked for: what an admin can decide. */
-export const QUEUE_STATES = Object.freeze(["pending", "stale"]);
+export const QUEUE_STATES = Object.freeze(["pending"]);
 const MAX_ABOUT_FAMILIES = 30;
 const BODY_FIELDS = new Set(["ops", "base_versions", "note"]);
 
@@ -102,7 +102,13 @@ async function staleOf(ctx, p, memo = new Map()) {
   return false;
 }
 
-const viewOf = async (ctx, actor, p, memo) => proposalView(p, actor, { stale: await staleOf(ctx, p, memo) });
+/** The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13). */
+const viewOf = async (ctx, actor, p, memo) => {
+  const view = proposalView(p, actor, { stale: await staleOf(ctx, p, memo) });
+  if (actor.admin === true || p.proposer?.id === actor.id) return view;
+  const { owners, request_id: requestId, ...rest } = view; // eslint-disable-line no-unused-vars
+  return rest;
+};
 
 /** If-Match as a bare etag (quotes and a weak prefix stripped), or null when the header is absent. */
 function ifMatchOf(c) {
@@ -147,6 +153,7 @@ export async function proposalsList(c) {
   const view = c.query.view ?? "mine";
   if (!LIST_VIEWS.includes(view)) throw problem(400, "validation", "view is queue, mine or about-me", { errors: [{ pointer: "/view", detail: "view is queue, mine or about-me" }] });
   const state = c.query.state;
+  if (state === "stale") throw problem(400, "validation", "stale is a flag on a suggestion, not a state: filter on `stale`", { errors: [{ pointer: "/state", detail: "stale is computed on read; ask for pending and filter on the stale flag" }] });
   if (state !== undefined && state !== "" && !PROPOSAL_STATES.includes(state)) throw problem(400, "validation", "that state is not known", { errors: [{ pointer: "/state", detail: "state is not known" }] });
   if (view === "queue" && actor.admin !== true) throw new HttpError(403, "not_admin", "only an admin can see the queue");
   const limit = limitOf(c.query.limit);
@@ -235,6 +242,8 @@ async function preconditionFailed(c, p) {
 /** Commits `{ puts, deletes }` of a state change; a failed etag is a 412 with the document as it is now. */
 async function commitRewrite(c, prev, fragment, audit) {
   const ctx = c.store;
+  const actions = fragment.puts.length + fragment.deletes.length + 1; // the audit item
+  if (actions > MAX_TXN_ACTIONS) throw problem(413, "too_large", "the suggestion touches too many pages to change in one step");
   try {
     await transact(ctx.ddb, ctx.cmds, ctx.table, { puts: [...fragment.puts, audit], deletes: fragment.deletes }, ctx.txnOpts);
   } catch (e) {
@@ -256,7 +265,7 @@ export async function proposalsAmend(c) {
   const body = isObj(c.body) ? c.body : {};
   const unknown = Object.keys(body).filter((k) => !BODY_FIELDS.has(k));
   if (unknown.length) throw problem(400, "validation", "the request is not valid", { errors: unknown.map((k) => ({ pointer: `/${k}`, detail: "not a field of this request" })) });
-  const guard = createRecordGuard({ dob: ctx.guardDob === true, log: ctx.log });
+  const guard = createRecordGuard({ dob: true, log: ctx.log });
   const target = prev.subject?.cls && prev.subject?.handle ? `${prev.subject.cls}:${prev.subject.handle}` : undefined;
   // parseRequest is POST /api/changes' own parser: shape, size caps, R-18 over the op text. `dry_run` only lifts the Idempotency-Key requirement.
   const parsed = parseRequest({ ...c, body: { ops: body.ops, ...(body.base_versions !== undefined ? { base_versions: body.base_versions } : {}), ...(body.note !== undefined ? { note: body.note } : {}), ...(target ? { target } : {}), dry_run: true } }, guard);
@@ -309,7 +318,7 @@ export async function createSystem(ctx, input = {}, { onSubmitted } = {}) {
   if (kind !== "create" && kind !== "edit") throw bad("/kind", "kind is create or edit");
   if (origin !== SYSTEM_ORIGIN) throw bad("/origin", `origin is ${SYSTEM_ORIGIN}`);
   if (typeof requestId !== "string" || !REQUEST_ID_RE.test(requestId)) throw bad("/requestId", "requestId is 1 to 64 letters, digits, _ or -");
-  const guard = createRecordGuard({ dob: ctx.guardDob === true, log: ctx.log });
+  const guard = createRecordGuard({ dob: true, log: ctx.log });
   const actor = { id: SYSTEM_PROPOSER.id, label: SYSTEM_PROPOSER.label, admin: true };
   const c = { actor, store: ctx, event: {}, body: { ops, base_versions: input.base_versions ?? {}, ...(input.note ? { note: input.note } : {}), ...(input.target ? { target: input.target } : {}), dry_run: true } };
   const req = { ...parseRequest(c, guard), route: "review", dry_run: false };
@@ -317,11 +326,13 @@ export async function createSystem(ctx, input = {}, { onSubmitted } = {}) {
 
   const key = `${SYSTEM_ORIGIN}:${requestId}`;
   const requestHash = contentHash({ kind, ops: req.ops, base_versions: req.base_versions, note: req.note ?? null, target: req.target ?? null });
+  const reqKeys = { PK: `PROPREQ#${requestId}`, SK: "META" };
   const replay = async () => {
-    const item = (await ctx.ddb.send(new ctx.cmds.GetCommand({ TableName: ctx.table, Key: idemKeys(SYSTEM_PROPOSER.id, key), ConsistentRead: true }))).Item;
+    const get1 = async (Key) => (await ctx.ddb.send(new ctx.cmds.GetCommand({ TableName: ctx.table, Key, ConsistentRead: true }))).Item;
+    const item = (await get1(idemKeys(SYSTEM_PROPOSER.id, key))) ?? (await get1(reqKeys)); // the IDEM# receipt expires; PROPREQ# does not
     if (!item) return null;
     if (item.requestHash !== requestHash) throw problem(422, "idempotency_mismatch", "that request id was used with a different suggestion");
-    return await loadProposal(ctx, item.result.body.id);
+    return await loadProposal(ctx, item.result?.body?.id ?? item.id);
   };
   const first = await replay();
   if (first) return first;
@@ -339,6 +350,7 @@ export async function createSystem(ctx, input = {}, { onSubmitted } = {}) {
   if (Buffer.byteLength(JSON.stringify(doc)) > MAX_PROPOSAL_BYTES) throw problem(413, "too_large", "the suggestion is too large");
   const puts = [
     idemPut({ principal: SYSTEM_PROPOSER.id, key, requestHash, result: { status: 201, body: { id: doc.id } }, at, nowMs }),
+    { item: { ...reqKeys, entity: "proposal_request", id: doc.id, requestHash }, condition: "attribute_not_exists(PK)", tag: "changes:proposal_request" },
     ...proposalPuts(doc),
     proposalAuditItem({ op: "proposal.create", id: doc.id, principalId: SYSTEM_PROPOSER.id, at, uid: ctx.uid(), table: ctx.table, after: { state: doc.state, rev: doc.rev, targets: doc.targets.length, origin: SYSTEM_ORIGIN } }),
   ];
