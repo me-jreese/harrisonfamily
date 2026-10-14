@@ -44,7 +44,7 @@ function validate(v, node, path = "#") {
     const types = [].concat(node.type);
     if (!types.some((t) => typeOk(v, t))) return [...errs, `${path}: expected ${types.join("/")}`];
   }
-  if (node.enum && !node.enum.includes(v)) errs.push(`${path}: not in enum`);
+  if (node.enum && !node.enum.some((e) => typeof e === typeof v && e === v)) errs.push(`${path}: not in enum`);
   if (typeof v === "string" && node.maxLength !== undefined && v.length > node.maxLength) errs.push(`${path}: too long`);
   if (typeof v === "number") {
     if (node.minimum !== undefined && v < node.minimum) errs.push(`${path}: below minimum`);
@@ -70,6 +70,11 @@ const check = (obj) => {
   if (!schema["x-gramps"].primary.includes(cls)) return [`#: _class ${cls} is not a primary class`];
   return validate(obj, schema.$defs[cls]);
 };
+// Expected-invalid set comes from the fixture census (rect_float), not a hard-coded pin. JSON.parse cannot
+// tell 10.0 from 10, so the float rule here relies on the fixture's literal 12.5 style values; the Python
+// checker (gramps/hfygramps/schema_check.py) rejects 10.0 too.
+const census = JSON.parse(read(join(repo, "gramps", "tests", "fixtures", "synthetic-tree.census.json")));
+const expectedInvalid = [...census.rect_float].sort();
 const hasFloatRect = (o) => (o.media_list || []).some((r) => r.rect && r.rect.some((c) => !Number.isInteger(c)));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const firstOf = (cls) => fixture.find((o) => o._class === cls);
@@ -94,13 +99,21 @@ describe("gramps schema golden", () => {
     expect(labels.tables.EventType.entries.length).toBe(47);
   });
 
-  it("validates every synthetic-tree object (the one deliberate float-rect object is refused)", () => {
-    const failing = fixture.filter((o) => check(o).length > 0);
+  it("validates every synthetic-tree object except the census rect_float objects, which fail on rect only", () => {
     expect(fixture.length).toBe(109);
-    expect(failing.length).toBe(1);
-    expect(hasFloatRect(failing[0])).toBe(true);
-    expect(check(failing[0]).every((e) => e.includes("/rect"))).toBe(true);
-    expect(fixture.filter((o) => !hasFloatRect(o)).every((o) => check(o).length === 0)).toBe(true);
+    const failing = fixture.filter((o) => check(o).length > 0).map((o) => o.gramps_id).sort();
+    expect(failing).toEqual(expectedInvalid);
+    for (const id of expectedInvalid) {
+      const obj = fixture.find((o) => o.gramps_id === id);
+      expect(hasFloatRect(obj)).toBe(true);
+      const errs = check(obj);
+      expect(errs.length).toBeGreaterThan(0);
+      expect(errs.every((e) => e.includes("/rect"))).toBe(true);
+    }
+  });
+
+  it("does not let a bool satisfy an integer enum", () => {
+    expect(validate(true, { type: "integer", enum: [1] })).not.toEqual([]);
   });
 
   it("refuses a wrong _class", () => {

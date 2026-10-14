@@ -34,8 +34,7 @@ GRAMPS_VERSION = "6.0.6"
 DB_SCHEMA = 21
 STEM = "gramps-" + GRAMPS_VERSION
 LOCALE = {"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "LANGUAGE": "en"}
-if __name__ == "__main__":
-    os.environ.update(LOCALE)
+os.environ.update(LOCALE)  # unconditional: a runner that imports this file as a module gets the pin too
 
 # The object classes of the schema (get_schema() classes that are not type tables).
 PRIMARY = ("Tag", "Note", "Source", "Repository", "Place", "Media", "Citation", "Event", "Person", "Family")
@@ -156,6 +155,9 @@ def build():
         if len(set(values)) != len(values):
             raise GenError(tname + ": duplicate values")
         tables[tname] = {"custom": cls._CUSTOM, "entries": entries}
+    first = {e["value"]: e["label"] for e in tables["EventType"]["entries"]}
+    if first.get(0) != "Custom" or first.get(-1) != "Unknown":
+        raise GenError("EventType labels are not English (got %r, %r); the locale pin failed" % (first.get(0), first.get(-1)))
     labels_doc = {"x-gramps": dict(meta, locale="en_US"), "tables": tables}
     return {
         STEM + ".schema.json": dump(schema_doc),

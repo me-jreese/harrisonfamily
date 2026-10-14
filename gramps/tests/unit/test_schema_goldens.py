@@ -106,10 +106,15 @@ class Goldens(unittest.TestCase):
                 names.update(a.name.split(".")[-1] for a in node.names)
                 if isinstance(node, ast.ImportFrom):
                     names.update((node.module or "").split("."))
-        banned = {"sqlite3", "open_database", "make_database", "DbState", "import_xml", "ImportXml", "load", "connect"}
+        banned = {"sqlite3", "open_database", "make_database", "DbState", "import_xml", "ImportXml", "load", "connect",
+                  "__import__", "eval", "exec", "importlib", "subprocess"}
         self.assertEqual(sorted(names & banned), [])
         self.assertIn("DbGeneric", names)  # imported only for its VERSION constant, never instantiated
-        self.assertNotIn("DbGeneric()", ast.dump(tree))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                self.assertNotEqual(called, "DbGeneric", "the generator must not instantiate DbGeneric")
 
 
 class Fixture(unittest.TestCase):
@@ -118,14 +123,19 @@ class Fixture(unittest.TestCase):
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
-    def test_every_fixture_object_validates_except_the_float_rect(self):
-        invalid = []
-        for obj in fixture():
-            errs = sc.validate_object(obj, SCHEMA)
-            if errs:
-                invalid.append((obj["gramps_id"], errs))
-        self.assertEqual(len(invalid), 1, invalid)
-        self.assertTrue(all("/rect: " in e for e in invalid[0][1]), invalid)
+    def test_every_fixture_object_validates_except_the_census_float_rects(self):
+        count, invalid, problems = sc.check_fixture(SCHEMA)
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(invalid), sc.expected_invalid_ids())
+        self.assertEqual(len(invalid), 1)
+        self.assertGreater(count, 100)
+
+    def test_enum_does_not_accept_bool_or_float_for_an_integer(self):
+        node = {"enum": [1, 2]}
+        self.assertEqual(sc.validate(1, node, {}), [])
+        self.assertTrue(sc.validate(True, node, {}))
+        self.assertTrue(sc.validate(1.0, node, {}))
+        self.assertTrue(sc.validate(10.0, {"type": "integer"}, {}))
 
     def test_wrong_class_fails(self):
         person = copy.deepcopy(first("Person"))
@@ -155,10 +165,10 @@ class Fixture(unittest.TestCase):
                 ref["rect"] = [10.5, 10, 40, 40]
         self.assertTrue(any("/rect" in e for e in sc.validate_object(mutated, SCHEMA)))
 
-    def test_exactly_one_fixture_object_carries_a_float_rect(self):
+    def test_census_rect_float_matches_the_objects_that_carry_a_float_rect(self):
         floats = [o["gramps_id"] for o in fixture()
                   if any(isinstance(c, float) for r in o.get("media_list", []) if r.get("rect") for c in r["rect"])]
-        self.assertEqual(len(floats), 1)
+        self.assertEqual(sorted(floats), sc.expected_invalid_ids())
 
 
 APP = os.environ.get("HFY_GRAMPS_APP", "/Applications/Gramps.app")

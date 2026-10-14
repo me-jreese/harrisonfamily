@@ -20,6 +20,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 SCHEMA_DIR = os.path.join(REPO, "gramps", "schema")
 STEM = "gramps-6.0.6"
 JSONL = os.path.join(REPO, "gramps", "tests", "fixtures", "synthetic-tree.jsonl")
+CENSUS = os.path.join(REPO, "gramps", "tests", "fixtures", "synthetic-tree.census.json")
 
 ANNOTATIONS = {"title", "$schema", "x-gramps", "$defs"}
 KEYWORDS = {"type", "enum", "properties", "additionalProperties", "required", "items", "minItems", "maxItems",
@@ -83,7 +84,7 @@ def validate(value, node, root, path="#"):
         types = node["type"] if isinstance(node["type"], list) else [node["type"]]
         if not any(_type_ok(value, t) for t in types):
             return errs + ["%s: expected %s" % (path, "/".join(types))]
-    if "enum" in node and value not in node["enum"]:
+    if "enum" in node and not any(type(value) is type(e) and value == e for e in node["enum"]):
         errs.append("%s: %r not in enum" % (path, value))
     if isinstance(value, str) and "maxLength" in node and len(value) > node["maxLength"]:
         errs.append("%s: longer than %d" % (path, node["maxLength"]))
@@ -121,12 +122,41 @@ def validate_object(obj, schema):
     return validate(obj, schema["$defs"][cls], schema)
 
 
-def is_float_rect_case(obj, errors):
-    """The fixture's one deliberate hostile input: a MediaRef rect holding floats, which get_schema()
-    (integer coordinates) rejects. The sync design keeps it to prove the validators refuse it."""
-    refs = obj.get("media_list") or []
-    floats = any(isinstance(c, float) for r in refs if r.get("rect") for c in r["rect"])
-    return floats and bool(errors) and all("/rect: " in e for e in errors)
+def expected_invalid_ids(census_path=CENSUS):
+    """gramps_ids the fixture census marks as deliberate float-rect hostile input (census key rect_float).
+    The expected-invalid set is derived from the census, not hard-coded, so a fixture change that adds a
+    second hostile object updates one place."""
+    with open(census_path, encoding="utf-8") as fh:
+        return sorted(json.load(fh)["rect_float"])
+
+
+def only_rect_errors(errors):
+    """True when the schema refused the object for its MediaRef rect and nothing else."""
+    return bool(errors) and all("/rect: " in e or "/rect/" in e for e in errors)
+
+
+def check_fixture(schema, jsonl=JSONL, census_path=CENSUS):
+    """Validate every fixture object. Return (count, invalid, problems): invalid maps gramps_id -> errors
+    for the census-listed float-rect objects, which must fail with rect errors only; every other object
+    must validate."""
+    want = set(expected_invalid_ids(census_path))
+    invalid, problems, count = {}, [], 0
+    with open(jsonl, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            count += 1
+            obj = json.loads(line)
+            errs = validate_object(obj, schema)
+            gid = obj.get("gramps_id")
+            if gid in want:
+                if only_rect_errors(errs):
+                    invalid[gid] = errs
+                else:
+                    problems.append("line %d: %s is census rect_float but fails with %r" % (n, gid, errs))
+            else:
+                problems += ["line %d: %s" % (n, e) for e in errs]
+    for gid in sorted(want - set(invalid)):
+        problems.append("census rect_float object %s was not refused" % gid)
+    return count, invalid, problems
 
 
 def main():
@@ -135,20 +165,10 @@ def main():
     meta = schema["x-gramps"]
     if (meta["gramps_version"], meta["db_schema"]) != ("6.0.6", 21):
         problems.append("schema records %r" % meta)
-    count = 0
-    float_rects = []
-    with open(JSONL, encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            count += 1
-            obj = json.loads(line)
-            errs = validate_object(obj, schema)
-            if is_float_rect_case(obj, errs):
-                float_rects.append(obj["gramps_id"])
-                continue
-            problems += ["line %d: %s" % (n, e) for e in errs]
-    if len(float_rects) != 1:
-        problems.append("expected exactly one float-rect object, found %r" % float_rects)
-    print("%d fixture objects checked (%d expected-invalid float rect), %d problems" % (count, len(float_rects), len(problems)))
+    count, invalid, more = check_fixture(schema)
+    problems += more
+    print("%d fixture objects checked (%d census rect_float expected invalid), %d problems"
+          % (count, len(invalid), len(problems)))
     for p in problems:
         print("  " + p, file=sys.stderr)
     return 1 if problems else 0
