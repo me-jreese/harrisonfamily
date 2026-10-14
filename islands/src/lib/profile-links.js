@@ -10,6 +10,25 @@ export const SECTION_TITLE = "links";
 export const EDIT_LINKS = "edit links";
 export const ADD_LINKS = "add your links";
 
+/** The admin's clear-only control on someone else's links (HFY-TSK-329; surfaces 6.3: an admin may only clear). */
+export const CLEAR_COPY = Object.freeze({
+  clear: "clear links",
+  ask: "clear all of their links? only they can add them back.",
+  confirm: "yes, clear them",
+  cancel: "cancel",
+  clearing: "clearing…",
+  done: "links cleared.",
+  conflict: "someone changed these a moment ago. here's the latest.",
+  failed: "that didn't work. try again."
+});
+
+/** The PUT body that clears every stored platform: `null` per set platform, at the version the admin read. */
+export function clearBody(links, version) {
+  const out = {};
+  for (const p of PLATFORMS) if (links && links[p]) out[p] = null;
+  return { links: out, version };
+}
+
 /** The editor's words (DS voice: lowercase, no exclamation marks). */
 export const EDITOR_COPY = Object.freeze({
   title: "your links",

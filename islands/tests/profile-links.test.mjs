@@ -66,3 +66,10 @@ test("chips drop anything that is not an https URL (stored data is not trusted)"
 test("editor copy has no exclamation marks and is lowercase", () => {
   for (const [k, v] of Object.entries(EDITOR_COPY)) assert.ok(!v.includes("!") && v === v.toLowerCase(), k);
 });
+
+import { clearBody } from "../src/lib/profile-links.js";
+test("clearBody sends null for every set platform at the read version, and nothing for unset ones", () => {
+  assert.deepEqual(clearBody({ instagram: { url: "u", handle: "h" }, website: { url: "w", host: "x" } }, 4), { links: { instagram: null, website: null }, version: 4 });
+  assert.deepEqual(clearBody({}, 0), { links: {}, version: 0 });
+  assert.deepEqual(clearBody(undefined, 2), { links: {}, version: 2 });
+});
