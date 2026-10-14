@@ -168,3 +168,40 @@ test("a union without a partners array (older schema, hand-built data) does not 
   const m = navigatorModel(loose, "N1");
   assert.deepEqual(m.siblings.map((c) => c.id), ["N2"]);
 });
+
+// ---- HFY-TSK-299 (viz-mvp-visual-desktop): the grandparents row and the panel's counts, on tests/fixtures/tree-graph-wide.json ----
+
+const wide = parseGraph(readFileSync(new URL("./fixtures/tree-graph-wide.json", import.meta.url), "utf8"));
+
+test("grandparents: two slots for each recorded parent, in the parent's order, and a placeholder slot (null) for each one not recorded", () => {
+  const m = navigatorModel(wide, "I7100");
+  assert.equal(m.grandparents.message, null);
+  assert.equal(m.grandparents.cards.length, 4);
+  assert.deepEqual(m.grandparents.cards.map((c) => c && c.id), ["I7103", "I7104", "I7105", null]);
+  assert.equal(m.grandparents.cards[0].label, "Rex Ashby, grandfather, 1898 to 1960");
+  assert.equal(m.grandparents.cards[1].role, "grandmother");
+});
+
+test("grandparents: never more than four slots; a parent with nobody recorded above them is two placeholders", () => {
+  const messyRobin = navigatorModel(g, "I8001");
+  assert.deepEqual(messyRobin.grandparents.cards, [null, null, null, null]);
+  for (const id of ["I7100", "I7101", "I7130"]) assert.ok(navigatorModel(wide, id).grandparents.cards.length <= 4);
+});
+
+test("grandparents: no recorded parent is a plain line, and one recorded parent gives that parent's two slots only", () => {
+  const orphan = navigatorModel(wide, "I7103");
+  assert.deepEqual(orphan.grandparents.cards, []);
+  assert.equal(orphan.grandparents.message, COPY.grandparentsNone);
+  // Ola Reed has one recorded parent (Mae Reed), who has no recorded parents: two placeholders, no guessed second parent
+  const one = navigatorModel(g, "I8030");
+  assert.deepEqual(one.grandparents.cards, [null, null]);
+});
+
+test("detailsModel counts: parents, then partners and children, with a plain line when nothing is recorded", () => {
+  assert.deepEqual(detailsModel(wide, "I7100").counts, ["2 parents", "2 partners, 12 children"]);
+  assert.deepEqual(detailsModel(wide, "I7101").counts, ["2 parents", "1 partner, 6 children"]);
+  assert.deepEqual(detailsModel(wide, "I7102").counts, ["1 parent", "1 partner, 6 children"]);
+  assert.deepEqual(detailsModel(wide, "I7103").counts, [COPY.parentsNone, "1 partner, 1 child"]);
+  assert.deepEqual(detailsModel(wide, "I7105").counts, [COPY.parentsNone, "1 child"]);
+  assert.deepEqual(detailsModel(wide, "I7150").counts, [COPY.parentsNone, COPY.noUnions]);
+});
