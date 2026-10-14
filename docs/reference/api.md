@@ -36,6 +36,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
+| [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
 | [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
@@ -383,7 +384,7 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - **Create.** A `parentId`, if given, must name a comment in the same thread, otherwise `404`. Any comment can be a parent, so replies can nest. Returns `201`.
 - **Edit.** Author only. If the trimmed text equals the stored body, the comment is returned unchanged with no write. Otherwise the body is replaced and `edited_at` is set.
 - Create and edit run the [contact-information guard](#contact-information-guard) on `body` as sent, before the unchanged-body shortcut and before any write.
-- **Delete.** Author or admin. Returns `204`. The comment and every reaction on it are deleted in one transaction with the audit item. Replies are not deleted and keep their `parentId`. A DynamoDB transaction holds at most 100 actions, so a comment with more than 98 reactions cannot be deleted. See [Permissions](#permissions) for `reason`.
+- **Delete.** Author or admin. Returns `204`. The comment and every reaction on it are deleted in one transaction with the audit item. Replies are not deleted and keep their `parentId`. The same transaction revokes the comment's credit, if it has one: its event delete and five counter updates ([Contributions ledger](#contributions-ledger)). A DynamoDB transaction holds at most 100 actions, so a credited comment with more than 92 reactions cannot be deleted, nor a comment from before the ledger (which has no event) with more than 98. Such a delete is `500 server` and changes nothing. See [Permissions](#permissions) for `reason`.
 - A create, edit or delete transaction cancelled by a failed condition, such as an edit that races another edit or a delete, is `409 conflict` ("comment changed concurrently"). One that stays cancelled by `TransactionConflict` after its retries is `503 busy`. Any other store failure is `500 server`.
 - On a `post:<ulid>` thread, list, create, edit and react first check that the caller can see the post ([Subjects](#subjects)).
 
@@ -533,7 +534,7 @@ From `createLinks` in [`links.js`](../../api/src/links.js). The owner is the mem
 
 The API's items in the `hfy-app` table. The table definition and the auth edge's items are in [System architecture](architecture.md#dynamodb-table-hfy-app).
 
-The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), profile links items ([`links.js`](../../api/src/links.js)), audit items ([`txn.js`](../../api/src/txn.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
+The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), profile links items ([`links.js`](../../api/src/links.js)), audit items ([`txn.js`](../../api/src/txn.js)), contribution events and counters ([`contrib.js`](../../api/src/contrib.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
 
 What the items hold:
 
@@ -543,8 +544,31 @@ What the items hold:
 - Profile links items (`PLINKS#<gramps-id>` / `META`), one per person, carry `entity: "plinks"`, `links` (as in [Links object](#links-object)), `version`, `updatedAt` and `updatedBy` (the member id of the last writer). A person whose links were never written has no item.
 - Audit items are listed under [Audit records](#audit-records).
 - Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post attaches the upload, then `attached` (the post id) instead of `ttl`. See [Upload binding](#upload-binding).
+- Contribution events and counters are listed under [Contributions ledger](#contributions-ledger). A credited post or comment carries `contrib: { id }`, the id of its event, on every stored copy.
 
 Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<id>` / `META`) and `gsiThread`. Neither is used, because comments live under `THREAD#<subject>` ([item layout](architecture.md#item-layout)).
+
+## Contributions ledger
+
+[`contrib.js`](../../api/src/contrib.js) credits members for what they add, and takes the credit back when it is deleted. Each credit is an event under `CONTRIB#<principal>` plus five counter updates, and they commit in the same `TransactWriteItems` call as the write that earned them ([item layout](architecture.md#item-layout)). The ledger is written whatever the `contribV1` flag says; the flag only gates the routes that read it.
+
+| Write | Ledger change |
+| --- | --- |
+| Comment create | Credit 1 (`kind: comment`). The stored comment gets `contrib: { id }`. |
+| Comment delete, by its author or an admin | Revoke the event of the comment's author. |
+| Post created published, or a draft's first publish | Credit 1 plus 1 per image attachment (`kind: post`), once per post. All three post items get `contrib: { id }`. A post with 3 photos adds 4. |
+| Withdraw, or return to draft | The event is hidden. No count changes. |
+| Republish | The event is shown again. No count changes. |
+| Post delete, by its author or an admin | Revoke the event of the post's author. |
+| Post delete, for each comment removed with the post | Revoke each comment's event. The revokes of one transaction are merged, so 30 comments by one author in one month are one decrement per counter key. |
+
+Not counted: edits of posts and comments (so photos added to a published post by a later edit earn nothing: the photo credit is fixed at first publish, and a delete returns exactly what was credited), reactions, drafts, and desktop pushes. A comment made through an MCP tool is credited like any other and its event carries `via: "mcp"`; HTTP calls carry `via: "ui"`. An MCP post is always a draft, so it earns nothing until a person publishes it. A write that the R-18 guard or the upload binding refuses stores nothing, so it earns nothing: the guard runs before the transaction, and the upload bindings commit in the same transaction as the credit.
+
+An event is `{ entity: "contrib", id, kind, actor: { id, label }, at, weight, photos, via, ref: { type, id, thread? }, subject?, hidden? }`. It copies no body text. `weight` is what the event adds to `n`: 1 for the kind plus `photos`. The counter rows hold `n`, `n_<kind>` for `post`, `comment`, `proposal_accepted`, `self_edit`, `tag` and `photo_to_record`, `n_photo`, and on `TOTAL` rows `first_at`. Readers clamp a negative value to 0, because revoking a credit whose `D#` row has already expired leaves a negative row that expires within days.
+
+The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. `contribOps` yields six writes for one credit: the event Put and the five counter updates. The caller adds the seventh, the `contrib: { id }` link on the item it writes, and a `self_edit` adds a daily `CAP#` marker Put. They return `{ puts, deletes, updates, checks }` fragments that a caller merges into its own `transact()` call. Credits for proposals, self-edits, tags and photo graduation are added by the code that owns those writes, through the same builders.
+
+A withdraw or republish hides or shows the event only if it exists, so a post whose event is missing still changes visibility; the backfill repairs that orphan. If a comment's author deletes it while a thread purge is running, the purge re-reads its events and commits the batch once more, so the revoke happens once. Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
 
 ## Audit records
 

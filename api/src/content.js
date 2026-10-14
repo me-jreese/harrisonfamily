@@ -6,6 +6,7 @@ import { postKeys, gsiPosts, gsiAuthor, gsiSubject } from "./keys.js";
 import { TxnCancelled, auditItem, transact, queryPartition, versionGuard } from "./txn.js";
 import { IMAGE_TYPES, UPLOAD_PREFIX, UPLOAD_PURPOSE_POST, uploadKeys } from "./uploads.js";
 import { createGuard, pointer } from "./guard.js";
+import { contribOps, emptyOps, getEvent, hideOps, mergeOps, revokeOps } from "./contrib.js";
 
 const hash = (s) => {
   let h = 5381;
@@ -82,8 +83,9 @@ function checkSize(post) {
  * `guard` is src/guard.js createGuard() (the R-18 check on body, title and alt; contact kinds only unless the DOB switch is on).
  * `checkUpload(key)` is upload-guard.js checkLocation bound to the media bucket: it resolves `{contentType}` or throws 400
  * photo_has_location / upload_missing. Without it, a post cannot take a new attachment (fail closed).
+ * `via` is the origin stamped on a contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
  */
-export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload }) {
+export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload, via = "ui" }) {
   const base = String(mediaPublicBase ?? "").replace(/\/+$/, "");
   const requireActor = () => {
     if (!actor) throw new ContentError("forbidden", "sign in to write");
@@ -169,7 +171,21 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
    * `updated_at` that `before` was read with, so a concurrent change cancels this write (409 conflict) instead of being
    * silently overwritten, and the audit `before` is exactly the state this write replaced.
    */
-  async function commit(op, id, before, after, at, { create = false, updates = [] } = {}) {
+  /**
+   * The post credit (D2-17): 1 for the post plus 1 per image, counted once per post at its first publish: the caller stores `post.contrib`
+   * from the result. Photos added by a later edit are not credited, and a delete revokes the stored event, so it returns exactly what was credited.
+   */
+  const creditPost = (post, at) =>
+    contribOps({
+      actor: { id: post.author.id, label: post.author.label }, kind: "post", ref: { type: "post", id: post.id },
+      ...(post.subject ? { subject: post.subject } : {}), photos: (post.attachments ?? []).filter((a) => a.kind === "image").length, at, via, uid,
+    });
+
+  /**
+   * `updates` are the UPLOAD# bindings (bindUploads). `ops` is a contrib.js fragment (credit, revoke or hide): its event and counter
+   * writes ride in this transaction with the bindings, so the ledger never disagrees with the post.
+   */
+  async function commit(op, id, before, after, at, { create = false, updates = [], ops = emptyOps() } = {}) {
     const who = requireActor();
     const entry = auditEntry(op, id, who.id, before, after, at);
     const mainCondition = create ? { condition: "attribute_not_exists(PK)" } : versionGuard("post", "updated_at", before.updated_at);
@@ -185,7 +201,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     }
     puts.push({ item: auditItem(entry, uid(), table) });
     try {
-      await transact(ddb, cmds, table, { puts, deletes, updates });
+      await transact(ddb, cmds, table, mergeOps({ puts, deletes, updates }, ops));
     } catch (e) {
       // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
       // @io-kit/content has no busy code, so busy is the API's HttpError: errorResponse answers it 503 for HTTP, and the MCP core reports any thrown Error's message as the tool error ("busy, try again").
@@ -252,9 +268,12 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
         ...(present(input.ref) ? { ref: input.ref } : {}),
       };
       guard("posts", "create", postTextFields(post)); // R-18: 422 contact_info / dob_not_allowed, nothing stored
+      // Published at once: the post is a contribution from this write on. A draft is credited when it is first published.
+      const credit = post.visibility === "published" ? creditPost(post, at) : undefined;
+      if (credit) post.contrib = { id: credit.event.id };
       checkSize(post);
       const updates = await bindUploads(post.id, post.attachments);
-      await commit("create", post.id, null, post, at, { create: true, updates });
+      await commit("create", post.id, null, post, at, { create: true, updates, ...(credit ? { ops: credit } : {}) });
       return view(post);
     },
     async update(id, patch) {
@@ -286,13 +305,27 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       if (current.visibility === visibility) return view(current);
       const before = structuredClone(current);
       const next = { ...current, visibility, updated_at: new Date(now()).toISOString() };
-      await commit("visibility", id, before, next, next.updated_at);
+      // First publish credits the post once; a withdraw (or a return to draft) hides its feed entry and a republish shows it
+      // again with no new count (D2-17).
+      let ops;
+      if (visibility === "published" && !current.contrib) {
+        ops = creditPost(next, next.updated_at);
+        next.contrib = { id: ops.event.id };
+      } else if (current.contrib && (visibility === "published") !== (current.visibility === "published")) {
+        // Hide only an event that exists: a post whose event is missing (an orphan link the backfill repairs) must still withdraw and
+        // republish, not fail with a 409 on the hide's condition.
+        const event = await getEvent({ ddb, cmds, table }, current.author.id, current.contrib.id);
+        if (event) ops = hideOps({ actor: current.author, id: current.contrib.id }, visibility !== "published");
+      }
+      await commit("visibility", id, before, next, next.updated_at, ops ? { ops } : {});
       return view(next);
     },
     async delete(id) {
       const current = await visible(id);
       if (!computeCan(current, actor).delete) throw new ContentError("forbidden", "not allowed to delete", { id });
-      await commit("delete", id, structuredClone(current), null, new Date(now()).toISOString());
+      // Deletes revoke the credit, whoever deletes (an admin's delete takes it from the author): the event sits under the author.
+      const event = current.contrib ? await getEvent({ ddb, cmds, table }, current.author.id, current.contrib.id) : undefined;
+      await commit("delete", id, structuredClone(current), null, new Date(now()).toISOString(), event ? { ops: revokeOps(event) } : {});
     },
   };
   return self;
