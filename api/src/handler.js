@@ -19,6 +19,7 @@ import { syncContext } from "./sync/guard.js";
 import { editingOn } from "./records/edit-bundle.js";
 import { circleIds, loadProposal, visibleProposal } from "./records/proposal-store.js";
 import { isPersonWithdrawn } from "./sync/store.js";
+import { createAccessRequests } from "./access-requests.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -104,12 +105,22 @@ export function createHandler(deps) {
       })(event);
     const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, ddb, cmds, table, now, bucket: mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
     const accessRequestCount = () => countPendingAccessRequests({ ddb, cmds, table });
+    // HFY-TSK-141: the access-request admin domain. It also supplies the approval's completeAccessRequest hook (a person.create proposal that came from
+    // a request links it in the approval's own transaction) unless a test or index.js wired its own.
+    const accessRequests = deps.accessRequests ?? createAccessRequests({
+      ddb, cmds, table, now, uid, log, txnOpts: deps.txnOpts, mailer: deps.mailer, notify: notifier.notify, getAdmins: deps.getAdmins, isOwner: deps.isOwner,
+      personFacts: deps.personFacts, readEntries: deps.readEntries, guardDob: deps.guardDob === true,
+    });
+    if (deps.completeAccessRequest === undefined) {
+      store.completeAccessRequest = accessRequests.completeAccessRequest;
+      store.afterCompleteAccessRequest = accessRequests.afterComplete;
+    }
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { store, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    return { store, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**

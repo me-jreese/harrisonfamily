@@ -9,13 +9,14 @@
 //   3. DynamoDB error: the S3 resolver's answer (a hit admits, a miss is null). If S3 also fails the call rejects, which denies.
 // With no ALLOW# item anywhere this behaves exactly like the S3 resolver, which is why the resolver deploys dark.
 import { normalizeEmail } from "@io-kit/auth";
-import { allowPrincipal, isActiveAllowItem, readAllowEntry } from "./shared/allowlist-store.mjs";
+import { allowPrincipal, isAllowedNow, readAllowEntry } from "./shared/allowlist-store.mjs";
 
 /**
- * `s3(email, provider)` is the kit's S3 PrincipalResolver. `ddb.send` and `cmds` are the lib-dynamodb DocumentClient and its command
+ * `s3(email, provider)` is the kit's S3 PrincipalResolver. A held second email (`effectiveAt` ahead, shared/allowlist-store.mjs) is not signed in
+ * until its time comes, and is not read through the S3 file either: the item overrides the file, so a held email is denied. `ddb.send` and `cmds` are the lib-dynamodb DocumentClient and its command
  * classes; `table` is the app table.
  */
-export function createCompositeResolver({ s3, ddb, cmds, table, log = console }) {
+export function createCompositeResolver({ s3, ddb, cmds, table, log = console, now = () => Date.now() }) {
   return async (rawEmail, provider) => {
     const email = normalizeEmail(String(rawEmail ?? ""));
     let item;
@@ -26,7 +27,7 @@ export function createCompositeResolver({ s3, ddb, cmds, table, log = console })
       log.error?.("allowlist table unavailable (the S3 file decides)", e instanceof Error ? e.name : "error");
       return s3(email, provider);
     }
-    if (item) return isActiveAllowItem(item) ? allowPrincipal(item, email) : null; // a DynamoDB item wins over the S3 file, active or revoked
+    if (item) return isAllowedNow(item, now()) ? allowPrincipal(item, email) : null; // a DynamoDB item wins over the S3 file, active or revoked
     return s3(email, provider);
   };
 }
