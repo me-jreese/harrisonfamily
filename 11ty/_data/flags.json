@@ -8,6 +8,7 @@
   "navMe": true,
   "notifyV2": true,
   "personV2": true,
+  "photoTagEdit": false,
   "photoTags": false,
   "postsV2": true,
   "profileLinks": false,

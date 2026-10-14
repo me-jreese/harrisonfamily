@@ -1,1 +1,0 @@
-import{b as n}from"./chunk-ZIKLJ5JR.js";var a=e=>n(e),o=(e,t)=>/^\/person(\/(index\.html)?)?$/.test(e.pathname)&&new URLSearchParams(e.search).get("id")===t,p=(e,t)=>t&&o(e,t)?a(t):e.pathname;export{a,p as b};
