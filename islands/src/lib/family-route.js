@@ -2,8 +2,10 @@
 // and what the nav matches its routes against. Pure functions, no DOM access of their own (the shell passes window.location), so
 // tests/family-route.test.mjs runs them in node.
 
+import { personPath } from "./person-name.js";
+
 /** The member's own page: /person/?id=<sub> (the edge session's sub is the gramps id); the account menu's "your page" is the same URL. */
-export const ownRoute = (sub) => `/person/?id=${encodeURIComponent(sub)}`;
+export const ownRoute = (sub) => personPath(sub);
 // True on that page only. Another person's page (/person/?id=<someone else>) is nobody's tab: it is reached from the tree, a search
 // or a link, so no item is marked there (marking the own-page tab would say it is the member's own page, marking "search" would guess
 // how they arrived). The id is compared exactly, as the person data keys are.

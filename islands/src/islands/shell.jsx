@@ -12,6 +12,7 @@ import { navPathname, ownRoute } from "../lib/family-route.js";
 import { SETTINGS_ROUTE, navItems, onSettings } from "../lib/nav.js";
 import { signOut } from "../lib/sign-out.js";
 import { SLOT_ORDER, barSlots } from "../lib/bar-slots.js";
+import { PersonName } from "../lib/person-name.jsx";
 // The page's edge session (HFYFeatureFlags.edgeSession, one GET /auth/session per page) and the "signed in" rule, shared with the
 // settings hub: undefined while pending, null when authV2 is off or /auth/session is unreachable, else {authenticated, sub, label}.
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
@@ -116,7 +117,8 @@ function Account({ notifyV2, navMe }) {
       <button type="button" className="hfy-account__btn" aria-label={`you're signed in as ${label}`} aria-haspopup="dialog" data-hfy-account="signed-in" data-slot="account" onClick={() => setOpen(true)}>
         <span className="hfy-avatar" aria-hidden="true">{initial}</span>
       </button>
-      <Sheet open={open} onClose={() => setOpen(false)} side={bp === "compact" ? "bottom" : "right"} title={label} closeLabel="close" className="hfy-account">
+      {/* The sheet's title is the member's name, a link to their own page like every listed name (HFY-TSK-323, ruling P2-R46). */}
+      <Sheet open={open} onClose={() => setOpen(false)} side={bp === "compact" ? "bottom" : "right"} title={<PersonName id={session.sub} name={label} />} closeLabel="close" className="hfy-account">
         <ul className="hfy-account__list">
           <li><a className="hfy-account__item" href={ownRoute(session.sub)}>your page</a></li>
           {/* navMe: the notification settings move into the hub, which the sheet opens as "settings" */}

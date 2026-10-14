@@ -2,6 +2,7 @@
 // Seeded from the signed-session assets /person/index.json (manifest) + /person/search-index.json. The old Lunr page is gone (HFY-TSK-317).
 import { createLocalEngine } from "@io-kit/search";
 import { cleanText } from "../../../shared/validate.mjs"; // repo-root shared/ (pure ESM, also staged into the api and auth zips)
+import { personPath } from "./person-name.js";
 
 const MANIFEST_URL = "/person/index.json";
 const INDEX_URL = "/person/search-index.json";
@@ -124,5 +125,5 @@ function engine() {
 /** SearchLauncher `suggest`: instant local suggestions linking straight to /person/?id=. */
 export async function suggestPeople(text) {
   const eng = await engine();
-  return eng.suggest(text, 6).map((r) => ({ id: r.id, title: r.title, subtitle: r.fields.lifespan || undefined, href: "/person/?id=" + encodeURIComponent(r.id) }));
+  return eng.suggest(text, 6).map((r) => ({ id: r.id, title: r.title, subtitle: r.fields.lifespan || undefined, href: personPath(r.id) }));
 }
