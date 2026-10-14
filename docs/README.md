@@ -62,7 +62,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Refresh `11ty/` from the Eleventy source without losing E5 files](how-to/refresh-the-eleventy-output.md) — promote new Eleventy output while keeping the repo-owned files, then rebuild the islands over it.
 - [Publish a change to the HFYAppendIndex CloudFront Function](how-to/publish-the-cloudfront-function.md) — test, dry-run, publish and roll back `scripts/cloudfront/append-index.js`.
 - [Run the test suites](how-to/run-the-tests.md) — run each suite with its prerequisites, and know which ones reach production.
-- [Regenerate the Gramps goldens](how-to/regenerate-the-gramps-goldens.md) — rebuild the values Gramps 6.0.6 computes for dates and birth and death indexes, compare them byte for byte, and check them without Gramps.
+- [Regenerate the Gramps goldens](how-to/regenerate-the-gramps-goldens.md) — rebuild the values Gramps 6.0.6 computes for dates, birth and death indexes, and the relationship scenarios, compare them byte for byte, and check them without Gramps.
 - [Change the CI pipeline](how-to/change-the-ci-pipeline.md) — edit `ci.manifest.yaml`, re-render the workflows and check for drift.
 
 ### Operate and maintain
