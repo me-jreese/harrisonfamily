@@ -55,7 +55,8 @@
 
 /* Touch (HFY-TSK-300): the element handles no touch event of its own. pan-y leaves a vertical drag, which starts on a card as often as not, to
    the page; the three things that scroll sideways (the children row, the brothers and sisters row and the tabs) say so themselves, and their
-   scrolling is the browser's. A page that scrolls vertically under a finger is what the element must never take away. */
+   scrolling is the browser's. (The brothers and sisters row shares .hfy-nav__row, and was already a scroll-snap row, so it is a deliberate
+   widening of the AC's "children row and the union tabs": the page still never scrolls sideways.) A page that scrolls vertically under a finger is what the element must never take away. */
 family-navigator { display: block; min-width: 0; max-width: 100%; touch-action: pan-y; }
 .hfy-nav { box-sizing: border-box; min-width: 0; max-width: 100%; }
 .hfy-nav__title { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -136,7 +137,7 @@ family-navigator { display: block; min-width: 0; max-width: 100%; touch-action: 
 .hfy-nav__row > .hfy-nav__item { flex: 0 0 auto; width: calc(var(--io-space-9) * 2.5); scroll-snap-align: start; }
 
 /* The six movement buttons: to parents, to children, previous and next sibling, previous and next partner family. Two to a line on a phone, all six
-   on one line from 43rem. A button with nowhere to go is dimmed (aria-disabled) and stays in the tab order. */
+   on one line from 43rem. A button with nowhere to go is dimmed (aria-disabled) and stays in the tab order. Coupling: islands/src/islands/tree.css reserves this block's height in the loading skeleton (3 rows of tap targets on a phone, 1 from 43rem); change the row count in both. */
 .hfy-nav__moves { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--io-space-2); margin: var(--io-space-3) 0 0; }
 @media (min-width: 43rem) { .hfy-nav__moves { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .hfy-tree .hfy-nav__move {

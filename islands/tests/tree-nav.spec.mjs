@@ -103,7 +103,7 @@ test("375: a button with nowhere to go does nothing, and keeps the keyboard wher
   await expect(move(page, "next-union")).toHaveAttribute("aria-disabled", "true");
 });
 
-test("375: tapping a card re-centres, ?focus follows, and a bad Back/forward sequence stays in step", async ({ page }) => {
+test("375: tapping a card re-centres, ?focus follows, and Back, forward and reload stay in step", async ({ page }) => {
   await open(page);
   await card(page, "I8004").click();
   await expect(focusName(page)).toHaveText("Pip Quill");
@@ -114,6 +114,44 @@ test("375: tapping a card re-centres, ?focus follows, and a bad Back/forward seq
   await expect(focusName(page)).toHaveText("Pip Quill");
   await page.reload({ waitUntil: "domcontentloaded" }); // ?focus alone restores it
   await expect(focusName(page)).toHaveText("Pip Quill");
+});
+
+test("375: a new re-centre after Back drops the old forward entry, and an unknown ?focus is replaced by the person shown", async ({ page }) => {
+  await open(page);
+  await card(page, "I8004").click();
+  await expect(focusName(page)).toHaveText("Pip Quill");
+  await page.goBack();
+  await expect(focusName(page)).toHaveText("Robin Quill");
+  await card(page, "I8005").click(); // a new push: Pip's forward entry is gone
+  await expect(focusName(page)).toHaveText("Kit Quill");
+  expect(await page.goForward()).toBeNull();
+  await expect(focusName(page)).toHaveText("Kit Quill");
+  await page.goBack();
+  await expect(focusName(page)).toHaveText("Robin Quill");
+  // an unknown ?focus: the page shows someone and the address agrees, so Back after one re-centre lands on that person (not the bad id)
+  await page.goto("/tree/?focus=NOT-A-PERSON", { waitUntil: "domcontentloaded" });
+  await expect(nav(page).locator(".hfy-nav__card--focus")).toBeVisible();
+  const shown = await nav(page).locator(".hfy-nav__card--focus").getAttribute("data-person");
+  await expect.poll(() => focusParam(page)).toBe(shown);
+  const other = await nav(page).locator("button[data-person]:not(.hfy-nav__card--focus)").first().getAttribute("data-person");
+  await nav(page).locator(`button[data-person='${other}']`).first().click();
+  await expect.poll(() => focusParam(page)).toBe(other);
+  await page.goBack();
+  await expect.poll(() => focusParam(page)).toBe(shown);
+  expect(focusParam(page)).not.toBe("NOT-A-PERSON");
+});
+
+test("375: after the keyboard has been in the cards, Back puts focus on the page's heading, not on the cards", async ({ page }) => {
+  await open(page);
+  await card(page, "I8001").focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => focusParam(page)).toBe("I8005");
+  await expect(nav(page).locator(".hfy-nav__card--focus")).toBeFocused(); // keyboard re-centre: the card keeps the keyboard
+  await page.goBack(); // the browser's Back is the page's re-centre, even though focus is still inside the element
+  await expect.poll(() => focusParam(page)).toBe("I8001");
+  await expect(page.locator("#hfy-tree-focus-name")).toBeFocused();
+  await expect(page.locator("#hfy-tree-focus-name")).toHaveText("Robin Quill");
 });
 
 test("1280: the same six buttons sit on one line above the grid and re-centre", async ({ page }) => {
@@ -310,6 +348,18 @@ test("an arrow key with no card to go to is left to the page (not prevented, so 
   expect(await keydown(".hfy-nav__card--focus", "Enter")).toBe(false); // the button's own
 });
 
+test("375: Shift+Arrow still moves between the union tabs (as before), but does not walk the cards", async ({ page }) => {
+  await open(page);
+  const tabs = nav(page).locator("[role=tab]");
+  expect(await tabs.count()).toBeGreaterThan(1);
+  await tabs.first().focus();
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+  await card(page, "I8004").focus();
+  await page.keyboard.press("Shift+ArrowDown");
+  expect(await activeId(page)).toBe("I8004"); // a shifted arrow is not the card walk
+});
+
 test("375: Enter and Space re-centre, there are no single-character shortcuts, and focus lands on the new focus card", async ({ page }) => {
   await open(page);
   await card(page, "I8004").focus();
@@ -335,7 +385,8 @@ test("375: Enter and Space re-centre, there are no single-character shortcuts, a
   await move(page, "children").focus();
   await page.keyboard.press("Enter");
   await expect(nav(page).locator(".hfy-nav__card--focus")).toBeFocused();
-  // the focus card's accessible name leads with the person's name: it is the new focus card's heading for a screen reader
+  // AC3 amendment: a heading cannot sit inside a button, so for a keyboard re-centre in the cards the "heading" focus lands on is the focus card
+  // button, whose accessible name leads with the person's name (the page's plain h2 gets focus on the outline and Back paths: see the Back test).
   await expect(nav(page).locator(".hfy-nav__card--focus")).toHaveAccessibleName(/^[A-Za-z ]+, focus, /);
 });
 

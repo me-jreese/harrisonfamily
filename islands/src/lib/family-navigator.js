@@ -32,6 +32,9 @@
 //     sideways, natively (family-navigator.css), so a vertical drag that starts on a card scrolls the page.
 //   - after a re-centre that the keyboard started, focus is put on the new focus card (the one place the new person's name is a control);
 //     a re-centre from the outline or Back is the page's (tree.jsx moves focus to the focus navigator's heading).
+//     AC3 AMENDMENT (recorded in the acceptance evidence): the AC says "focus moves to the new focus card's heading". A heading cannot be put
+//     inside a <button>, and arrow-key walking needs the keyboard to stay on the cards, so for a re-centre started in the cards the "heading" is
+//     the focus card button, whose accessible name leads with the person's name. The page's plain h2 gets focus on the outline and Back paths.
 //   - the element has no live region. The island's one polite region announces each re-centre (tree.jsx).
 //
 // The 375 px layout draws: the focus card, a parents strip, one tab per union
@@ -50,6 +53,8 @@ export const EVENT_FOCUS = "hfy-focus";
 export const EVENT_DETAILS = "hfy-details";
 
 let serial = 0;
+/** How long after this element emitted hfy-focus a focus change still counts as the answer to it. */
+const ASK_WINDOW_MS = 1000;
 
 /** A tiny element builder: h("li", {class: "x"}, child, "text"). Text goes in as text nodes, so a name can never inject markup. */
 function h(tag, attrs, ...kids) {
@@ -81,6 +86,7 @@ export class FamilyNavigator extends Base {
     this._moves = [];
     this._ring = [];
     this._refocus = false;
+    this._askedAt = -Infinity;
     this._entering = false;
     this._uid = `hfy-nav-${(serial += 1)}`;
     this._onClick = (e) => this._click(e);
@@ -96,8 +102,10 @@ export class FamilyNavigator extends Base {
     if (next !== this._focus) {
       this._union = 0;
       this._expanded.clear();
-      // A re-centre while the keyboard is in the element puts it on the new focus card; a re-centre (not the first draw) also eases in.
-      this._refocus = this.contains(document.activeElement);
+      // A re-centre this element asked for, with the keyboard still in it, puts the keyboard on the new focus card. One the page made (Back,
+      // forward, the outline) is the page's to focus, even if document.activeElement is still inside here. A re-centre (not the first draw) eases in.
+      this._refocus = Date.now() - this._askedAt < ASK_WINDOW_MS && this.contains(document.activeElement);
+      this._askedAt = -Infinity;
       this._entering = this._focus !== null;
     }
     this._focus = next;
@@ -150,6 +158,9 @@ export class FamilyNavigator extends Base {
   }
 
   _emit(name, id) {
+    // The element itself asked for this re-centre (a tap, Enter/Space or a move button): note it, so the focus setter can tell it from a re-centre
+    // the page made (Back, forward, the outline) while the keyboard happened to still be inside the element. Expires, in case the page declined.
+    if (name === EVENT_FOCUS) this._askedAt = Date.now();
     this.dispatchEvent(new CustomEvent(name, { detail: { id }, bubbles: true, composed: true }));
   }
 
@@ -182,7 +193,7 @@ export class FamilyNavigator extends Base {
   // The keys: the tab pattern's arrows on a tab, the card walk on a card or a "+N more" button. Nothing else is handled (no single-character
   // shortcuts), and Enter and Space are the buttons' own.
   _key(e) {
-    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const tab = e.target.closest?.("[role=tab]");
     if (tab && this.contains(tab)) {
       const tabs = [...this.querySelectorAll("[role=tab]")];
@@ -195,6 +206,7 @@ export class FamilyNavigator extends Base {
       this._select(next, `tab:${next}`);
       return;
     }
+    if (e.shiftKey) return; // the card walk is unshifted arrows only; the tabs above keep their own Shift behaviour as before
     const dir = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[e.key];
     const from = e.target.closest?.("[data-person], [data-more]");
     if (!dir || !from || !this.contains(from)) return;
