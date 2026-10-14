@@ -108,7 +108,7 @@ case "$1 $2" in
     python3 - "$(arg policy-input-list "$@")" "$(arg resource-policy "$@")" "$(arg caller-arn "$@")" "$(arg action-names "$@")" "$(arg resource-arns "$@")" <<'PY'
 import fnmatch, json, sys
 ident, rpol, caller, action, res = sys.argv[1:6]
-load = lambda f: json.load(open(f[len("file://"):]))
+load = lambda f: json.loads(f) if f.lstrip().startswith("{") else json.load(open(f[len("file://"):]))
 as_list = lambda v: v if isinstance(v, list) else [v]
 def match(pats, v): return any(fnmatch.fnmatchcase(v, p) for p in as_list(pats))
 def stmts(doc): return as_list(doc.get("Statement", []))

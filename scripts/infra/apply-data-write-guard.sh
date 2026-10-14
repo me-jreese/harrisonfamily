@@ -8,7 +8,8 @@
 #   HfyDataWriteGuardMediaDelete  Deny s3:DeleteObject, s3:DeleteObjectVersion on media/* (binaries included), same exceptions
 #                               plus hfy-api: the exception covers media binaries only (Put is not denied there, and hfy-api
 #                               deletes the staging copy after a graduation). hfy-api is NOT an exception to the *.json statement.
-# Exceptions (matched on aws:PrincipalArn with ArnNotLike): hfy-sync-render, hfy-graph-render, hfy-data-breakglass.
+# Exceptions (matched on aws:PrincipalArn with ArnNotLike, with and without an IAM path): hfy-sync-render, hfy-graph-render, hfy-data-breakglass.
+# s3:DeleteObjectVersion is denied as well as the specified Put/Delete, so a versioned delete cannot bypass the deny (confirm at G-cutover).
 # person/index.html (every PUBLIC_PERSON_FILES key) is outside both statements, so the CI deploy role keeps deploying the person
 # shell. A test pins the Put patterns to ci.manifest.yaml deploy.exclude, so the two cannot drift. The statements are merged into the
 # bucket's current policy: every other statement is kept as it is, and a rerun replaces only the two Sids above (no change when the
@@ -41,6 +42,9 @@ while [ $# -gt 0 ]; do case "$1" in
   --render-role) RENDER_ROLE=$2; shift;; --graph-role) GRAPH_ROLE=$2; shift;; --api-role) API_ROLE=$2; shift;;
   --breakglass-role) BREAKGLASS_ROLE=$2; shift;; --deploy-role) DEPLOY_ROLE=$2; shift;;
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift; done
+if [ "$CONFIRM" = 1 ] && [ "$DRY$SIM" != 00 ]; then
+  echo "refusing --confirm-g-cutover together with --dry-run or --simulate: nothing would be applied; run them first, then apply alone" >&2; exit 2
+fi
 if [ "$DRY$SIM$CONFIRM" = 000 ]; then
   echo "refusing to change the bucket policy without --confirm-g-cutover (io's G-cutover approval); use --dry-run to look first" >&2; exit 2
 fi
@@ -55,6 +59,8 @@ if [ -z "$ACCOUNT" ]; then
 fi
 case "$ACCOUNT" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) echo "account id must be 12 digits" >&2; exit 2;; esac
 role_arn() { printf 'arn:aws:iam::%s:role/%s' "$ACCOUNT" "$1"; }
+# the exception match also covers a role with an IAM path (role/<path>/<name>): a path would otherwise lock the renderer out
+role_pair() { printf '%s\n%s' "$(role_arn "$1")" "arn:aws:iam::$ACCOUNT:role/*/$1"; }
 
 # --- the current policy ------------------------------------------------------------------------------------------------------
 if [ -n "$POLICY_FILE" ]; then
@@ -68,16 +74,16 @@ fi
 jq -e 'type == "object"' "$W/current.json" >/dev/null || { echo "the current policy is not a JSON object" >&2; exit 1; }
 
 # --- the merge ---------------------------------------------------------------------------------------------------------------
-jq -n --arg b "$BUCKET" --arg r "$(role_arn "$RENDER_ROLE")" --arg g "$(role_arn "$GRAPH_ROLE")" \
-  --arg k "$(role_arn "$BREAKGLASS_ROLE")" --arg a "$(role_arn "$API_ROLE")" \
+jq -n --arg b "$BUCKET" --arg r "$(role_pair "$RENDER_ROLE")" --arg g "$(role_pair "$GRAPH_ROLE")" \
+  --arg k "$(role_pair "$BREAKGLASS_ROLE")" --arg a "$(role_pair "$API_ROLE")" \
   --arg s1 "$SID_RECORDS" --arg s2 "$SID_MEDIA" '
   def res($p): "arn:aws:s3:::\($b)/\($p)";
   [ { Sid: $s1, Effect: "Deny", Principal: "*", Action: ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"],
       Resource: (["person/*.json", "family/*", "event/*", "note/*", "place/*", "media/*.json"] | map(res(.))),
-      Condition: { ArnNotLike: { "aws:PrincipalArn": [$r, $g, $k] } } },
+      Condition: { ArnNotLike: { "aws:PrincipalArn": ([$r, $g, $k] | map(split("\n")) | add) } } },
     { Sid: $s2, Effect: "Deny", Principal: "*", Action: ["s3:DeleteObject", "s3:DeleteObjectVersion"],
       Resource: [res("media/*")],
-      Condition: { ArnNotLike: { "aws:PrincipalArn": [$r, $g, $k, $a] } } } ]' > "$W/guard.json"
+      Condition: { ArnNotLike: { "aws:PrincipalArn": ([$r, $g, $k, $a] | map(split("\n")) | add) } } } ]' > "$W/guard.json"
 jq --slurpfile guard "$W/guard.json" --argjson remove "$REMOVE" --arg s1 "$SID_RECORDS" --arg s2 "$SID_MEDIA" '
   (.Statement // []) as $st
   | ((if ($st | type) == "array" then $st else [$st] end) | map(select(.Sid != $s1 and .Sid != $s2))) as $others
@@ -96,13 +102,16 @@ summary() {
 
 if [ "$SIM" = 1 ]; then
   # The matrix. Identity side: a broad allow on the bucket, so only the bucket-policy deny can say no (explicitDeny). The caller is
-  # the role named; the real service may accept only user ARNs as --caller-arn (see the runbook), which this step then reports.
+  # the role named. Verified read-only against live IAM: --caller-arn accepts a role ARN and feeds aws:PrincipalArn (a stranger gets
+  # explicitDeny). A simulation is still a model of the policy, not of S3: the runbook's verify step does a real canary Put.
   jq -n --arg b "$BUCKET" '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: ["s3:PutObject", "s3:DeleteObject"], Resource: ["arn:aws:s3:::\($b)", "arn:aws:s3:::\($b)/*"]}]}' > "$W/identity.json"
+  # Compact inline JSON: the live API rejects a pretty-printed file:// policy-input-list item (verified read-only against live IAM).
+  IDENT=$(jq -c . "$W/identity.json"); MERGED=$(jq -c . "$W/merged.json")
   STRANGER=$(role_arn hfy-not-allowed-role)
   FAIL=0
   probe() { # EXPECT CALLER ACTION KEY
     local got
-    got=$(aws iam simulate-custom-policy --policy-input-list "file://$W/identity.json" --resource-policy "file://$W/merged.json" \
+    got=$(aws iam simulate-custom-policy --policy-input-list "$IDENT" --resource-policy "$MERGED" \
       --caller-arn "$2" --action-names "$3" --resource-arns "arn:aws:s3:::$BUCKET/$4" \
       --query 'EvaluationResults[0].EvalDecision' --output text)
     if [ "$got" = "$1" ]; then printf 'ok    %-9s %-60s %s %s\n' "$1" "$(basename "$2")" "$3" "$4"
@@ -151,5 +160,10 @@ BK="${HFY_S3_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/hfy-infra/s3-poli
 BKF="$BK/$BUCKET-$(date -u +%Y%m%dT%H%M%SZ)-before.json"; cp "$W/current.json" "$BKF"
 echo "saved the pre-change policy to $BKF"
 summary "$W/merged.json"
+# read-modify-write guard: abort when the live policy changed since the copy that was merged (a stack update, an OAC edit)
+aws s3api get-bucket-policy --bucket "$BUCKET" --query Policy --output text > "$W/recheck.raw" 2> "$W/recheck.err" || { [ -s "$W/recheck.err" ] && grep -q NoSuchBucketPolicy "$W/recheck.err" && echo '{}' > "$W/recheck.raw"; }
+if [ "$(jq -cS . "$W/recheck.raw" 2>/dev/null || echo unreadable)" != "$(jq -cS . "$W/current.json")" ]; then
+  echo "the bucket policy changed while the guard was being merged: nothing applied; rerun to merge against the new policy" >&2; exit 1
+fi
 if [ "$EMPTY" = true ]; then aws s3api delete-bucket-policy --bucket "$BUCKET"; echo "no statements remain: bucket policy deleted"
 else aws s3api put-bucket-policy --bucket "$BUCKET" --policy "file://$W/merged.json"; echo "bucket policy applied"; fi

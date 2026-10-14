@@ -21,6 +21,11 @@ eq "a policy file can never drive a real put" "$RC" 2
 guard_run --bogus
 eq "unknown argument" "$RC" 2
 check "no AWS call was made by a refusal" test ! -f "$STUB_DIR/calls.log"
+guard_run --simulate --confirm-g-cutover --policy-file /dev/null
+eq "--simulate with --confirm-g-cutover is refused, not silently a simulation" "$RC" 2
+guard_run --dry-run --confirm-g-cutover
+eq "--dry-run with --confirm-g-cutover is refused" "$RC" 2
+check "...with no AWS call" test ! -f "$STUB_DIR/calls.log"
 
 CURRENT="guard: --dry-run prints the merged policy and preserves the existing statements"
 new_stub
@@ -40,11 +45,13 @@ eq "media statement: Delete on media/* only" \
   "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardMediaDelete") | [.Effect, (.Action | sort), (.Resource | map(sub("^arn:aws:s3:::[^/]+/"; "")))]' "$T/merged.json")" \
   '["Deny",["s3:DeleteObject","s3:DeleteObjectVersion"],["media/*"]]'
 eq "records exceptions: the two renderers and break-glass, never hfy-api" \
-  "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardRecords") | .Condition.ArnNotLike["aws:PrincipalArn"] | map(sub("^arn:aws:iam::[0-9]+:role/"; ""))' "$T/merged.json")" \
+  "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardRecords") | .Condition.ArnNotLike["aws:PrincipalArn"] | map(select(contains("role/*/") | not) | sub("^arn:aws:iam::[0-9]+:role/"; ""))' "$T/merged.json")" \
   '["hfy-sync-render-role","hfy-graph-render-role","hfy-data-breakglass"]'
 eq "media Delete exceptions add hfy-api (binaries only)" \
-  "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardMediaDelete") | .Condition.ArnNotLike["aws:PrincipalArn"] | map(sub("^arn:aws:iam::[0-9]+:role/"; ""))' "$T/merged.json")" \
+  "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardMediaDelete") | .Condition.ArnNotLike["aws:PrincipalArn"] | map(select(contains("role/*/") | not) | sub("^arn:aws:iam::[0-9]+:role/"; ""))' "$T/merged.json")" \
   '["hfy-sync-render-role","hfy-graph-render-role","hfy-data-breakglass","hfy-api-role"]'
+eq "every exception role also matches with an IAM path" \
+  "$(jq -r '.Statement[] | select(.Sid == "HfyDataWriteGuardRecords") | .Condition.ArnNotLike["aws:PrincipalArn"] | map(select(contains("role/*/"))) | length' "$T/merged.json")" 3
 guard_run --dry-run --policy-file /dev/null
 contains "an empty policy file means no policy, and the dry run says one is added" "$OUT" "(dry-run) the policy would change"
 
@@ -109,11 +116,43 @@ contains "hfy-api cannot Put media/x.json" "$OUT" "explicitDeny hfy-api-role"
 eq "all 19 probes passed" "$(echo "$OUT" | grep -c '^ok ')" 19
 check "simulate-custom-policy was the API used" grep -q 'iam simulate-custom-policy' "$STUB_DIR/calls.log"
 check "the simulation changed nothing" test ! -f "$STUB_DIR/policy-writes.log"
-# The matrix has teeth: against a policy without the guard, the deny probes must fail. (Simulating a "remove" run models that policy.)
+# The matrix has teeth: against a policy without the guard (the stub aws drops every Deny statement from the resource policy), the deny probes must FAIL.
+cat > "$T/aws-noguard" <<'SH'
+#!/usr/bin/env bash
+# negative control: strip Deny statements from the --resource-policy before the stub evaluates it
+args=(); while [ $# -gt 0 ]; do
+  if [ "$1" = "--resource-policy" ]; then args+=("$1" "$(printf '%s' "$2" | jq -c '.Statement |= map(select(.Effect != "Deny"))')"); shift
+  else args+=("$1"); fi; shift; done
+exec "$REAL_STUB_AWS" "${args[@]}"
+SH
+chmod +x "$T/aws-noguard"; mkdir -p "$T/nogbin"; cp "$T/aws-noguard" "$T/nogbin/aws"
+new_stub
+set +e; OUT=$(REAL_STUB_AWS="$STUB_BIN/aws" PATH="$T/nogbin:$PATH" "$INFRA/$GUARD" --simulate --policy-file /dev/null 2>&1); RC=$?; set -e
+eq "negative control: without the deny the simulation exits 1" "$RC" 1
+contains "negative control: the stranger Put on person/x.json is reported FAIL" "$OUT" "FAIL  expected explicitDeny got allowed: hfy-not-allowed-role s3:PutObject person/x.json"
+contains "negative control: hfy-api Put on media/x.json is reported FAIL" "$OUT" "FAIL  expected explicitDeny got allowed: hfy-api-role s3:PutObject media/x.json"
 new_stub
 printf '{"Version":"2012-10-17","Statement":[%s]}' "$unrelated" > "$T/current.json"
-set +e; OUT=$(PATH="$STUB_BIN:$PATH" "$INFRA/$GUARD" --simulate --remove --policy-file "$T/current.json" 2>&1); RC=$?; set -e
+guard_run --simulate --remove --policy-file "$T/current.json"
 eq "--remove --simulate: a stranger may Put person/x.json again" "$RC" 0
+
+CURRENT="guard: default role names match the stack templates"
+RT=$(python3 - "$ROOT/infrastructure/cloudformation" "$INFRA/$GUARD" <<'PY'
+import re, sys
+d, g = sys.argv[1], open(sys.argv[2]).read()
+app = open(d + "/app-stack.yaml").read(); gh = open(d + "/github-roles.yaml").read()
+tmpl = lambda n: re.search(r"^  %s: \{ Type: String, Default: ([\w-]+)" % n, app, re.M).group(1)
+names = {"RENDER_ROLE": tmpl("RenderFunctionName") + "-role", "GRAPH_ROLE": tmpl("GraphRenderFunctionName") + "-role",
+         "API_ROLE": tmpl("FunctionName") + "-role",
+         "BREAKGLASS_ROLE": re.search(r"RoleName: (hfy-data-breakglass)\b", app).group(1),
+         "DEPLOY_ROLE": re.search(r"RoleName: (harrisonfamily-github-deploy-role)\b", gh).group(1)}
+for k, v in names.items():
+    print(k, "default matches the template:", re.search(r"\b%s=%s\b" % (k, re.escape(v)), g) is not None)
+print("no IAM Path in the templates (aws:PrincipalArn is role/<name>):", "Path:" not in re.sub(r"#.*", "", app + gh).replace("PathPattern", ""))
+PY
+)
+for k in RENDER_ROLE GRAPH_ROLE API_ROLE BREAKGLASS_ROLE DEPLOY_ROLE; do contains "$k" "$RT" "$k default matches the template: True"; done
+contains "role paths" "$RT" "no IAM Path in the templates (aws:PrincipalArn is role/<name>): True"
 
 CURRENT="guard: real apply, rerun, remove"
 new_stub
@@ -143,6 +182,24 @@ new_stub; guard_run --confirm-g-cutover --bucket test-bucket-not-prod
 eq "no existing policy (NoSuchBucketPolicy): apply works" "$RC" 0
 eq "...on the named bucket" "$(grep -c 'arn:aws:s3:::test-bucket-not-prod/person/\*.json' "$STUB_DIR/bucket-policy.json")" 1
 
+CURRENT="guard: a policy changed between the read and the put is not overwritten"
+new_stub
+printf '{"Version":"2012-10-17","Statement":[%s]}' "$unrelated" > "$STUB_DIR/bucket-policy.json"
+cat > "$T/racebin-aws" <<'SH'
+#!/usr/bin/env bash
+# on the second get-bucket-policy, another writer has changed the policy
+if [ "$1 $2" = "s3api get-bucket-policy" ]; then
+  n=$(cat "$STUB_DIR/gets" 2>/dev/null || echo 0); echo $((n + 1)) > "$STUB_DIR/gets"
+  [ "$n" = 1 ] && jq '.Statement += [{"Sid":"Raced","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"*"}]' "$STUB_DIR/bucket-policy.json" > "$STUB_DIR/b.new" && mv "$STUB_DIR/b.new" "$STUB_DIR/bucket-policy.json"
+fi
+exec "$REAL_STUB_AWS" "$@"
+SH
+mkdir -p "$T/racebin"; cp "$T/racebin-aws" "$T/racebin/aws"; chmod +x "$T/racebin/aws"
+set +e; OUT=$(REAL_STUB_AWS="$STUB_BIN/aws" PATH="$T/racebin:$PATH" HFY_S3_BACKUP_DIR="$STUB_DIR/s3-backups" "$INFRA/$GUARD" --confirm-g-cutover 2>&1); RC=$?; set -e
+eq "a raced policy aborts" "$RC" 1
+contains "...with a clear message" "$OUT" "the bucket policy changed while the guard was being merged"
+eq "...and no put was made" "$(writes)" 0
+
 CURRENT="runbook: sync-gramps-with-the-website.md (cutover order and rollback)"
 DOC="$ROOT/docs/how-to/sync-gramps-with-the-website.md"
 check "the replacement doc exists" test -s "$DOC"
@@ -164,6 +221,8 @@ print("break-glass run uses --no-delete and --legacy-break-glass:", "--legacy-br
 flags = re.findall(r"apply-data-write-guard\.sh[^\n`]*", t)
 used = {f for line in flags for f in re.findall(r"--[a-z0-9-]+", line)}
 print("script flags named exist:", len(used) > 0 and all(f in script for f in used))
+print("moderation re-apply check fails closed and names its blocker:", "test -x scripts/moderation/reapply-moderation-hides.sh ||" in rb and "hfy-moderation-record-targets" in rb)
+print("the approval flag is explained as the G-cutover record:", "`--confirm-g-cutover` flag is that approval" in t)
 print("approval gate named:", "G-cutover" in t)
 base = os.path.dirname(sys.argv[1]); broken = []
 for m in re.finditer(r"\]\(([^)#\s]+)(#[^)]*)?\)", t):
@@ -175,6 +234,9 @@ PY
 RB=$(python3 "$T/runbook-check.py" "$DOC" "$INFRA/$GUARD")
 for k in "cutover headings in order: True" "rollback names the primary, then the last-resort steps in order: True" "primary rollback needs no republish: True" \
   "legacy republish is last resort only: True" "break-glass run uses --no-delete and --legacy-break-glass: True" "script flags named exist: True" \
-  "approval gate named: True" "no broken relative links: True"; do contains "runbook: $k" "$RB" "$k"; done
+  "moderation re-apply check fails closed and names its blocker: True" "the approval flag is explained as the G-cutover record: True" "approval gate named: True" "no broken relative links: True"; do contains "runbook: $k" "$RB" "$k"; done
+# The re-apply script is absent today, so the runbook's fail-closed check must stop (AC3 stays partial until hfy-moderation-record-targets ships it).
+set +e; (cd "$ROOT" && { test -x scripts/moderation/reapply-moderation-hides.sh || { echo blocked >&2; exit 1; }; }) >/dev/null 2>&1; MRC=$?; set -e
+eq "the fail-closed moderation check stops while the script is absent" "$MRC" 1
 # The rollback is dry-run checked: the policy-level step is exercised above (--remove --dry-run) and the runbook names that command.
 contains "the runbook names the rollback dry run" "$(cat "$DOC")" "apply-data-write-guard.sh --remove --dry-run"

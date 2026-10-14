@@ -48,9 +48,11 @@ The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/ap
    scripts/infra/apply-data-write-guard.sh --simulate
    ```
 
-   It calls `aws iam simulate-custom-policy` for 19 cases, and ends with `simulation passed` or exits `1` on the first mismatch. The cases include the renderer putting `person/<id>.json` (allowed), a role outside the exceptions putting it (denied), the deploy role putting `person/index.html` (allowed) and `person/x.json` (denied), and `hfy-api` putting `media/x.json` (denied) and `media/x.jpg` (allowed). The IAM API documents `--caller-arn` as an IAM user. If it refuses a role ARN, stop and ask the orchestrator: do not skip the check. The script's policy tests pin the same cases offline.
+   It calls `aws iam simulate-custom-policy` for 19 cases, and ends with `simulation passed` or exits `1` on the first mismatch. The cases include the renderer putting `person/<id>.json` (allowed), a role outside the exceptions putting it (denied), the deploy role putting `person/index.html` (allowed) and `person/x.json` (denied), and `hfy-api` putting `media/x.json` (denied) and `media/x.jpg` (allowed). The IAM API documents `--caller-arn` as an IAM user, but a read-only run against live IAM accepted the role ARNs and evaluated `aws:PrincipalArn` from them (all 19 cases passed, and the script passes the policies as compact inline JSON because the API rejects a pretty-printed `file://` item). If a later run is refused, stop and ask the orchestrator: do not skip the check. A simulation models the policy, not S3, so the real canary Put in [Then verify](#then-verify) stays required. The script's policy tests pin the same cases offline. The exception ARNs match both `role/<name>` and `role/<path>/<name>`; the five default role names exist in the stack templates and need confirming only if a stack renames them.
 
-3. Apply, with io's G-cutover approval on the record:
+3. Apply, with io's G-cutover approval on the record. The `--confirm-g-cutover` flag is that approval: pass it only when io's G-cutover approval is on record for this run, and never together with `--dry-run` or `--simulate` (the script refuses the mix). The guard goes on before `RenderMode` is `live`, never after. The deny also covers `s3:DeleteObjectVersion`, which the design text does not list, so a versioned delete cannot slip past it; io or cutover-live-render confirms this at G-cutover, together with the rule that `hfy-api` may not Put `media/*.json`.
+
+   
 
    ```sh
    scripts/infra/apply-data-write-guard.sh --confirm-g-cutover
@@ -81,7 +83,13 @@ Republishing from the legacy ETL is a last resort, for the case where the store 
 
 1. **A desktop pull first.** Run `hfy-sync check`, review the changes that would come from the website, and apply them, so the Gramps tree holds everything the store holds. The ETL publishes from the tree, so anything not pulled is lost from the site.
 2. **A break-glass run with `--no-delete`.** Assume `hfy-data-breakglass` (io only, MFA, one hour). It is an exception to the write guard, so the guard can stay on. Run the legacy sync with its break-glass escape, `--legacy-break-glass`, and with `--no-delete`, so nothing the tree lacks is removed. Member photos and every key the tree does not know stay in place.
-3. **Moderation hides re-applied by a script.** The legacy export does not know about moderation, so every record hidden since the cutover is public again after step 2. Re-apply the hides before you tell anyone the site is back, with the moderation re-apply script that `hfy-moderation-record-targets` ships. Until that script exists, do not run step 2.
+3. **Moderation hides re-applied by a script.** The legacy export does not know about moderation, so every record hidden since the cutover is public again after step 2. Re-apply the hides before you tell anyone the site is back, with the moderation re-apply script that `hfy-moderation-record-targets` ships. Until that script exists, do not run step 2. The check below fails closed while it is absent, and it must pass before step 2 starts:
+
+   ```sh
+   test -x scripts/moderation/reapply-moderation-hides.sh || { echo 'moderation re-apply script missing: rollback step 2 is blocked (hfy-moderation-record-targets)' >&2; exit 1; }
+   ```
+
+   The rollback is only partly delivered by this page: this step is blocked on `hfy-moderation-record-targets`, which must ship `scripts/moderation/reapply-moderation-hides.sh` (path to be confirmed there) before G-cutover.
 
 The policy-level rollback, taking the write guard off, is needed only for step 2 and for a deploy that the guard breaks. It is checked with a dry run first, so the policy it would leave is on screen before anything changes:
 
