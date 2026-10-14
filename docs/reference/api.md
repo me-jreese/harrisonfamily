@@ -38,6 +38,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
 | [`comment-photos.js`](../../api/src/comment-photos.js) | Comment photo attachments: `normalizeNew` (the shape check), and `createUploadPhotos` with its `parse`, `owned` and `bind` (the `UPLOAD#` binding, `headUpload` and `checkLocation`). `uploadPhotosFor` wires it over the API's S3 client. See [Comment photos](#comment-photos). |
 | [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
+| [`contrib-read.js`](../../api/src/contrib-read.js) | The contributions read side: `createContribReader` (the `list`, `stats` and `site` behind `/contributions`), the pure feed-line rule `pickLine` with its `CANDIDATES` and `lineText`, `hrefOf`, and the default `proposalVisible`. See [Contributions read API](#contributions-read-api). |
 | [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). `headUpload(bucket, key)`: the `HeadObject` of a comment photo, with a 2 s timeout. See [Comment photos](#comment-photos). |
@@ -171,6 +172,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
 | `uploads.presign` | POST | `/uploads` | body `contentType`, `size`, optional `purpose` (`post` default, or `comment`); a `filename` is ignored | `201` | Presigned S3 PUT under `uploads/posts/`, or `uploads/comments/` for `purpose` `comment` (jpeg, png or webp only; needs `commentPhotosV1`) |
+| `contributions.list` | GET | `/contributions` | query `author` (required), `cursor`, `limit` (1 to 50, default 10) | `200` `{items, cursor}` | Newest first. Not an MCP tool. Behind `requireFeature("contribV1")`. See [Contributions read API](#contributions-read-api). |
+| `contributions.stats` | GET | `/contributions/stats` | query `author` | `200` `{author, total, by_kind, first_at?}` | A member's counters, zeros for an unknown member. Behind `contribV1`. Not an MCP tool. |
+| `contributions.site` | GET | `/contributions/stats` | none (no `author`) | `200` `{total, line, computed_at}` | The site total and the feed line, through the cached `CSTAT#site/LINE` row. Shares its path with `contributions.stats`: `?author=` picks that route. Behind `contribV1`. Not an MCP tool. |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
@@ -184,9 +188,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Five routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, and the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Eight routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get` and `links.put` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put` and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -579,6 +583,60 @@ An event is `{ entity: "contrib", id, kind, actor: { id, label }, at, weight, ph
 The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. `contribOps` yields six writes for one credit: the event Put and the five counter updates. The caller adds the seventh, the `contrib: { id }` link on the item it writes, and a `self_edit` adds a daily `CAP#` marker Put. They return `{ puts, deletes, updates, checks }` fragments that a caller merges into its own `transact()` call. Credits for proposals, self-edits, tags and photo graduation are added by the code that owns those writes, through the same builders.
 
 A withdraw or republish hides or shows the event only if it exists, so a post whose event is missing still changes visibility; the backfill repairs that orphan. If a comment's author deletes it while a thread purge is running, the purge re-reads its events and commits the batch once more, so the revoke happens once. Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
+
+## Contributions read API
+
+[`contrib-read.js`](../../api/src/contrib-read.js) reads what the [ledger](#contributions-ledger) writes (HFY-TSK-256, BRD2 D2-17). The three routes are dark behind `requireFeature("contribV1")`: `404` for everyone, signed in or not, until the flag is on or the caller is in the `uat` group. `contributions.stats` and `contributions.site` share `GET /contributions/stats`; a route's `when(query)` member, which `matchRoute` reads, sends a request with `?author=` to the first and one without to the second.
+
+### List
+
+`GET /contributions?author=<gramps_id>&cursor=&limit=` queries `CONTRIB#<author>` for `E#` items, newest first, and returns `{items, cursor}`. `author` is required (`400 validation` if missing or not a gramps id); `limit` is a whole number from 1 to 50 (default 10, else `400 validation`); a cursor that this route did not issue is `400 cursor_invalid`. An unknown author gives `{items: [], cursor: null}`.
+
+A row is `{id, kind, at, weight, photos, ref: {type, id, thread?}, subject?, href, hidden?}`. It carries no body text, no actor and no origin. `cursor` is opaque and `null` at the end. A page is filled across events the viewer cannot see: the route reads up to five pages of events to find `limit` visible ones, and hands back a cursor to continue when it gives up.
+
+Who sees which event:
+
+| Event | Shown to |
+| --- | --- |
+| `hidden` (a withdrawn post, a moderated item) | The author and admins, with `hidden: true`. Nobody else. |
+| A post event, or a comment on a `post:<id>` thread | A viewer for whom `canView` of the current post is true (the author, admins, and everyone while it is published and not hidden by moderation). A withdrawn or deleted post hides the event, and so does a post that could not be read. |
+| A comment on a `proposal:<ulid>` thread | The proposal's visibility set only: the proposer, admins and the owners of the targeted pages. A third member gets nothing, and so does anyone when the proposal is gone. |
+| Anything else (a person-thread comment, a record, tag, accepted proposal or graduated photo) | Every signed-in member. |
+
+The checks read the current posts and proposals with `BatchGet` in chunks of at most 20 distinct keys (`POST#<id>/META`, `PROP#<ulid>/META`). Unprocessed keys are retried once; an event whose item is still unread is omitted, so the check fails closed. A page with nothing to check makes no `BatchGet`. The default proposal rule is `proposalVisible`: the proposer, the member whose page the proposal is about (`subject.gramps_id`), the members listed in `owners[]` if the proposal store records them, and admins. `proposal-store-api` replaces it through `createContribReader({proposalVisible})` once the store knows the owners of every targeted page.
+
+`href` is computed by the server:
+
+| Ref | `href` |
+| --- | --- |
+| `post` | `/posts/?id=<post id>` |
+| `comment` on a person thread | `/person/?id=<gramps id>#comment-<ulid>` |
+| `comment` on a post thread | `/posts/?id=<post id>#comment-<ulid>` |
+| `comment` on a proposal thread | `/person/?id=<gramps id of the page the proposal is about>#comment-<ulid>` |
+| `proposal`, `record`, `tag` | `/person/?id=<subject>` |
+| `media` | `/person/?id=<subject>#photos` |
+
+`href` is `null` when the page cannot be named.
+
+### Stats
+
+`GET /contributions/stats?author=<gramps_id>` reads `CSTAT#person:<author>/TOTAL` and returns `{author, total, by_kind: {post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}`. Every value is clamped at 0, and an unknown author reads as zeros, not `404`. Hidden events still count (hide and withdraw change no counter).
+
+### Site total and the feed line
+
+`GET /contributions/stats` (no `author`) returns `{total, line, computed_at}`. `line` is `{x, y, unit, window_days, text}`, for example `12 contributions in the past 3 days`, or `null` when no window reaches 3 (the page then shows its no-number line).
+
+The line is cached in `CSTAT#site/LINE`. A read serves the cached row while it is under one hour old (`LINE_TTL_MS`), reading nothing more than the total and the row. Past an hour it reads the `D#` day rows of the last 366 days (and the `M#` month rows when the site is at least 730 days old), recomputes with `pickLine`, and writes the row back with a 2 hour `ttl`. A failed cache write is logged and the computed line is still served. The clock is `deps.now`, so tests inject it.
+
+`pickLine(buckets, today, firstAt, prev?)` is pure:
+
+1. **Windows**, shortest first: 1 to 6 days, 7, 14 and 21 days (weeks), 30, 60, 90 and 180 days (months), then 365 days times 1 to 10 (years). A window is eligible only when the site's history is at least as long, so a young site never claims a long span. Windows over 400 days sum `M#` month buckets (12 per year).
+2. **Hot**: the shortest eligible window of 30 days or fewer with `X >= 5` and `X >= P`, where `X` is the sum of the window's buckets, today included, and `P` the same number of buckets before it.
+3. **Volume**: otherwise the shortest eligible window with `X >= 3`.
+4. **Null**: otherwise, so a "1 contribution in the past day" line is never produced.
+5. **Dwell**: a pick cached earlier on the same UTC day is kept, with its current count, while its window is still eligible with `X >= 3` and the fresh pick is within one candidate step of it.
+
+A negative or non-numeric bucket reads as 0. The golden table is in [`contrib-read.test.js`](../../api/test/contrib-read.test.js).
 
 ## Audit records
 
