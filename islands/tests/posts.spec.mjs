@@ -159,3 +159,73 @@ test("flag off: homepage, person and /posts/ unchanged, no posts islands request
   expect(asked).toEqual([]);
   expect(await page.locator("[data-hfy-timeline], [data-hfy-my-posts], [data-hfy-posts]").count()).toBe(0);
 });
+
+// HFY-TSK-315 (@io-kit/content 0.3.1): a post is a line, a photo, or both. What a photo-only post's row holds: the kit card is the
+// meta row and the photo list only (no markdown or excerpt element for the empty body), every image's alt, and any element that is
+// drawn with nothing in it (no children, no text, not an image), which must be none.
+const photoOnlyRow = (row) => row.evaluate((li) => {
+  const card = li.querySelector(".iok-content-card");
+  const drawn = (e) => e.getClientRects().length > 0; // generates a box: not display:none, nor inside one
+  return {
+    card: [...card.children].filter(drawn).map((c) => c.className),
+    markdown: card.querySelectorAll(".kit-md, .iok-content-card > p").length,
+    alts: [...li.querySelectorAll("img")].map((i) => i.alt),
+    empty: [...li.querySelectorAll("*")].filter((e) => drawn(e) && e.tagName !== "IMG" && e.children.length === 0 && e.textContent.trim() === "").map((e) => e.outerHTML.slice(0, 80)),
+  };
+});
+
+test("HFY-TSK-315: post is enabled with a photo and an empty text box; the photo-only post shows as just its photo in my posts, the timeline and /posts/?id=", async ({ page }) => {
+  const s = await stub(page);
+  await page.goto("/person/?id=I9001&hfy_flags=postsV2", { waitUntil: "domcontentloaded" });
+  const mine = page.locator("[data-hfy-my-posts]");
+  const box = mine.getByRole("textbox").first();
+  const submit = mine.getByRole("button", { name: /^post$/i });
+  const picker = mine.locator("input[type=file]").first();
+  await expect(submit).toBeVisible();
+  await submit.scrollIntoViewIfNeeded();
+  await expect(submit, "the post button is wholly on screen at 375px, not clipped").toBeInViewport({ ratio: 1 });
+  await expect(box).toHaveValue("");
+  await expect(submit).toBeDisabled(); // nothing to post yet: no line, no photo
+
+  await picker.setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
+  await expect.poll(() => s.puts).toBe(1);
+  await expect(box).toHaveValue("");
+  await expect(submit).toBeEnabled(); // a photo alone is enough
+  await expect(submit).toBeInViewport({ ratio: 1 });
+  expect(await box.evaluate((e) => e.required), "the empty box is not `required` while a photo is attached").toBe(false);
+  await mine.getByRole("button", { name: "remove 1" }).click();
+  await expect(submit).toBeDisabled(); // the photo was the only content
+  expect(await box.evaluate((e) => e.required)).toBe(true);
+
+  await picker.setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
+  await expect.poll(() => s.puts).toBe(2);
+  await mine.getByRole("textbox", { name: "describe photo 1" }).fill("the garden at dusk");
+  await box.fill("   "); // whitespace only is still an empty box
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(mine.getByRole("status").filter({ hasText: /^posted$/ })).toBeVisible();
+  expect(s.postBodies).toHaveLength(1);
+  expect(s.postBodies[0]).toMatchObject({ visibility: "published", subject: "I9001", body: "" });
+  expect(s.postBodies[0].attachments).toEqual([expect.objectContaining({ kind: "image", mime: "image/png", alt: "the garden at dusk" })]);
+  await expect(box).toHaveValue("");
+  await expect(submit).toBeDisabled(); // the composer is clear again
+
+  const want = { card: ["iok-content-meta", "iok-content-media"], markdown: 0, alts: ["the garden at dusk"], empty: [] };
+  const row = (scope) => scope.locator(".hfy-posts__item").filter({ has: page.getByRole("img", { name: "the garden at dusk" }) });
+  await expect(row(mine)).toHaveCount(1);
+  expect(await photoOnlyRow(row(mine))).toEqual(want);
+  expect(await noHScroll(page)).toBe(true);
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const tl = page.locator("[data-hfy-timeline]");
+  await expect(row(tl)).toHaveCount(1);
+  expect(await photoOnlyRow(row(tl))).toEqual(want);
+  expect((await tl.locator(".hfy-posts__item").first().locator("img").getAttribute("alt"))).toBe("the garden at dusk"); // newest first
+  await expect(tl.getByText("Seeded older post")).toBeVisible();
+
+  await row(tl).getByRole("link", { name: /^comments/ }).click();
+  await expect(page).toHaveURL(/\/posts\/\?id=01JZ/);
+  const one = page.locator("[data-hfy-post]");
+  await expect(row(one)).toHaveCount(1);
+  expect(await photoOnlyRow(row(one))).toEqual(want);
+});

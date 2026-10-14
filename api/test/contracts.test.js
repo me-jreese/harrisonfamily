@@ -4,9 +4,10 @@ import { registerContentContract, FIXTURE_POSTS } from "@io-kit/content/testing"
 import { registerCommentContract } from "@io-kit/comments/testing";
 import { createContentSource, seedPosts } from "../src/content.js";
 import { createCommentSource } from "../src/comments.js";
-import { TABLE, cmds, createFakeDdb, createUlidFactory, ticker, ulidTime } from "./world.js";
+import { TABLE, UPLOAD_PHOTO, cmds, createFakeDdb, createUlidFactory, ticker, ulidTime } from "./world.js";
 
-const api = { describe, it: (name, fn) => it(name, fn) };
+// @io-kit/content 0.1.1+ reports a case the host cannot run (a capability it does not declare) through `skip`, so it shows as skipped, never as passed.
+const api = { describe, it: (name, fn) => it(name, fn), skip: (name, fn) => it.skip(name, fn) };
 
 registerContentContract(
   {
@@ -21,6 +22,8 @@ registerContentContract(
     author: { id: "I0001", label: "Ann Author" },
     other: { id: "I0002", label: "Olive Other" },
     admin: { id: "I0099", label: "Admin", admin: true },
+    // CS-19 (photo-only posts) posts an image: the store only takes member uploads, not the kit's default example.test url.
+    photo: UPLOAD_PHOTO,
   },
   api,
   "hfy posts (CS) over DynamoDB fake",

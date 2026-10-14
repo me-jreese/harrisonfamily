@@ -2,7 +2,7 @@
 // a PostComposer (text + photos) and this member's posts. Others see nothing from this island.
 //
 // DS Posts composer: one row, one height — the input (placeholder "post a photo or a line"), a 44px "add a photo" button and post.
-// Kit root cause (@io-kit/content 0.1.1 PostComposer; record for the kit backlog): it renders a bare <input type=file> with only an
+// Kit root cause (@io-kit/content PostComposer, 0.1.1 through 0.3.1; record for the kit backlog): it renders a bare <input type=file> with only an
 // aria-label, so the browser's own "Choose File" / "No file chosen" copy and a 32px picker showed, the alt-text input is aria-label only
 // (no visible hint), an attached photo shows no thumbnail, and it takes no placeholder. HFY overrides, all in this island:
 //   - the kit's file input is hidden (posts.css) and taken out of the tab order and the accessibility tree; the HFY button opens it;

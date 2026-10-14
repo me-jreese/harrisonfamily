@@ -11,10 +11,14 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FIXTURE_POSTS } from "@io-kit/content/testing";
-import { PostCard } from "@io-kit/content/react";
+import { importContentReact } from "../kit-content.mjs";
 import { uploadPhoto } from "../src/lib/upload.js";
 import { createApi } from "../src/lib/api.js";
 import { makeApi, signToken } from "../../api/test/world.js";
+
+// Since @io-kit/content 0.2.0, Node cannot import "@io-kit/content/react" directly (DocumentEditor's Cloudscape import, see
+// kit-content.mjs); it is bundled the way the islands build bundles it.
+const { PostCard } = await importContentReact();
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const walk = (d) => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));

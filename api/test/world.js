@@ -18,6 +18,12 @@ export function ticker(after = Date.now()) {
 }
 export { createFakeDdb, cmds, createUlidFactory, ulidTime };
 
+/**
+ * A member-upload image the posts store accepts (normalizeAttachments only takes `/uploads/posts/<ulid>/<name>`), for the kit
+ * contract's photo-only case (@io-kit/content 0.3.1 CS-19, `ContentContractHarness.photo`) and the photo-only post tests.
+ */
+export const UPLOAD_PHOTO = Object.freeze({ kind: "image", url: "/uploads/posts/01J00000000000000000000000/photo-only.png", mime: "image/png", alt: "a photo" });
+
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 export const pem = privateKey.export({ type: "pkcs8", format: "pem" });
 export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUDIENCE } = {}) =>
