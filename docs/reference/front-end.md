@@ -619,8 +619,25 @@ These suites cover the mechanisms on this page. The theme, copy and lint suites 
 | [`islands/tests/flags-fallback.spec.mjs`](../../islands/tests/flags-fallback.spec.mjs) | Also stubs the build flags as all off. The banner and its "turn off" button, the per-tab override, the purge of the old `localStorage` override, the fallbacks when an island or `/auth/session` is unavailable, the static `theme-color` and the manifest link after the shell loads, the `authV2` sign-out, and the `/family-login/?next=` chain into `/auth/login`. | The same command. |
 | [`islands/tests/d11-fixes.spec.mjs`](../../islands/tests/d11-fixes.spec.mjs) | The HFY-TSK-069 after-state audit fixes: no `/api` request and no 401 for a visitor signed out under `authV2`, no One Tap prompt under `authV2`, the focusable scroller region, and the legacy token fallback's `?next=`. | The same command. |
 | [`islands/tests/sw.spec.mjs`](../../islands/tests/sw.spec.mjs), [`asset-versions.spec.mjs`](../../islands/tests/asset-versions.spec.mjs), [`asset-versions.test.mjs`](../../islands/tests/asset-versions.test.mjs) | The worker's registration URL and cache name, cache-first chunks and fonts, network-first entries and theme with one copy per path, and pages that request only versioned URLs while the bare URLs are stale. | The same command. |
+| [`islands/tests/feed-conformance.test.mjs`](../../islands/tests/feed-conformance.test.mjs) | The `@io-kit/feed` conformance suite FT-01 to FT-12 against the posts source: the real `createHfyContentSource` adapter and the kit timeline adapter over the real `api/` handler and its in-memory DynamoDB fake, with synthetic posts. FT-01 to FT-04 and FT-10 to FT-12 must pass. The posts source has no `since()` and no realtime `subscribe`, so FT-05 to FT-09 are reported as skips, and FT-13 is browser-only. | `npm run test:contract` and `npm test` in `islands/`. |
+| [`islands/tests/notifications-roundtrip.spec.mjs`](../../islands/tests/notifications-roundtrip.spec.mjs) | Drives the `/me/notifications` toggles and detail levels in the browser with `/api/notifications/**` routed to the real `api/` handler, not a stub. Captures the exact `PUT /api/notifications/preferences` payloads and asserts that each reaches the stored shape (`features.<type>.{enabled,detail}`: `types` becomes `features` and `level` becomes `detail`), that `GET` returns the same per-type values, and that a reload renders them. Also checks that the island catalog and the server template registry name the same four types with the same lock-screen text. | `npm test` in `islands/` (Playwright). |
 
 No workflow runs these suites.
+
+### Search keystroke-to-paint baseline
+
+[`islands/scripts/measure-search-p95.mjs`](../../islands/scripts/measure-search-p95.mjs) (`npm run measure:search` in `islands/`, with a free `PW_PORT`) measures Search 1.0 (`@io-kit/search` 1.0.1 and `@io-kit/search-ui` 1.0.10, local tier, `searchV2`) at a 375 x 812 viewport in Chrome. It loads `/search/` with a synthetic corpus of 231 invented people, the size of the live index (only that count is used), and types four queries one character at a time, 48 keystrokes per run, clearing the box between queries. A sample starts at the capture-phase `keydown` and ends at the second `requestAnimationFrame` after the last DOM change under `#hfy-search-v2`, the frame that painted it. The script waits 150 ms after each key before it reads the sample, so an engine debounce counts. A key that changes nothing visible is reported as `unchanged` and left out of the percentile.
+
+No design budget exists for Search 1.0 keystroke latency, so this result is the baseline, not a pass or a fail. Three runs on one development machine (headless Chrome 155, a warm cache, an idle CPU) gave:
+
+| Run | Measured keystrokes | p50 | p95 | max |
+|---|---|---|---|---|
+| 1 | 48 | 11.5 ms | 30.3 ms | 32.3 ms |
+| 2 | 48 | 11.6 ms | 24.2 ms | 37.5 ms |
+| 3 | 48 | 11.6 ms | 27.3 ms | 37.7 ms |
+| Pooled | 144 | 11.6 ms | **27.3 ms** | 37.7 ms |
+
+Timer and frame granularity is about 16.7 ms, so read differences under one frame as noise. Re-run the script after a `@io-kit/search` or `@io-kit/search-ui` bump and compare against this table. The script's header comment holds the definition of a sample.
 
 ## Discrepancies
 
