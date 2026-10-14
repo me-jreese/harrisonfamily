@@ -8,15 +8,15 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "9fc6d310",
+        "js": "597ab13e",
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "6918b446",
+        "js": "d5cec94a",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "a619a333",
+        "js": "fdd27d14",
         "css": "d8c9710c"
       },
       "follow": {
@@ -44,35 +44,39 @@
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "2101fb66",
+        "js": "57bbf7b1",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "f14f204e",
+        "js": "c4dc5277",
         "css": "be703fb4"
       },
       "person": {
-        "js": "fe63915d",
+        "js": "4639b798",
         "css": "92f22fd0"
       },
       "person-links": {
         "js": "a61d6edb",
         "css": "fcacbc39"
       },
+      "photo-tag-edit": {
+        "js": "4497927a",
+        "css": "6226b36b"
+      },
       "photo-tags": {
-        "js": "b5df981d",
+        "js": "5d8ede95",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "97230b9e",
+        "js": "cf613057",
         "css": "890fde1c"
       },
       "review": {
-        "js": "d705cc84",
+        "js": "c8427a7c",
         "css": "d4074f34"
       },
       "search": {
-        "js": "6021386e",
+        "js": "cedb25b3",
         "css": "9e007813"
       },
       "settings": {
@@ -80,21 +84,21 @@
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "1654d27d",
+        "js": "1314ffe3",
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "c21dda70",
+        "js": "1da01713",
         "css": "8f618380"
       },
       "tree": {
-        "js": "e4e0ca89",
+        "js": "21674740",
         "css": "373d5410"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "7c3f0e10"
+    "sw": "a21a2b35"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -795,6 +799,15 @@
   resolveFlags().then((flags) => {
     if (flags.photoTags !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
     loadIsland("photo-tags", { onError() { /* the gallery stands without tag overlays */ } });
+  });
+
+  // HFY-TSK-260: photoTagEdit mounts the photo tag editor on the person page's lightbox (island photo-tag-edit): a "tag people" toggle for a signed-in
+  // member, then draw, move, resize and remove person tags through POST /api/changes. It needs the app stack's HFY_EDITING switch (the editing routes
+  // answer 404 and /api/me reports editing false until then, and the toggle stays away). It listens to the person page's hfy:lightbox-media event and is
+  // independent of photoTags; with the flag off nothing is requested and the lightbox is as before.
+  resolveFlags().then((flags) => {
+    if (flags.photoTagEdit !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("photo-tag-edit", { onError() { /* the lightbox stands without the tag editor */ } });
   });
 
   // HFY-TSK-185: inboxV1 mounts the notification inbox. The bell island fills the shell's bell slot on every page that has the shell, for a

@@ -3,6 +3,7 @@
 // It listens to the two events of the person page's mount points (HFY-TSK-137) and edits nothing of the page:
 //   hfy:person-rendered { personId, person, sections }   after every render: the thumbnails
 //   hfy:lightbox-media  { index, media, img, box }        whenever the lightbox shows an image: the lightbox layer
+//   hfy:tags-edited     { index, media, img, box }                         the photo tag editor saved a tag now: the lightbox layer is drawn again
 // The island loads after the flags resolve, which can be after the first render, and the page does not replay its events (HFY-TSK-137);
 // when the gallery is already on the page and no event has arrived it reads the person once itself (the same gated JSON the page read,
 // the same ?id=) so the first render is not missed. The first event, whenever it comes, wins over that read.
@@ -19,6 +20,8 @@ document.addEventListener("hfy:person-rendered", (e) => {
   }
 });
 document.addEventListener("hfy:lightbox-media", (e) => showLightbox(e.detail, person));
+// The photo tag editor (photoTagEdit) saved a tag that took effect now: it has put it into the photo's media.tags, so the lightbox is drawn again.
+document.addEventListener("hfy:tags-edited", (e) => { if (person && e.detail && e.detail.img) showLightbox(e.detail, person); });
 
 async function catchUp() {
   const id = new URLSearchParams(location.search).get("id");
