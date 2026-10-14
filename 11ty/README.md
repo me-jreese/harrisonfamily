@@ -16,7 +16,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 
 | Path | What it is |
 | --- | --- |
-| `_data/flags.json` | The build-time feature flags `authV2`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `searchV2` and `shellV2`. |
+| `_data/flags.json` | The build-time feature flags `authV2`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `recordSubsV1`, `searchV2` and `shellV2`. |
 | `js/islands/**` | Committed build output of `islands/` (HFY-R58). Rebuild with `scripts/ci/build-islands.sh` or `cd islands && npm run build`, and commit; `npm run check:islands` fails when it is stale. |
 | `css/hfy-theme.css` | Build output: the design-system theme layer, built from `islands/src/theme/` and `@io-kit/tokens`. Every page links it render-blocking, right after `css/main.css` where the page has one; `main.css` itself is never edited. |
 | `css/auth-edge.css` | Build output: the sign-in stylesheet, built from `islands/src/auth-edge/auth-edge.css` (HFY-TSK-069). `auth/edge.manifest.json` `theme.cssUrl` names it with `?v=<sha8 of this file>`, which the build stamps; the sign-in page links the new URL once `hfy-auth-edge` is redeployed. It must be served from `https://<site>`, the stylesheet origin the sign-in page's CSP allows. |
