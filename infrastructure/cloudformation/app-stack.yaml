@@ -46,7 +46,7 @@ Parameters:
   HfyEditing: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Editing routes switch (env HFY_EDITING). While off they answer 404 not_found" }
   AccessRequests: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Access-request intake kill switch on the auth edge (env ACCESS_REQUESTS)" }
   TurnstileSiteKey: { Type: String, Default: "", Description: "Public Cloudflare Turnstile site key (env TURNSTILE_SITE_KEY); not a secret" }
-  SesConfigurationSet: { Type: String, Default: "", Description: "Optional SES configuration set name for the hfy-api notification mail (env SES_CONFIGURATION_SET on hfy-api). Access-request mail from the auth edge uses the Join* parameters below, never this one" }
+  SesConfigurationSet: { Type: String, Default: "", Description: "Optional SES configuration set name for the hfy-api notification mail (env SES_CONFIGURATION_SET on hfy-api). Access-request mail (from the auth edge, and the requester mail from hfy-api) uses the Join* parameters below, never this one" }
   # HFY-TSK-195 (ruling P2-R23, review PS-25): access-request mail has its OWN SES identity (the join subdomain, with its own MAIL FROM subdomain),
   # configuration set and bounce and complaint alarms, so abuse of the join flow can never pause Cognito's password-reset mail or the API's mail.
   JoinSesIdentityArn: { Type: String, Default: "", Description: "Verified SES identity ARN of the join subdomain (same region) that sends the access-request mail from the auth edge (env: none, the grant only). Empty leaves the edge without a SendEmail grant, so the code route answers 503 unavailable" }
@@ -204,6 +204,19 @@ Resources:
                   Condition:
                     StringEquals: { "ses:FromAddress": !Ref SesFromAddress }
                 - !Ref "AWS::NoValue"
+              # HFY-TSK-331 (P2-R61, Q2-09): the mail hfy-api sends to a REQUESTER (approved, approved later, awaiting record, declined) goes through the
+              # JOIN identity and its own configuration set, the same as the auth edge's, so the join alarms see it and abuse cannot pause the general identity.
+              - !If
+                - HasJoinSes
+                - Sid: SendRequesterEmail
+                  Effect: Allow
+                  Action: ses:SendEmail
+                  Resource:
+                    - !Ref JoinSesIdentityArn
+                    - !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${JoinSesConfigurationSet}" # required with the identity (rule JoinSesIdentityNeedsConfigurationSet)
+                  Condition:
+                    StringEquals: { "ses:FromAddress": !Ref JoinFromAddress }
+                - !Ref "AWS::NoValue"
               - !If
                 - HasVapid
                 - Sid: Secrets
@@ -244,6 +257,8 @@ Resources:
           SYNC_BUCKET: !Ref SyncBucketName
           SES_FROM_ADDRESS: !Ref SesFromAddress
           SES_CONFIGURATION_SET: !Ref SesConfigurationSet
+          JOIN_FROM_ADDRESS: !Ref JoinFromAddress
+          JOIN_SES_CONFIGURATION_SET: !Ref JoinSesConfigurationSet
 
   # HFY-TSK-178 (hfy-record-change-fanout; BRD2 D2-02, review SI-20): record-change notifications come from the render outbox only. The renderer
   # writes SYNC#RENDERED/<seq> in its live passes; this mapping wakes hfy-api for each insert (KEYS_ONLY stream: the consumer reads the item back).

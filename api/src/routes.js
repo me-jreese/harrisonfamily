@@ -294,6 +294,10 @@ export const ROUTES = defineRoutes([
     gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.decide(c.actor, c.params.id, c.body, { store: c.store })),
   },
   {
+    name: "accessRequests.revokeGrant", method: "POST", path: "/allow-grants/revoke", summary: "End a member's access by their ALLOW# entries, admins only, whatever the age of the request that gave it: {sub (Gramps ID), confirmedOutside: true, reason?}: 200 {revoked: [{email: masked}]}; needs a sign-in within 900 s; 404 no active grant (no MCP tool)",
+    gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.revokeGrant(c.actor, c.body)),
+  },
+  {
     name: "accessRequests.revoke", method: "POST", path: "/access-requests/:id/revoke", summary: "End the access a request gave, admins only: {version, confirmedOutside: true, reason?}: 200 {state: revoked}; needs a sign-in within 900 s (no MCP tool)",
     gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.revoke(c.actor, c.params.id, c.body)),
   },
