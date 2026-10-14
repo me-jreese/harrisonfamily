@@ -1,9 +1,9 @@
 // In-memory DynamoDB DocumentClient fake: Get/Put/Delete/Update/Query(main table + GSI1)/Scan/TransactWrite with the semantics the API
 // relies on (condition checks, duplicate-target rejection, atomicity, CancellationReasons by item index, ClientRequestToken replay).
 // Inject with the real lib-dynamodb command classes.
-import { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 
-export const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand };
+export const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand };
 const kk = (k) => `${k.PK}\u0000${k.SK}`;
 const err = (name, message) => Object.assign(new Error(message), { name });
 const fail = (m) => { throw new Error(`fake: ${m}`); };
@@ -24,6 +24,8 @@ export function createFakeDdb() {
   const calls = [];
   const tokens = []; // ClientRequestToken of every TransactWrite attempt, in order
   const injected = []; // failNext() queue
+  const batchGets = []; // the number of keys in every BatchGet, in order (DynamoDB allows 100; the API sends at most 20)
+  const unprocessed = []; // leaveUnprocessed() queue: how many keys of the next BatchGet to hand back unprocessed
   const applied = new Map(); // ClientRequestToken -> serialized TransactItems of a committed transaction (idempotent replay)
 
   // Condition subset the API uses: clauses joined by AND (alternatives joined by OR), each attribute_exists(path), attribute_not_exists(path) or
@@ -198,6 +200,11 @@ export function createFakeDdb() {
     rows,
     calls,
     tokens,
+    batchGets,
+    /** The next `n` BatchGets leave their last `count` keys unprocessed (every key by default), as DynamoDB does under throttling. */
+    leaveUnprocessed(n = 1, count = Infinity) {
+      for (let k = 0; k < n; k += 1) unprocessed.push(count);
+    },
     /**
      * The next `n` TransactWrite calls are cancelled with `code` on every item (or only on item `index`, the others "None") when
      * `code` is a cancellation code (TransactionConflict, ConditionalCheckFailed, ThrottlingError, ...); any other `code` is thrown
@@ -235,6 +242,20 @@ export function createFakeDdb() {
           const p = i.ExpressionAttributeValues?.[":p"];
           const items = [...rows.values()].filter((r) => (p === undefined ? true : r.PK.startsWith(p)));
           return { Items: items.map((r) => ({ PK: r.PK })) };
+        }
+        case "BatchGetCommand": {
+          const [[tbl, spec], ...extra] = Object.entries(i.RequestItems ?? {});
+          if (extra.length > 0 || !spec) fail("BatchGet over one table only");
+          const keys = spec.Keys ?? [];
+          batchGets.push(keys.length);
+          if (keys.length === 0 || keys.length > 100) throw err("ValidationException", "Member must have length between 1 and 100");
+          if (new Set(keys.map(kk)).size !== keys.length) throw err("ValidationException", "Provided list of item keys contains duplicates");
+          const drop = Math.min(unprocessed.shift() ?? 0, keys.length);
+          const done = keys.slice(0, keys.length - drop);
+          return {
+            Responses: { [tbl]: done.filter((k) => rows.has(kk(k))).map((k) => structuredClone(rows.get(kk(k)))) },
+            UnprocessedKeys: drop > 0 ? { [tbl]: { Keys: keys.slice(keys.length - drop) } } : {},
+          };
         }
         case "TransactWriteCommand":
           return transactWrite(i);

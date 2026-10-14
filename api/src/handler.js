@@ -12,6 +12,7 @@ import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
+import { createContribReader } from "./contrib-read.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -88,7 +89,8 @@ export function createHandler(deps) {
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
     const links = createLinks(base);
-    return { content, comments, links, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
+    return { content, comments, links, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**
@@ -111,7 +113,7 @@ export function createHandler(deps) {
       path = path.slice(BASE_PATH.length);
 
       const preview = previewOf(event);
-      const { route, params, candidates } = matchRoute(method, path, routes);
+      const { route, params, candidates } = matchRoute(method, path, routes, event.queryStringParameters ?? {});
       if (!route) {
         if (candidates.length === 0) throw new HttpError(404, "not_found", "no such route");
         // Another method on a known path is 405, unless every route on that path is dark for this caller: then the path does not exist (404).
