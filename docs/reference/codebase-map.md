@@ -192,6 +192,7 @@ Paths:
   - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
   - `comment-photos.js`: comment photo attachments behind `commentPhotosV1`: the shape check, the `UPLOAD#` binding of `purpose` `comment` uploads, and the `HeadObject` and location checks before the write ([API: Comment photos](api.md#comment-photos)).
+  - `contrib.js`: the contributions ledger (HFY-TSK-255): builders for the `CONTRIB#` event and its five `CSTAT#` counter updates (`contribOps`, `revokeOps`, `hideOps`, `mergeOps`), which `content.js` and `comments.js` commit in the same transaction as the write that earned or lost the credit, and the event read `getEvent` ([API: Contributions ledger](api.md#contributions-ledger)).
   - `links.js`: profile links (HFY-TSK-193), the store behind `GET` and `PUT /api/people/:id/links`: one `PLINKS#<gramps-id>` item per person, written with an `AUDIT#plinks:<gramps-id>` item and a version check. The owner sets or clears, an admin only clears, and both routes are behind `profileLinks`. It validates with `shared/profile-links.mjs` ([API: Profile links](api.md#profile-links)).
   - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
   - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos, and `headUpload`, the `HeadObject` of a comment photo with a 2 s timeout.
@@ -207,6 +208,7 @@ Paths:
   - `records/relationships.js`, `records/duplicates.js`: the relationship intent compiler (parents, children, spouse and unlink intents to Gramps Family and ChildRef EditOps, checked with `semantics.js`) and the accent-stripped duplicate-name matcher. Pure, and no route reaches them yet.
   - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
 - [`api/scripts/scan-contact-info.mjs`](../../api/scripts/scan-contact-info.mjs): the one-off, read-only scan of existing posts and comments for contact information; counts only ([API: Contact-information guard](api.md#contact-information-guard)).
+- [`api/scripts/contrib-backfill.mjs`](../../api/scripts/contrib-backfill.mjs): the one-off backfill of the contributions ledger: credits the posts and comments written before it, then rebuilds every `CSTAT#` counter from the events. `--dry-run` writes nothing, and `--apply` is idempotent and runs only with io's go-ahead ([Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md)).
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
 - [`api/parity/`](../../api/parity/): the parity files of the MCP surface. See [MCP server](#mcp-server).
 - [`api/README.md`](../../api/README.md): a short pointer to the [API reference](api.md).

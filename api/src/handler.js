@@ -38,14 +38,15 @@ export function createHandler(deps) {
     }
   };
 
-  function build(actor, event, preview) {
+  // `via` is the origin stamped on contribution events: "ui" for HTTP, "mcp" for a tool call (invoke).
+  function build(actor, event, preview, via = "ui") {
     const notifier = createNotifier({
       subscriptions: deps.subscriptions, preferences: deps.preferences, webpush: deps.webpush, vapid: deps.vapid, log,
       listPrincipals: scanSubscribedPrincipals(ddb, cmds, table),
       // A recipient's inbox write follows featureOn for the RECIPIENT, never the actor's preview header.
       inbox: deps.inbox, featureOn: (name, principal) => features.featureOn(name, principal),
     });
-    const base = { ddb, cmds, table, actor, now, ulid, uid };
+    const base = { ddb, cmds, table, actor, now, ulid, uid, via };
     const commenterIds = async (threadId) => {
       const ids = new Set();
       let key;
@@ -96,7 +97,7 @@ export function createHandler(deps) {
     const route = routes.find((r) => r.name === routeName);
     if (!route) throw new HttpError(404, "not_found", "no such route");
     await features.check(route.gate, actor);
-    return route.handler({ ...build(actor, {}), actor, params, query, body, event: {} });
+    return route.handler({ ...build(actor, {}, undefined, "mcp"), actor, params, query, body, event: {} });
   }
 
   async function handler(event) {

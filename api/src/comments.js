@@ -5,6 +5,7 @@ import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, comm
 import { ContentError } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
+import { contribOps, emptyOps, getEvent, mergeOps, mergedSize, revokeOps } from "./contrib.js";
 import { createGuard, pointer } from "./guard.js";
 import { normalizeNew } from "./comment-photos.js";
 
@@ -25,8 +26,9 @@ export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: act
 /**
  * `guard` is src/guard.js createGuard(): the R-18 check on the body and every photo alt of each create and edit (422, nothing stored).
  * `photos` is src/comment-photos.js (parse, owned, bind): without it a comment cannot carry attachments (503, fail closed).
+ * `via` is the origin stamped on the contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
  */
-export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard(), photos }) {
+export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
   const view = (c) => ({ ...structuredClone(c), can: computeCan(c, viewer, canOpts) });
@@ -92,11 +94,13 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
   };
   const parser = { parse: (url) => photoParser().parse(url) };
   const stored = ({ id, path, mime, width, height, alt }) => ({ id, kind: "image", url: path, mime, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), ...(alt ? { alt } : {}) });
-  async function commit(entry, { put, deletes = [], updates = [] }) {
+  // `updates` are the UPLOAD# bindings of new photos (tag "upload"); `ops` is a contrib.js fragment (credit or revoke). Both ride in
+  // this transaction.
+  async function commit(entry, { put, deletes = [], updates = [], ops = emptyOps() }) {
     const puts = [{ item: auditItem(entry, uid(), table) }];
     if (put) puts.unshift(put);
     try {
-      await transact(ddb, cmds, table, { puts, deletes, updates });
+      await transact(ddb, cmds, table, mergeOps({ puts, deletes, updates }, ops));
     } catch (e) {
       // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
       if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
@@ -159,9 +163,16 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       const id = ulid(now());
       const updates = list.length > 0 ? await photoParser().bind(list, who, id) : []; // 403 upload_not_owned, 400 upload_missing / photo_has_location
       const c = { id, threadId: t, ...(parent ? { parentId: parent.id } : {}), author: { id: who.id, label: who.label }, body: text, ...(list.length > 0 ? { attachments: list.map(stored) } : {}), created_at: at };
+      // The credit commits with the comment (D2-17): one event, five counters, and the link on the stored comment.
+      const credit = contribOps({
+        actor: { id: who.id, label: who.label }, kind: "comment", ref: { type: "comment", id: c.id, thread: t }, subject: t,
+        photos: Array.isArray(c.attachments) ? c.attachments.length : 0, at, via, uid,
+      });
+      c.contrib = { id: credit.event.id };
       await commit(auditEntry("create", c.id, who.id, null, c, at), {
         put: { item: { ...cKey(t, c.id), GSI1PK: "COMMENTS", GSI1SK: c.id, entity: "comment", comment: c }, condition: "attribute_not_exists(PK)" },
         updates,
+        ops: credit,
       });
       if (onCreated) await onCreated(c, { parent });
       return view(c);
@@ -208,8 +219,11 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       if (!computeCan(c, who, canOpts).delete) throw new CommentError("forbidden", "cannot delete this comment");
       const cascade = (await reactionRows(t, `R#${commentTarget(id)}#`)).map((i) => ({ PK: i.PK, SK: i.SK }));
       const reason = opts.reason !== undefined && who.roles?.includes("admin") && c.author.id !== who.id ? opts.reason : undefined;
+      // Deletes revoke the credit, whoever deletes: the event sits under the comment's author.
+      const event = c.contrib ? await getEvent({ ddb, cmds, table }, c.author.id, c.contrib.id) : undefined;
       await commit(auditEntry("delete", id, who.id, structuredClone(c), null, iso(), reason), {
         deletes: [{ key: cKey(t, id), ...versionGuard("comment", "edited_at", c.edited_at) }, ...cascade],
+        ...(event ? { ops: revokeOps(event) } : {}),
       });
     },
     async react(t, target, emoji) {
@@ -240,7 +254,9 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
 
 /**
  * Removes a whole thread (comments + reactions), e.g. after its post is deleted. Each removed comment gets its own D-15
- * `delete` audit item (reason "post deleted") in the same transaction as the delete; at most 100 items per transaction.
+ * `delete` audit item (reason "post deleted") in the same transaction as the delete, and its contribution is revoked there too
+ * (BRD2 D2-17: deletes revoke, cascade included). The revokes of one batch are merged (mergeOps), so 30 comments by one author in
+ * one month are one decrement per counter key instead of 30 duplicate targets. A batch holds at most 100 actions after the merge.
  * Returns the number of comments removed.
  */
 export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), uid }, t, principalId, reason = "post deleted") {
@@ -254,22 +270,51 @@ export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), ui
     key = r.LastEvaluatedKey;
     if (!key) break;
   }
-  let batch = { puts: [], deletes: [] };
-  const size = () => batch.puts.length + batch.deletes.length;
+  // The stored events of the comments that were credited (a comment from before the ledger has none and revokes nothing).
+  const events = new Map();
+  const credited = rows.filter((row) => row.SK.startsWith("C#") && row.comment?.contrib);
+  for (let i = 0; i < credited.length; i += 25) {
+    await Promise.all(credited.slice(i, i + 25).map(async ({ comment: c }) => {
+      const e = await getEvent({ ddb, cmds, table }, c.author.id, c.contrib.id);
+      if (e) events.set(c.id, e);
+    }));
+  }
+  // Each batch entry keeps its row, so a retry can rebuild the revokes from fresh events.
+  const opsFor = (row) => (events.has(row.comment?.id) ? revokeOps(events.get(row.comment.id)) : emptyOps());
+  const refresh = async (batchRows) => {
+    for (const row of batchRows.filter((r) => r.SK.startsWith("C#") && r.comment?.contrib)) {
+      const e = await getEvent({ ddb, cmds, table }, row.comment.author.id, row.comment.contrib.id);
+      if (e) events.set(row.comment.id, e);
+      else events.delete(row.comment.id);
+    }
+  };
+  let batch = [];
+  const build = () => mergeOps(...batch.flatMap(({ frag, row }) => [frag, opsFor(row)]));
   const flush = async () => {
-    if (size() > 0) await transact(ddb, cmds, table, batch);
-    batch = { puts: [], deletes: [] };
+    if (batch.length === 0) return;
+    try {
+      await transact(ddb, cmds, table, build());
+    } catch (e) {
+      // A revoke deletes its event only if it still exists. If the comment's author deleted it between our read and this batch, the
+      // condition fails and the whole batch is cancelled. Re-read the batch's events (the vanished one has already been revoked by that
+      // delete, so it drops out) and commit once more. Busy and store failures are not retried here: transact() already did.
+      if (!(e instanceof TxnCancelled) || e.kind !== "condition") throw e;
+      await refresh(batch.map(({ row }) => row));
+      await transact(ddb, cmds, table, build());
+    }
+    batch = [];
   };
   let removed = 0;
   for (const row of rows) {
     const isComment = row.SK.startsWith("C#") && row.comment;
-    if (size() + (isComment ? 2 : 1) > 100) await flush();
-    batch.deletes.push({ PK: row.PK, SK: row.SK });
+    const frag = { puts: [], deletes: [{ PK: row.PK, SK: row.SK }] };
     if (isComment) {
       const at = new Date(now()).toISOString();
-      batch.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
-      removed += 1;
+      frag.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
     }
+    if (batch.length > 0 && mergedSize(...batch.flatMap((b) => [b.frag, opsFor(b.row)]), frag, opsFor(row)) > 100) await flush();
+    batch.push({ frag, row });
+    if (isComment) removed += 1;
   }
   await flush();
   return removed;

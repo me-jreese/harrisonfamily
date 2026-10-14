@@ -135,6 +135,26 @@ describe("comment attachments: create", () => {
     expect(upload(up).attached).toBeUndefined();
   });
 
+  it("credits 1 plus 1 per photo in the same transaction as the binding; a refused binding credits nothing; a delete revokes it all", async () => {
+    const site = () => w.ddb.all().find((r) => r.PK === "CSTAT#site" && r.SK === "TOTAL");
+    const events = () => w.ddb.all().filter((r) => r.PK.startsWith("CONTRIB#") && r.SK.startsWith("E#"));
+    const theirs = await presign(olive);
+    expect((await create({ body: "x", attachments: [att(theirs)] })).status).toBe(403);
+    expect(events()).toEqual([]);
+    const [a, b] = await Promise.all([presign(), presign()]);
+    const r = await create({ body: "two", attachments: [att(a), att(b)] });
+    expect(r.status).toBe(201);
+    expect(events()).toHaveLength(1);
+    expect(events()[0]).toMatchObject({ kind: "comment", weight: 3, photos: 2, id: r.body.contrib.id });
+    expect(site()).toMatchObject({ n: 3, n_comment: 1, n_photo: 2 });
+    expect(upload(a)).toMatchObject({ attached: r.body.id });
+    expect((await patch(r.body.id, { body: "two", attachments: [att(a)] })).status).toBe(200); // credit is fixed at create
+    expect(site()).toMatchObject({ n: 3, n_photo: 2 });
+    expect((await w.call("DELETE", `/api/comments/${r.body.id}`, { token: ann, query: { subject: SUBJECT } })).status).toBe(204);
+    expect(events()).toEqual([]);
+    expect(site()).toMatchObject({ n: 0, n_comment: 0, n_photo: 0 });
+  });
+
   it("takes up to 4 photos, not 5", async () => {
     const four = await Promise.all([1, 2, 3, 4].map(() => presign()));
     expect((await create({ body: "four", attachments: four.map((u) => att(u)) })).status).toBe(201);
