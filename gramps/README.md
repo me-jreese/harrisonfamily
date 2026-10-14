@@ -1,6 +1,6 @@
 # gramps
 
-Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228); other tasks add `hfygramps/`, the addon and the schema export beside it.
+Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228); the schema export (HFY-TSK-231) is the last section; other tasks add `hfygramps/`, the addon and more beside it.
 
 Every value under `gramps/tests/fixtures/` is fictional. Phones are 555-01xx, mail is example.org, addresses are documentation-style, names are invented. Never copy a record, date, name or contact detail from the real tree into this directory (D-03).
 
@@ -65,3 +65,27 @@ python3 gramps/redaction/make_vectors.py            # rewrite the vectors (--che
 python3 gramps/redaction/render_reference.py        # rewrite the reference page (--check compares bytes)
 python3 -m unittest discover gramps/tests/unit      # schema, rules, vectors, oracle, fixture tree, drift
 ```
+
+## The Gramps schema export
+
+`gramps/scripts/gen-schema.py` is the single source of Gramps schema truth (HFY-TSK-231). Store, validator and edit-schema code read its committed output and never call `get_schema()` themselves. It reads only the class definitions in the bundled Gramps 6.0.6 library; it opens no family database, no sqlite file and no tree.
+
+| File in `gramps/schema/` | What it is |
+| --- | --- |
+| `gramps-6.0.6.schema.json` | JSON Schema 2020-12 for the 27 object classes (`$defs`), a `oneOf` over the ten primary objects, and `x-gramps` with the Gramps version (6.0.6) and DB schema (21). Every object is closed (`additionalProperties: false`) and requires `_class`. |
+| `gramps-6.0.6.labels.json` | English value-to-label tables for EventType, PlaceType, ChildRefType, FamilyRelType, EventRoleType, UrlType, AttributeType, NameType, NoteType, RepositoryType, SourceMediaType, NameOriginType and SrcAttributeType, with each table's Custom value. |
+| `gramps-6.0.6.sha256` | sha256 of the two files above. |
+
+`get_schema()` omits keys that Gramps serializes (`Date.format`, `Family.complete`, `Media.thumb`) and states a styled-text tag value too narrowly (it is `true` for bold). The generator adds those as `SUPPLEMENTS` (recorded in `x-gramps.supplements`) and proves, from an empty instance of every class, that no serialized key is left undescribed.
+
+```bash
+gramps/tests/gramps/gramps-shim.sh --script gramps/scripts/gen-schema.py          # rewrite gramps/schema/
+gramps/tests/gramps/gramps-shim.sh --script gramps/scripts/gen-schema.py --check  # byte comparison, writes nothing
+python3 gramps/hfygramps/schema_check.py                                          # no Gramps: hashes + fixture validation
+python3 -m unittest discover gramps/tests/unit                                    # includes the byte-identical regeneration test on io-mac-gramps
+(cd api && npx vitest run test/gramps-schema.test.js)                             # JS side: fixture validates, mutations fail
+```
+
+The fixture's float-rect object (listed under `rect_float` in `synthetic-tree.census.json`; `[12.5, ...]`) is a deliberate hostile input for the sync design, and `get_schema()` types a rect as integers, so the schema refuses it. The checkers (`schema_check.py` and the vitest) derive the expected-invalid set from that census key, require each such object to fail with rect errors only, and require every other object to validate. The ruling that "every fixture object validates" is relaxed for this hostile input is an open question for io; the schema stays strict. The float rule relies on the fixture's literal `12.5` style values: JavaScript cannot tell `10.0` from `10` after `JSON.parse`, while Python keeps `10.0` as a float and rejects it.
+
+What the checks prove, and what they do not. Validation is closed-world on keys, not on completeness: every object requires only `_class`, so a missing key is not caught (drift in the serialized key set is caught by the generator's empty-instance proof, on the Gramps host). The validators are small subsets that raise on any keyword they do not implement; swap them for a standard validator when validator-js lands. CI (`ci.manifest.yaml`) runs the unit tests, which check the sha256 manifest, the recorded version and the fixture; that gate does not prove the goldens match what Gramps generates, because hand-edited goldens with a recomputed manifest would pass it. Reproducibility is proven only by `gen-schema.py --check` on a Mac with the Gramps 6.0.6 bundle (`io-mac-gramps`), run by hand or on that host. Commit the three schema files together.

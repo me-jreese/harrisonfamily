@@ -1,0 +1,1079 @@
+{
+ "tables": {
+  "AttributeType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Caste",
+     "value": 1,
+     "xml": "Caste"
+    },
+    {
+     "label": "Description",
+     "value": 2,
+     "xml": "Description"
+    },
+    {
+     "label": "Identification Number",
+     "value": 3,
+     "xml": "Identification Number"
+    },
+    {
+     "label": "National Origin",
+     "value": 4,
+     "xml": "National Origin"
+    },
+    {
+     "label": "Number of Children",
+     "value": 5,
+     "xml": "Number of Children"
+    },
+    {
+     "label": "Social Security Number",
+     "value": 6,
+     "xml": "Social Security Number"
+    },
+    {
+     "label": "Nickname",
+     "value": 7,
+     "xml": "Nickname"
+    },
+    {
+     "label": "Cause",
+     "value": 8,
+     "xml": "Cause"
+    },
+    {
+     "label": "Agency",
+     "value": 9,
+     "xml": "Agency"
+    },
+    {
+     "label": "Age",
+     "value": 10,
+     "xml": "Age"
+    },
+    {
+     "label": "Father's Age",
+     "value": 11,
+     "xml": "Father Age"
+    },
+    {
+     "label": "Mother's Age",
+     "value": 12,
+     "xml": "Mother Age"
+    },
+    {
+     "label": "Witness",
+     "value": 13,
+     "xml": "Witness"
+    },
+    {
+     "label": "Time",
+     "value": 14,
+     "xml": "Time"
+    },
+    {
+     "label": "Occupation",
+     "value": 15,
+     "xml": "Occupation"
+    }
+   ]
+  },
+  "ChildRefType": {
+   "custom": 7,
+   "entries": [
+    {
+     "label": "None",
+     "value": 0,
+     "xml": "None"
+    },
+    {
+     "label": "Birth",
+     "value": 1,
+     "xml": "Birth"
+    },
+    {
+     "label": "Adopted",
+     "value": 2,
+     "xml": "Adopted"
+    },
+    {
+     "label": "Stepchild",
+     "value": 3,
+     "xml": "Stepchild"
+    },
+    {
+     "label": "Sponsored",
+     "value": 4,
+     "xml": "Sponsored"
+    },
+    {
+     "label": "Foster",
+     "value": 5,
+     "xml": "Foster"
+    },
+    {
+     "label": "Unknown",
+     "value": 6,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 7,
+     "xml": "Custom"
+    }
+   ]
+  },
+  "EventRoleType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Primary",
+     "value": 1,
+     "xml": "Primary"
+    },
+    {
+     "label": "Clergy",
+     "value": 2,
+     "xml": "Clergy"
+    },
+    {
+     "label": "Celebrant",
+     "value": 3,
+     "xml": "Celebrant"
+    },
+    {
+     "label": "Aide",
+     "value": 4,
+     "xml": "Aide"
+    },
+    {
+     "label": "Bride",
+     "value": 5,
+     "xml": "Bride"
+    },
+    {
+     "label": "Groom",
+     "value": 6,
+     "xml": "Groom"
+    },
+    {
+     "label": "Witness",
+     "value": 7,
+     "xml": "Witness"
+    },
+    {
+     "label": "Family",
+     "value": 8,
+     "xml": "Family"
+    },
+    {
+     "label": "Informant",
+     "value": 9,
+     "xml": "Informant"
+    },
+    {
+     "label": "Godparent",
+     "value": 10,
+     "xml": "Godparent"
+    },
+    {
+     "label": "Father",
+     "value": 11,
+     "xml": "Father"
+    },
+    {
+     "label": "Mother",
+     "value": 12,
+     "xml": "Mother"
+    },
+    {
+     "label": "Parent",
+     "value": 13,
+     "xml": "Parent"
+    },
+    {
+     "label": "Child",
+     "value": 14,
+     "xml": "Child"
+    },
+    {
+     "label": "Multiple birth",
+     "value": 15,
+     "xml": "Multiple birth"
+    },
+    {
+     "label": "Friend",
+     "value": 16,
+     "xml": "Friend"
+    },
+    {
+     "label": "Neighbor",
+     "value": 17,
+     "xml": "Neighbor"
+    },
+    {
+     "label": "Officiator",
+     "value": 18,
+     "xml": "Officiator"
+    }
+   ]
+  },
+  "EventType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Adopted",
+     "value": 11,
+     "xml": "Adopted"
+    },
+    {
+     "label": "Birth",
+     "value": 12,
+     "xml": "Birth"
+    },
+    {
+     "label": "Death",
+     "value": 13,
+     "xml": "Death"
+    },
+    {
+     "label": "Adult Christening",
+     "value": 14,
+     "xml": "Adult Christening"
+    },
+    {
+     "label": "Baptism",
+     "value": 15,
+     "xml": "Baptism"
+    },
+    {
+     "label": "Bar Mitzvah",
+     "value": 16,
+     "xml": "Bar Mitzvah"
+    },
+    {
+     "label": "Bat Mitzvah",
+     "value": 17,
+     "xml": "Bas Mitzvah"
+    },
+    {
+     "label": "Blessing",
+     "value": 18,
+     "xml": "Blessing"
+    },
+    {
+     "label": "Burial",
+     "value": 19,
+     "xml": "Burial"
+    },
+    {
+     "label": "Cause Of Death",
+     "value": 20,
+     "xml": "Cause Of Death"
+    },
+    {
+     "label": "Census",
+     "value": 21,
+     "xml": "Census"
+    },
+    {
+     "label": "Christening",
+     "value": 22,
+     "xml": "Christening"
+    },
+    {
+     "label": "Confirmation",
+     "value": 23,
+     "xml": "Confirmation"
+    },
+    {
+     "label": "Cremation",
+     "value": 24,
+     "xml": "Cremation"
+    },
+    {
+     "label": "Degree",
+     "value": 25,
+     "xml": "Degree"
+    },
+    {
+     "label": "Education",
+     "value": 26,
+     "xml": "Education"
+    },
+    {
+     "label": "Elected",
+     "value": 27,
+     "xml": "Elected"
+    },
+    {
+     "label": "Emigration",
+     "value": 28,
+     "xml": "Emigration"
+    },
+    {
+     "label": "First Communion",
+     "value": 29,
+     "xml": "First Communion"
+    },
+    {
+     "label": "Immigration",
+     "value": 30,
+     "xml": "Immigration"
+    },
+    {
+     "label": "Graduation",
+     "value": 31,
+     "xml": "Graduation"
+    },
+    {
+     "label": "Medical Information",
+     "value": 32,
+     "xml": "Medical Information"
+    },
+    {
+     "label": "Military Service",
+     "value": 33,
+     "xml": "Military Service"
+    },
+    {
+     "label": "Naturalization",
+     "value": 34,
+     "xml": "Naturalization"
+    },
+    {
+     "label": "Nobility Title",
+     "value": 35,
+     "xml": "Nobility Title"
+    },
+    {
+     "label": "Number of Marriages",
+     "value": 36,
+     "xml": "Number of Marriages"
+    },
+    {
+     "label": "Occupation",
+     "value": 37,
+     "xml": "Occupation"
+    },
+    {
+     "label": "Ordination",
+     "value": 38,
+     "xml": "Ordination"
+    },
+    {
+     "label": "Probate",
+     "value": 39,
+     "xml": "Probate"
+    },
+    {
+     "label": "Property",
+     "value": 40,
+     "xml": "Property"
+    },
+    {
+     "label": "Religion",
+     "value": 41,
+     "xml": "Religion"
+    },
+    {
+     "label": "Residence",
+     "value": 42,
+     "xml": "Residence"
+    },
+    {
+     "label": "Retirement",
+     "value": 43,
+     "xml": "Retirement"
+    },
+    {
+     "label": "Will",
+     "value": 44,
+     "xml": "Will"
+    },
+    {
+     "label": "Marriage",
+     "value": 1,
+     "xml": "Marriage"
+    },
+    {
+     "label": "Marriage Settlement",
+     "value": 2,
+     "xml": "Marriage Settlement"
+    },
+    {
+     "label": "Marriage License",
+     "value": 3,
+     "xml": "Marriage License"
+    },
+    {
+     "label": "Marriage Contract",
+     "value": 4,
+     "xml": "Marriage Contract"
+    },
+    {
+     "label": "Marriage Banns",
+     "value": 5,
+     "xml": "Marriage Banns"
+    },
+    {
+     "label": "Engagement",
+     "value": 6,
+     "xml": "Engagement"
+    },
+    {
+     "label": "Divorce",
+     "value": 7,
+     "xml": "Divorce"
+    },
+    {
+     "label": "Divorce Filing",
+     "value": 8,
+     "xml": "Divorce Filing"
+    },
+    {
+     "label": "Annulment",
+     "value": 9,
+     "xml": "Annulment"
+    },
+    {
+     "label": "Alternate Marriage",
+     "value": 10,
+     "xml": "Alternate Marriage"
+    },
+    {
+     "label": "Stillbirth",
+     "value": 45,
+     "xml": "Stillbirth"
+    }
+   ]
+  },
+  "FamilyRelType": {
+   "custom": 4,
+   "entries": [
+    {
+     "label": "Married",
+     "value": 0,
+     "xml": "Married"
+    },
+    {
+     "label": "Unmarried",
+     "value": 1,
+     "xml": "Unmarried"
+    },
+    {
+     "label": "Civil Union",
+     "value": 2,
+     "xml": "Civil Union"
+    },
+    {
+     "label": "Unknown",
+     "value": 3,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 4,
+     "xml": "Custom"
+    }
+   ]
+  },
+  "NameOriginType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown "
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "",
+     "value": 1,
+     "xml": ""
+    },
+    {
+     "label": "Inherited",
+     "value": 2,
+     "xml": "Inherited"
+    },
+    {
+     "label": "Given",
+     "value": 3,
+     "xml": "Given"
+    },
+    {
+     "label": "Taken",
+     "value": 4,
+     "xml": "Taken"
+    },
+    {
+     "label": "Patronymic",
+     "value": 5,
+     "xml": "Patronymic"
+    },
+    {
+     "label": "Matronymic",
+     "value": 6,
+     "xml": "Matronymic"
+    },
+    {
+     "label": "Feudal",
+     "value": 7,
+     "xml": "Feudal"
+    },
+    {
+     "label": "Pseudonym",
+     "value": 8,
+     "xml": "Pseudonym"
+    },
+    {
+     "label": "Patrilineal",
+     "value": 9,
+     "xml": "Patrilineal"
+    },
+    {
+     "label": "Matrilineal",
+     "value": 10,
+     "xml": "Matrilineal"
+    },
+    {
+     "label": "Occupation",
+     "value": 11,
+     "xml": "Occupation"
+    },
+    {
+     "label": "Location",
+     "value": 12,
+     "xml": "Location"
+    }
+   ]
+  },
+  "NameType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Also Known As",
+     "value": 1,
+     "xml": "Also Known As"
+    },
+    {
+     "label": "Birth Name",
+     "value": 2,
+     "xml": "Birth Name"
+    },
+    {
+     "label": "Married Name",
+     "value": 3,
+     "xml": "Married Name"
+    }
+   ]
+  },
+  "NoteType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "General",
+     "value": 1,
+     "xml": "General"
+    },
+    {
+     "label": "Research",
+     "value": 2,
+     "xml": "Research"
+    },
+    {
+     "label": "Analysis",
+     "value": 27,
+     "xml": "Analysis"
+    },
+    {
+     "label": "Transcript",
+     "value": 3,
+     "xml": "Transcript"
+    },
+    {
+     "label": "Source text",
+     "value": 21,
+     "xml": "Source text"
+    },
+    {
+     "label": "Citation",
+     "value": 22,
+     "xml": "Citation"
+    },
+    {
+     "label": "Report",
+     "value": 23,
+     "xml": "Report"
+    },
+    {
+     "label": "Html code",
+     "value": 24,
+     "xml": "Html code"
+    },
+    {
+     "label": "To Do",
+     "value": 25,
+     "xml": "To Do"
+    },
+    {
+     "label": "Link",
+     "value": 26,
+     "xml": "Link"
+    },
+    {
+     "label": "Person Note",
+     "value": 4,
+     "xml": "Person Note"
+    },
+    {
+     "label": "Name Note",
+     "value": 20,
+     "xml": "Name Note"
+    },
+    {
+     "label": "Attribute Note",
+     "value": 5,
+     "xml": "Attribute Note"
+    },
+    {
+     "label": "Address Note",
+     "value": 6,
+     "xml": "Address Note"
+    },
+    {
+     "label": "Association Note",
+     "value": 7,
+     "xml": "Association Note"
+    },
+    {
+     "label": "LDS Note",
+     "value": 8,
+     "xml": "LDS Note"
+    },
+    {
+     "label": "Family Note",
+     "value": 9,
+     "xml": "Family Note"
+    },
+    {
+     "label": "Event Note",
+     "value": 10,
+     "xml": "Event Note"
+    },
+    {
+     "label": "Event Reference Note",
+     "value": 11,
+     "xml": "Event Reference Note"
+    },
+    {
+     "label": "Source Note",
+     "value": 12,
+     "xml": "Source Note"
+    },
+    {
+     "label": "Source Reference Note",
+     "value": 13,
+     "xml": "Source Reference Note"
+    },
+    {
+     "label": "Place Note",
+     "value": 14,
+     "xml": "Place Note"
+    },
+    {
+     "label": "Repository Note",
+     "value": 15,
+     "xml": "Repository Note"
+    },
+    {
+     "label": "Repository Reference Note",
+     "value": 16,
+     "xml": "Repository Reference Note"
+    },
+    {
+     "label": "Media Note",
+     "value": 17,
+     "xml": "Media Note"
+    },
+    {
+     "label": "Media Reference Note",
+     "value": 18,
+     "xml": "Media Reference Note"
+    },
+    {
+     "label": "Child Reference Note",
+     "value": 19,
+     "xml": "Child Reference Note"
+    }
+   ]
+  },
+  "PlaceType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Country",
+     "value": 1,
+     "xml": "Country"
+    },
+    {
+     "label": "State",
+     "value": 2,
+     "xml": "State"
+    },
+    {
+     "label": "County",
+     "value": 3,
+     "xml": "County"
+    },
+    {
+     "label": "City",
+     "value": 4,
+     "xml": "City"
+    },
+    {
+     "label": "Parish",
+     "value": 5,
+     "xml": "Parish"
+    },
+    {
+     "label": "Locality",
+     "value": 6,
+     "xml": "Locality"
+    },
+    {
+     "label": "Street",
+     "value": 7,
+     "xml": "Street"
+    },
+    {
+     "label": "Province",
+     "value": 8,
+     "xml": "Province"
+    },
+    {
+     "label": "Region",
+     "value": 9,
+     "xml": "Region"
+    },
+    {
+     "label": "Department",
+     "value": 10,
+     "xml": "Department"
+    },
+    {
+     "label": "Neighborhood",
+     "value": 11,
+     "xml": "Neighborhood"
+    },
+    {
+     "label": "District",
+     "value": 12,
+     "xml": "District"
+    },
+    {
+     "label": "Borough",
+     "value": 13,
+     "xml": "Borough"
+    },
+    {
+     "label": "Municipality",
+     "value": 14,
+     "xml": "Municipality"
+    },
+    {
+     "label": "Town",
+     "value": 15,
+     "xml": "Town"
+    },
+    {
+     "label": "Village",
+     "value": 16,
+     "xml": "Village"
+    },
+    {
+     "label": "Hamlet",
+     "value": 17,
+     "xml": "Hamlet"
+    },
+    {
+     "label": "Farm",
+     "value": 18,
+     "xml": "Farm"
+    },
+    {
+     "label": "Building",
+     "value": 19,
+     "xml": "Building"
+    },
+    {
+     "label": "Number",
+     "value": 20,
+     "xml": "Number"
+    }
+   ]
+  },
+  "RepositoryType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Library",
+     "value": 1,
+     "xml": "Library"
+    },
+    {
+     "label": "Cemetery",
+     "value": 2,
+     "xml": "Cemetery"
+    },
+    {
+     "label": "Church",
+     "value": 3,
+     "xml": "Church"
+    },
+    {
+     "label": "Archive",
+     "value": 4,
+     "xml": "Archive"
+    },
+    {
+     "label": "Album",
+     "value": 5,
+     "xml": "Album"
+    },
+    {
+     "label": "Web site",
+     "value": 6,
+     "xml": "Web site"
+    },
+    {
+     "label": "Bookstore",
+     "value": 7,
+     "xml": "Bookstore"
+    },
+    {
+     "label": "Collection",
+     "value": 8,
+     "xml": "Collection"
+    },
+    {
+     "label": "Safe",
+     "value": 9,
+     "xml": "Safe"
+    }
+   ]
+  },
+  "SourceMediaType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "Audio",
+     "value": 1,
+     "xml": "Audio"
+    },
+    {
+     "label": "Book",
+     "value": 2,
+     "xml": "Book"
+    },
+    {
+     "label": "Card",
+     "value": 3,
+     "xml": "Card"
+    },
+    {
+     "label": "Electronic",
+     "value": 4,
+     "xml": "Electronic"
+    },
+    {
+     "label": "Fiche",
+     "value": 5,
+     "xml": "Fiche"
+    },
+    {
+     "label": "Film",
+     "value": 6,
+     "xml": "Film"
+    },
+    {
+     "label": "Magazine",
+     "value": 7,
+     "xml": "Magazine"
+    },
+    {
+     "label": "Manuscript",
+     "value": 8,
+     "xml": "Manuscript"
+    },
+    {
+     "label": "Map",
+     "value": 9,
+     "xml": "Map"
+    },
+    {
+     "label": "Newspaper",
+     "value": 10,
+     "xml": "Newspaper"
+    },
+    {
+     "label": "Photo",
+     "value": 11,
+     "xml": "Photo"
+    },
+    {
+     "label": "Tombstone",
+     "value": 12,
+     "xml": "Tombstone"
+    },
+    {
+     "label": "Video",
+     "value": 13,
+     "xml": "Video"
+    }
+   ]
+  },
+  "SrcAttributeType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    }
+   ]
+  },
+  "UrlType": {
+   "custom": 0,
+   "entries": [
+    {
+     "label": "Unknown",
+     "value": -1,
+     "xml": "Unknown"
+    },
+    {
+     "label": "Custom",
+     "value": 0,
+     "xml": "Custom"
+    },
+    {
+     "label": "E-mail",
+     "value": 1,
+     "xml": "E-mail"
+    },
+    {
+     "label": "Web Home",
+     "value": 2,
+     "xml": "Web Home"
+    },
+    {
+     "label": "Web Search",
+     "value": 3,
+     "xml": "Web Search"
+    },
+    {
+     "label": "FTP",
+     "value": 4,
+     "xml": "FTP"
+    }
+   ]
+  }
+ },
+ "x-gramps": {
+  "db_schema": 21,
+  "gramps_version": "6.0.6",
+  "locale": "en_US"
+ }
+}
