@@ -301,12 +301,14 @@ function bloodPaths(graph, a, b, cache) {
     }
     if (paths.length >= MAX_PATHS) break;
   }
+  // Tie-break (documented rule): among equal-length paths the label comes from the first, which is the most balanced one (smaller longer side,
+  // so a (2,2) split reads "first cousin" ahead of a (1,3) split), then the shorter upward leg, then the ancestor id for stability.
   // Most direct first: the smaller longer side, then the shorter upward leg, then the ancestor id (stable).
   paths.sort((x, y) => Math.max(x.up.length, x.down.length) - Math.max(y.up.length, y.down.length) || x.up.length - y.up.length || (x.ancestor < y.ancestor ? -1 : x.ancestor > y.ancestor ? 1 : 0));
   return { length: best, paths };
 }
 
-const KIND_RANK = { blood: 0, "partner:direct": 1, "partner:b": 2, "partner:a": 3 };
+const KIND_RANK = { blood: 0, "partner:direct": 1, "partner:mid": 2, "partner:b": 3, "partner:a": 4 };
 const rankOf = (p) => KIND_RANK[p.kind === "blood" ? "blood" : `partner:${p.side}`];
 
 /** Every shortest path a -> b over parent and partner links (see FamilyGraph#relationPaths). */
@@ -329,13 +331,27 @@ export function relationPaths(graph, a, b) {
     const bp = bloodPaths(graph, a, pb.id, cache);
     for (const path of bp.paths) cands.push({ kind: "partner", side: "b", partner: pb.id, blood: path, nodes: [...path.nodes, b], length: bp.length + 1 });
   }
+  if (bridge) {
+    // A partner hop in the middle: `b` is a child of a parent's partner (a step-sibling), a -> parent -> parent's partner -> b.
+    for (const par of graph.parents(a)) {
+      for (const q of graph.partners(par.id)) {
+        if (q.id === a || q.id === b || graph.parents(a).some((x) => x.id === q.id)) continue;
+        if (graph.children(q.id).some((c) => c.id === b)) cands.push({ kind: "partner", side: "mid", partner: q.id, blood: null, nodes: [a, par.id, q.id, b], length: 3 });
+      }
+    }
+  }
   if (!cands.length) return [];
   const min = Math.min(...cands.map((c) => c.length));
   return cands.filter((c) => c.length === min).sort((x, y) => rankOf(x) - rankOf(y)).slice(0, MAX_PATHS);
 }
 
 const ORDINALS = ["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
-const ordinal = (n) => ORDINALS[n] || `${n}th`;
+const ordinal = (n) => {
+  if (ORDINALS[n]) return ORDINALS[n];
+  const t = n % 100;
+  const suffix = t >= 11 && t <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+  return `${n}${suffix}`;
+};
 /** "great-" for one, "second great-" for two, and so on. */
 const greats = (k) => (k <= 0 ? "" : k === 1 ? "great-" : `${ordinal(k)} great-`);
 
@@ -359,7 +375,22 @@ export const NOT_CONNECTED = "not yet connected";
 /** Shown when both are in the tree but no path of parents and partners joins them. */
 export const NOT_RELATED = "not related";
 /** True for a label that names a real relationship (the focus card writes "your <label>" only for these). */
-export const isRelationWord = (label) => typeof label === "string" && label !== "you" && label !== NOT_CONNECTED && label !== NOT_RELATED;
+export const isRelationWord = (label) => typeof label === "string" && label !== "you" && label !== NOT_CONNECTED && label !== NOT_RELATED && label !== RELATED_BY_MARRIAGE;
+
+/** Shown when two people are joined only by a chain of parent and partner links longer than the engine labels (a step-sibling's spouse, say). */
+export const RELATED_BY_MARRIAGE = "related by marriage";
+
+/** True when any chain of parent, child and partner links joins the two people (plain BFS). */
+function linked(graph, a, b) {
+  const seen = new Set([a]);
+  const queue = [a];
+  while (queue.length) {
+    const id = queue.shift();
+    if (id === b) return true;
+    for (const n of [...graph.parents(id), ...graph.children(id), ...graph.partners(id)]) if (!seen.has(n.id)) { seen.add(n.id); queue.push(n.id); }
+  }
+  return false;
+}
 
 /** What `other` is to `viewer` ("mother", "half-sister", "great-aunt", "second cousin once removed", "stepmother", "sister-in-law",
  *  "adopted son"). Lowercase words, never derived from colour. "you" for the same person; NOT_CONNECTED across components or for someone with
@@ -375,8 +406,13 @@ export function relationLabel(graph, viewer, other) {
     if (!(v.component === undefined && o.component === undefined)) return NOT_CONNECTED;
   }
   const path = graph.relationPaths(viewer, other)[0];
-  if (!path) return placed(v) && placed(o) ? NOT_RELATED : NOT_CONNECTED;
+  if (!path) {
+    if (!(placed(v) && placed(o))) return NOT_CONNECTED;
+    // A longer chain of parent and partner links still joins them: neutral, not "not related".
+    return linked(graph, viewer, other) ? RELATED_BY_MARRIAGE : NOT_RELATED;
+  }
   if (path.kind === "blood") return directLabel(graph, viewer, other, path, o);
+  if (path.side === "mid") return { f: "stepsister", m: "stepbrother" }[o.sex] || "stepsibling";
   if (path.side === "direct") {
     const partner = graph.partners(viewer).find((p) => p.id === other);
     return partner && partner.union.type === "married" ? word("partner", o) : "partner";
