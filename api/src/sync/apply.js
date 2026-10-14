@@ -9,28 +9,28 @@
 //   IDALIAS#Person#<id>  put for a Person merge or an allowed renumber   (never deleted)
 //   SYNC#BATCH#<id>      put, attribute_not_exists                       (the receipt; the cross-attempt idempotency guard)
 //   AUDIT#records:<id>   put                                              (one audit item per batch)
+//   SYNC#BUDGET#<hour>   update, only for a batch with a delete or withdraw (the destructive budget the validator reads)
 //   + caller `extra` items and registered contributors' items             (proposal state, contribution ops, comment updates)
+// The SYNC#HEAD update also keeps `live_heads`, the count of live heads (the validator's 5 % share of the budget).
 //
-// Not here: ID minting (store-id-policy), the server validator (validator-js: pass it as ctx.validate), record-change
-// notifications (the render outbox, D2-02), HTTP mapping (the sync and edit routes).
+// The server validator (validator.js, HFY-TSK-245) runs on every call, from every origin, before the version check.
+//
+// Not here: ID minting (store-id-policy), record-change notifications (the render outbox, D2-02), HTTP mapping (the sync and edit routes).
 import { randomUUID } from "node:crypto";
 import { HttpError, logSafeError } from "../http.js";
-import { TxnCancelled, TxnTokenMismatch, assertTxnSize, auditItem, mergeUpdates, transact } from "../txn.js";
+import { TxnCancelled, TxnTokenMismatch, assertTxnSize, auditItem, counterUpdate, mergeUpdates, transact } from "../txn.js";
 import { canonicalJson, HANDLE_SHAPE } from "../records/ops.js";
 import { canonicalJson as storedJson } from "../shared/canonical.mjs";
+import { SyncError } from "./errors.js";
 import { defaultHooks } from "./hooks.js";
 import {
-  CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, getBatchReceipt, getGid, getRecordItem, getSyncHead,
-  gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
+  BUDGET_TTL_SECONDS, CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, budgetBucket, budgetKey,
+  getBatchReceipt, getGid, getRecordItem, getSyncHead, gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
+import { defaultValidate } from "./validator.js";
+import { createStoreView } from "./view.js";
 
-/** An applyBatch failure with an HTTP status and, for a conflict, the per-op detail. Routes pass it through errorResponse(). */
-export class SyncError extends HttpError {
-  constructor(status, code, message, details) {
-    super(status, code, message, details);
-    this.name = "SyncError";
-  }
-}
+export { SyncError };
 
 /** Internal retries after a lost seq race (sync design S07). */
 export const MAX_SEQ_RETRIES = 3;
@@ -115,7 +115,7 @@ function normaliseOps(rawOps) {
       throw bad("validation", `${at}.obj must be absent for ${raw.op}`);
     }
     if (raw.op === "withdraw") {
-      if (reason !== undefined && reason !== "private") throw bad("validation", `${at}.reason of a withdraw is private`);
+      if (reason !== "private") throw bad("validation", `${at}.reason of a withdraw must be private`);
       norm.reason = "private";
     } else if (reason !== undefined) norm.reason = reason;
     if (raw.merged_into !== undefined) {
@@ -280,13 +280,19 @@ function priorCondition(prior) {
 /**
  * Applies a batch of ops atomically.
  *
- * @param ctx  { ddb, cmds, table, validate, now?, uid?, log?, hooks?, maxSeqRetries?, txnOpts?, unsafeNoValidate? }
- *   `validate({ ops, origin, principal, on_behalf_of, sync_head, record(cls, handle) })` is validator-js's seam and is REQUIRED: it
- *   throws an HttpError to refuse the batch, and it runs again on the refreshed view after every lost seq race. It runs before the
- *   version check, so a refused caller never sees conflict detail. A call with neither `validate` nor `unsafeNoValidate: true` (the
- *   seed and tests only) throws a TypeError. `hooks` is a createHookRegistry()
- *   (default: the process-wide one). `txnOpts` goes to transact() (tests inject sleep and random).
- * @param req  { principal, origin, onBehalfOf?, idempotencyKey, ops, extra?, client? }
+ * @param ctx  { ddb, cmds, table, validate?, storeView?, now?, uid?, log?, hooks?, maxSeqRetries?, txnOpts?, unsafeNoValidate? }
+ *   `validate(view)` is the server validator's seam. By default (neither `validate` nor `unsafeNoValidate`) applyBatch runs the validator of
+ *   validator.js with the policy and schema in the repository; pass `createValidator({...})` to change its options. `view` is
+ *   { ops, origin, principal, on_behalf_of, sync_head: {seq, tree_id, live_heads}, record(cls, handle), store, stepUp, expected }:
+ *   `store` is the store view (view.js; `ctx.storeView(store, {now, prefetched})` may supply another one, for example the store-view fold),
+ *   `stepUp` and `expected` come from `req`. It throws an HttpError to refuse the batch, runs before the version check (a refused caller
+ *   never sees conflict detail) and runs again on the refreshed view after every lost seq race. Only the seed and tests may pass
+ *   `unsafeNoValidate: true` to skip it, and a seed that does so must have run the projection's own checks. `hooks` is a
+ *   createHookRegistry() (default: the process-wide one). `txnOpts` goes to transact() (tests inject sleep and random).
+ * @param req  { principal, origin, onBehalfOf?, idempotencyKey, ops, extra?, client?, stepUp?, expected? }
+ *   `stepUp: true` says the route verified a fresh step-up for the caller (amr mfa within its window); the validator asks for it on a
+ *   desktop delete and on a destructive batch over the budget. `expected` is the open push session's announced handles, an array of
+ *   {class, handle} or "Class#handle": a reference to one resolves although it is not written yet.
  *   op:    { op_id?, op: create|update|delete|withdraw|marker, class, handle, base_version, obj?, reason?, renumber?, merged_into?, blob? }
  *          `renumber` (a Person update that changes its gramps_id), `merged_into` (a Person delete with reason merge: the survivor's
  *          gramps_id, at most 64 characters) and `blob` (a Media descriptor, at most MAX_BLOB_BYTES) are PROVISIONAL op fields invented
@@ -305,12 +311,12 @@ export async function applyBatch(ctx, req) {
   const log = ctx.log ?? console;
   const hooks = ctx.hooks ?? defaultHooks;
   const maxSeqRetries = ctx.maxSeqRetries ?? MAX_SEQ_RETRIES;
-  const { principal, origin, onBehalfOf, idempotencyKey, extra, client } = req ?? {};
+  const { principal, origin, onBehalfOf, idempotencyKey, extra, client, stepUp, expected } = req ?? {};
 
-  // The version-conflict body returns stored objects, which is safe only because the validator runs first: a caller cannot skip it by omission.
-  if (typeof ctx.validate !== "function" && ctx.unsafeNoValidate !== true) {
-    throw new TypeError("applyBatch needs ctx.validate (the server validator); only the seed and tests may pass ctx.unsafeNoValidate: true");
-  }
+  // The version-conflict body returns stored objects, which is safe only because the validator runs first: a caller cannot skip it by
+  // omission. With no ctx.validate the repository's own validator runs; only the seed and tests may opt out.
+  const validate = typeof ctx.validate === "function" ? ctx.validate : ctx.unsafeNoValidate === true ? undefined : defaultValidate;
+  if (ctx.validate !== undefined && typeof ctx.validate !== "function") throw new TypeError("ctx.validate must be a function");
   if (typeof principal !== "string" || !principal) throw bad("validation", "principal is required");
   // batch_id hashes `principal:key`; with no ':' in a principal the pair is unambiguous (principal 'a:b' + key 'c' is not 'a' + 'b:c').
   if (principal.includes(":")) throw bad("validation", "principal must not contain ':'");
@@ -319,6 +325,7 @@ export async function applyBatch(ctx, req) {
   if (typeof idempotencyKey !== "string" || idempotencyKey.length < 1 || idempotencyKey.length > 200) throw new SyncError(428, "idempotency_key_required", "an Idempotency-Key is required");
   const ops = normaliseOps(req.ops);
   if (extra !== undefined && !isObj(extra)) throw bad("validation", "extra must be a transaction fragment");
+  const expectedKeys = normaliseExpected(expected);
 
   const batchId = batchIdFor(principal, idempotencyKey);
   let requestHash;
@@ -357,21 +364,26 @@ export async function applyBatch(ctx, req) {
     await Promise.all([...gidWanted].map(async ([key, [cls, id]]) => gids.set(key, await getGid(store, cls, id))));
 
     // 3. Validate on this view (it is re-run on the refreshed view after a lost race), then check versions and ids.
-    if (ctx.validate) {
-      await ctx.validate({
+    if (validate) {
+      const readOnly = { now, prefetched: heads };
+      await validate({
         ops: ops.map(wire),
         origin,
         principal,
         on_behalf_of: onBehalfOf,
-        sync_head: headItemNow ? { seq: headItemNow.seq ?? 0, tree_id: headItemNow.tree_id } : undefined,
+        sync_head: headItemNow ? { seq: headItemNow.seq ?? 0, tree_id: headItemNow.tree_id, live_heads: headItemNow.live_heads } : undefined,
         record: (cls, handle) => parseHead(heads.get(`${cls}#${handle}`)),
+        store: ctx.storeView ? ctx.storeView(store, readOnly) : createStoreView(store, readOnly),
+        stepUp: stepUp === true,
+        expected: (cls, handle) => expectedKeys.has(`${cls}#${handle}`),
       });
     }
     const versions = checkVersions(ops, heads);
     const plan = planGids(ops, heads, headItemNow, gids);
 
     // 4. Build the transaction.
-    const at = iso(now());
+    const nowMs = now();
+    const at = iso(nowMs);
     const seqFrom = (headItemNow?.seq ?? 0) + 1;
     const seqTo = seqFrom + ops.length - 1;
     const ident = { at, batch_id: batchId };
@@ -381,6 +393,8 @@ export async function applyBatch(ctx, req) {
     const changes = [];
     const before = [];
     const after = [];
+    let liveDelta = 0; // the change in live heads, for SYNC#HEAD.live_heads
+    let destructive = 0; // deletes and withdraws, for the budget counter
     ops.forEach((op, i) => {
       const seq = seqFrom + i;
       if (op.op === "marker") {
@@ -391,6 +405,11 @@ export async function applyBatch(ctx, req) {
       const prev = heads.get(`${op.class}#${op.handle}`);
       const version = versions[i];
       const live = op.op === "create" || op.op === "update";
+      if (op.op === "create") liveDelta += 1; // a create is over no head or over a tombstone (checkVersions)
+      else if (!live) {
+        liveDelta -= 1;
+        destructive += 1;
+      }
       const grampsId = live ? op.gramps_id : prev.gramps_id;
       const fields = { class: op.class, handle: op.handle, gramps_id: grampsId, version, seq, deleted: !live, objJson: live ? op.objJson : null, blob: op.blob, reason: live ? undefined : op.reason, at, by: principal, origin };
       const cond =
@@ -440,8 +459,11 @@ export async function applyBatch(ctx, req) {
       tag: "sync:audit",
     });
     const updates = [
-      headUpdate(headItemNow, seqTo, at, origin),
+      headUpdate(headItemNow, seqTo, at, origin, liveDelta),
     ];
+    if (destructive > 0) {
+      updates.push(counterUpdate(budgetKey(budgetBucket(nowMs)), { count: destructive }, { ttl: Math.floor(nowMs / 1000) + BUDGET_TTL_SECONDS, ifNotExists: { entity: "syncbudget" } }));
+    }
 
     // 5. Caller extra items and the registered contributors' items ride in the same transaction.
     const batch = { batch_id: batchId, origin, principal, on_behalf_of: onBehalfOf, at, seq_from: seqFrom, seq_to: seqTo, results: results.map((r) => ({ ...r })), changes };
@@ -502,11 +524,15 @@ export async function applyBatch(ctx, req) {
  * The SYNC#HEAD update. Its condition pins the seq AND the gate state that was read (writes_enabled, and seeded for a non-seed
  * origin), so a pause or an un-seed between the gate check and the commit fails the transaction; the retry re-reads and re-gates.
  */
-function headUpdate(headItemNow, seqTo, at, origin) {
+function headUpdate(headItemNow, seqTo, at, origin, liveDelta = 0) {
   const key = headKey();
   const names = { "#s": "seq", "#u": "updated_at" };
-  const base = { key, update: "SET #s = :to, #u = :at", tag: "sync:head" };
   const values = { ":to": seqTo, ":at": at };
+  if (liveDelta !== 0) {
+    names["#lh"] = "live_heads";
+    values[":lh"] = liveDelta;
+  }
+  const base = { key, update: liveDelta !== 0 ? "SET #s = :to, #u = :at ADD #lh :lh" : "SET #s = :to, #u = :at", tag: "sync:head" };
   if (!headItemNow) return { ...base, condition: "attribute_not_exists(PK)", names, values };
   const pins = [];
   if (headItemNow.seq === undefined) pins.push("attribute_not_exists(#s)");
@@ -526,6 +552,19 @@ function headUpdate(headItemNow, seqTo, at, origin) {
     values[":sd"] = true;
   }
   return { ...base, condition: pins.join(" AND "), names, values };
+}
+
+/** The set of "Class#handle" keys of a request's `expected` list: {class, handle} objects or "Class#handle" strings. */
+function normaliseExpected(expected) {
+  const keys = new Set();
+  if (expected === undefined) return keys;
+  if (!Array.isArray(expected)) throw bad("validation", "expected must be an array");
+  for (const e of expected) {
+    if (typeof e === "string" && /^[A-Za-z]+#.+$/.test(e)) keys.add(e);
+    else if (isObj(e) && CLASSES.includes(e.class) && typeof e.handle === "string" && e.handle) keys.add(`${e.class}#${e.handle}`);
+    else throw bad("validation", "expected holds {class, handle} entries");
+  }
+  return keys;
 }
 
 async function runContributors(hooks, batch, origin) {

@@ -8,9 +8,10 @@
 //   const tree = buildTree(objects);                 // Gramps json_data objects, one plain object each
 //   isBirthLike(event, tree, policy);                // the only birth-like list anywhere
 //
-// Scope: this port holds the date, place, coordinate, attribute, rect and birth-like predicates. The URL channel rules (url_rules),
-// the path-pattern matcher (match_pointers) and the pointer helpers exist only in gramps/hfygramps/rules.py; the validator task
-// ports them before it relies on them. Nothing in the API imports this file yet.
+// Scope: this port holds the date, place, coordinate, attribute, rect and birth-like predicates, the URL channel rules (urlRules), the
+// path-pattern matcher (matchPointers) and the read-only pointer helpers (pointerGet, escapePointerToken). The projection-only
+// helpers of rules.py (pointer_set, pointer_remove) have no use on the server and are not ported. validator-js (api/src/sync/checker.js)
+// and the edit guard import this file.
 //
 // No function here logs or returns a matched value. A nested value of the wrong shape (an event_ref_list entry that is not an
 // object, a type or a date that is not an object, a citation_list that is not an array) reads as absent, never throws. A date that
@@ -180,4 +181,118 @@ export function rectProblem(rect, policy) {
   if (!Array.isArray(rect) || rect.length !== 4 || rect.some((v) => typeof v !== "number" || !Number.isFinite(v) || !Number.isInteger(v))
     || rect.some((v) => v < lo || v > hi) || rect[0] >= rect[2] || rect[1] >= rect[3]) return "degenerate_or_float";
   return rect.every((v, i) => v === pol.fullFrameRect[i]) ? "full_frame" : null;
+}
+
+// ---- URLs
+
+const SPECIAL_SCHEMES = ["http", "https", "ftp", "ws", "wss"];
+// Python's str.strip() whitespace (not JavaScript's: it has \x1c-\x1f and \x85, and lacks \ufeff).
+const PY_SPACE = "\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const PY_STRIP = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "g");
+
+/** [scheme, host, path] of a Gramps Url path: lower-case scheme and host, path with its leading slash (rules.py _url_parts). */
+export function urlParts(raw) {
+  const s = (typeof raw === "string" ? raw : "").replace(PY_STRIP, "").replace(/\\/g, "/"); // a browser reads a backslash as a slash
+  const m = /^([A-Za-z][A-Za-z0-9+.\-]*):([\s\S]*)$/.exec(s);
+  let scheme = "";
+  let rest = s;
+  if (m && !/^[0-9]+(?:\/|(?=\n?$))/.test(m[2])) { // "host:8080/x" is a port, not a scheme
+    scheme = m[1].toLowerCase();
+    rest = m[2];
+  }
+  if (SPECIAL_SCHEMES.includes(scheme)) rest = rest.replace(/^\/+/, ""); // a browser takes https:/host and https:///host as https://host
+  else if (rest.startsWith("//")) rest = rest.slice(2);
+  else if (scheme) return [scheme, "", rest];
+  const cut = rest.search(/[/?#]/);
+  const authority = cut < 0 ? rest : rest.slice(0, cut);
+  const path = cut < 0 ? "" : rest.slice(cut);
+  let host = authority.slice(authority.lastIndexOf("@") + 1);
+  const colon = host.indexOf(":");
+  if (colon >= 0) host = host.slice(0, colon);
+  return [scheme, host.toLowerCase().replace(/\.+$/, ""), path];
+}
+
+const hostMatches = (host, domain) => host === domain || host.endsWith(`.${domain}`);
+
+/**
+ * The contact rule ids that make one Gramps Url element local-only: contact.url.email_type, contact.url.channel and
+ * contact.url.scan_hit. `scan(text)` is the shared detector reduced to a boolean-ish (a non-empty result is a hit).
+ */
+export function urlRules(url, scan, policy) {
+  const pol = policy.urls;
+  const u = obj(url);
+  const out = [];
+  if (obj(u.type).value === pol.emailType) out.push("contact.url.email_type");
+  const [scheme, host, path] = urlParts(u.path);
+  let channel = pol.schemes.includes(scheme) || pol.hosts.some((h) => hostMatches(host, h));
+  if (!channel) channel = pol.paths.some((p) => hostMatches(host, p.host) && path.toLowerCase().startsWith(p.prefix));
+  if (channel) out.push("contact.url.channel");
+  const hit = (t) => { const r = scan(typeof t === "string" ? t : ""); return Array.isArray(r) ? r.length > 0 : Boolean(r); };
+  if (hit(u.path) || hit(u.desc)) out.push("contact.url.scan_hit");
+  return out;
+}
+
+// ---- RFC 6901 pointers and the path patterns of the rules
+
+/** One object key as an RFC 6901 reference token. */
+export const escapePointerToken = (key) => String(key).replace(/~/g, "~0").replace(/\//g, "~1");
+
+/** `/a/{b,c/d}/e` -> `/a/b/e`, `/a/c/d/e`. */
+export function expandBraces(pattern) {
+  const m = /\{([^{}]*)\}/.exec(pattern);
+  if (!m) return [pattern];
+  const out = [];
+  for (const alt of m[1].split(",")) out.push(...expandBraces(pattern.slice(0, m.index) + alt + pattern.slice(m.index + m[0].length)));
+  return out;
+}
+
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const children = (node) => (Array.isArray(node) ? node.map((v, i) => [String(i), v]) : isObj(node) ? Object.entries(node) : []);
+const isIndex = (t) => /^[0-9]+$/.test(t);
+
+function walk(node, segs, prefix, out) {
+  if (!segs.length) {
+    out.push(prefix);
+    return;
+  }
+  const [head, ...rest] = segs;
+  if (head === "**") {
+    walk(node, rest, prefix, out);
+    for (const [k, v] of children(node)) walk(v, segs, `${prefix}/${escapePointerToken(k)}`, out);
+  } else if (head === "*") {
+    for (const [k, v] of children(node)) walk(v, rest, `${prefix}/${escapePointerToken(k)}`, out);
+  } else if (isObj(node) && hasOwn(node, head)) walk(node[head], rest, `${prefix}/${escapePointerToken(head)}`, out);
+  else if (Array.isArray(node) && isIndex(head) && Number(head) < node.length) walk(node[Number(head)], rest, `${prefix}/${head}`, out);
+}
+
+// Sort key of a pointer: numeric tokens first and in numeric order, then text tokens (rules.py _pointer_key).
+const pointerKey = (p) => p.split("/").slice(1).map((t) => (isIndex(t) ? [0, Number(t), ""] : [1, 0, t]));
+function compareKeys(a, b) {
+  for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+    for (let j = 0; j < 3; j += 1) if (a[i][j] !== b[i][j]) return a[i][j] < b[i][j] ? -1 : 1;
+  }
+  return a.length - b.length;
+}
+
+/**
+ * Sorted RFC 6901 pointers of the existing nodes of `object` that match a rule path pattern. Segments: a literal key or list
+ * index, `*` for one key or index, `**` for any depth (including none), `{a,b}` for alternatives. `/` is the object itself (the
+ * empty pointer). A key is matched only when the object owns it, so `constructor` never matches through the prototype.
+ */
+export function matchPointers(object, pattern) {
+  const out = [];
+  for (const pat of expandBraces(pattern)) walk(object, pat.split("/").slice(1).filter((s) => s !== ""), "", out);
+  return [...new Set(out)].sort((a, b) => compareKeys(pointerKey(a), pointerKey(b)));
+}
+
+/** The value at an RFC 6901 pointer, or `dflt` when any step is missing. */
+export function pointerGet(object, pointer, dflt = undefined) {
+  let node = object;
+  for (const raw of pointer.split("/").slice(1)) {
+    const t = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (isObj(node) && hasOwn(node, t)) node = node[t];
+    else if (Array.isArray(node) && isIndex(t) && Number(t) < node.length) node = node[Number(t)];
+    else return dflt;
+  }
+  return node;
 }

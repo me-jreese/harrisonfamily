@@ -15,8 +15,9 @@ Basis: sync.md section 5, as amended by BRD2 section 11.1; BRD2 D2-32, Q2-02 and
 | `gramps/redaction/vectors/*.json` | Golden vectors: input objects, the expected projection, the expected holds and the server validator's verdict. Python and JavaScript both pass them. |
 | `gramps/redaction/make_vectors.py` | Generates the vectors; `--check` compares bytes. |
 | `gramps/hfygramps/rules.py` | The Python loader and the pure predicates, `is_birth_like` first. |
-| `shared/redaction-rules.mjs` | The JavaScript port of the same predicates; it takes the parsed policy as an argument. |
-| `gramps/tests/unit/redaction_oracle.py` | Test-only reference reading of the rules that the vectors are checked against. It is not the projection or the validator. |
+| `shared/redaction-rules.mjs` | The JavaScript port of the same predicates, the URL channel rules and the pointer matcher; it takes the parsed policy as an argument. |
+| `api/src/sync/checker.js` | The server validator's privacy checker: every rule marked `server: detect`, run on every write. It reproduces `expected.server` of every vector. |
+| `gramps/tests/unit/redaction_oracle.py` | Test-only reference reading of the rules that the vectors are checked against. It is neither the projection nor the server validator. |
 
 The projection, the server validator, the edit guard and the renderer are to import this one file and keep no list of their own (D2-32).
 
