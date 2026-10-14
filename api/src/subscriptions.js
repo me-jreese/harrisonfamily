@@ -61,6 +61,7 @@ export function createSubscriptions({ ddb, cmds, table, actor, now, personExists
       const after = cursor !== undefined && cursor !== "" ? decodeCursor(cursor) : undefined;
       const all = [];
       let key;
+      let truncated = false;
       for (let i = 0; i < MAX_PAGES; i += 1) {
         const r = await ddb.send(new cmds.QueryCommand({
           TableName: table, KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
@@ -69,12 +70,13 @@ export function createSubscriptions({ ddb, cmds, table, actor, now, personExists
         for (const it of r.Items ?? []) if (typeof it.subject === "string") all.push({ subject: it.subject, created_at: String(it.created_at ?? "") });
         key = r.LastEvaluatedKey;
         if (!key) break;
+        if (i === MAX_PAGES - 1) truncated = true; // the cap was hit with more rows left: say so rather than pass a short list off as whole
       }
       // Newest first; the subject breaks ties so the order (and so the cursor) is total.
       all.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : a.subject < b.subject ? 1 : -1));
       const rest = after ? all.filter((x) => x.created_at < after.at || (x.created_at === after.at && x.subject < after.subject)) : all;
       const items = rest.slice(0, size);
-      return { items, cursor: rest.length > size ? encodeCursor({ at: items.at(-1).created_at, subject: items.at(-1).subject }) : null };
+      return { items, cursor: rest.length > size ? encodeCursor({ at: items.at(-1).created_at, subject: items.at(-1).subject }) : null, ...(truncated ? { truncated: true } : {}) };
     },
 
     /** subscriptions.put: idempotent; the first call writes, later calls keep created_at. */

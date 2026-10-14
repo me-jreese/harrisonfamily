@@ -167,6 +167,18 @@ describe("onRecordChanged fan-out rules", () => {
     expect(await types(edge.inbox, "F2")).toEqual(["record_updated_followed"]);
   });
 
+  it("bulk: an owner who also follows other changed pages gets one record_updated_mine and one digest, never the owner twice for their own page", async () => {
+    const ids = Array.from({ length: BATCH_DIGEST_OVER + 1 }, (_, i) => `P${200 + i}`);
+    const follows = {};
+    for (const id of ids) follows[`person:${id}`] = ["P200", "F1"]; // P200 owns the first page and follows every page, its own included
+    const { inbox, notifier } = mk({ members: ["P200"], follows });
+    await notifier.onRecordChanged(ids.map((i) => ch(i)));
+    expect((await types(inbox, "P200")).sort()).toEqual(["record_updated_mine", "records_updated_followed_digest"]);
+    const digest = (await items(inbox, "P200")).find((x) => x.type === "records_updated_followed_digest");
+    expect(digest.count).toBe(ids.length - 1); // every page but their own
+    expect(await types(inbox, "F1")).toEqual(["records_updated_followed_digest"]);
+  });
+
   it("a batch beyond the old 500-subject lookup bound still notifies its owners", async () => {
     const { inbox, notifier } = mk({ members: ["P900"] });
     const many = Array.from({ length: 600 }, (_, i) => ch(`P${i + 400}`));
