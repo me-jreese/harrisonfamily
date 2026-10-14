@@ -203,7 +203,7 @@ for (const [name, viewport] of VIEWPORTS) {
       const state = await openEditor(page, { conflictOnce: true });
       await input(page, "snapchat").fill("@sample_snap");
       await page.getByRole("button", { name: "save", exact: true }).click();
-      await expect(page.locator(".hfy-links-editor__status")).toHaveText("someone changed this a moment ago. here's the latest.");
+      await expect(page.locator(".hfy-links-editor__status")).toHaveText("someone changed this a moment ago. your edits were replaced with the latest.");
       await expect(input(page, "website")).toHaveValue("https://example.net/");
       await expect(input(page, "instagram")).toHaveValue("");
       await expect(input(page, "snapchat")).toHaveValue("");
@@ -212,6 +212,30 @@ for (const [name, viewport] of VIEWPORTS) {
       await page.getByRole("button", { name: "save", exact: true }).click();
       await expect(page.locator(".hfy-links-editor__status")).toHaveText("saved");
       expect(state.puts.at(-1).version).toBe(4);
+    });
+
+    test("editor: a 422 with no usable fields still tells the member it failed", async ({ page }) => {
+      await openEditor(page, { links: {}, version: 0 });
+      await page.route("**/api/people/*/links", (r) => r.request().method() !== "PUT" ? r.fallback() : r.fulfill({ status: 422, json: { error: "validation", message: "nope", details: {} } }));
+      await input(page, "linkedin").fill("https://www.linkedin.com/in/sample-name");
+      await page.getByRole("button", { name: "save", exact: true }).click();
+      await expect(page.locator(".hfy-links-editor__status")).toHaveText("that didn't work. try again.");
+    });
+
+    test("editor: saving with no changes sends nothing and says so", async ({ page }) => {
+      const state = await openEditor(page);
+      await page.getByRole("button", { name: "save", exact: true }).click();
+      await expect(page.locator(".hfy-links-editor__status")).toHaveText("nothing to change yet.");
+      expect(state.puts).toEqual([]);
+    });
+
+    test("editor: /api/me without an id shows the can't-tell line and never asks for links", async ({ page }) => {
+      const state = await stub(page);
+      await page.route("**/api/me", (r) => r.fulfill({ status: 200, json: { label: "Sam Example", admin: false, can: {} } }));
+      await page.goto("/me/links/", { waitUntil: "domcontentloaded" });
+      await expect(page.getByText("we can't tell which page is yours yet. try again in a moment.")).toBeVisible();
+      expect(state.apiGets).toBe(0);
+      await expect(page.locator("input")).toHaveCount(0);
     });
 
     test("editor: signed out shows the sign-in line, axe clean", async ({ page }) => {

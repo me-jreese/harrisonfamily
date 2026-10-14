@@ -114,6 +114,10 @@ export function Editor({ personId }) {
     e.preventDefault();
     if (busy) return;
     const links = changesFrom(values, stored);
+    if (!Object.keys(links).length) {
+      setNote(COPY.nothingToSave);
+      return;
+    }
     // The fields the API would refuse are shown before the request; the API stays the authority.
     const local = {};
     for (const field of Object.keys(links)) {
@@ -137,13 +141,14 @@ export function Editor({ personId }) {
         const cur = err.details && err.details.current;
         if (cur && typeof cur === "object") adopt(cur);
         else {
-          try { adopt(await api.get(`/people/${encodeURIComponent(personId)}/links`)); } catch { /* keep what is typed */ }
+          try { adopt(await api.get(`/people/${encodeURIComponent(personId)}/links`)); } catch { /* the latest could not be fetched: the typed values stay */ }
         }
         setNote(COPY.conflict);
       } else if (err && err.status === 422) {
         const byField = fieldErrors(err.fields);
         setErrors(byField);
-        refs.current[PLATFORMS.find((p) => byField[p])]?.focus();
+        if (Object.keys(byField).some((f) => PLATFORMS.includes(f))) refs.current[PLATFORMS.find((p) => byField[p])]?.focus();
+        else setNote(COPY.failed);
       } else if (err && err.status === 403) setNote(COPY.forbidden);
       else if (err && err.status === 401) setNote(COPY.signedOut);
       else setNote(COPY.failed);
@@ -187,7 +192,7 @@ function LinksPage() {
   useEffect(() => {
     if (!sub) return undefined;
     let live = true;
-    getMe().then((me) => { if (live) setPersonId(typeof me.id === "string" && me.id ? me.id : sub); });
+    getMe().then((me) => { if (live) setPersonId(me && typeof me.id === "string" && me.id ? me.id : null); });
     return () => { live = false; };
   }, [sub]);
   const pending = session === undefined || (sub && personId === undefined);
@@ -196,6 +201,7 @@ function LinksPage() {
       {session === undefined && <div className="hfy-links-editor__skeleton" role="status" aria-label={COPY.loading} />}
       {session !== undefined && !sub && <SignInGate />}
       {sub && personId === undefined && <div className="hfy-links-editor__skeleton" role="status" aria-label={COPY.loading} />}
+      {sub && personId === null && <p className="hfy-links-editor__note" role="status">{COPY.noPerson}</p>}
       {sub && personId && <Editor personId={personId} />}
     </section>
   );

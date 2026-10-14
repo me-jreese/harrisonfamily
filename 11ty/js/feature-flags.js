@@ -12,7 +12,7 @@
         "css": "24d74883"
       },
       "links-editor": {
-        "js": "7deaafdc",
+        "js": "05a03f0a",
         "css": "a475a3dd"
       },
       "my-posts": {
@@ -28,7 +28,7 @@
         "css": "3909ca3c"
       },
       "person-links": {
-        "js": "780e350b",
+        "js": "70972ead",
         "css": "930bb673"
       },
       "photo-tags": {

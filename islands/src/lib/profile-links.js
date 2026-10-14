@@ -23,7 +23,7 @@ export const EDITOR_COPY = Object.freeze({
   off: "your links aren't available yet.",
   noPerson: "we can't tell which page is yours yet. try again in a moment.",
   signedOut: "sign in to change your links.",
-  conflict: "someone changed this a moment ago. here's the latest.",
+  conflict: "someone changed this a moment ago. your edits were replaced with the latest.",
   forbidden: "you can only change your own links.",
   failed: "that didn't work. try again.",
   loadFailed: "your links didn't load. try again.",
