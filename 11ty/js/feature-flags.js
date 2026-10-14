@@ -24,7 +24,7 @@
         "css": "56799f74"
       },
       "person": {
-        "js": "1ee9e6a5",
+        "js": "9bcb1cc9",
         "css": "fc1191e0"
       },
       "person-links": {
@@ -54,11 +54,15 @@
       "timeline": {
         "js": "b98b7945",
         "css": "169edbe4"
+      },
+      "tree": {
+        "js": "f2abdefe",
+        "css": "66b35626"
       }
     },
-    "theme": "4765e64a",
+    "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "2a460504"
+    "sw": "3934a10a"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -724,6 +728,23 @@
   resolveFlags().then((flags) => {
     if (flags.aboutCta !== true || !/^\/about\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("about-cta", { onError() { /* the story stands on its own */ } });
+  });
+
+  // HFY-TSK-201: familyViz mounts the family tree island on the static /tree/ page (the page is public; its data fetch is gated). With the
+  // flag off, or when the island fails to load, the page keeps its heading and says the tree is not available.
+  resolveFlags().then((flags) => {
+    if (!/^\/tree\/?(index\.html)?$/.test(window.location.pathname)) return;
+    const unavailable = (why) => {
+      const main = document.querySelector("main:not([data-io-scroller])");
+      if (!main || main.querySelector("[data-tree-unavailable]")) return;
+      const p = document.createElement("p");
+      p.setAttribute("data-tree-unavailable", "");
+      p.setAttribute("role", "status");
+      p.textContent = why;
+      main.querySelector("h1")?.insertAdjacentElement("afterend", p);
+    };
+    if (flags.familyViz !== true) { unavailable("the family tree isn't turned on yet. you can find anyone through search."); return; }
+    loadIsland("tree", { onError() { unavailable("the family tree didn't load. try again in a moment."); } });
   });
 
   // HFY-TSK-169: photoTags mounts the photo tag overlays, the names lists and the hover cards on the person page. The island listens to the
