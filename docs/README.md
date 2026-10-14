@@ -19,6 +19,7 @@ The reasoning behind the system. Start here if you want to know *what was built 
 - [Why releases ship through a pipeline and feature flags](explanation/release-model.md) — why a deploy, a flag flip and attaching the private data gate are separate switches, and why their order matters.
 - [The privacy model for family data](explanation/family-data-privacy.md) — what counts as private, how it stays out of git, and how the edge keeps the data and member photos members-only.
 - [Why one CloudFront distribution fronts everything](explanation/edge-and-origin-design.md) — one origin for the browser, the two Lambda@Edge exceptions, and the Cloudflare cache in front that the versioned URLs get past.
+- [How editing and suggested changes work](explanation/editing-and-proposals.md) — why a change saves now, goes to review or is refused, what a suggestion is, and why editing ships behind a server switch and its site flags.
 - [How member content stays accountable](explanation/member-content-design.md) — the rules behind posts, comments, reactions and photos, and the audit record every post and comment change leaves.
 
 ## Reference — find the facts (and the code)
@@ -28,6 +29,7 @@ Neutral descriptions of the machinery. Consult these; you don't read them front 
 - [Codebase map](reference/codebase-map.md) — each capability routed to the files that implement it, including the pieces outside the repository.
 - [System architecture](reference/architecture.md) — the deployed system: request routing, origins, buckets, compute, the identity store, the `hfy-app` table and the CloudFormation stacks.
 - [Family API (hfy-api)](reference/api.md) — the members-only API at `/api/*`: routes, permissions, audit records, notifications, uploads and configuration.
+- [Field policy](reference/field-policy.md) — who may change which field, on which record and how: the generated table, the Q2-15 switches and the withheld types. Checked against `field-policy.js` by a test.
 - [MCP server (/mcp)](reference/mcp-server.md) — the MCP endpoint that `hfy-api` serves: tools, policy, groups, step-up, audit and the conformance gate.
 - [Identity services](reference/identity-services.md) — the auth edge, the private data gate and the legacy sign-in path: routes, tokens, cookies, session refresh and configuration.
 - [Front end](reference/front-end.md) — what `11ty/` contains: the feature flags and preview override, the `authV2` data path, the island loader and islands, and the PWA shell.
@@ -58,6 +60,8 @@ For a new environment, for this family or another, in this order. The first page
 
 - [Deploy a change to the static site](how-to/deploy-a-site-change.md) — ship `11ty/` or the legacy sign-in functions through the pipeline and confirm the change is live past Cloudflare's cache.
 - [Roll back, or drill a rollback of, a site deploy](how-to/roll-back-a-site-deploy.md) — undo a release or rehearse it, checking `authV2` first while the gate is attached.
+- [Turn on editing](how-to/turn-on-editing.md) — name the approvers, set `HfyEditing`, try the editor and the relationship wizard in one tab, flip `proposalReview`, `recordEdit` and `relationshipWizard` in that order, and turn it off again.
+- [Review suggested changes](how-to/review-suggested-changes.md) — as an admin, open the queue and approve, ask for changes, decline or edit then approve.
 - [Turn a feature flag on or off, for one tab or for everyone](how-to/toggle-a-feature-flag.md) — preview a flag with the per-tab override, publish it in `flags.json`, and roll it back.
 - [Build and preview the React islands](how-to/build-and-preview-the-islands.md) — rebuild everything the islands build writes, check it against the source, and view it locally with a flag on.
 - [Change the theme or brand fonts](how-to/change-the-theme-or-brand-fonts.md) — change the colours, a theme partial or a font with the theme lint passing, and ship it.
