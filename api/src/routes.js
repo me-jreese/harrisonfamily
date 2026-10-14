@@ -7,6 +7,7 @@ import { describeGate, gateExempt, requireFeature } from "./features.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
+import { changesPost } from "./records/changes.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
@@ -231,6 +232,12 @@ export const ROUTES = defineRoutes([
   {
     name: "edit.get", method: "GET", path: "/edit/:cls/:ref", summary: "The edit bundle for a record (ref = gramps_id or h:<handle>): {key, version, etag, obj, related, relation, viewer, policy, pending, customTypes, schemaHash}, through publishView and applyModOverlay; pending[] only what the viewer may see (no MCP tool)",
     gate: editingGate(), handler: bundleGet,
+  },
+  // POST /api/changes (HFY-TSK-183; editing.md 7.3): direct groups and a proposal in one transaction, or a dry-run plan. Behind HFY_EDITING like the
+  // routes above. No `mcp` member: hfy_changes_submit (agentMode dry_run) is edit-mcp-tools'.
+  {
+    name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (no MCP tool)",
+    gate: editingGate(), handler: changesPost,
   },
 ]);
 

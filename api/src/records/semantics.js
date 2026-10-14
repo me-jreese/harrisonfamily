@@ -16,8 +16,8 @@
 // editing design section 6.2 (a person who already has birth parents, a parent under 13 years older than the child,
 // a possible duplicate person). `warnings` is always [] and is kept in the result so a caller can rely on its shape.
 //
-// PURE. Its only import is the EditOp engine's canonical JSON, so it runs under `node --test` and in a browser. No
-// route calls it yet (its first caller is `edit-api-changes`), so it ships in the `hfy-api` zip unreachable.
+// PURE. Its only import is the EditOp engine's canonical JSON, so it runs under `node --test` and in a browser. POST
+// /api/changes (records/changes.js, HFY-TSK-183) runs it on every part of a submission.
 //
 // It tests the rules against the data as it will be AFTER the ops apply. It reports only what the change itself
 // introduces: a tree that already breaks a rule (a dangling handle from an old import, say) does not block an

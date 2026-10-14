@@ -121,7 +121,7 @@ async function personStub(ctx, obj, nowYear) {
 }
 
 /** The read side relationOf wants: get(cls, handle) -> object, byGrampsId, referrers(cls, handle) -> [{cls, handle}]. */
-const relationView = (ctx) => ({
+export const relationView = (ctx) => ({
   get: async (cls, handle) => (await get(ctx, cls, handle))?.obj ?? null,
   byGrampsId: (cls, gid) => byGrampsId(ctx, cls, gid),
   referrers: async (cls, handle) => (await backrefs(ctx, `${cls}:${handle}`)).map((k) => ({ cls: k.slice(0, k.indexOf(":")), handle: k.slice(k.indexOf(":") + 1) })),

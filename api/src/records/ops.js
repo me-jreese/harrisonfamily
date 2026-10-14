@@ -5,7 +5,7 @@
 // kind: it runs under `node --test` and in a browser (canonical JSON and SHA-256 are implemented here, so the editor
 // and the API compute the same key hashes).
 //
-// Nothing calls this module yet. It is not reachable from any route; its first caller is `edit-gramps-semantics`.
+// POST /api/changes (records/changes.js, HFY-TSK-183) applies a submission's ops with it.
 //
 // Ops operate on a map of objects `{ "Person:<handle>": <Gramps JSON>, ... }`. An EditOp is
 //   { id, op: "set"|"add"|"remove"|"move"|"create"|"delete", obj: "Person:<h>"|"new:1", cls?, path?, base?, base_hash?,

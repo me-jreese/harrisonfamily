@@ -27,7 +27,9 @@ export function createAdminList({ load, ttlMs = 60_000, now = () => Date.now(), 
 
 /**
  * Returns async (event) => actor | null. null means no (valid) session. Throws nothing for bad tokens.
- * Actor: { id: gramps_id, label, admin }. The label is shown to every member (author.label), so it is never an email (HFY-R68):
+ * Actor: { id: gramps_id, label, admin, authTime }. `authTime` is the token's auth_time in epoch seconds (the sign-in itself, which a refresh never
+ * renews; the principal falls back to iat only for a token that carries none): POST /api/changes reads it for the 900 s freshness of a destructive
+ * admin change (editing design 7.4, DEC-E9). The label is shown to every member (author.label), so it is never an email (HFY-R68):
  * `resolveLabel({sub, name})` (src/labels.js) takes the session's name only when it is a usable non-email label, else the person's
  * displayName from the site's own record, else the gramps_id. The default does no lookup (name or gramps_id).
  */
@@ -45,7 +47,7 @@ export function createAuthenticator({ issuer, audience, cookieName = "io_id", ge
       const admins = await getAdmins();
       // A label problem must never end a valid session. principal.displayName is the id token's `name` (else its email): resolveLabel rejects emails.
       const label = await Promise.resolve(resolveLabel({ sub: principal.sub, name: principal.displayName })).catch(() => fallbackLabel(principal.sub));
-      return { id: principal.sub, label, admin: admins.has(principal.sub) };
+      return { id: principal.sub, label, admin: admins.has(principal.sub), authTime: typeof principal.authTime === "number" ? principal.authTime : 0 };
     } catch (e) {
       log.warn?.("session rejected", logSafeError(e));
       return null;
