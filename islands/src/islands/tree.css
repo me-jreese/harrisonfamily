@@ -1,5 +1,8 @@
 /* /tree/: the family tree page shell (tree.jsx, HFY-TSK-201). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
    --io-radius-*, --io-typography-* (theme-lint no-literal-token-values). The outline, navigator and chart tasks add their own rules. */
+/* The details Sheet is the kit's (lib/tree-chart.jsx). Its rules ship in the shell island's CSS, which loads only with shellV2, and familyViz does
+   not imply shellV2, so the tree page carries the kit stylesheet itself: the sheet is a fixed panel with Esc and a close button either way. */
+@import "@io-kit/shell/io-kit.css";
 @import "../lib/family-navigator.css";
 .hfy-tree {
   box-sizing: border-box;

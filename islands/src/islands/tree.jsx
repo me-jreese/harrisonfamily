@@ -29,6 +29,7 @@ const ChartView = lazy(() => import("../lib/tree-chart.jsx"));
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
   static getDerivedStateFromError() { return { failed: true }; }
+  // Deliberately minimal (a console line only): viz-mvp-visual-fallback owns the visible message and may replace this boundary.
   componentDidCatch() { console.error("HFY tree: CHART_CHUNK_FAILED"); }
   render() { return this.state.failed ? null : this.props.children; }
 }

@@ -342,11 +342,39 @@ test("cards: a tab per union switches the partner and the children; adopted, ste
   s = await snapshot(page);
   expect(s.partner).toBeNull(); // 'partner not recorded': no partner card
   expect(s.children.map((c) => [c.name, c.badges])).toEqual([["Dot Fosterly", ["foster"]], ["Eli Sponsor", []], ["Fen Nonrel", []], ["Gus Custom", []], ["Hal Unknown", []]]);
-  // arrow keys move between tabs (the tab pattern)
+  // arrow keys move between tabs and keyboard focus follows the selected tab (the tab pattern)
   await page.keyboard.press("ArrowRight");
   await expect(tabs.nth(3)).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.nth(3)).toBeFocused();
   s = await snapshot(page);
   expect(s.children.map((c) => c.name)).toEqual(["Ivo Orphaned"]); // the private-excluded partner is absent, not a blank card
+});
+
+test("cards: ArrowRight, ArrowLeft, Home and End move the selection and the focus together, two presses in a row included", async ({ page }) => {
+  await openCards(page);
+  const tabs = nav(page).getByRole("tab");
+  await expect(tabs).toHaveCount(4);
+  const at = async (i) => {
+    await expect(tabs.nth(i)).toHaveAttribute("aria-selected", "true");
+    await expect(tabs.nth(i)).toBeFocused();
+    await expect(tabs.nth(i)).toHaveAttribute("tabindex", "0");
+  };
+  await tabs.nth(0).focus();
+  await page.keyboard.press("ArrowRight");
+  await at(1);
+  await page.keyboard.press("ArrowRight"); // the second consecutive press advances again
+  await at(2);
+  await page.keyboard.press("ArrowLeft");
+  await at(1);
+  await page.keyboard.press("End");
+  await at(3);
+  await page.keyboard.press("ArrowRight"); // wraps to the first
+  await at(0);
+  await page.keyboard.press("End");
+  await page.keyboard.press("Home");
+  await at(0);
+  await page.keyboard.press("ArrowLeft"); // wraps to the last
+  await at(3);
 });
 
 test("cards: a face crop, or initials in the role colour pair when face is null; a face that fails to load becomes initials", async ({ page }) => {
@@ -404,7 +432,7 @@ test("cards: every person is a <button> named 'name, role, years'; names 16px or
   const cards = nav(page).locator("button.hfy-nav__card");
   expect(await cards.count()).toBeGreaterThanOrEqual(6);
   await expect(nav(page).locator("button[data-person='I8002']")).toHaveAccessibleName("Sam Quill, father, 1925 to 1990");
-  await expect(nav(page).locator("button[data-person='I8001']")).toHaveAccessibleName("Robin Quill, 1952 to 2020, show details");
+  await expect(nav(page).locator("button[data-person='I8001']")).toHaveAccessibleName("Robin Quill, focus, 1952 to 2020, show details");
   for (const label of await cards.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))) expect(label).toMatch(/^.+, .+, .+$/);
   // no card-like element that is not a button, except the placeholder (which has nothing to open)
   expect(await nav(page).locator(".hfy-nav__card:not(button)").count()).toBe(0);
@@ -493,6 +521,24 @@ test("hfy-details: the focus card opens the kit Sheet with years, places, unions
   await nav(page).locator("button[data-person='I8002']").click();
   await expect(dialog).toHaveCount(0);
   await expect(nav(page).locator(".hfy-nav__card--focus .hfy-nav__name")).toHaveText("Sam Quill");
+});
+
+test("hfy-details with the shell off (familyViz alone): the sheet still opens, is styled as a dialog and dismisses with Esc and the close button", async ({ page }) => {
+  await openCards(page, "I8001", { shell: false });
+  await page.route("**/person/index.json", (r) => r.fulfill({ json: { people: [] } }));
+  const dialog = page.getByRole("dialog");
+  const card = nav(page).locator(".hfy-nav__card--focus");
+  await card.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("1952 to 2020");
+  // styled: out of the page flow (fixed over the page), not an unstyled block after the cards
+  expect(await dialog.evaluate((el) => getComputedStyle(el.closest(".io-sheet") || el).position)).toBe("fixed");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await card.click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "close" }).click();
+  await expect(dialog).toHaveCount(0);
 });
 
 test("cards: a chart chunk that fails to load leaves the outline and the focus navigator working", async ({ page }) => {

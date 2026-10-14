@@ -16,7 +16,13 @@
 //
 // What it draws (375 px layout; the ADR's other widths are separate tasks): the focus card, a parents strip, one tab per union
 // ("with <partner>" or "partner not recorded"), that union's partner and children as a scroll-snap row, and the siblings as a row.
-// Every person is one <button> with an accessible name like "Ben Example, father, 1878 to unknown".
+// Every person is one <button> with an accessible name like "Ben Example, father, 1878 to unknown". The focus card's name is "Ada Example,
+// focus, 1878 to unknown, show details".
+//
+// Recorded deviation from the HFY-TSK-201 addendum (person names in tree UI outside the SVG use the PersonName helper, so a name is a link):
+// a card here is a re-centre control (a <button>), and a link cannot be nested in a button, so the card's name is plain text inside it.
+// The person link is carried where a link is valid: the details Sheet (its title, the parents, the partner and the children are PersonName
+// links, and "view page" goes to the person) and the generation outline. tests/tree.spec.mjs "hfy-details" asserts those links.
 import { COPY, navigatorModel } from "./navigator-model.js";
 
 export const TAG = "family-navigator";
@@ -88,7 +94,7 @@ export class FamilyNavigator extends Base {
       return;
     }
     const tab = e.target.closest?.("[role=tab]");
-    if (tab && this.contains(tab)) this._select(Number(tab.getAttribute("data-union")));
+    if (tab && this.contains(tab)) this._select(Number(tab.getAttribute("data-union")), `tab:${tab.getAttribute("data-union")}`);
   }
 
   // The tab pattern's arrow keys. Nothing else is handled here: cards are buttons, so Enter and Space already activate them.
@@ -100,13 +106,16 @@ export class FamilyNavigator extends Base {
     const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[e.key];
     if (to === undefined) return;
     e.preventDefault();
-    this._select((to + tabs.length) % tabs.length);
+    const next = (to + tabs.length) % tabs.length;
+    // Focus follows the tab (the WAI-ARIA tab pattern): without this _render would refocus the OLD tab, which is now tabindex -1.
+    this._select(next, `tab:${next}`);
   }
 
-  _select(i) {
+  // `focusKey` is the data-key the render puts keyboard focus on; omitted, focus stays on whatever had it.
+  _select(i, focusKey = null) {
     if (!Number.isInteger(i) || i === this._union) return;
     this._union = i;
-    this._render();
+    this._render(focusKey);
   }
 
   _card(c) {
@@ -160,9 +169,9 @@ export class FamilyNavigator extends Base {
     return this._section("unions", title, tabs, panel);
   }
 
-  _render() {
+  _render(focusKey = null) {
     if (!this.isConnected) return;
-    const had = this.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null;
+    const had = focusKey || (this.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null);
     const m = this._graph && this._focus ? navigatorModel(this._graph, this._focus) : null;
     if (!m) { this.replaceChildren(); return; }
     const title = `family chart centred on ${m.name}. the outline has the same information.`;
@@ -184,7 +193,8 @@ export class FamilyNavigator extends Base {
     );
     this.replaceChildren(root);
     // A re-render must not drop the keyboard: put focus back on the same control (a card that became the focus card has the same key).
-    if (had) (this.querySelector(`[data-key="${had}"]`) || this.querySelector(".hfy-nav__card--focus"))?.focus({ preventScroll: true });
+    // (Matched by comparing the attribute, never by building a selector from a graph id: an odd character in an id cannot throw here.)
+    if (had) ([...this.querySelectorAll("[data-key]")].find((e) => e.getAttribute("data-key") === had) || this.querySelector(".hfy-nav__card--focus"))?.focus({ preventScroll: true });
   }
 }
 

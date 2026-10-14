@@ -82,7 +82,8 @@ export function initials(p) {
 /**
  * One person card. kind: "focus" | "parent" | "child" | "sibling" | "partner". `rel` is the per-parent link for a parent or a child of the
  * focus; `half` marks a half-sibling; `unionType` names a partner's word (wife, husband, spouse, partner).
- * `label` is the accessible name ("Ben Example, father, 1878 to unknown"); `role` is the plain role word shown on the card.
+ * `label` is the accessible name ("Ben Example, father, 1878 to unknown"); `role` is the plain role word shown on the card. The focus card is an
+ * action (it opens the details sheet), so its name reads "Ada Example, focus, 1878 to unknown, show details" and it shows no role word.
  */
 export function personCard(graph, id, kind, { rel = null, half = false, unionType = null, withPlace = false } = {}) {
   const p = graph.person(id);
@@ -104,7 +105,7 @@ export function personCard(graph, id, kind, { rel = null, half = false, unionTyp
     label: null
   };
   if (kind === "focus") {
-    card.label = `${p.name}, ${years}, show details`;
+    card.label = `${p.name}, focus, ${years}, show details`;
     return card;
   }
   const plain = roleLabel(kind, p, { unionType });
@@ -131,7 +132,7 @@ function siblingsOf(graph, id) {
   const out = new Map(graph.siblings(id).map((s) => [s.id, s]));
   for (const u of graph.data.unions) {
     if (!u || !Array.isArray(u.children) || !u.children.some((c) => c && c.id === id)) continue;
-    if (u.partners.some((pid) => graph.has(pid))) continue;
+    if ((Array.isArray(u.partners) ? u.partners : []).some((pid) => graph.has(pid))) continue;
     for (const c of u.children) if (c && c.id !== id && graph.has(c.id) && !out.has(c.id)) out.set(c.id, { id: c.id, half: false });
   }
   return [...out.values()];

@@ -2,6 +2,11 @@
 // it sets `graph` and `focus` as properties, turns the element's hfy-focus and hfy-details CustomEvents into the island's calls, and renders
 // the details sheet itself (the kit Sheet; the element ships no sheet of its own). Everything the person reads here is also in the always
 // rendered focus navigator and generation outline, so a chunk that fails to load costs nothing but the cards.
+//
+// Person links (HFY-TSK-201 addendum: names outside the SVG use PersonName): the cards are re-centre buttons and a link cannot sit inside a
+// button, so card names are plain text by design (see lib/family-navigator.js). The Sheet carries the links: its title, the parents, the
+// partner and the children are PersonName, and "view page" goes to the person. The skip link below is the one navigation aid this chunk adds
+// (the outline anchor it targets is in tree.jsx); viz-mvp-visual-nav may restyle or replace it.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Sheet, useBreakpoint } from "@io-kit/shell/react";
 import { bindNavigatorEvents, defineFamilyNavigator } from "./family-navigator.js";

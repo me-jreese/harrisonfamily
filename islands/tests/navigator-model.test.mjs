@@ -22,7 +22,7 @@ test("the focus card: face, name, years in words, one place line from the real p
   assert.equal(m.focus.face, "/media/faces/I8001-1a2b3c4d.webp");
   assert.equal(m.focus.years, "1952 to 2020");
   assert.equal(m.focus.place, "born in Riverton, Marlow County, Examplestate");
-  assert.equal(m.focus.label, "Robin Quill, 1952 to 2020, show details");
+  assert.equal(m.focus.label, "Robin Quill, focus, 1952 to 2020, show details");
   assert.equal(m.connected, true);
   assert.equal(m.notice, null);
 });
@@ -152,4 +152,19 @@ test("detailsModel: years, places, unions, children and the page link", () => {
   assert.equal(d.href, "/person/?id=I8001");
   // a living person has no places
   assert.equal(detailsModel(g, "I8020").born, null);
+});
+
+test("a union without a partners array (older schema, hand-built data) does not take the cards view down", () => {
+  // FamilyGraph itself rejects such a union, so this uses a minimal duck-typed graph: the model must still not throw.
+  const people = new Map([["N1", { id: "N1", name: "Nia Test", generation: 0 }], ["N2", { id: "N2", name: "Noa Test", generation: 0 }]]);
+  const loose = {
+    data: { places: [], unions: [{ id: "UN1", children: [{ id: "N1" }, { id: "N2" }] }] },
+    person: (id) => people.get(id) || null,
+    has: (id) => people.has(id),
+    parents: () => [],
+    unionsOf: () => [],
+    siblings: () => []
+  };
+  const m = navigatorModel(loose, "N1");
+  assert.deepEqual(m.siblings.map((c) => c.id), ["N2"]);
 });
