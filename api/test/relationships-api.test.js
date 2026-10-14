@@ -36,12 +36,12 @@ afterEach(() => { if (envBefore === undefined) delete process.env.HFY_EDITING; e
 
 // A synthetic tree: me (1, a man), a stranger (2), a woman (3), a living namesake of a stub (4) with a birth year, a deceased woman (5), my child (6),
 // and a family (F1) of me alone with the child.
-async function world({ admins = [ADMIN, ADMIN2] } = {}) {
+async function world({ admins = [ADMIN, ADMIN2], clock } = {}) {
   const txns = [];
   const hooks = createHookRegistry();
   const inbox = new InMemoryNotificationStore();
   const w = makeApi({
-    admins, log: q, inbox, flags: { inboxV1: true },
+    admins, log: q, inbox, ...(clock ? { clock } : {}), flags: { inboxV1: true },
     intercept: async (cmd) => { if (cmd.constructor.name === "TransactWriteCommand") txns.push(structuredClone(cmd.input)); },
     extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} } },
   });
@@ -306,5 +306,73 @@ describe("registration", () => {
       expect(approvalActionCount({ touched, created })).toBeLessThanOrEqual(store);
       expect(store - approvalActionCount({ touched, created })).toBeLessThanOrEqual(7);
     }
+  });
+});
+
+describe("review fixes (HFY-TSK-210)", () => {
+  const phone = "call 555-0123";
+  it("guards every string leaf of the intent, including unknown keys, so nothing unguarded is stored in the proposal", async () => {
+    const w = await world();
+    const before = w.ddb.all().length;
+    for (const intent of [
+      { ...spouseOf(3), extra: phone },
+      { ...spouseOf(3), married: { year: 1990, about: false, place: null, memo: { deep: [phone] } } },
+      { ...spouseOf(3), [phone]: 1 },
+    ]) {
+      expect(err(await w.submit(ME, { intent }, `k${Math.random()}`))).toEqual({ status: 422, error: "contact_info" });
+      expect(err(await w.preview(ME, { intent }))).toEqual({ status: 422, error: "contact_info" });
+    }
+    expect(w.ddb.all().length).toBe(before);
+    expect(w.rows("PROP#")).toHaveLength(0);
+  });
+  it("refuses an admin's auto compile that reaches more than 24 records, writing nothing", async () => {
+    const w = await world();
+    const children = Array.from({ length: 10 }, (_, i) => ({ who: { new: stub(`Kid${String.fromCharCode(97 + i)}`, "Zzyzx", { birthYear: 2000 + i }) }, relToMe: "birth", relToOther: "birth" }));
+    const intent = { type: "children", person: P(1), otherParent: { new: stub("Parent", "Qqyqx", { birthYear: 1970 }) }, children };
+    const auto = await w.submit(ADMIN, { intent, confirmDistinct: [] });
+    // The compiler's own transaction budget (proposal_too_large) answers first; the route's 24-object check (413) is the backstop. Either way it is a clear refusal.
+    expect([413, 422]).toContain(auto.status);
+    expect(["too_large", "proposal_too_large"]).toContain(auto.body.error);
+    expect(w.txns).toEqual([]);
+    expect(w.rows("PROP#")).toHaveLength(0);
+  });
+  it("rejects confirmDistinct entries that name no stub of the intent", async () => {
+    const w = await world();
+    expect(err(await w.submit(ME, { intent: spouseOf(3), confirmDistinct: ["new:1"] }))).toEqual({ status: 400, error: "validation" });
+    expect(err(await w.preview(ME, { intent: spouseOf(3), confirmDistinct: ["new:0"] }))).toEqual({ status: 400, error: "validation" });
+  });
+  it("shows the same ops in the preview as the proposal stores (no compiler-derived fields)", async () => {
+    const w = await world();
+    const intent = { type: "parents", person: P(1), parents: [{ who: { new: stub("Moss", "Testwood", { gender: "male", birthYear: 1960 }) }, rel: "birth" }] };
+    const pv = await w.preview(ME, { intent });
+    const sub = await w.submit(ME, { intent });
+    expect(pv.body.ops).toEqual(sub.body.proposal.ops);
+  });
+  it("throttles the preview per actor", async () => {
+    const at = Date.parse("2026-10-14T00:00:00Z");
+    const w = await world({ clock: () => at });
+    let last;
+    for (let i = 0; i < 61; i += 1) last = await w.preview("I0042", { intent: { ...spouseOf(3), person: P(1) } });
+    expect(err(last)).toEqual({ status: 429, error: "rate_limited" });
+    expect((await w.preview(ADMIN, { intent: spouseOf(3) })).status).toBe(200);
+  });
+  it("replays an Idempotency-Key after the tree moved, and a concurrent same-key submit files one proposal", async () => {
+    const w = await world();
+    const a = await w.submit(ME, { intent: spouseOf(3) }, "same");
+    await w.bump({ ...w.me, gender: 1, private: false, primary_name: { ...w.me.primary_name, nick: "Al" } }, 1);
+    const b = await w.submit(ME, { intent: spouseOf(3) }, "same");
+    expect(b.status).toBe(201);
+    expect(b.body.proposal.id).toBe(a.body.proposal.id);
+    const w2 = await world();
+    const [x, y] = await Promise.all([w2.submit(ME, { intent: spouseOf(3) }, "race"), w2.submit(ME, { intent: spouseOf(3) }, "race")]);
+    expect([x.status, y.status].every((s) => s === 201 || s === 503)).toBe(true);
+    expect(w2.rows("PROP#").filter((r) => r.SK === "META")).toHaveLength(1);
+  });
+  it("does not let the proposer amend a relationship proposal (its intent and read versions would go stale)", async () => {
+    const w = await world();
+    const p = (await w.submit(ME, { intent: spouseOf(3) })).body.proposal;
+    const got = await w.call("GET", `/api/proposals/${p.id}`, ME);
+    const r = await w.call("PATCH", `/api/proposals/${p.id}`, ME, { ops: p.ops, base_versions: p.base_versions }, { "if-match": got.headers?.etag ?? got.headers?.ETag ?? '"x"' });
+    expect(err(r)).toEqual({ status: 409, error: "not_amendable" });
   });
 });

@@ -26,6 +26,7 @@ import { findDuplicates, summarizePerson } from "./duplicates.js";
 import { get, storeView } from "./index.js";
 import { ownPerson, viewRecord } from "./read.js";
 import { MAX_PROPOSAL_OPS } from "./proposals.js";
+import { MAX_OPS as MAX_BATCH_OPS } from "../sync/store.js";
 
 export const MAX_NOTE_CHARS = 1000;
 const MAX_INTENT_BYTES = 16 * 1024;
@@ -57,6 +58,11 @@ function parseBody(c, { submit }) {
   if (b.note !== undefined && !(typeof b.note === "string" && b.note.length <= MAX_NOTE_CHARS)) bad("/note", `note is a string of at most ${MAX_NOTE_CHARS} characters`);
   if (b.route !== undefined && b.route !== "auto" && b.route !== "review") bad("/route", "route is auto or review");
   if (errors.length) throw invalid(errors);
+  if (Array.isArray(b.confirmDistinct)) {
+    const stubCount = stubsOf(b.intent).length;
+    b.confirmDistinct.forEach((x, i) => { const n = Number(x.slice(4)); if (n < 1 || n > stubCount) bad(`/confirmDistinct/${i}`, "that is not one of the new people in this request"); });
+    if (errors.length) throw invalid(errors);
+  }
   if (Buffer.byteLength(JSON.stringify(b.intent)) > MAX_INTENT_BYTES) throw problem(413, "too_large", "the request is too large");
 
   let key;
@@ -72,6 +78,21 @@ function parseBody(c, { submit }) {
     route: b.route ?? "auto",
     key,
   };
+}
+
+const REF_RE = /^(Person|Family|Event|Place):[0-9a-f]{1,64}$/;
+/** Every string leaf of the intent (keys and values; a record reference carries no free text), for the R-18/R-19 guard: an unknown key cannot smuggle text past it. */
+export function intentStrings(intent) {
+  const out = [];
+  const walk = (v, depth) => {
+    if (depth > 12) { out.push("<too deep>"); return; }
+    if (typeof v === "string") { if (!REF_RE.test(v)) out.push(v); return; }
+    if (typeof v === "number") { out.push(String(v)); return; }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (isObj(v)) for (const [k, x] of Object.entries(v)) { out.push(k); walk(x, depth + 1); }
+  };
+  walk(intent, 0);
+  return out;
 }
 
 /** The stubs and new places an intent carries: the free text a member typed. Defensive: the compiler names whatever is malformed. */
@@ -137,7 +158,7 @@ export async function visiblePeople(ctx, actor, stubs, nowMs) {
 }
 
 // ---- the compile, with the objects it reads loaded between rounds -------------------------------------------------------------
-async function compileLoaded(ctx, opts) {
+async function compileLoaded(ctx, actor, opts) {
   const cache = new Map(); // "Class:handle" -> { obj, version } | null
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
     const need = new Set();
@@ -153,7 +174,10 @@ async function compileLoaded(ctx, opts) {
     if (need.size === 0) return res;
     await Promise.all([...need].map(async (k) => {
       const [cls, handle] = keyParts(k);
-      cache.set(k, (await get(ctx, cls, handle)) ?? null);
+      const head = await get(ctx, cls, handle);
+      // What the viewer may not see is an unknown object (404), so neither a name nor the existence of a handle is learned from the answer.
+      const seen = head ? await viewRecord(ctx, actor, { class: cls, handle, gramps_id: typeof head.obj?.gramps_id === "string" ? head.obj.gramps_id : "", version: head.version, obj: head.obj }) : null;
+      cache.set(k, seen ? head : null);
     }));
   }
   throw problem(413, "too_large", "the change reaches too many records");
@@ -186,11 +210,12 @@ async function compileFor(c, parsed, guard, { mode }) {
   const ctx = c.store;
   const nowMs = ctx.now();
   // R-18/R-19 on what the member typed, before anything is read or compiled: stub names, place names, the note.
-  const typed = newThings(parsed.intent);
-  if (typed.length) guard.assertValue(typed, "intent.new", { surface: "relationships", op: "intent" });
+  // Every string leaf of the intent, not only the stubs and places: the intent is stored verbatim in the proposal.
+  const typed = intentStrings(parsed.intent);
+  if (typed.length) guard.assertValue(typed, "intent.leaves", { surface: "relationships", op: "intent" });
   if (parsed.note) guard.assertValue(parsed.note, "proposal.note", { surface: "relationships", op: "note" });
   const people = await visiblePeople(ctx, c.actor, stubsOf(parsed.intent), nowMs);
-  const res = await compileLoaded(ctx, {
+  const res = await compileLoaded(ctx, c.actor, {
     intent: parsed.intent, people, mode, admin: c.actor.admin === true, today: new Date(nowMs),
     ...(parsed.confirm !== undefined || mode === "commit" ? { confirmDistinct: parsed.confirm ?? [] } : {}),
   });
@@ -223,23 +248,42 @@ function requestFrom(c, parsed, res, { dry }) {
   };
 }
 
-const withinCaps = (res) => {
+// applyBatch takes at most 24 objects (MAX_OPS, D2-30; one op per object): on the auto route a larger compile is refused, not split.
+const withinCaps = (res, route) => {
   if (res.ops.length > MAX_PROPOSAL_OPS) throw problem(413, "too_large", `a submission holds at most ${MAX_PROPOSAL_OPS} ops`);
+  if (route === "auto") {
+    const objects = new Set(res.ops.map((o) => o.obj).filter((x) => typeof x === "string"));
+    if (objects.size > MAX_BATCH_OPS) throw problem(413, "too_large", `this change reaches ${objects.size} records and can be applied at most ${MAX_BATCH_OPS} at a time; send it for review or split it into smaller ones`);
+  }
 };
+
+// A cheap per-actor throttle for the preview (it reads the store and runs the compile rounds on every call): PREVIEW_LIMIT per PREVIEW_WINDOW_MS, per instance.
+export const PREVIEW_LIMIT = 60;
+const PREVIEW_WINDOW_MS = 60_000;
+const previewHits = new Map(); // "table|actor id" -> [ms] (the store context is built per request, so the state lives in the module)
+function throttlePreview(ctx, actor, nowMs) {
+  const key = `${ctx.table}|${actor.id}`;
+  const recent = (previewHits.get(key) ?? []).filter((t) => nowMs - t < PREVIEW_WINDOW_MS);
+  if (recent.length >= PREVIEW_LIMIT) { previewHits.set(key, recent); throw problem(429, "rate_limited", "please slow down; try again in a minute"); }
+  recent.push(nowMs);
+  previewHits.set(key, recent);
+  if (previewHits.size > 2000) for (const [k, v] of previewHits) if (!v.some((t) => nowMs - t < PREVIEW_WINDOW_MS)) previewHits.delete(k);
+}
 
 // ---- the routes -------------------------------------------------------------------------------------------------------------------
 /** POST /api/relationships/preview { intent, confirmDistinct? } */
 export async function relationshipsPreview(c) {
   const guard = createRecordGuard({ dob: c.store.guardDob === true, log: c.store.log });
   const parsed = parseBody(c, { submit: false });
+  throttlePreview(c.store, c.actor, c.store.now());
   const res = await compileFor(c, parsed, guard, { mode: "preview" });
   const body = {
-    ops: res.ops, base_versions: res.base_versions, read_versions: res.read_versions, summary: res.summary, warnings: res.warnings,
+    ops: res.ops.map(withoutDerived), base_versions: res.base_versions, read_versions: res.read_versions, summary: res.summary, warnings: res.warnings,
     duplicates: res.duplicates, followUps: res.followUps, destructive: res.destructive, already_recorded: res.alreadyRecorded, subject: res.subject,
     route: c.actor.admin === true ? "auto" : "proposal",
   };
   if (res.alreadyRecorded) return { status: 200, body };
-  withinCaps(res);
+  withinCaps(res, routeFor(c, parsed));
   // The same refusals a submit would give (field classes, semantics, schema, the guard over the whole result, size), with nothing written.
   const planned = await planChanges(c, requestFrom(c, parsed, res, { dry: true }), c.store.now(), guard, { skipRateLimit: true });
   return { status: 200, body: { ...body, warnings: [...res.warnings, ...planned.warnings] } };
@@ -255,7 +299,7 @@ export async function relationshipsPost(c) {
   if (item) return replayOf(item, requestHashOf({ intent: parsed.intent, confirm: parsed.confirm, note: parsed.note, route: routeFor(c, parsed) }));
   const res = await compileFor(c, parsed, guard, { mode: "commit" });
   if (res.alreadyRecorded) throw problem(409, "already_recorded", "that is already recorded", { details: { summary: res.summary } });
-  withinCaps(res);
+  withinCaps(res, routeFor(c, parsed));
   const req = requestFrom(c, parsed, res, { dry: false });
   const planned = await planChanges(c, req, nowMs, guard);
   const out = await commit(c, req, planned, nowMs, {

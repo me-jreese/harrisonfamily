@@ -263,6 +263,8 @@ export async function proposalsAmend(c) {
   const ctx = c.store;
   const { actor } = c;
   const prev = await loadForWrite(c, { verb: "amend" });
+  // A relationship proposal keeps the intent and the read versions its ops were compiled from; an amend of the ops alone would leave them stale (HFY-TSK-210).
+  if (prev.kind === "relationship") throw new HttpError(409, "not_amendable", "a relationship suggestion cannot be edited; withdraw it and make a new one");
   const body = isObj(c.body) ? c.body : {};
   const unknown = Object.keys(body).filter((k) => !BODY_FIELDS.has(k));
   if (unknown.length) throw problem(400, "validation", "the request is not valid", { errors: unknown.map((k) => ({ pointer: `/${k}`, detail: "not a field of this request" })) });
