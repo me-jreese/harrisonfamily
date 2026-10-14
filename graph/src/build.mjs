@@ -12,7 +12,7 @@ import { computeGenerations } from './generations.mjs';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const BUILDER = `hfy-graph@${pkg.version}`;
 export const SCHEMA_VERSION = 1;
-export const MINOR = 1; // 1: places[].geo may be "naturalearth" (state, province and country centroids)
+export const MINOR = 2; // 1: places[].geo may be "naturalearth" (state, province and country centroids); 2: photoEdges
 export const PROJECTION = 1;
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -55,7 +55,7 @@ export function buildFamilyGraph(objects, opts = {}) {
   const now = resolveNow(opts.now);
   const generatedAt = opts.generatedAt ?? isoSeconds(now);
   const warnings = new Warnings();
-  const { people, unions, places: projected, events, faceJobs } = projectRecords(objects, {
+  const { people, unions, places: projected, events, photoEdges, faceJobs } = projectRecords(objects, {
     maxYear: now.getUTCFullYear(),
     warnings,
     keepLivingResidence: opts.keepLivingResidence === true,
@@ -79,6 +79,7 @@ export function buildFamilyGraph(objects, opts = {}) {
     events,
     components,
     generations,
+    photoEdges, // photo co-occurrence (minor 2); ids only, no handles, rects or paths
     attribution: { geonames: geo.geonames }, // any GeoNames coordinate needs the credit (GEONAMES_CREDIT)
   };
   const digest = snapshotDigest(body);
@@ -103,7 +104,7 @@ export function buildFamilyGraph(objects, opts = {}) {
   return { graph, faceJobs, report };
 }
 
-const BODY_KEYS = ['people', 'unions', 'edges', 'places', 'events', 'components', 'generations', 'attribution'];
+const BODY_KEYS = ['people', 'unions', 'edges', 'places', 'events', 'components', 'generations', 'photoEdges', 'attribution'];
 
 // The snapshot id is a digest of the projected content, so it is the same for any input order and never touches the
 // unredacted input.
