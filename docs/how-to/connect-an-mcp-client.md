@@ -43,12 +43,14 @@ Ask the client to list the server's tools.
 | You are | Tools you see |
 | --- | --- |
 | In neither group | None. The list is empty, and its `_meta.reason` has the code `not_in_group` and the group `mcp-authors`. |
-| In `mcp-authors` | Three read tools, `hfy_posts_list`, `hfy_posts_get` and `hfy_comments_list`, and two create tools, `hfy_posts_create` and `hfy_comments_create`. |
-| In `hfy-admin` | The same five, and `hfy_posts_delete` and `hfy_comments_delete`. The two deletes are disabled, with the reason `step_up_required`, until you complete step 3. |
+| In `mcp-authors` | Nine tools. Three read tools, `hfy_posts_list`, `hfy_posts_get` and `hfy_comments_list`; two create tools, `hfy_posts_create` and `hfy_comments_create`; and four editing tools, `hfy_records_get`, `hfy_proposals_list`, `hfy_proposals_get` and `hfy_changes_submit`. |
+| In `hfy-admin` | The same nine, and `hfy_posts_delete` and `hfy_comments_delete`. The two deletes are disabled, with the reason `step_up_required`, until you complete step 3. |
 
 `hfy_posts_create` always makes a draft. It takes no visibility, and a post is published on the site, by a person.
 
-A create or delete call runs when the client makes it. To preview one without writing anything, add `"mode": "dry_run"` to its arguments. The result describes the call instead of running it: the policy decision, and `wouldExecute`, which says whether the call would run.
+The editing tools are listed whether or not record editing is switched on (the `HFY_EDITING` stack switch). While it is off, each of them answers `404`. There is no tool to approve, amend or withdraw a suggestion: that stays in the site.
+
+A create, delete or `hfy_changes_submit` call runs when the client makes it. To preview one without writing anything, add `"mode": "dry_run"` to its arguments. The result describes the call instead of running it: the policy decision, and `wouldExecute`, which says whether the call would run. For `hfy_changes_submit` it also carries the plan, which edits would save now and which would go to an admin as a suggestion. Without `mode`, `hfy_changes_submit` saves the edits and files the suggestion.
 
 ### 3. Run an admin delete
 
