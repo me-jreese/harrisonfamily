@@ -181,7 +181,7 @@ Paths:
   - `handler.js`: Function URL handler. Its `invoke` runs a route's own handler for a non-HTTP caller, the MCP tools.
   - `routes.js`: route registry, including `MCP_RESOURCE`, the `mcp` member of each route exposed as a tool, and each route's `gate`.
   - `features.js`: the server-side feature gate (HFY-TSK-238): `requireFeature`, `serverSwitch` and `gateExempt` for routes, the flags-file reader, the `uat` and `x-hfy-preview` rules, and `featureOn` for producers ([API: Feature gate](api.md#feature-gate)).
-  - `http.js`: HTTP helpers.
+  - `http.js`: HTTP helpers, including `HttpError` and the error mapper, which sends an error's `details` and the guard's `errors`.
   - `auth.js`: session principal and admin list. It resolves the actor's label through `labels.js`.
   - `labels.js`: author labels, shared by the cookie path and the MCP path.
   - `policy.js`: the MCP and UI permission table, the step-up settings and the groups config resolver (the MCP groups and the `uat` group).
@@ -190,6 +190,7 @@ Paths:
   - `origin.js`: the `X-Origin-Verify` check.
   - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `links.js`: profile links (HFY-TSK-193), the store behind `GET` and `PUT /api/people/:id/links`: one `PLINKS#<gramps-id>` item per person, written with an `AUDIT#plinks:<gramps-id>` item and a version check. The owner sets or clears, an admin only clears, and both routes are behind `profileLinks`. It validates with `shared/profile-links.mjs` ([API: Profile links](api.md#profile-links)).
   - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
   - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.

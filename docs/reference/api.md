@@ -1,6 +1,6 @@
 # Family API (hfy-api)
 
-Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, the contact-information guard, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
+Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, the contact-information guard, profile links, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
 
 The same Lambda function also serves the MCP server at `/mcp` and the protected-resource metadata at `/.well-known/oauth-protected-resource*`. Those paths authenticate with a bearer access token, not the session cookie, and are described in [MCP server](mcp-server.md). This page covers them only where they share code or configuration with `/api/*`.
 
@@ -24,10 +24,10 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | File | Role |
 | --- | --- |
 | [`index.js`](../../api/src/index.js) | Lambda entry. Creates the AWS clients and the admin-list, label and groups resolvers, runs the origin check, builds the handler on the first verified request, and sends MCP paths to the MCP mount. |
-| [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, notification and upload services for each request. Also exposes `handler.invoke(actor, routeName, {params, query, body})`, which runs a route's own handler without the HTTP steps, for the MCP tools. |
+| [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, profile links, notification and upload services for each request. Also exposes `handler.invoke(actor, routeName, {params, query, body})`, which runs a route's own handler without the HTTP steps, for the MCP tools. |
 | [`routes.js`](../../api/src/routes.js) | The route registry `ROUTES` (including each MCP tool's definition and each route's `gate`), `defineRoutes`, `matchRoute`, `MCP_RESOURCE`, and `buildCaps` for `caps.json`. |
 | [`features.js`](../../api/src/features.js) | The [feature gate](#feature-gate): `requireFeature`, `serverSwitch` and `gateExempt` for `ROUTES` entries, the flags-file reader `createFlagSource`, `createFeatureGate`, the `x-hfy-preview` parser, and `featureOn` for producers. |
-| [`http.js`](../../api/src/http.js) | JSON responses, `HttpError`, error mapping, cookie parsing. |
+| [`http.js`](../../api/src/http.js) | JSON responses, `HttpError` (with its optional `details`), error mapping, cookie parsing. |
 | [`origin.js`](../../api/src/origin.js) | The `X-Origin-Verify` check. |
 | [`auth.js`](../../api/src/auth.js) | Remote JWKS, session authenticator (which resolves the actor's label), admin list. |
 | [`labels.js`](../../api/src/labels.js) | Author labels: `cleanLabel`, `fallbackLabel` and the cached person-record resolver `createLabelResolver` (see [Author label](#author-label)). Used by the cookie path and the MCP path. |
@@ -36,6 +36,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
+| [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
@@ -114,31 +115,31 @@ A `204` response has an empty body.
 { "error": "<code>", "message": "<text>", "details": { }, "errors": [ ] }
 ```
 
-`details` appears only on kit errors that carry it. `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
+`details` appears only on an error that carries it: a kit error with details, or an `HttpError` constructed with them. `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). An error that carries both sends both. Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Profile links errors carry `{"fields": [...]}` on a `422` and `{"current": ...}` on a `409` ([Profile links](#profile-links)). Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
 
-Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input) return `400 validation`. Checks on post and comment content return `422 validation`.
+Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input, the shape of a profile links body and its person id) return `400 validation`. Checks on post, comment and profile link content return `422 validation`.
 
 | Status | `error` | Raised by |
 | --- | --- | --- |
-| 400 | `validation` | Unparseable or non-object body; missing `subject` on a comment route; upload input |
+| 400 | `validation` | Unparseable or non-object body; missing `subject` on a comment route; upload input; a profile links person id, `links` or `version` of the wrong shape |
 | 400 | `cursor_invalid` | A posts or comments cursor that is malformed, or a posts cursor from another filter |
 | 400 | `photo_has_location` | A new post attachment whose stored bytes carry location metadata ([Location check](#location-check)) |
 | 400 | `upload_missing` | A new post attachment whose object is missing or empty, or whose type differs from the one it was presigned for |
 | 401 | `unauthenticated` | No session cookie, or a token that fails verification |
-| 403 | `forbidden` | Failed origin check; caller lacks the permission for a post or comment action |
+| 403 | `forbidden` | Failed origin check; caller lacks the permission for a post, comment or profile links action |
 | 403 | `self_react` | Reacting to your own comment |
 | 403 | `upload_not_owned` | A new post attachment that is not the caller's own, unexpired, not yet attached upload ([Upload binding](#upload-binding)) |
 | 404 | `not_found` | Unknown route; a route behind a feature gate that is closed to the caller; post missing or not visible to the caller; comment missing; malformed subject or comment id |
 | 405 | `method_not_allowed` | Known path, other method |
-| 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)) |
+| 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)); a profile links write whose `version` is not the stored one, with the stored links in `details.current` |
 | 415 | `unsupported_media_type` | A write without a JSON content type |
-| 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji |
+| 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji; profile link fields, listed in `details.fields` |
 | 422 | `contact_info` | A phone number, email address, street address, PO box or contact-channel link in a post's body, title or attachment description, or a comment's body ([Contact-information guard](#contact-information-guard)) |
 | 422 | `dob_not_allowed` | Only while `HFY_GUARD_DOB` is `on`: a birth day or month, and nothing else the guard refuses, in the same fields |
 | 500 | `server` | A comment create, edit or delete failed for a reason other than a cancelled transaction |
 | 500 | `internal` | Anything else |
-| 503 | `busy` | A post or comment write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
-| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new attachment on a handler built without an S3 client |
+| 503 | `busy` | A post, comment or profile links write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
+| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; a profile links transaction cancelled for any other reason, such as throttling; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new attachment on a handler built without an S3 client |
 
 ## Routes
 
@@ -159,6 +160,8 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
 | `uploads.presign` | POST | `/uploads` | body `contentType`, `size` (a `filename` is ignored) | `201` | Presigned S3 PUT under `uploads/posts/` |
+| `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
+| `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
 | `notifications.subscribe` | POST | `/notifications/subscribe` | body: a push subscription | `200` `{ok: true}` | Kit route |
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
@@ -167,9 +170,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-None of these routes is behind the [feature gate](#feature-gate). The comments, posts, uploads and notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Only `links.get` and `links.put` are behind the [feature gate](#feature-gate), with `requireFeature("profileLinks")`. The comments, posts, uploads and notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools).
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get` and `links.put` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -330,6 +333,8 @@ Every write that changes an existing record is conditioned on the version that w
 | Post update, visibility change, delete | The item exists and its stored `post.updated_at` equals the value read |
 | Comment create | The id does not exist yet |
 | Comment edit, delete | The item exists and its stored `comment.edited_at` equals the value read, or is still absent for a never-edited comment |
+| Profile links, first write | The `PLINKS#` item does not exist yet |
+| Profile links, later write | The stored `version` equals the body's `version` |
 
 A failed condition cancels the whole transaction, audit item included, and the API returns `409 conflict`. A client recovers by reading the record again before it retries.
 
@@ -383,6 +388,49 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - Each member has at most one reaction per comment, stored at `R#comment:<id>#<member id>`. Sending the emoji you already have removes it and returns `{removed: true}`. Sending a different emoji, or the first one, stores it, replacing any earlier one, and returns `{removed: false, reaction}`. Both return `200`.
 - The route always targets `comment:<id>`. `react` in `comments.js` also accepts the target `root`, returns `404 not_found` for an `attachment:` target and `422 validation` for any other target, but no route reaches any of these.
 - Reactions are single `PutItem` and `DeleteItem` calls, not transactions, and are not audited.
+
+## Profile links
+
+[`links.js`](../../api/src/links.js) stores each member's links to their own profiles elsewhere (HFY-TSK-193; HFY-PLN-002 surfaces.md 6.3, R-16 and R-17). Both routes are behind `requireFeature("profileLinks")`, so they answer `404 not_found` while the flag is not `true`, except to a `uat` member ([Feature gate](#feature-gate)). Neither route is an MCP tool.
+
+### Links object
+
+`GET /people/:id/links` returns `{links, version, can: {edit}}`. `PUT /people/:id/links` returns `{links, version}`.
+
+| Field | Value |
+| --- | --- |
+| `links` | An object keyed by platform. `facebook`, `instagram`, `snapchat`, `tiktok`, `linktree` and `linkedin` each hold `{url, handle}`, and `website` holds `{url, host}`. `url` is the canonical URL the validator produced. A platform with no link is absent, so a person with none has `{}`. |
+| `version` | An integer: `0` before the first write, then one more after each write that changes something. |
+| `can.edit` | `true` only when the caller's member id is `:id`. It is `false` for an admin on someone else's page, although the admin may clear links there. |
+
+- `:id` is a gramps id matching `^[A-Za-z0-9_-]{1,64}$` (`LINKS_ID_RE`). Any other value is `400 validation` ("invalid person id").
+- A well-formed id with no stored item reads as `{links: {}, version: 0}`. The API does not check that the person exists.
+- The read is strongly consistent, so a member sees their own write at once.
+
+### Writing links
+
+`PUT /people/:id/links` takes `{links: {<platform>: <string or null>}, version}`, where `version` is the one the client last read. The checks run in this order, and the first that fails decides the response:
+
+1. The caller is neither the owner (their member id is `:id`) nor an admin: `403 forbidden`, before the body is looked at.
+2. `links` is not an object, or `version` is not a non-negative integer: `400 validation`.
+3. An admin who is not the owner gives any platform a value other than `null` or a blank string: `403 forbidden` ("an admin can only clear links"). An admin who owns the page has the owner's rights.
+4. Every field goes through `validateLinks` in [`shared/profile-links.mjs`](../../shared/profile-links.mjs), the one validator for the API and the browser (surfaces.md 6.2). A failure is `422 validation`, and `details.fields` lists each failed field as `{field, code, suggest?, message?}`. A value of a known platform that is not a string fails as `invalid_url` before the validator runs. Nothing is written.
+5. The body's `version` differs from the stored one (`0` when there is no item): `409 conflict`, with the stored `{links, version, updatedAt?}` in `details.current`.
+
+```json
+{ "error": "validation", "message": "some links are not valid", "details": { "fields": [ { "field": "website", "code": "wrong_platform", "suggest": "instagram" } ] } }
+```
+
+The field codes are the validator's `ERROR_CODES`: `invalid_url`, `scheme_not_allowed`, `wrong_platform` (with `suggest`, the field the link belongs in), `not_a_profile`, `short_link`, `contact_channel`, `contact_info`, `too_long` and `invalid_handle`, plus `unknown_platform` for a key that is not one of the seven platforms. A legacy `linkedin.com/pub/` address is `not_a_profile` with a `message` telling the member to copy their `/in/` address.
+
+After the checks:
+
+- A platform the body does not name keeps its link. `null` or a blank string removes one.
+- A body that changes nothing, such as an empty `links` or clears of platforms that are not set, returns `200` with the stored links and writes nothing: no version bump and no audit item.
+- Any other body writes the `PLINKS#` item, with `version` one higher, and its audit item in one `TransactWriteItems` call, conditioned as described in [Concurrent writes](#concurrent-writes). The response is the new `{links, version}`.
+- A transaction cancelled by its condition, because a concurrent write won, is `409 conflict` with the winner's links in `details.current`. One that stays cancelled by `TransactionConflict` after its retries is `503 busy`, and any other cancellation is `503 unavailable`. A store failure that is not a cancellation is `500 internal`.
+
+**R-18.** Profile links do not go through `guard.js`. The validator applies R-18 itself: every field refuses contact channels (`contact_channel`), and handles, URL paths, queries and fragments are scanned with the shared detector's `scanText` (`contact_info`). The hit is reported only as a field code, never as the matched text. The website field also refuses every host of the six platforms (R-17).
 
 ## Contact-information guard
 
@@ -450,6 +498,17 @@ From `computeCan` in `@io-kit/comments`. An admin is passed to the kit as a prin
 
 On a `post:<ulid>` thread, every comment action except delete also requires that the post is visible to the caller. Otherwise it is `404 not_found`.
 
+### Profile links
+
+From `createLinks` in [`links.js`](../../api/src/links.js). The owner is the member whose id is the route's `:id`.
+
+| Action | Owner | Admin (not the owner) | Other member |
+| --- | --- | --- | --- |
+| Read | yes | yes | yes |
+| Set a link | yes | no (`403`) | no (`403`) |
+| Clear a link | yes | yes | no (`403`) |
+| `can.edit` | `true` | `false` | `false` |
+
 ### Admins
 
 - The admin list is a JSON object in S3 at `ADMIN_LIST_BUCKET` / `ADMIN_LIST_KEY` (defaults `<config-bucket>` and `config/admins.json`). It holds member ids (gramps ids), either as an array or as `{"admins": [...]}`. Entries that are not strings are ignored. Any other shape means nobody is an admin.
@@ -468,13 +527,14 @@ On a `post:<ulid>` thread, every comment action except delete also requires that
 
 The API's items in the `hfy-app` table. The table definition and the auth edge's items are in [System architecture](architecture.md#dynamodb-table-hfy-app).
 
-The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), audit items ([`txn.js`](../../api/src/txn.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
+The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), profile links items ([`links.js`](../../api/src/links.js)), audit items ([`txn.js`](../../api/src/txn.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
 
 What the items hold:
 
 - All three post items carry `entity: "post"` and the full post under `post`, so a listing needs no second read.
 - Comment items carry `entity: "comment"` and `comment`.
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
+- Profile links items (`PLINKS#<gramps-id>` / `META`), one per person, carry `entity: "plinks"`, `links` (as in [Links object](#links-object)), `version`, `updatedAt` and `updatedBy` (the member id of the last writer). A person whose links were never written has no item.
 - Audit items are listed under [Audit records](#audit-records).
 - Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post attaches the upload, then `attached` (the post id) instead of `ttl`. See [Upload binding](#upload-binding).
 
@@ -482,11 +542,11 @@ Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<i
 
 ## Audit records
 
-Every post create, update, visibility change and delete, and every comment create, edit and delete, writes one audit item ([`txn.js`](../../api/src/txn.js), `auditItem`).
+Every post create, update, visibility change and delete, every comment create, edit and delete, and every profile links write that changes something writes one audit item ([`txn.js`](../../api/src/txn.js), `auditItem`).
 
 | Attribute | Value |
 | --- | --- |
-| `PK` | `AUDIT#<record id>`, the post id or comment id |
+| `PK` | `AUDIT#<record id>`: the post id, the comment id, or `plinks:<gramps-id>` for a person's profile links |
 | `SK` | `<at>#<ulid>` |
 | `GSI1PK`, `GSI1SK` | `AUDIT`, and the same value as `SK` |
 | `entity` | `audit` |
@@ -494,18 +554,19 @@ Every post create, update, visibility change and delete, and every comment creat
 | `id` | The record id |
 | `principal` | The caller's member id |
 | `at` | ISO 8601 time of the change |
-| `before` | The full record before the change, or `null` on create |
-| `after` | The full record after the change, or `null` on delete |
+| `before` | The full record before the change, or `null` on create. For profile links, `{links, version}`, which is `{links: {}, version: 0}` on the first write. |
+| `after` | The full record after the change, or `null` on delete. For profile links, the new `{links, version}`. |
 | `reason` | On an admin's delete of another member's comment, when given; `post deleted` on each comment removed with its post |
 
 | Record | `op` values |
 | --- | --- |
 | Post | `create`, `update`, `visibility`, `delete` |
 | Comment | `create`, `edit`, `delete` |
+| Profile links | `links.clear` when the body names platforms only to clear them, `links.update` for any other change |
 
 The data change and its audit item are written in a single `TransactWriteItems` call (`transact` in `txn.js`). Both land or neither does, so a failed write leaves no audit item.
 
-Comments removed with their post are audited too, each in the same transaction as its delete ([Writes](#writes)). Not audited: reactions, notification subscriptions and preferences, uploads, and writes that change nothing (a visibility set to its current value, a comment edit with identical text). No route reads audit items. The `GSI1` partition `AUDIT` lists them all in time order.
+Comments removed with their post are audited too, each in the same transaction as its delete ([Writes](#writes)). Not audited: reactions, notification subscriptions and preferences, uploads, and writes that change nothing (a visibility set to its current value, a comment edit with identical text, a profile links body that changes no link). No route reads audit items. The `GSI1` partition `AUDIT` lists them all in time order.
 
 ## Notifications
 
@@ -875,7 +936,7 @@ The person-record lookups are cached in memory, per container:
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
 | `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
 | `notifications` | `{types: <the four types>, default_level: 0}` |
-| `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility"]}` |
+| `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"]}` |
 
 `actions` and `mcp.tools` are derived from `ROUTES`. The other fields are written by hand in `buildCaps` and differ from the code in two places:
 
