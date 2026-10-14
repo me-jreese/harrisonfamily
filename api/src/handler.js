@@ -2,7 +2,7 @@
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
 import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments.js";
-import { createNotifier, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
+import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
@@ -46,6 +46,8 @@ export function createHandler(deps) {
       listPrincipals: scanSubscribedPrincipals(ddb, cmds, table),
       // A recipient's inbox write follows featureOn for the RECIPIENT, never the actor's preview header.
       inbox: deps.inbox, featureOn: (name, principal) => features.featureOn(name, principal),
+      // Sources for the PLN-002 producers (admins, member principals, record followers); absent => that producer notifies nobody.
+      getAdmins: deps.getAdmins, listMembers: deps.listMembers, followersOf: queryFollowers(ddb, cmds, table),
     });
     const base = { ddb, cmds, table, actor, now, ulid, uid, via };
     const commenterIds = async (threadId) => {

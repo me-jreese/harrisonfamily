@@ -93,9 +93,8 @@ Resources:
                   - lambda:CreateAlias
                   - lambda:UpdateAlias
                 Resource:
-                  # @io-kit/ci deploy-lambda waits on function-updated and its rollback lists/publishes versions (HFY-R60)
-                  - !Sub "arn:aws:lambda:us-west-2:${AWS::AccountId}:function:hfy-check-allowed"
-                  - !Sub "arn:aws:lambda:us-west-2:${AWS::AccountId}:function:hfy-check-allowed:*"
+                  # @io-kit/ci deploy-lambda waits on function-updated and its rollback lists/publishes versions (HFY-R60).
+                  # hfy-check-allowed was deleted on 2026-10-14 (HFY-TSK-326, P2-R48), so its grant is gone.
                   - !Sub "arn:aws:lambda:us-west-2:${AWS::AccountId}:function:hfy-api"
                   - !Sub "arn:aws:lambda:us-west-2:${AWS::AccountId}:function:hfy-api:*"
                   - !Sub "arn:aws:lambda:us-west-2:${AWS::AccountId}:function:hfy-auth-edge"

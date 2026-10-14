@@ -10,19 +10,18 @@ Placeholders on this page:
 - `<app-stack>` is the name of the live app stack. It is not `hfy-app`, the default that the behavior scripts use for it. `add-auth-behavior.sh`, `add-api-behavior.sh`, `add-uploads-behavior.sh` and `add-mcp-behavior.sh` take it as `--stack <app-stack>`. `add-data-gate-behaviors.sh` takes it as `--app-stack <app-stack>`, because its own `--stack` names the `us-east-1` gate stack.
 - `<config-bucket>` is the private config bucket, and `<site-bucket>` is the site bucket.
 - `<distribution-id>` is the CloudFront distribution, the `--distribution` default in the behavior scripts and in `publish-append-index.sh`.
-- `<legacy-origin-id>` is the ID of the CloudFront origin in front of `hfy-check-allowed`, an API Gateway (`execute-api`) host.
 - `<edge-region>` is an AWS Region that holds a Lambda@Edge log group (see [Before you start](#before-you-start)).
 - `<email>` and `<gramps-id>` stand for a member's address and record ID.
 - `<image-url>` is the address of a post photo, `https://<site>/uploads/posts/<ulid>/<name>`. It names a member's private file.
 - `<redirect-uri>`, `<client-origin>` and `<resource>` are an MCP client's callback URL, web origin and resource URL.
 - `<new-kid>` is a session signing key ID that no earlier key has used, such as `hfy-session-2` after `hfy-session-1`.
 
-The placeholders shared across these docs are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). `<legacy-origin-id>`, `<edge-region>`, `<image-url>`, `<redirect-uri>`, `<client-origin>`, `<resource>` and `<new-kid>` belong to this page and are defined above. Never put real values for any of these in a ticket or in this repository.
+The placeholders shared across these docs are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders). `<edge-region>`, `<image-url>`, `<redirect-uri>`, `<client-origin>`, `<resource>` and `<new-kid>` belong to this page and are defined above. Never put real values for any of these in a ticket or in this repository.
 
 ## Before you start
 
 - **Tools:** `curl`, `jq`, `openssl` and the AWS CLI. The MCP token check also needs Node 22 and the `auth/` dependencies (`npm ci` in `auth/`). The `HFYAppendIndex` check runs local unit tests when Node is installed.
-- **AWS read access** to the log groups `/aws/lambda/hfy-api`, `/aws/lambda/hfy-auth-edge` and `/aws/lambda/hfy-check-allowed` in `us-west-2`, and to the Lambda@Edge log groups `/aws/lambda/us-east-1.hfy-edge-gate` and `/aws/lambda/us-east-1.hfy-mcp-edge401`. CloudFront's copies of those two functions log in the Region of the edge location that ran them, not in `us-east-1`. To find the Regions that hold them (this needs `ec2:DescribeRegions` and `logs:DescribeLogGroups`):
+- **AWS read access** to the log groups `/aws/lambda/hfy-api` and `/aws/lambda/hfy-auth-edge` in `us-west-2`, and to the Lambda@Edge log groups `/aws/lambda/us-east-1.hfy-edge-gate` and `/aws/lambda/us-east-1.hfy-mcp-edge401`. CloudFront's copies of those two functions log in the Region of the edge location that ran them, not in `us-east-1`. To find the Regions that hold them (this needs `ec2:DescribeRegions` and `logs:DescribeLogGroups`):
 
   ```bash
   for r in $(aws ec2 describe-regions --query 'Regions[].RegionName' --output text); do
@@ -51,7 +50,7 @@ The placeholders shared across these docs are listed in [Private data and secret
 Two rules apply to every step:
 
 - **Select fields. Never dump whole objects.** The output of `aws lambda get-function-configuration` and `aws cloudfront get-distribution-config` contains the origin-verify secret. The commands on this page pick fields with `--query` or `jq`. Keep it that way.
-- **Keep tokens, logs and photo URLs private.** Read a cookie or token with `read -rs`, decode it locally, and `unset` it when you finish. `hfy-check-allowed` logs the Gramps ID of every successful sign-in, tokens carry an email address, and `/auth/session` returns the member's Gramps ID and a label that is often their email. A `/media/` or `/uploads/` URL names a private file. Do not paste any of these into a ticket or a chat.
+- **Keep tokens, logs and photo URLs private.** Read a cookie or token with `read -rs`, decode it locally, and `unset` it when you finish. Tokens carry an email address, and `/auth/session` returns the member's Gramps ID and a label that is often their email. A `/media/` or `/uploads/` URL names a private file. Do not paste any of these into a ticket or a chat.
 
 To read a function's recent log, run `aws logs tail /aws/lambda/<function> --since 30m`. For a Lambda@Edge group, add `--region <edge-region>`. Add `--filter-pattern '"<text>"'` to keep only matching lines.
 
@@ -66,7 +65,7 @@ To read a function's recent log, run `aws logs tail /aws/lambda/<function> --sin
 | Email and password sign-in fails, a password reset is refused or never arrives, or setting a password fails | [Password sign-in, reset or setup fails](#password-sign-in-reset-or-setup-fails) |
 | Google sign-in on `/auth/login` fails because the origin is not allowed for the client ID | [Google sign-in is refused on /auth/login](#google-sign-in-is-refused-on-authlogin) |
 | The sign-in pages look unstyled, or keep an old look after a restyle | [The sign-in page is unstyled or out of date](#the-sign-in-page-is-unstyled-or-out-of-date) |
-| The retired `/api/check-allowed` route returns `404` (nothing on the site calls it any more) | [The retired check-allowed route returns 404](#the-retired-check-allowed-route-returns-404) |
+| `POST /api/check-allowed` returns `404` from `hfy-api` (expected: the route is retired) | [The retired check-allowed route returns 404](#the-retired-check-allowed-route-returns-404) |
 | `/api/*` returns `401` while you are signed in, or an island acts signed out | [The API returns 401 while you are signed in](#the-api-returns-401-while-you-are-signed-in) |
 | Person pages, search, photos or post photos fail: `401 {"error":"unauthenticated"}` from `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` or `/uploads/*`, a page load sent to `/auth/login?returnTo=...`, or "Your sign-in has expired" on a person page | [Person, search or photo data is refused (data gate)](#person-search-or-photo-data-is-refused-data-gate) |
 | A private path, or a different spelling of one such as `/Person/index.json`, answers `404` with `cache-control: private, no-store` | [A private path answers 404](#a-private-path-answers-404) |
@@ -162,7 +161,7 @@ The `401` on the second line is the correct answer. The request passed CloudFron
   bash scripts/infra/add-api-behavior.sh --stack <app-stack> --secret-name "$NAME" --dry-run
   ```
 
-  When only the header is wrong, a dry run lists the cache behaviors before and after, then prints `(only the X-Origin-Verify header value differs)`. The `X-Origin-Verify` value is redacted in any diff it prints. If it prints `(dry-run) origin-verify secret not read; using a placeholder`, it compared CloudFront with a placeholder, so its diff tells you nothing. Other diff lines mean someone changed that origin or its behaviors by hand. Read them before you apply, because a run resets every field the script manages. If `add-api-behavior.sh` stops with a line that starts with `refusing:` and exit status 3, fix the legacy route first, as in [Legacy check-allowed returns 404](#the-retired-check-allowed-route-returns-404).
+  When only the header is wrong, a dry run lists the cache behaviors before and after, then prints `(only the X-Origin-Verify header value differs)`. The `X-Origin-Verify` value is redacted in any diff it prints. If it prints `(dry-run) origin-verify secret not read; using a placeholder`, it compared CloudFront with a placeholder, so its diff tells you nothing. Other diff lines mean someone changed that origin or its behaviors by hand. Read them before you apply, because a run resets every field the script manages.
 
   Then run both scripts without `--dry-run`, one after the other, because each reads the distribution's current ETag. Wait for the edges:
 
@@ -402,62 +401,24 @@ Checks 4 and 5 of [Deploy the app stack: Verify](deploy-the-app-stack.md#verify)
 
 ## The retired check-allowed route returns 404
 
-**What you see.** `POST /api/check-allowed` returns `404 {"error":"not_found","message":"no such route"}`. That body comes from `hfy-api` ([`api/src/handler.js`](../../api/src/handler.js)), which has no `check-allowed` route. No page calls this route since HFY-TSK-317, so no visitor sees the failure. It matters because `add-api-behavior.sh` refuses to run until the route is fixed, and because the route is the way to reach the still-deployed legacy function by hand.
+**What you see.** `POST /api/check-allowed` returns `404 {"error":"not_found","message":"no such route"}`. That body comes from `hfy-api` ([`api/src/handler.js`](../../api/src/handler.js)), which has no `check-allowed` route.
 
-**Cause.** CloudFront tries its cache behaviors in list order and uses the first pattern that matches. The retired endpoint reaches `hfy-check-allowed` through its API Gateway origin, which this repository does not define. [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps that route with a `/api/check-allowed*` behavior placed above `/api/*`. When it creates that pin, it copies whichever behavior serves `/api/check-allowed` at that moment. A 404 means no pin above `/api/*` targets the legacy origin. Someone moved the pin below `/api/*` or deleted it, the pin targets `hfy-api-origin`, or `/api/*` was pointed at `hfy-api` before any pin existed. The script moves a misplaced pin back on its own. In the other cases it refuses, as the check below shows. The rules are in [Repository operations](../reference/repository-operations.md#the-legacy-apicheck-allowed-pin).
+**Cause.** This is the expected, permanent answer. The route belonged to the legacy Google sign-in. HFY-TSK-317 removed every call to it from the pages, and the `hfy-check-allowed` Lambda and its API Gateway were deleted on 2026-10-14 (HFY-TSK-326, ruling P2-R48). The distribution has no `/api/check-allowed*` behavior and no API Gateway origin, so the path falls under `/api/*`, which [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) points at `hfy-api`. The script no longer creates a pin for the path, and its `--legacy-origin` flag is gone.
 
-**Check.**
-
-1. List the behaviors in evaluation order, then the origins, by ID and host only:
-
-   ```bash
-   aws cloudfront get-distribution-config --id <distribution-id> \
-     | jq -r '.DistributionConfig.CacheBehaviors.Items[] | "\(.PathPattern)\t\(.TargetOriginId)"'
-   aws cloudfront get-distribution-config --id <distribution-id> \
-     | jq -r '.DistributionConfig.Origins.Items[] | "\(.Id)\t\(.DomainName)"'
-   ```
-
-   The retired endpoint works only when `/api/check-allowed*` is listed above `/api/*` and targets the origin whose host is an `execute-api` address. That origin's ID is `<legacy-origin-id>`.
-
-2. Ask the script what it would do. `$NAME` is the stack's origin-verify secret, from step 1 of the [403 check](#every-api-or-auth-request-gets-403-forbidden). The dry run changes nothing:
-
-   ```bash
-   bash scripts/infra/add-api-behavior.sh --stack <app-stack> --secret-name "$NAME" --dry-run; echo "exit $?"
-   ```
-
-   | Output | Meaning |
-   | --- | --- |
-   | `legacy /api/check-allowed stays on origin <legacy-origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)` | The script can restore the route. The `cache behaviors after` line shows the pin back above `/api/*`. |
-   | `refusing: /api/check-allowed is already routed to hfy-api-origin by /api/* and no /api/check-allowed* behavior exists; ...` and `exit 3` | No pin, and nothing left to copy. |
-   | `refusing: no cache behavior serves /api/check-allowed today (only the default behavior), ...` and `exit 3` | No pin, and nothing to copy. |
-   | `refusing: the existing /api/check-allowed* behavior targets hfy-api-origin; ...` and `exit 3` | The pin points at the API. |
-
-**Fix.** Each run without `--dry-run` changes the distribution, and saves a backup first as described in the [403 fix](#every-api-or-auth-request-gets-403-forbidden).
-
-- **The script can restore the route.** Run it without `--dry-run`. It also resets `/api/*` and `hfy-api-origin` to their managed settings.
-
-  ```bash
-  bash scripts/infra/add-api-behavior.sh --stack <app-stack> --secret-name "$NAME"
-  aws cloudfront wait distribution-deployed --id <distribution-id>
-  ```
-
-- **No pin, and nothing to copy.** Name the legacy origin. The script then creates `/api/check-allowed*` on that origin with the same settings as `/api/*`, directly above the first behavior that matches the path. It refuses an ID that is not an origin of the distribution.
-
-  ```bash
-  bash scripts/infra/add-api-behavior.sh --stack <app-stack> --secret-name "$NAME" --legacy-origin <legacy-origin-id> --dry-run
-  bash scripts/infra/add-api-behavior.sh --stack <app-stack> --secret-name "$NAME" --legacy-origin <legacy-origin-id>
-  aws cloudfront wait distribution-deployed --id <distribution-id>
-  ```
-
-- **The pin points at the API.** The script never retargets a pin. In the CloudFront console, on the distribution's **Behaviors** tab, delete the `/api/check-allowed*` behavior. Then run the script with `--legacy-origin`, as in the previous item.
-
-To confirm that the route now reaches the legacy Lambda, send an empty body. It is refused before any token check:
+**Check.** You need this only when the route answers something other than that `404`. Send the request from a shell with no cookies:
 
 ```bash
 curl -s -w '  %{http_code}\n' -X POST "$SITE/api/check-allowed" -H 'content-type: application/json' -d '{}'
 ```
 
-It prints `{"allowed":false,"error":"missing id_token"}  400`.
+It prints `{"error":"not_found","message":"no such route"}  404`. A `403 {"error":"forbidden"}` is the [403 symptom](#every-api-or-auth-request-gets-403-forbidden) and affects every `/api/*` path. Any other answer means a behavior ahead of `/api/*` still matches the path. List the behaviors in evaluation order:
+
+```bash
+aws cloudfront get-distribution-config --id <distribution-id> \
+  | jq -r '.DistributionConfig.CacheBehaviors.Items[] | "\(.PathPattern)\t\(.TargetOriginId)"'
+```
+
+**Fix.** There is nothing to restore. Do not add a behavior or an origin for `/api/check-allowed`: the function behind it no longer exists. If the listing shows a `/api/check-allowed*` row, someone added it by hand. Find out why before you remove it in the CloudFront console, which needs io's go-ahead. If a page calls the route, remove the call. `scripts/validate_build.sh` refuses an Eleventy build whose pages still call it.
 
 ## The API returns 401 while you are signed in
 
@@ -675,7 +636,7 @@ Any other `refusing:` line names its cause, such as credentials that cannot desc
 - **Every site refresh,** with the same 300 s copy. Where `authV2` resolves on, `feature-flags.js` sends `POST /auth/refresh` when the session nears its expiry and when the gate answers `401`. For a removed member, the refresh fails with `401`, clears both cookies and revokes the session's refresh family. Where `authV2` resolves off, no site script refreshes, so the member keeps the session until `io_id` expires and is refused at the next sign-in.
 - **Every MCP code exchange and refresh grant,** and every `/auth/userinfo` call, with a 60 s copy.
 
-MCP tools follow `config/groups.json`, not the allowlist, so a removed member listed there keeps their tools until their access token expires. The retired `hfy-check-allowed` function keeps its own copy of the allowlist until Lambda starts new instances, but no page calls it, and it mints no session the gate or the API accepts. For the full timing, see [The identity model](../explanation/identity-model.md#what-removal-does-and-does-not-do).
+MCP tools follow `config/groups.json`, not the allowlist, so a removed member listed there keeps their tools until their access token expires. The legacy `hfy-check-allowed` function, which held its own copy of the allowlist, was deleted on 2026-10-14 (HFY-TSK-326). For the full timing, see [The identity model](../explanation/identity-model.md#what-removal-does-and-does-not-do).
 
 **Check.**
 
@@ -697,7 +658,7 @@ MCP tools follow `config/groups.json`, not the allowlist, so a removed member li
 **Fix.**
 
 - **MCP tools.** Remove the member's Gramps ID and email from `config/groups.json`, as in [Manage family access](manage-family-access.md). `hfy-api` reads the file again within 60 s, and from then on the member's token lists no tools.
-- **Every edge session and MCP token now, instead of within the hour.** [Rotate the session signing key](rotate-the-session-signing-key.md), which recycles the auth edge, and then recycle `hfy-api` as in [The API returns 401 while you are signed in](#the-api-returns-401-while-you-are-signed-in), so that neither its cookie check nor its MCP server keeps the old key. Every `io_id` and MCP access token signed with the old key stops verifying, and the gate drops the old key within 300 s. Where `authV2` resolves on, this does not sign everyone out: members' pages refresh silently from the refresh cookie, and MCP clients refresh their tokens, both under the new key. The removed member's refresh is refused. Where `authV2` resolves off, nothing refreshes `io_id`, so members who signed in at `/auth/login` sign in again. Legacy sign-ins are not affected.
+- **Every edge session and MCP token now, instead of within the hour.** [Rotate the session signing key](rotate-the-session-signing-key.md), which recycles the auth edge, and then recycle `hfy-api` as in [The API returns 401 while you are signed in](#the-api-returns-401-while-you-are-signed-in), so that neither its cookie check nor its MCP server keeps the old key. Every `io_id` and MCP access token signed with the old key stops verifying, and the gate drops the old key within 300 s. Where `authV2` resolves on, this does not sign everyone out: members' pages refresh silently from the refresh cookie, and MCP clients refresh their tokens, both under the new key. The removed member's refresh is refused. Where `authV2` resolves off, nothing refreshes `io_id`, so members who signed in at `/auth/login` sign in again.
 
 The removal has taken full effect when a sign-in as that member at `/auth/login` is refused as not on the access list. Run the checks in [Manage family access](manage-family-access.md#verify-a-removal).
 

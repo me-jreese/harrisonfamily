@@ -270,7 +270,7 @@ Each script adds one Function URL to the distribution as an HTTPS custom origin 
 | Script | Origin | Behaviors |
 | --- | --- | --- |
 | [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) | `hfy-auth-origin` | `/auth/*`, `/.well-known/oauth-authorization-server*` |
-| [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) | `hfy-api-origin` | `/api/*`, plus the legacy pin `/api/check-allowed*` on the origin that served `/api/check-allowed` before |
+| [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) | `hfy-api-origin` | `/api/*` |
 
 #### Check the secret the scripts will send
 
@@ -302,9 +302,11 @@ scripts/infra/add-auth-behavior.sh --stack <app-stack> --distribution <distribut
 
 On a first deploy, the dry-run diff only adds `hfy-auth-origin` and its two behaviors and raises the matching `Quantity` counts. On a re-run against a correct distribution, it prints `distribution <distribution-id> already has ...: no change` and stops. The real run prints where it saved the pre-change configuration, a rollback command, and the distribution status, `InProgress`.
 
-#### Add the API behavior and the legacy pin
+#### Add the API behavior
 
-The legacy Google sign-in is retired from the pages and the pipeline (HFY-TSK-317): no page calls `/api/check-allowed` and no push deploys its Lambda, `hfy-check-allowed`. The function, its `hfy-check-allowed` API Gateway and the CloudFront route to it are still in AWS until io retires them, so a direct call keeps working. `add-api-behavior.sh` keeps the legacy path where it is, so the endpoint is not shadowed by `/api/*`. Before it points `/api/*` at `hfy-api`, it clones whichever behavior serves `/api/check-allowed` under the pattern `/api/check-allowed*`, and orders the clone ahead of `/api/*` (HFY-R58). [Edge and origin design](../explanation/edge-and-origin-design.md#one-origin-for-the-browser) explains why the path needs its own behavior.
+`add-api-behavior.sh` adds `hfy-api-origin`, which sends the `X-Origin-Verify` header, and a `/api/*` behavior that targets it. If the distribution already has a `/api/*` behavior on another origin, the script retargets that behavior to `hfy-api-origin` in place, at the same position. It never deletes an origin or a behavior, so an origin that `/api/*` used before stays in the configuration.
+
+The script no longer creates or keeps a `/api/check-allowed*` pin. The legacy `hfy-check-allowed` Lambda and its API Gateway were deleted on 2026-10-14 (HFY-TSK-326, ruling P2-R48), and the distribution has no behavior or origin for them. `/api/check-allowed` therefore falls under `/api/*`, and `hfy-api` answers it with `404`, which is expected. The `--legacy-origin` flag is gone with the pin.
 
 ```sh
 scripts/infra/add-api-behavior.sh --stack <app-stack> --distribution <distribution-id> --secret-name "$OV_NAME" --dry-run
@@ -312,18 +314,9 @@ scripts/infra/add-api-behavior.sh --stack <app-stack> --distribution <distributi
 
 Read the dry run:
 
-- A line `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`. `<origin-id>` must be the legacy API Gateway origin, never `hfy-api-origin`. The line's wording names HFY-TSK-069, the cutover task, but neither the cutover nor HFY-TSK-317 removed the legacy Lambda or this pin, so keep the pin.
-- Two `cache behaviors ... (in evaluation order)` lines. In the `after` line, `/api/check-allowed* -> <origin-id>` comes before `/api/* -> hfy-api-origin`.
-- A diff that touches only `hfy-api-origin`, `/api/*` and, on the first run, the new pin.
-
-If the script stops with exit status `3` and a message that starts with `refusing:`, it could not tell which origin serves the legacy path, for example because `/api/*` already points at `hfy-api` and no pin exists. Find the legacy API Gateway origin:
-
-```sh
-aws cloudfront get-distribution-config --id <distribution-id> \
-  --query "DistributionConfig.Origins.Items[?contains(DomainName, 'execute-api')].Id" --output text
-```
-
-If it prints one origin ID, add `--legacy-origin <origin-id>` to both the dry run and the real run. If it prints nothing, the legacy origin is gone and there is nothing to pin to: stop and find out how `/api/check-allowed` is served before you go on.
+- Two `cache behaviors ... (in evaluation order)` lines. On a first deploy, the `after` line adds `/api/* -> hfy-api-origin`. Where `/api/*` already existed, it keeps its place and now names `hfy-api-origin`.
+- A diff that touches only `hfy-api-origin`, `/api/*` and the matching `Quantity` counts.
+- On a re-run against a correct distribution, only `distribution <distribution-id> already has origin hfy-api-origin and /api/*: no change`.
 
 Then apply it and wait for the distribution:
 
@@ -338,7 +331,7 @@ Three messages mean stop, in this step and in step 8:
 
 - `cannot read secret <name>` on a real run, or `(dry-run) origin-verify secret not read; using a placeholder` on a dry run. The script could not read `$OV_NAME`. Check the name, the region and your `GetSecretValue` permission.
 - `stack hfy-app has no output ...`: `--stack <app-stack>` is missing.
-- `unknown arg ...`: a flag is misspelled.
+- `unknown arg ...`, with exit status `2`: a flag is misspelled, or an old command still passes `--legacy-origin` to `add-api-behavior.sh`. Drop that flag.
 
 To undo a behavior change, run the rollback command the script printed, with the distribution's current ETag from `aws cloudfront get-distribution-config --id <distribution-id> --query ETag --output text`. The backup file holds the origin-verify value, so delete it once you no longer need it.
 
@@ -480,8 +473,7 @@ Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None p
    The command prints `{"error":"unauthenticated","message":"sign in required"}` and `401`. That shows CloudFront reached `hfy-api` with the right header and the request got as far as the session check. Other results:
 
    - `{"error":"forbidden"}` and `403`: the header the distribution sends does not match the function's `ORIGIN_VERIFY`. See [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md#every-api-or-auth-request-gets-403-forbidden).
-   - A body with only a `message` key, such as `{"message":"Not Found"}` or `{"message":"Missing Authentication Token"}`: API Gateway answered, so `/api/*` still targets the legacy origin. Run [Add the API behavior](#add-the-api-behavior-and-the-legacy-pin), or wait for the distribution to finish deploying.
-   - An error page from the site bucket: no `/api/*` behavior exists.
+   - An error page from the site bucket: no `/api/*` behavior exists. Run [Add the API behavior](#add-the-api-behavior), or wait for the distribution to finish deploying.
    - A `5xx` status: CloudFront reached `hfy-api`, but the function failed, for example because a module is missing from the package. Read its log with `aws logs tail /aws/lambda/hfy-api --since 15m`, then rebuild and redeploy from step 2.
 7. **The MCP server challenges a request without a token.**
 
@@ -515,14 +507,14 @@ Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None p
    ```
 
    Both lines print `{"error":"forbidden"} 403`. The Function URLs use AuthType `NONE`, so this header check is the only thing that stops callers from bypassing CloudFront.
-10. **The legacy endpoint's route survived.** Nothing on the site calls it any more, but the route is kept until io retires the function, and it must not fall through to `hfy-api`.
+10. **The retired check-allowed route falls through to `hfy-api`.** The legacy `hfy-check-allowed` Lambda and its API Gateway were deleted on 2026-10-14 (HFY-TSK-326), and nothing on the site calls the route.
 
     ```sh
     curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}' \
       https://<site>/api/check-allowed
     ```
 
-    The command prints `{"allowed":false,"error":"missing id_token"} 400`. That is the legacy Lambda refusing the empty request ([`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs)). `{"error":"not_found","message":"no such route"} 404` comes from `hfy-api` and means the request never reached the legacy Lambda. Go back to [Add the API behavior and the legacy pin](#add-the-api-behavior-and-the-legacy-pin).
+    The command prints `{"error":"not_found","message":"no such route"} 404`. That is `hfy-api` answering a path it has no route for, and it is the expected answer. If check 6 passed and this prints anything else, a behavior ahead of `/api/*` still matches the path. Check 11 must list no `/api/check-allowed*` row.
 11. **The behaviors are in order, and uploads carry the policy for their state.**
 
     ```sh
@@ -537,7 +529,7 @@ Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None p
 
     The first command lists one row per behavior, in evaluation order. Its last column is the event type of the behavior's Lambda@Edge association, or `None` when it has none.
 
-    - `/api/check-allowed*` is listed before `/api/*`.
+    - The `/api/*` row targets `hfy-api-origin`, and no `/api/check-allowed*` row is listed.
     - The `/mcp*` and `/.well-known/oauth-protected-resource*` rows target `hfy-api-origin` and end in `origin-response`.
     - The `/uploads/*` row matches the `curl` result:
       - When `curl` prints anything other than `401`, `/uploads/*` is public. The row ends in `None` and carries the stack's policy ID, which the second command prints. This is the state after a first deploy, before the gate is attached.
@@ -610,7 +602,7 @@ curl -s https://<site>/_data/flags.json | jq .authV2
 
 If the first command prints a version older than `2.1.2`, that build sends `Referrer-Policy: no-referrer`, and Google refuses sign-in on `/auth/login` as an origin that is not allowed for the client ID. If the second command prints `true`, `/auth/login` is where every member signs in. In that case do not roll back that far: fix forward instead. An earlier build also shows its own manifest's sign-in text and links its own stylesheet URL.
 
-To undo a CloudFront change from step 5, 6 or 8, use the rollback command that the script printed for its backup, as described at the end of [step 5](#add-the-api-behavior-and-the-legacy-pin). The backup holds the whole distribution configuration as it was before that run. Restoring it also undoes every later change to the distribution, the private data gate's included. Restore only the backup of the run you are undoing, before anything else changes the distribution, and run check 11 afterwards.
+To undo a CloudFront change from step 5, 6 or 8, use the rollback command that the script printed for its backup, as described at the end of [step 5](#add-the-api-behavior). The backup holds the whole distribution configuration as it was before that run. Restoring it also undoes every later change to the distribution, the private data gate's included. Restore only the backup of the run you are undoing, before anything else changes the distribution, and run check 11 afterwards.
 
 Then run every check in [Verify](#verify). Check 1 shows both keys ending in the earlier commit's `SHA`. Checks of features that the earlier commit lacks fail as expected. Check 4 shows the earlier manifest's text and stylesheet URL. Check 5 can show two different values once the site serves a newer `auth-edge.css` than the earlier build names.
 

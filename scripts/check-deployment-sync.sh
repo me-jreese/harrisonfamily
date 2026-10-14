@@ -20,13 +20,11 @@ if [ -z "$STAGED_FILES" ]; then
 fi
 
 needs_eleventy_check=0
-needs_lambda_check=0
 
 IFS=$'\n'
 for file in $STAGED_FILES; do
   case "$file" in
     11ty/*) needs_eleventy_check=1 ;;
-    lambda/*) needs_lambda_check=1 ;;
   esac
 done
 unset IFS
@@ -107,15 +105,8 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
   # 11ty/README.md refresh rsync (scripts/infra/test/run.sh checks it).
 fi
 
-if [ "$needs_lambda_check" -eq 1 ]; then
-  # lambda/hfy-check-allowed is retired from the sign-in path (HFY-TSK-317) but its source and the deploy-role grant stay until a
-  # later task deletes the Lambda (P2-R42), so the drift check stays until then.
-  run_rsync_check \
-    "Lambda hfy-check-allowed (scripts/auth/check-allowed-lambda -> lambda/hfy-check-allowed)" \
-    "$PROJECT_ROOT/scripts/auth/check-allowed-lambda" \
-    "$REPO_ROOT/lambda/hfy-check-allowed" \
-    --exclude 'node_modules/'
-fi
+# There is no Lambda check: lambda/hfy-check-allowed/ and its drift check were removed when the Lambda and its API Gateway were
+# deleted on 2026-10-14 (HFY-TSK-326, ruling P2-R48). lambda/placeholders/ is repo-owned and has no workspace source.
 
 # There is no Cloud Function check: getAllowlist, its source (functions/get-allowlist/) and its secret were deleted on 2026-10-14
 # (HFY-TSK-325).
