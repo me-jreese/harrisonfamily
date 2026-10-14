@@ -43,11 +43,11 @@ With io, open a signed-in tab on the site and turn the flags on for that tab onl
 1. On your own person page the hero shows `edit my info`; on another page `suggest a change`; for an admin `edit`.
 2. Change a nickname on your own page. It saves now (`saved.` with `undo`).
 3. Change a surname. The sheet says it goes to review; send it.
-4. On your own page, the family section shows `add or fix family connections`, and no other page does. It opens `/edit/family/`. Add a made-up child through `my children` and `send for review`; a member's relationship is always a suggestion.
-5. As an admin, open `/me/review/`, find the suggestions and decide them ([Review suggested changes](review-suggested-changes.md)).
+4. On your own page, the family section shows `add or fix family connections`, and no other page does. It opens `/edit/family/`. Add a made-up child through `my children` and `send for review`; a member's relationship is always a suggestion. The wizard works only on the signed-in member's own record (any other id gets "this is for your own page"), so this suggestion is against your real page, not a test one. It must never be approved.
+5. As an admin, open `/me/review/`, find the suggestions and decide them ([Review suggested changes](review-suggested-changes.md)). `decline` the made-up child, with a reason. Approving it would add a made-up person and a family link to the live tree, and a deletion cannot be undone from the web. Instead of declining, the member who sent it can `withdraw` it from `my suggestions` on the same page.
 6. Type a made-up phone number into a note. The editor refuses it and does not repeat it.
 
-Use a test person or a synthetic page for this; undo what you change.
+Use a test person or a synthetic page for the editor steps, and undo what you change. The wizard step cannot use one: decline or withdraw its suggestion.
 
 ### 4. Check the page audits
 
@@ -59,7 +59,7 @@ With io's approval for each, change `11ty/_data/flags.json` and deploy ([Turn a 
 
 1. `proposalReview` first: only admins get the tab.
 2. `recordEdit` next: everyone gets the editor.
-3. `relationshipWizard` third: members get `add or fix family connections` on their own page and the wizard at `/edit/family/`. It does not need `recordEdit`, because the wizard has its own page and button, but its suggestions land in the same queue.
+3. `relationshipWizard` third, only while `recordEdit` is on: members get `add or fix family connections` on their own page and the wizard at `/edit/family/`. The wizard has its own page and button, but it needs `recordEdit` too. After a send it links `see what you sent` to `my suggestions` on `/me/review/`, where the member can change or withdraw the suggestion, and that tab shows only with `recordEdit`; without it the member gets "suggestions aren't available yet". Its offer to add a spouse's death year opens the editor at `/edit/`, which also needs `recordEdit`. Its suggestions land in the same queue.
 4. `photoTagEdit` separately, with its own approval and its own audit. The design requires `recordEdit` to be live first (BRD2 flag table, `photoTagEdit` row).
 
 ### 6. Check it for everyone

@@ -8,7 +8,7 @@
 // fragments of the same page are checked too (the page's own headings).
 // Known limits: a target containing parentheses ends at the first ')', link text containing ']' is skipped, reference-style links and
 // HTML anchors are not checked, and duplicate headings are not numbered the way GitHub does. Exit 1 and one line per broken link on any failure.
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -88,4 +88,13 @@ function main(argv) {
   return problems.length ? 1 : 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+// Compare real paths: Node runs the main module from its real path, so a path through a symlink (macOS /var, /tmp) would
+// otherwise never match, and the CLI would exit 0 having checked nothing.
+const isMain = () => {
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (process.argv[1] && isMain()) process.exitCode = main(process.argv.slice(2));

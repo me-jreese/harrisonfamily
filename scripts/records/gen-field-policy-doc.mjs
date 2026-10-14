@@ -7,8 +7,16 @@
 // The only input is the policy table the API itself loads (DEFAULT_FIELD_POLICY.document(), Q2_15_ROWS, STRUCTURE_ROWS and the
 // never-type lists). It reads no data. The output carries a sha256 of that input, so a change to the table shows up as a changed
 // header even before the rows are compared. `--root <dir>` moves the repository root (tests use it for the output path only).
+//
+// It needs no installed package, so the io-kit CI `test` job, which installs nothing, can run it. The table's import chain
+// (records/guard.js, then http.js) reaches two packages from the private registry, `@io-kit/content` and `@io-kit/comments`,
+// for one error class each, which http.js uses only to map an error to a response. Before it imports the table, the generator
+// stands an empty error class in for each of those two imports of http.js (a module resolve hook, `standInHttpPackages`). Any
+// other package import on the chain still fails with ERR_MODULE_NOT_FOUND, and the test that runs this in a copy with no
+// node_modules catches it.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import * as nodeModule from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -106,7 +114,35 @@ export function render(mod) {
   return out.join("\n");
 }
 
+// The packages api/src/http.js imports only for its error mapping, and the stand-in for each (see the header).
+const HTTP_STAND_INS = {
+  "@io-kit/content": "export class ContentError extends Error {}",
+  "@io-kit/comments": "export class CommentError extends Error {}",
+};
+const HOOK_SOURCE = `const S = ${JSON.stringify(HTTP_STAND_INS)};
+export function resolve(specifier, context, next) {
+  if (Object.hasOwn(S, specifier) && typeof context.parentURL === "string" && context.parentURL.endsWith("/api/src/http.js")) {
+    return { url: "data:text/javascript," + encodeURIComponent(S[specifier]), shortCircuit: true };
+  }
+  return next(specifier, context);
+}`;
+let hooked = null;
+
+/**
+ * Register HOOK_SOURCE once per process: in-thread with module.registerHooks (Node 22.15 and later), else off-thread with
+ * module.register. The one hook body serves both, because it returns whatever `next` returns, value or promise.
+ */
+export function standInHttpPackages() {
+  hooked ??= (async () => {
+    const url = `data:text/javascript,${encodeURIComponent(HOOK_SOURCE)}`;
+    if (typeof nodeModule.registerHooks === "function") nodeModule.registerHooks({ resolve: (await import(url)).resolve });
+    else nodeModule.register(url);
+  })();
+  return hooked;
+}
+
 export async function load(root = DEFAULT_ROOT) {
+  await standInHttpPackages();
   return import(pathToFileURL(join(root, "api/src/records/field-policy.js")).href);
 }
 
@@ -145,4 +181,13 @@ async function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));
+// Compare real paths: Node runs the main module from its real path, so a path through a symlink (macOS /var, /tmp) would
+// otherwise never match, and the CLI would exit 0 having checked nothing.
+const isMain = () => {
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (process.argv[1] && isMain()) process.exitCode = await main(process.argv.slice(2));

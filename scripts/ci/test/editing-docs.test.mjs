@@ -1,11 +1,13 @@
-// Tests for the editing documentation (HFY-TSK-284, edit-docs). CodeArtifact-free: runs in the io-kit CI `tests` list.
+// Tests for the editing documentation (HFY-TSK-284, edit-docs). CodeArtifact-free: runs in the io-kit CI `tests` list, which
+// installs nothing. The generator stands in for the two @io-kit packages that api/src/http.js imports (see its header), and a
+// test runs it in a copy with no node_modules.
 //   - docs/reference/field-policy.md is generated from api/src/records/field-policy.js, and the drift check fails on a mismatch
 //   - every editing route in api/src/routes.js is in the API reference's route table
 //   - the changed docs pages have no broken relative links or anchors
 //   - the new pages carry no e-mail address or phone number
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -63,6 +65,22 @@ describe("field-policy.md", () => {
   it("passes the CLI check on the committed page", () => {
     const run = spawnSync(process.execPath, [join(REPO, "scripts/records/gen-field-policy-doc.mjs"), "--check"], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /field-policy\.md is current/);
+  });
+
+  it("passes the CLI check in a copy with no installed packages, as CI runs it", () => {
+    // CI installs nothing; a worktree with api/node_modules would hide a package import on the table's import chain.
+    const dir = mkdtempSync(join(tmpdir(), "hfy-fp-bare-"));
+    try {
+      for (const p of ["api/src", "gramps/redaction", "scripts/records/gen-field-policy-doc.mjs", OUT_PATH]) cpSync(join(REPO, p), join(dir, p), { recursive: true });
+      for (let d = dir; d !== dirname(d); d = dirname(d)) assert.ok(!existsSync(join(d, "node_modules")), `${d} has node_modules`);
+      // Run it through the unresolved temp path (a symlink on macOS): the CLI must still run, not exit 0 having checked nothing.
+      const run = spawnSync(process.execPath, [join(dir, "scripts/records/gen-field-policy-doc.mjs"), "--check"], { encoding: "utf8" });
+      assert.equal(run.status, 0, run.stderr);
+      assert.match(run.stdout, /field-policy\.md is current/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
