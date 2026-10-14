@@ -184,7 +184,15 @@ export function makeLookups(bundle, schemas = {}) {
 export const MODIFIER = Object.freeze({ NONE: 0, BEFORE: 1, AFTER: 2, ABOUT: 3, RANGE: 4 });
 /** The Gramps event type code of a Birth. */
 export const BIRTH = 12;
-export const isBirthCode = (code) => String(code) === String(BIRTH);
+/** The birth-like event types (gramps/redaction/redaction-v1.json birthLike, D2-32): a test pins this list to the policy file. */
+export const BIRTH_LIKE_CODES = Object.freeze([12, 14, 15, 18, 22, 45]);
+export const BIRTH_LIKE_CUSTOM = /birth|bapt|christen|naissance|geburt|nacimiento/i;
+/** True for a birth-like type code ("15") or a custom type ("c:<text>") whose words say so. Year only, for everyone. */
+export const isBirthCode = (code) => {
+  const c = String(code);
+  if (c.startsWith("c:")) return BIRTH_LIKE_CUSTOM.test(c.slice(2));
+  return BIRTH_LIKE_CODES.includes(Number(c)) && /^\d+$/.test(c);
+};
 
 /** An empty Gregorian Date: no year, no month, no day. */
 export const emptyDate = () => ({ _class: "Date", calendar: 0, modifier: 0, quality: 0, dateval: [0, 0, 0, false], text: "", newyear: 0 });

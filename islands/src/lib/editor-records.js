@@ -28,6 +28,8 @@ export const RECORD_COPY = Object.freeze({
   placeNone: "(none)",
   noteAddress: "we don't keep phone numbers, street addresses, e-mail addresses or id numbers on the site.",
   placeStreet: "we don't keep street-level places on the site, so street, building and number aren't offered.",
+  placeCoords: "we keep places to about two decimals (town level), so a longer number is rounded when it is reviewed.",
+  dateBirthLike: "a birth, baptism or christening date, or a date equal to one, is kept as a year only.",
   placeCodeHint: "a postal or other code, for towns and larger places only.",
   repoNoAddress: "we don't keep addresses on the site, so a repository has no addresses.",
   mediaFile: "the photo file itself can't be changed here.",
@@ -49,7 +51,7 @@ const TAGS = f("tags", "tags", "tags", "/tag_list");
 export const RECORD_FIELDS = Object.freeze({
   Event: Object.freeze([
     f("type", "kind of event", "type", "/type", { def: "EventType" }),
-    f("date", "date", "date", "/date", { widget: "grampsDate" }),
+    f("date", "date", "date", "/date", { widget: "grampsDate", hint: RECORD_COPY.dateBirthLike }),
     f("place", "place", "place", "/place", { widget: "placeRef" }),
     f("description", "description", "text", "/description", { max: 500 }),
     TAGS
@@ -58,8 +60,8 @@ export const RECORD_FIELDS = Object.freeze({
     f("name", "name", "text", "/name/value", { max: 200 }),
     f("place_type", "kind of place", "type", "/place_type", { def: "PlaceType", skip: PLACE_TYPES_SKIPPED, hint: RECORD_COPY.placeStreet }),
     f("code", "code", "text", "/code", { max: 20, hint: RECORD_COPY.placeCodeHint }),
-    f("lat", "latitude", "text", "/lat", { max: 7 }),
-    f("long", "longitude", "text", "/long", { max: 8 }),
+    f("lat", "latitude", "text", "/lat", { max: 7, hint: RECORD_COPY.placeCoords }),
+    f("long", "longitude", "text", "/long", { max: 8, hint: RECORD_COPY.placeCoords }),
     f("enclosed", "inside", "parent", "/placeref_list", { widget: "placeRef" }),
     TAGS
   ]),
@@ -73,7 +75,7 @@ export const RECORD_FIELDS = Object.freeze({
   Citation: Object.freeze([
     f("source", "source", "source", "/source_handle", { widget: "sourceRef" }),
     f("page", "page or place in the source", "text", "/page", { max: 500 }),
-    f("date", "date", "date", "/date", { widget: "grampsDate" }),
+    f("date", "date", "date", "/date", { widget: "grampsDate", hint: RECORD_COPY.dateBirthLike }),
     f("confidence", "how sure", "int", "/confidence", { prop: "confidence", fallback: "2" }),
     TAGS
   ]),
@@ -84,7 +86,7 @@ export const RECORD_FIELDS = Object.freeze({
   ]),
   Media: Object.freeze([
     f("desc", "description", "text", "/desc", { max: 500, hint: RECORD_COPY.mediaFile }),
-    f("date", "date", "date", "/date", { widget: "grampsDate" }),
+    f("date", "date", "date", "/date", { widget: "grampsDate", hint: RECORD_COPY.dateBirthLike }),
     TAGS
   ]),
   Note: Object.freeze([

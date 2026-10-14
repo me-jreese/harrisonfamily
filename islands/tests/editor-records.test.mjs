@@ -8,7 +8,7 @@ import { applyOps } from "../../api/src/records/ops.js";
 import { EDIT_SCHEMAS } from "../src/lib/edit-schemas.js";
 import { PERSON_SECTIONS, createModeResolver, parseRoute, sectionSchema, sectionValues, sectionsFor } from "../src/lib/editor-model.js";
 import { RECORD_COPY, RECORD_FIELDS, PLACE_TYPES_SKIPPED, drillLinks, recordNotes, recordOps, recordPolicy, recordSeed, recordTitle } from "../src/lib/editor-records.js";
-import { makeLookups, restyleText } from "../src/lib/editor-sections.js";
+import { BIRTH_LIKE_CODES, BIRTH_LIKE_CUSTOM, isBirthCode, makeLookups, restyleText } from "../src/lib/editor-sections.js";
 import { countOps, modeOfOp, opsFromDrafts } from "../src/lib/editor-save.js";
 
 const typed = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -164,6 +164,36 @@ test("dates: a member's edit carries the record's version and the parts changed;
   assert.deepEqual(dateOp.value.dateval.slice(0, 3), [0, 0, 1990], "day and month are zero on a birth");
   const same = run("Event", valuesOf("Event"));
   assert.deepEqual(same.ops, []);
+});
+
+test("every birth-like type is cut to a year and badged by the birth-year row (D2-32); the list is the policy file's", () => {
+  const pol = JSON.parse(readFileSync(new URL("../../gramps/redaction/redaction-v1.json", import.meta.url), "utf8")).birthLike;
+  assert.deepEqual([...BIRTH_LIKE_CODES], pol.eventTypes.map((t) => t.value));
+  assert.equal(BIRTH_LIKE_CUSTOM.source, pol.customType.pattern);
+  for (const code of ["12", "14", "15", "18", "22", "45", "c:Baptism of a child"]) {
+    const r = run("Event", { ...valuesOf("Event"), type: code, date: date(15, 3, 1990) });
+    const op = r.ops.find((o) => o.path === "/date");
+    assert.deepEqual(op.value.dateval.slice(0, 3), [0, 0, 1990], `${code} keeps the year only`);
+    assert.equal(recordPolicy(secOf("Event").form, "date", { type: code })[1], "/date/dateval/2", code);
+  }
+  for (const code of ["21", "c:Synthetic custom", "-1", ""]) {
+    assert.equal(isBirthCode(code), false, code);
+    assert.equal(recordPolicy(secOf("Event").form, "date", { type: code })[1], "/description", code);
+  }
+});
+
+test("fields explain the year-only date and the rounded coordinates; own and unknown tag handles", () => {
+  for (const cls of ["Event", "Citation", "Media"]) assert.equal(RECORD_FIELDS[cls].find((f) => f.key === "date").hint, RECORD_COPY.dateBirthLike);
+  for (const k of ["lat", "long"]) assert.equal(RECORD_FIELDS.Place.find((f) => f.key === k).hint, RECORD_COPY.placeCoords);
+  const resolver = createModeResolver(JSON.parse(JSON.stringify(POLICY)));
+  const form = secOf("Place").form;
+  const [c, ptr] = recordPolicy(form, "code");
+  const member = resolver.resolve(c, ptr, { admin: false, relation: "other" }, { lenient: true });
+  assert.equal(member, "proposal", "the fixture table sends a member's place code to review; the live bundle table decides the admin-only badge");
+  const own = resolver.resolve("Event", "/description", { admin: false, relation: "own" }, { lenient: true });
+  assert.equal(own, "direct", "own relation resolves through the same table");
+  const stale = makeLookups({ ...bundleFor("Event"), tags: [] }, schemas);
+  assert.deepEqual(stale.tags, []);
 });
 
 test("tags: assignment is from the tags that exist; add and remove are string-list ops; no tag list yet is created", () => {
