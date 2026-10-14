@@ -277,7 +277,8 @@ Facts:
 - The MCP server runs inside `hfy-api` at `https://<site>/mcp`, a path rather than a subdomain.
 - `index.js` sends `/mcp`, `/mcp/*`, `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/*` to the mount, after the `X-Origin-Verify` check.
 - The bearer is an access token from the auth edge's OAuth server. It is verified as RS256 against the edge's JWKS, with a pinned issuer and a client ID binding, and its `aud` must be the resource URL.
-- There are seven tools, one for each route with an `mcp` member: `hfy_comments_list`, `hfy_comments_create`, `hfy_comments_delete`, `hfy_posts_list`, `hfy_posts_get`, `hfy_posts_create` and `hfy_posts_delete`.
+- There are eleven tools, one for each route with an `mcp` member: `hfy_comments_list`, `hfy_comments_create`, `hfy_comments_delete`, `hfy_posts_list`, `hfy_posts_get`, `hfy_posts_create` and `hfy_posts_delete`, and the editing tools `hfy_records_get`, `hfy_changes_submit`, `hfy_proposals_list` and `hfy_proposals_get` (HFY-TSK-211). The editing tools answer `404` while `HFY_EDITING` is off. There is no tool to decide, amend or withdraw a suggestion (DEC-E5).
+- `withPlanPreview` in `mcp.js` wraps the kit server: an allowed `dry_run` of `hfy_changes_submit` carries the route's own plan. On this server a call without `mode` submits, because the kit edge makes every caller a person.
 - A tool call runs its route's own handler through `handler.invoke`, so the API's validation, permissions, audit and notifications apply to it.
 - Authorization comes from the groups config, `config/groups.json` in `<config-bucket>`, never from the token's `groups` claim. The config defines two groups, `mcp-authors` and `hfy-admin`. A missing or unreadable config grants nothing.
 - The delete tools need `hfy-admin` and a fresh step-up: an `amr` claim that includes `mfa`, and an `auth_time` within the last 300 seconds.

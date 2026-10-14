@@ -4,9 +4,9 @@
 # api:records.get and api:records.byGrampsId (GET /api/records/:class/:handle and /api/records/Person/by-id/:gramps_id, HFY-TSK-175) are session-only reads with no MCP tool (the edit bundle calls the same viewRecord), so they have no row here.
 # api:subscriptions.get, api:subscriptions.list, api:subscriptions.put and api:subscriptions.remove (/api/subscriptions, HFY-TSK-254) are session-only member-owned routes with no MCP tool, so they have no row here.
 # api:contributions.list, api:contributions.stats and api:contributions.site (GET /api/contributions and /api/contributions/stats, HFY-TSK-256) are session-only reads with no MCP tool, so they have no row here.
-# api:edit.get and api:edit.schema (GET /api/edit/:cls/:ref and /api/edit/schema/:cls, HFY-TSK-182) are session-only reads behind HFY_EDITING with no MCP tool here (hfy_records_get is edit-mcp-tools'), so they have no row here.
 # api:relationships.preview and api:relationships.post (POST /api/relationships/preview and /api/relationships, HFY-TSK-210) are session routes behind HFY_EDITING with no MCP tool, so they have no row here.
-# api:changes.post (POST /api/changes, HFY-TSK-183) is a session route behind HFY_EDITING with no MCP tool here (hfy_changes_submit, agentMode dry_run, is edit-mcp-tools'), so it has no row here.
+# api:edit.schema (GET /api/edit/schema/:cls, HFY-TSK-182) is a session-only read behind HFY_EDITING with no MCP tool, so it has no row here.
+# api:edit.get, api:changes.post, api:proposals.list and api:proposals.get are the MCP tools hfy_records_get, hfy_changes_submit, hfy_proposals_list and hfy_proposals_get (HFY-TSK-211, editing.md 7.6). There is no tool for api:proposals.decide, api:proposals.amend or api:proposals.withdraw (DEC-E5): approving is a human action.
 surfaces:
   mcp-tools:
     hfy_comments_list: { handler: "api:comments.list" }
@@ -16,6 +16,10 @@ surfaces:
     hfy_posts_get: { handler: "api:posts.get" }
     hfy_posts_create: { handler: "api:posts.create" }
     hfy_posts_delete: { handler: "api:posts.delete" }
+    hfy_records_get: { handler: "api:edit.get" }
+    hfy_changes_submit: { handler: "api:changes.post" }
+    hfy_proposals_list: { handler: "api:proposals.list" }
+    hfy_proposals_get: { handler: "api:proposals.get" }
   hfy-mcp:
     hfy_comments_list: { handler: "api:comments.list" }
     hfy_comments_create: { handler: "api:comments.create" }
@@ -24,3 +28,7 @@ surfaces:
     hfy_posts_get: { handler: "api:posts.get" }
     hfy_posts_create: { handler: "api:posts.create" }
     hfy_posts_delete: { handler: "api:posts.delete" }
+    hfy_records_get: { handler: "api:edit.get" }
+    hfy_changes_submit: { handler: "api:changes.post" }
+    hfy_proposals_list: { handler: "api:proposals.list" }
+    hfy_proposals_get: { handler: "api:proposals.get" }

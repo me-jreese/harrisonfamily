@@ -762,9 +762,9 @@ describe("a destructive admin direct group needs a fresh sign-in (AC5)", () => {
 });
 
 describe("the route (AC6)", () => {
-  it("is in caps and the registry, behind HFY_EDITING, with no MCP tool", async () => {
+  it("is in caps and the registry, behind HFY_EDITING, and is the MCP tool hfy_changes_submit", async () => {
     expect(buildCaps().actions.find((a) => a.name === "changes.post")).toMatchObject({ method: "POST", path: "/api/changes", write: true, gate: { switch: "HFY_EDITING" } });
-    expect(ROUTES.find((r) => r.name === "changes.post").mcp).toBeUndefined();
+    expect(ROUTES.find((r) => r.name === "changes.post").mcp.tool).toBe("hfy_changes_submit");
     const w = await world();
     process.env.HFY_EDITING = "off";
     const r = await w.post(ADMIN, { base_versions: {}, ops: [] }, { idem: "x" });

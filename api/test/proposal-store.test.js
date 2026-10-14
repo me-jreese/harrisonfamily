@@ -525,7 +525,7 @@ describe("comments on proposal threads (AC5)", () => {
 });
 
 describe("the routes are registered (caps)", () => {
-  it("lists the four proposal routes behind the editing gate, with no MCP tool", () => {
+  it("lists the four proposal routes behind the editing gate; only list and get are MCP tools (DEC-E5)", () => {
     const caps = buildCaps();
     const names = ["proposals.list", "proposals.get", "proposals.amend", "proposals.withdraw"];
     for (const n of names) {
@@ -533,7 +533,7 @@ describe("the routes are registered (caps)", () => {
       expect(a, n).toBeTruthy();
       expect(a.gate, n).toBeTruthy();
     }
-    expect(names.every((n) => !ROUTES.find((r) => r.name === n).mcp)).toBe(true);
+    expect(names.filter((n) => ROUTES.find((r) => r.name === n).mcp)).toEqual(["proposals.list", "proposals.get"]);
     expect(caps.subjects).toContain("proposal:<ulid>");
   });
 });
