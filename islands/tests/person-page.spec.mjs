@@ -387,6 +387,16 @@ test("error: one banner line in the voice, no technical detail", async ({ page }
   await expect(page.locator("#person-loading")).toBeHidden();
 });
 
+// HFY-TSK-186: the follow slot (person-page-mount-points) is the island's; recordSubsV1 absent or off requests no follow bundle and leaves it empty.
+test("follow slot: empty, and no follow bundle requested, with recordSubsV1 off", async ({ page }) => {
+  const requested = [];
+  await page.route(/\/js\/islands\/follow\./, (r) => { requested.push(r.request().url()); return r.continue(); });
+  await openPerson(page, { personV2: true });
+  await page.waitForTimeout(300);
+  await expect(page.locator('#person-hero [data-slot="follow"]')).toBeEmpty();
+  expect(requested).toEqual([]);
+});
+
 // HFY-TSK-201: the tree-link slot (person-page-mount-points). The link is the island's, so personV2 is on; familyViz decides.
 test("tree-link slot: 'see in the family tree' links to /tree/?focus=<id> with familyViz on", async ({ page }) => {
   await openPerson(page, { personV2: true, familyViz: true });

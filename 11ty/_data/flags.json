@@ -10,6 +10,7 @@
   "photoTags": false,
   "postsV2": true,
   "profileLinks": false,
+  "recordSubsV1": false,
   "searchV2": true,
   "shellV2": true
 }

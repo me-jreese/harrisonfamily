@@ -8,6 +8,7 @@ import { edgeSignedOut } from "../lib/api.js";
 import { notifyApi } from "../lib/notify-api.js";
 import { CATALOG, catalogFor } from "../lib/notify-catalog.js";
 import { getMe } from "../lib/me.js";
+import { FollowedPages } from "../lib/followed-pages.jsx";
 
 // The catalog (lib/notify-catalog.js) holds one entry per type of the API registry, grouped "about me", "family" and "for moderators";
 // the moderators group is shown to an admin only (catalogFor). tests/notify-catalog.test.mjs fails when it drifts from the registry.
@@ -51,7 +52,20 @@ function SignInGate() {
   );
 }
 
+/** recordSubsV1 (HFY-TSK-186): the runtime flag, from the shared loader (build flags plus the ?hfy_flags preview). Off until it answers. */
+function useFlag(name) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const flags = window.HFYFeatureFlags;
+    if (flags && typeof flags.resolveFlags === "function") flags.resolveFlags().then((f) => { if (live) setOn(f && f[name] === true); }, () => {});
+    return () => { live = false; };
+  }, [name]);
+  return on;
+}
+
 function Settings({ onSignedOut }) {
+  const follows = useFlag("recordSubsV1");
   // The kit swallows a failed preferences load (it renders defaults); the island says so in a danger banner.
   const [loadError, setLoadError] = useState(null);
   const watched = useMemo(() => ({
@@ -75,6 +89,7 @@ function Settings({ onSignedOut }) {
       <PushNudge api={api} dismissKey="hfy:notify-nudge" labels={LABELS} />
       {loadError && <p className="hfy-notify__banner" role="alert" data-hfy-banner>{loadError}</p>}
       {catalog ? <NotificationSettings catalog={catalog} api={watched} lockScreenHint banners labels={LABELS} /> : <div className="iok-notify-skeleton" role="status" aria-label="loading" />}
+      {follows && <FollowedPages />}
     </>
   );
 }
