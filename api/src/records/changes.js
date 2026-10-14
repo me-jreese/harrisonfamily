@@ -271,14 +271,18 @@ export function parseRequest(c, guard) {
 }
 const ops_creates = (ops, temp) => ops.some((o) => isObj(o) && o.op === "create" && o.obj === temp);
 
-const requestHashOf = (req) => contentHash({ target: req.target ?? null, base_versions: req.base_versions, ops: req.ops, note: req.note ?? null, route: req.route });
+// A relationship submission (HFY-TSK-210) is keyed by what the member sent (the intent, the confirmed stubs, the note, the route), not by the ops
+// the compile made of it: a retry must replay its receipt without compiling, and the tree may have moved since. /api/changes receipts keep their hash.
+export const requestHashOf = (req) => (req.intent !== undefined
+  ? contentHash({ intent: req.intent, confirm: req.confirm ?? null, note: req.note ?? null, route: req.route })
+  : contentHash({ target: req.target ?? null, base_versions: req.base_versions, ops: req.ops, note: req.note ?? null, route: req.route }));
 
 // ---- idempotency --------------------------------------------------------------------------------------------------------------
-async function readIdem(ctx, principal, key) {
+export async function readIdem(ctx, principal, key) {
   const res = await ctx.ddb.send(new ctx.cmds.GetCommand({ TableName: ctx.table, Key: idemKeys(principal, key), ConsistentRead: true }));
   return res.Item ?? null;
 }
-function replayOf(item, requestHash) {
+export function replayOf(item, requestHash) {
   if (item.requestHash !== requestHash) throw problem(422, "idempotency_mismatch", "that Idempotency-Key was used with a different request");
   return { status: item.result.status, body: item.result.body, headers: { "idempotent-replayed": "true" } };
 }
@@ -323,7 +327,7 @@ export function isDestructive(before, after, changes) {
 }
 
 /** 401 step_up_required unless the sign-in itself (auth_time, never renewed by a refresh) is at most 900 s old. */
-function requireRecentSignIn(actor, nowMs) {
+export function requireRecentSignIn(actor, nowMs) {
   const t = actor.authTime;
   const age = typeof t === "number" && Number.isFinite(t) && t > 0 ? nowMs / 1000 - t : Infinity;
   if (!(age >= -60 && age <= STEP_UP_MAX_AGE_SECONDS)) {
@@ -415,7 +419,7 @@ function schemaErrors(objects, keys, opIdFor) {
  * stored objects before, the objects to write (normalised, with the derived people), and what changed.
  */
 async function resultOf(ctx, actor, plan, ops, label, nowMs) {
-  const run = applyOps(plan.objects, ops, { versions: plan.versions });
+  const run = applyOps(plan.objects, ops, plan.applyCtx());
   if (!run.ok) {
     const invalidOps = run.conflicts.filter((x) => INVALID_REASONS.has(x.reason));
     if (invalidOps.length) throw invalid(invalidOps.map((x) => ({ opId: x.opId, obj: x.obj, pointer: "", code: x.reason, detail: x.message ?? x.reason })));
@@ -459,7 +463,7 @@ async function resultOf(ctx, actor, plan, ops, label, nowMs) {
 }
 
 // ---- the plan (steps 2 to 5) -----------------------------------------------------------------------------------------------------
-export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false } = {}) {
+export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false, mint } = {}) {
   const { actor } = c;
   const ctx = c.store;
   const stored = await loadTouched(ctx, actor, req);
@@ -473,6 +477,8 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false 
   const plan = {
     objects, versions, cache, refCache: new Map(),
     guard,
+    /** The applyOps context. `mint` (the approval, HFY-TSK-209) is a factory of a handle generator: each run mints the same handles in the same order. */
+    applyCtx: () => ({ versions, ...(mint ? { mint: mint() } : {}) }),
     contextList: () => [...context.values()].map((h) => h.obj).concat(Object.values(pick(objects, [...stored.keys()]))),
     currentVersions: () => ({ ...versions }),
     /** The stored version of a key: a touched object, or a derived person loaded for the semantics. */
@@ -495,7 +501,7 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false 
   };
 
   // 2-3. All ops on the stored state, then the guard over the full result, before any partition.
-  const all = applyOps(objects, req.ops, { versions });
+  const all = applyOps(objects, req.ops, plan.applyCtx());
   if (!all.ok) {
     const bad = all.conflicts.filter((x) => INVALID_REASONS.has(x.reason));
     if (bad.length) throw invalid(bad.map((x) => ({ opId: x.opId, obj: x.obj, pointer: "", code: x.reason, detail: x.message ?? x.reason })));
@@ -581,7 +587,7 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false 
 }
 
 // ---- step 6: the commit ------------------------------------------------------------------------------------------------------
-function wireOps(direct) {
+export function wireOps(direct) {
   const used = new Set();
   const idFor = (k) => {
     let id = direct.opIdFor(k) ?? `d:${k}`;
@@ -623,7 +629,11 @@ export const subjectOf = (req, stored, ops) => {
   return { cls, handle, gramps_id: typeof head.obj.gramps_id === "string" ? head.obj.gramps_id : "" };
 };
 
-async function commit(c, req, planned, nowMs) {
+/**
+ * `extra` (relationship-api): { kind, intent, read_versions, summary } for the proposal document: the kind "relationship", the intent the member
+ * sent, the objects the compile read but did not change (checked for staleness with base_versions) and the compiler's sentences.
+ */
+export async function commit(c, req, planned, nowMs, extra = {}) {
   const { actor } = c;
   const ctx = c.store;
   const at = new Date(nowMs).toISOString();
@@ -636,9 +646,10 @@ async function commit(c, req, planned, nowMs) {
   if (review) {
     const reviewSummary = planned.plan.review.flatMap((g) => g.summary);
     const doc = newProposal({
-      id: ctx.uid(), actor, origin: ctx.via === "mcp" ? "mcp" : "web", kind: review.ops.some((o) => o.op === "create") ? "create" : "edit",
+      id: ctx.uid(), actor, origin: ctx.via === "mcp" ? "mcp" : "web", kind: extra.kind ?? (review.ops.some((o) => o.op === "create") ? "create" : "edit"),
       subject: subjectOf(req, stored, review.ops), targets: review.targets,
-      base_versions: pick(req.base_versions, sortedUnique(review.ops.map(existingKey).filter(Boolean))), ops: review.ops, summary: reviewSummary, note: req.note, warnings: review.warnings, at,
+      base_versions: pick(req.base_versions, sortedUnique(review.ops.map(existingKey).filter(Boolean))), ops: review.ops, summary: extra.summary ?? reviewSummary, note: req.note, warnings: review.warnings, at,
+      ...(extra.intent !== undefined ? { intent: extra.intent } : {}), ...(extra.read_versions !== undefined ? { read_versions: extra.read_versions } : {}),
       owners: await ownersOf(ctx, review.targets, stored), // HFY-TSK-256: contrib-read's proposalVisible reads owners[]
     });
     if (Buffer.byteLength(JSON.stringify(doc)) > MAX_PROPOSAL_BYTES) throw problem(413, "too_large", "the suggestion is too large");

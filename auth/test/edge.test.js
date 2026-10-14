@@ -183,7 +183,7 @@ describe("login page under the /auth mount", () => {
 
 // ---- design system: sign-in pages (components/SignIn; HFY overrides of @io-kit/auth 2.1.2 in adapt()) ----
 import { DEFAULT_COPY } from "@io-kit/auth/edge/deploy";
-import { ALLOWLIST_NOTICE_SCRIPT, BACK_LINK, FONT_SRC, GIS_FOCUS_SCRIPT, KIT_STRINGS, allowlistNotice, backToSite, cspWithFontSrc, deniedNotice, gisButtonDark, gisFocusRing, kitVoice } from "../src/edge.js";
+import { ALLOWLIST_NOTICE_JOIN_SCRIPT, ALLOWLIST_NOTICE_SCRIPT, BACK_LINK, FONT_SRC, GIS_FOCUS_SCRIPT, KIT_STRINGS, allowlistNotice, backToSite, cspWithFontSrc, deniedNotice, gisButtonDark, gisFocusRing, kitVoice } from "../src/edge.js";
 import vm from "node:vm";
 
 const cspOf = (res) => Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === "content-security-policy")?.[1];
@@ -293,6 +293,34 @@ describe("sign-in pages: Google button and signed-out /auth/link (kit loginPage 
 
 const inlineScripts = (html) => [...html.matchAll(/<script nonce="[^"]+"([^>]*)>([\s\S]*?)<\/script>/g)].map((m) => ({ attrs: m[1], code: m[2] })).filter((x) => x.code);
 
+// The real kit script and ours run in a vm against a minimal DOM, so the wrapping is tested against the kit's actual ioMsg/ioFail.
+function loginPageRuntime(html, { email = "stranger@example.com", clipboard = "ok" } = {}) {
+  const timers = [];
+  const writes = [];
+  const el = (id) => {
+    const e = { id, attrs: {}, children: [], className: "", value: "", focused: false, selected: false, listeners: {} };
+    let text = "";
+    Object.defineProperty(e, "textContent", { get: () => text, set: (v) => { text = String(v); e.children = []; } }); // like the DOM: setting text drops the children
+    Object.assign(e, {
+      setAttribute: (k, v) => { e.attrs[k] = String(v); },
+      removeAttribute: (k) => { delete e.attrs[k]; },
+      appendChild: (c) => { e.children.push(c); return c; },
+      addEventListener: (t, f) => { e.listeners[t] = f; },
+      focus: () => { e.focused = true; },
+      select: () => { e.selected = true; },
+    });
+    return e;
+  };
+  const els = { "msg-pw": el("msg-pw"), "msg-google": el("msg-google"), email: el("email") };
+  els.email.value = email;
+  const navigator = clipboard === "none" ? {} : { clipboard: { writeText: (t) => { writes.push(t); return clipboard === "ok" ? Promise.resolve() : Promise.reject(new Error("denied")); } } };
+  const ctx = { document: { getElementById: (id) => els[id] ?? null, createElement: () => el("new") }, navigator, setTimeout: (f) => timers.push(f), location: { assign() {} } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  for (const { attrs, code } of inlineScripts(html)) if (!attrs.includes("data-hfy-gis-focus")) vm.runInContext(code, ctx); // the kit script first, then ours
+  return { ctx, els, writes, timers };
+}
+
 describe("sign-in pages: the allowlist state is a neutral banner with a copy button (HFY-TSK-084, QA2 major)", () => {
 
   it("the login page carries the allowlist script once, under the page's own script nonce, after the kit script", async () => {
@@ -314,33 +342,6 @@ describe("sign-in pages: the allowlist state is a neutral banner with a copy but
     for (const v of [undefined, "", 7]) expect(allowlistNotice(v)).toBe(v);
   });
 
-  // The real kit script and ours run in a vm against a minimal DOM, so the wrapping is tested against the kit's actual ioMsg/ioFail.
-  function loginPageRuntime(html, { email = "stranger@example.com", clipboard = "ok" } = {}) {
-    const timers = [];
-    const writes = [];
-    const el = (id) => {
-      const e = { id, attrs: {}, children: [], className: "", value: "", focused: false, selected: false, listeners: {} };
-      let text = "";
-      Object.defineProperty(e, "textContent", { get: () => text, set: (v) => { text = String(v); e.children = []; } }); // like the DOM: setting text drops the children
-      Object.assign(e, {
-        setAttribute: (k, v) => { e.attrs[k] = String(v); },
-        removeAttribute: (k) => { delete e.attrs[k]; },
-        appendChild: (c) => { e.children.push(c); return c; },
-        addEventListener: (t, f) => { e.listeners[t] = f; },
-        focus: () => { e.focused = true; },
-        select: () => { e.selected = true; },
-      });
-      return e;
-    };
-    const els = { "msg-pw": el("msg-pw"), "msg-google": el("msg-google"), email: el("email") };
-    els.email.value = email;
-    const navigator = clipboard === "none" ? {} : { clipboard: { writeText: (t) => { writes.push(t); return clipboard === "ok" ? Promise.resolve() : Promise.reject(new Error("denied")); } } };
-    const ctx = { document: { getElementById: (id) => els[id] ?? null, createElement: () => el("new") }, navigator, setTimeout: (f) => timers.push(f), location: { assign() {} } };
-    ctx.window = ctx;
-    vm.createContext(ctx);
-    for (const { attrs, code } of inlineScripts(html)) if (!attrs.includes("data-hfy-gis-focus")) vm.runInContext(code, ctx); // the kit script first, then ours
-    return { ctx, els, writes, timers };
-  }
 
   it("a not_allowlisted failure marks the message and adds 'copy my email'; the button copies the typed address and says copied", async () => {
     const page = (await edge(get("/auth/login"))).body;
@@ -418,6 +419,80 @@ describe("sign-in pages: the allowlist state is a neutral banner with a copy but
     expect(deniedNotice('<main><h1>x</h1><p>y</p></main>', 404)).toBe('<main><h1>x</h1><p>y</p></main>');
     expect(deniedNotice('<main><h1>x</h1><p>y</p></main>', 403)).toBe('<main><h1>x</h1><p data-state="not_allowlisted">y</p></main>');
     for (const v of [undefined, 7]) expect(deniedNotice(v, 403)).toBe(v);
+  });
+});
+
+describe("sign-in and denied pages: the 'ask to join' link follows ACCESS_REQUESTS (HFY-TSK-140)", () => {
+  let withJoin;
+  let openNow = true;
+  let throwing = false;
+  beforeAll(async () => {
+    const g = await generateKeyPair("RS256", { extractable: true });
+    const s = await generateKeyPair("RS256", { extractable: true });
+    const gt = (email) => new SignJWT({ email, email_verified: true }).setProtectedHeader({ alg: "RS256", kid: "g1" })
+      .setSubject("google-sub-2").setIssuer("https://accounts.google.com").setAudience(ENV.GOOGLE_CLIENT_ID).setIssuedAt().setExpirationTime("10m").sign(g.privateKey);
+    const pub = { ...(await exportJWK(s.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" };
+    const gjwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(g.publicKey)), kid: "g1", alg: "RS256", use: "sig" }] });
+    const identity = createIdentityService({
+      resolver: buildResolver(manifest.resolver, { readObject: async () => JSON.stringify(ALLOW) }),
+      links: memoryLinkStore(),
+      google: { clientId: ENV.GOOGLE_CLIENT_ID, jwks: gjwks },
+      sessions: { issuer: manifest.session.issuer, audience: manifest.session.audience, kid: "hfy-session-1", privateKey: s.privateKey, store: memoryRefreshStore(), defaultProfile: "installed" },
+    });
+    const accessRequests = { handle: async () => undefined, isOpen: () => { if (throwing) throw new Error("flag unreadable"); return openNow; } };
+    const e = createAuthEdge({ manifest, identity, accessRequests, publicJwk: pub, verify: { issuers: [manifest.session.issuer], audiences: [manifest.session.audience], jwks: createLocalJWKSet({ keys: [pub] }) }, nonce: () => "n0nce" });
+    withJoin = { edge: e, token: gt };
+  });
+
+  it("ACCESS_REQUESTS on: the login page carries the join variant of the script (once), and the unchanged script when off, throwing, or not wired", async () => {
+    openNow = true;
+    const on = (await withJoin.edge(get("/auth/login"))).body;
+    expect(on).toContain(ALLOWLIST_NOTICE_JOIN_SCRIPT);
+    expect(on.split("data-hfy-allowlist").length - 1).toBe(1);
+    expect(allowlistNotice(on, { join: true })).toBe(on); // idempotent
+    openNow = false;
+    expect((await withJoin.edge(get("/auth/login"))).body).toContain(ALLOWLIST_NOTICE_SCRIPT);
+    expect((await withJoin.edge(get("/auth/login"))).body).not.toContain("/join/");
+    openNow = true;
+    throwing = true;
+    expect((await withJoin.edge(get("/auth/login"))).body).not.toContain("/join/");
+    throwing = false;
+    expect((await edge(get("/auth/login"))).body).not.toContain("/join/"); // the edge without access requests
+  });
+
+  it("a not_allowlisted failure adds a plain /join/ link (no query string, so no address in a URL) before 'copy my email'", async () => {
+    openNow = true;
+    const page = (await withJoin.edge(get("/auth/login"))).body;
+    const { ctx, els } = loginPageRuntime(page, { email: "stranger@example.com" });
+    ctx.ioFail("msg-pw", { body: { detail: "not_allowlisted" } });
+    const kids = els["msg-pw"].children;
+    const link = kids.find((c) => c.textContent === "ask to join");
+    expect(link.href).toBe("/join/");
+    expect("data-hfy-join" in link.attrs).toBe(true);
+    expect(kids[kids.length - 1].textContent).toBe("copy my email");
+    expect(kids.map((c) => c.textContent)).toEqual(["ask to join", "copy my email"]); // the order in the banner: message text, ask to join, copy my email
+    expect(JSON.stringify(link)).not.toContain("stranger");
+    ctx.ioFail("msg-pw", { body: { detail: "invalid_credentials" } }); // another failure: the link goes with the message
+    expect(els["msg-pw"].children).toHaveLength(0);
+    // no typed address (the Google path): still the link, still no copy button
+    const bare = loginPageRuntime(page, { email: " " });
+    bare.ctx.ioFail("msg-google", { body: { detail: "not_allowlisted" } });
+    expect(bare.els["msg-google"].children.some((c) => c.href === "/join/")).toBe(true);
+    expect(bare.els["msg-google"].children.some((c) => "data-copy-email" in c.attrs)).toBe(false);
+  });
+
+  it("the denied page (403 HTML) gets the join line after its sentence only when ACCESS_REQUESTS is on", async () => {
+    const ev = post("/auth/google", { credential: await withJoin.token("stranger@example.com") });
+    const html = { ...ev, headers: { ...ev.headers, accept: "text/html" } };
+    openNow = true;
+    const on = await withJoin.edge(html);
+    expect(on.statusCode).toBe(403);
+    expect(on.body).toMatch(/<p data-state="not_allowlisted">[^<]*<\/p><p data-hfy-join>new here\? <a href="\/join\/">ask to join\.<\/a><\/p>/);
+    expect(on.body).not.toContain("stranger");
+    openNow = false;
+    expect((await withJoin.edge(html)).body).not.toContain("/join/");
+    expect(deniedNotice("<main><h1>x</h1><p>y</p></main>", 403, { join: true })).toBe('<main><h1>x</h1><p data-state="not_allowlisted">y</p><p data-hfy-join>new here? <a href="/join/">ask to join.</a></p></main>');
+    expect(deniedNotice("<main><h1>x</h1><p>y</p></main>", 404, { join: true })).toBe("<main><h1>x</h1><p>y</p></main>");
   });
 });
 

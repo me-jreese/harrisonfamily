@@ -11,13 +11,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import {
-  NOTE_MAX, SAVE_COPY, barText, changesBody, confirmLabel, countOps, newIdempotencyKey, noteCountText, opsFromDrafts, planGroups, problemFor, reviewerLine, savedToast, undoBody, undoLeftMs
+  NOTE_MAX, SAVE_COPY, barText, baseVersionsFor, changesBody, confirmLabel, countOps, newIdempotencyKey, noteCountText, opsFromDrafts, planGroups, problemFor, reviewerLine, savedToast, settledUnitsOf, undoBody, undoLeftMs
 } from "./editor-save.js";
+import { sameValue } from "./editor-sections.js";
 
 export const REVIEW_HREF = "/me/review/?tab=mine";
 
-/** The sections with a form, the only ones that produce ops. */
-export const formSections = (sections) => sections.filter((s) => s.form);
+/** The sections with a form or lists, the only ones that produce ops. */
+export const formSections = (sections) => sections.filter((s) => s.form || s.lists);
 
 /**
  * The save flow's state and actions. `getBundle()` is the bundle the forms were made from, `getDrafts()` the form values now, `refetch()` fetches
@@ -34,7 +35,7 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const set = useCallback((next) => { if (live.current) setSheet(next); }, []);
 
-  const build = (bundle) => opsFromDrafts({ key: bundle.key, sections: formSections(sections), obj: bundle.obj, drafts: getDrafts() });
+  const build = (bundle) => opsFromDrafts({ key: bundle.key, sections: formSections(sections), obj: bundle.obj, bundle, viewer, drafts: getDrafts() });
   const keyFor = (bundle, ops, note) => {
     const sig = JSON.stringify([bundle.key, bundle.version, ops, note]);
     if (keyRef.current.sig !== sig) keyRef.current = { sig, key: newIdempotencyKey() };
@@ -47,8 +48,9 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
   const adoptFresh = (fresh, settledOps = []) => {
     const bundle = getBundle();
     const settled = Object.fromEntries(settledOps.map((o) => [o.id, o.value]));
-    const pending = bundle ? build(bundle).ops.filter((o) => !(Object.hasOwn(settled, o.id) && settled[o.id] === o.value)) : [];
-    adopt(fresh, pending.length > 0, settled);
+    const built = bundle ? build(bundle) : { ops: [], units: {} };
+    const pending = built.ops.filter((o) => !(Object.hasOwn(settled, o.id) && sameValue(settled[o.id], o.value)));
+    adopt(fresh, pending.length > 0, settled, settledUnitsOf(built, settled));
   };
 
   // Fetch the bundle after a save or an undo and adopt it, unless a later save or undo has started its own fetch meanwhile (its answer is newer).
@@ -76,7 +78,7 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
     }
     set({ phase: "planning", notice, ops, labels, bundle, replayed, groups: null, problem: null, note });
     try {
-      const body = await api.post("/changes", changesBody({ target: bundle.key, version: bundle.version, ops, dryRun: true }));
+      const body = await api.post("/changes", changesBody({ target: bundle.key, version: bundle.version, ops, dryRun: true, baseVersions: baseVersionsFor(bundle, ops) }));
       // The dry run went through, so a conflict on the save that follows is a new one and gets its own replay.
       set({ phase: "ready", notice, ops, labels, bundle, replayed: false, groups: planGroups(body), problem: null, note });
     } catch (e) {
@@ -110,7 +112,7 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
     set({ ...s, phase: "saving" });
     try {
       const note = s.groups && s.groups.review.length ? (s.note || "").trim() : "";
-      const body = await api.post("/changes", changesBody({ target: s.bundle.key, version: s.bundle.version, ops: s.ops, note }), { headers: { "Idempotency-Key": keyFor(s.bundle, s.ops, note) } });
+      const body = await api.post("/changes", changesBody({ target: s.bundle.key, version: s.bundle.version, ops: s.ops, note, baseVersions: baseVersionsFor(s.bundle, s.ops) }), { headers: { "Idempotency-Key": keyFor(s.bundle, s.ops, note) } });
       const t = savedToast(body);
       set(null);
       setToast({ ...t, id: Date.now() });
@@ -284,11 +286,11 @@ export function ConfirmSheet({ flow, signInHref }) {
   );
 }
 
-/** Bar counts for the ops now (the bundle's policy table, a hint; the dry run decides). */
+/** Bar counts for the ops now (the bundle's policy table, a hint; the dry run decides). A change of several ops counts once. */
 export function useCounts({ bundle, sections, drafts, resolver, cls, viewer }) {
   return useMemo(() => {
     if (!bundle || !viewer) return { total: 0, direct: 0, review: 0 };
-    const { ops } = opsFromDrafts({ key: bundle.key, sections: formSections(sections), obj: bundle.obj, drafts });
-    return countOps(ops, resolver, cls, viewer);
+    const { ops, units } = opsFromDrafts({ key: bundle.key, sections: formSections(sections), obj: bundle.obj, bundle, viewer, drafts });
+    return countOps(ops, resolver, cls, viewer, units);
   }, [bundle, sections, drafts, resolver, cls, viewer]);
 }

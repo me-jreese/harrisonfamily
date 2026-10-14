@@ -1,5 +1,6 @@
 {
   "aboutCta": false,
+  "accessRequests": false,
   "authV2": true,
   "commentPhotosV1": false,
   "contribV1": false,

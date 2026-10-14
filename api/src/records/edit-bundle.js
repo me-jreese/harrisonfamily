@@ -9,6 +9,7 @@
 //
 // What a member sees. Every object in the bundle goes through viewRecord (records/read.js): publishView (Q2-04b: no day or month on another person's
 // non-birth date) and applyModOverlay (no hidden note, MediaRef or Media for a non-owner). A hidden Note or Media is left out of `related`.
+// The related objects also hold, one level further, the places of the related events and the sources of the related citations (HFY-TSK-156).
 // pending[] lists only the proposals the viewer may see: their own, every one for an admin, or one that targets the viewer's own Person or Families
 // (R2-28, PS-09). A third member gets []. Nothing in a bundle echoes a proposal's ops values, note or decision.
 import { createHash } from "node:crypto";
@@ -214,16 +215,36 @@ export async function buildBundle(ctx, actor, cls, handle, { fieldPolicy = DEFAU
   }
   const related = {};
   const nowYear = new Date(now()).getUTCFullYear();
-  for (let i = 0; i < refs.length; i += CHUNK) {
-    const part = await Promise.all(refs.slice(i, i + CHUNK).map(async (r) => {
-      const h = await get(ctx, r.cls, r.handle);
-      if (!h) return null;
-      if (r.cls === "Person") return [`Person:${r.handle}`, { version: h.version, stub: await personStub(ctx, h.obj, nowYear) }];
-      const v = await viewRecord(ctx, actor, { class: r.cls, handle: r.handle, gramps_id: typeof h.obj.gramps_id === "string" ? h.obj.gramps_id : "", version: h.version, obj: h.obj });
-      return v ? [`${r.cls}:${r.handle}`, { version: v.version, obj: v.obj }] : null;
-    }));
-    for (const p of part) if (p) related[p[0]] = p[1];
+  const load = async (list) => {
+    for (let i = 0; i < list.length; i += CHUNK) {
+      const part = await Promise.all(list.slice(i, i + CHUNK).map(async (r) => {
+        const h = await get(ctx, r.cls, r.handle);
+        if (!h) return null;
+        if (r.cls === "Person") return [`Person:${r.handle}`, { version: h.version, stub: await personStub(ctx, h.obj, nowYear) }];
+        const v = await viewRecord(ctx, actor, { class: r.cls, handle: r.handle, gramps_id: typeof h.obj.gramps_id === "string" ? h.obj.gramps_id : "", version: h.version, obj: h.obj });
+        return v ? [`${r.cls}:${r.handle}`, { version: v.version, obj: v.obj }] : null;
+      }));
+      for (const p of part) if (p) related[p[0]] = p[1];
+    }
+  };
+  await load(refs);
+
+  // One level further, for the editor's pickers (HFY-TSK-156): the places the related events sit in and the sources the related
+  // citations cite, through the same read-side view. They are the "places in the bundle" a place picker lists and the sources a citation
+  // can name; a place or source the viewer may not see is simply absent. The bundle stays bounded by MAX_RELATED across both levels.
+  const second = [];
+  for (const [k, v] of Object.entries(related)) {
+    if (refs.length + second.length >= MAX_RELATED) break;
+    const o = isObj(v.obj) ? v.obj : null;
+    if (!o) continue;
+    const next = k.startsWith("Event:") && typeof o.place === "string" ? { cls: "Place", handle: o.place } : k.startsWith("Citation:") && typeof o.source_handle === "string" ? { cls: "Source", handle: o.source_handle } : null;
+    if (!next || !HANDLE_RE.test(next.handle)) continue;
+    const nk = `${next.cls}:${next.handle}`;
+    if (seen.has(nk)) continue;
+    seen.add(nk);
+    second.push(next);
   }
+  await load(second);
 
   return {
     key, version: view.version, etag: `${key}@${view.version}`, obj: view.obj, related,

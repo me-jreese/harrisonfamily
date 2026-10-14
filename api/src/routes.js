@@ -8,7 +8,9 @@ import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
+import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
+import { proposalsDecide } from "./records/proposal-decision.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
@@ -240,6 +242,16 @@ export const ROUTES = defineRoutes([
     name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (no MCP tool)",
     gate: editingGate(), handler: changesPost,
   },
+  // The relationship wizard's routes (HFY-TSK-210; editing.md 8.2): an intent is compiled to EditOps. Preview writes nothing; a submit is a proposal of
+  // kind "relationship" for a member and, for an admin on route auto, applied through applyBatch(). Behind HFY_EDITING. No MCP tool.
+  {
+    name: "relationships.preview", method: "POST", path: "/relationships/preview", summary: "Preview a relationship intent {intent: parents|children|spouse|unlink, confirmDistinct?}: 200 {ops, base_versions, read_versions, summary[], warnings[], duplicates[], followUps[], destructive, already_recorded, route}; nothing is written (no MCP tool)",
+    gate: editingGate(), handler: relationshipsPreview,
+  },
+  {
+    name: "relationships.post", method: "POST", path: "/relationships", summary: "Submit a relationship intent {intent, confirmDistinct, note?, route?: auto|review (admins)} with an Idempotency-Key header: a member always gets 201 {proposal} (kind relationship, storing the intent and the compiled ops); an admin on route auto gets 201 {applied}; 422 unconfirmed_duplicate until every flagged new:<n> is in confirmDistinct, 422 cycle | too_many_children | contact_info, 409 already_recorded (no MCP tool)",
+    gate: editingGate(), handler: relationshipsPost,
+  },
   // The proposal store (HFY-TSK-184; editing.md 7.4): lists, one proposal, amend, withdraw. Behind HFY_EDITING like the routes above. Decide is
   // proposal-decision-api's; no `mcp` member (hfy_proposals_list and hfy_proposals_get are edit-mcp-tools'). A proposal outside the viewer's
   // visibility set is 404 (the proposer, admins and the owners of the targeted pages see it), and view=queue is 403 for a non-admin.
@@ -258,6 +270,12 @@ export const ROUTES = defineRoutes([
   {
     name: "proposals.withdraw", method: "POST", path: "/proposals/:id/withdraw", summary: "The proposer withdraws an open suggestion, with If-Match: the etag (no MCP tool)",
     gate: editingGate(), handler: proposalsWithdraw,
+  },
+  // The decision (HFY-TSK-209; editing.md 7.4): an admin approves (rebase and one applyBatch transaction), denies or asks for changes. Behind HFY_EDITING like the
+  // routes above. No `mcp` member: approving is a human action in the site UI (DEC-E5), so there is no decide tool.
+  {
+    name: "proposals.decide", method: "POST", path: "/proposals/:id/decision", summary: "An admin decides a pending or stale suggestion {verdict: approve|deny|needs_changes, reason? (required for deny and needs_changes), amend?: {ops, base_versions}} with If-Match: the etag and an Idempotency-Key: approve rebases onto the page as it is now and commits the records, the proposal, the audit and the proposer's credit in one transaction; 200 {proposal, applied?: {versions}}; 403 not_admin, 401 step_up_required (a destructive approval needs a sign-in within 900 s), 409 rebase_conflict (the suggestion is now stale), 409 invalid_state, 412 precondition_failed (details.proposal is the fresh view), 422 from the privacy guard (no MCP tool)",
+    gate: editingGate(), handler: proposalsDecide,
   },
 ]);
 

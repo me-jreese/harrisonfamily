@@ -54,7 +54,10 @@ test("sections: the admin-only one is hidden from members; the names form is bui
   assert.ok(sectionsFor("Person", { admin: true }).some((s) => s.id === "more"));
   const names = PERSON_SECTIONS[0];
   const schema = sectionSchema(EDIT_SCHEMAS.Person, names.form);
-  assert.deepEqual(Object.keys(schema.properties), ["first_name", "call", "nick", "title", "suffix"]);
+  assert.deepEqual(Object.keys(schema.properties), ["first_name", "surname", "call", "nick", "title", "suffix"]);
+  assert.equal(schema.properties.surname.title, "last name at birth");
+  assert.equal(schema.properties.first_name["x-io-widget"], "givenNames");
+  assert.equal(schema.properties.call["x-io-widget"], "callName");
   assert.equal(schema.properties.first_name.title, "given names");
   assert.equal(sectionSchema({}, names.form), null);
   assert.deepEqual(sectionValues({ primary_name: { first_name: "Test", nick: "", title: 3 } }, names.form), { first_name: "Test" });

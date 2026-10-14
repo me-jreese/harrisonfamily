@@ -569,6 +569,8 @@ export function createAccessRequest({
       const route = Object.hasOwn(ROUTES, rel) ? ROUTES[rel] : undefined;
       return route ? route(event) : undefined;
     },
+    /** True while ACCESS_REQUESTS is on (read per request). The edge's denied page links to /join/ only then (HFY-TSK-140). */
+    isOpen: () => flag() === true,
     gate, botCheck, submitAdmission, queueFull, emailHash, ticketKey,
   };
 }
