@@ -78,7 +78,6 @@ islands/playwright-report/
 /workspace/11ty-dev/src/*
 !/workspace/11ty-dev/src/_data/
 /workspace/11ty-dev/src/_data/*
-!/workspace/11ty-dev/src/_data/featureFlags.js
 
 /workspace-local/
 /gramps_exports/*
