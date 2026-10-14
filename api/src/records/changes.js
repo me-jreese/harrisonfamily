@@ -323,7 +323,7 @@ export function isDestructive(before, after, changes) {
 }
 
 /** 401 step_up_required unless the sign-in itself (auth_time, never renewed by a refresh) is at most 900 s old. */
-function requireRecentSignIn(actor, nowMs) {
+export function requireRecentSignIn(actor, nowMs) {
   const t = actor.authTime;
   const age = typeof t === "number" && Number.isFinite(t) && t > 0 ? nowMs / 1000 - t : Infinity;
   if (!(age >= -60 && age <= STEP_UP_MAX_AGE_SECONDS)) {
@@ -415,7 +415,7 @@ function schemaErrors(objects, keys, opIdFor) {
  * stored objects before, the objects to write (normalised, with the derived people), and what changed.
  */
 async function resultOf(ctx, actor, plan, ops, label, nowMs) {
-  const run = applyOps(plan.objects, ops, { versions: plan.versions });
+  const run = applyOps(plan.objects, ops, plan.applyCtx());
   if (!run.ok) {
     const invalidOps = run.conflicts.filter((x) => INVALID_REASONS.has(x.reason));
     if (invalidOps.length) throw invalid(invalidOps.map((x) => ({ opId: x.opId, obj: x.obj, pointer: "", code: x.reason, detail: x.message ?? x.reason })));
@@ -459,7 +459,7 @@ async function resultOf(ctx, actor, plan, ops, label, nowMs) {
 }
 
 // ---- the plan (steps 2 to 5) -----------------------------------------------------------------------------------------------------
-export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false } = {}) {
+export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false, mint } = {}) {
   const { actor } = c;
   const ctx = c.store;
   const stored = await loadTouched(ctx, actor, req);
@@ -473,6 +473,8 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false 
   const plan = {
     objects, versions, cache, refCache: new Map(),
     guard,
+    /** The applyOps context. `mint` (the approval, HFY-TSK-209) is a factory of a handle generator: each run mints the same handles in the same order. */
+    applyCtx: () => ({ versions, ...(mint ? { mint: mint() } : {}) }),
     contextList: () => [...context.values()].map((h) => h.obj).concat(Object.values(pick(objects, [...stored.keys()]))),
     currentVersions: () => ({ ...versions }),
     /** The stored version of a key: a touched object, or a derived person loaded for the semantics. */
@@ -495,7 +497,7 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false 
   };
 
   // 2-3. All ops on the stored state, then the guard over the full result, before any partition.
-  const all = applyOps(objects, req.ops, { versions });
+  const all = applyOps(objects, req.ops, plan.applyCtx());
   if (!all.ok) {
     const bad = all.conflicts.filter((x) => INVALID_REASONS.has(x.reason));
     if (bad.length) throw invalid(bad.map((x) => ({ opId: x.opId, obj: x.obj, pointer: "", code: x.reason, detail: x.message ?? x.reason })));
@@ -581,7 +583,7 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false 
 }
 
 // ---- step 6: the commit ------------------------------------------------------------------------------------------------------
-function wireOps(direct) {
+export function wireOps(direct) {
   const used = new Set();
   const idFor = (k) => {
     let id = direct.opIdFor(k) ?? `d:${k}`;

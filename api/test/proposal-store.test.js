@@ -581,13 +581,29 @@ describe("review fixes (HFY-TSK-184 R1)", () => {
     expect(w.txns).toHaveLength(1);
     expect(propRows(w, doc.id).map((x) => x.SK).sort()).toEqual(["IDX#BY", `IDX#REC#${key(w.me)}`, "META"].sort());
   });
-  it("state=stale is a 400 (stale is a flag), and the default queue shows pending suggestions with their stale flag", async () => {
+  it("the default queue shows pending suggestions with their stale flag; state=stale lists the stored state only, not the flag", async () => {
     const w = await world();
     const p = await w.propose(OTHER, w.me, "Aldric", "r-2");
-    expect(err(await w.list(ADMIN, { view: "queue", state: "stale" }))).toEqual({ status: 400, error: "validation" });
+    const none = await w.list(ADMIN, { view: "queue", state: "stale" });
+    expect(none.status).toBe(200);
+    expect(none.body.items).toEqual([]);
     await bump(w, w.me, 1, { gender: 0 });
     const q = await w.list(ADMIN, { view: "queue" });
-    expect(q.body.items.map((x) => [x.id, x.stale])).toEqual([[p.id, true]]);
+    expect(q.body.items.map((x) => [x.id, x.state, x.stale])).toEqual([[p.id, "pending", true]]);
+    expect((await w.list(ADMIN, { view: "queue", state: "stale" })).body.items).toEqual([]); // the flag alone is not the state
+  });
+  it("a proposal in the stale state (what a conflicting approval leaves) stays in the default queue and is listed by state=stale (HFY-TSK-209 review)", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "r-3");
+    const p2 = await w.propose(OTHER, w.third, "Aldric", "r-4");
+    await rewriteAll(w, p, withState(p, "stale", "2026-10-14T01:00:00.000Z"));
+    const q = await w.list(ADMIN, { view: "queue" });
+    expect(q.body.items.map((x) => [x.id, x.state, x.can.decide]).sort()).toEqual([[p.id, "stale", true], [p2.id, "pending", true]].sort());
+    const s = await w.list(ADMIN, { view: "queue", state: "stale" });
+    expect(s.body.items.map((x) => x.id)).toEqual([p.id]);
+    expect((await w.list(ADMIN, { view: "queue", state: "pending" })).body.items.map((x) => x.id)).toEqual([p2.id]);
+    expect((await w.list(OTHER, { view: "mine", state: "stale" })).body.items.map((x) => x.id)).toEqual([p.id]);
+    expect(err(await w.list(OTHER, { view: "queue", state: "stale" }))).toEqual({ status: 403, error: "not_admin" });
   });
   it("createSystem repeats beyond the IDEM# receipt's life return the first proposal (PROPREQ# is durable)", async () => {
     const w = await world();
