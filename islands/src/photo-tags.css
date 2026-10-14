@@ -76,12 +76,18 @@
   padding: 0;
   list-style: none;
 }
-.photo-tags__item { margin: 0; }
-.photo-tags__name {
+/* A chip (ruling P2-R53): the name, a link to the person's page with the name's look (a.hfy-person-name, 20-base.css), and an icon
+   button that shows the tag's data. Both are 44px targets; the chip's ring is an inset outline, so the chip stays 44 tall and the
+   ring survives forced colours. Hover, a highlighted region or a pinned panel turns the ring to the link colour; the name keeps its
+   colour (it is a name, not a link-coloured word). */
+.photo-tags__item {
+  display: inline-flex;
+  align-items: center;
   box-sizing: border-box;
   min-height: var(--io-control-tap-min);
-  padding: var(--io-space-1) var(--io-space-3);
-  border: 1px solid var(--io-color-semantic-border-strong);
+  margin: 0;
+  outline: 1px solid var(--io-color-semantic-border-strong);
+  outline-offset: -1px;
   border-radius: var(--io-radius-pill);
   background-color: var(--io-color-semantic-surface-raised);
   color: var(--io-color-semantic-text);
@@ -89,10 +95,46 @@
   font-size: var(--io-typography-size-sm);
   line-height: var(--io-typography-leading-snug);
 }
-.photo-tags__name:hover,
-.photo-tags__name.is-active { border-color: var(--io-color-semantic-link); color: var(--io-color-semantic-link-hover); }
-.photo-tags__name[aria-expanded="true"] { border-color: var(--io-color-semantic-link); }
-.photo-tags__name:focus-visible,
+.photo-tags__item:hover,
+.photo-tags__item.is-active,
+.photo-tags__item:has(> .photo-tags__show[aria-expanded="true"]) { outline-color: var(--io-color-semantic-link); }
+.photo-tags__name {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  padding-inline: var(--io-space-3) var(--io-space-1);
+  border-radius: var(--io-radius-pill);
+}
+.photo-tags__show {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text-dim);
+  cursor: pointer;
+}
+.photo-tags__show:hover,
+.photo-tags__show[aria-expanded="true"],
+.photo-tags__item.is-active > .photo-tags__show { color: var(--io-color-semantic-link-hover); }
+/* "show where {name} is in the photo": a frame with a centre point, drawn as a currentColor mask */
+.photo-tags__show-icon {
+  display: block;
+  inline-size: var(--io-space-5);
+  block-size: var(--io-space-5);
+  background: currentColor;
+  -webkit-mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+  mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+}
+.photo-tags__show:focus-visible,
 .photo-tags__open:focus-visible,
 .photo-tags__toggle:focus-visible {
   outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
@@ -168,9 +210,11 @@
 @media (prefers-reduced-motion: reduce) {
   .photo-tags__region,
   .photo-tags__label,
-  .photo-tags__name { transition: none; }
+  .photo-tags__item { transition: none; }
 }
 @media (forced-colors: active) {
+  /* the icon is a mask over currentColor: keep it drawn in the button's text colour */
+  .photo-tags__show-icon { forced-color-adjust: none; background: ButtonText; }
   .photo-tags__region,
   .photo-tags__layer--lightbox .photo-tags__region[data-role] { border-color: CanvasText; }
 }
