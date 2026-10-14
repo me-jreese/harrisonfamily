@@ -106,6 +106,29 @@ export const ROUTES = defineRoutes([
     gate: requireFeature("contribV1"), when: (q) => !q.author,
     handler: async (c) => ok(await c.contrib.site()),
   },
+  // Record follows (hfy-record-subs-api; social.md section 6, R-12), dark until recordSubsV1 is on (or the caller is uat). No `mcp` member and no
+  // policy row. The remove route is subscriptions.remove, never *.delete, which the policy glob would read as an admin step-up action.
+  // subscriptions.get and subscriptions.list share a path: `?subject=` picks the first, its absence the second.
+  {
+    name: "subscriptions.get", method: "GET", path: "/subscriptions", summary: "Am I following ?subject=person:<id>? {subject, subscribed} (no MCP tool)",
+    gate: requireFeature("recordSubsV1"), when: (q) => q.subject !== undefined,
+    handler: async (c) => ok(await c.subscriptions.get(c.query.subject)),
+  },
+  {
+    name: "subscriptions.list", method: "GET", path: "/subscriptions", summary: "The pages I follow, newest first (cursor, limit 1-100, default 25): {items: [{subject, created_at}], cursor} (no MCP tool)",
+    gate: requireFeature("recordSubsV1"), when: (q) => q.subject === undefined,
+    handler: async (c) => ok(await c.subscriptions.list({ cursor: c.query.cursor || undefined, limit: c.query.limit })),
+  },
+  {
+    name: "subscriptions.put", method: "PUT", path: "/subscriptions/person/:id", summary: "Follow a person's page, idempotent (400 self_subscribe for your own page, 404 for an unknown person; no MCP tool)",
+    gate: requireFeature("recordSubsV1"),
+    handler: async (c) => ok(await c.subscriptions.put(c.params.id)),
+  },
+  {
+    name: "subscriptions.remove", method: "DELETE", path: "/subscriptions/person/:id", summary: "Unfollow a person's page, idempotent: 204 (no MCP tool)",
+    gate: requireFeature("recordSubsV1"),
+    handler: async (c) => { await c.subscriptions.remove(c.params.id); return ok(undefined, 204); },
+  },
   {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first by default or order=desc for newest first (cursor, bound to its order), with reactions",
     handler: async (c) => {

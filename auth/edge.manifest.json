@@ -81,6 +81,7 @@
     "invalid_credentials": "that email and password don't match. try again, or text J.",
     "unconfirmed": "that email isn't set up yet. text J.",
     "generic_error": "that didn't work. try again, or text J.",
+    "error_details": "details",
     "forgot_title": "forgot your password?",
     "forgot_done": "check your email. we sent a 6-digit code.",
     "reset_title": "choose a new password",

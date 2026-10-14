@@ -351,6 +351,7 @@ Written by `hfy-api`:
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
 | Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
+| Record follow, one per principal and person | `RSUB#<principal>` | `REC#person:<gramps-id>` | `RECSUB#person:<gramps-id>` | `<principal>` | [`api/src/subscriptions.js`](../../api/src/subscriptions.js) |
 | Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |
 | Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js); not reachable from a route yet |
 | Record change log | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | - | `api/src/sync/apply.js` |
@@ -442,6 +443,10 @@ Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/
 | `GoogleClientId` | None (required, public value) | `GOOGLE_CLIENT_ID` |
 | `SesIdentityArn` | Empty | A verified SES identity, in the stack's region, for Cognito email; drives `HasSes` |
 | `SesFromAddress` | Empty | The `From` address when `SesIdentityArn` is set; drives `HasSesFrom` |
+| `JoinSesIdentityArn` | Empty | The verified SES identity of the join subdomain that sends access-request mail from the auth edge; drives `HasJoinSes` and the edge's `ses:SendEmail` grant |
+| `JoinFromAddress` | Empty | The bare `From` address on that identity (`JOIN_FROM_ADDRESS`); the grant is conditioned on it |
+| `JoinSesConfigurationSet` | Empty | The configuration set for access-request mail only (`JOIN_SES_CONFIGURATION_SET`); required whenever `JoinSesIdentityArn` is set (the stack refuses one without the other), and the code route answers `503 unavailable` while it is empty |
+| `JoinBounceAlarmName`, `JoinComplaintAlarmName` | `hfy-access-request-bounce`, `hfy-access-request-complaint` | The CloudWatch alarms the code route reads (`JOIN_MAIL_ALARMS`); the edge may call `cloudwatch:DescribeAlarms` (read-only, on `*`: the call is list-style and AWS may not honor an alarm ARN for it; the code asks for these two names only, and the RG-4 route smoke checks the real IAM behavior) |
 
 #### Conditions
 

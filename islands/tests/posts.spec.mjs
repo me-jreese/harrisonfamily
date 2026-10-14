@@ -199,7 +199,7 @@ test("HFY-TSK-315: post is enabled with a photo and an empty text box; the photo
 
   await picker.setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
   await expect.poll(() => s.puts).toBe(2);
-  await mine.getByRole("textbox", { name: "describe photo 1" }).fill("the garden at dusk");
+  await mine.getByRole("textbox", { name: "add a caption 1" }).fill("the garden at dusk");
   await box.fill("   "); // whitespace only is still an empty box
   await expect(submit).toBeEnabled();
   await submit.click();
@@ -210,8 +210,10 @@ test("HFY-TSK-315: post is enabled with a photo and an empty text box; the photo
   await expect(box).toHaveValue("");
   await expect(submit).toBeDisabled(); // the composer is clear again
 
-  const want = { card: ["iok-content-meta", "iok-content-media"], markdown: 0, alts: ["the garden at dusk"], empty: [] };
-  const row = (scope) => scope.locator(".hfy-posts__item").filter({ has: page.getByRole("img", { name: "the garden at dusk" }) });
+  // P2-R47 (HFY-TSK-323): the typed text is the photo's visible caption, under it; the img alt is the who-posted fallback, so the
+  // caption is not announced twice.
+  const want = { card: ["iok-content-meta", "iok-content-media"], markdown: 0, alts: ["a photo from Test Person"], empty: [] };
+  const row = (scope) => scope.locator(".hfy-posts__item").filter({ has: page.locator("figcaption", { hasText: "the garden at dusk" }) });
   await expect(row(mine)).toHaveCount(1);
   expect(await photoOnlyRow(row(mine))).toEqual(want);
   expect(await noHScroll(page)).toBe(true);
@@ -220,7 +222,7 @@ test("HFY-TSK-315: post is enabled with a photo and an empty text box; the photo
   const tl = page.locator("[data-hfy-timeline]");
   await expect(row(tl)).toHaveCount(1);
   expect(await photoOnlyRow(row(tl))).toEqual(want);
-  expect((await tl.locator(".hfy-posts__item").first().locator("img").getAttribute("alt"))).toBe("the garden at dusk"); // newest first
+  await expect(tl.locator(".hfy-posts__item").first().locator("figcaption")).toHaveText("the garden at dusk"); // newest first
   await expect(tl.getByText("Seeded older post")).toBeVisible();
 
   await row(tl).getByRole("link", { name: /^comments/ }).click();
@@ -230,11 +232,11 @@ test("HFY-TSK-315: post is enabled with a photo and an empty text box; the photo
   expect(await photoOnlyRow(row(one))).toEqual(want);
 });
 
-// HFY-TSK-315 review: a photo posted with no description and an empty box. The upload carries no alt and the member typed none, so
-// the request has none either; every list renders the photo as "a photo from <name>" (posts-ui withPhotoAlt), never alt="", so the
-// row is more than a name and a time to a screen reader. In a post with several photos the fallback counts them, and a typed
-// description is kept as written.
-test("HFY-TSK-315: a photo posted with no description reads as \"a photo from <name>\" in my posts, the timeline and /posts/?id=", async ({ page }) => {
+// HFY-TSK-315 review: a photo posted with no caption and an empty box. The upload carries no alt and the member typed none, so the
+// request has none either; every list renders the photo as "a photo from <name>" (posts-ui photoAlt), never alt="", so the row is more
+// than a name and a time to a screen reader. In a post with several photos the fallback counts them, and a typed caption shows under
+// its photo (P2-R47, HFY-TSK-323) instead of standing in for the alt.
+test("HFY-TSK-315: a photo posted with no caption reads as \"a photo from <name>\" in my posts, the timeline and /posts/?id=", async ({ page }) => {
   const s = await stub(page);
   s.posts.push({
     id: ULID(2), type: "post", author: { id: "I9003", label: "Ann Other" }, subject: "I9003", body: "",
@@ -252,7 +254,7 @@ test("HFY-TSK-315: a photo posted with no description reads as \"a photo from <n
   const submit = mine.getByRole("button", { name: /^post$/i });
   await mine.locator("input[type=file]").first().setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
   await expect.poll(() => s.puts).toBe(1);
-  await expect(mine.getByRole("textbox", { name: "describe photo 1" })).toHaveValue("");
+  await expect(mine.getByRole("textbox", { name: "add a caption 1" })).toHaveValue("");
   await expect(box).toHaveValue("");
   await submit.scrollIntoViewIfNeeded();
   await expect(submit, "post is on screen and enabled at 320px with only an undescribed photo").toBeInViewport({ ratio: 1 });
@@ -271,10 +273,13 @@ test("HFY-TSK-315: a photo posted with no description reads as \"a photo from <n
   await expect(row(mine)).toMatchAriaSnapshot(`
     - listitem:
       - article:
+        - link "Test Person":
+          - /url: /person/?id=I9001
         - time
         - list:
           - listitem:
-            - img "a photo from Test Person"
+            - figure:
+              - img "a photo from Test Person"
       - link "comments on Test Person's post"
       - button "delete"
   `);
@@ -284,8 +289,9 @@ test("HFY-TSK-315: a photo posted with no description reads as \"a photo from <n
   const tl = page.locator("[data-hfy-timeline]");
   await expect(row(tl)).toHaveCount(1);
   expect(await photoOnlyRow(row(tl))).toEqual(want);
-  const several = tl.locator(".hfy-posts__item").filter({ has: page.getByRole("img", { name: "the lake" }) });
-  expect(await several.locator("img").evaluateAll((imgs) => imgs.map((i) => i.alt))).toEqual(["the lake", "photo 2 of 3 from Ann Other", "photo 3 of 3 from Ann Other"]);
+  const several = tl.locator(".hfy-posts__item").filter({ has: page.locator("figcaption", { hasText: "the lake" }) });
+  expect(await several.locator("img").evaluateAll((imgs) => imgs.map((i) => i.alt))).toEqual(["photo 1 of 3 from Ann Other", "photo 2 of 3 from Ann Other", "photo 3 of 3 from Ann Other"]);
+  await expect(several.locator("figcaption"), "only the typed caption draws; a blank one does not").toHaveText(["the lake"]);
   expect(await noHScroll(page)).toBe(true);
 
   await row(tl).getByRole("link", { name: /^comments/ }).click();

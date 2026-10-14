@@ -1,11 +1,12 @@
-/* HFY comments (DS components/Comments) over @io-kit/comments 0.1.0. Imported AFTER @io-kit/comments/comments.css.
-   Kit root cause (file upstream, then drop the remap block): @io-kit/comments 0.1.0 declares its defaults on :where(.io-comments)
-   under names outside the kit-bridge contract (--io-comments-fg, -fg-muted, -bg, -accent-fg, -font, -radius, -gap, -gap-sm,
-   -gap-xs, -text-sm, -input-size, -control-height) and with CSS system colours (Canvas, CanvasText, GrayText, Highlight,
-   HighlightText). Declared on the element itself, those defaults also shadow the contract names the bridge sets on :root
-   (--io-comments-surface, -border, -accent, -danger, -radius-pill), so the thread rendered in system colours on a 40px control.
-   `.hfy-comments .io-comments` outranks :where(), so all 17 names are remapped to semantic tokens here (not to the contract
-   names: --io-comments-surface: var(--io-comments-surface) would be a cycle). */
+/* HFY comments (DS components/Comments) over @io-kit/comments 0.3.1. Imported AFTER @io-kit/comments/comments.css.
+   Kit root cause (file upstream, then drop the remap block): @io-kit/comments 0.1.0 through 0.3.1 declares its defaults on
+   :where(.io-comments) under names outside the kit-bridge contract (--io-comments-fg, -fg-muted, -bg, -accent-fg, -font, -radius,
+   -gap, -gap-sm, -gap-xs, -text-sm, -input-size, -control-height) and with CSS system colours (Canvas, CanvasText, GrayText,
+   Highlight, HighlightText). Declared on the element itself, those defaults also shadow the contract names the bridge sets on :root
+   (--io-comments-surface, -border, -accent, -danger, -radius-pill, and since 0.3.0 -focus, -focus-ring and -focus-offset, which
+   the author link's focus ring reads), so the thread rendered in system colours on a 40px control. `.hfy-comments .io-comments`
+   outranks :where(), so all 20 names are remapped to theme tokens here (not to the contract names: --io-comments-surface:
+   var(--io-comments-surface) would be a cycle). */
 .hfy-comments .io-comments {
   --io-comments-fg: var(--io-color-semantic-text);
   --io-comments-fg-muted: var(--io-color-semantic-text-dim);
@@ -15,6 +16,9 @@
   --io-comments-accent: var(--io-color-semantic-accent);
   --io-comments-accent-fg: var(--io-color-semantic-accent-text);
   --io-comments-danger: var(--io-color-semantic-danger);
+  --io-comments-focus: var(--io-color-semantic-focus);
+  --io-comments-focus-ring: var(--io-control-focus-ring);
+  --io-comments-focus-offset: var(--io-control-focus-offset);
   --io-comments-font: var(--io-typography-font-ui);
   --io-comments-radius: var(--io-radius-md);
   --io-comments-radius-pill: var(--io-radius-pill);
@@ -39,8 +43,10 @@
   line-height: var(--io-typography-leading-relaxed);
   overflow-wrap: anywhere;
 }
-.hfy-comments a:not(.hfy-btn) { color: var(--io-comments-link); }
-.hfy-comments a:not(.hfy-btn):hover { color: var(--io-comments-link-hover); }
+/* Not the comment author's name (the kit's a.io-comments-author, @io-kit/comments 0.3.1 authorHref) nor any other person-name link:
+   at (0,2,1) and loaded after the kit sheet, this rule would otherwise recolour them as links (the kit sheet's own note). */
+.hfy-comments a:not(.hfy-btn, .io-comments-author, .hfy-person-name) { color: var(--io-comments-link); }
+.hfy-comments a:not(.hfy-btn, .io-comments-author, .hfy-person-name):hover { color: var(--io-comments-link-hover); }
 
 /* Signed out: one line and one button, no thread. */
 .hfy-comments__signin { display: grid; justify-items: start; gap: var(--io-comments-space-3); }
@@ -59,7 +65,27 @@
   background: transparent;
 }
 .hfy-comments .io-comments-meta { gap: var(--io-comments-space-2); color: var(--io-comments-text-dim); font-size: var(--io-comments-font-size-sm); }
-.hfy-comments .io-comments-author { color: var(--io-comments-text); font-weight: var(--io-typography-weight-semibold); }
+/* The author's name links to their person page (HFY-TSK-323, ruling P2-R46; comments-ui Thread authorHref) and looks exactly like the
+   plain name (a span when the author has no Gramps person id): text colour and semibold in every link state, never underlined, the
+   pointer, and the theme focus ring on keyboard focus. The comment header is tapped, so the link is a 44px target (tap.min) without
+   growing the row: a transparent band centred on the name, tap.min tall and at least tap.min wide. */
+.hfy-comments .io-comments-author,
+.hfy-comments a.io-comments-author:is(:link, :visited, :hover, :focus, :active) {
+  color: var(--io-comments-text);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: none;
+}
+.hfy-comments a.io-comments-author { position: relative; cursor: pointer; }
+.hfy-comments a.io-comments-author::after {
+  content: "";
+  position: absolute;
+  inset-block: calc(50% - var(--io-comments-tap-min) / 2);
+  inset-inline: min(0%, calc(50% - var(--io-comments-tap-min) / 2));
+}
+.hfy-comments a.io-comments-author:focus-visible {
+  outline: var(--io-comments-focus-ring) solid var(--io-comments-focus);
+  outline-offset: var(--io-comments-focus-offset);
+}
 .hfy-comments .io-comments-media img { border-radius: var(--io-comments-radius-md); }
 .hfy-comments .io-comments-empty { color: var(--io-comments-text-dim); }
 

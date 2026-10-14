@@ -69,7 +69,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | Package | Version (lockfile) | Used for |
 | --- | --- | --- |
 | `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
-| `@io-kit/comments` | 0.2.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
+| `@io-kit/comments` | 0.3.1 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.5.0 | The notification routes (five push routes and three inbox routes), the inbox store, persist-first delivery (`createDelivery`), subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
@@ -182,6 +182,10 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `records.byGrampsId` | GET | `/records/Person/by-id/:gramps_id` | none | `200`, as `records.get` | `404` when no live Person has the id, `409 ambiguous_gramps_id` when two do |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
+| `subscriptions.get` | GET | `/subscriptions` | query `subject` (`person:<gramps_id>`) | `200` `{subject, subscribed}` | `400` for a bad subject. Shares its path with `subscriptions.list`: `?subject=` picks this route. Behind `requireFeature("recordSubsV1")`. Not an MCP tool. See [Record follows](#record-follows). |
+| `subscriptions.list` | GET | `/subscriptions` | query `cursor`, `limit` (1 to 100, default 25) | `200` `{items: [{subject, created_at}], cursor}` | My follows, newest first; `400 cursor_invalid`. Behind `recordSubsV1`. Not an MCP tool. |
+| `subscriptions.put` | PUT | `/subscriptions/person/:id` | body `{}` | `200` `{subject, subscribed: true}` | Idempotent. `404` for an unknown person, `400 self_subscribe` for your own page, `503` if the person lookup fails. Behind `recordSubsV1`. |
+| `subscriptions.remove` | DELETE | `/subscriptions/person/:id` | none | `204` | Idempotent. Named `remove`, never `*.delete`, so the policy glob does not read it as an admin step-up action. Behind `recordSubsV1`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
 | `notifications.subscribe` | POST | `/notifications/subscribe` | body: a push subscription | `200` `{ok: true}` | Kit route |
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
@@ -193,9 +197,9 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Eight routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Twelve routes are behind the [feature gate](#feature-gate): the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put` and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the four `subscriptions.*` routes and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -414,6 +418,12 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - Each member has at most one reaction per comment, stored at `R#comment:<id>#<member id>`. Sending the emoji you already have removes it and returns `{removed: true}`. Sending a different emoji, or the first one, stores it, replacing any earlier one, and returns `{removed: false, reaction}`. Both return `200`.
 - The route always targets `comment:<id>`. `react` in `comments.js` also accepts the target `root`, returns `404 not_found` for an `attachment:` target and `422 validation` for any other target, but no route reaches any of these.
 - Reactions are single `PutItem` and `DeleteItem` calls, not transactions, and are not audited.
+
+## Record follows
+
+`api/src/subscriptions.js` (HFY-TSK-254, BRD2 D2-16, R-12) stores one `RSUB#<principal>` / `REC#person:<gramps_id>` item per follow, with `GSI1PK` `RECSUB#person:<gramps_id>` and `GSI1SK` the principal. The same item answers "my follows" (a Query on the partition) and fan-out (one GSI1 Query per changed subject, `queryFollowers`). Follows are explicit, are not audited and never tell the followed person. The routes are dark behind `recordSubsV1` (404 for everyone outside the `uat` group). `subscriptions.put` checks that `person/<id>.json` exists with the same S3 read the label resolver uses (`createPersonExists`); an absent record is `404`, a failed read is `503`.
+
+`notifier.onRecordChanged(changes, { silent, import, seed })` is called only by the render-outbox consumer (`hfy-record-change-fanout`). It sends nothing when `silent`, `import` or `seed` is `true`; the consumer passes `seed` from `SYNC#SESSION.seed`. The owner gets `record_updated_mine` only when a member and not the actor. Followers (not the actor, not the owner) get `record_updated_followed`, grouped by `rec:<subject>` so a repeat update coalesces; a follower with more than 3 pages in one call gets one `records_updated_followed_digest`. A non-silent call with more than 50 distinct subjects is never refused: every follower gets one digest and every member owner one `record_updated_mine`.
 
 ## Profile links
 
@@ -1012,6 +1022,24 @@ Three op fields are **provisional**: `renumber: true` (a Person update that chan
 - **Extra items.** `extra` (`{puts, deletes, updates, checks}`, the `transact()` shapes) commits in the same transaction, as do the items of registered contributors. A failed condition on one of the caller's own items surfaces as the `TxnCancelled`, with the caller's `tag`.
 - **Validator.** `applyBatch` runs the server validator ([below](#the-server-validator)) on every call, from every origin, before the version check; `ctx.validate(view)` runs after it as an extra layer (a `createValidator({...})` result replaces it, to change its options), and `ctx.unsafeNoValidate: true` skips the default (the seed and tests only). A withdraw op must carry `reason: "private"`; any other reason, or none, is `400 validation`. This is a contract change for callers: no moderation or graduation code in the tree sends a sync `withdraw` today, and the moderation and graduation tasks must send the reason.
 
+### The cloud ID policy
+
+`api/src/sync/id-policy.js` holds the Q2-03 policy (HFY-TSK-246). `ctx.idPolicy` (built with `createIdPolicy({ mode, accessRequestOf, completeAccessRequest })`) or the `HFY_ID_POLICY` environment variable picks one branch from the `q2-03-id-block` answer; the other branch is off. With neither set, every create needs a `gramps_id`, as before.
+
+| Mode | Web-origin create (`self`, `admin`, `proposal`, `graduation`, `tag`, `moderation`) | Desktop |
+| --- | --- | --- |
+| `mint` | An empty or absent `gramps_id` is minted from `SYNC#HEAD.id_next.<Class>` (`I8000` to `I8999`, `F8000`, ...). The counter is written by the same `TransactWriteItems` as the record, under the `SYNC#HEAD` seq condition and the `GID#` claim; a taken number is skipped; past 8999 the answer is `409 id_block_exhausted`. A web-origin id that is supplied and inside the block is `409 reserved_id_block`. | A create into the block, or an update that moves an object into it, is `409 reserved_id_block`. A minted Person id is permanent (retired on delete, withdraw or merge, never released). |
+| `assign` | The `gramps_id` stays empty; no `GID#` item is written; the renderer gives the person no file. | The first empty-to-ID update is allowed once, under the `GID#` guard (`gramps_id_taken`, `gramps_id_retired`), and is not `renumber_blocked`. Any later change of a Person id is `409 renumber_blocked`. A web origin assigning an id is `renumber_blocked` too. The block is not reserved. After the commit, `completeAccessRequest(requestId, grampsId)` runs for a Person that `accessRequestOf` ties to an access request; a failure is logged and never fails the write. |
+
+**Status and open links (HFY-TSK-246).**
+
+- **The mode must be set before the push routes are wired.** The rule covers the routes that call `applyBatch`: the sessions, batches and media routes of `sync-push-routes`. The handshake and bind routes of HFY-TSK-172 (`sync.meta`, `sync.bind`) are already in `ROUTES` and never call `applyBatch`, so they need no mode and can be turned on with `SyncApiEnabled=1` while `HFY_ID_POLICY` is unset. With no mode the store keeps the pre-Q2-03 behaviour and neither branch is active. A production profile should fail when the push routes are wired if `HFY_ID_POLICY` is unset; the gate task does that. `policyOf(ctx)` validates once per ctx; a bad value is logged as `id_policy_misconfigured` and answered `500 id_policy_misconfigured`. Call it at wiring time to fail early.
+- **The branch is a deploy-time setting, not read from the recorded answer.** Acceptance criterion 3 (the branch is taken from the `q2-03-id-block` answer) stays **open** until io or the gate task wires that answer to `HFY_ID_POLICY`. Consumers that must reference the answer: `render-lambda` (no person file without an ID) and `addon-push` (the assignment test). Both are Python with `unittest` suites (the renderer in `gramps/hfygramps/render/`, the add-on standard-library only), so neither can import `id-policy.js`. They take the branch from another carrier, such as the `HFY_ID_POLICY` value or the recorded `q2-03-id-block` answer.
+- **Assign mode, who assigns.** Only the desktop gives an ID-less object an id, for every class: any other origin is `409 renumber_blocked` (Person) or `409 assign_desktop_only` (other classes). The assignment is GID-guarded for every class.
+- **Mint mode, the block.** A web-origin create or update cannot supply an id inside the block unless the store already minted it for that object.
+- **Access-request completion is best effort.** `completeAccessRequest` runs after the commit, with no outbox. A crash between the commit and the call leaves the request open, and a replay returns the receipt without re-running it. `accessRequestOf` and `completeAccessRequest` are supplied by `surf-access-admin-api`, which should also add a reconcile pass that completes any request whose Person already holds an id.
+- **Deploy proof.** Acceptance criterion 4 (the green `io-kit-deploy` run for the merge commit) cannot exist before merge; the code is reachable from no route.
+
 ### The server validator
 
 [`validator.js`](../../api/src/sync/validator.js) is the gate in front of the transaction (HFY-TSK-245, sync design 5.7 and 7.2). `applyBatch` calls it as `validate(view)` with `{ops, origin, principal, on_behalf_of, sync_head, record, store, stepUp, expected}`, runs it again after every lost seq race, and builds nothing until it passes. It reads the batch as it will stand once it commits: the store view overlaid with the batch's creates, updates, deletes and withdraws. A refusal is a `SyncError` whose `details.violations` list `{rule, class, handle, pointer, op_id}`: where, never what. The first family that finds anything answers:
@@ -1112,7 +1140,7 @@ Owner bearer, any state of the store. Returns `{api_version: 1, min_client, acce
 
 - `merges_enabled` is `true` only when `SYNC#HEAD.merges_enabled` is literally `true`; it stays `false` until `identity-merge-rekey` ships.
 - `retired_person_ids` lists every Person id whose head is a tombstone (deleted, withdrawn or merged away), sorted, from the `RECS#Person` index. The add-on holds a local create that reuses one (D44); the server refuses it anyway with `409 gramps_id_retired`. The index is eventually consistent and the server stays the authority. Renumbers are blocked in this release; when they ship, the list must also read retired `GID#` items.
-- `id_block` is the range the cloud mints from (`I8000-I8999` and the other classes' prefixes); a desktop create may not use it.
+- `id_block` is the range the cloud mints from (`I8000-I8999` and the other classes' prefixes); a desktop create may not use it. Under `HFY_ID_POLICY=assign` nothing is minted and the validator does not reserve the block ([The cloud ID policy](#the-cloud-id-policy)); the handshake still reports it, so the add-on holds ids in it either way.
 - `bound` never includes the tree-name hash. `rendered_seq` is `SYNC#RENDER.rendered_seq`, `0` before the first render.
 
 ### `POST /api/sync/bind`

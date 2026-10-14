@@ -92,7 +92,8 @@ const expectGoldRing = (r, what) => {
 };
 
 const PAGES = { home: "/", posts: "/posts/", post: `/posts/?id=${FX.posts[0].id}`, person: "/person/?id=I9001", search: "/search/?q=Quillfeather", notifications: "/me/notifications/" };
-const READY = { home: "[data-hfy-timeline] .hfy-posts__item", posts: "[data-hfy-posts] .hfy-posts__item", post: "[data-hfy-comments] .io-comments-comment", person: "[data-hfy-comments] .io-comments-comment", search: "#hfy-search-v2 .hfy-search__row", notifications: ".hfy-notify [role=switch]" };
+// A post row, not a loading skeleton row (also .hfy-posts__item): an audit run while only the skeleton shows sees almost no text.
+const READY = { home: "[data-hfy-timeline] .hfy-posts__item:has(.iok-content-card)", posts: "[data-hfy-posts] .hfy-posts__item:has(.iok-content-card)", post: "[data-hfy-comments] .io-comments-comment", person: "[data-hfy-comments] .io-comments-comment", search: "#hfy-search-v2 .hfy-search__row", notifications: ".hfy-notify [role=switch]" };
 
 for (const width of [375, 1024]) {
   for (const [name, path] of Object.entries(PAGES)) {

@@ -1,6 +1,6 @@
 # gramps
 
-Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231) and the merge engine (HFY-TSK-242) are the last sections; other tasks add the addon and more beside them.
+Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231), the projection, the merge engine (HFY-TSK-242) and the desktop addon skeleton (HFY-TSK-179) are the last sections; other tasks add the rest of the addon beside them.
 
 Every value under `gramps/tests/fixtures/` is fictional. Phones are 555-01xx, mail is example.org, addresses are documentation-style, names are invented. Never copy a record, date, name or contact detail from the real tree into this directory (D-03).
 
@@ -203,3 +203,56 @@ python3 -m coverage report -m                                            # 100 %
 ```
 
 `test_merge.py` has a test for every row of sync.md 6.3 and 6.4, the composite and tombstone rules, pinning over several runs, convergence of a web edit and a desktop edit in one run, and two seeded property tests over the synthetic tree: `P(lift(C, L)) == C` for 1,000 accepted random edit pairs (the checker is the projection: C must be a fixed point of P with no hold), and, for 500 random pairs of website and desktop edits, that a run without conflicts leaves Gramps and the cloud agreeing. `coverage` is not needed by CI; it is a development tool.
+
+## The desktop addon skeleton
+
+HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. It has two real actions, `status` and `bind`. `login`, `check`, `pull`, `push` and `sync` are registered and answer exit `69` (not enabled) until the transport, pull-apply and push tasks fill them in. The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
+
+| Path | What it is |
+| --- | --- |
+| `hfy_sync/hfy_sync.gpr.py` | Registers the tool (`TOOL_DBPROC`, so Tools > Family Tree Processing > Website sync..., GUI and CLI modes, `gramps_target_version` 6.0). Its `version` must equal `ADDON_VERSION` in `hfygramps/addon/consts.py`; a unit test checks it. |
+| `hfy_sync/hfy_sync_tool.py` | The Gramps shell: a plain `Tool` (so Gramps keeps undo), its options (`action`, `dry_run`, `allow_deletes`, `yes`, `run_id`) and `GrampsTree`, which gives the runner the dbid, the schema, the tree marker and the handles. It imports everything at the top, because Gramps puts the addon folder on `sys.path` only while it loads the module. |
+| `hfy_sync/hfy_sync_ui.py` | The two Gtk dialogs of the skeleton: status, and "Bind this tree?". The preview, conflict and apply dialogs of sync.md 13.1 come with the GUI preview task. |
+| `hfygramps/addon/` | The runtime, standard library only and Python 3.9 compatible, with no Gramps import: `consts` (versions, exit codes, the refusal table), `paths` (the sync.md 4.3 layout), `status` (`status.json`, run ids), `sidecar` (`state.sqlite` with the sync.md 4.3 DDL), `binding`, `preflight` and `runner`. |
+| `bin/hfy-sync` | The wrapper. It generates a run id, runs `Gramps -O <tree> -a tool -p name=hfy_sync,...,run_id=<id>`, reads `status.json` and exits with its `exit_code`; a missing file, or one with another run's `run_id`, is exit `70` (D41). Before Gramps starts it refuses `--force-unlock` (64), a tree whose database schema the addon does not read (78; Gramps would upgrade an older tree on open) and a tree with a `lock` file (75). It never removes a lock. |
+| `scripts/build-addon.sh` | Writes `gramps/dist/hfy_sync-<version>/` (the Gramps files, a vendored copy of `hfygramps/` without `render/` and `schema_check.py`, and `redaction/redaction-v1.json`, which `rules.py` finds beside the package) and the zip of it. `dist/` is not tracked. |
+| `scripts/install-addon.sh` | Builds, then replaces `<plugins>/hfy_sync`: `--dest`, else `$GRAMPSHOME/gramps/gramps60/plugins`, else `~/Library/Application Support/gramps/gramps60/plugins`. Nothing but the `hfy_sync` folder is touched. |
+| `tests/unit/test_addon_runtime.py`, `test_addon_wrapper.py` | CI: the runtime against a fake tree, the wrapper against a fake Gramps command, the build and the installer in a temporary folder. |
+| `tests/gramps/test_addon_skeleton.py`, `addon_support.py` | The Gramps lane (`io-mac-gramps`): installs the addon into the throwaway `GRAMPSHOME` and drives the real Gramps CLI and the wrapper on copies of the fixture tree. |
+
+The sync state lives outside Dropbox and git, under `~/Library/Application Support/hfy_sync/` (`config.json`, then `<dbid>/` with `state.sqlite`, `state.lock`, `status.json`, `previews/`, `backups/`, `logs/`, `cache/`), all owner-only. The `<dbid>` is the tree's folder name under Gramps' `grampsdb` (`db.get_dbid()`). The tests point `HOME` and `GRAMPSHOME` at a temporary directory, so they never read or write the real one; the wrapper and the tool read `HOME` and `GRAMPSHOME` only.
+
+```bash
+python3 -m unittest discover gramps/tests/unit                  # CI: includes the two addon files
+gramps/tests/gramps/run.sh test_addon_skeleton.py               # Mac with Gramps 6.0.6: the integration suite
+gramps/scripts/install-addon.sh --dest <a-throwaway-folder>      # try the installer without touching Gramps
+```
+
+### The tree binding
+
+A run proceeds only when three things agree (BRD2 section 11, SI-06):
+
+1. The dbid (the tree's folder name) equals the `dbid` in `config.json` and in the sidecar's `meta`.
+2. The tree marker, a uuid stored in the tree's own metadata under `hfy_sync_tree_id`, equals the sidecar's `tree_id`. `bind` writes it inside one `DbTxn` together with the sidecar and rolls both back if either fails; `config.json` is written last.
+3. The similarity guard: at least 90 % of the sidecar's `base` handles still exist in the tree. With nothing synced yet (an empty `base`) there is nothing to compare.
+
+Anything else is D03 (exit 78, `next_action: open_bound_tree`). The earlier hash of all handles is gone: it changed on every local create or delete. A few local creates and deletes between syncs (the tests use 8 removed and 6 created, under 10 %) leave the guard satisfied, and local creates never lower it. Replacing the tree with a different one (no marker, or the marker with most of the objects gone) does not satisfy it.
+
+Two edges follow from the 90 % line and are by design. Deleting more than 10 % of the synced objects in Gramps between two syncs reads as a different tree and is refused until the tree is rebound; the mass-delete guard (more than 10 objects or 5 % in one run) is meant to catch a deliberate clean-up before that, in the sync run. And `bind` never moves the binding: with a `config.json` present it answers D03 for any other tree.
+
+A tree that was re-imported, restored from a copy or exported and re-imported has a new dbid, or a marker that the sidecar does not know. It is treated as a new tree, in this order (these steps arrive with later tasks, named per step below; the skeleton only refuses it):
+
+1. A step-up rebind: a fresh sign-in, because rebinding changes which tree the website follows. Owners: `addon-transport-auth` (the sign-in) and `addon-push` (the step-up on the push).
+2. A new sidecar, so no `base` of the old tree is trusted.
+3. Rebase mode (D12): objects that equal the website's copy are re-based, everything else becomes a conflict; the command line refuses, the GUI resolves, and nothing is pushed automatically. Owners: `addon-pull-apply` (the new sidecar and the rebase pass) and `addon-gui-preview` (the Gramps-window resolution).
+4. The mass-delete guard on both sides for the first runs, so a tree that is missing objects cannot delete them on the website. Owners: `addon-push` (the push side) and `addon-pull-apply` (the pull side).
+
+D12 (sidecar missing) and D13 (sidecar damaged, or written by a newer addon) are refusals with exit 78 and `next_action: rebase`; the skeleton never rebuilds a sidecar by itself.
+
+### status.json
+
+`<dbid>/status.json` is the sync.md 4.3 document, written atomically (temp file and rename). This build adds one key, `versions` (`addon`, `gramps`, `db_schema`, `redaction`), and two `next_action` values for the binding recoveries, `bind` and `rebase` (BRD2 D50). It carries counts and codes only, never a name, a date, a handle or a path to media. The per-run log in `logs/<run_id>.log` records step names and refusal codes and nothing else.
+
+### Test seams
+
+`HFY_GRAMPS_CMD` (the wrapper: the Gramps command to run, default the app bundle's executable) and `HFY_SYNC_PS_CMD` (the process list the GUI scan reads, default `ps -axo command=`) exist so tests do not depend on what is running on the machine. Neither is set in use. `HFY_SYNC_PS_CMD` is honoured only while `HFY_SYNC_TEST=1` is also set, so a stray variable cannot switch the GUI-process half of D01 off; the tree's `lock` file protects the tree either way.

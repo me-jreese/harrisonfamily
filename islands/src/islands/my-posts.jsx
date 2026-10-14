@@ -2,11 +2,14 @@
 // a PostComposer (text + photos) and this member's posts. Others see nothing from this island.
 //
 // DS Posts composer: one row, one height — the input (placeholder "post a photo or a line"), a 44px "add a photo" button and post.
-// Kit root cause (@io-kit/content PostComposer, 0.1.1 through 0.3.1; record for the kit backlog): it renders a bare <input type=file>
-// with only an aria-label, so the browser's own "Choose File" / "No file chosen" copy and a 32px picker showed, the alt-text input is
-// aria-label only (no visible hint), an attached photo shows no thumbnail, and it takes no placeholder. HFY overrides, all in this island:
+// Each attached photo gets an "add a caption" field (ruling P2-R47, HFY-TSK-323): what is typed there is stored as the attachment's
+// `alt` and every post card shows it as the photo's visible caption (@io-kit/content 0.3.2 <figure><figcaption>; posts-ui photoAlt).
+// Kit root cause (@io-kit/content PostComposer, 0.1.1 through 0.3.2; record for the kit backlog): it renders a bare <input type=file>
+// with only an aria-label, so the browser's own "Choose File" / "No file chosen" copy and a 32px picker showed, an attached photo shows
+// no thumbnail, and the textarea takes no placeholder (0.3.2 sets one on the caption field only, from labels.caption). HFY overrides,
+// all in this island:
 //   - the kit's file input is hidden (posts.css) and taken out of the tab order and the accessibility tree; the HFY button opens it;
-//   - the textarea and every alt-text input get a placeholder after render (the kit has no placeholder prop);
+//   - the textarea gets a placeholder after render (the kit has no placeholder prop for it);
 //   - each attachment row gets a 44px thumbnail of the uploaded photo, tracked here by index (remove clicks are followed);
 //   - a successful upload pings "got it. it's in the gallery." (DS Posts done state);
 //   - the R-18 pre-check (lib/contact-guard.js; privacy-guard-existing-paths AC2) marks a phone number, address or email in the
@@ -30,13 +33,14 @@ const LABELS = {
   bodyHint: "plain words are fine",
   attachments: "photos",
   addAttachment: "add a photo",
-  altText: "describe photo",
+  // The photo's caption field: its placeholder, and its accessible name with the photo's number ("add a caption 1"). P2-R47.
+  caption: "add a caption",
   remove: "remove",
   post: "post",
   saving: "posting…",
 };
 const PLACEHOLDER = "post a photo or a line";
-// The composer fields the R-18 pre-check reads: the body, the title (articles) and each photo's description.
+// The composer fields the R-18 pre-check reads: the body, the title (articles) and each photo's caption.
 const GUARDED = '.iok-content-composer textarea, .iok-content-composer input[name="title"], .iok-content-attachment > input';
 /**
  * The line a failed post write shows in the composer (the kit keeps the text). An R-18 refusal (contact_info, dob_not_allowed)
@@ -57,14 +61,13 @@ export function postWriteError(e) {
 const guardOptions = {
   fields: GUARDED,
   submitOf: (form) => form.querySelector('button[type="submit"]'),
-  // The kit's own rule once a hit is gone (@io-kit/content 0.3.1 PostComposer, HFY-TSK-315): a line or a photo is enough to post,
-  // so a photo-only post whose description held the hit gets "post" back with its box still empty.
+  // The kit's own rule once a hit is gone (@io-kit/content 0.3.2 PostComposer, HFY-TSK-315): a line or a photo is enough to post,
+  // so a photo-only post whose caption held the hit gets "post" back with its box still empty.
   enabledOf: (form) => (form.querySelector("textarea")?.value ?? "").trim() !== "" || form.querySelector(".iok-content-attachment") !== null,
 };
-const ALT_PLACEHOLDER = "describe the photo";
 const DONE = "got it. it's in the gallery.";
 
-/** Keeps the kit composer's DOM in the DS shape (see the header): placeholders, the hidden picker and one thumbnail per row. */
+/** Keeps the kit composer's DOM in the DS shape (see the header): the textarea placeholder, the hidden picker and one thumbnail per row. */
 function decorate(root, photos) {
   if (!root) return;
   const box = root.querySelector(".iok-content-composer textarea");
@@ -75,8 +78,6 @@ function decorate(root, photos) {
     picker.setAttribute("aria-hidden", "true");
   }
   root.querySelectorAll(".iok-content-attachment").forEach((row, i) => {
-    const alt = row.querySelector("input");
-    if (alt && !alt.hasAttribute("placeholder")) alt.setAttribute("placeholder", ALT_PLACEHOLDER);
     const url = photos[i];
     let img = row.querySelector(":scope > img.hfy-posts__thumb");
     if (!url) { img?.remove(); return; }

@@ -13,6 +13,8 @@ import { cognitoProvisioner } from "./cognito.js";
 import { hfyLinkStore } from "./linkstore.js";
 import { hfyPasskeyStore } from "./passkeystore.js";
 import { ddbRateLimiter } from "./ratelimit.js";
+import { createAccessRequest, createMailAlarmGate } from "./access-request.js";
+import { createSesMailer } from "./mailer.js";
 
 const sdk = (name) => import(name);
 
@@ -97,10 +99,70 @@ async function init() {
         challenges: ddbChallengeStore({ client: ddb, tableName }),
       })
     : undefined;
+  const limiter = ddbRateLimiter({ doc, cmds: lib, table: tableName });
+  const accessRequests = createAccessRequestRoutes({ m, doc, cmds: lib, tableName, limiter, sm, resolver });
   return createAuthEdge({
-    manifest: m, identity, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
-    limiter: ddbRateLimiter({ doc, cmds: lib, table: tableName }), // POST /auth/password/forgot (HFY-R58 ruling 5)
+    manifest: m, identity, accessRequests, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
+    limiter, // POST /auth/password/forgot (HFY-R58 ruling 5) and the access-request routes (surfaces.md 7.5)
     verify: { issuers: [m.session.issuer], audiences: [m.session.audience], jwks: createLocalJWKSet({ keys: [publicJwk] }) },
+  });
+}
+
+/**
+ * The anonymous access-request routes (HFY-TSK-195). ACCESS_REQUESTS is read per request, so the routes answer 503 "closed" until the
+ * stack parameter is on. The two secrets (Turnstile, pepper) and the SES and CloudWatch clients load on first use and are never logged.
+ * Mail goes out from the JOIN identity (JOIN_FROM_ADDRESS, JOIN_SES_CONFIGURATION_SET), not the Cognito and API one; the code route
+ * stops while one of the JOIN_MAIL_ALARMS bounce or complaint alarms is in ALARM.
+ */
+export function createAccessRequestRoutes({ m, doc, cmds, tableName, limiter, sm, resolver, env = process.env, sdkImport = sdk }) {
+  const once = (fn) => { let v; return async () => (v ??= await fn()); }; // a rejection is not cached
+  const secretString = async (name) => {
+    if (!name) throw new Error("secret name not set");
+    const out = (await new sm.SecretsManagerClient({}).send(new sm.GetSecretValueCommand({ SecretId: name }))).SecretString;
+    if (typeof out !== "string" || !out) throw new Error("secret has no string value");
+    return out;
+  };
+  const turnstile = once(async () => {
+    const raw = (await secretString(env.TURNSTILE_SECRET_NAME)).trim();
+    if (!raw.startsWith("{")) return raw;
+    const o = JSON.parse(raw); // a JSON secret is also accepted: {"secret": "..."}
+    const v = o.secret ?? o.secretKey ?? o.TURNSTILE_SECRET;
+    if (typeof v !== "string" || !v) throw new Error("turnstile secret has no key");
+    return v;
+  });
+  const pepper = once(async () => (await secretString(env.ACCESS_REQUEST_PEPPER_SECRET)).trim());
+  const ses = once(async () => {
+    const mod = await sdkImport("@aws-sdk/client-sesv2");
+    return { client: new mod.SESv2Client({}), SendEmailCommand: mod.SendEmailCommand };
+  });
+  const cw = once(async () => {
+    const mod = await sdkImport("@aws-sdk/client-cloudwatch");
+    return { client: new mod.CloudWatchClient({}), DescribeAlarmsCommand: mod.DescribeAlarmsCommand };
+  });
+  const site = new URL(String(m.authOrigin ?? `https://${m.site}`));
+  return createAccessRequest({
+    flag: () => env.ACCESS_REQUESTS === "on",
+    siteOrigin: site.origin, siteHost: site.hostname, turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? "",
+    ddb: doc, cmds, table: tableName, limiter,
+    secrets: { turnstile, pepper },
+    mailConfigured: () => Boolean(env.JOIN_FROM_ADDRESS && env.JOIN_SES_CONFIGURATION_SET), // else 503 unavailable, before anything is spent
+    mailer: {
+      send: async (msg) => {
+        const { client, SendEmailCommand } = await ses();
+        return createSesMailer({
+          from: env.JOIN_FROM_ADDRESS, configurationSet: env.JOIN_SES_CONFIGURATION_SET,
+          send: (input) => client.send(new SendEmailCommand(input)),
+        }).send(msg);
+      },
+    },
+    isMember: async (email) => (await resolver(email, { kind: "password" })) != null,
+    mailAlarm: createMailAlarmGate({
+      names: (env.JOIN_MAIL_ALARMS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+      describeAlarms: async (names) => {
+        const { client, DescribeAlarmsCommand } = await cw();
+        return (await client.send(new DescribeAlarmsCommand({ AlarmNames: names, AlarmTypes: ["MetricAlarm"] }))).MetricAlarms ?? [];
+      },
+    }),
   });
 }
 

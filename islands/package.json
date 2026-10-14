@@ -16,8 +16,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@io-kit/comments": "0.1.0",
-    "@io-kit/content": "0.3.1",
+    "@io-kit/comments": "0.3.1",
+    "@io-kit/content": "0.3.2",
     "@io-kit/gates": "0.1.2",
     "@io-kit/md": "1.2.0",
     "@io-kit/notify": "0.4.0",
