@@ -267,6 +267,8 @@ A `link` for a person who **already signs in with another address** is refused w
 
 Revoke the request, not the file: `POST /api/access-requests/<id>/revoke` with the request's current `version`, `confirmedOutside: true` and an optional `reason`. It needs a sign-in at most 15 minutes old. One transaction sets the `ALLOW#` item and the request to `revoked`, adds the audits and lets the address ask again. Nobody is emailed. Access ends at the next sign-in or refresh: an `io_id` already issued lives out its hour. If io's file also lists the address, the revoked item still wins.
 
+**In the app.** The *remove access* button on `/me/requests/` calls `POST /api/allow-grants/revoke` with the member's Gramps ID and `confirmedOutside: true`, so it works at any age of the request (HFY-TSK-333, ruling P2-R60). A step-up answer shows a *sign in again* link; a half-edited *they're new* preview comes back after that sign-in (kept in the tab's `sessionStorage`).
+
 **More than 30 days after the decision.** The request is deleted 30 days after it is decided, and then that route answers `404`. Revoke by the member's grant instead: `POST /api/allow-grants/revoke` with `{"sub": "<the member's Gramps ID>", "confirmedOutside": true, "reason": "..."}`. It needs the same recent sign-in and confirmation. It revokes every active `ALLOW#` entry of that member (the answer lists the masked addresses), writes an `allow.revoke` audit for each and an `allowgrant.revoke` audit for the call, and also moves a request that still exists to `revoked`. `404` means the member has no active grant. Nobody is emailed. **Verify** with the check in [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb): it prints `"state": "revoked"`.
 
 ## Remove a member

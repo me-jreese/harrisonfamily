@@ -12,7 +12,7 @@
         "css": "11377c0e"
       },
       "access-requests": {
-        "js": "f51d3683",
+        "js": "ea8e0116",
         "css": "ed4e0505"
       },
       "edit-entry": {

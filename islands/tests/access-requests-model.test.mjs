@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mapToGramps } from "../../shared/legacy-form.mjs";
 import {
   COPY, TABS, answersOf, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, fold, givenOverlap, linkBody, locationFor, matchPlaces,
-  newBody, parseLocation, placeChoices, previewFields, rankCandidates, requesterName, tidyPreviewNames, resultLine, revokeBody, scoreCandidate, setEventPlace, stateWords,
+  newBody, parseLocation, placeChoices, previewFields, rankCandidates, requesterName, tidyPreviewNames, resultLine, revokeBody, REVOKE_PATH, saveDraft, loadDraft, clearDraft, scoreCandidate, setEventPlace, stateWords,
 } from "../src/lib/access-requests-model.js";
 
 const PEOPLE = [
@@ -161,7 +161,9 @@ test("the decision bodies carry the confirmed-outside flag only as true, and a n
   assert.deepEqual(declineBody({ note: "  ", sendNote: true, version: 1 }), { decision: "decline", version: 1 });
   assert.deepEqual(declineBody({ note: " hello ", sendNote: true, version: 1 }), { decision: "decline", version: 1, note: "hello", sendNote: true });
   assert.deepEqual(declineBody({ note: "hello", version: 1 }), { decision: "decline", version: 1, note: "hello", sendNote: false });
-  assert.deepEqual(revokeBody({ version: 4, confirmedOutside: true, reason: " " }), { version: 4, confirmedOutside: true });
+  assert.deepEqual(revokeBody({ grampsId: "I9001", confirmedOutside: true, reason: " " }), { grampsId: "I9001", confirmedOutside: true });
+  assert.deepEqual(revokeBody({ grampsId: "I9001", confirmedOutside: "yes", reason: " why " }), { grampsId: "I9001", confirmedOutside: false, reason: "why" });
+  assert.equal(REVOKE_PATH, "/allow-grants/revoke");
 });
 
 test("result and error words (surfaces.md 7.10, DS voice: lowercase, no exclamation marks)", () => {
@@ -193,4 +195,28 @@ test("free-text birth place: the city must equal the first segment, not just sta
   assert.ok(!scoreCandidate({ ...req, birthPlace: "Ann" }, { ...row, birthPlace: "Annapolis, Exampleland" }).reasons.includes("birthplace"));
   assert.ok(scoreCandidate(req, { ...row, birthPlace: "York, Exampleland" }).reasons.includes("birthplace"));
   assert.ok(!scoreCandidate(req, { ...row, birthPlace: "York, Otherland" }).reasons.includes("birthplace"));
+});
+
+test("revoke errors have their own words, and other routes keep theirs", () => {
+  const e = (status, code, o) => describeError({ status, code }, o);
+  assert.match(e(404, "not_found", { revoke: true }).text, /no access to remove/);
+  assert.match(e(422, "too_many", { revoke: true }).text, /more ways in/);
+  assert.equal(e(404, "not_found").text, "that request isn't there anymore.");
+  assert.equal(e(401, "step_up_required", { revoke: true }).kind, "signin");
+});
+
+test("a preview draft round-trips through storage, and a missing or broken storage is no draft", () => {
+  const mem = new Map();
+  const st = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  saveDraft("req1", { person: { nick: "Tessie" } }, st);
+  assert.deepEqual(loadDraft("req1", st), { person: { nick: "Tessie" } });
+  assert.equal(loadDraft("req2", st), null);
+  clearDraft("req1", st);
+  assert.equal(loadDraft("req1", st), null);
+  mem.set("hfy-requests-draft:bad", "{not json");
+  assert.equal(loadDraft("bad", st), null);
+  const boom = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
+  assert.doesNotThrow(() => { saveDraft("x", { a: 1 }, boom); clearDraft("x", boom); });
+  assert.equal(loadDraft("x", boom), null);
+  assert.equal(loadDraft("x", null), null);
 });

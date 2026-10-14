@@ -312,7 +312,27 @@ export function declineBody({ note, sendNote, version }) {
   const text = typeof note === "string" ? note.trim() : "";
   return { decision: "decline", version, ...(text ? { note: text, sendNote: sendNote === true } : {}) };
 }
-export const revokeBody = ({ version, confirmedOutside, reason }) => ({ version, confirmedOutside: confirmedOutside === true, ...(typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {}) });
+export const revokeBody = ({ grampsId, confirmedOutside, reason }) => ({ grampsId, confirmedOutside: confirmedOutside === true, ...(typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {}) });
+
+/** The route a remove takes: by the member's ALLOW# entries (P2-R60, POST /api/allow-grants/revoke), so it works whatever the age of the request. */
+export const REVOKE_PATH = "/allow-grants/revoke";
+
+// ---- a half-edited "they're new" preview survives the step-up sign-in (sessionStorage, this tab only; no storage means no draft)
+const DRAFT_PREFIX = "hfy-requests-draft:";
+const store = () => { try { return typeof sessionStorage === "undefined" ? null : sessionStorage; } catch { return null; } };
+export function saveDraft(id, preview, storage = store()) {
+  try { if (storage && typeof id === "string" && id && preview && typeof preview === "object") storage.setItem(DRAFT_PREFIX + id, JSON.stringify(preview)); } catch { /* storage full or blocked: the edits are not kept */ }
+}
+export function loadDraft(id, storage = store()) {
+  try {
+    const raw = storage && typeof id === "string" && id ? storage.getItem(DRAFT_PREFIX + id) : null;
+    const got = raw ? JSON.parse(raw) : null;
+    return got && typeof got === "object" && !Array.isArray(got) ? got : null;
+  } catch { return null; }
+}
+export function clearDraft(id, storage = store()) {
+  try { if (storage && typeof id === "string" && id) storage.removeItem(DRAFT_PREFIX + id); } catch { /* nothing to clear */ }
+}
 
 /** The result line for a decision answer `{state, emailSent}`. `mail: false` is a decision that sends none (revoke). */
 export function resultLine(answer, { revoke = false } = {}) {
@@ -326,9 +346,12 @@ export function resultLine(answer, { revoke = false } = {}) {
  * What an API error means for the admin: `{kind, text}`. kinds: signin (a fresh sign-in is needed), reload (the request changed),
  * second (the person already has access with another email), field (a validation problem), plain.
  */
-export function describeError(err) {
+export function describeError(err, { revoke = false } = {}) {
   const status = err?.status;
   const code = err?.code;
+  if (revoke && status === 404) return { kind: "plain", text: "they have no access to remove. it may already be gone." };
+  if (revoke && status === 422 && code === "too_many") return { kind: "plain", text: "this person has more ways in than can be removed here. ask the owner of the site." };
+  if (revoke && (status === 400 || status === 422)) return { kind: "plain", text: "that didn't go through. confirm with this person outside the site, then try again." };
   if (status === 401 && code === "step_up_required") return { kind: "signin", text: "to do this, sign in again first." };
   if (status === 401) return { kind: "signin", text: "your sign-in ran out. sign in again." };
   if (status === 403 && code === "owner_only") return { kind: "plain", text: "only the owner of the site can allow a second email." };

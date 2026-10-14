@@ -14,8 +14,8 @@ import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
 import { PersonName } from "../lib/person-name.jsx";
 import {
-  COPY, TABS, answersOf, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, giveAccessPrompt, linkBody, locationFor, newBody,
-  parseLocation, placeChoices, previewFields, rankCandidates, removePrompt, requesterName, resultLine, revokeBody, setEventPlace, stateWords, tabById, tidyPreviewNames,
+  COPY, TABS, answersOf, clearDraft, loadDraft, saveDraft, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, giveAccessPrompt, linkBody, locationFor, newBody,
+  parseLocation, placeChoices, previewFields, rankCandidates, removePrompt, requesterName, resultLine, REVOKE_PATH, revokeBody, setEventPlace, stateWords, tabById, tidyPreviewNames,
 } from "../lib/access-requests-model.js";
 
 /** The sign-in link: a fresh one (prompt=login) for a step-up, back to this same list or detail. */
@@ -168,13 +168,23 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
   const pending = detail.state === "pending";
   const request = useMemo(() => ({ ...(detail.form || {}) }), [detail.form]);
 
-  const reset = () => { setMode(null); setConfirmed(false); setNote(""); setSendNote(false); setNeedSecond(false); onProblem(null); };
+  const reset = () => { clearDraft(detail.id); setMode(null); setConfirmed(false); setNote(""); setSendNote(false); setNeedSecond(false); onProblem(null); };
+  // A step-up sign-in leaves the page; the half-edited preview comes back with it (sessionStorage, keyed by the request).
+  const edited = (next) => { setPreview(next); saveDraft(detail.id, next); };
+  useEffect(() => {
+    const kept = pending ? loadDraft(detail.id) : null;
+    if (!kept) return undefined;
+    let live = true;
+    loadIndexes().then((i) => { if (!live) return; setPlaces(i.places); setPreview(kept); setMode("new"); });
+    return () => { live = false; };
+  }, [detail.id, pending]);
   const startNew = async () => {
     onProblem(null);
     setConfirmed(false);
     const i = await loadIndexes();
     setPlaces(i.places);
-    setPreview(detail.preview ? tidyPreviewNames(applyUniquePlaces(detail.preview, i.places)) : null);
+    const kept = loadDraft(detail.id);
+    setPreview(kept || (detail.preview ? tidyPreviewNames(applyUniquePlaces(detail.preview, i.places)) : null));
     setMode("new");
   };
 
@@ -221,7 +231,7 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
       {mode === "new" && (
         <form className="hfy-requests__confirm" role="group" aria-label={COPY.theyAreNew} onSubmit={(e) => { e.preventDefault(); if (confirmed && preview && !busy) send(newBody({ preview, version: detail.version, confirmedOutside: confirmed })); }} data-hfy-confirm="new">
           <h3 className="hfy-requests__h4">{COPY.theyAreNew}</h3>
-          {preview ? <PreviewEditor preview={preview} onChange={setPreview} places={places} /> : <p className="hfy-requests__note">the answers can't be turned into a page yet. read them above, and add this person in Gramps first.</p>}
+          {preview ? <PreviewEditor preview={preview} onChange={edited} places={places} /> : <p className="hfy-requests__note">the answers can't be turned into a page yet. read them above, and add this person in Gramps first.</p>}
           <Confirmed checked={confirmed} onChange={setConfirmed} idPrefix={`${base}-new`} />
           <div className="hfy-requests__row">
             <button type="submit" className="hfy-requests__btn hfy-requests__btn--primary" disabled={!confirmed || !preview || busy} data-hfy-act="add-new">add them to the tree</button>
@@ -256,8 +266,8 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
 }
 
 // ---- removing access ----------------------------------------------------------------------------------------------------------------------
-// TODO(HFY-TSK-331): revoking is keyed by the ALLOW# entry (ruling P2-R60), which HFY-TSK-331 adds as its own route; until it merges this
-// calls the request-based revoke (POST /api/access-requests/:id/revoke), which works while the request is still inside its retention.
+// Revoking is keyed by the member's ALLOW# entries (ruling P2-R60, HFY-TSK-331): POST /api/allow-grants/revoke { grampsId, confirmedOutside },
+// which works after the request itself has been deleted. The member is the Gramps ID the request was linked to.
 function Revoke({ detail, name, onDone, onProblem, onReload, problem, busy, setBusy }) {
   const base = useId();
   const [open, setOpen] = useState(false);
@@ -266,12 +276,12 @@ function Revoke({ detail, name, onDone, onProblem, onReload, problem, busy, setB
     setBusy(true);
     onProblem(null);
     try {
-      const answer = await api.post(`/access-requests/${encodeURIComponent(detail.id)}/revoke`, revokeBody({ version: detail.version, confirmedOutside: confirmed }));
+      const answer = await api.post(REVOKE_PATH, revokeBody({ grampsId: detail.decision?.grampsId, confirmedOutside: confirmed }));
       announceChanged();
       onDone(resultLine(answer, { revoke: true }));
       setOpen(false);
     } catch (err) {
-      onProblem(describeError(err));
+      onProblem(describeError(err, { revoke: true }));
     } finally {
       setBusy(false);
     }
