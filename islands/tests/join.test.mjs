@@ -19,7 +19,7 @@ const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const EMAIL = "sam.example@example.test";
 const GOOD = {
   givenNames: "Sample Q", maidenSurname: "Example", gender: "female", nickname: "Sammy", birthPlace: "Springfield, IL", birthYear: "1962",
-  everMarried: "never_married", university: "Example State", graduationYear: "1984", otherDegrees: "", otherInstitutions: "", otherDegreeYears: "", forSelf: true
+  currentPlace: "Portland, OR", movedYear: "", everMarried: "never_married", university: "Example State", graduationYear: "1984", otherDegrees: "", otherInstitutions: "", otherDegreeYears: "", forSelf: true
 };
 const year = new Date().getUTCFullYear();
 
@@ -66,9 +66,9 @@ test("copy: lowercase, no '!', no 'record', no 'users' or 'members'", () => {
   assert.equal(entry.LINE, "new here? ask to join.");
 });
 
-test("the form asks the Legacy Form's questions in order; gender is male or female; the current city waits for Q2-11(a)", () => {
-  assert.equal(STORE_CURRENT_CITY, false);
-  assert.deepEqual(formFields(1).map((f) => f.key), ["givenNames", "maidenSurname", "gender", "nickname", "birthPlace", "birthYear", "everMarried"]);
+test("the form asks the Legacy Form's questions in order; gender is male or female; the current city is asked at city and state level (Q2-11(a))", () => {
+  assert.equal(STORE_CURRENT_CITY, true);
+  assert.deepEqual(formFields(1).map((f) => f.key), ["givenNames", "maidenSurname", "gender", "nickname", "birthPlace", "birthYear", "currentPlace", "movedYear", "everMarried"]);
   assert.deepEqual(formFields(2).map((f) => f.key), ["university", "graduationYear", "otherDegrees", "otherInstitutions", "otherDegreeYears"]);
   assert.deepEqual(FIELD_UI.gender.options.map((o) => o[0]), ["male", "female"]);
   assert.deepEqual(FIELD_UI.everMarried.options.map((o) => o[0]), ["married_once_still", "married_once_widowed", "married_once_divorced", "married_more_than_once", "never_married"]);
@@ -87,9 +87,13 @@ test("the client check is the edge's validator: a good form passes, each bad ans
   assert.equal(got.forSelf, "required");
   assert.equal(checkForm({ ...GOOD, birthYear: String(year + 1) }, EMAIL)[0].code, "year_range");
   assert.equal(checkForm({ ...GOOD, birthYear: String(year - 200) }, EMAIL)[0].code, "year_format");
-  // the current city is neither asked nor sent while the edge does not keep it
-  assert.deepEqual(checkForm({ ...GOOD, currentPlace: "", movedYear: "" }, EMAIL), []);
-  assert.equal("currentPlace" in formBody({ ...GOOD, currentPlace: "Elsewhere, IL" }), false);
+  // the current city is asked and sent, at city and state level only: a missing one is required, a street or a postal code is refused
+  assert.deepEqual(checkForm({ ...GOOD, currentPlace: "" }, EMAIL), [{ field: "currentPlace", code: "required" }]);
+  for (const place of ["12 Main Street, Portland, OR", "Portland, OR 97201"]) {
+    assert.deepEqual(checkForm({ ...GOOD, currentPlace: place }, EMAIL).map((f) => f.field), ["currentPlace"], place);
+  }
+  assert.equal(formBody({ ...GOOD, currentPlace: " Elsewhere, IL " }).currentPlace, "Elsewhere, IL");
+  assert.equal("movedYear" in formBody(GOOD), false); // optional and blank
 });
 
 test("formBody trims, leaves blanks out and sends the consent tick as true", () => {
@@ -119,7 +123,7 @@ function memoryStore(seed = {}) {
 test("the draft holds the answers only: never the code, the ticket, the email or the consent tick", () => {
   const dirty = { ...GOOD, code: "123456", ticket: "tkt_" + "a".repeat(40), email: EMAIL, turnstileToken: "tok", forSelf: true, company: "x" };
   const kept = draftOf(dirty);
-  assert.deepEqual(Object.keys(kept).sort(), ["birthPlace", "birthYear", "everMarried", "gender", "givenNames", "graduationYear", "maidenSurname", "nickname", "university"].sort());
+  assert.deepEqual(Object.keys(kept).sort(), ["birthPlace", "birthYear", "currentPlace", "everMarried", "gender", "givenNames", "graduationYear", "maidenSurname", "nickname", "university"].sort());
   const s = memoryStore();
   saveDraft(dirty, s);
   assert.equal(DRAFT_KEY, "hfy:join-draft");
