@@ -626,16 +626,16 @@ No workflow runs these suites.
 
 ### Search keystroke-to-paint baseline
 
-[`islands/scripts/measure-search-p95.mjs`](../../islands/scripts/measure-search-p95.mjs) (`npm run measure:search` in `islands/`, with a free `PW_PORT`) measures Search 1.0 (`@io-kit/search` 1.0.1 and `@io-kit/search-ui` 1.0.10, local tier, `searchV2`) at a 375 x 812 viewport in Chrome. It loads `/search/` with a synthetic corpus of 231 invented people, the size of the live index (only that count is used), and types four queries one character at a time, 48 keystrokes per run, clearing the box between queries. A sample starts at the capture-phase `keydown` and ends at the second `requestAnimationFrame` after the last DOM change under `#hfy-search-v2`, the frame that painted it. The script waits 150 ms after each key before it reads the sample, so an engine debounce counts. A key that changes nothing visible is reported as `unchanged` and left out of the percentile.
+[`islands/scripts/measure-search-p95.mjs`](../../islands/scripts/measure-search-p95.mjs) (`npm run measure:search` in `islands/`, with a free `PW_PORT`) measures Search 1.0 (`@io-kit/search` 1.0.1 and `@io-kit/search-ui` 1.0.10, local tier, `searchV2`) at a 375 x 812 viewport in Chrome. It loads `/search/` with a synthetic corpus of 231 invented people, the size of the live index (only that count is used), and types four queries one character at a time, 48 keystrokes per run, clearing the box between queries. A sample starts at the capture-phase `keydown` and ends at the second `requestAnimationFrame` after the last DOM change under `#hfy-search-v2`, the frame that painted it. The script waits 150 ms after each key before it reads the sample, so an engine debounce counts. A key with no change after 150 ms is re-read 800 ms later: a paint that lands then stays in the percentile and is counted as `late`; a key that never changes anything is reported as `unchanged` and left out. Every run must reach 30 measured keystrokes.
 
 No design budget exists for Search 1.0 keystroke latency, so this result is the baseline, not a pass or a fail. Three runs on one development machine (headless Chrome 155, a warm cache, an idle CPU) gave:
 
-| Run | Measured keystrokes | p50 | p95 | max |
-|---|---|---|---|---|
-| 1 | 48 | 11.5 ms | 30.3 ms | 32.3 ms |
-| 2 | 48 | 11.6 ms | 24.2 ms | 37.5 ms |
-| 3 | 48 | 11.6 ms | 27.3 ms | 37.7 ms |
-| Pooled | 144 | 11.6 ms | **27.3 ms** | 37.7 ms |
+| Run | Measured keystrokes | Unchanged | Late | p50 | p95 | max |
+|---|---|---|---|---|---|---|
+| 1 | 48 | 0 | 0 | 10.4 ms | 30.9 ms | 37.4 ms |
+| 2 | 48 | 0 | 0 | 11.4 ms | 24.5 ms | 36.3 ms |
+| 3 | 48 | 0 | 0 | 10.2 ms | 19.0 ms | 31.5 ms |
+| Pooled | 144 | 0 | 0 | 10.7 ms | **29.0 ms** | 37.4 ms |
 
 Timer and frame granularity is about 16.7 ms, so read differences under one frame as noise. Re-run the script after a `@io-kit/search` or `@io-kit/search-ui` bump and compare against this table. The script's header comment holds the definition of a sample.
 

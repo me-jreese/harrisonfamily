@@ -10,8 +10,8 @@
 // causes; after the LAST change, two requestAnimationFrame callbacks fire (the first runs before the next paint, the second after the
 // frame that painted the change). That second callback's time minus t0 is the keystroke-to-paint latency. The script waits QUIET_MS
 // after the last change before it reads the sample, so a debounce in the engine shows up in the number rather than hiding behind it.
-// A keystroke that changes nothing visible (the query still matches the same rows and the same count) has no mutation: it is reported
-// as `unchanged` and excluded from the percentile, never counted as zero.
+// A keystroke with no mutation after QUIET_MS is re-read after LATE_MS more: a paint that lands then is kept in the percentile and
+// counted as `late`; one that never changes anything is reported as `unchanged` and excluded, never counted as zero.
 import { chromium } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
@@ -19,6 +19,7 @@ import { resolve } from "node:path";
 const CORPUS_SIZE = 231;
 const KEYS_MIN = 30;
 const QUIET_MS = 150;
+const LATE_MS = 800;
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? d : process.argv[i + 1]; };
 const RUNS = Number(arg("runs", 3));
 const port = Number(process.env.PW_PORT || 18322);
@@ -68,7 +69,7 @@ async function oneRun(browser, runNo) {
   const input = root.getByRole("textbox").first();
   await input.waitFor();
   await page.locator(".io-search-header__count").filter({ hasText: /people|person/ }).first().waitFor({ timeout: 15_000 });
-  await page.evaluate(({ quiet }) => {
+  await page.evaluate(() => {
     const root = document.querySelector("#hfy-search-v2");
     const s = (window.__ks = { t0: 0, paint: 0, mutated: false, pending: 0 });
     window.addEventListener("keydown", () => { s.t0 = performance.now(); s.paint = 0; s.mutated = false; }, true);
@@ -77,18 +78,23 @@ async function oneRun(browser, runNo) {
       const id = ++s.pending;
       requestAnimationFrame(() => requestAnimationFrame(() => { if (id === s.pending) s.paint = performance.now(); }));
     }).observe(root, { subtree: true, childList: true, characterData: true, attributes: true });
-    window.__quiet = quiet;
-  }, { quiet: QUIET_MS });
+  });
 
-  const samples = []; let unchanged = 0; let keys = 0;
+  const samples = []; let unchanged = 0; let late = 0; let keys = 0;
   for (const q of QUERIES) {
     await input.click();
     for (const ch of q) {
       await page.keyboard.type(ch);
       await page.waitForTimeout(QUIET_MS + 50);
-      const r = await page.evaluate(() => ({ ...window.__ks }));
+      let r = await page.evaluate(() => ({ ...window.__ks }));
       keys += 1;
-      if (!r.mutated || !r.paint) { unchanged += 1; continue; }
+      if (!r.mutated || !r.paint) {
+        // Not seen within QUIET_MS: wait much longer before calling it a no-op. A paint that lands here is a slow one and stays in the percentile.
+        await page.waitForTimeout(LATE_MS);
+        r = await page.evaluate(() => ({ ...window.__ks }));
+        if (!r.mutated || !r.paint) { unchanged += 1; continue; }
+        late += 1;
+      }
       samples.push(r.paint - r.t0);
     }
     await input.fill("");
@@ -96,7 +102,7 @@ async function oneRun(browser, runNo) {
   }
   const rows = await root.getByRole("link").count();
   await ctx.close();
-  return { run: runNo, keystrokes: keys, measured: samples.length, unchanged, rowsAtEnd: rows, samples };
+  return { run: runNo, keystrokes: keys, measured: samples.length, unchanged, late, rowsAtEnd: rows, samples };
 }
 
 const server = await serve();
@@ -105,15 +111,16 @@ try {
   const browser = await chromium.launch({ channel: process.env.PW_CHANNEL || "chrome" });
   const runs = [];
   for (let i = 1; i <= RUNS; i += 1) runs.push(await oneRun(browser, i));
+  const browserVersion = browser.version();
   await browser.close();
   const all = runs.flatMap((r) => r.samples);
-  if (runs[0].measured < KEYS_MIN) throw new Error(`only ${runs[0].measured} measured keystrokes per run, need ${KEYS_MIN}`);
-  const per = runs.map((r) => ({ run: r.run, keystrokes: r.keystrokes, measured: r.measured, unchanged: r.unchanged, p50: round(percentile(r.samples, 50)), p95: round(percentile(r.samples, 95)), max: round(Math.max(...r.samples)) }));
+  for (const r of runs) if (r.measured < KEYS_MIN) throw new Error(`run ${r.run}: only ${r.measured} measured keystrokes, need ${KEYS_MIN}`);
+  const per = runs.map((r) => ({ run: r.run, keystrokes: r.keystrokes, measured: r.measured, unchanged: r.unchanged, late: r.late, p50: round(percentile(r.samples, 50)), p95: round(percentile(r.samples, 95)), max: round(Math.max(...r.samples)) }));
   out = {
     measure: "search 1.0 keystroke-to-paint",
     package: "@io-kit/search 1.0.1 + @io-kit/search-ui 1.0.10 (local tier, searchV2)",
     viewport: "375x812 @2x",
-    browser: `chrome (${browser.version?.() ?? "?"})`,
+    browser: `chrome (${browserVersion})`,
     corpusPeople: CORPUS_SIZE,
     runs: per,
     pooled: { n: all.length, p50: round(percentile(all, 50)), p95: round(percentile(all, 95)), p99: round(percentile(all, 99)), max: round(Math.max(...all)) },

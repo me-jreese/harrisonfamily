@@ -47,18 +47,26 @@ async function makeTarget() {
   return { name: "harrisonfamily posts source (adapter + timeline over the api handler)", source, backend, filter: undefined, otherFilter: { type: "article" }, markOwnWrite: (item) => source.markOwnWrite(item.id) };
 }
 
-describe("feed conformance FT-01..FT-12 on the posts source", () => {
-  it("no failures; FT-13 and the since/realtime cases are reported as skips", async () => {
-    const report = await runConformance(await makeTarget());
-    const n = (s) => report.results.filter((r) => r.status === s).length;
-    console.log(`feed conformance: ${report.results.length} cases, ${n("pass")} pass, ${n("skip")} skip, ${n("fail")} fail`);
-    for (const r of report.results.filter((x) => x.status !== "pass")) console.log(`  ${r.status} ${r.id} ${r.detail ?? ""}`);
-    assert.equal(n("fail"), 0, JSON.stringify(report.results.filter((r) => r.status === "fail")));
+// FT-05..FT-09 need since()/subscribe (this surface refetches); FT-13 is browser-only. Pinned exactly so a case that silently stops or starts running is noticed.
+const EXPECT_PASS = ["FT-01", "FT-02", "FT-03", "FT-04", "FT-10", "FT-11", "FT-12"];
+const EXPECT_SKIP = ["FT-05", "FT-06", "FT-07", "FT-08", "FT-09", "FT-13"];
+const idOf = (r) => r.id.match(/^FT-\d+/)?.[0];
+
+describe("feed conformance FT-01..FT-12 on the posts source", async () => {
+  const report = await runConformance(await makeTarget());
+  const by = (id) => report.results.find((r) => idOf(r) === id);
+  console.log(`feed conformance: ${report.results.length} cases; skips: ${report.results.filter((r) => r.status === "skip").map(idOf).join(" ")}`);
+
+  for (const id of [...EXPECT_PASS, ...EXPECT_SKIP].sort()) {
+    it(`${id} is ${EXPECT_PASS.includes(id) ? "pass" : "skip"}`, () => {
+      const r = by(id);
+      assert.ok(r, `${id} missing from report`);
+      assert.equal(r.status, EXPECT_PASS.includes(id) ? "pass" : "skip", `${id}: ${r.detail ?? ""}`);
+    });
+  }
+  it("no failures and no unexpected cases", () => {
+    assert.equal(report.results.filter((r) => r.status === "fail").length, 0, JSON.stringify(report.results.filter((r) => r.status === "fail")));
     assert.ok(report.ok);
-    // The cases that must really run on this surface (not skip): paging, limits, filter reset, snapshot mode, schema, transport auth.
-    for (const id of ["FT-01", "FT-02", "FT-03", "FT-04", "FT-10", "FT-11", "FT-12"]) {
-      assert.equal(report.results.find((r) => r.id.startsWith(id))?.status, "pass", id);
-    }
-    assert.equal(report.results.filter((r) => /^FT-(0[1-9]|1[0-3])/.test(r.id)).length, 13);
+    assert.deepEqual(report.results.map(idOf).sort(), [...EXPECT_PASS, ...EXPECT_SKIP].sort());
   });
 });

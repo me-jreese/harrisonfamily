@@ -73,14 +73,18 @@ test("every payload the page sends is accepted by the handler (200, never invali
   const { w } = await wire(page);
   page.on("response", (res) => { if (res.request().method() === "PUT" && res.url().endsWith("/api/notifications/preferences")) statuses.push(res.status()); });
   const root = await open(page);
-  for (const t of ["comment_on_my_record", "reply_to_me", "new_family_post", "mention"]) {
+  const types = ["comment_on_my_record", "reply_to_me", "new_family_post", "mention"];
+  for (const [i, t] of types.entries()) {
     await root.locator(`[data-type="${t}"] [role=switch]`).click();
-    await expect.poll(() => statuses.length).toBeGreaterThan(0);
+    await expect.poll(() => statuses.length).toBeGreaterThanOrEqual(i + 1);
   }
   await expect.poll(async () => Object.keys((await w.preferences.get(ME)).features ?? {}).length).toBe(4);
+  expect(statuses.length).toBeGreaterThanOrEqual(4);
   expect(statuses.every((s) => s === 200)).toBe(true);
 });
 
+// Deliberately a source-text check: the island is JSX and not importable from the node/Playwright runner without a build step.
+// If CATALOG is reformatted (4-space entries, `export const CATALOG` / `export const LABELS` markers) update the slice below.
 test("the island catalog and the server registry name the same four types with the same lock-screen text", async () => {
   const src = readFileSync(new URL("../src/islands/notifications.jsx", import.meta.url), "utf8");
   const catalog = src.slice(src.indexOf("export const CATALOG"), src.indexOf("export const LABELS"));
