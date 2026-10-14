@@ -11,12 +11,7 @@
 // /family-login/ is a static redirect page to /auth/login (11ty/family-login/index.html), so old bookmarks still work.
 (function () {
   var SIGNOUT_LOCAL_KEYS = ["hfy:edge-session"];
-  // What the retired Google sign-in (auth.js, HFY-TSK-317) left in this browser: purged on every page, so no old Google ID token or
-  // legacy session token outlives the script that used it.
-  var RETIRED_LOCAL_KEYS = ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID"];
-  var RETIRED_SESSION_KEYS = ["HFY_GATEWAY_SESSION_V1"];
-  RETIRED_LOCAL_KEYS.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
-  RETIRED_SESSION_KEYS.forEach(function (k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
+  // The keys the retired Google sign-in left behind are purged by feature-flags.js (HFYFeatureFlags.purgeRetiredKeys), which every page loads.
   var LOGOUT_TIMEOUT_MS = 4000;
 
   function getJSON(url, init) {

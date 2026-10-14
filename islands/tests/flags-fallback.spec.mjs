@@ -219,3 +219,28 @@ for (const here of ["/person/?id=I0113", "/search/?query=Harrison"]) {
     await expect.poll(async () => decodeURIComponent((await link.getAttribute("href")) || "")).toMatch(new RegExp("^/auth/login\\?returnTo=" + here.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 }
+
+test("the retired Google sign-in's keys are purged on pages that do not load auth-v2.js (/posts/, /me/)", async ({ page }) => {
+  await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: false } }));
+  await page.addInitScript(() => {
+    localStorage.setItem("HFY_AUTH_ID_TOKEN", "retired-token");
+    localStorage.setItem("HFY_AUTH_USER_GRAMPS_ID", "I0001");
+    sessionStorage.setItem("HFY_GATEWAY_SESSION_V1", JSON.stringify({ token: "retired" }));
+  });
+  for (const path of ["/posts/", "/me/"]) {
+    await page.goto(path);
+    expect(await page.locator("script[src*='auth-v2.js']").count(), `${path} does not load auth-v2.js`).toBe(0);
+    expect(await page.evaluate(() => ({ t: localStorage.getItem("HFY_AUTH_ID_TOKEN"), g: localStorage.getItem("HFY_AUTH_USER_GRAMPS_ID"), s: sessionStorage.getItem("HFY_GATEWAY_SESSION_V1") }))).toEqual({ t: null, g: null, s: null });
+  }
+});
+
+test("/search/ says search is unavailable when searchV2 is off or its island fails to load, instead of staying empty", async ({ page }) => {
+  const note = page.locator("main [data-search-unavailable][role=status]");
+  await page.goto("/search/");
+  await expect(note).toHaveCount(1);
+  await expect(note).toContainText("Search is not available");
+  expect(await page.locator("#hfy-search-v2").count()).toBe(0);
+  await page.route("**/js/islands/search.js*", (r) => r.fulfill({ status: 404, body: "" }));
+  await page.goto("/search/?hfy_flags=searchV2");
+  await expect(note).toHaveCount(1);
+});

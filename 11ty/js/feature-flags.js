@@ -36,11 +36,11 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "4a77a8a5",
+        "js": "79ac63fd",
         "css": "b1550e24"
       },
       "shell": {
-        "js": "29968265",
+        "js": "36ba7a7b",
         "css": "53cdeb03"
       },
       "timeline": {
@@ -50,7 +50,7 @@
     },
     "theme": "1e33d0e0",
     "manifest": "c0f9b5fc",
-    "sw": "e156369b"
+    "sw": "a74a20a3"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -376,6 +376,17 @@
     }
   }
 
+  // What the retired Google sign-in (auth.js, HFY-TSK-317) left in this browser. feature-flags.js is the one script every page loads
+  // (posts/, me/ and me/notifications/ do not load auth-v2.js), so the purge runs here, on every page, and the shared sign-out
+  // (islands/src/lib/sign-out.js) calls it through HFYFeatureFlags.purgeRetiredKeys. Nothing reads these keys any more.
+  const RETIRED_LOCAL_KEYS = ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID"];
+  const RETIRED_SESSION_KEYS = ["HFY_GATEWAY_SESSION_V1"];
+  function purgeRetiredKeys() {
+    RETIRED_LOCAL_KEYS.forEach((k) => storageSet("localStorage", k, null));
+    RETIRED_SESSION_KEYS.forEach((k) => storageSet("sessionStorage", k, null));
+  }
+  purgeRetiredKeys();
+
   function getSessionJSON() {
     return fetch(SESSION_URL, { credentials: "same-origin", cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -448,6 +459,7 @@
     });
   }
   featureAPI.edgeSession = edgeSession;
+  featureAPI.purgeRetiredKeys = purgeRetiredKeys;
   // Sign-out: drop the overlay and the "had an edge session" marker so later pages do not try to refresh.
   featureAPI.forgetEdgeSession = function forgetEdgeSession() {
     storageSet("localStorage", EDGE_SEEN_KEY, null);
@@ -672,10 +684,21 @@
 
   // HFY-TSK-065 (D-09): searchV2 mounts the @io-kit/search island (local tier only) on /search/. It is the only search page: the
   // old search page and the navbar search are gone (HFY-TSK-317).
+  // With the flag off, or when the island fails to load, the page says so instead of staying empty (there is no older search to fall back to).
   resolveFlags().then((flags) => {
-    if (flags.searchV2 !== true || !/^\/search\/?(index\.html)?$/.test(window.location.pathname)) return;
-    loadIsland("search");
+    if (!/^\/search\/?(index\.html)?$/.test(window.location.pathname)) return;
+    if (flags.searchV2 !== true) { searchUnavailableNote(); return; }
+    loadIsland("search", { onError: searchUnavailableNote });
   });
+  function searchUnavailableNote() {
+    const main = document.querySelector("main:not([data-io-scroller])");
+    if (!main || main.querySelector("[data-search-unavailable]")) return;
+    const p = document.createElement("p");
+    p.setAttribute("data-search-unavailable", "");
+    p.setAttribute("role", "status");
+    p.textContent = "Search is not available right now. Please reload the page in a moment.";
+    main.prepend(p);
+  }
 
   // HFY-TSK-068 (D-08): notifyV2 mounts the notifications island on the static /me/notifications/ page.
   resolveFlags().then((flags) => {
