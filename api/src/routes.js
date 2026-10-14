@@ -3,7 +3,7 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt } from "./features.js";
+import { describeGate, gateExempt, requireFeature } from "./features.js";
 
 export const API_NAME = "hfy-api";
 export const API_VERSION = "0.1.0";
@@ -137,6 +137,10 @@ export const ROUTES = defineRoutes([
   { name: "notifications.subscribe", method: "POST", path: "/notifications/subscribe", summary: "Register a push subscription", handler: (c) => c.notifyHandler() },
   { name: "notifications.unsubscribe", method: "DELETE", path: "/notifications/subscribe", summary: "Remove a push subscription", handler: (c) => c.notifyHandler() },
   { name: "notifications.preferences.get", method: "GET", path: "/notifications/preferences", summary: "Read notification preferences", handler: (c) => c.notifyHandler() },
+  // The inbox (hfy-inbox-delivery-api; BRD2 D2-15, D2-28): served by the kit handler, dark until inboxV1 is on (or the caller is uat). No `mcp` member and no policy row.
+  { name: "notifications.inbox.list", method: "GET", path: "/notifications/inbox", summary: "List your notification inbox, newest first (cursor, limit, unread)", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
+  { name: "notifications.inbox.count", method: "GET", path: "/notifications/inbox/unread-count", summary: "Count your unread notifications", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
+  { name: "notifications.inbox.read", method: "POST", path: "/notifications/inbox/read", summary: "Mark notifications read: {ids} or {all:true}", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
   { name: "notifications.preferences.put", method: "PUT", path: "/notifications/preferences", summary: "Save notification preferences", handler: (c) => c.notifyHandler() },
 ]);
 

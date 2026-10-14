@@ -3,7 +3,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
-import { DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
+import { DynamoNotificationStore, DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
 import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
@@ -82,6 +82,10 @@ const features = configureFeatures(createFeatureGate({
   isUat: async (sub) => (await getGroups({ sub })).includes(UAT_GROUP),
 }));
 
+/** The inbox store (BRD2 D2-15): INBOX#<principal> rows on the app table. Unread items carry no TTL; the 90-day TTL starts when an item is read. */
+export const INBOX_TTL = Object.freeze({ unreadTtlDays: null, readTtlDays: 90 });
+export const createInboxStore = (client = ddb, commands = cmds, tableName = table) => new DynamoNotificationStore(client, commands, tableName, { ...INBOX_TTL });
+
 let inner;
 let mcp;
 export const handler = async (event) => {
@@ -92,6 +96,7 @@ export const handler = async (event) => {
       ddb, cmds, table, authenticate, ulid: createUlidFactory(),
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
+      inbox: createInboxStore(),
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",

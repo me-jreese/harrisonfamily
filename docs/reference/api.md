@@ -51,7 +51,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | --- | --- | --- |
 | `@io-kit/content` | 0.1.0 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
 | `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
-| `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
+| `@io-kit/notify` (`/server`) | 0.5.0 | The notification routes (five push routes and three inbox routes), the inbox store, persist-first delivery (`createDelivery`), subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
 | `@io-kit/feed` | 1.1.1 | `createUlidFactory`: monotonic ULIDs for record ids and audit sort keys |
@@ -155,6 +155,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
 | `notifications.preferences.get` | GET | `/notifications/preferences` | none | `200` preferences | Kit route |
 | `notifications.preferences.put` | PUT | `/notifications/preferences` | body: preferences | `200` preferences | Kit route |
+| `notifications.inbox.list` | GET | `/notifications/inbox` | query `cursor`, `limit`, `unread` | `200` `{items, next_cursor, has_more}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.count` | GET | `/notifications/inbox/unread-count` | none | `200` `{unread}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.read` | POST | `/notifications/inbox/read` | body `{ids}` or `{all: true}` | `200` `{updated, unread, ...}` | Kit route; dark behind `inboxV1`; no MCP tool and no policy row |
 
 The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
@@ -203,7 +206,7 @@ A `ROUTES` entry may carry `gate`:
 
 `featureOn(name, principal)` applies the same rule outside a route. `principal` is a gramps id or an actor: a `uat` principal gets `true`, anyone else the deployed value. `index.js` configures it with the deployed gate; until then it returns `false`. A route handler gets `c.featureOn(name)` for its caller, which counts the caller's preview header when they are `uat`.
 
-**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires no inbox store yet (`hfy-inbox-delivery-api` adds it), so today the notifier behaves as described in [Notifications](#notifications).
+**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires a `DynamoNotificationStore` on the app table (`INBOX#<principal>` rows, `@io-kit/notify` 0.5.0). Delivery is the kit's `createDelivery`: it stores first, then pushes. Storing needs no `VAPID_SECRET`; only the push does. Unread items have no TTL, and a 90-day TTL starts when an item is read. The three inbox routes are dark behind `inboxV1` too (404 outside `uat`).
 
 ## Subjects
 
