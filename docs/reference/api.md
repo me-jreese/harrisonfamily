@@ -44,6 +44,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). `headUpload(bucket, key)`: the `HeadObject` of a comment photo, with a 2 s timeout. See [Comment photos](#comment-photos). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
 | [`sync/store.js`](../../api/src/sync/store.js) | The cloud record store's keys and items (`REC#`, `SYNC#LOG`, `SYNC#HEAD`, `SYNC#BATCH#`, `GID#`, `IDALIAS#`), the batch id and request token, and the reads `applyBatch` needs. See [The cloud record store](#the-cloud-record-store). |
+| [`records/read.js`](../../api/src/records/read.js) | The read-only records API (HFY-TSK-175): `publishView`, `applyModOverlay`, `viewRecord` and the two `/api/records` routes. See [Records read API](#records-read-api). |
 | [`sync/apply.js`](../../api/src/sync/apply.js) | `applyBatch()`, the one write path into the record store. No route calls it yet. See [The cloud record store](#the-cloud-record-store). |
 | [`records/index.js`](../../api/src/records/index.js) | Read accessors over the record store: `get`, `byGrampsId` (GSI1, tombstones excluded), `backrefs`, `graph` (cached up to 60 s) and `customTypes`, on a store view (snapshot plus `SYNC#LOG` fold). No route calls it yet. |
 | [`sync/hooks.js`](../../api/src/sync/hooks.js) | The commit-hook registry: `registerContributor` and `registerAfterCommit`. |
@@ -177,6 +178,8 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `contributions.list` | GET | `/contributions` | query `author` (required), `cursor`, `limit` (1 to 50, default 10) | `200` `{items, cursor}` | Newest first. Not an MCP tool. Behind `requireFeature("contribV1")`. See [Contributions read API](#contributions-read-api). |
 | `contributions.stats` | GET | `/contributions/stats` | query `author` | `200` `{author, total, by_kind, first_at?}` | A member's counters, zeros for an unknown member. Behind `contribV1`. Not an MCP tool. |
 | `contributions.site` | GET | `/contributions/stats` | none (no `author`) | `200` `{total, line, computed_at}` | The site total and the feed line, through the cached `CSTAT#site/LINE` row. Shares its path with `contributions.stats`: `?author=` picks that route. Behind `contribV1`. Not an MCP tool. |
+| `records.get` | GET | `/records/:class/:handle` | none | `200` `{class, handle, gramps_id, version, obj}` with `ETag: "v<version>"` | Read-only, not an MCP tool, behind `HFY_EDITING`. `404` for a tombstone, an unknown handle or class. See [Records read API](#records-read-api) |
+| `records.byGrampsId` | GET | `/records/Person/by-id/:gramps_id` | none | `200`, as `records.get` | `404` when no live Person has the id, `409 ambiguous_gramps_id` when two do |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
@@ -1046,6 +1049,16 @@ One `GID#` write per distinct id decides the batch as a whole, so a swap or a ro
 - A contributor, `fn(batch, origin)`, returns extra transaction items for the batch's own transaction. It runs on every attempt, so it must be pure. The self-edit and tag contribution ops come only from the contributor that `hfy-record-change-fanout` registers; no caller adds them.
 - An after-commit hook, `fn({batch_id, origin, seq_from, seq_to})`, runs once per committed batch, after the commit, and never for a replay or a refused batch. A hook that throws is logged by name and code and never fails the write. If the process dies between the commit and the hook, the hook does not run for that batch.
 - Record-change notifications do not come from here. They come from the render outbox.
+
+## Records read API
+
+[`src/records/read.js`](../../api/src/records/read.js) (HFY-TSK-175). `GET /api/records/:class/:handle` and `GET /api/records/Person/by-id/:gramps_id` return one stored record to a signed-in member as `{class, handle, gramps_id, version, obj}` with `ETag: "v<version>"`. The editing, proposals and tagging domains read through it. There is no write route and no MCP tool; the edit bundle and `hfy_records_get` call the same `viewRecord()`.
+
+- **What is stored.** `obj` is the redacted Gramps JSON of the cloud record store ([The cloud record store](#the-cloud-record-store)). A tombstone, an unknown handle, an unknown class or a malformed handle answers `404 not_found`. The ETag carries the version only and the body depends on the viewer, so the response is `no-store` with `Vary: Cookie`; the route does not answer `If-None-Match` with `304`.
+- **`publishView(obj, viewer)` (Q2-04b, HFY-R76).** A non-admin gets every date at year precision: day and month (also the second day and month of a range or span) become `0`, `sortval` becomes `0`, and `text` becomes the year or an empty string. Admins, the member's own Person and the member's own-only events are not reduced; an own-only event is an Event that only the member's own Person references, as Primary. It returns a copy.
+- **`applyModOverlay(obj, viewer, mods)` (D2-19, D2-34).** `loadMods()` reads the open, hidden `MOD#note:<handle>`, `MOD#mediaref:<holder handle>:<media handle>` and `MOD#media:<handle>` items for the references in `obj`. The overlay removes hidden note handles from every `note_list`, and hidden MediaRefs and MediaRefs of hidden Media from every `media_list`, unless the viewer is an admin or the item's `author_id`. A hidden Note or Media record itself is a `404` to everyone else. A failed `MOD#` read is an error, never an unfiltered record.
+- **The `HFY_EDITING` switch.** While it is not `on`, the routes answer `404 not_found` to everyone except admins and a member reading their own record: their own Person (also by id), or an Event, Note or Media their own Person references. A signed-out caller gets `404` while it is off and `401` when it is on.
+- **Cost.** The own record costs one index query and one read per request; the reference index (the store view) is read only for an Event that holds a day-precise date.
 
 ## The sync API
 
