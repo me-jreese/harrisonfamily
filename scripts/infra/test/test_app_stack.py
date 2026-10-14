@@ -213,7 +213,7 @@ class SyncInfra(unittest.TestCase):
             "SyncBucketName": "harrisonfamily-sync", "AlarmEmail": "",
             # HFY-TSK-195 (P2-R23): the access-request mail identity, configuration set and alarms are separate from Cognito's and the API's
             "JoinSesIdentityArn": "", "JoinFromAddress": "", "JoinSesConfigurationSet": "",
-            "JoinBounceAlarmName": "hfy-access-request-bounce", "JoinComplaintAlarmName": "hfy-access-request-complaint",
+            "JoinBounceAlarmName": "hfy-ses-access-request-bounce-rate", "JoinComplaintAlarmName": "hfy-ses-access-request-complaint-rate",
         }
         for name, default in expected.items():
             self.assertIn(name, self.p, name)

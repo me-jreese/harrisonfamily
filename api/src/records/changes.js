@@ -34,7 +34,7 @@ import { relationView } from "./edit-bundle.js";
 import { viewRecord } from "./read.js";
 import {
   CONTRIB_RESERVE, MAX_APPROVAL_OBJECTS, MAX_NEW_OBJECTS, MAX_PROPOSAL_BYTES, MAX_PROPOSAL_OPS, MAX_TXN_ACTIONS, PROPOSAL_RATE_LIMIT, idemKeys, idemPut, newProposal, proposalAuditItem, proposalPuts,
-  proposalTooLarge, proposalView, recentProposalCount,
+  ownersOf, proposalTooLarge, proposalView, recentProposalCount,
 } from "./proposals.js";
 import { FIXED_TXN_ITEMS } from "../sync/store.js";
 
@@ -72,15 +72,15 @@ const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const arr = (v) => (Array.isArray(v) ? v : []);
 const esc = (s) => String(s).replace(/~/g, "~0").replace(/\//g, "~1");
 const unescSeg = (s) => s.replace(/~1/g, "/").replace(/~0/g, "~");
-const sortedUnique = (xs) => [...new Set(xs)].sort();
+export const sortedUnique = (xs) => [...new Set(xs)].sort();
 
 /** An HttpError that also carries errors[] (positions and codes, never values), which errorResponse sends beside `details`. */
-const problem = (status, code, message, { errors, details } = {}) => Object.assign(new HttpError(status, code, message, details), errors ? { errors } : {});
+export const problem = (status, code, message, { errors, details } = {}) => Object.assign(new HttpError(status, code, message, details), errors ? { errors } : {});
 const invalid = (errors, message = "the request is not valid") => problem(400, "validation", message, { errors });
-const keyParts = (key) => [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+export const keyParts = (key) => [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
 
 /** A header by name, whatever its case (API Gateway HTTP API lower-cases names; a REST API or a direct invocation may not). */
-function headerOf(headers, name) {
+export function headerOf(headers, name) {
   if (!isObj(headers)) return undefined;
   if (typeof headers[name] === "string") return headers[name];
   const hit = Object.keys(headers).find((k) => k.toLowerCase() === name && typeof headers[k] === "string");
@@ -216,7 +216,7 @@ function shapeOp(raw, at, bad, createdCls) {
 }
 
 // ---- step 1: the request ----------------------------------------------------------------------------------------------------
-function parseRequest(c, guard) {
+export function parseRequest(c, guard) {
   const b = c.body;
   const errors = [];
   const bad = (pointer, detail) => errors.push({ pointer, detail });
@@ -293,11 +293,11 @@ function diffObjects(before, after) {
   for (const k of Object.keys(before)) if (!(k in after)) deleted.push(k);
   return { created: created.sort(), updated: updated.sort(), deleted: deleted.sort() };
 }
-const pick = (m, keys) => Object.fromEntries(keys.filter((k) => k in m).map((k) => [k, m[k]]));
+export const pick = (m, keys) => Object.fromEntries(keys.filter((k) => k in m).map((k) => [k, m[k]]));
 const opsAt = (ops, indexes) => [...indexes].sort((a, b) => a - b).map((i) => ops[i]);
-const existingKey = (op) => (typeof op.obj === "string" && !TEMP_RE.test(op.obj) ? op.obj : null);
+export const existingKey = (op) => (typeof op.obj === "string" && !TEMP_RE.test(op.obj) ? op.obj : null);
 
-function displayName(obj) {
+export function displayName(obj) {
   const n = isObj(obj?.primary_name) ? obj.primary_name : {};
   const surname = arr(n.surname_list).map((s) => (isObj(s) ? s.surname : "")).filter(Boolean).join(" ");
   return [n.first_name, surname].filter((x) => typeof x === "string" && x).join(" ");
@@ -457,7 +457,7 @@ async function resultOf(ctx, actor, plan, ops, label, nowMs) {
 }
 
 // ---- the plan (steps 2 to 5) -----------------------------------------------------------------------------------------------------
-async function planChanges(c, req, nowMs, guard) {
+export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false } = {}) {
   const { actor } = c;
   const ctx = c.store;
   const stored = await loadTouched(ctx, actor, req);
@@ -569,7 +569,7 @@ async function planChanges(c, req, nowMs, guard) {
     if (counts.created > MAX_NEW_OBJECTS) throw problem(413, "too_large", `a proposal creates at most ${MAX_NEW_OBJECTS} new objects`);
     if (proposalTooLarge(counts)) throw problem(422, "proposal_too_large", "this suggestion is too big to approve in one step; please split it into smaller ones", { details: { objects: counts.created + counts.updated + counts.deleted } });
     // A soft limit: the count and the write are not one atomic step, so concurrent submissions from one principal can overshoot 50 by a few.
-    if ((await recentProposalCount(ctx, actor.id)) >= PROPOSAL_RATE_LIMIT) throw problem(429, "rate_limited", "you have made a lot of suggestions today; please try again tomorrow");
+    if (!skipRateLimit && (await recentProposalCount(ctx, actor.id)) >= PROPOSAL_RATE_LIMIT) throw problem(429, "rate_limited", "you have made a lot of suggestions today; please try again tomorrow");
     if (counts.created + counts.updated + counts.deleted > 0) {
       out.review = { ops, ...r, targets: touched };
       out.warnings.push(...r.warnings);
@@ -613,7 +613,7 @@ function appliedOf(direct) {
   return { versions, undo };
 }
 
-const subjectOf = (req, stored, ops) => {
+export const subjectOf = (req, stored, ops) => {
   const key = req.target ?? ops.map(existingKey).find((k) => k?.startsWith("Person:")) ?? ops.map(existingKey).find(Boolean);
   const head = key ? stored.get(key) : null;
   if (!head) return null;
@@ -637,6 +637,7 @@ async function commit(c, req, planned, nowMs) {
       id: ctx.uid(), actor, origin: ctx.via === "mcp" ? "mcp" : "web", kind: review.ops.some((o) => o.op === "create") ? "create" : "edit",
       subject: subjectOf(req, stored, review.ops), targets: review.targets,
       base_versions: pick(req.base_versions, sortedUnique(review.ops.map(existingKey).filter(Boolean))), ops: review.ops, summary: reviewSummary, note: req.note, warnings: review.warnings, at,
+      owners: await ownersOf(ctx, review.targets, stored), // HFY-TSK-256: contrib-read's proposalVisible reads owners[]
     });
     if (Buffer.byteLength(JSON.stringify(doc)) > MAX_PROPOSAL_BYTES) throw problem(413, "too_large", "the suggestion is too large");
     proposal = doc;

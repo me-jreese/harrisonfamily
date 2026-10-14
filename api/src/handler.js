@@ -16,6 +16,8 @@ import { createSubscriptions } from "./subscriptions.js";
 import { createContribReader } from "./contrib-read.js";
 import { unauthenticated } from "./sync/auth.js";
 import { syncContext } from "./sync/guard.js";
+import { editingOn } from "./records/edit-bundle.js";
+import { circleIds, loadProposal, visibleProposal } from "./records/proposal-store.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -67,13 +69,24 @@ export function createHandler(deps) {
       }
       return [...ids];
     };
+    // `store` is the record-store context of the editing routes: reads (records/index.js) and, with the extra members, applyBatch() (sync/apply.js).
+    const store = { ddb, cmds, table, now, uid, log, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts, guardDob: deps.guardDob === true, via, completeAccessRequest: deps.completeAccessRequest };
     const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload });
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
       photos: uploadPhotosFor({ ddb, cmds, table, bucket: mediaBucket, base: deps.mediaPublicBase, now, s3: deps.s3 }), // HEAD + checkLocation + UPLOAD# binding for comment photos
       getPost: (id) => content.get(id),
+      // A proposal:<ulid> thread: dark with HFY_EDITING, and visible only inside the proposal's visibility set (the proposer, admins, owners of the targeted pages).
+      proposalVisible: async (id) => editingOn() && (await visibleProposal(store, actor, id)) !== null,
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
+        if (c.threadId.startsWith("proposal:")) {
+          // The proposer stands where a post's author does; a mention or a reply reaches only the proposal's visibility set (PS-09).
+          const proposal = await loadProposal(store, c.threadId.slice(9));
+          if (!proposal) return;
+          await notifier.onComment(c, { parent }, { postAuthorId: proposal.proposer.id, earlierCommenters: await commenterIds(c.threadId), visibleTo: await circleIds(proposal, deps.getAdmins) });
+          return;
+        }
         const postAuthorId = c.threadId.startsWith("post:") ? (await content.get(c.threadId.slice(5))).author.id : undefined;
         const earlierCommenters = await commenterIds(c.threadId);
         await notifier.onComment(c, { parent }, { postAuthorId, earlierCommenters });
@@ -94,8 +107,6 @@ export function createHandler(deps) {
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    // `store` is the record-store context of the editing routes: reads (records/index.js) and, with the extra members, applyBatch() (sync/apply.js).
-    const store = { ddb, cmds, table, now, uid, log, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts, guardDob: deps.guardDob === true, via };
     return { store, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
