@@ -51,19 +51,33 @@ export function buildDetails(view) {
   row("citations", view.citations);
   row("source", [SOURCE_LINE[view.source]]);
   box.append(facts);
-  const site = node("p", "photo-tags__site");
-  site.append(node("span", "photo-tags__site-label", "from this site, not the tag:"), document.createTextNode(` ${ROLE_PHRASE[view.role] || ROLE_PHRASE.family}`));
-  box.append(site);
+  // "family" is the fallback for someone outside this page's tree, not a relationship the site knows: no line rather than a placeholder.
+  if (view.role && view.role !== "family" && ROLE_PHRASE[view.role]) {
+    const site = node("p", "photo-tags__site");
+    site.append(node("span", "photo-tags__site-label", "from this site, not the tag:"), document.createTextNode(` ${ROLE_PHRASE[view.role]}`));
+    box.append(site);
+  }
   return box;
 }
 
 // ---------------------------------------------------------------------------------------------------------------- hover cards
 const scopes = new Set();
 
+/** The scopes whose names list is still in the document; a gallery re-render leaves the old lists detached, so those are dropped here. */
+function liveScopes() {
+  for (const s of scopes) {
+    if (!s.root.isConnected) {
+      s.hideCard();
+      scopes.delete(s);
+    }
+  }
+  return scopes;
+}
+
 /** Hides every hovercard (Esc). Returns true when one was showing. */
 export function dismissCards() {
   let any = false;
-  for (const s of scopes) any = s.hideCard() || any;
+  for (const s of liveScopes()) any = s.hideCard() || any;
   return any;
 }
 if (typeof document !== "undefined") {
@@ -74,6 +88,10 @@ if (typeof document !== "undefined") {
       e.stopPropagation();
     }
   }, true);
+  // The card is position:fixed and placed once when it opens; a scroll (the page, the lightbox) or a resize moves its anchor, so it is placed again.
+  const reposition = () => { for (const s of liveScopes()) s.reposition(); };
+  window.addEventListener("scroll", reposition, { capture: true, passive: true });
+  window.addEventListener("resize", reposition, { passive: true });
 }
 
 function placeCard(card, anchor) {
@@ -111,6 +129,7 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
   let pinned = -1;
   let hovered = -1;
   let shown = -1;
+  let anchored = null;
   let timer = 0;
 
   const setActive = (i, on) => {
@@ -124,6 +143,7 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
     if (shown < 0) return false;
     const i = shown;
     shown = -1;
+    anchored = null;
     cards[i].hidden = true;
     for (const el of [buttons[i], regions.get(i)]) if (el) el.removeAttribute("aria-describedby");
     return true;
@@ -137,10 +157,16 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
       refresh(prev);
     }
     shown = i;
+    anchored = anchor;
     hovered = i;
     refresh(i);
     placeCard(cards[i], anchor);
     for (const el of [buttons[i], regions.get(i)]) if (el) el.setAttribute("aria-describedby", cards[i].id);
+  };
+  const reposition = () => {
+    if (shown < 0) return;
+    if (anchored && anchored.isConnected) placeCard(cards[shown], anchored);
+    else hideCard();
   };
   const leave = (i) => {
     window.clearTimeout(timer);
@@ -205,7 +231,9 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
   });
 
   const scope = {
+    root,
     hideCard,
+    reposition,
     // The lightbox regions share this list's cards: hover or keyboard focus on a region shows the same card, anchored to it.
     regionEnter: (i, region) => showCard(i, region),
     regionLeave: (i) => leave(i)
@@ -317,6 +345,7 @@ function track(img, host, built) {
 // ---------------------------------------------------------------------------------------------------------------- gallery
 /** Overlays and names lists for every tagged photo in `#person-media-grid`. Safe to call again after a render; a figure is done once. */
 export function mountGallery(person) {
+  liveScopes();
   const grid = document.getElementById("person-media-grid");
   const items = person && Array.isArray(person.mediaGallery) ? person.mediaGallery : [];
   if (!grid) return 0;
@@ -381,6 +410,13 @@ function applyToggle() {
   if (lightbox && lightbox.layer) lightbox.layer.classList.toggle("photo-tags__layer--names", namesOn === true);
 }
 
+/** The person arrived after the lightbox opened (or changed): draws the photo now shown again, so its roles are the page's. */
+export function refreshLightbox(person) {
+  const detail = lightbox && lightbox.detail;
+  if (!detail || !detail.img || detail.img.classList.contains("d-none")) return;
+  showLightbox(detail, person);
+}
+
 /**
  * Renders the tags of the photo now in the lightbox. `detail` is the hfy:lightbox-media detail { index, media, img, box }; `person` is
  * the page's person (for the site's relationship line).
@@ -413,7 +449,7 @@ export function showLightbox(detail, person) {
   else box.after(names.root);
   img.setAttribute("aria-describedby", names.list.id);
   if (built.order.length) box.append(built.layer);
-  lightbox = { layer: built.order.length ? built.layer : null, names, built, img };
+  lightbox = { layer: built.order.length ? built.layer : null, names, built, img, detail };
   if (modal) {
     const btn = ensureToggle(modal);
     if (namesOn === null) namesOn = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;

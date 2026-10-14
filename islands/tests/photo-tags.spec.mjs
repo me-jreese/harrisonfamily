@@ -45,7 +45,7 @@ const RECTS = {
   4: { 0: [10, 10, 40, 40] }
 };
 
-async function stub(page, { flag = true, person = TAGGED, delayIsland = 0 } = {}) {
+async function stub(page, { flag = true, person = TAGGED, delayIsland = 0, delayCatchUp = 0 } = {}) {
   const hits = { island: 0, person: 0 };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, photoTags: flag } }));
@@ -53,7 +53,12 @@ async function stub(page, { flag = true, person = TAGGED, delayIsland = 0 } = {}
   await page.route("**/api/**", (r) => r.fulfill({ json: {} }));
   await page.route("**/person/index.json", (r) => r.fulfill({ json: { people: [] } }));
   await page.route("**/person/search-index.json", (r) => r.fulfill({ json: { documents: [] } }));
-  await page.route("**/person/I9001.json", (r) => { hits.person += 1; return r.fulfill({ json: person }); });
+  await page.route("**/person/I9001.json", async (r) => {
+    hits.person += 1;
+    // the island's own read is the second request; holding it keeps the island without a person for a while
+    if (delayCatchUp && hits.person === 2) await new Promise((res) => setTimeout(res, delayCatchUp));
+    return r.fulfill({ json: person });
+  });
   await page.route("**/media/tree_I9001.svg", (r) => r.fulfill({ contentType: "image/svg+xml", body: readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8") }));
   await page.route(/\/media\/MTAG\d\.jpg/, (r) => r.fulfill({ contentType: "image/svg+xml", body: svg(r.request().url().match(/MTAG\d/)[0]) }));
   await page.route(/\/js\/islands\/photo-tags\.js/, async (r) => {
@@ -467,3 +472,82 @@ for (const [name, viewport] of [["375", { width: 375, height: 812 }], ["1280", {
     expect(await axeViolations(page, { include: "#mediaLightbox" })).toEqual([]);
   });
 }
+
+test("1280 someone outside the page's tree gets no relationship line (the 'family' fallback is not a relationship)", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openPerson(page);
+  await ready(page, 2);
+  const fig = figure(page, 2);
+  await fig.locator("button.photo-tags__name").nth(0).click(); // Sibling Example: a sibling of this page's person
+  await expect(fig.locator(".photo-tags__panel").nth(0).locator(".photo-tags__site")).toHaveText("from this site, not the tag: a sibling of this page's person");
+  await fig.locator("button.photo-tags__name").nth(1).click(); // Stranger Example: not in the tree
+  const panel = fig.locator(".photo-tags__panel").nth(1);
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("Stranger Example");
+  expect(await panel.locator(".photo-tags__site").count()).toBe(0);
+  expect(await fig.locator(".photo-tags__item").nth(1).locator('[role="tooltip"] .photo-tags__site').count()).toBe(0);
+});
+
+test("1280 a shown hovercard follows its anchor on scroll and resize", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openPerson(page);
+  await ready(page, 0);
+  const fig = figure(page, 0);
+  const name = fig.locator("button.photo-tags__name").nth(0);
+  await name.evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - 250)); // the name sits well inside the viewport, with room for the card below it
+  await name.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab"); // keyboard modality: focus-visible
+  const card = fig.locator(".photo-tags__item").nth(0).locator('[role="tooltip"]');
+  await expect(card).toBeVisible();
+  const gap = async () => page.evaluate(() => {
+    const b = document.querySelector("#person-media-grid .gallery-item button.photo-tags__name").getBoundingClientRect();
+    const c = document.querySelector("#person-media-grid .gallery-item [role=tooltip]:not([hidden])").getBoundingClientRect();
+    return { below: Math.abs(c.top - b.bottom), left: Math.abs(c.left - b.left) };
+  });
+  const before = await gap();
+  expect(before.below).toBeLessThan(2);
+  await page.evaluate(() => window.scrollBy(0, 60));
+  await expect.poll(async () => (await gap()).below).toBeLessThan(2);
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect(card).toBeVisible();
+  await expect.poll(async () => (await gap()).below).toBeLessThan(2);
+  expect((await gap()).left).toBeLessThan(2);
+});
+
+test("forced colors and reduced motion: the regions keep a CanvasText border and stop animating", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+  await openPerson(page);
+  await ready(page, 0);
+  const got = await page.evaluate(() => {
+    const probe = document.createElement("i");
+    probe.style.color = "CanvasText";
+    document.body.append(probe);
+    const text = getComputedStyle(probe).color;
+    probe.remove();
+    const region = document.querySelector('#person-media-grid .photo-tags__region');
+    const cs = getComputedStyle(region);
+    return { text, border: cs.borderTopColor, width: cs.borderTopWidth, style: cs.borderTopStyle, transition: cs.transitionDuration };
+  });
+  expect(got.border).toBe(got.text);
+  expect(got.style).toBe("solid");
+  expect(parseFloat(got.width)).toBeGreaterThan(0);
+  expect(parseFloat(got.transition)).toBe(0);
+});
+
+test("a lightbox opened before the island has the person re-reads its roles when the person arrives", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const hits = await openPerson(page, { delayIsland: 600, delayCatchUp: 2500 });
+  await expect(page.locator("#person-media-grid .gallery-item")).toHaveCount(6);
+  await expect.poll(() => hits.island).toBe(1);
+  await expect.poll(() => hits.person).toBe(2); // the island is asking for the person
+  await figure(page, 0).locator("button.media-lightbox-trigger").click({ position: { x: 5, y: 5 } });
+  const regions = page.locator("#mediaLightbox a.photo-tags__region");
+  await expect(regions).toHaveCount(2);
+  // DOM order is top to bottom: Father (y 15) first. No person yet, so he reads as "family"; when the island's read lands he is a parent.
+  await expect(regions.nth(0)).toHaveAttribute("aria-label", "Father Example, family. open their page");
+  await expect(regions.nth(0)).toHaveAttribute("aria-label", "Father Example, parent. open their page");
+  await expect(regions.nth(1)).toHaveAttribute("aria-label", "Spouse Example, spouse. open their page");
+  await expect(page.locator("#mediaLightbox")).toBeVisible();
+});
