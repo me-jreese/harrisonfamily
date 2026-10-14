@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
-import { relationLabel } from "../lib/family-graph.js";
+import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
 
 export const COPY = {
@@ -65,7 +65,8 @@ export function FocusNavigator({ graph, focus, viewer, onFocus }) {
     if (first.current) { first.current = false; return; }
     heading.current?.focus();
   }, [focus]);
-  const rel = viewer ? relationLabel(graph, viewer, focus) : null;
+  const rawRel = viewer ? relationLabel(graph, viewer, focus) : null;
+  const rel = rawRel === "you" || isRelationWord(rawRel) ? rawRel : null;
   const groups = useMemo(() => focusGroups(graph, focus), [graph, focus]);
   if (!p) return null;
   const place = p.living ? null : placeName(graph, p.birthPlace);
