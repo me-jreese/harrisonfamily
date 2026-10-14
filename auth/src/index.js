@@ -145,11 +145,12 @@ export function createAccessRequestRoutes({ m, doc, cmds, tableName, limiter, sm
     siteOrigin: site.origin, siteHost: site.hostname, turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? "",
     ddb: doc, cmds, table: tableName, limiter,
     secrets: { turnstile, pepper },
+    mailConfigured: () => Boolean(env.JOIN_FROM_ADDRESS && env.JOIN_SES_CONFIGURATION_SET), // else 503 unavailable, before anything is spent
     mailer: {
       send: async (msg) => {
         const { client, SendEmailCommand } = await ses();
         return createSesMailer({
-          from: env.JOIN_FROM_ADDRESS, configurationSet: env.JOIN_SES_CONFIGURATION_SET || undefined,
+          from: env.JOIN_FROM_ADDRESS, configurationSet: env.JOIN_SES_CONFIGURATION_SET,
           send: (input) => client.send(new SendEmailCommand(input)),
         }).send(msg);
       },

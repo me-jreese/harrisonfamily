@@ -51,7 +51,7 @@ Parameters:
   # configuration set and bounce and complaint alarms, so abuse of the join flow can never pause Cognito's password-reset mail or the API's mail.
   JoinSesIdentityArn: { Type: String, Default: "", Description: "Verified SES identity ARN of the join subdomain (same region) that sends the access-request mail from the auth edge (env: none, the grant only). Empty leaves the edge without a SendEmail grant, so the code route answers 503 unavailable" }
   JoinFromAddress: { Type: String, Default: "", AllowedPattern: "^$|^[^<>\\s]+@[^<>\\s]+$", Description: "Bare From address on the join identity, for example: no-reply@join.example.test (env JOIN_FROM_ADDRESS). Bare because the ses:FromAddress condition on the grant compares it exactly" }
-  JoinSesConfigurationSet: { Type: String, Default: "", Description: "SES configuration set for access-request mail only: no open or click tracking, bounce and complaint feedback (env JOIN_SES_CONFIGURATION_SET)" }
+  JoinSesConfigurationSet: { Type: String, Default: "", Description: "SES configuration set for access-request mail only: no open or click tracking, bounce and complaint feedback (env JOIN_SES_CONFIGURATION_SET). Required whenever JoinSesIdentityArn is set, and the code route answers 503 unavailable without it" }
   JoinBounceAlarmName: { Type: String, Default: hfy-access-request-bounce, Description: "CloudWatch alarm on the join configuration set's bounce rate. The edge reads its state (cloudwatch:DescribeAlarms) and answers 503 unavailable on the code route while it is in ALARM, or if the alarm does not exist" }
   JoinComplaintAlarmName: { Type: String, Default: hfy-access-request-complaint, Description: "CloudWatch alarm on the join configuration set's complaint rate; read like JoinBounceAlarmName" }
   ChatServicePublicKeys: { Type: String, Default: "", Description: "JSON array of {kid, spki} chat-worker service public keys (env CHAT_SERVICE_PUBLIC_KEYS); public, so not a secret. Empty makes the chat service routes answer 503" }
@@ -74,6 +74,11 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref JoinFromAddress, ""]]
         AssertDescription: JoinSesIdentityArn requires JoinFromAddress (the SendEmail grant is conditioned on it)
+  JoinSesIdentityNeedsConfigurationSet:
+    RuleCondition: !Not [!Equals [!Ref JoinSesIdentityArn, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref JoinSesConfigurationSet, ""]]
+        AssertDescription: JoinSesIdentityArn requires JoinSesConfigurationSet (access-request mail without its own configuration set sends no bounce or complaint feedback, so the alarm gate would watch nothing; the code route fails closed without it)
   JoinSesConfigurationSetNeedsIdentity:
     RuleCondition: !Not [!Equals [!Ref JoinSesConfigurationSet, ""]]
     Assertions:
@@ -87,7 +92,6 @@ Conditions:
   HasSes: !Not [!Equals [!Ref SesIdentityArn, ""]]
   HasSesFrom: !And [!Condition HasSes, !Not [!Equals [!Ref SesFromAddress, ""]]]
   HasJoinSes: !Not [!Equals [!Ref JoinSesIdentityArn, ""]]
-  HasJoinSesConfigSet: !Not [!Equals [!Ref JoinSesConfigurationSet, ""]]
 
 Resources:
   Table:
@@ -383,17 +387,18 @@ Resources:
                   Action: ses:SendEmail
                   Resource:
                     - !Ref JoinSesIdentityArn
-                    - !If [HasJoinSesConfigSet, !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${JoinSesConfigurationSet}", !Ref "AWS::NoValue"]
+                    - !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${JoinSesConfigurationSet}" # required whenever the identity is set (rule JoinSesIdentityNeedsConfigurationSet)
                   Condition:
                     StringEquals: { "ses:FromAddress": !Ref JoinFromAddress }
                 - !Ref "AWS::NoValue"
               # The code route reads the state of the bounce and complaint alarms and stops while either is in ALARM (review PS-25).
+              # DescribeAlarms is a list-style call and AWS may not honor an alarm-ARN Resource for it (an AccessDenied would fail the gate
+              # closed, so the code route would answer 503 for good). Resource "*" is therefore used; the route asks for the two alarm names
+              # only (JOIN_MAIL_ALARMS), and the grant is read-only alarm metadata. The real IAM behavior is checked by the RG-4 route smoke.
               - Sid: JoinMailAlarmState
                 Effect: Allow
                 Action: cloudwatch:DescribeAlarms
-                Resource:
-                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${JoinBounceAlarmName}
-                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${JoinComplaintAlarmName}
+                Resource: "*"
 
   AuthFunction:
     Type: AWS::Lambda::Function

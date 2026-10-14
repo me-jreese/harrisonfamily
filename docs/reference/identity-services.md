@@ -283,18 +283,18 @@ Every route answers `503 {"detail":"closed"}` while the stack parameter `AccessR
 | --- | --- | --- | --- |
 | GET | `/auth/access-request/config` | | `200 {open, turnstileSiteKey}` |
 | POST | `/auth/access-request/start` | `{ email, turnstileToken, company }` | `202 {ok:true}` for every address. `400 invalid_email`. `403 bot_check_failed`. `429 rate_limited` with `Retry-After`. `503 unavailable` (the limiter, the table, a secret, SES, Turnstile or the mail alarm is down) or `503 queue_full`. |
-| POST | `/auth/access-request/verify` | `{ email, code }` | `200 {ticket, expiresAt}`. `400 invalid_code`. `410 code_expired`. `429 too_many_attempts`. `503 unavailable`. |
+| POST | `/auth/access-request/verify` | `{ email, code }` | `200 {ticket, expiresAt}`. `400 invalid_code`. `429 too_many_attempts`. `503 unavailable`. An expired code is the same `400 invalid_code` as a missing one. |
 
 **Start, in order.**
 
 1. The honeypot `company`: when it is not blank the answer is `202` and nothing else happens (no Turnstile call, no limiter hit, no write, no mail).
-2. The address is trimmed, lower-cased and checked (one `@`, a dot in the domain, at most 254 characters).
+2. The address is trimmed, lower-cased and checked (one `@`, a dot in the domain, at most 254 characters). With no client address (the edge cannot derive one) or with `JOIN_FROM_ADDRESS` or `JOIN_SES_CONFIGURATION_SET` empty, the route answers `503 unavailable` here, before anything is spent. Mail without the configuration set would send no bounce or complaint feedback, so the alarm gate would watch nothing.
 3. Turnstile `siteverify` with the secret from `TURNSTILE_SECRET_NAME`, the token and the client IP. It must report `success`, the site's hostname and `action` `join`. A refused token is `403`. A timeout after 3 s, a network or HTTP error, an unreadable answer or a server-side misconfiguration fails closed with `503`.
 4. The bounce and complaint alarms: while either alarm named in `JOIN_MAIL_ALARMS` is in `ALARM`, the route answers `503 unavailable` and sends nothing. A missing alarm, an unset list or a CloudWatch failure fails closed the same way. `OK` and `INSUFFICIENT_DATA` let mail go. An answer is cached for 30 s.
 5. The queue cap: with 100 `ACCESSREQS#pending` items on `GSI1`, every address gets `503 queue_full`.
 6. The rate limits, in the order of the table below. They stop at the first denial, so a request that a narrow limit refused never spends the global budget.
 7. One membership lookup (the composite resolver) and one request lookup (`ACCESSREQEMAIL#<emailHash>`; a request in any state except `declined` or `expired`, and not past its `ttl`, is open).
-8. One `ACCESSCODE#<emailHash>` write, then one mail. A member gets `already_member`, an open request `already_requested`, and anyone else the code. A failed mail removes the code item and answers `503`.
+8. One `ACCESSCODE#<emailHash>` write, then one mail. A member gets `already_member`, an open request `already_requested`, and anyone else the code. The new item keeps the attempts of a still-live previous code (a resend never refills the guess budget). A failed mail puts the previous live code back, or removes ours, and answers `503`. The limiters run before the mail, so a transient `503` still spends the per-address, per-IP and global counters and the 60 s resend gap; that is deliberate (fail closed).
 
 | Name | Scope | Limit |
 | --- | --- | --- |
@@ -303,15 +303,15 @@ Every route answers `503 {"detail":"closed"}` while the stack parameter `AccessR
 | `joincode` | email | 5 per 24 h |
 | `joincode` | IP | 10 per 24 h |
 | `joincode` | global | 50 per 24 h |
-| `joinverify` | email | 10 per hour (`429 too_many_attempts`) |
+| `joinverify` | IP, then email | 30 and 10 per hour (`429 too_many_attempts`); the IP limit runs first, so one client cannot spend an address owner's budget |
 | `joinsubmit` | IP | 5 per 24 h |
 | `joinsubmit` | global | 20 per 24 h |
 
 The `joinsubmit` limits and the queue cap are applied by `submitAdmission()` for the submit route.
 
-**Enumeration parity.** A member, an open request and a new address take the same path: the same lookups, the same write and one mail each, so `start` answers every address with the same `202`. The `ACCESSCODE#` item written for a member or an open request is a decoy whose MAC can never match. A later `verify` therefore answers a wrong code with `400`, the fifth with `429` and an old one with `410`, whichever of the three the address was. An address that never asked for a code gets `400 invalid_code` too.
+**Enumeration parity.** A member, an open request and a new address take the same path: the same lookups, the same write and one mail each, so `start` answers every address with the same `202`. The `ACCESSCODE#` item written for a member or an open request is a decoy whose MAC can never match. A later `verify` therefore answers a wrong code with `400`, the fifth with `429` and an expired one with `400`, whichever of the three the address was. An address that never asked for a code gets `400 invalid_code` too.
 
-**Code.** Six digits from `crypto.randomInt`, stored in `ACCESSCODE#<emailHash>` as `codeMac`, the HMAC-SHA256 of the pepper over `<email>:<code>`, with `attempts`, `expiresAt` and `ttl` 15 minutes ahead. Each `verify` counts the attempt atomically before it compares, so at most 5 comparisons happen however many requests run in parallel. The fifth wrong attempt deletes the code. A right code is deleted in the same transaction that writes the ticket.
+**Code.** Six digits from `crypto.randomInt`, stored in `ACCESSCODE#<emailHash>` as `codeMac`, the HMAC-SHA256 of the pepper over `<email>:<code>`, with `attempts`, `expiresAt` and `ttl` 15 minutes ahead. Each `verify` counts the attempt atomically before it compares, so at most 5 comparisons happen however many requests run in parallel. The fifth wrong attempt locks the code: the item stays, spent, until it expires, so a resend cannot start a fresh budget (the locked item keeps its original expiry). A right code is deleted in the same transaction that writes the ticket.
 
 **Ticket.** 32 random bytes, base64url, returned once. The table keeps `ACCESSTICKET#<sha256 hex of the ticket>` with the address, its hash and a 60 minute `expiresAt` and `ttl`. The submit route deletes it conditionally, so it is single use.
 
@@ -723,7 +723,7 @@ Defined on `AuthFunction` in [`infrastructure/cloudformation/app-stack.yaml`](..
 | `TURNSTILE_SECRET_NAME` | Only with `ACCESS_REQUESTS=on` | `TurnstileSecretName` | Secrets Manager name of the Turnstile secret (a plain string or `{"secret": ...}`) |
 | `ACCESS_REQUEST_PEPPER_SECRET` | Only with `ACCESS_REQUESTS=on` | `AccessRequestPepperSecretName` | Secrets Manager name of the pepper for the email hash and the code MAC |
 | `JOIN_FROM_ADDRESS` | Only with `ACCESS_REQUESTS=on` | `JoinFromAddress` | Bare From address on the join SES identity |
-| `JOIN_SES_CONFIGURATION_SET` | No | `JoinSesConfigurationSet` | SES configuration set for access-request mail only |
+| `JOIN_SES_CONFIGURATION_SET` | Only with `ACCESS_REQUESTS=on` (the route answers `503` while empty) | `JoinSesConfigurationSet` | SES configuration set for access-request mail only |
 | `JOIN_MAIL_ALARMS` | Only with `ACCESS_REQUESTS=on` | `JoinBounceAlarmName`, `JoinComplaintAlarmName` | Comma list of the CloudWatch alarms the code route watches |
 
 The allowlist bucket and key come from the manifest, not from the stack. The stack parameters `ConfigBucket`, `AllowlistKey` and `AdminListKey` scope the function's `s3:GetObject` permission, so they must name the same objects. The role also allows `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem` and `Query` on the table and its indexes, `secretsmanager:GetSecretValue` on the signing-key secret, and `AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminConfirmSignUp` and `AdminUpdateUserAttributes` on the user pool.

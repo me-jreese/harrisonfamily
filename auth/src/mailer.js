@@ -5,12 +5,13 @@ import { renderEmail } from "./shared/emails.mjs";
 
 /** The SESv2 SendEmail input for one template. `from` is a bare address (the IAM ses:FromAddress condition compares it exactly). */
 export function sendEmailInput({ from, configurationSet, template, to, vars }) {
+  if (!configurationSet) throw new Error("the join SES configuration set is not set");
   const { subject, text } = renderEmail(template, vars);
   return {
     FromEmailAddress: from,
     Destination: { ToAddresses: [to] },
     Content: { Simple: { Subject: { Data: subject, Charset: "UTF-8" }, Body: { Text: { Data: text, Charset: "UTF-8" } } } },
-    ...(configurationSet ? { ConfigurationSetName: configurationSet } : {}),
+    ConfigurationSetName: configurationSet,
   };
 }
 
@@ -20,6 +21,8 @@ export function sendEmailInput({ from, configurationSet, template, to, vars }) {
  */
 export function createSesMailer({ send, from, configurationSet }) {
   if (!from) throw new Error("the join From address is not set");
+  // Fail closed: without the configuration set the mail would send no bounce or complaint feedback and the alarm gate would watch nothing.
+  if (!configurationSet) throw new Error("the join SES configuration set is not set");
   return {
     async send({ template, to, vars }) {
       try {

@@ -8,7 +8,7 @@ import { generateKeyPair, exportJWK, createLocalJWKSet } from "jose";
 import { createIdentityService, memoryLinkStore, memoryRefreshStore } from "@io-kit/auth/server";
 import { buildResolver } from "@io-kit/auth/edge/deploy";
 import {
-  CODE_TTL_SECONDS, MAX_CODE_ATTEMPTS, QUEUE_CAP, SUBMIT_LIMITS, START_LIMITS, TICKET_TTL_SECONDS, TURNSTILE_URL,
+  CODE_TTL_SECONDS, MAX_CODE_ATTEMPTS, QUEUE_CAP, SUBMIT_LIMITS, START_LIMITS, TICKET_TTL_SECONDS, TURNSTILE_URL, VERIFY_LIMITS,
   codeMac, createAccessRequest, createMailAlarmGate, emailHash, normalizeJoinEmail, ticketKey, verifyTurnstile,
 } from "../src/access-request.js";
 import { createSesMailer, sendEmailInput } from "../src/mailer.js";
@@ -121,6 +121,7 @@ function setup(o = {}) {
     ddb: doc, cmds, table: TABLE, limiter: spyLimiter, mailer, fetch,
     secrets: { turnstile: o.turnstileSecret ?? (async () => TURNSTILE_SECRET), pepper: o.pepper ?? (async () => PEPPER) },
     isMember: async (email) => state.member.has(email),
+    ...(o.mailConfigured ? { mailConfigured: o.mailConfigured } : {}),
     mailAlarm: o.mailAlarm ?? { isFiring: async () => { if (state.alarm === "THROW") throw new Error("cloudwatch down"); return state.alarm === "ALARM"; } },
     random: () => (codes.length ? codes.shift() : 424242), now, log,
   });
@@ -326,6 +327,7 @@ describe("rate limits (7.5), each enforced on its own", () => {
     expect(START_LIMITS.map((l) => `${l.name}/${l.scope}/${l.limit}/${l.windowSeconds}`)).toEqual([
       "joincode/email/1/60", "joincode/email+ip/3/3600", "joincode/email/5/86400", "joincode/ip/10/86400", "joincode/global/50/86400",
     ]);
+    expect(VERIFY_LIMITS.map((l) => `${l.name}/${l.scope}/${l.limit}/${l.windowSeconds}`)).toEqual(["joinverify/ip/30/3600", "joinverify/email/10/3600"]);
     expect(SUBMIT_LIMITS.map((l) => `${l.name}/${l.scope}/${l.limit}/${l.windowSeconds}`)).toEqual(["joinsubmit/ip/5/86400", "joinsubmit/global/20/86400"]);
   });
 
@@ -402,6 +404,14 @@ describe("rate limits (7.5), each enforced on its own", () => {
     expect([res.statusCode, bodyOf(res)]).toEqual([429, { detail: "too_many_attempts" }]);
     expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
     expect((await m.verify("b@example.com", "000000")).statusCode).toBe(400); // another address is unaffected
+  });
+
+  it("joinverify ip: the 31st verification from one IP in an hour is 429 across addresses, and it does not spend an address's own budget", async () => {
+    const m = setup();
+    for (let i = 0; i < 30; i += 1) expect((await m.verify(`a${i}@example.com`, "000000", ipHeader("192.0.2.50"))).statusCode).toBe(400);
+    const res = await m.verify("victim@example.com", "000000", ipHeader("192.0.2.50"));
+    expect([res.statusCode, bodyOf(res)]).toEqual([429, { detail: "too_many_attempts" }]);
+    for (let i = 0; i < 10; i += 1) expect((await m.verify("victim@example.com", "000000", ipHeader("192.0.2.51"))).statusCode).toBe(400); // the refused calls spent none of it
   });
 
   it("joinsubmit ip: the 6th submit from one IP in 24 h is 429", async () => {
@@ -523,13 +533,16 @@ describe("enumeration parity (7.1)", () => {
     expect(seqs[2]).toEqual(seqs[0]);
   });
 
-  it("verify cannot tell them apart in time either: all three expire to 410 after 15 minutes", async () => {
+  it("verify cannot tell them apart in time either: all three expire to the same 400 as an address that never asked", async () => {
     const m = setup({ members: ["member@example.com"] });
     for (const [i, email] of ["member@example.com", "new@example.com"].entries()) await m.start(email, ipHeader(`198.51.100.${i + 1}`));
     m.clock.now += (CODE_TTL_SECONDS + 1) * 1000;
-    expect((await m.verify("member@example.com", "123456")).statusCode).toBe(410);
-    expect((await m.verify("new@example.com", "123456")).statusCode).toBe(410);
-    expect((await m.verify("never@example.com", "123456")).statusCode).toBe(400); // an address that never asked looks like a wrong code
+    const answers = [];
+    for (const email of ["member@example.com", "new@example.com", "never@example.com"]) {
+      const res = await m.verify(email, "123456");
+      answers.push([res.statusCode, res.body]);
+    }
+    expect(answers).toEqual(Array(3).fill([400, '{"detail":"invalid_code"}'])); // an expired code, a member's decoy and an address that never asked
   });
 
   it("no code is ever accepted for a member or a pending request, even the new-address code", async () => {
@@ -621,25 +634,25 @@ describe("the code (15 minutes, 5 attempts, stored as a MAC) and the ticket (60 
     expect((await m.verify("other@example.com", "111111")).statusCode).toBe(400);
   });
 
-  it("is 410 code_expired after 15 minutes, and the item is removed", async () => {
+  it("is the same 400 invalid_code as a missing code after 15 minutes (no 410), and the item is removed", async () => {
     const m = setup({ codes: [111111] });
     await m.start("a@example.com");
     m.clock.now += (CODE_TTL_SECONDS - 1) * 1000;
     expect((await m.verify("a@example.com", "000000")).statusCode).toBe(400);
     m.clock.now += 2000;
     const res = await m.verify("a@example.com", "111111");
-    expect([res.statusCode, bodyOf(res)]).toEqual([410, { detail: "code_expired" }]);
+    expect([res.statusCode, bodyOf(res)]).toEqual([400, { detail: "invalid_code" }]);
     expect(m.doc.rows.has(`ACCESSCODE#${hash("a@example.com")}|META`)).toBe(false);
   });
 
-  it("allows 5 attempts: 4 wrong are 400, the 5th wrong is 429 and deletes the code, and the right code then fails", async () => {
+  it("allows 5 attempts: 4 wrong are 400, the 5th wrong is 429 and locks the code, and the right code then fails", async () => {
     const m = setup({ codes: [111111] });
     await m.start("a@example.com");
     const seq = [];
     for (let i = 0; i < 5; i += 1) seq.push((await m.verify("a@example.com", "222222")).statusCode);
     expect(seq).toEqual([400, 400, 400, 400, 429]);
-    expect(m.doc.rows.has(`ACCESSCODE#${hash("a@example.com")}|META`)).toBe(false);
-    expect((await m.verify("a@example.com", "111111")).statusCode).toBe(400);
+    expect(m.doc.rows.get(`ACCESSCODE#${hash("a@example.com")}|META`).attempts).toBe(5); // kept, spent: a resend cannot refill it
+    expect((await m.verify("a@example.com", "111111")).statusCode).toBe(429);
   });
 
   it("the 5th attempt may still succeed", async () => {
@@ -674,6 +687,50 @@ describe("the code (15 minutes, 5 attempts, stored as a MAC) and the ticket (60 
     expect((await m.verify("a@example.com", "222222")).statusCode).toBe(200);
   });
 
+  it("a resend does not refill the guess budget: attempts carry over to the new code", async () => {
+    const m = setup({ codes: [111111, 222222] });
+    await m.start("a@example.com");
+    for (let i = 0; i < 3; i += 1) expect((await m.verify("a@example.com", "999999")).statusCode).toBe(400);
+    m.clock.now += 61_000;
+    await m.start("a@example.com");
+    expect(m.doc.rows.get(`ACCESSCODE#${hash("a@example.com")}|META`).attempts).toBe(3);
+    expect((await m.verify("a@example.com", "999999")).statusCode).toBe(400); // the 4th guess overall
+    expect((await m.verify("a@example.com", "999999")).statusCode).toBe(429); // the 5th overall, not the 2nd of a fresh five
+    expect((await m.verify("a@example.com", "222222")).statusCode).toBe(429);
+  });
+
+  it("a spent code stays locked through a resend, and the lock ends when the first code would have expired", async () => {
+    const m = setup({ codes: [111111, 222222, 333333] });
+    await m.start("a@example.com");
+    const firstExpiry = m.doc.rows.get(`ACCESSCODE#${hash("a@example.com")}|META`).expiresAt;
+    for (let i = 0; i < 5; i += 1) await m.verify("a@example.com", "999999");
+    m.clock.now += 61_000;
+    await m.start("a@example.com");
+    expect(m.doc.rows.get(`ACCESSCODE#${hash("a@example.com")}|META`)).toMatchObject({ attempts: 5, expiresAt: firstExpiry, ttl: firstExpiry });
+    expect((await m.verify("a@example.com", "222222")).statusCode).toBe(429);
+    m.clock.now = (firstExpiry + 1) * 1000;
+    await m.start("a@example.com");
+    expect((await m.verify("a@example.com", "333333")).statusCode).toBe(200); // a fresh budget once the lock has run out
+  });
+
+  it("an expired code's attempts do not carry over", async () => {
+    const m = setup({ codes: [111111, 222222] });
+    await m.start("a@example.com");
+    for (let i = 0; i < 4; i += 1) await m.verify("a@example.com", "999999");
+    m.clock.now += (CODE_TTL_SECONDS + 1) * 1000;
+    await m.start("a@example.com");
+    expect(m.doc.rows.get(`ACCESSCODE#${hash("a@example.com")}|META`).attempts).toBe(0);
+  });
+
+  it("a failed resend puts the still-valid previous code back instead of deleting it", async () => {
+    const m = setup({ codes: [111111, 222222] });
+    await m.start("a@example.com");
+    m.mailer.send.mockImplementationOnce(async () => { throw Object.assign(new Error("x"), { name: "Throttling" }); });
+    m.clock.now += 61_000;
+    expect((await m.start("a@example.com")).statusCode).toBe(503);
+    expect((await m.verify("a@example.com", "111111")).statusCode).toBe(200);
+  });
+
   it("malformed verify bodies are 400 invalid_code without touching the table", async () => {
     const m = setup();
     for (const body of [{}, { email: "a@example.com" }, { email: "a@example.com", code: "12345" }, { email: "a@example.com", code: "1234567" }, { email: "a@example.com", code: "12a456" }, { email: "a@example.com", code: 123456 }, { email: "bad", code: "123456" }]) {
@@ -692,6 +749,41 @@ describe("the code (15 minutes, 5 attempts, stored as a MAC) and the ticket (60 
   it("a table failure on verify is 503", async () => {
     const m = setup({ doc: fakeDoc({ failOn: ["GetCommand"] }) });
     expect((await m.verify("a@example.com", "123456")).statusCode).toBe(503);
+  });
+});
+
+describe("no client address", () => {
+  const noAddress = (rel, body) => post(rel, body, { headers: { "cloudfront-viewer-address": undefined } });
+
+  it("start, verify and submit admission fail closed with 503 (not one shared ip bucket), log a distinct label, and spend nothing", async () => {
+    const m = setup();
+    const s = await m.ar.handle("/access-request/start", noAddress("/access-request/start", { email: "a@example.com", turnstileToken: "t" }));
+    const v = await m.ar.handle("/access-request/verify", noAddress("/access-request/verify", { email: "a@example.com", code: "123456" }));
+    const a = await m.ar.submitAdmission(noAddress("/access-request", {}));
+    expect([s.statusCode, v.statusCode, a.statusCode]).toEqual([503, 503, 503]);
+    expect(m.logs.map((l) => JSON.parse(l).step)).toEqual(["no-client-ip", "no-client-ip", "no-client-ip"]);
+    expect(m.hits).toEqual([]);
+    expect(m.fetch).not.toHaveBeenCalled();
+    expect(m.sent).toEqual([]);
+  });
+
+  it("a request that has an address is unaffected by the earlier ones", async () => {
+    const m = setup();
+    await m.ar.handle("/access-request/start", noAddress("/access-request/start", { email: "a@example.com", turnstileToken: "t" }));
+    expect((await m.start("a@example.com")).statusCode).toBe(202);
+  });
+});
+
+describe("join mail not configured (fails closed)", () => {
+  it("start answers 503 unavailable before Turnstile, the limiters, the table and the mailer", async () => {
+    const m = setup({ mailConfigured: () => false });
+    const res = await m.start("a@example.com");
+    expect([res.statusCode, bodyOf(res)]).toEqual([503, { detail: "unavailable" }]);
+    expect(m.logs.map((l) => JSON.parse(l).step)).toEqual(["mail-config"]);
+    expect(m.fetch).not.toHaveBeenCalled();
+    expect(m.hits).toEqual([]);
+    expect(m.doc.calls).toEqual([]);
+    expect(m.sent).toEqual([]);
   });
 });
 
@@ -815,17 +907,26 @@ describe("the mailer (own SES identity, configuration set and templates)", () =>
     expect(input.Content.Simple.Subject.Data).toBe("your Harrison Family code");
     expect(input.Content.Simple.Body.Text.Data).toContain("your code is 123456. it works for 15 minutes.");
     expect(Object.keys(input.Content.Simple.Body)).toEqual(["Text"]); // no HTML part, so nothing to track
-    expect(sendEmailInput({ from: "x@y.test", template: "already_member", to: "a@example.com" })).not.toHaveProperty("ConfigurationSetName");
+  });
+
+  it("never builds mail without the configuration set (no set means no bounce or complaint feedback)", () => {
+    expect(() => sendEmailInput({ from: "x@y.test", template: "already_member", to: "a@example.com" })).toThrow(/configuration set/);
+    expect(() => sendEmailInput({ from: "x@y.test", configurationSet: "", template: "already_member", to: "a@example.com" })).toThrow(/configuration set/);
   });
 
   it("a send failure carries the SES error name and never its message (which can quote the address)", async () => {
-    const mailer = createSesMailer({ from: "x@y.test", send: async () => { throw Object.assign(new Error("Email address is not verified: a@example.com"), { name: "MessageRejected" }); } });
+    const mailer = createSesMailer({ from: "x@y.test", configurationSet: "hfy-access-request", send: async () => { throw Object.assign(new Error("Email address is not verified: a@example.com"), { name: "MessageRejected" }); } });
     const e = await mailer.send({ template: "code", to: "a@example.com", vars: { code: "1" } }).catch((x) => x);
     expect([e.name, e.message]).toEqual(["MessageRejected", "mail not sent"]);
   });
 
   it("refuses to start without a From address", () => {
-    expect(() => createSesMailer({ send: async () => {} })).toThrow(/From address/);
+    expect(() => createSesMailer({ configurationSet: "cs", send: async () => {} })).toThrow(/From address/);
+  });
+
+  it("refuses to start without a configuration set", () => {
+    expect(() => createSesMailer({ from: "x@y.test", send: async () => {} })).toThrow(/configuration set/);
+    expect(() => createSesMailer({ from: "x@y.test", configurationSet: "", send: async () => {} })).toThrow(/configuration set/);
   });
 });
 
@@ -883,6 +984,19 @@ describe("wired like the Lambda: createAccessRequestRoutes", () => {
     const noAlarm = wired({ ...ENV, JOIN_MAIL_ALARMS: "" });
     expect((await noAlarm.ar.handle("/access-request/start", post("/access-request/start", { email: "new@example.com", turnstileToken: "t" }))).statusCode).toBe(503);
     expect(noAlarm.sesCalls).toEqual([]);
+  });
+
+  it("answers 503 unavailable, with no SES call and no Turnstile call, while JOIN_SES_CONFIGURATION_SET is empty or unset", async () => {
+    for (const set of ["", undefined]) {
+      const w = wired({ ...ENV, JOIN_SES_CONFIGURATION_SET: set });
+      const res = await w.ar.handle("/access-request/start", post("/access-request/start", { email: "new@example.com", turnstileToken: "t" }));
+      expect([res.statusCode, bodyOf(res)]).toEqual([503, { detail: "unavailable" }]);
+      expect(w.sesCalls).toEqual([]);
+      expect(w.cwCalls).toEqual([]);
+      expect(w.doc.rows.size).toBe(0);
+    }
+    const noFrom = wired({ ...ENV, JOIN_FROM_ADDRESS: "" });
+    expect((await noFrom.ar.handle("/access-request/start", post("/access-request/start", { email: "new@example.com", turnstileToken: "t" }))).statusCode).toBe(503);
   });
 
   it("serves the public config", async () => {

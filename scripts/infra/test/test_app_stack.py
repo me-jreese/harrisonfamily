@@ -369,23 +369,29 @@ class SyncInfra(unittest.TestCase):
             st = ses[0]["Fn::If"][1]
             self.assertEqual((st["Sid"], st["Action"]), ("SendEmail", "ses:SendEmail"))
             self.assertEqual(st["Resource"][0], {"Ref": ident})
-            self.assertEqual(sub(st["Resource"][1]["Fn::If"][1]), f"arn:${{AWS::Partition}}:ses:${{AWS::Region}}:${{AWS::AccountId}}:configuration-set/${{{cset}}}", role)
+            cs = st["Resource"][1]
+            if role == "AuthRole":  # required with the identity (rule JoinSesIdentityNeedsConfigurationSet), so no condition around the ARN
+                self.assertNotIn("Fn::If", cs)
+            else:
+                cs = cs["Fn::If"][1]
+            self.assertEqual(sub(cs), f"arn:${{AWS::Partition}}:ses:${{AWS::Region}}:${{AWS::AccountId}}:configuration-set/${{{cset}}}", role)
             self.assertEqual(st["Condition"], {"StringEquals": {"ses:FromAddress": {"Ref": frm}}}, role)
             self.assertEqual(ses[0]["Fn::If"][2], {"Ref": "AWS::NoValue"}, role)
-        # the edge reads the state of the bounce and complaint alarms (and nothing wider)
+        # the edge reads the state of the bounce and complaint alarms: one read-only action. DescribeAlarms is list-style, so an alarm-ARN
+        # Resource may not be honored by IAM (AccessDenied would fail the gate closed for good); the resource is "*" and the RG-4 smoke checks it
         alarms = by_sid(self.r["AuthRole"], "JoinMailAlarmState")
-        self.assertEqual(alarms["Action"], "cloudwatch:DescribeAlarms")
-        self.assertEqual(sorted(sub(x) for x in alarms["Resource"]), sorted(
-            f"arn:${{AWS::Partition}}:cloudwatch:${{AWS::Region}}:${{AWS::AccountId}}:alarm:${{{n}}}" for n in ("JoinBounceAlarmName", "JoinComplaintAlarmName")))
+        self.assertEqual((alarms["Effect"], alarms["Action"], alarms["Resource"]), ("Allow", "cloudwatch:DescribeAlarms", "*"))
         conds = self.t["Conditions"]
         self.assertEqual(conds["HasJoinSes"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
-        self.assertEqual(conds["HasJoinSesConfigSet"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesConfigurationSet"}, ""]}]})
+        self.assertNotIn("HasJoinSesConfigSet", conds)  # the configuration set is required with the identity, never optional
         rules = self.t["Rules"]  # a config set or identity without its companions would fail at runtime, so the template refuses them
         self.assertEqual(rules["SesConfigurationSetNeedsIdentity"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesIdentityArn"}, ""]}]})
         self.assertEqual(rules["SesConfigurationSetNeedsIdentity"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesConfigurationSet"}, ""]}]})
         self.assertEqual(rules["SesIdentityNeedsFromAddress"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "SesFromAddress"}, ""]}]})
         self.assertEqual(rules["JoinSesIdentityNeedsFromAddress"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
         self.assertEqual(rules["JoinSesIdentityNeedsFromAddress"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinFromAddress"}, ""]}]})
+        self.assertEqual(rules["JoinSesIdentityNeedsConfigurationSet"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
+        self.assertEqual(rules["JoinSesIdentityNeedsConfigurationSet"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesConfigurationSet"}, ""]}]})
         self.assertEqual(rules["JoinSesConfigurationSetNeedsIdentity"]["RuleCondition"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesConfigurationSet"}, ""]}]})
         self.assertEqual(rules["JoinSesConfigurationSetNeedsIdentity"]["Assertions"][0]["Assert"], {"Fn::Not": [{"Fn::Equals": [{"Ref": "JoinSesIdentityArn"}, ""]}]})
         for name in ("SesFromAddress", "JoinFromAddress"):

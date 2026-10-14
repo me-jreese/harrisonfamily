@@ -41,7 +41,11 @@ export const START_LIMITS = Object.freeze([
   Object.freeze({ name: "joincode", scope: "ip", limit: 10, windowSeconds: 86400 }),
   Object.freeze({ name: "joincode", scope: "global", limit: 50, windowSeconds: 86400 }),
 ]);
-export const VERIFY_LIMITS = Object.freeze([Object.freeze({ name: "joinverify", scope: "email", limit: 10, windowSeconds: 3600 })]);
+// Per IP first (30 an hour), so one client cannot spend an address's 10 an hour and lock its owner out of verifying; then per email.
+export const VERIFY_LIMITS = Object.freeze([
+  Object.freeze({ name: "joinverify", scope: "ip", limit: 30, windowSeconds: 3600 }),
+  Object.freeze({ name: "joinverify", scope: "email", limit: 10, windowSeconds: 3600 }),
+]);
 export const SUBMIT_LIMITS = Object.freeze([
   Object.freeze({ name: "joinsubmit", scope: "ip", limit: 5, windowSeconds: 86400 }),
   Object.freeze({ name: "joinsubmit", scope: "global", limit: 20, windowSeconds: 86400 }),
@@ -156,9 +160,18 @@ export function createMailAlarmGate({ describeAlarms, names, ttlMs = 30_000, now
  * - `limiter` is {hit(key, {limit, windowSeconds})} (ratelimit.js). `secrets.turnstile()` and `secrets.pepper()` return the secret strings.
  * - `mailer.send({ template, to, vars })` (mailer.js). `isMember(email)` is the composite allowlist resolver, true for a granted email.
  * - `mailAlarm.isFiring()` (createMailAlarmGate). `fetch` is for Turnstile. `random()` returns a code in [0, 1e6).
+ * - `mailConfigured()` is false while the join From address or its SES configuration set is unset: the code route then answers 503
+ *   unavailable before it spends anything (mail without the configuration set would send no bounce or complaint feedback, so the alarm
+ *   gate would watch nothing; it fails closed).
+ *
+ * Budget note (fails closed, by design): the start limiters run before the mail is sent, so a transient SES or DynamoDB failure (503)
+ * still spends the per-email, per-IP and global counters and the 60 s resend gap. A burst of 503s can briefly lock a visitor out of retrying.
+ *
+ * The client address is required: with none derivable (clientIp answers "unknown") the start, verify and submit-admission checks answer
+ * 503 unavailable and log the label "no-client-ip", instead of putting every such caller into one shared ip bucket.
  */
 export function createAccessRequest({
-  flag, siteOrigin, siteHost, turnstileSiteKey = "", ddb, cmds, table, limiter, secrets, mailer, isMember, mailAlarm,
+  flag, siteOrigin, siteHost, turnstileSiteKey = "", ddb, cmds, table, limiter, secrets, mailer, isMember, mailAlarm, mailConfigured = () => true,
   fetch: fetchImpl, random = () => randomInt(0, 1_000_000), now = () => Date.now(), log = console,
 }) {
   const origin = String(siteOrigin).replace(/\/+$/, "");
@@ -223,6 +236,7 @@ export function createAccessRequest({
    * limits per IP and global (429). undefined admits. Limiter or table failures answer 503 unavailable.
    */
   async function submitAdmission(event) {
+    if (clientIp(event) === "unknown") return unavailable("no-client-ip", new Error("no client address"));
     try {
       if (await queueFull()) return json(503, { detail: "queue_full" });
     } catch (e) {
@@ -254,6 +268,8 @@ export function createAccessRequest({
     const email = normalizeJoinEmail(b.email);
     if (!email) return json(400, { detail: "invalid_email" });
     const ip = clientIp(event);
+    if (ip === "unknown") return unavailable("no-client-ip", new Error("no client address"));
+    if (!mailConfigured()) return unavailable("mail-config", new Error("join mail is not configured"));
 
     const bot = await botCheck(b.turnstileToken, ip);
     if (bot === "unavailable") return json(503, { detail: "unavailable" });
@@ -285,26 +301,35 @@ export function createAccessRequest({
     const hash = emailHash(pepper, email);
     let member;
     let open;
+    let prev;
     try {
-      [member, open] = await Promise.all([isMember(email), hasOpenRequest(hash)]);
+      [member, open, prev] = await Promise.all([isMember(email), hasOpenRequest(hash), ddb.send(new cmds.GetCommand({ TableName: table, Key: codeKey(hash), ConsistentRead: true }))]);
+      prev = prev?.Item;
     } catch (e) {
       return unavailable("lookup", e);
     }
     const real = !member && !open;
     const code = String(random()).padStart(6, "0");
     const createdAt = nowSec();
-    const expiresAt = createdAt + CODE_TTL_SECONDS;
+    // A resend never refills the guess budget: while the previous code is still alive its attempts carry over, and a code that already
+    // used them all stays locked until it would have expired (a resend neither extends the lock nor lifts it). The same for every kind
+    // of address, so parity holds. The Get above and this Put are not one transaction: a guess landing between them can be lost, which
+    // costs an attacker nothing they did not already have (the 10 an hour verify limits bound it).
+    const prevLive = prev && Number(prev.expiresAt) > createdAt ? prev : undefined;
+    const attempts = prevLive ? Math.max(0, Number(prevLive.attempts) || 0) : 0;
+    const expiresAt = prevLive && attempts >= MAX_CODE_ATTEMPTS ? Number(prevLive.expiresAt) : createdAt + CODE_TTL_SECONDS;
     try {
       await ddb.send(new cmds.PutCommand({
         TableName: table,
         Item: {
-          ...codeKey(hash), entity: "accesscode", attempts: 0, createdAt, expiresAt, ttl: expiresAt,
+          ...codeKey(hash), entity: "accesscode", attempts, createdAt, expiresAt, ttl: expiresAt,
           codeMac: real ? codeMac(pepper, email, code) : hmac(pepper, `decoy:${randomBytes(16).toString("hex")}`), // a decoy never matches
         },
       }));
       await mailer.send({ template: member ? "already_member" : open ? "already_requested" : "code", to: email, vars: real ? { code } : {} });
     } catch (e) {
-      await ddb.send(new cmds.DeleteCommand({ TableName: table, Key: codeKey(hash) })).catch(() => undefined); // no half state
+      // no half state: put the previous live code back (a failed resend must not cost a legitimate visitor the code they hold), else remove ours
+      await (prevLive ? ddb.send(new cmds.PutCommand({ TableName: table, Item: prevLive })) : ddb.send(new cmds.DeleteCommand({ TableName: table, Key: codeKey(hash) }))).catch(() => undefined);
       return unavailable("send", e);
     }
     return json(202, { ok: true });
@@ -317,6 +342,7 @@ export function createAccessRequest({
     const email = normalizeJoinEmail(b.email);
     const code = typeof b.code === "string" ? b.code.trim() : "";
     if (!email || !/^\d{6}$/.test(code)) return json(400, { detail: "invalid_code" });
+    if (clientIp(event) === "unknown") return unavailable("no-client-ip", new Error("no client address"));
     try {
       const over = await limited(VERIFY_LIMITS, { email, ip: clientIp(event) });
       if (over) return tooMany(over, "too_many_attempts");
@@ -331,8 +357,10 @@ export function createAccessRequest({
       const item = got?.Item;
       if (!item) return json(400, { detail: "invalid_code" }); // never asked, already used, or deleted by the TTL: the same answer
       if (!(item.expiresAt > nowSec())) {
+        // Expired is answered exactly like missing (not a distinct 410): DynamoDB's TTL purge runs late, so a distinct answer would tell an
+        // anonymous caller that someone asked for this address in the last two days.
         await ddb.send(new cmds.DeleteCommand({ TableName: table, Key: key })).catch(() => undefined);
-        return json(410, { detail: "code_expired" });
+        return json(400, { detail: "invalid_code" });
       }
       // The attempt is counted atomically before the code is compared, so parallel guesses cannot exceed MAX_CODE_ATTEMPTS comparisons.
       let attempts;
@@ -348,10 +376,8 @@ export function createAccessRequest({
       }
       if (attempts > MAX_CODE_ATTEMPTS) return json(429, { detail: "too_many_attempts" });
       if (!sameMac(item.codeMac, codeMac(pepper, email, code))) {
-        if (attempts >= MAX_CODE_ATTEMPTS) {
-          await ddb.send(new cmds.DeleteCommand({ TableName: table, Key: key })).catch(() => undefined);
-          return json(429, { detail: "too_many_attempts" });
-        }
+        // The spent item stays (locked) until it expires: deleting it would let a resend start a fresh budget of guesses.
+        if (attempts >= MAX_CODE_ATTEMPTS) return json(429, { detail: "too_many_attempts" });
         return json(400, { detail: "invalid_code" });
       }
       const ticket = randomBytes(32).toString("base64url");
