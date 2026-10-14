@@ -54,11 +54,14 @@ describe("persist-first without VAPID_SECRET (AC2)", () => {
     expect(await inbox.unreadCount(OWNER)).toBe(2);
   });
 
-  it("an inbox store failure never fails the comment write", async () => {
+  it("an inbox store failure never fails the comment write, and the push still goes without app_badge", async () => {
     const inbox = new InMemoryNotificationStore();
     inbox.add = async () => { throw new Error("store down"); };
-    const w = makeApi({ withPush: false, flags: { inboxV1: true }, inbox });
+    const w = makeApi({ flags: { inboxV1: true }, inbox });
+    await w.subscriptions.put(OWNER, sub);
     expect((await comment(w, `person:${OWNER}`)).status).toBe(201);
+    expect(w.sent).toHaveLength(1);
+    expect(w.sent[0].payload.notification).not.toHaveProperty("app_badge");
   });
 
   it("new_family_post is push-only (inbox:false), and the registry whitelist is widened", () => {
@@ -129,6 +132,13 @@ describe("inbox routes (AC3)", () => {
     const all = await w.call("POST", "/api/notifications/inbox/read", { token: await signToken(OWNER), body: { all: true } });
     expect(all.status).toBe(200);
     expect((await get(w, "/api/notifications/inbox/unread-count")).body).toEqual({ unread: 0 });
+  });
+
+  it("the list filter is validated: bogus is 400, unread and all are 200", async () => {
+    const w = makeApi({ withPush: false, flags: { inboxV1: true }, inbox: new InMemoryNotificationStore() });
+    expect((await get(w, "/api/notifications/inbox?filter=bogus")).status).toBe(400);
+    expect((await get(w, "/api/notifications/inbox?filter=unread")).status).toBe(200);
+    expect((await get(w, "/api/notifications/inbox?filter=all")).status).toBe(200);
   });
 
   it("a signed-out caller gets 401, and an empty read body 400", async () => {

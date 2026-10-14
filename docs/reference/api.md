@@ -155,11 +155,11 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
 | `notifications.preferences.get` | GET | `/notifications/preferences` | none | `200` preferences | Kit route |
 | `notifications.preferences.put` | PUT | `/notifications/preferences` | body: preferences | `200` preferences | Kit route |
-| `notifications.inbox.list` | GET | `/notifications/inbox` | query `cursor`, `limit`, `unread` | `200` `{items, next_cursor, has_more}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.list` | GET | `/notifications/inbox` | query `filter` (`unread` or `all`), `cursor`, `limit` | `200` `{items, next_cursor, has_more}` | Kit route; dark behind `inboxV1` |
 | `notifications.inbox.count` | GET | `/notifications/inbox/unread-count` | none | `200` `{unread}` | Kit route; dark behind `inboxV1` |
 | `notifications.inbox.read` | POST | `/notifications/inbox/read` | body `{ids}` or `{all: true}` | `200` `{updated, unread, ...}` | Kit route; dark behind `inboxV1`; no MCP tool and no policy row |
 
-The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
+The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
 None of these routes is behind the [feature gate](#feature-gate). The comments, posts, uploads and notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
@@ -503,6 +503,12 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 | `DELETE /notifications/subscribe` | `{endpoint}` | `{ok: true}` | `400 {"error":"endpoint required"}` |
 | `GET /notifications/preferences` | none | `{enabled: true, types: {<type>: {enabled, level}}, extra: {}}` | |
 | `PUT /notifications/preferences` | `{types: {<type>: {enabled, level}}}`, `enabled` a boolean and `level` 0 or 1 | Same shape as `GET` | `400 {"error":"invalid preferences"}` |
+| `GET /notifications/inbox` | none; query `filter` (`unread` or `all`), `cursor`, `limit` | `{items, next_cursor, has_more}` | `400` on a bad `filter`, `cursor` or `limit` |
+| `GET /notifications/inbox/unread-count` | none | `{unread}` | |
+| `POST /notifications/inbox/read` | `{ids}` (1 to 100 ids) or `{all: true}` | `{updated, unread, ...}` | `400` on an empty or invalid body |
+
+- The three inbox routes exist only when an inbox store is wired, and are 404 outside `uat` while `inboxV1` is off.
+- The kit stores an inbox item whether or not the recipient disabled that type in preferences; preferences gate only the push. This is a kit behaviour, pending io's confirmation.
 
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
 - `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
