@@ -24,7 +24,7 @@ import { batchIdFor, requestTokenFor } from "../sync/store.js";
 import { applyOps, canonicalJson, contentHash, INVALID_REASONS, validateOps } from "./ops.js";
 import { classifyOps, isRefusal } from "./field-policy.js";
 import { partitionOps, summarizeGroup } from "./edit-plan.js";
-import { checkSemantics } from "./semantics.js";
+import { checkSemantics, collectRefs } from "./semantics.js";
 import { createRecordGuard } from "./guard.js";
 import { backrefs, customTypes, get, invalidateGraph } from "./index.js";
 import { relationView } from "./edit-bundle.js";
@@ -57,6 +57,14 @@ const sortedUnique = (xs) => [...new Set(xs)].sort();
 const problem = (status, code, message, { errors, details } = {}) => Object.assign(new HttpError(status, code, message, details), errors ? { errors } : {});
 const invalid = (errors, message = "the request is not valid") => problem(400, "validation", message, { errors });
 const keyParts = (key) => [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+
+/** A header by name, whatever its case (API Gateway HTTP API lower-cases names; a REST API or a direct invocation may not). */
+function headerOf(headers, name) {
+  if (!isObj(headers)) return undefined;
+  if (typeof headers[name] === "string") return headers[name];
+  const hit = Object.keys(headers).find((k) => k.toLowerCase() === name && typeof headers[k] === "string");
+  return hit === undefined ? undefined : headers[hit];
+}
 
 // ---- step 1: the request ----------------------------------------------------------------------------------------------------
 function parseRequest(c) {
@@ -96,7 +104,7 @@ function parseRequest(c) {
   if (news.length > MAX_NEW_OBJECTS) throw problem(413, "too_large", `a submission creates at most ${MAX_NEW_OBJECTS} new objects`);
   if (new Set(news.map((o) => o.obj)).size !== news.length) throw invalid([{ pointer: "/ops", detail: "a new object is created twice" }]);
 
-  let key = c.event?.headers?.["idempotency-key"] ?? b.idempotency_key;
+  let key = headerOf(c.event?.headers, "idempotency-key") ?? b.idempotency_key;
   const dry = b.dry_run === true;
   if (key !== undefined && !(typeof key === "string" && IDEM_KEY_RE.test(key))) throw invalid([{ pointer: "/headers/idempotency-key", detail: "the Idempotency-Key is 1 to 128 visible characters" }]);
   if (!dry && key === undefined) throw invalid([{ pointer: "/headers/idempotency-key", detail: "an Idempotency-Key header is required" }], "an Idempotency-Key is required");
@@ -213,7 +221,7 @@ const conflictBody = (conflicts, current) => problem(409, "version_conflict", "t
 
 // ---- step 5: semantics, schema, guard ----------------------------------------------------------------------------------------
 /** checkSemantics is synchronous, so the objects it asks for are loaded between rounds until a round asks for nothing new. */
-async function semantics(ctx, cache, refCache, input) {
+async function semantics(ctx, cache, refCache, input, hidden = new Set()) {
   const need = new Set();
   const needRefs = new Set();
   for (let round = 0; round < SEMANTIC_ROUNDS; round += 1) {
@@ -222,7 +230,7 @@ async function semantics(ctx, cache, refCache, input) {
     const refsOf = (k) => { if (refCache.has(k)) return refCache.get(k); needRefs.add(k); return []; };
     const res = checkSemantics({
       ...input,
-      get: (k) => { if (cache.has(k)) return cache.get(k)?.obj ?? undefined; need.add(k); return undefined; },
+      get: (k) => { if (hidden.has(k)) return undefined; if (cache.has(k)) return cache.get(k)?.obj ?? undefined; need.add(k); return undefined; },
       referrers: refsOf,
       eventReferrers: (h) => refsOf(`Event:${h}`),
     });
@@ -266,8 +274,24 @@ async function resultOf(ctx, actor, plan, ops, label, nowMs) {
   const opIdFor = (k) => opIdOf.get(k) ?? null;
   const before = pick(plan.objects, [...changes.updated, ...changes.deleted]);
   const after = pick(run.objects, [...changes.created, ...changes.updated]);
-  const sem = await semantics(ctx, plan.cache, plan.refCache, { before, after, admin: actor.admin === true, today: new Date(nowMs) });
-  if (!sem.ok) throw invalid(semanticErrors(sem.errors, opIdFor));
+  // A member may not learn that a record they cannot see exists: a reference this change introduces to one is judged as a reference to nothing.
+  const hidden = new Set();
+  if (actor.admin !== true) {
+    for (const [k, o] of Object.entries(after)) {
+      const had = new Set(isObj(before[k]) ? collectRefs(before[k]).map((r) => `${r.cls}:${r.handle}`) : []);
+      for (const r of collectRefs(o)) {
+        const rk = `${r.cls}:${r.handle}`;
+        if (!had.has(rk) && !TEMP_RE.test(r.handle) && !(rk in after) && !(await plan.canSee(rk))) hidden.add(rk);
+      }
+    }
+  }
+  const sem = await semantics(ctx, plan.cache, plan.refCache, { before, after, admin: actor.admin === true, today: new Date(nowMs) }, hidden);
+  if (!sem.ok) {
+    // ...and no error may name a record the viewer cannot see (a deleted record's referrer, a member of a loop): the name is dropped.
+    const shown = [];
+    for (const e of sem.errors) shown.push(e.obj && !(await plan.canSee(e.obj)) ? { ...e, obj: undefined, path: undefined } : e);
+    throw invalid(semanticErrors(shown, opIdFor));
+  }
   const final = {};
   for (const [k, o] of Object.entries(sem.objects)) final[k] = { ...o, change: Math.floor(nowMs / 1000) };
   const differs = (k) => plan.storedObj(k) !== undefined && canonicalJson({ ...final[k], change: 0 }) !== canonicalJson({ ...plan.storedObj(k), change: 0 });
@@ -289,6 +313,7 @@ async function planChanges(c, req, nowMs) {
   for (const [k, h] of stored) { objects[k] = h.obj; versions[k] = h.version; }
   for (const [k, h] of context) objects[k] = h.obj;
   const cache = new Map([...stored, ...context]);
+  const seen = new Map();
   const plan = {
     objects, versions, cache, refCache: new Map(),
     guard: createRecordGuard({ dob: ctx.guardDob === true, log: ctx.log }),
@@ -297,6 +322,20 @@ async function planChanges(c, req, nowMs) {
     /** The stored version of a key: a touched object, or a derived person loaded for the semantics. */
     versionOf: (k) => versions[k] ?? cache.get(k)?.version,
     storedObj: (k) => objects[k] ?? cache.get(k)?.obj,
+    /** Can the viewer see this record? The touched ones were checked on load; an absent one has nothing to hide. */
+    canSee: (k) => {
+      if (actor.admin === true || stored.has(k)) return Promise.resolve(true);
+      if (!seen.has(k)) {
+        seen.set(k, (async () => {
+          const [cls, handle] = keyParts(k);
+          const head = cache.get(k) ?? (await get(ctx, cls, handle));
+          if (!head) return true;
+          const gid = typeof head.obj.gramps_id === "string" ? head.obj.gramps_id : "";
+          return (await viewRecord(ctx, actor, { class: cls, handle, gramps_id: gid, version: head.version, obj: head.obj })) !== null;
+        })());
+      }
+      return seen.get(k);
+    },
   };
 
   // 2-3. All ops on the stored state, then the guard over the full result, before any partition.
@@ -364,6 +403,9 @@ async function planChanges(c, req, nowMs) {
   }
 
   // 5b. The review part: applied to the stored state too (a proposal is judged on what it would leave), the limits, the size budget.
+  // It is planned against the STORED state, not the state after the direct part: the two parts of one submission are independent edits, and the
+  // proposal rebases against whatever is stored when it is approved. A review op whose `base` no longer matches the stored value is 409, but a
+  // stale base_version alone is not: the proposal is filed with the versions the editor loaded and shows `stale` once the record has moved on.
   if (reviewGroups.length) {
     const ops = opsAt(req.ops, indexesOf(reviewGroups));
     const r = await resultOf(ctx, actor, plan, ops, "review", nowMs);
@@ -371,6 +413,7 @@ async function planChanges(c, req, nowMs) {
     const counts = { created: r.changes.created.length, updated: r.changes.updated.length, deleted: r.changes.deleted.length, targets: touched.length };
     if (counts.created > MAX_NEW_OBJECTS) throw problem(413, "too_large", `a proposal creates at most ${MAX_NEW_OBJECTS} new objects`);
     if (proposalTooLarge(counts)) throw problem(422, "proposal_too_large", "this suggestion is too big to approve in one step; please split it into smaller ones", { details: { objects: counts.created + counts.updated + counts.deleted } });
+    // A soft limit: the count and the write are not one atomic step, so concurrent submissions from one principal can overshoot 50 by a few.
     if ((await recentProposalCount(ctx, actor.id)) >= PROPOSAL_RATE_LIMIT) throw problem(429, "rate_limited", "you have made a lot of suggestions today; please try again tomorrow");
     if (counts.created + counts.updated + counts.deleted > 0) {
       out.review = { ops, ...r, targets: touched };
@@ -402,7 +445,16 @@ function appliedOf(direct) {
   for (const k of direct.changes.created) versions[k] = 1;
   for (const k of direct.changes.updated) versions[k] = direct.versionOf(k) + 1;
   // A delete cannot be undone from the web (a deleted person's id is retired for ever), so a group that deletes offers no undo.
-  const undo = direct.changes.deleted.length ? null : { base_versions: versions, ops: direct.run.inverse };
+  // undo.base_versions names only the records the inverse ops touch (the derived people the semantics rewrote are not undone by it).
+  const inverse = direct.run.inverse;
+  const minted = direct.run.minted ?? {};
+  const touchesOf = (o) => {
+    if (typeof o.obj !== "string") return [];
+    if (!TEMP_RE.test(o.obj)) return [o.obj];
+    return Object.keys(versions).filter((k) => minted[o.obj] && keyParts(k)[1] === minted[o.obj]);
+  };
+  const undoKeys = new Set(inverse.flatMap(touchesOf));
+  const undo = direct.changes.deleted.length ? null : { base_versions: pick(versions, [...undoKeys]), ops: inverse };
   return { versions, undo };
 }
 

@@ -38,7 +38,7 @@ let envBefore;
 beforeEach(() => { envBefore = process.env.HFY_EDITING; process.env.HFY_EDITING = "on"; });
 afterEach(() => { if (envBefore === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = envBefore; });
 
-async function world({ clock = () => Date.now(), admins = [ADMIN, ADMIN2], seedExtra = [] } = {}) {
+async function world({ clock = () => Date.now(), admins = [ADMIN, ADMIN2], seedExtra = [], guardDob } = {}) {
   const txns = [];
   const race = { before: null };
   const afters = [];
@@ -48,7 +48,7 @@ async function world({ clock = () => Date.now(), admins = [ADMIN, ADMIN2], seedE
   hooks.registerContributor((batch, origin) => { contributed.push({ batch_id: batch.batch_id, origin }); });
   const inbox = new InMemoryNotificationStore();
   const w = makeApi({
-    admins, log: q, clock, inbox, flags: { inboxV1: true },
+    admins, log: q, clock, inbox, flags: { inboxV1: true }, ...(guardDob === undefined ? {} : { guardDob }),
     intercept: async (cmd) => {
       if (cmd.constructor.name !== "TransactWriteCommand") return;
       txns.push(structuredClone(cmd.input));
@@ -149,6 +149,13 @@ describe("a mixed submission is one transaction (AC2)", () => {
     // the rows are really there
     expect(w.rows("PROP#")).toHaveLength(3);
     expect(w.ddb.rows.get(`REC#Person#${w.me.handle}\u0000HEAD`).version).toBe(2);
+  });
+  it("the review part is planned against the stored state: the proposal keeps the version the editor loaded, and the undo names only the records it touches", async () => {
+    const { w, r } = await mixed();
+    expect(r.body.proposal.base_versions).toEqual({ [key(w.me)]: 1 });
+    expect(r.body.applied.versions).toEqual({ [key(w.me)]: 2 });
+    expect(r.body.applied.undo.base_versions).toEqual({ [key(w.me)]: 2 });
+    expect(r.body.applied.undo.ops.map((o) => o.obj)).toEqual([key(w.me)]);
   });
   it("fires the afterCommit hook exactly once with origin=self, and runs the contributors once", async () => {
     const { w } = await mixed();
@@ -281,6 +288,46 @@ describe("the error matrix (AC3)", () => {
     expect(err(r)).toEqual({ status: 400, error: "validation" });
     expect(r.body.errors[0].pointer).toBe("/headers/idempotency-key");
   });
+  it("reads the Idempotency-Key header whatever its case", async () => {
+    const w = await world();
+    const body = { base_versions: versions(w, [w.me]), ops: [set(w.me, "/primary_name/nick", "", "Ally")] };
+    const a = await w.post(ME, body, { headers: { "Idempotency-Key": "mixed-case-1" } });
+    expect(a.status).toBe(201);
+    const b = await w.post(ME, body, { headers: { "IDEMPOTENCY-KEY": "mixed-case-1" } });
+    expect(b.status).toBe(201);
+    expect(b.headers["idempotent-replayed"]).toBe("true");
+    expect(w.rows("IDEM#")).toHaveLength(1);
+  });
+  it("a review-only submission on a stale base version is filed (not 409) while its op bases still match; the proposal keeps the versions the editor loaded", async () => {
+    const w = await world();
+    await w.bump(person(2, { note_list: [w.n2.handle], gender: 0 }), 1); // the page moved on (version 2), the given name did not
+    const r = await w.post(ME, { target: key(w.other), base_versions: { [key(w.other)]: 1 }, ops: [set(w.other, "/primary_name/first_name", "Alder", "Aldwin", "first")] }, { idem: "stale-r1" });
+    expect(r.status).toBe(201);
+    expect(r.body.applied).toBeNull();
+    expect(r.body.proposal.base_versions).toEqual({ [key(w.other)]: 1 });
+    expect(w.rows("PROP#")).toHaveLength(3);
+  });
+  it("...but a review op whose base value changed since is 409 version_conflict, and nothing is filed", async () => {
+    const w = await world();
+    await w.bump(person(2, { note_list: [w.n2.handle], primary_name: { ...person(2).primary_name, first_name: "Aldous" } }), 1);
+    const r = await w.post(ME, { target: key(w.other), base_versions: { [key(w.other)]: 1 }, ops: [set(w.other, "/primary_name/first_name", "Alder", "Aldwin", "first")] }, { idem: "stale-r2" });
+    expect(err(r)).toEqual({ status: 409, error: "version_conflict" });
+    expect(r.body.details.current).toEqual({ [key(w.other)]: 2 });
+    expect(w.rows("PROP#")).toEqual([]);
+    expect(w.rows("IDEM#")).toEqual([]);
+  });
+  it("a reference to a hidden note is answered exactly like a reference to a note that does not exist", async () => {
+    const w = await world();
+    w.ddb.rows.set(`MOD#note:${w.n2.handle}\u0000META`, { PK: `MOD#note:${w.n2.handle}`, SK: "META", entity: "mod", author_id: OTHER, state: "hidden", hidden: true, open: true });
+    const link = (handle, id) => ({ id, op: "add", obj: key(w.me), path: "/note_list", value: handle });
+    const hidden = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [link(w.n2.handle, "ln")] }, { idem: "hid-1" });
+    const absent = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [link(h(777), "ln")] }, { idem: "hid-2" });
+    expect(err(hidden)).toEqual({ status: 400, error: "validation" });
+    expect(hidden.body.errors).toEqual(absent.body.errors);
+    expect(w.txns).toEqual([]);
+    // an admin sees the note, so the same link is fine for them
+    expect((await w.post(ADMIN, { base_versions: versions(w, [w.me]), ops: [link(w.n2.handle, "ln")] }, { idem: "hid-3" })).status).toBe(201);
+  });
   it("the 51st proposal in 24 hours is 429 rate_limited", async () => {
     const w = await world();
     const nowMs = Date.now();
@@ -388,6 +435,25 @@ describe("races and no-ops", () => {
     const r = await w.post(ME, body, { idem: "race-2" });
     expect(err(r)).toEqual({ status: 422, error: "idempotency_mismatch" });
   });
+  it("a condition failure on an item that is not the receipt is 503 unavailable, never a replay", async () => {
+    const w = await world();
+    w.ddb.failNext("ConditionalCheckFailed", 1, { index: 1 }); // item 0 is the IDEM# receipt, item 1 a PROP# item
+    const r = await w.post(ME, body, { idem: "race-3" });
+    expect(err(r)).toEqual({ status: 503, error: "unavailable" });
+    expect(r.headers["idempotent-replayed"]).toBeUndefined();
+    expect(w.rows("IDEM#")).toEqual([]);
+    expect(w.rows("PROP#")).toEqual([]);
+  });
+  it("a condition failure on the receipt with a stored receipt is the replay (the tag names the receipt item)", async () => {
+    const w = await world();
+    const hash = contentHash({ target: body.target, base_versions: body.base_versions, ops, note: null, route: "auto" });
+    w.ddb.rows.set(`${idemKeys(ME, "race-4").PK}\u0000META`, receipt(hash));
+    // the receipt exists but the pre-read is skipped by making the first read miss: the commit's own condition then decides
+    w.race.before = null;
+    w.ddb.failNext("ConditionalCheckFailed", 1, { index: 0 });
+    const r = await w.post(ME, body, { idem: "race-4" });
+    expect(r.headers["idempotent-replayed"]).toBe("true");
+  });
   it("ops that are already applied change nothing: 200 unchanged, no transaction, no receipt", async () => {
     const w = await world();
     const r = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [set(w.me, "/primary_name/nick", "", "")] }, { idem: "noop-1" });
@@ -404,21 +470,23 @@ describe("races and no-ops", () => {
 });
 
 describe("the guard runs on the resulting state before any PROP# write (AC4)", () => {
+  // Each case is refused by dob_not_allowed whether HFY_GUARD_DOB is on or off (the structural date rules run unconditionally); never_in_cloud is a different rule.
   const cases = {
-    "a TEXTONLY birth date": (ev) => ({ path: "/date", base: ev.date, value: date([0, 0, 0, false], "born 3 May 1950", 6) }),
-    "a span's second date on a birth": (ev) => ({ path: "/date", base: ev.date, value: date([0, 0, 1950, false, 14, 3, 1952, false], "", 5) }),
-    "a baptism day for a deceased person": (ev) => ({ path: "/date", base: ev.date, value: date([14, 3, 1950, false]) }),
+    "a TEXTONLY birth date": { code: "dob_not_allowed", mk: (ev) => ({ path: "/date", base: ev.date, value: date([0, 0, 0, false], "born 3 May 1950", 6) }) },
+    "a span's second date on a birth": { code: "dob_not_allowed", mk: (ev) => ({ path: "/date", base: ev.date, value: date([0, 0, 1950, false, 14, 3, 1952, false], "", 5) }) },
+    "a baptism day for a deceased person": { code: "dob_not_allowed", mk: (ev) => ({ path: "/date", base: ev.date, value: date([14, 3, 1950, false]) }) },
   };
-  for (const [name, mk] of Object.entries(cases)) {
-    it(`${name} is 422 with zero PROP#, IDX# and THREAD# writes`, async () => {
+  for (const [name, { code, mk }] of Object.entries(cases)) {
+    for (const guardDob of [undefined, true]) {
+    it(`${name} is 422 ${code} (guardDob ${guardDob ? "on" : "off"}) with zero PROP#, IDX# and THREAD# writes`, async () => {
       const type = name.includes("baptism") ? 15 : 12;
       const ev = event(5, type, [0, 0, 1950, false]);
       const death = event(6, 13, [0, 0, 1990, false]);
       const dead = person(5, { event_ref_list: [eref(ev), eref(death)], birth_ref_index: -1, death_ref_index: 1 });
-      const w = await world({ seedExtra: [dead, ev, death] });
+      const w = await world({ seedExtra: [dead, ev, death], guardDob });
       const r = await w.post(OTHER, { target: key(dead), base_versions: { [key(ev)]: 1 }, ops: [{ id: "d", op: "set", obj: key(ev), ...mk(ev) }] }, { idem: `g-${type}` });
       expect(r.status).toBe(422);
-      expect(["dob_not_allowed", "never_in_cloud"]).toContain(r.body.error);
+      expect(r.body.error).toBe(code);
       expect(r.body.errors.length).toBeGreaterThan(0);
       expect(r.body.errors.every((e) => e.pointer && e.code)).toBe(true);
       expect(JSON.stringify(r.body)).not.toContain("born 3 May");
@@ -427,6 +495,7 @@ describe("the guard runs on the resulting state before any PROP# write (AC4)", (
       expect(w.rows("IDEM#")).toEqual([]);
       expect(w.txns).toEqual([]);
     });
+   }
   }
   it("a phone number in a proposal note or in a nickname is 422 contact_info", async () => {
     const w = await world();
@@ -468,6 +537,10 @@ describe("a destructive admin direct group needs a fresh sign-in (AC5)", () => {
     expect(w.txns).toEqual([]);
     const missing = await w.post(ADMIN, body, { idem: "su-2", token: await authToken(ADMIN, 0) });
     expect(err(missing)).toEqual({ status: 401, error: "step_up_required" });
+    // a token with no auth_time claim has a fresh iat but no known sign-in: stale (the principal's iat fallback must not count)
+    const iatOnly = await w.post(ADMIN, body, { idem: "su-2b", token: await authToken(ADMIN, undefined) });
+    expect(err(iatOnly)).toEqual({ status: 401, error: "step_up_required" });
+    expect(w.txns).toEqual([]);
     const fresh = await w.post(ADMIN, body, { idem: "su-3", token: await authToken(ADMIN, now - 120) });
     expect(fresh.status).toBe(201);
     expect(fresh.body.applied.versions).toEqual({ [key(w.me)]: 2, [key(w.fam)]: 2 });
