@@ -43,7 +43,7 @@ export const CATALOG = {
 };
 
 /** Registry types the catalog does not hold yet (see the header). */
-export const CATALOG_EXEMPT = ["chat_message"];
+export const CATALOG_EXEMPT = ["chat_message", "access_request_new"];
 
 /**
  * The catalog a viewer sees: the moderators' group (and its types) only for a viewer `/api/me` reports as `admin`, since the server sends

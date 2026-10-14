@@ -3,7 +3,7 @@ import { createPrivateKey, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createLocalJWKSet, exportJWK, importPKCS8 } from "jose";
 import { createIdentityService, createPasskeyService, ddbChallengeStore, ddbFromDocumentClient, ddbRefreshStore } from "@io-kit/auth/server";
-import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator, loadPasskeyBrowserBundle } from "@io-kit/auth/edge/deploy";
+import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator, loadPasskeyBrowserBundle, parseAllowlist } from "@io-kit/auth/edge/deploy";
 import { createAuthEdge, loadManifest } from "./edge.js";
 import { DEFAULT_CLIENT_ID, DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthStore, desktopClient } from "./oauth.js";
 import { createMembership } from "./membership.js";
@@ -15,6 +15,9 @@ import { hfyPasskeyStore } from "./passkeystore.js";
 import { ddbRateLimiter } from "./ratelimit.js";
 import { createAccessRequest, createMailAlarmGate } from "./access-request.js";
 import { createSesMailer } from "./mailer.js";
+import { createAdminDirectory } from "./admins.js";
+import { createAdminInbox } from "./admin-notify.js";
+import { createFlagReader } from "./flags.js";
 
 const sdk = (name) => import(name);
 
@@ -100,7 +103,11 @@ async function init() {
       })
     : undefined;
   const limiter = ddbRateLimiter({ doc, cmds: lib, table: tableName });
-  const accessRequests = createAccessRequestRoutes({ m, doc, cmds: lib, tableName, limiter, sm, resolver });
+  const accessRequests = createAccessRequestRoutes({
+    m, doc, cmds: lib, tableName, limiter, sm, resolver,
+    readAdmins: () => readObject(m.resolver.bucket, process.env.ADMIN_LIST_KEY ?? "config/admins.json"),
+    readEntries: async () => parseAllowlist(await readObject(m.resolver.bucket, m.resolver.key)),
+  });
   return createAuthEdge({
     manifest: m, identity, accessRequests, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
     limiter, // POST /auth/password/forgot (HFY-R58 ruling 5) and the access-request routes (surfaces.md 7.5)
@@ -113,8 +120,11 @@ async function init() {
  * stack parameter is on. The two secrets (Turnstile, pepper) and the SES and CloudWatch clients load on first use and are never logged.
  * Mail goes out from the JOIN identity (JOIN_FROM_ADDRESS, JOIN_SES_CONFIGURATION_SET), not the Cognito and API one; the code route
  * stops while one of the JOIN_MAIL_ALARMS bounce or complaint alarms is in ALARM.
+ * The submit (HFY-TSK-196) tells the admins after it commits: an inbox item per admin principal (behind the site's inboxV1 flag, read from
+ * FLAGS_URL) and one mail per admin address. `readAdmins()` and `readEntries()` read config/admins.json and the S3 allowlist; without them
+ * the submit still sends the requester's receipt.
  */
-export function createAccessRequestRoutes({ m, doc, cmds, tableName, limiter, sm, resolver, env = process.env, sdkImport = sdk }) {
+export function createAccessRequestRoutes({ m, doc, cmds, tableName, limiter, sm, resolver, readAdmins, readEntries, env = process.env, sdkImport = sdk, fetch: fetchImpl }) {
   const once = (fn) => { let v; return async () => (v ??= await fn()); }; // a rejection is not cached
   const secretString = async (name) => {
     if (!name) throw new Error("secret name not set");
@@ -140,7 +150,12 @@ export function createAccessRequestRoutes({ m, doc, cmds, tableName, limiter, sm
     return { client: new mod.CloudWatchClient({}), DescribeAlarmsCommand: mod.DescribeAlarmsCommand };
   });
   const site = new URL(String(m.authOrigin ?? `https://${m.site}`));
+  const directory = readAdmins && readEntries ? createAdminDirectory({ readAdmins, readEntries, ddb: doc, cmds, table: tableName }) : undefined;
+  const flags = createFlagReader({ ...(env.FLAGS_URL ? { url: env.FLAGS_URL } : {}), ...(fetchImpl ? { fetch: fetchImpl } : {}) });
+  const adminInbox = directory ? createAdminInbox({ principals: directory.principals, featureOn: flags.on, ddb: doc, cmds, table: tableName }) : undefined;
   return createAccessRequest({
+    ...(directory ? { admins: { inbox: () => adminInbox.notifyNewRequest(), emails: directory.emails } } : {}),
+    fetch: fetchImpl,
     flag: () => env.ACCESS_REQUESTS === "on",
     siteOrigin: site.origin, siteHost: site.hostname, turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? "",
     ddb: doc, cmds, table: tableName, limiter,

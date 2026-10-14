@@ -195,7 +195,7 @@ describe("the kill switch and the request checks (7.2)", () => {
     const m = setup();
     expect((await m.start("a@example.com")).headers["cache-control"]).toBe("no-store");
     expect(await m.ar.handle("/access-request/nope", post("/access-request/nope", {}))).toBeUndefined();
-    expect(await m.ar.handle("/access-request", post("/access-request", {}))).toBeUndefined(); // the submit route is surf-access-submit's
+    expect((await m.ar.handle("/access-request", post("/access-request", {}))).statusCode).toBe(403); // the submit route (surf-access-submit): no ticket
     expect(await m.ar.handle("/access-request/constructor", post("/access-request/constructor", {}))).toBeUndefined();
   });
 });

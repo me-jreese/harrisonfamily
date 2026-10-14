@@ -55,7 +55,7 @@ Requests are handled in this order:
 8. OAuth routes, including `/auth/userinfo`, if the authorization server is enabled.
 9. `POST /auth/verify`, refused with `410`.
 10. `POST /auth/password/forgot`, counted against the rate limit; a request over the limit stops here with `429`.
-11. The [access-request routes](#access-request-routes), if the path starts with `/auth/access-request/`.
+11. The [access-request routes](#access-request-routes), if the path is `/auth/access-request` or starts with `/auth/access-request/`.
 12. Everything else goes to the kit app, with `/auth/login`'s `returnTo` normalized first. The kit's response is then rewritten (cookies, `Location`, links and the HTML overrides). The JSON `returnTo` of `/auth/password` and `/auth/passkey/login/verify`, and the `Location` of a `/auth/callback` redirect, are normalized afterwards.
 
 ### edge.manifest.json
@@ -275,7 +275,7 @@ The OAuth routes are listed under [MCP authorization server](#mcp-authorization-
 
 ### Access-request routes
 
-The anonymous sign-up routes of the join flow (HFY-TSK-195, surfaces.md 7.2 and 7.5; [`auth/src/access-request.js`](../../auth/src/access-request.js)). The submit route, `POST /auth/access-request`, is a later task (`surf-access-submit`) that reuses this module's gate, Turnstile check and admission limits. The routes are wired in `createAuthEdge` before the kit fall-through, and they never reach the kit app.
+The anonymous sign-up routes of the join flow (HFY-TSK-195, surfaces.md 7.2 and 7.5; [`auth/src/access-request.js`](../../auth/src/access-request.js)). The submit route, `POST /auth/access-request` (HFY-TSK-196, `surf-access-submit`), reuses this module's gate, Turnstile check and admission limits. The routes are wired in `createAuthEdge` before the kit fall-through, and they never reach the kit app.
 
 Every route answers `503 {"detail":"closed"}` while the stack parameter `AccessRequests` is not `on`, whatever the method or headers. When it is on, a `POST` route also needs the method `POST`, a `content-type` of `application/json`, `X-Requested-With: io-kit` and an `Origin` equal to `https://<site>`, or it answers `403 {"detail":"forbidden"}`. The config route is a `GET` that needs the header and takes an `Origin` only when the browser sent one.
 
@@ -283,6 +283,7 @@ Every route answers `503 {"detail":"closed"}` while the stack parameter `AccessR
 | --- | --- | --- | --- |
 | GET | `/auth/access-request/config` | | `200 {open, turnstileSiteKey}` |
 | POST | `/auth/access-request/start` | `{ email, turnstileToken, company }` | `202 {ok:true}` for every address. `400 invalid_email`. `403 bot_check_failed`. `429 rate_limited` with `Retry-After`. `503 unavailable` (the limiter, the table, a secret, SES, Turnstile or the mail alarm is down) or `503 queue_full`. |
+| POST | `/auth/access-request` | `{ ticket, form, turnstileToken, company }` | `201 {ok:true, state:"pending"}`. `400 {detail:"validation", fields:[{field, code}]}`. `403 ticket_expired` (no ticket, an unknown, expired or used one) or `403 bot_check_failed`. `409 already_member` or `409 already_requested`. `429 rate_limited`. `503 unavailable` or `503 queue_full`. |
 | POST | `/auth/access-request/verify` | `{ email, code }` | `200 {ticket, expiresAt}`. `400 invalid_code`. `429 too_many_attempts`. `503 unavailable`. An expired code is the same `400 invalid_code` as a missing one. |
 
 **Start, in order.**
@@ -309,11 +310,23 @@ Every route answers `503 {"detail":"closed"}` while the stack parameter `AccessR
 
 The `joinsubmit` limits and the queue cap are applied by `submitAdmission()` for the submit route.
 
+**Submit, in order.** The cheap and free checks come first, so junk spends nothing.
+
+1. The shared gate (`503 closed`, then `POST`, JSON, `X-Requested-With`, `Origin`). A filled honeypot (`company`, at the top level or inside `form`) gets a fake `201` and nothing else.
+2. The ticket: a missing, malformed, unknown, expired or already used ticket is `403 {"detail":"ticket_expired"}`. The visitor starts again at step 1 (the join page keeps the draft). Nothing is spent.
+3. The form, with `validateForm()` of [`shared/legacy-form.mjs`](../../shared/legacy-form.mjs) (which runs the R-18 detector on every free-text field) and the address equal to the ticket's: `400 {"detail":"validation","fields":[{"field","code"}]}`, with codes only and no echo of a value. The ticket is kept and no Turnstile call or limiter hit happens, so the visitor fixes the form and sends again with the same ticket. The Residence event follows Q2-11(a) (`STORE_CURRENT_CITY` in `access-request.js`, default yes, io has not recorded an answer).
+4. Turnstile, then `submitAdmission()` (the queue cap, then the `joinsubmit` limits).
+5. A membership lookup and an open-request lookup: `409 already_member` or `409 already_requested`. These are safe to say because the ticket proves the mailbox.
+6. One `TransactWriteItems`: delete the ticket (conditional, so it is good once), put `ACCESSREQEMAIL#<emailHash>` (condition: none, or `declined`, `expired`, or past its `ttl`), put `ACCESSREQ#<ulid>` (`state` `pending`, `version` 1, `GSI1PK` `ACCESSREQS#pending`, `GSI1SK` the id, `ttl` 90 days ahead) and put `AUDIT#accessreq:<ulid>` (op `accessreq.submit`, `after: {id, state}`, no PII). A condition that fails inside it is `403` (the ticket went) or `409 already_requested` (a parallel submit won the guard); any other failure is `503` and nothing is written.
+7. After the commit, in parallel, each on its own and each best effort: the `received` mail to the requester, one `access_request_new` inbox item per admin principal, and one `admin_new` mail per admin address (at most 10; no details, no link). A failure of any of them logs a label and an error name and the answer is still `201`.
+
+**Admin notices.** [`auth/src/admins.js`](../../auth/src/admins.js) reads the admin principals from `config/admins.json` and inverts the allowlist for their addresses (the S3 file plus `ALLOW#` items through `ALLOWSUB#<sub>`, an item of either state overriding the file; the first address per admin, sorted), cached 60 s. [`auth/src/admin-notify.js`](../../auth/src/admin-notify.js) writes the inbox items with the kit's `createDelivery` and `DynamoNotificationStore` (`@io-kit/notify` 0.6.0, the same `INBOX#<principal>` rows as `hfy-api`) and the shared registry [`shared/notify-registry.mjs`](../../shared/notify-registry.mjs), which `api/src/notify.js` re-exports. The type `access_request_new` reads "someone asked to join." at both levels, opens `/me/requests/` and has no push (the edge holds no subscriptions). Like every persist-first write it runs only while `inboxV1` is on in the site's `_data/flags.json` ([`auth/src/flags.js`](../../auth/src/flags.js): cached 60 s, the last good value kept for 10 minutes, then off). `FLAGS_URL` can override the URL.
+
 **Enumeration parity.** A member, an open request and a new address take the same path: the same lookups, the same write and one mail each, so `start` answers every address with the same `202`. The `ACCESSCODE#` item written for a member or an open request is a decoy whose MAC can never match. A later `verify` therefore answers a wrong code with `400`, the fifth with `429` and an expired one with `400`, whichever of the three the address was. An address that never asked for a code gets `400 invalid_code` too.
 
 **Code.** Six digits from `crypto.randomInt`, stored in `ACCESSCODE#<emailHash>` as `codeMac`, the HMAC-SHA256 of the pepper over `<email>:<code>`, with `attempts`, `expiresAt` and `ttl` 15 minutes ahead. Each `verify` counts the attempt atomically before it compares, so at most 5 comparisons happen however many requests run in parallel. The fifth wrong attempt locks the code: the item stays, spent, until it expires, so a resend cannot start a fresh budget (the locked item keeps its original expiry). A right code is deleted in the same transaction that writes the ticket.
 
-**Ticket.** 32 random bytes, base64url, returned once. The table keeps `ACCESSTICKET#<sha256 hex of the ticket>` with the address, its hash and a 60 minute `expiresAt` and `ttl`. The submit route deletes it conditionally, so it is single use.
+**Ticket.** 32 random bytes, base64url, returned once. The table keeps `ACCESSTICKET#<sha256 hex of the ticket>` with the address, its hash and a 60 minute `expiresAt` and `ttl`. The submit route deletes it conditionally inside its transaction, so it is single use.
 
 **`emailHash`** is the HMAC-SHA256 of the pepper (`ACCESS_REQUEST_PEPPER_SECRET`) over the normalized address.
 
@@ -417,6 +430,9 @@ The edge uses the DynamoDB table named by `AUTH_TABLE` (`hfy-app` in the stack).
 | `RATE#` | [`auth/src/ratelimit.js`](../../auth/src/ratelimit.js) | A request counter `n` for one forgot-password or access-request (`joincode`, `joinverify`, `joinsubmit`) window. No email or IP. |
 | `ACCESSCODE#` | [`auth/src/access-request.js`](../../auth/src/access-request.js) | One join code per email hash: `codeMac` (an HMAC, never the code), `attempts`, `expiresAt`. A member's or an open request's item is a decoy whose MAC never matches. `ttl` is 15 minutes ahead. |
 | `ACCESSTICKET#` | [`auth/src/access-request.js`](../../auth/src/access-request.js) | A join ticket, keyed by the SHA-256 of the ticket: the verified email, its hash and `expiresAt`. `ttl` is 60 minutes ahead. |
+| `ACCESSREQ#` | [`auth/src/access-request.js`](../../auth/src/access-request.js) (the submit creates it; `hfy-api` decides it) | One access request: `id` (a ULID), `state` (`pending`), `version`, `createdAt`, `updatedAt`, `email`, `emailHash`, `form` (the validated answers, without the address; years only), `GSI1PK` `ACCESSREQS#pending`, `GSI1SK` the id. `ttl` is 90 days ahead. |
+| `ACCESSREQEMAIL#` | [`auth/src/access-request.js`](../../auth/src/access-request.js) | The one-open-request guard per email hash: `requestId`, `state`, `createdAt`. Same `ttl` as the request. |
+| `AUDIT#accessreq:` | [`auth/src/access-request.js`](../../auth/src/access-request.js) | `op` `accessreq.submit`, `after: {id, state}`, `principal` `anonymous`. No PII. |
 | `MCPCODE#` | OAuth | Authorization code binding: client, `redirect_uri`, PKCE challenge, `sub`, resource, scope, expiry, and the sign-in facts: `email`, `amr`, `authTime` (`0` means unknown) and `name` |
 | `MCPRT#` | OAuth | MCP refresh token: client, `sub`, resource, scope, family, expiry, and the same `email`, `amr`, `authTime` and `name` |
 | `MCPRTUSED#` | OAuth | Marker for a used refresh token, with its family |
