@@ -31,6 +31,9 @@ export function commentGuard(c) {
     : { ...g, condition: `${g.condition} AND #doc.#gv = :gv`, names: { ...g.names, "#gv": "grad_v" }, values: { ...g.values, ":gv": c.grad_v } };
 }
 
+/** Does a photo on stored comment `c` have a graduation under way (graduate.js: reserved, not finished)? Such a comment is never deleted. */
+export const hasPendingPhoto = (c) => Array.isArray(c?.attachments) && c.attachments.some((a) => a?.graduated?.state === "pending");
+
 /** Maps the API actor onto the comments Principal (admin => moderator role). */
 export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: actor.label, ...(actor.admin ? { roles: ["admin"] } : {}) } : null);
 
@@ -259,7 +262,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
       if (!computeCan(c, who, canOpts).delete) throw new CommentError("forbidden", "cannot delete this comment");
       // A photo whose graduation is under way (reserved, not finished) keeps its comment: the admin's retry needs it to finalize (audit, credit, notice).
       // A write between this read and the delete moves grad_v, so commentGuard cancels the delete (409) instead.
-      if (c.attachments?.some((a) => a.graduated?.state === "pending")) throw new HttpError(409, "graduation_pending", "a photo on this comment is being added to a family page. try again in a minute.");
+      if (hasPendingPhoto(c)) throw new HttpError(409, "graduation_pending", "a photo on this comment is being added to a family page. try again in a minute.");
       const cascade = (await reactionRows(t, `R#${commentTarget(id)}#`)).map((i) => ({ PK: i.PK, SK: i.SK }));
       const reason = opts.reason !== undefined && who.roles?.includes("admin") && c.author.id !== who.id ? opts.reason : undefined;
       // Deletes revoke the credit, whoever deletes: the event sits under the comment's author.
@@ -295,24 +298,48 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
   return self;
 }
 
-/**
- * Removes a whole thread (comments + reactions), e.g. after its post is deleted. Each removed comment gets its own D-15
- * `delete` audit item (reason "post deleted") in the same transaction as the delete, and its contribution is revoked there too
- * (BRD2 D2-17: deletes revoke, cascade included). The revokes of one batch are merged (mergeOps), so 30 comments by one author in
- * one month are one decrement per counter key instead of 30 duplicate targets. A batch holds at most 100 actions after the merge.
- * Returns the number of comments removed.
- */
-export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), uid }, t, principalId, reason = "post deleted") {
+/** The items of thread `t` (comments and reactions), or only its comments with `commentsOnly`; at most 50 pages, as purgeThread removes. */
+async function threadRows({ ddb, cmds, table }, t, commentsOnly = false) {
   const rows = [];
   let key;
   for (let i = 0; i < 50; i += 1) {
     const r = await ddb.send(new cmds.QueryCommand({
-      TableName: table, KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": threadPk(t) }, ...(key ? { ExclusiveStartKey: key } : {}),
+      TableName: table,
+      KeyConditionExpression: commentsOnly ? "PK = :pk AND begins_with(SK, :sk)" : "PK = :pk",
+      ExpressionAttributeValues: { ":pk": threadPk(t), ...(commentsOnly ? { ":sk": "C#" } : {}) },
+      ...(key ? { ExclusiveStartKey: key } : {}),
     }));
     rows.push(...(r.Items ?? []));
     key = r.LastEvaluatedKey;
     if (!key) break;
   }
+  return rows;
+}
+
+/**
+ * The check a post delete runs before it writes anything (handler.js wires it as the content source's beforeDelete): while a photo on any
+ * comment of thread `t` has a graduation under way, the delete is 409 graduation_pending, as a comment delete is. The admin's retry
+ * finishes the graduation (audit, credit, notice), and the post can then be deleted. A reservation that lands after this read is
+ * covered by purgeThread, which keeps such a comment.
+ */
+export async function refusePendingGraduation(ctx, t) {
+  if ((await threadRows(ctx, t, true)).some((row) => hasPendingPhoto(row.comment))) {
+    throw new HttpError(409, "graduation_pending", "a photo in this post's discussion is being added to a family page. try again in a minute.");
+  }
+}
+
+/**
+ * Removes a whole thread (comments + reactions), e.g. after its post is deleted. Each removed comment gets its own D-15
+ * `delete` audit item (reason "post deleted") in the same transaction as the delete, and its contribution is revoked there too
+ * (BRD2 D2-17: deletes revoke, cascade included). The revokes of one batch are merged (mergeOps), so 30 comments by one author in
+ * one month are one decrement per counter key instead of 30 duplicate targets. A batch holds at most 100 actions after the merge.
+ * A comment with a photo whose graduation is pending (hasPendingPhoto) is kept, as a comment delete refuses it: a reservation can land
+ * between a post delete's check (refusePendingGraduation) and its commit, and the admin's retry needs the comment to finalize. No
+ * reservation starts once the post is gone (graduate.js checks the post in the reserve's transaction), and the graduation route removes
+ * the rest of the thread once that photo's graduation is no longer pending. Returns the number of comments removed.
+ */
+export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), uid }, t, principalId, reason = "post deleted") {
+  const rows = (await threadRows({ ddb, cmds, table }, t)).filter((row) => !(row.SK.startsWith("C#") && hasPendingPhoto(row.comment)));
   // The stored events of the comments that were credited (a comment from before the ledger has none and revokes nothing).
   const events = new Map();
   const credited = rows.filter((row) => row.SK.startsWith("C#") && row.comment?.contrib);

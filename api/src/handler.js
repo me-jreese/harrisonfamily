@@ -1,7 +1,7 @@
 // Lambda Function URL (payload v2) handler. All logic is injected through `deps` so tests run offline.
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
-import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments.js";
+import { createCommentSource, purgeThread, refusePendingGraduation, toCommentPrincipal } from "./comments.js";
 import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
@@ -74,7 +74,8 @@ export function createHandler(deps) {
     };
     // `store` is the record-store context of the editing routes: reads (records/index.js) and, with the extra members, applyBatch() (sync/apply.js).
     const store = { ddb, cmds, table, now, uid, log, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts, guardDob: deps.guardDob === true, via, completeAccessRequest: deps.completeAccessRequest };
-    const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload });
+    // A post whose thread holds a photo with a graduation under way is not deleted (409 graduation_pending): the thread purge would take the comment the retry needs.
+    const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload, beforeDelete: (post) => refusePendingGraduation(base, `post:${post.id}`) });
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
       photos: uploadPhotosFor({ ddb, cmds, table, bucket: mediaBucket, base: deps.mediaPublicBase, now, s3: deps.s3 }), // HEAD + checkLocation + UPLOAD# binding for comment photos
@@ -97,7 +98,8 @@ export function createHandler(deps) {
       }),
     });
     const afterPublished = (post) => afterCommit("publish notification", () => notifier.onPublished(post));
-    // A deleted post takes its discussion with it (each removed comment is audited); best effort after the post delete.
+    // A deleted post takes its discussion with it (each removed comment is audited); best effort after the post delete. A comment whose photo
+    // graduation is pending stays (purgeThread): the graduation route removes it once it is no longer pending.
     const afterPostDeleted = (id) => afterCommit("post thread purge", () => purgeThread(base, `post:${id}`, actor.id));
     const notifyHandler = () =>
       createNotifyHandler({

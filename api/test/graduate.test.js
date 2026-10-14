@@ -691,6 +691,129 @@ describe("the comment after a graduation", () => {
   });
 });
 
+describe("a photo on a post's thread: the post delete never takes a comment whose graduation is pending", () => {
+  let post, subject; // `member` is the post's author
+  beforeEach(async () => {
+    const p = await w.call("POST", "/api/posts", { token: member, body: { body: "news from the reunion", visibility: "published" } });
+    expect(p.status, JSON.stringify(p.body)).toBe(201);
+    post = p.body.id;
+    subject = `post:${post}`;
+  });
+  /** A photo comment by AUTHOR on the post's thread, and a plain comment by the post's author beside it. */
+  async function postPhotoComment() {
+    const up = await presign(author);
+    const r = await w.call("POST", "/api/comments", { token: author, body: { subject, body: "look", attachments: [{ url: up.publicUrl, mime: "image/jpeg", width: 640, height: 480, alt: "a picnic" }] } });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const plain = await w.call("POST", "/api/comments", { token: member, body: { subject, body: "lovely" } });
+    expect(plain.status, JSON.stringify(plain.body)).toBe(201);
+    return { cid: r.body.id, aid: r.body.attachments[0].id, plain: plain.body.id };
+  }
+  const gradPost = (c, token = admin) => w.call("POST", `/api/comments/${c.cid}/attachments/${c.aid}/graduate`, { token, body: { subject, person: TARGET.gramps_id } });
+  const threadRow = (id) => row(`THREAD#${subject}`, `C#${id}`);
+  const postRow = () => row(`POST#${post}`, "META");
+  const deleteAudits = (id) => rows(`AUDIT#${id}`).filter((r) => r.op === "delete");
+
+  it("the post delete is 409 graduation_pending while a photo is pending (author and admin, after the delete is allowed); the retry finalizes once and the post then goes with its thread", async () => {
+    const c = await postPhotoComment();
+    ctl.fault = "apply"; // applyBatch committed: the Media and the MediaRef are live, finalize has not run
+    expect((await gradPost(c)).status).toBe(500);
+    expect(threadRow(c.cid).comment.attachments[0].graduated.state).toBe("pending");
+    expect((await w.call("DELETE", `/api/posts/${post}`, { token: author })).status).toBe(403); // not allowed comes first: no hint of the thread
+    for (const token of [member, admin]) {
+      const del = await w.call("DELETE", `/api/posts/${post}`, { token });
+      expect(del.status, JSON.stringify(del.body)).toBe(409);
+      expect(del.body.error).toBe("graduation_pending");
+    }
+    expect(postRow()).toBeTruthy();
+    expect(threadRow(c.cid)).toBeTruthy();
+    expect(threadRow(c.plain)).toBeTruthy();
+    const retry = await gradPost(c);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(201);
+    expect(mediaHeads()).toHaveLength(1);
+    expect(personObj(TARGET).media_list).toHaveLength(1);
+    expect(audits(c)).toHaveLength(1);
+    expect(credits()).toHaveLength(1);
+    expect(await notices()).toHaveLength(1);
+    expect((await w.call("DELETE", `/api/posts/${post}`, { token: member })).status).toBe(204); // done: the post and its thread go
+    expect(postRow()).toBeUndefined();
+    expect(threadRow(c.cid)).toBeUndefined();
+    expect(threadRow(c.plain)).toBeUndefined();
+    expect(head("Media", retry.body.media.handle)).toBeTruthy(); // the record photo stays
+  });
+
+  it("a reservation that lands between the post delete's check and its write: the purge keeps that comment, the retry finalizes once and then removes the rest of the thread", async () => {
+    const c = await postPhotoComment();
+    const send = w.ddb.send;
+    let raced = false;
+    w.ddb.send = async (cmd) => {
+      if (!raced && cmd.constructor.name === "TransactWriteCommand" && cmd.input.TransactItems.some((i) => i.Delete?.Key?.PK === `POST#${post}` && i.Delete.Key.SK === "META")) {
+        raced = true;
+        ctl.fault = "reserve";
+        expect((await gradPost(c)).status).toBe(500); // reserved while the post still exists, then stopped
+      }
+      return send.call(w.ddb, cmd);
+    };
+    expect((await w.call("DELETE", `/api/posts/${post}`, { token: member })).status).toBe(204);
+    w.ddb.send = send;
+    expect(raced).toBe(true);
+    expect(postRow()).toBeUndefined();
+    expect(threadRow(c.plain)).toBeUndefined(); // the purge ran
+    expect(deleteAudits(c.plain)).toHaveLength(1);
+    expect(threadRow(c.cid).comment.attachments[0].graduated.state).toBe("pending"); // and kept the pending one
+    expect(deleteAudits(c.cid)).toHaveLength(0);
+    const retry = await gradPost(c);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(201);
+    expect(mediaHeads()).toHaveLength(1);
+    expect(audits(c)).toHaveLength(1);
+    expect(credits()).toHaveLength(1);
+    expect(await notices()).toHaveLength(1);
+    expect(threadRow(c.cid)).toBeUndefined(); // the deleted post's thread is gone once the graduation is done
+    expect(deleteAudits(c.cid)).toHaveLength(1);
+    expect(deleteAudits(c.cid)[0]).toMatchObject({ reason: "post deleted" });
+    expect(head("Media", retry.body.media.handle)).toBeTruthy();
+    expect(personObj(TARGET).media_list).toHaveLength(1);
+    expect((await gradPost(c)).status).toBe(404); // a later retry: the comment is gone with its post
+  });
+
+  it("nothing new starts on the thread of a deleted post: 404, nothing reserved or copied, and the leftover thread is removed", async () => {
+    const c = await postPhotoComment();
+    w.ddb.rows.delete(`POST#${post}\u0000META`); // a post whose thread purge did not run (it is best effort)
+    const r = await gradPost(c);
+    expect(r.status, JSON.stringify(r.body)).toBe(404);
+    expect(r.body.error).toBe("not_found");
+    expect(w.s3.copies).toEqual([]);
+    expect(mediaHeads()).toHaveLength(0);
+    expect(threadRow(c.cid)).toBeUndefined();
+    expect(threadRow(c.plain)).toBeUndefined();
+  });
+
+  it("a post deleted between the route's read and the reservation cancels the reservation (404): the reserve checks the post in its own transaction", async () => {
+    const c = await postPhotoComment();
+    const send = w.ddb.send;
+    w.ddb.send = async (cmd) => {
+      if (cmd.constructor.name === "TransactWriteCommand" && cmd.input.TransactItems.some((i) => i.ConditionCheck?.Key?.PK === `POST#${post}`)) w.ddb.rows.delete(`POST#${post}\u0000META`);
+      return send.call(w.ddb, cmd);
+    };
+    const r = await gradPost(c);
+    w.ddb.send = send;
+    expect(r.status, JSON.stringify(r.body)).toBe(404);
+    expect(threadRow(c.cid).comment.attachments[0].graduated).toBeUndefined();
+    expect(w.s3.copies).toEqual([]);
+    expect(mediaHeads()).toHaveLength(0);
+  });
+
+  it("a done or failed marker does not block the post delete", async () => {
+    const done = await postPhotoComment();
+    expect((await gradPost(done)).status).toBe(201);
+    const failed = await postPhotoComment();
+    ctl.errors.push(new SyncError(422, "validation", "bad title", { pointer: "/desc" }));
+    expect((await gradPost(failed)).status).toBe(400);
+    expect(threadRow(failed.cid).comment.attachments[0].graduated.state).toBe("failed");
+    expect((await w.call("DELETE", `/api/posts/${post}`, { token: member })).status).toBe(204);
+    for (const id of [done.cid, done.plain, failed.cid, failed.plain]) expect(threadRow(id)).toBeUndefined();
+  });
+});
+
 describe("no new IAM", () => {
   it("app-stack.yaml already grants the API role PutObject on media/* and GetObject on uploads/comments/* (app-stack-sync-infra)", () => {
     const yaml = readFileSync(resolve(import.meta.dirname, "../../infrastructure/cloudformation/app-stack.yaml"), "utf8");

@@ -10,6 +10,7 @@
 //   1. reserve   The attachment's `graduated` marker becomes {state: "pending", media_handle: H, person, by, at, title?, description?}.
 //                H is minted once and stored here; a retry resumes with it. The comment is written with a Put guarded by commentGuard()
 //                (`edited_at` and `grad_v`), so an author's edit or a second admin's reserve cannot slide between the read and the write.
+//                On a post:<ulid> thread the same transaction checks that the post exists, so no reservation starts after a post delete.
 //                A marker already `done` for the same person is a 200; for another person it is 409 already_graduated; a pending one for
 //                another person is 409 graduation_pending. A `failed` marker is reserved again, with the same H.
 //   2. copy      CopyObject uploads/comments/<ulid>/<name> -> media/<H>.jpg with ChecksumAlgorithm SHA256. S3 computes the checksum and
@@ -27,7 +28,11 @@
 //   retry of a `done` marker without the flag sends it, so a failure between the commit and the notice loses nothing. A crash between
 //   the notice and the flag can send it twice; that is the price of never losing one.
 //
-// A comment with a pending photo cannot be deleted (comments.js: 409 graduation_pending), so a retry always finds the comment and finalizes.
+// No path deletes a comment with a pending photo, so a retry always finds the comment and finalizes. Deleting the comment, or the post whose
+// thread holds it, is 409 graduation_pending (comments.js: delete, refusePendingGraduation). The purge after a post delete (purgeThread) keeps
+// such a comment too: a reservation can commit between the post delete's check and its write, and only before that write (the reserve checks
+// the post). On a thread whose post is gone, the route finishes a pending or done marker and refuses anything else (404), then removes the
+// rest of the thread (purgeThread, best effort, which again keeps a comment that is still pending).
 // The route needs the cloud ID policy "mint" (HFY_ID_POLICY): the Media is created with an empty gramps_id that applyBatch fills. Without it the
 // create would fail validation and release the reservation, so the route answers 503 id_policy_not_mint before it reserves anything.
 //
@@ -43,8 +48,9 @@ import { CopyObjectCommand } from "@aws-sdk/client-s3";
 import { HttpError, logSafeError } from "./http.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
 import { contribOps, mergeOps } from "./contrib.js";
-import { commentGuard } from "./comments.js";
+import { commentGuard, purgeThread } from "./comments.js";
 import { pointer } from "./guard.js";
+import { postKeys } from "./keys.js";
 import { checkLocation, headUpload } from "./upload-guard.js";
 import { mintHandle } from "./records/ops.js";
 import { byGrampsId } from "./records/index.js";
@@ -170,6 +176,8 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
       await transact(ddb, cmds, table, mergeOps({ puts: [put], deletes: [], updates: [], checks: [] }, extra), store.txnOpts);
     } catch (e) {
       if (e instanceof TxnCancelled && e.busy) throw unavailable("busy", "busy, try again");
+      // The reserve's post check alone failed: the post was deleted after the comment was read, so the comment is going with it.
+      if (e instanceof TxnCancelled && e.conditionFailed && e.failures?.length > 0 && e.failures.every((f) => f.tag === "post")) throw notFound("comment");
       if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "conflict", "the comment changed concurrently. try again.");
       if (e instanceof TxnCancelled) throw unavailable("unavailable", "the store is unavailable, try again");
       throw e;
@@ -177,6 +185,22 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
   }
   const withMarker = (c, i, graduated) => ({ ...c, grad_v: (c.grad_v ?? 0) + 1, attachments: c.attachments.map((a, j) => (j === i ? { ...a, graduated } : a)) });
   const markerOf = (c, i) => c.attachments[i].graduated;
+  /** The id of the post behind a post:<ulid> thread, else undefined. */
+  const postIdOf = (subject) => (subject.startsWith("post:") ? subject.slice(5) : undefined);
+  /** Is the thread's post deleted? Only a post:<ulid> thread has one; its comments outlive it only while the purge keeps them (comments.js). */
+  async function postGone(subject) {
+    const id = postIdOf(subject);
+    if (id === undefined) return false;
+    return !(await ddb.send(new cmds.GetCommand({ TableName: table, Key: postKeys(id), ConsistentRead: true }))).Item;
+  }
+  /** Removes what is left of a deleted post's thread. purgeThread keeps a comment that is still pending, so this is safe at any point. Best effort. */
+  async function sweep(req, actor) {
+    try {
+      await purgeThread({ ddb, cmds, table, now, uid }, req.subject, actor.id);
+    } catch (e) {
+      log.error?.("graduate: could not remove the rest of the deleted post's thread", logSafeError(e));
+    }
+  }
 
   /** The Media is created with an empty gramps_id, which only the "mint" cloud ID policy fills. Anything else fails validation, so refuse before any write. */
   function idPolicyMustMint() {
@@ -221,7 +245,11 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
       ...(req.title !== undefined ? { title: req.title } : {}), ...(req.description !== undefined ? { description: req.description } : {}),
     };
     const next = withMarker(comment, i, marker);
-    await commit(req, comment, next);
+    const postId = postIdOf(req.subject);
+    // A post delete commits after its thread check (comments.js refusePendingGraduation): checking the post here means a reservation either
+    // commits before that delete, and the purge keeps its comment, or not at all.
+    const checks = postId === undefined ? [] : [{ key: postKeys(postId), condition: "attribute_exists(PK)", tag: "post" }];
+    await commit(req, comment, next, { checks });
     return { comment: next, i, marker };
   }
 
@@ -371,25 +399,32 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
       const source = found.comment.attachments[found.i];
       if (found.comment.moderation?.hidden === true || source.moderation?.hidden === true) throw new HttpError(409, "moderated", "that photo or its comment is hidden by a moderator.");
       const g = source.graduated;
-      if (g?.state === "done") {
-        if (g.person !== req.person) throw new HttpError(409, "already_graduated", "this photo is already on another page.", { person: g.person });
-        await noticeOnce(req);
-        return { status: 200, body: await bodyOf(g) };
-      }
-      if (g?.state === "pending" && g.person !== req.person) throw new HttpError(409, "graduation_pending", "this photo is being added to another page.", { person: g.person });
-      if (!(await resolvePerson(req.person))) throw personMissing(); // before the reservation, so a mistyped id leaves nothing behind
+      // The post behind the thread was deleted and the purge kept this comment: finish a reservation (or a done marker's notice), start nothing new.
+      const orphan = await postGone(req.subject);
+      try {
+        if (orphan && g?.state !== "pending" && g?.state !== "done") throw notFound("comment");
+        if (g?.state === "done") {
+          if (g.person !== req.person) throw new HttpError(409, "already_graduated", "this photo is already on another page.", { person: g.person });
+          await noticeOnce(req);
+          return { status: 200, body: await bodyOf(g) };
+        }
+        if (g?.state === "pending" && g.person !== req.person) throw new HttpError(409, "graduation_pending", "this photo is being added to another page.", { person: g.person });
+        if (!(await resolvePerson(req.person))) throw personMissing(); // before the reservation, so a mistyped id leaves nothing behind
 
-      const res = await reserve(req, actor, found);
-      await phase("reserve");
-      const applied = await isApplied(res.marker.media_handle);
-      const copied = applied ? undefined : await copy(req, res, source);
-      await phase("copy");
-      if (!applied) await applyPhase(req, res, source, copied);
-      await phase("apply");
-      const done = await finalize(req, res);
-      await phase("finalize");
-      await noticeOnce(req);
-      return { status: 201, body: await bodyOf(done) };
+        const res = await reserve(req, actor, found);
+        await phase("reserve");
+        const applied = await isApplied(res.marker.media_handle);
+        const copied = applied ? undefined : await copy(req, res, source);
+        await phase("copy");
+        if (!applied) await applyPhase(req, res, source, copied);
+        await phase("apply");
+        const done = await finalize(req, res);
+        await phase("finalize");
+        await noticeOnce(req);
+        return { status: 201, body: await bodyOf(done) };
+      } finally {
+        if (orphan) await sweep(req, actor); // whatever the outcome: purgeThread keeps the comment while its photo is still pending
+      }
     },
   };
 }

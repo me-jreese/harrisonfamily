@@ -149,6 +149,24 @@ describe("tools run the API's own route handlers", () => {
     expect(fresh.result.isError).toBeUndefined();
     expect((await rpc(author, "tools/call", { name: "hfy_posts_get", arguments: { id } })).result.isError).toBe(true);
   });
+  it("delete refuses a post whose thread holds a photo with a graduation under way (graduation_pending), and keeps the post and the thread", async () => {
+    const { rpc, api } = setup();
+    const author = await token("I0044");
+    const id = (await rpc(author, "tools/call", { name: "hfy_posts_create", arguments: { body: "to delete" } })).result.structuredContent.id;
+    const c = (await rpc(author, "tools/call", { name: "hfy_comments_create", arguments: { subject: `post:${id}`, body: "a photo" } })).result.structuredContent;
+    const row = api.ddb.rows.get(`THREAD#post:${id}\u0000C#${c.id}`);
+    // A synthetic pending marker, as graduate.js's reserve writes it.
+    row.comment.attachments = [{ id: "01J00000000000000000000001", url: "/uploads/comments/01J00000000000000000000001/photo.jpg", mime: "image/jpeg", graduated: { state: "pending", media_handle: "f0000000000000000000000000001", person: "I0003" } }];
+    const admin = await token("I0113", { amr: ["passkey", "hwk", "mfa"], authTime: nowS() });
+    const del = await rpc(admin, "tools/call", { name: "hfy_posts_delete", arguments: { id } });
+    expect(del.result.isError).toBe(true);
+    expect(JSON.stringify(del.result)).toContain("being added to a family page");
+    expect((await rpc(author, "tools/call", { name: "hfy_posts_get", arguments: { id } })).result.isError).toBeUndefined();
+    expect(api.ddb.rows.get(`THREAD#post:${id}\u0000C#${c.id}`)).toBeTruthy();
+    row.comment.attachments[0].graduated.state = "done";
+    expect((await rpc(admin, "tools/call", { name: "hfy_posts_delete", arguments: { id } })).result.isError).toBeUndefined();
+    expect(api.ddb.rows.get(`THREAD#post:${id}\u0000C#${c.id}`)).toBeUndefined();
+  });
 });
 
 describe("actor display label (mcp-actor-label-is-gramps-id)", () => {
