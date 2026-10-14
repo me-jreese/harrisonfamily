@@ -127,7 +127,8 @@ Facts:
   - `person` loads on `personV2`, on `/person/?id=…`.
   - Under `postsV2`, `my-posts` loads on `/person/?id=…`, `timeline` on `/`, and `posts` on `/posts/`.
   - `notifications` loads on `notifyV2`, on `/me/notifications/`.
-  - `settings` loads on `navMe`, on `/me/`: the settings hub (HFY-TSK-091).
+  - `settings` loads on `navMe`, on `/me/`: the settings hub (HFY-TSK-091). With `profileLinks` its `ROWS` list adds "your links" (`/me/links/`).
+  - `person-links` and `links-editor` load on `profileLinks`: `person-links` on `/person/?id=…` (it fills the person page's `[data-slot="links"]` host with a labelled "links" section), `links-editor` on `/me/links/` (HFY-TSK-217). Their shared copy and chip rules are in `src/lib/profile-links.js`, over `shared/profile-links.mjs`.
 - The shell's navigation registry is `navItems()` in `src/lib/nav.js`, a pure function of the flags `navMe`, `familyViz` and `notifyV2` and the edge session's sub. With `navMe` off it has five items: home, family (`/private/`), search, posts, and me (`/auth/link`, or `/me/notifications/` under `notifyV2`). With `navMe` on (HFY-TSK-091), "me" takes the family tab's own-page route, "family" leaves the bar until `familyViz` gives it `/tree/`, and a gear before the account control opens the `/me/` settings hub. The family tab is "your family": once the edge session names the member, its route becomes their own page, `/person/?id=<sub>` (`src/lib/family-route.js`), and it is marked current on that page only. Signed out, or before the session answers, it stays `/private/`, a redirect page (`HFYFeatureFlags.goToFamily`) that sends a signed-in visitor to their own page and a signed-out one to `/auth/login?returnTo=/private/`. `/person/` without an id does the same. `/family/` cannot be the route: it is a gated data prefix.
 - Installing needs `CODEARTIFACT_AUTH_TOKEN` for the `@io-kit/*` packages ([`islands/.npmrc`](../../islands/.npmrc)). The build also needs the dev dependencies, which hold the fonts, so install with `npm ci`, not with `--omit=dev`. `package.json` requires Node 22 or later.
 - How to rebuild: [How to build and preview the React islands](../how-to/build-and-preview-the-islands.md).
@@ -150,7 +151,7 @@ Facts:
 - Every output is written by `islands/build.mjs`. Never edit one by hand, and commit them with the source change ([React islands](#react-islands)).
 - `hfy-theme.css` is built in this cascade order: the `@font-face` rules (the virtual import `hfy:fonts`), the `@io-kit/tokens` harrisonfamily `theme.css`, `bs-bridge.css`, `kit-bridge.css`, every `islands/src/theme/NN-*.css` partial in ascending order, and a generated `@media print` block that puts `:root` in the daylight (`[data-theme="light"]`) theme.
 - The Eleventy `css/main.css`, Bootstrap compiled with literal values, is never edited. `hfy-theme.css` is linked right after it, so the theme wins on equal or higher specificity.
-- `heads.mjs` writes two marker blocks into 14 pages: the 10 Eleventy pages plus `posts/index.html`, `me/index.html`, `me/notifications/index.html` and `offline.html`. Block A (`<!-- hfy-theme:start A -->`) sits immediately before the `main.css` link. It holds the `color-scheme` meta, a static `theme-color` meta set to the surface token, the shell early-hint script (left out on `offline.html`) and the preload of the UI font. Block B, right after `main.css`, links `/css/hfy-theme.css?v=<sha8>`. A page without `main.css` gets A, then B, after `</title>`.
+- `heads.mjs` writes two marker blocks into 15 pages: the 10 Eleventy pages plus `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html` and `offline.html`. Block A (`<!-- hfy-theme:start A -->`) sits immediately before the `main.css` link. It holds the `color-scheme` meta, a static `theme-color` meta set to the surface token, the shell early-hint script (left out on `offline.html`) and the preload of the UI font. Block B, right after `main.css`, links `/css/hfy-theme.css?v=<sha8>`. A page without `main.css` gets A, then B, after `</title>`.
 - The blocks are head markup because `feature-flags.js` runs at the end of `<body>`, where nothing can block rendering. A page that lacks the theme link still gets one from `feature-flags.js`, marked `data-hfy-theme-fallback`.
 - A new HTML page must be added to `PAGES`. `islands/tests/theme-delivery.test.mjs` fails when a page is not registered or lacks the blocks.
 - `fonts.mjs` copies the faces from exact-pinned devDependencies: `@fontsource-variable/source-sans-3` (the UI face), `@fontsource/libre-caslon-text` (the display serif) and `@fontsource-variable/source-code-pro`. `11ty/fonts/` holds 12 latin and latin-ext `woff2` files named `<base>.<sha256-8>.woff2`, plus three `LICENSE-*.txt` files.
@@ -398,7 +399,8 @@ Facts:
 - `hfy-check-allowed` verified a Google ID token and checked an HMAC of the email against the hashed allowlist. Production CloudFront has no `/api/check-allowed*` behavior, so `/api/check-allowed` reaches `hfy-api` through `/api/*` and gets `404`.
 - `ci.manifest.yaml` has no `lambda` target (HFY-TSK-317).
 - The pre-commit sync check compares only `11ty/`. It has no Lambda or Cloud Function comparison.
-- Still in AWS: `config/allowed_hashes.json`, which the allowlist publisher writes and nothing reads, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keys it, which only the publisher reads. The deployed deploy-role stack keeps its grant on the deleted function until the GitHub-roles stack is next updated.
+- The hashed allowlist went too, under ruling P2-R51 on 2026-10-14: the allowlist publisher's digest step was removed, `config/allowed_hashes.json` was deleted, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keyed it was scheduled for deletion on 2026-11-13.
+- Still in AWS: the deployed deploy-role stack keeps its grant on the deleted function until the GitHub-roles stack is next updated.
 
 ## Infrastructure
 
@@ -548,7 +550,7 @@ Paths: [`allowlist/`](../../allowlist/), [`harrisonfamily-frontend/`](../../harr
 Facts:
 
 - These are placeholders that show the shape of the private data. The real files live under `<project>/workspace-local/`.
-- `allowlist/` holds example addresses and hashes.
+- `allowlist/` holds example addresses, and example hashes in the format of the retired digest list.
 - `harrisonfamily-frontend/` is a synthetic set of person, family, event, media, note and place records.
 - `etl-output/` holds only READMEs, and `gramps_exports/` holds only `.gitkeep`.
 - The top-level README in each sample directory that has one is a short pointer into these docs.
@@ -567,7 +569,7 @@ Facts:
 - The source's `partials/head.njk` already emits head blocks A and B, with a hard-coded theme `?v` and font file name that the islands build overwrites in the output. The base layout does not emit the `auth-v2.js` tag, and neither the Voice copy nor the asset versions are ported, so `copy.mjs` and `assets.mjs` are still needed. The source's layout still emits the retired Google client, `auth.js`, the navbar search and the `gateway` entry, and its `public/js/` still holds `auth.js`, `search-navbar.js` and `search-results.js`, until it is ported ([Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)).
 - The ETL scripts turn the Gramps export into person JSON and family-tree media.
 - `build_search_index.js` builds the person manifest and search index. The source's `build:search` step runs it.
-- `publish_allowlists.sh` publishes the email-to-gramps_id map and the hashed allowlist to the config bucket. Nothing has read the hashed allowlist since `hfy-check-allowed` was deleted, but that step still reads the `HFY_ALLOWLIST_HMAC_SECRET` secret from Secrets Manager, and the script stops there without it. Its last step still writes the allowlist to the Google Secret Manager secret, which was deleted on 2026-10-14, so that step fails after the uploads.
+- `publish_allowlists.sh` publishes the email-to-gramps_id map to the config bucket as `config/userGrampsID.json`, the file the auth edge reads, and does nothing else. Its hashed-allowlist and Google Secret Manager steps were removed on 2026-10-14 (ruling P2-R51).
 - `mint_test_id_token.py` mints Google ID tokens for the retired legacy sign-in. Nothing in the repository runs it any more.
 - `workspace-local/` holds the private family data and the real credentials.
 - The workspace sources of the legacy sign-in code are also outside the repository. See [Retired legacy sign-in](#retired-legacy-sign-in).
@@ -599,7 +601,7 @@ After any refresh, and after `scripts/promote_workspace_assets.sh`, run `cd isla
 | `js/person-page.js` | Repo-edited, and largely rewritten for the design system's PersonRecord layout: a hero, then life, family, photos and stories, and a tree toolbar with zoom and a legend. The data path: `dataFetch()` sends the data requests through `HFYFeatureFlags.dataFetch` with the cookie, and `fetchPerson()` turns a final 401 into a sign-in link, which `showSignIn()` shows. `renderFamilyVisualization()` loads the family-tree SVG as a background request. | Overwritten with the source copy, which lacks the layout and the `authV2` data path. | Excluded. | Excluded. |
 | `_data/flags.json`, `js/auth-v2.js`, `images/pwa-192.png`, `images/pwa-512.png`, `images/pwa-maskable-512.png` | Repo-only. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `sw.js`, `manifest.webmanifest` | Repo-only. The islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
-| `offline.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html` | Repo-only. The islands build writes their head blocks and `?v` versions. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
+| `offline.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html` | Repo-only. The islands build writes their head blocks and `?v` versions. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `js/islands/`, including `chunks/` and `notify-sw.js`; `css/hfy-theme.css`; `css/auth-edge.css`; `fonts/` | Build output. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `README.md` | Repository note for the directory. It is not deployed: the static sync excludes it. | Excluded. | Excluded. | Excluded. |
 
