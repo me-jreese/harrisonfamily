@@ -103,15 +103,19 @@ async function staleOf(ctx, p, memo = new Map()) {
 }
 
 /**
- * The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13), and so do the admin's
- * decision reason and the deciding sign-in time (HFY-TSK-209: a member of the page's circle sees the verdict, never the private note).
+ * The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13), and so does the admin's
+ * decision reason (HFY-TSK-209: a member of the page's circle sees the verdict, never the private note). The deciding sign-in time (auth_time) is
+ * for admins only: the proposer does not see it.
  */
 export const viewOf = async (ctx, actor, p, memo) => {
   const view = proposalView(p, actor, { stale: await staleOf(ctx, p, memo) });
-  if (actor.admin === true || p.proposer?.id === actor.id) return view;
+  if (actor.admin === true) return view;
+  // The admin's sign-in time is session metadata for admins and the audit: the proposer does not see it either.
+  const dropAuthTime = (d) => { const { auth_time: authTime, ...rest } = d; return rest; }; // eslint-disable-line no-unused-vars
+  if (p.proposer?.id === actor.id) return view.decision ? { ...view, decision: dropAuthTime(view.decision) } : view;
   const { owners, request_id: requestId, ...rest } = view; // eslint-disable-line no-unused-vars
   if (rest.decision) {
-    const { reason, auth_time: authTime, ...decision } = rest.decision; // eslint-disable-line no-unused-vars
+    const { reason, ...decision } = dropAuthTime(rest.decision); // eslint-disable-line no-unused-vars
     rest.decision = decision;
   }
   return rest;

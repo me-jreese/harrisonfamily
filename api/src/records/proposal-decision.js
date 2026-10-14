@@ -217,8 +217,11 @@ async function decideWithoutRecords(c, prev, input, requestHash) {
 }
 
 // ---- approve ------------------------------------------------------------------------------------------------------------------------------
-/** A target that is gone, or an overlap: not an error of the admin's, so the proposal is moved aside (stale or superseded) and the proposer told. */
-const isConflict = (e) => e instanceof HttpError && ((e.status === 409 && e.code === "version_conflict") || (e.status === 400 && e.code === "validation"));
+/**
+ * An overlap (the engine's 409 version_conflict): not an error of the admin's, so the proposal is moved aside (stale) and the proposer told. A 400
+ * validation (a shape, schema, field-policy or semantics failure) is not a rebase conflict and is answered as it is, with nothing persisted.
+ */
+const isConflict = (e) => e instanceof HttpError && e.status === 409 && e.code === "version_conflict";
 
 async function planApproval(c, prev, amend, nowMs, guard) {
   const ctx = c.store;
@@ -232,6 +235,19 @@ async function planApproval(c, prev, amend, nowMs, guard) {
     else gone.push(k);
   }
   if (gone.length) return { gone };
+  // An amend carries the versions the admin read. If the records moved after that read, the edited ops were made against a page that is gone: 409,
+  // nothing applied. (The stored proposal's own base_versions are the stale-or-clean question of the rebase; an amend is judged on the admin's.)
+  if (amend) {
+    const given = isObj(amend.base_versions) ? amend.base_versions : {};
+    const missing = Object.keys(versions).filter((k) => given[k] === undefined);
+    if (missing.length) throw bad(missing.map((k) => ({ pointer: `/amend/base_versions/${k}`, obj: k, detail: `amend.base_versions has no version of ${k}` })), "amend.base_versions must name every record the ops touch");
+    const moved = Object.keys(versions).filter((k) => given[k] !== versions[k]);
+    if (moved.length) {
+      throw problem(409, "rebase_conflict", "the page changed since you opened it", {
+        details: { conflicts: moved.map((k) => ({ opId: null, obj: k, path: "", reason: "stale_base", base_version: given[k], current_version: versions[k] })), current: pick(versions, moved) },
+      });
+    }
+  }
   // A relationship proposal also names the objects its decision was based on but its ops leave alone (read_versions, relationship-api): if any of
   // them moved, the suggestion was judged on a page that is no longer there.
   const readRows = [];
@@ -258,7 +274,7 @@ async function effectiveProposal(c, prev, amend, planned) {
 }
 
 /** The gramps_id the access-request completion links: the Person the approval created, else the page the proposal is about. "" when none is set yet (assign mode). */
-function grampsIdFor(batch, eff) {
+export function grampsIdFor(batch, eff) {
   const created = arr(batch.changes).find((x) => x.class === "Person" && x.op === "create");
   if (created) return created.gramps_id ?? "";
   return eff.subject?.cls === "Person" ? eff.subject.gramps_id ?? "" : "";
@@ -310,26 +326,37 @@ function hooksWith(base, mine) {
   return { contributors: () => [...base.contributors(), mine], afterCommitHooks: () => base.afterCommitHooks() };
 }
 
-async function moveAside(c, prev, { state, op, conflicts, errors, superseded }) {
+/** The body errorResponse() makes of an HttpError, for the receipt of an answer that is an error (a retry of the key replays it). */
+const errorBodyOf = (e) => ({
+  error: e.code, message: e.message,
+  ...(Array.isArray(e.errors) ? { errors: e.errors } : {}),
+  ...(e.details && typeof e.details === "object" ? { details: e.details } : {}),
+});
+
+async function moveAside(c, prev, { state, op, conflicts, errors, superseded }, idem) {
   const ctx = c.store;
   const at = iso(ctx.now());
   if (prev.state !== state) {
     const next = withState(prev, state, at);
-    await commitState(c, prev, next, { op, auditAfter: { conflicts: conflicts.length } });
-    await notifyProposer(c, prev, "stale");
     const fresh = proposalView(next, c.actor, { stale: state === "stale" });
-    throw problem(409, "rebase_conflict", superseded ? "the page was merged or removed" : "the page changed since this was suggested", { details: { proposal: fresh, conflicts }, errors });
+    const answer = problem(409, "rebase_conflict", superseded ? "the page was merged or removed" : "the page changed since this was suggested", { details: { proposal: fresh, conflicts }, errors });
+    // The receipt is written in the same transaction, so a retry of this Idempotency-Key after a lost answer replays the 409 instead of meeting a moved etag (412).
+    const receipt = receiptFor(c, idem.input, idem.requestHash, { status: answer.status, body: errorBodyOf(answer) }, at);
+    await commitState(c, prev, next, { op, auditAfter: { conflicts: conflicts.length }, receipt });
+    await notifyProposer(c, prev, "stale");
+    throw answer;
   }
   const view = proposalView(prev, c.actor, { stale: true });
   throw problem(409, "rebase_conflict", "the page changed since this was suggested", { details: { proposal: view, conflicts }, errors });
 }
 
 /** A guard failure at approval time (the rules may have tightened): the proposal goes back to its proposer with a system reason. */
-async function moveBack(c, prev, e) {
+async function moveBack(c, prev, e, idem) {
   const ctx = c.store;
   const at = iso(ctx.now());
   const next = withState(prev, "needs_changes", at, { decision: decisionOf(c.actor, "needs_changes", at, { reason: GUARD_SYSTEM_REASON, system: true }) });
-  await commitState(c, prev, next, { op: "proposal.decide", reason: GUARD_SYSTEM_REASON, auditAfter: { verdict: "needs_changes", system: true, findings: arr(e.errors).length } });
+  const receipt = receiptFor(c, idem.input, idem.requestHash, { status: e.status, body: errorBodyOf(e) }, at); // a retry of the key replays the 422
+  await commitState(c, prev, next, { op: "proposal.decide", reason: GUARD_SYSTEM_REASON, auditAfter: { verdict: "needs_changes", system: true, findings: arr(e.errors).length }, receipt });
   logDecision(ctx, { verdict: "needs_changes", state: "needs_changes", system: true });
   await notifyProposer(c, prev, "needs_changes", GUARD_SYSTEM_REASON);
 }
@@ -340,6 +367,7 @@ async function approve(c, prev, input, requestHash) {
   const guard = createRecordGuard({ dob: ctx.guardDob === true, log: ctx.log });
   const amended = input.amend !== undefined;
   const nowMs = ctx.now();
+  const idem = { input, requestHash };
 
   let planned;
   for (let round = 0; ; round += 1) {
@@ -348,23 +376,23 @@ async function approve(c, prev, input, requestHash) {
       step = await planApproval(c, prev, input.amend, nowMs, guard);
     } catch (e) {
       if (!amended && e instanceof RecordGuardError) {
-        await moveBack(c, prev, e);
+        await moveBack(c, prev, e, idem);
         throw e;
       }
       if (!amended && isConflict(e)) {
         const rows = (await rebaseOf(ctx, actor, prev)).conflicts;
-        await moveAside(c, prev, { state: "stale", op: "proposal.stale", conflicts: rows.length ? rows : arr(e.details?.conflicts), errors: e.errors });
+        await moveAside(c, prev, { state: "stale", op: "proposal.stale", conflicts: rows.length ? rows : arr(e.details?.conflicts), errors: e.errors }, idem);
       }
       throw e;
     }
     if (step.gone) {
       if (amended) throw new HttpError(404, "not_found", "no such record");
       const rows = (await rebaseOf(ctx, actor, prev)).conflicts;
-      await moveAside(c, prev, { state: "superseded", op: "proposal.supersede", conflicts: rows, superseded: true });
+      await moveAside(c, prev, { state: "superseded", op: "proposal.supersede", conflicts: rows, superseded: true }, idem);
     }
     if (step.readRows) {
       if (amended) throw problem(409, "rebase_conflict", "the page changed since this was suggested", { details: { conflicts: step.readRows } });
-      await moveAside(c, prev, { state: "stale", op: "proposal.stale", conflicts: step.readRows });
+      await moveAside(c, prev, { state: "stale", op: "proposal.stale", conflicts: step.readRows }, idem);
     }
     planned = step.planned;
 

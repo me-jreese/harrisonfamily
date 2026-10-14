@@ -8,7 +8,7 @@ import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 import { createSystem } from "../src/records/proposal-store.js";
-import { GUARD_SYSTEM_REASON } from "../src/records/proposal-decision.js";
+import { GUARD_SYSTEM_REASON, grampsIdFor } from "../src/records/proposal-decision.js";
 import { sha256Hex } from "../src/records/proposals.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
@@ -24,6 +24,7 @@ const note = (n, extra = {}) => ({ _class: "Note", handle: h(2000 + n), gramps_i
 const create = (obj) => ({ op: "create", class: obj._class, handle: obj.handle, base_version: null, obj });
 const noteValue = (text) => ({ _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: text, tags: [] }, format: 0, type: typ("NoteType", 1) });
 
+const personValue = () => { const { handle, ...rest } = person(7, { gramps_id: "" }); return rest; }; // eslint-disable-line no-unused-vars
 const ME = "I0001";
 const OTHER = "I0002";
 const THIRD = "I0003";
@@ -544,6 +545,128 @@ describe("create proposals: ids per Q2-03 and the access-request hook (AC5)", ()
     const p = await w.propose(OTHER, w.me, "Aldric", "h-1");
     expect((await w.decide(ADMIN, p, { verdict: "approve" })).status).toBe(200);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("review fixes (HFY-TSK-209 R58 follow-up)", () => {
+  it("an amend whose base_versions are behind the records is 409 rebase_conflict: nothing is applied and the proposal stays pending", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "f-1");
+    await w.bump({ ...w.me, primary_name: { ...w.me.primary_name, nick: "Ally" } }, 1); // the record moved after the admin read it (version 1)
+    w.txns.length = 0;
+    const r = await w.decide(ADMIN, p, { verdict: "approve", amend: { base_versions: { [key(w.me)]: 1 }, ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldrich", "e1")] } });
+    expect(err(r)).toEqual({ status: 409, error: "rebase_conflict" });
+    expect(r.body.details.conflicts).toEqual([expect.objectContaining({ obj: key(w.me), reason: "stale_base", base_version: 1, current_version: 2 })]);
+    expect(w.txns).toEqual([]);
+    expect(w.stored(p.id).proposal.state).toBe("pending");
+    expect(w.heads("Person", w.me.handle).primary_name.first_name).toBe("Alder");
+    // the same amend with the version the admin re-read is applied, and the stored base_versions are the verified ones
+    const ok = await w.decide(ADMIN, p, { verdict: "approve", amend: { base_versions: { [key(w.me)]: 2 }, ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldrich", "e1")] } }, { idem: "f-1b" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(w.stored(p.id).proposal.base_versions).toEqual({ [key(w.me)]: 2 });
+  });
+
+  it("an amend that names no version of a record its ops touch is 400", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "f-2");
+    const r = await w.decide(ADMIN, p, { verdict: "approve", amend: { ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldrich", "e1")] } });
+    expect(err(r)).toEqual({ status: 400, error: "validation" });
+    expect(w.stored(p.id).proposal.state).toBe("pending");
+  });
+
+  it("a validation failure that is not a rebase conflict is 400, not stale: nothing is persisted and the proposer is not told", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "f-3");
+    const doc = structuredClone(w.stored(p.id).proposal);
+    doc.ops[0].value = 12345; // a value the schema refuses (planted, as an older release would have accepted it)
+    for (const row of w.rows(`PROP#${p.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: doc });
+    w.txns.length = 0;
+    const r = await w.decide(ADMIN, doc, { verdict: "approve" });
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    expect(w.txns).toEqual([]);
+    expect(w.stored(p.id).proposal.state).toBe("pending");
+    expect(w.rows(`AUDIT#proposal:${p.id}`).map((x) => x.op)).not.toContain("proposal.stale");
+    expect((await w.inbox.list(OTHER)).items.map((i) => i.type)).not.toContain("proposal_stale");
+  });
+
+  it("a retry of the key that moved a proposal aside replays the 409 (not 412), and the move-back 422 likewise", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "f-4");
+    await w.bump({ ...w.me, primary_name: { ...w.me.primary_name, first_name: "Alden" } }, 1);
+    const first = await w.decide(ADMIN, p, { verdict: "approve" }, { idem: "same-key" });
+    expect(err(first)).toEqual({ status: 409, error: "rebase_conflict" });
+    const again = await w.decide(ADMIN, p, { verdict: "approve" }, { idem: "same-key" }); // the same request, after a lost answer
+    expect(err(again)).toEqual({ status: 409, error: "rebase_conflict" });
+    expect(again.body.details.proposal.state).toBe("stale");
+    expect(w.rows(`AUDIT#proposal:${p.id}`).filter((x) => x.op === "proposal.stale")).toHaveLength(1);
+
+    const q2 = await w.propose(OTHER, w.third, "Aldric", "f-5");
+    const doc = structuredClone(w.stored(q2.id).proposal);
+    doc.ops[0].value = "Aldric 212-555-0143";
+    for (const row of w.rows(`PROP#${q2.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: doc });
+    const g1 = await w.decide(ADMIN, doc, { verdict: "approve" }, { idem: "guard-key" });
+    expect(g1.status).toBe(422);
+    const g2 = await w.decide(ADMIN, doc, { verdict: "approve" }, { idem: "guard-key" });
+    expect(g2.status).toBe(422);
+    expect(JSON.stringify(g2.body)).not.toContain("555");
+    expect(w.stored(q2.id).proposal.state).toBe("needs_changes");
+    expect((await w.inbox.list(OTHER)).items.filter((i) => i.type === "proposal_needs_changes")).toHaveLength(1); // told once
+  });
+
+  it("the admin's sign-in time is stored for admins and the audit, and shown to nobody else, the proposer included", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "f-6");
+    const r = await w.decide(ADMIN, p, { verdict: "deny", reason: "a note for the proposer" });
+    expect(r.body.proposal.decision).toHaveProperty("auth_time");
+    expect(w.stored(p.id).proposal.decision).toHaveProperty("auth_time");
+    expect((await w.getP(ADMIN2, p.id)).body.decision).toHaveProperty("auth_time");
+    const mine = await w.getP(OTHER, p.id);
+    expect(mine.body.decision.reason).toBe("a note for the proposer");
+    expect(mine.body.decision).not.toHaveProperty("auth_time");
+    const list = await w.call("GET", "/api/proposals", OTHER);
+    expect(JSON.stringify(list.body)).not.toContain("auth_time");
+  });
+
+  it("an approval with nothing left to write never needs a recent sign-in (it is not destructive: no record is touched)", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "f-7");
+    await w.bump({ ...w.me, primary_name: { ...w.me.primary_name, first_name: "Aldric" } }, 1);
+    const old = await w.authToken(ADMIN, Math.floor(w.NOW / 1000) - 5000); // signed in far longer than 900 s ago
+    const r = await w.decide(ADMIN, p, { verdict: "approve" }, { token: old });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.applied.versions).toEqual({});
+  });
+});
+
+describe("grampsIdFor (Q2-03, AC5)", () => {
+  const eff = (subject) => ({ subject });
+  it("a created Person's gramps_id is the one linked, else the page the proposal is about, else none", () => {
+    expect(grampsIdFor({ changes: [{ class: "Person", op: "create", gramps_id: "I8001" }] }, eff({ cls: "Person", gramps_id: "I0001" }))).toBe("I8001");
+    expect(grampsIdFor({ changes: [{ class: "Person", op: "create" }] }, eff(undefined))).toBe(""); // assign mode: the desktop assigns it
+    expect(grampsIdFor({ changes: [{ class: "Note", op: "create", gramps_id: "N8001" }] }, eff({ cls: "Person", gramps_id: "I0001" }))).toBe("I0001");
+    expect(grampsIdFor({ changes: [] }, eff({ cls: "Family", gramps_id: "F0001" }))).toBe("");
+    expect(grampsIdFor({}, eff(undefined))).toBe("");
+  });
+
+  it("a Person create from an access request is not reachable yet: field policy refuses it at filing (403 derived) and again at approval, with a clear error and nothing written (owned by surf-access-admin-api and relationship-api)", async () => {
+    const calls = [];
+    const w = await world({ completeAccessRequest: async (a) => { calls.push(a.grampsId); return { puts: [] }; } });
+    const sys = { ...w.sctx, uid: (() => { let n = 0; return () => `01J${String(++n).padStart(23, "0")}`; })() };
+    const mk = (cls, value) => ({ id: "mk", op: "create", obj: "new:1", cls, value });
+    // filing: the system proposer cannot file a Person create today
+    const refused = await createSystem(sys, { kind: "create", origin: "access_request", requestId: "req-0002", base_versions: {}, ops: [mk("Person", personValue())] }).catch((e) => e);
+    expect(refused).toMatchObject({ status: 403, code: "not_allowed" });
+    expect(refused.errors).toEqual([expect.objectContaining({ code: "derived" })]);
+    // approval: a stored Person-create proposal (planted, as a later release that allows it would have filed it) is refused with the same error
+    const doc = await createSystem(sys, { kind: "create", origin: "access_request", requestId: "req-0003", base_versions: {}, ops: [mk("Note", noteValue("Synthetic request note"))] });
+    const planted = { ...structuredClone(doc), ops: [mk("Person", personValue())] };
+    for (const row of w.rows(`PROP#${doc.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: planted });
+    w.txns.length = 0;
+    const r = await w.decide(ADMIN, planted, { verdict: "approve" });
+    expect(err(r)).toEqual({ status: 403, error: "not_allowed" });
+    expect(w.txns).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(w.stored(doc.id).proposal.state).toBe("pending"); // not moved aside: this is not a rebase conflict
   });
 });
 
