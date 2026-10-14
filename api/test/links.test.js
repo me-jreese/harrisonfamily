@@ -129,6 +129,66 @@ describe("profile links API (synthetic ids)", () => {
     expect(racing.ddb.all().filter((x) => x.PK.startsWith("AUDIT#"))).toEqual([]);
   });
 
+  it("a no-op body writes nothing: empty body, or clearing platforms that are not set, or an admin clear on a missing item", async () => {
+    const empty = await put(owner, {}, 0);
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ links: {}, version: 0 });
+    expect((await put(owner, { tiktok: null }, 0)).body.version).toBe(0);
+    expect((await put(admin, { instagram: null }, 0)).status).toBe(200);
+    expect(w.ddb.all()).toEqual([]);
+    await put(owner, { instagram: "@jane.example" }, 0);
+    const again = await put(owner, { tiktok: null }, 1);
+    expect(again.body.version).toBe(1);
+    expect(w.ddb.all().filter((x) => x.PK.startsWith("AUDIT#"))).toHaveLength(1);
+    expect(w.ddb.calls.filter((c) => c === "TransactWriteCommand")).toHaveLength(1);
+  });
+
+  it("a stale version on a no-op body is still 409 (422 and 403 come first, then 409)", async () => {
+    await put(owner, { instagram: "@jane.example" }, 0);
+    expect((await put(owner, {}, 0)).status).toBe(409);
+    expect((await put(owner, { myspace: "x" }, 0)).status).toBe(422);
+    expect((await put(other, { instagram: null }, 0)).status).toBe(403);
+  });
+
+  it("a mixed set and clear body is audited as links.update; an all-clear body as links.clear", async () => {
+    await put(owner, { instagram: "@jane.example" }, 0);
+    await put(owner, { instagram: null, tiktok: "@jane.example" }, 1);
+    await put(owner, { tiktok: null }, 2);
+    const ops = w.ddb.all().filter((x) => x.PK.startsWith("AUDIT#")).sort((a, b) => a.SK.localeCompare(b.SK)).map((x) => x.op);
+    expect(ops).toEqual(["links.update", "links.update", "links.clear"]);
+  });
+
+  it("the transaction guards the item with the version (or its absence for a first write)", async () => {
+    const seen = [];
+    const spy = makeApi({ flags: { profileLinks: true }, intercept: async (cmd) => { if (cmd.constructor.name === "TransactWriteCommand") seen.push(cmd.input.TransactItems[0].Put); } });
+    const t = await signToken(OWNER);
+    const go = (links, version) => spy.call("PUT", PATH, { token: t, body: { links, version } });
+    await go({ instagram: "@jane.example" }, 0);
+    await go({ tiktok: "@jane.example" }, 1);
+    expect(seen[0].ConditionExpression).toBe("attribute_not_exists(PK)");
+    expect(seen[1]).toMatchObject({ ConditionExpression: "#v = :v", ExpressionAttributeNames: { "#v": "version" }, ExpressionAttributeValues: { ":v": 1 } });
+  });
+
+  it("a cancelled transaction maps to 503 busy (conflict) or 503 unavailable (throttle); a condition failure is 409 with updatedAt", async () => {
+    const t = await signToken(OWNER);
+    const attempt = async (code) => {
+      const f = makeApi({ flags: { profileLinks: true } });
+      f.ddb.failNext(code, 20);
+      const r = await f.call("PUT", PATH, { token: t, body: { links: { instagram: "@jane.example" }, version: 0 } });
+      expect(f.ddb.all()).toEqual([]);
+      return r;
+    };
+    const busy = await attempt("TransactionConflict");
+    expect([busy.status, busy.body.error]).toEqual([503, "busy"]);
+    const unavailable = await attempt("ThrottlingError");
+    expect([unavailable.status, unavailable.body.error]).toEqual([503, "unavailable"]);
+    const f = makeApi({ flags: { profileLinks: true } });
+    const go = (links, version) => f.call("PUT", PATH, { token: t, body: { links, version } });
+    expect((await go({ instagram: "@jane.example" }, 0)).status).toBe(200);
+    const stale = await go({ tiktok: "@jane.example" }, 0);
+    expect(typeof stale.body.details.current.updatedAt).toBe("string");
+  });
+
   it("the routes are dark (404) without profileLinks, even for the owner", async () => {
     const dark = makeApi({ flags: { profileLinks: false } });
     expect((await dark.call("GET", PATH, { token: owner })).status).toBe(404);

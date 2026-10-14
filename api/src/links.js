@@ -3,7 +3,10 @@
 // One item per person, PK=PLINKS#<gramps_id>, SK=META: {links: {<platform>: {url, handle|host}}, version, updatedAt, updatedBy}. Every write is
 // one TransactWriteItems of that item plus an AUDIT#plinks:<gramps_id> item (op links.update or links.clear, with before and after; D-15).
 // The owner (actor.id === :id) may set or clear any platform. An admin may only clear (null). Anyone else is 403. The version is optimistic
-// concurrency: a stale one is 409 with the current item. The validator is the shared module the editor runs too (src/shared/profile-links.mjs).
+// concurrency: a stale one is 409 with the current item. A no-op body (nothing would change) is 200 with the current view and no write.
+// An invalid :id is 400 (the spec leaves the status open); a well-formed id with no item reads as empty (no person-existence check).
+// The validator is the shared module the editor runs too (src/shared/profile-links.mjs).
+import { isDeepStrictEqual } from "node:util";
 import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
 import { validateLinks, PLATFORMS } from "./shared/profile-links.mjs";
@@ -15,6 +18,7 @@ export const linksAuditId = (id) => `plinks:${id}`;
 const isBlank = (v) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const view = (item) => ({ links: item?.links ?? {}, version: item?.version ?? 0 });
+const currentOf = (item) => ({ ...view(item), ...(item?.updatedAt ? { updatedAt: item.updatedAt } : {}) });
 
 export function createLinks({ ddb, cmds, table, actor, now, uid }) {
   const idOf = (id) => {
@@ -22,7 +26,7 @@ export function createLinks({ ddb, cmds, table, actor, now, uid }) {
     return id;
   };
   const read = async (id) => (await ddb.send(new cmds.GetCommand({ TableName: table, Key: linksKeys(id), ConsistentRead: true }))).Item;
-  const conflict = (item) => new HttpError(409, "conflict", "links changed since you loaded them", { current: view(item) });
+  const conflict = (item) => new HttpError(409, "conflict", "links changed since you loaded them", { current: currentOf(item) });
 
   return {
     async get(rawId) {
@@ -54,6 +58,8 @@ export function createLinks({ ddb, cmds, table, actor, now, uid }) {
         if (v === null) delete links[k];
         else links[k] = v;
       }
+      // A body that changes nothing (empty, or clears of platforms that are not set) writes nothing: no version bump, no audit item.
+      if (isDeepStrictEqual(links, before?.links ?? {})) return view(before);
       const at = new Date(now()).toISOString();
       const next = { ...linksKeys(id), entity: "plinks", links, version: version + 1, updatedAt: at, updatedBy: actor.id };
       const clearing = touched.length > 0 && touched.every((k) => isBlank(input[k]));
