@@ -533,6 +533,19 @@ describe("amend: edit then approve (AC)", () => {
     expect(w.stored(p.id).proposal.ops[0].value).toBe("Aldrich");
   });
 
+  it("an amend of a relationship (spouse) proposal drops the stale intent and recomputes read_versions to the objects the edited ops leave alone", async () => {
+    const w = await world();
+    const p = await w.propose(OTHER, w.me, "Aldric", "a-rel");
+    const doc = { ...w.stored(p.id).proposal, kind: "relationship", intent: { type: "spouse", spouse: { who: "stub" } }, read_versions: { [key(w.fam)]: 1, [key(w.me)]: 1 } };
+    for (const row of w.rows(`PROP#${p.id}`)) w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, proposal: doc });
+    const r = await w.decide(ADMIN, doc, { verdict: "approve", amend: { base_versions: { [key(w.me)]: 1 }, ops: [set(w.me, "/primary_name/first_name", "Alder", "Aldrich", "e1")] } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const stored = w.stored(p.id).proposal;
+    expect(stored.intent).toBeUndefined();
+    expect(stored.kind).toBe("edit");
+    expect(stored.read_versions).toEqual({ [key(w.fam)]: 1 });
+  });
+
   it("an amend runs the privacy guard (admins are not exempt): 422, and nothing is written", async () => {
     const w = await world();
     const p = await w.propose(OTHER, w.me, "Aldric", "a-2");

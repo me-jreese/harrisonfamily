@@ -271,8 +271,12 @@ async function effectiveProposal(c, prev, amend, planned) {
   const review = planned.review;
   if (!amend || !review) return prev;
   const touched = sortedUnique(review.ops.map(existingKey).filter(Boolean));
+  // The intent a relationship proposal was compiled from no longer describes the admin's ops, so it is dropped; read_versions is recomputed to the
+  // objects read but not touched by the edited ops (planApproval has just verified each is still at that version). The kind follows the ops below.
+  const { intent: _intent, read_versions: prevRead, ...rest } = prev;
+  const read = Object.fromEntries(Object.entries(isObj(prevRead) ? prevRead : {}).filter(([k]) => !touched.includes(k)));
   return {
-    ...prev, kind: review.ops.some((o) => o.op === "create") ? "create" : "edit", targets: review.targets, owners: ownersList(await ownersOf(c.store, review.targets, planned.stored)),
+    ...rest, ...(Object.keys(read).length ? { read_versions: read } : {}), kind: review.ops.some((o) => o.op === "create") ? "create" : "edit", targets: review.targets, owners: ownersList(await ownersOf(c.store, review.targets, planned.stored)),
     base_versions: pick(amend.base_versions, touched), ops: review.ops, summary: planned.plan.review.flatMap((g) => g.summary), warnings: review.warnings ?? [],
   };
 }
