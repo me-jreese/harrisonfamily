@@ -557,6 +557,63 @@ class ExactBirthDate(unittest.TestCase):
         res = run([e, other, PE("p1", ["ev2"], birth=-1)], sticky=["ev2"])
         self.assertEqual(res.projected["ev3"]["date"]["dateval"][:2], [0, 0])
 
+    def test_structural_renderings_hold_whatever_the_separator_order_month_spelling_or_year_length(self):
+        """Review finding: the full-date match is read from date-like triples, not from a list of strings."""
+        for text in ("05-03-1900", "03-05-1900", "5 3 1900", "1900 03 05", "1900.3.5", "Mar-5-1900", "5-Mar-1900", "1900-Mar-05",
+                     "5/3/00", "05.03.00", "Fifth of March 1900", "fifth march, 1900", "5 mars 1900", "5 de marzo de 1900", "5. M\u00e4rz 1900",
+                     "5 maart 1900", "5 marzo 1900", "5 mar\u00e7o 1900", "19000305", "05031900", "03051900", "1900-03-05T10:00:00",
+                     "5 March '00", "March 5th 1900", "the 5th day: 5th of Mar., 1900", "1900 / 5 / 3", "3 - 5 - 1900", "MARCH-5-1900"):
+            with self.subTest(text):
+                self.assertIn("scan.dob_exact", self.held_by("Entered " + text + " in the register"))
+
+    def test_the_day_words_and_compound_ordinals_are_read(self):
+        index = P.DobIndex([P._Dob("p", (), 1900, 3, 21, 0), P._Dob("p", (), 1900, 3, 30, 0)], 60)
+        for text in ("Twenty-first of March 1900", "twenty first March 1900", "March thirtieth, 1900", "21st March 1900"):
+            with self.subTest(text):
+                self.assertTrue(index.text_hit(text))
+        self.assertFalse(index.text_hit("Twenty-second of March 1900"))
+
+    def test_near_misses_of_the_structural_match_are_not_held(self):
+        for text in ("6-3-1900", "1900-03-06", "5 3 1901", "5/3/01", "Page 5 3 19", "5 March 1901", "1900 5", "19000306", "5 and 3 and 1900",
+                     "5 xx March 1900", "5/13/1900", "5/3/", "tel 1900 03 0", "5 3 900"):
+            with self.subTest(text):
+                self.assertNotIn("scan.dob_exact", self.held_by(text, first="Hazel"))
+
+    def test_day_and_month_alone_hold_with_dash_and_slash_separators_near_an_anchor(self):
+        for text in ("Alder came 5-3", "born 3-5", "born Mar-5", "born 5-Mar", "born 5/3", "Alder 3/5", "Alder 5.3.", "born March, 5th"):
+            with self.subTest(text):
+                self.assertIn("scan.dob_exact", self.held_by(text))
+        for text in ("Alder had 5 3 chairs", "Alder walked 5.3 miles", "Alder 5-3-17", "Alder 13/5/1901", "born 12/5/3", "Alder 15-3"):
+            with self.subTest(text):
+                self.assertNotIn("scan.dob_exact", self.held_by(text, first="Alder"))
+
+    def test_two_digit_years_and_accents_fold_to_the_same_day(self):
+        index = P.DobIndex([P._Dob("p", ("zoe",), 1987, 2, 4, 0)], 60)
+        self.assertTrue(index.text_hit("4 f\u00e9vrier 1987"))
+        self.assertTrue(index.text_hit("Zoe went on 4 Feb"))
+        self.assertTrue(index.text_hit("04.02.87"))
+        self.assertFalse(index.text_hit("04.02.88"))
+
+    def test_the_text_scan_costs_one_pass_whatever_the_number_of_birth_days(self):
+        """Review finding: one regex per distinct (month, day) made the scan grow with the tree; now one pass per text."""
+        import time
+        objs, n = [], 0
+        for month in range(1, 13):
+            for day in range(1, 29):
+                n += 1
+                objs.append(EV("e%d" % n, MV.BIRTH, DATE(day, month, 1800 + n % 150)))
+                objs.append(PE("p%d" % n, ["e%d" % n], birth=0, first="Name%d" % n))
+        notes = [NOTE("n%d" % i, "Plain remark number %d about the harvest of 19%02d, filed 1%d/2%d" % (i, i % 100, i % 9, i % 7)) for i in range(3000)]
+        start = time.time()
+        res = run(objs + notes)
+        self.assertLess(time.time() - start, 30)
+        self.assertEqual([h for h in res.holds if h["rule"] == "scan.dob_exact"], [])
+        index = P.DobIndex(P.local_dobs(R.Tree(objs), (), POLICY), POLICY["scan"]["dobWindow"])
+        start = time.time()
+        for note in notes:
+            index.text_hit(note["text"]["string"])
+        self.assertLess(time.time() - start, 5)
+
     def test_the_index_is_cheap_on_a_big_tree(self):
         objs = []
         for i in range(400):
@@ -893,6 +950,125 @@ class CoordinatesAndRects(unittest.TestCase):
             P.hold_reason("no.such.rule")
 
 
+class ReviewFollowUps(unittest.TestCase):
+    """Held values and hold pointers: the base copy, list matching, settled pointers and release (review of HFY-TSK-241)."""
+
+    HOT = "call me at 555-010-1234"
+
+    def test_the_cloud_copy_of_a_held_object_names_no_excluded_object(self):
+        base_p = PE("p1", [ER("e_gone"), ER("e_kept")], birth=1, death=-1, note_list=["n1", "n2"], first="Alder")
+        local_p = C(base_p, primary_name=NAME("Alder", private=True))
+        objs = [local_p, EV("e_gone", MV.RESIDENCE, private=True), EV("e_kept", MV.BIRTH), NOTE("n1", "now private", private=True), NOTE("n2", "fine")]
+        res = run(objs, base={"p1": base_p})
+        self.assertIn(("p1", "private.name.hold_person"), [(h["handle"], h["rule"]) for h in res.holds])
+        held = res.projected["p1"]
+        self.assertEqual(held["note_list"], ["n2"])
+        self.assertEqual([r["ref"] for r in held["event_ref_list"]], ["e_kept"])
+        self.assertEqual(held["birth_ref_index"], 0)
+        self.assertIsNone(res.projected["n1"])
+        self.assertEqual(dangling(res, objs), [])
+        self.assertEqual(res.projected["p1"], run(objs, base={"p1": base_p}).projected["p1"])
+        self.assertEqual(base_p["note_list"], ["n1", "n2"], "the input base is not changed")
+
+    def test_a_field_hold_in_a_list_takes_the_value_of_the_same_element_not_of_the_same_index(self):
+        x, y = ATTR(0, "base-x", "Hobby"), ATTR(0, "base-y", "Pet")
+        base = PE("p1", attribute_list=[x, y])
+        local = C(base, attribute_list=[ATTR(0, "fine", "Craft"), ATTR(0, self.HOT, "Hobby"), copy.deepcopy(y)])
+        res = run([local], base={"p1": base})
+        got = res.projected["p1"]["attribute_list"]
+        self.assertEqual([(a["type"]["string"], a["value"]) for a in got], [("Craft", "fine"), ("Hobby", "base-x"), ("Pet", "base-y")])
+        self.assertEqual([(h["scope"], h["pointer"]) for h in res.holds], [("field", "/attribute_list/1/value")])
+
+    def test_a_list_element_without_a_counterpart_in_the_base_holds_the_object_whole(self):
+        base = PE("p1", attribute_list=[ATTR(0, "base-y", "Pet")])
+        local = C(base, attribute_list=[ATTR(0, self.HOT, "Hobby")])
+        res = run([local], base={"p1": base})
+        self.assertEqual(res.projected["p1"], base)
+        self.assertEqual([(h["scope"], h["pointer"]) for h in res.holds], [("object", "/attribute_list/0/value")])
+
+    def test_two_held_fields_of_one_element_are_both_put_back(self):
+        old = NAME("Basefirst", "Sur", MV.NAME_MARRIED, nick="Basenick")
+        base = PE("p1", alternate_names=[old])
+        new = NAME(self.HOT, "Sur", MV.NAME_MARRIED, nick="someone@example.org")
+        local = C(base, alternate_names=[NAME("Plain", "Other", MV.NAME_MARRIED), new])
+        res = run([local], base={"p1": C(base, alternate_names=[copy.deepcopy(old)])})
+        self.assertEqual(res.projected["p1"]["alternate_names"][1], old)
+        self.assertEqual(sorted((h["scope"], h["pointer"]) for h in res.holds),
+                         [("field", "/alternate_names/1/first_name"), ("field", "/alternate_names/1/nick")])
+
+    def test_a_hold_pointer_is_the_pointer_in_the_projected_object_after_references_are_filtered(self):
+        base = PE("p1", media_list=[MR("m2", rect=[0, 0, 10, 10])], person_ref_list=[MV.PREF("p2", "friend")])
+        local = C(base, media_list=[MR("m1"), MR("m2", rect=[1, 1, 50.5, 50])],
+                  person_ref_list=[MV.PREF("p9", "friend"), MV.PREF("p2", self.HOT)])
+        objs = [local, MED("m1", private=True), MED("m2"), PE("p2", first="Birch"), PE("p9", first="Cedar", private=True)]
+        res = run(objs, base={"p1": base, "p2": PE("p2", first="Birch"), "m2": MED("m2")}, files={})
+        got = res.projected["p1"]
+        self.assertEqual([r["ref"] for r in got["media_list"]], ["m2"])
+        self.assertEqual(got["media_list"][0]["rect"], [0, 0, 10, 10])
+        self.assertEqual([r["ref"] for r in got["person_ref_list"]], ["p2"])
+        self.assertEqual(got["person_ref_list"][0]["rel"], "friend")
+        pointers = {h["rule"]: h["pointer"] for h in res.holds if h["handle"] == "p1"}
+        self.assertEqual(pointers["media.rect.degenerate_or_float"], "/media_list/0/rect")
+        self.assertEqual(pointers["scan.phone"], "/person_ref_list/0/rel")
+        for h in res.holds:
+            if h["scope"] == "field":
+                self.assertIsNot(R.pointer_get(res.projected[h["handle"]], h["pointer"], None), None)
+        again = run([o for o in objs], base={"p1": base, "p2": PE("p2", first="Birch"), "m2": MED("m2")})
+        self.assertEqual(again.holds, res.holds)
+
+    def test_a_hold_on_an_element_that_the_references_phase_removes_is_dropped(self):
+        base = PE("p1", person_ref_list=[MV.PREF("p9", "friend"), MV.PREF("p2", "friend")])
+        local = C(base, person_ref_list=[MV.PREF("p9", self.HOT), MV.PREF("p2", "friend")])
+        objs = [local, PE("p2", first="Birch"), PE("p9", first="Cedar", private=True)]
+        res = run(objs, base={"p1": base, "p2": PE("p2", first="Birch")})
+        self.assertEqual(res.projected["p1"]["person_ref_list"], [MV.PREF("p2", "friend")])
+        self.assertEqual([h for h in res.holds if h["handle"] == "p1"], [])
+
+    def sticky_tree(self, birth_type, date_birth, date_other):
+        return [EV("ev1", birth_type, date_birth), EV("ev2", MV.RESIDENCE, date_other), PE("p1", ["ev1", "ev2"], birth=0)]
+
+    def test_a_released_handle_is_not_added_back_by_any_rule_while_it_is_listed(self):
+        """Release semantics: ended persistence, not an exemption from the ordinary rules."""
+        retyped = self.sticky_tree(MV.RESIDENCE, DATE(5, 3, 1900), DATE(5, 3, 1900))
+        retyped[2]["birth_ref_index"] = -1
+        base = {"ev1": EV("ev1", MV.BIRTH, DY(1900)), "p1": PE("p1", ["ev1"], birth=0)}
+        stored = P.update_birthlike_sticky(set(), retyped, base)
+        self.assertEqual(stored, {"ev1", "ev2"}, "ev1 was a Birth at the base; ev2 shares its date")
+        kept = P.update_birthlike_sticky(stored, retyped, base, released=["ev2"])
+        self.assertEqual(kept, {"ev1"})
+        again = P.update_birthlike_sticky(kept, retyped, base, released=["ev2"])
+        self.assertEqual(again, {"ev1"}, "still released on the next sync")
+        res = run(retyped, base=base, sticky=stored, released=["ev2"])
+        self.assertEqual(res.sticky, frozenset({"ev1"}))
+        self.assertEqual(res.projected["ev2"]["date"]["dateval"][:2], [0, 0], "its date is a local birth date: the ordinary rule still reduces it")
+        self.assertNotIn("ev2", P.birthlike_sticky_additions(retyped, base, released=["ev2"]))
+
+    def test_a_released_handle_that_is_birth_like_now_is_reduced_but_not_sticky(self):
+        tree = self.sticky_tree(MV.BIRTH, DATE(5, 3, 1900), DATE(9, 9, 1901))
+        res = run(tree, sticky=["ev1"], released=["ev1"])
+        self.assertEqual(res.projected["ev1"]["date"]["dateval"][:2], [0, 0])
+        self.assertNotIn("ev1", res.sticky)
+        self.assertEqual(P.update_birthlike_sticky({"ev1"}, tree, released=["ev1"]), set())
+
+    def test_a_released_event_shows_its_date_once_nothing_else_protects_it(self):
+        tree = self.sticky_tree(MV.RESIDENCE, DATE(7, 7, 1907), DATE(9, 9, 1901))
+        tree[2]["birth_ref_index"] = -1
+        protected = run(tree, sticky=["ev2"])
+        self.assertEqual(protected.projected["ev2"]["date"]["dateval"][:2], [0, 0])
+        released = run(tree, sticky=["ev2"], released=["ev2"])
+        self.assertEqual(released.projected["ev2"]["date"]["dateval"][:2], [9, 9])
+        self.assertEqual(released.sticky, frozenset())
+
+    def test_the_sticky_set_only_accumulates_if_the_caller_keeps_it(self):
+        """Documented contract: each run sees one base; the caller stores the union."""
+        first_base = {"ev1": EV("ev1", MV.BIRTH, DY(1900)), "p1": PE("p1", ["ev1"], birth=0)}
+        later = [EV("ev1", MV.RESIDENCE, DATE(5, 3, 1900)), PE("p1", ["ev1"], birth=-1)]
+        stored = P.update_birthlike_sticky(set(), later, first_base)
+        self.assertEqual(stored, {"ev1"})
+        self.assertEqual(P.update_birthlike_sticky(set(), later, {}), set(), "a caller that kept nothing forgets it")
+        self.assertEqual(P.update_birthlike_sticky(stored, later, {}), {"ev1"})
+
+
 class Contract(unittest.TestCase):
     def test_project_tree_returns_a_tuple_and_project_adds_the_details(self):
         objs = [PE("p1", []), PE("p2", [], private=True)]
@@ -915,7 +1091,7 @@ class Contract(unittest.TestCase):
         self.assertEqual((r.projected, r.holds, r.excluded, r.withdrawn), ({}, [], [], []))
 
     def test_the_module_imports_only_the_standard_library_and_its_own_package(self):
-        allowed = {"copy", "re", "json", "os", "hashlib"}
+        allowed = {"copy", "re", "json", "os", "hashlib", "unicodedata"}
         for name in ("projection.py", "canonical.py"):
             with open(os.path.join(REPO, "gramps", "hfygramps", name), encoding="utf-8") as fh:
                 tree = ast.parse(fh.read())
