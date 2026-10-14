@@ -46,7 +46,9 @@ registerCommentContract(
     admin: roles("I0099", "Admin", ["admin"]),
     reader: roles("I0005", "Rita Reader", ["reader"]),
     maxLength: 1000,
-    features: { reactions: true },
+    // @io-kit/comments 0.3.0 CC-24..CC-27 need CommentSource.moderate; hfy has no comment moderation (an admin deletes, with a
+    // reason), so the harness opts out. CC-23 (the can.moderate matrix) still runs: computeCan sets it on every comment.
+    features: { reactions: true, moderation: false },
   },
   api,
   "hfy comments (CC) over DynamoDB fake",

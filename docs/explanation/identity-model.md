@@ -42,7 +42,7 @@ Making one file the authority has these consequences:
 
 ## One edge, several methods
 
-Every sign-in method ends at the same auth edge: the `hfy-auth-edge` Lambda ([`auth/src/index.js`](../../auth/src/index.js), [`auth/src/edge.js`](../../auth/src/edge.js)), built on `@io-kit/auth` 2.2.0, which [`auth/package.json`](../../auth/package.json) and [`api/package.json`](../../api/package.json) both pin exactly. A method only has to tie the visitor to a verified email. The edge then does the same three things for every method. It resolves the email through the allowlist, records that this method is linked to that member, and mints its own RS256 session.
+Every sign-in method ends at the same auth edge: the `hfy-auth-edge` Lambda ([`auth/src/index.js`](../../auth/src/index.js), [`auth/src/edge.js`](../../auth/src/edge.js)), built on `@io-kit/auth` 2.2.2, which [`auth/package.json`](../../auth/package.json) and [`api/package.json`](../../api/package.json) both pin exactly. A method only has to tie the visitor to a verified email. The edge then does the same three things for every method. It resolves the email through the allowlist, records that this method is linked to that member, and mints its own RS256 session.
 
 Three methods exist:
 

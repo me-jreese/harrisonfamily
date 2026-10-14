@@ -1,6 +1,6 @@
 # gramps
 
-Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231) is the last section; other tasks add the addon and more beside them.
+Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231), the projection, the merge engine (HFY-TSK-242) and the desktop addon skeleton (HFY-TSK-179) are the last sections; other tasks add the rest of the addon beside them.
 
 Every value under `gramps/tests/fixtures/` is fictional. Phones are 555-01xx, mail is example.org, addresses are documentation-style, names are invented. Never copy a record, date, name or contact detail from the real tree into this directory (D-03).
 
@@ -151,3 +151,108 @@ What it does beyond the rule list of the reference page, always in the safe dire
 python3 -m unittest discover gramps/tests/unit     # includes test_projection.py and test_canonical.py
 node --test shared/                                 # includes canonical.test.mjs
 ```
+
+## The merge engine
+
+`gramps/hfygramps/merge.py` is the desktop's three-way merge, lift and conflict model, sync.md section 6 as amended by BRD2 section 11.1 (HFY-TSK-242). It is standard library only and imports nothing from Gramps. The addon (`addon-pull-apply`, `addon-push`) is its caller; nothing deployed calls it yet.
+
+```python
+from hfygramps import merge as M
+
+ctx = M.merge_context(local_objects, base_objects.values(), sticky)       # birth-like locally or at the base
+r = M.merge_object(base, local, local_proj, cloud, cloud_version=C.version, project_fn=project_one,
+                   pins=open_conflicts, mode="cli", ctx=ctx)               # one object
+tree = M.merge_tree(base, local, local_proj, cloud, versions=..., pins=..., project_fn=..., mode="gui", sticky=sticky)   # all of them
+obj = M.lift(cloud_obj, local_obj, local_proj)                             # the local-form object for a projected one
+```
+
+`base` is B (the sidecar's cloud copy), `local` is L (the raw Gramps `json_data`), `local_proj` is P(L) from `projection.project_tree`, and `cloud` is C (the pulled object, `M.TOMBSTONE`, or `None`). `project_fn(obj)` projects an object in the context of the whole local tree; the push object is `project_fn(lift(M, L))`.
+
+What a result carries (`MergeResult`):
+
+| Field | Meaning |
+| --- | --- |
+| `action` | `noop`, `unchanged`, `converged`, `create_local`, `push_create`, `update`, `delete_local`, `delete_deferred`, `push_delete`, `withdraw`, `drop_base`, `conflict` or `excluded` (the rows of sync.md 6.4 and the cases around them). |
+| `local_obj` | `lift(M, L)`: what to commit in Gramps, or `None` when nothing changes locally. |
+| `push` | `{"op", "class", "handle", "base_version", "obj"}` with `base_version = C.version`, or `None` when the push object equals C. A web edit to field a and a desktop edit to field b are both in `push["obj"]` and in `local_obj` after one run. |
+| `base_after` | The object the sidecar's base row becomes once the push is acknowledged (C when nothing is pushed; unchanged while an object-level conflict is open). |
+| `conflicts` | Every open conflict of the object: `id` (stable per class, handle and path), `kind` (`field`, `composite`, `list`, `delete_edit`, `identity` or `integrity`), `path` (RFC 6901, with list element keys such as `/media_list/<ref>#0/rect`), `reason`, projected `base`, `cloud` and `local` values (also as `*_json`), and `disposition` (`parked` for the CLI, `open` for the GUI). |
+| `autos` | Automatic resolutions worth logging (both sides reordered a list). |
+| `closed` | The pins the run found resolved. |
+
+The rules are those of sync.md 6.2 to 6.7. Keyed lists (`event_ref_list`, `media_list`, `person_ref_list`, `reporef_list`, `placeref_list`, `child_ref_list`) merge element by element under the key `<ref>#<n>` and are matched to the base by content first, so a stale key is a `list` conflict and never a different element; ordered sets (`family_list`, `parent_family_list`, `note_list`, `citation_list`, `tag_list`) and bags (`alternate_names`, `attribute_list`, `urls`, `surname_list`, `alt_names`, `alt_loc`, `address_list`, `lds_ord_list`) merge by content, and a bag element replaced differently on both sides is an ambiguous-pairing conflict. A cloud change is a `composite` conflict when the local value is refined by a local-only part (a birth date with a local day and month, a street-level event place, a held field), and when it changes the `type` of an event, the `role` of a reference to it, or a person's birth reference while that event is birth-like locally or was at the base. An incoming tombstone for an object that holds a desktop-only part is a `delete_edit` conflict with the reason `has desktop-only data`; `lost` lists the pointers the preview shows.
+
+Pinning. The caller stores each open conflict as a pin, `{"path", "base_json"}` (`base_json` is `None` for a path the base lacked), and passes the pins of an object on every run. While a pin is open its `base_json` is the base for that path and its descendants, so the sidecar's base row can advance for other paths without the run silently settling the conflict; the push carries the cloud value there and the local apply keeps the local value there. The run lists the conflict again each run and reports the pin in `closed` when the path has converged or has become one-sided. A pin with the path `""` is on the whole object (a delete against an edit, an identity conflict, an integrity freeze). It needs no kind or reason: the object is merged again every run, the same object-level conflict (same `id`) is listed while its cause stands, and the pin is reported in `closed` when the cause is gone. For an integrity freeze `merge_tree` re-checks the result, so a violation that still stands freezes the object again, and one that is gone ends the pin. Only violations that are new in the run freeze an object: a dangling or asymmetric reference already in the local tree before the run never blocks an unrelated cloud edit.
+
+Conflicts hold projected values only, because the sidecar mirrors them to the cloud. To keep mine, read the raw desktop value with `M.local_value(conflict, local, local_proj, base)` and pass it as `M.resolve_conflict(conflict, "keep_mine", local_raw=...)`; without it `keep_mine` is refused, so the projection can never overwrite a street-level place or a held field. `delete_edit` conflicts for a tombstone list `lost_edited` (shared edits) and `lost_desktop_only` (desktop-only data) beside the combined `lost`, and the reason is `has desktop-only data` whenever the second list is not empty. `resolve_date` keeps the website's text, and the default choice falls back to `keep_mine` (flagged by `fallback`) when the two dates do not have the same shape (a range against a single date, a text-only local date).
+
+An object that became excluded (private, private by association) after it was synced is withdrawn: `action: withdraw` with a `withdraw` push op, no step-up, base row dropped (`drop_base` when the cloud copy is already gone).
+
+Two behaviours are deliberately conservative. A bag element that both sides dropped, with a different addition on each side, is an ambiguous-pairing conflict even if the additions look unrelated, because an edited element is a removal plus an addition. A keyed list whose raw desktop elements cannot be paired with the projection's (the projection's own element differs from the raw one and the counts disagree) holds the object as a stale key, never a guess; a private duplicate whose public twin matches by content is fine.
+
+The sticky set. The merge engine is stateless. After every run the addon stores `M.update_baseline(stored_sticky, local_objects, base, released)` (the `birthlike_sticky` set: the stored one, the events birth-like now or at the base or sharing a local full birth date, minus what io released) and passes it back as `sticky` to `projection.project_tree` and to `merge_context` on the next run. The projection never carries Gramps' `change` stamp, so no other part of the baseline needs persisting beyond the base rows.
+
+Composite date conflicts offer three choices (`M.date_choices()`): keep mine, take the website year and keep my day and month (the default), or take the website value and clear my day and month (it needs `confirmed=True`). `M.resolve_date(cloud_date, local_date, choice)` returns the date to store in Gramps and the date the cloud holds afterwards; `M.resolve_conflict(conflict, choice)` does the same for the other conflicts.
+
+Relationship symmetry (6.6). `M.merge_tree` checks the post-merge local tree with `M.check_integrity`: references to a missing object or an object of the wrong class, a person's `family_list` against the family's parents, a family's children against the person's `parent_family_list`, and the birth and death indexes. A violation freezes the objects this run changes and that it involves (an `integrity` conflict, nothing applied or pushed for them, base row unchanged) and every other object proceeds.
+
+```bash
+python3 -m unittest discover gramps/tests/unit -p test_merge.py          # the merge engine alone (about 10 s)
+python3 -m coverage run --branch --include='*/hfygramps/merge.py' -m unittest discover gramps/tests/unit -p test_merge.py
+python3 -m coverage report -m                                            # 100 % statements and branches, none missing
+```
+
+`test_merge.py` has a test for every row of sync.md 6.3 and 6.4, the composite and tombstone rules, pinning over several runs, convergence of a web edit and a desktop edit in one run, and two seeded property tests over the synthetic tree: `P(lift(C, L)) == C` for 1,000 accepted random edit pairs (the checker is the projection: C must be a fixed point of P with no hold), and, for 500 random pairs of website and desktop edits, that a run without conflicts leaves Gramps and the cloud agreeing. `coverage` is not needed by CI; it is a development tool.
+
+## The desktop addon skeleton
+
+HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. It has two real actions, `status` and `bind`. `login`, `check`, `pull`, `push` and `sync` are registered and answer exit `69` (not enabled) until the transport, pull-apply and push tasks fill them in. The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
+
+| Path | What it is |
+| --- | --- |
+| `hfy_sync/hfy_sync.gpr.py` | Registers the tool (`TOOL_DBPROC`, so Tools > Family Tree Processing > Website sync..., GUI and CLI modes, `gramps_target_version` 6.0). Its `version` must equal `ADDON_VERSION` in `hfygramps/addon/consts.py`; a unit test checks it. |
+| `hfy_sync/hfy_sync_tool.py` | The Gramps shell: a plain `Tool` (so Gramps keeps undo), its options (`action`, `dry_run`, `allow_deletes`, `yes`, `run_id`) and `GrampsTree`, which gives the runner the dbid, the schema, the tree marker and the handles. It imports everything at the top, because Gramps puts the addon folder on `sys.path` only while it loads the module. |
+| `hfy_sync/hfy_sync_ui.py` | The two Gtk dialogs of the skeleton: status, and "Bind this tree?". The preview, conflict and apply dialogs of sync.md 13.1 come with the GUI preview task. |
+| `hfygramps/addon/` | The runtime, standard library only and Python 3.9 compatible, with no Gramps import: `consts` (versions, exit codes, the refusal table), `paths` (the sync.md 4.3 layout), `status` (`status.json`, run ids), `sidecar` (`state.sqlite` with the sync.md 4.3 DDL), `binding`, `preflight` and `runner`. |
+| `bin/hfy-sync` | The wrapper. It generates a run id, runs `Gramps -O <tree> -a tool -p name=hfy_sync,...,run_id=<id>`, reads `status.json` and exits with its `exit_code`; a missing file, or one with another run's `run_id`, is exit `70` (D41). Before Gramps starts it refuses `--force-unlock` (64), a tree whose database schema the addon does not read (78; Gramps would upgrade an older tree on open) and a tree with a `lock` file (75). It never removes a lock. |
+| `scripts/build-addon.sh` | Writes `gramps/dist/hfy_sync-<version>/` (the Gramps files, a vendored copy of `hfygramps/` without `render/` and `schema_check.py`, and `redaction/redaction-v1.json`, which `rules.py` finds beside the package) and the zip of it. `dist/` is not tracked. |
+| `scripts/install-addon.sh` | Builds, then replaces `<plugins>/hfy_sync`: `--dest`, else `$GRAMPSHOME/gramps/gramps60/plugins`, else `~/Library/Application Support/gramps/gramps60/plugins`. Nothing but the `hfy_sync` folder is touched. |
+| `tests/unit/test_addon_runtime.py`, `test_addon_wrapper.py` | CI: the runtime against a fake tree, the wrapper against a fake Gramps command, the build and the installer in a temporary folder. |
+| `tests/gramps/test_addon_skeleton.py`, `addon_support.py` | The Gramps lane (`io-mac-gramps`): installs the addon into the throwaway `GRAMPSHOME` and drives the real Gramps CLI and the wrapper on copies of the fixture tree. |
+
+The sync state lives outside Dropbox and git, under `~/Library/Application Support/hfy_sync/` (`config.json`, then `<dbid>/` with `state.sqlite`, `state.lock`, `status.json`, `previews/`, `backups/`, `logs/`, `cache/`), all owner-only. The `<dbid>` is the tree's folder name under Gramps' `grampsdb` (`db.get_dbid()`). The tests point `HOME` and `GRAMPSHOME` at a temporary directory, so they never read or write the real one; the wrapper and the tool read `HOME` and `GRAMPSHOME` only.
+
+```bash
+python3 -m unittest discover gramps/tests/unit                  # CI: includes the two addon files
+gramps/tests/gramps/run.sh test_addon_skeleton.py               # Mac with Gramps 6.0.6: the integration suite
+gramps/scripts/install-addon.sh --dest <a-throwaway-folder>      # try the installer without touching Gramps
+```
+
+### The tree binding
+
+A run proceeds only when three things agree (BRD2 section 11, SI-06):
+
+1. The dbid (the tree's folder name) equals the `dbid` in `config.json` and in the sidecar's `meta`.
+2. The tree marker, a uuid stored in the tree's own metadata under `hfy_sync_tree_id`, equals the sidecar's `tree_id`. `bind` writes it inside one `DbTxn` together with the sidecar and rolls both back if either fails; `config.json` is written last.
+3. The similarity guard: at least 90 % of the sidecar's `base` handles still exist in the tree. With nothing synced yet (an empty `base`) there is nothing to compare.
+
+Anything else is D03 (exit 78, `next_action: open_bound_tree`). The earlier hash of all handles is gone: it changed on every local create or delete. A few local creates and deletes between syncs (the tests use 8 removed and 6 created, under 10 %) leave the guard satisfied, and local creates never lower it. Replacing the tree with a different one (no marker, or the marker with most of the objects gone) does not satisfy it.
+
+Two edges follow from the 90 % line and are by design. Deleting more than 10 % of the synced objects in Gramps between two syncs reads as a different tree and is refused until the tree is rebound; the mass-delete guard (more than 10 objects or 5 % in one run) is meant to catch a deliberate clean-up before that, in the sync run. And `bind` never moves the binding: with a `config.json` present it answers D03 for any other tree.
+
+A tree that was re-imported, restored from a copy or exported and re-imported has a new dbid, or a marker that the sidecar does not know. It is treated as a new tree, in this order (these steps arrive with later tasks, named per step below; the skeleton only refuses it):
+
+1. A step-up rebind: a fresh sign-in, because rebinding changes which tree the website follows. Owners: `addon-transport-auth` (the sign-in) and `addon-push` (the step-up on the push).
+2. A new sidecar, so no `base` of the old tree is trusted.
+3. Rebase mode (D12): objects that equal the website's copy are re-based, everything else becomes a conflict; the command line refuses, the GUI resolves, and nothing is pushed automatically. Owners: `addon-pull-apply` (the new sidecar and the rebase pass) and `addon-gui-preview` (the Gramps-window resolution).
+4. The mass-delete guard on both sides for the first runs, so a tree that is missing objects cannot delete them on the website. Owners: `addon-push` (the push side) and `addon-pull-apply` (the pull side).
+
+D12 (sidecar missing) and D13 (sidecar damaged, or written by a newer addon) are refusals with exit 78 and `next_action: rebase`; the skeleton never rebuilds a sidecar by itself.
+
+### status.json
+
+`<dbid>/status.json` is the sync.md 4.3 document, written atomically (temp file and rename). This build adds one key, `versions` (`addon`, `gramps`, `db_schema`, `redaction`), and two `next_action` values for the binding recoveries, `bind` and `rebase` (BRD2 D50). It carries counts and codes only, never a name, a date, a handle or a path to media. The per-run log in `logs/<run_id>.log` records step names and refusal codes and nothing else.
+
+### Test seams
+
+`HFY_GRAMPS_CMD` (the wrapper: the Gramps command to run, default the app bundle's executable) and `HFY_SYNC_PS_CMD` (the process list the GUI scan reads, default `ps -axo command=`) exist so tests do not depend on what is running on the machine. Neither is set in use. `HFY_SYNC_PS_CMD` is honoured only while `HFY_SYNC_TEST=1` is also set, so a stray variable cannot switch the GUI-process half of D01 off; the tree's `lock` file protects the tree either way.

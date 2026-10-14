@@ -8,39 +8,39 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "2b569e77",
-        "css": "24d74883"
+        "js": "e581a732",
+        "css": "7d6cf784"
       },
       "links-editor": {
         "js": "05a03f0a",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "0708af25",
-        "css": "24a8cc2d"
+        "js": "dbec3c10",
+        "css": "5a80e679"
       },
       "notifications": {
         "js": "9ec1c0d9",
         "css": "56799f74"
       },
       "person": {
-        "js": "19520c34",
-        "css": "3909ca3c"
+        "js": "9bcb1cc9",
+        "css": "fc1191e0"
       },
       "person-links": {
         "js": "70972ead",
         "css": "930bb673"
       },
       "photo-tags": {
-        "js": "72b2d893",
-        "css": "bf6043c1"
+        "js": "3d566647",
+        "css": "b4b1459b"
       },
       "posts": {
-        "js": "0e7f3e3f",
-        "css": "c678e2b1"
+        "js": "531e90e8",
+        "css": "dc46d8d9"
       },
       "search": {
-        "js": "3fa6315b",
+        "js": "65a96856",
         "css": "9e007813"
       },
       "settings": {
@@ -48,17 +48,21 @@
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "354abba7",
-        "css": "53cdeb03"
+        "js": "809130e5",
+        "css": "dfe52562"
       },
       "timeline": {
-        "js": "e6378382",
-        "css": "e839f302"
+        "js": "b98b7945",
+        "css": "169edbe4"
+      },
+      "tree": {
+        "js": "f2abdefe",
+        "css": "66b35626"
       }
     },
-    "theme": "1e33d0e0",
+    "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "73cddc5a"
+    "sw": "3934a10a"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -724,6 +728,23 @@
   resolveFlags().then((flags) => {
     if (flags.aboutCta !== true || !/^\/about\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("about-cta", { onError() { /* the story stands on its own */ } });
+  });
+
+  // HFY-TSK-201: familyViz mounts the family tree island on the static /tree/ page (the page is public; its data fetch is gated). With the
+  // flag off, or when the island fails to load, the page keeps its heading and says the tree is not available.
+  resolveFlags().then((flags) => {
+    if (!/^\/tree\/?(index\.html)?$/.test(window.location.pathname)) return;
+    const unavailable = (why) => {
+      const main = document.querySelector("main:not([data-io-scroller])");
+      if (!main || main.querySelector("[data-tree-unavailable]")) return;
+      const p = document.createElement("p");
+      p.setAttribute("data-tree-unavailable", "");
+      p.setAttribute("role", "status");
+      p.textContent = why;
+      main.querySelector("h1")?.insertAdjacentElement("afterend", p);
+    };
+    if (flags.familyViz !== true) { unavailable("the family tree isn't turned on yet. you can find anyone through search."); return; }
+    loadIsland("tree", { onError() { unavailable("the family tree didn't load. try again in a moment."); } });
   });
 
   // HFY-TSK-169: photoTags mounts the photo tag overlays, the names lists and the hover cards on the person page. The island listens to the

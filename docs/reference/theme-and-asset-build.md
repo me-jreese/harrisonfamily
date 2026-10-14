@@ -20,7 +20,7 @@ Every output is committed build output (HFY-R58). The deploy syncs `11ty/` as it
 | The theme layer | `css/hfy-theme.css` | `islands/src/theme/` and `@io-kit/tokens` 0.4.1 | `build.mjs` | `theme-delivery`, `kit-aliases`, `theme-lint`, `bundle` |
 | The sign-in stylesheet | `css/auth-edge.css` | `islands/src/auth-edge/auth-edge.css` and `@io-kit/tokens` | `build.mjs` | `theme-delivery`, `theme-lint`, `bundle`, `auth/test/edge.test.js` |
 | The brand fonts | `fonts/` | Three `@fontsource` packages | [`fonts.mjs`](../../islands/fonts.mjs) | `theme-delivery`, `bundle` |
-| Head blocks A and B | The 14 pages in `PAGES` | The built theme layer, the surface token, the preloaded font's file name | [`heads.mjs`](../../islands/heads.mjs) | `theme-delivery` |
+| Head blocks A and B | The 16 pages in `PAGES` | The built theme layer, the surface token, the preloaded font's file name | [`heads.mjs`](../../islands/heads.mjs) | `theme-delivery` |
 | The family-voice copy | The ten Eleventy pages | The constants in `copy.mjs` | [`copy.mjs`](../../islands/copy.mjs) | `copy` |
 | The manifest colours | `background_color` and `theme_color` in `manifest.webmanifest` | The surface token | `heads.mjs` | `theme-delivery` |
 | The version stamps | The `hfy-asset-versions` block in `sw.js` and in `js/feature-flags.js` | Hashes of the files those scripts load | [`assets.mjs`](../../islands/assets.mjs) | `asset-versions` |
@@ -37,7 +37,7 @@ The build computes every output in memory, in this order, and only then writes o
 2. `css/hfy-theme.css`.
 3. `css/auth-edge.css`, when its source exists.
 4. The fonts.
-5. The head blocks in the 14 pages, and the manifest colours. Block B's `?v` is the hash of the theme layer from step 2.
+5. The head blocks in the 16 pages, and the manifest colours. Block B's `?v` is the hash of the theme layer from step 2.
 6. The family-voice copy on the ten Eleventy pages, applied to the text from step 5.
 7. The stamp in `sw.js`, then the stamp in `js/feature-flags.js`, which carries the hash of the stamped `sw.js`.
 8. `?v=<sha8>` in every HTML page of the site.
@@ -68,13 +68,13 @@ Every page with the Eleventy `css/main.css` links the theme layer right after it
 
 | Partial | Covers |
 |---|---|
-| `10-kit-aliases.css` | One `html:root` block that maps the short variables `@io-kit/shell` 0.6.6, `@io-kit/content` 0.3.1 and `@io-kit/notify` 0.4.0 read (`--bg`, `--fg`, `--space-2` and others) to `--io-*` tokens. Those kit versions read the short names instead of their `--io-*` contracts (DVP-TSK-A73). `html:root` has specificity (0,1,1), so it beats any `:root` declaration of the same names. Its header says to delete the file once the kit reads only `--io-*` variables. |
+| `10-kit-aliases.css` | One `html:root` block that maps the short variables `@io-kit/shell` 0.6.6, `@io-kit/content` 0.3.2 and `@io-kit/notify` 0.4.0 read (`--bg`, `--fg`, `--space-2` and others) to `--io-*` tokens. Those kit versions read the short names instead of their `--io-*` contracts (DVP-TSK-A73). `html:root` has specificity (0,1,1), so it beats any `:root` declaration of the same names. Its header says to delete the file once the kit reads only `--io-*` variables. |
 | `20-base.css` | Global element rules (the page ground, text, links and headings) that override the literal values in `main.css`, and three `--bs-*` variables that `main.css` declares as literals |
 | `30-bootstrap.css` | The Bootstrap 5.3 components that `bs-bridge.css` cannot reach, re-pointed at `--io-*` tokens class by class. Each rule's comment names the `main.css` literal it replaces. |
 | `40-site.css` | The Eleventy site's own rules from `main.css` (gutters, `main` padding, footer and the rest), re-pointed at `--io-*` tokens |
 | `45-person.css` | The person page that `js/person-page.js` renders: the record, the family tree and the lightbox |
 | `60-shell-static.css` | The shell frame before the island loads: `--io-bp-medium-min` and `--io-bp-palette-min` (`43rem`, under the lint's breakpoint tag), the hidden Bootstrap navbar under `html.hfy-shell-v2`, and the placeholder bars painted until the shell mounts |
-| `80-pages.css` | The four repo-owned pages (`.hfy-page`) and the preview-flags banner |
+| `80-pages.css` | The six repo-owned pages (`.hfy-page`) and the preview-flags banner |
 
 ### Print block
 
@@ -126,7 +126,7 @@ A build leaves exactly these 15 files in `fonts/`: it deletes every other file t
 
 ## Head blocks
 
-`heads.mjs` writes two marker-delimited blocks into the 14 pages of its `PAGES` list, on every build.
+`heads.mjs` writes two marker-delimited blocks into the 16 pages of its `PAGES` list, on every build.
 
 | Block | Contents, in order |
 |---|---|
@@ -140,7 +140,7 @@ The early-hint script is `try{localStorage.getItem("hfy:shell-hint")==="1"&&docu
 | Pages | Where the blocks go |
 |---|---|
 | The ten Eleventy pages (nine, plus the repo-owned redirect page `family-login/index.html`, which gets the blocks without the early hint): `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `person/`, `privacy/`, `private/`, `search/` and `terms/` | Block A immediately before the first `<link>` to `/css/main.css` (with or without a query), block B immediately after it |
-| The five repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
+| The six repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `tree/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
 
 Each block takes the indentation of the line it is anchored to. A build first removes any existing blocks and then writes them again, so a second build changes nothing, and removing the blocks restores the page byte for byte. A page with neither a `main.css` link nor `</title>` fails the build with `<page>: no main.css link and no </title> to anchor the theme head block`, and a page in `PAGES` that does not exist fails it as well.
 
@@ -159,7 +159,7 @@ Each block takes the indentation of the line it is anchored to. A build first re
 | `index.html`, hero lede | `<h3>Learn about our heritage and help us preserve our family history.</h3>`, in either capitalization | `<p class="home-hero__lede">learn about our heritage and help us preserve our family history.</p>` |
 | `index.html`, calls to action | `About Us` (the `/about/` link) and `Family Login` (the `data-feature="familyLoginLink"` link) | `our story` and `sign in` |
 | `about/index.html`, heading | `Honoring the Harrison Family Legacy` | `honoring the Harrison family legacy` |
-| Every page with the footer line, and `posts/`, `me/`, `me/notifications/` and `me/links/` (`COPY_EXTRA`) | No links after the footer line | `FOOTER_NAV`: a `<nav class="site-footer__links" aria-label="about this site">` with `about`, `contact`, `privacy` and `terms`, once. The shell hides the navbar that linked them. `40-site.css` styles them (44 px targets, `text.dim`, underlined). |
+| Every page with the footer line, and `posts/`, `me/`, `me/notifications/`, `me/links/` and `tree/` (`COPY_EXTRA`) | No links after the footer line | `FOOTER_NAV`: a `<nav class="site-footer__links" aria-label="about this site">` with `about`, `contact`, `privacy` and `terms`, once. The shell hides the navbar that linked them. `40-site.css` styles them (44 px targets, `text.dim`, underlined). |
 | All ten pages, meta description, `og:description`, `twitter:description` | The Eleventy default, `Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data.` | `DESCRIPTION`: `the Harrison family archive. family members sign in to see the private pages.` |
 | `logged-out/index.html`, heading, lede and buttons | `You are signed out`, `Your session has ended successfully. …`, `Return to Family Login` (`/family-login/`), `Back to Home` | `SIGNED_OUT`: `you're signed out.`, `come back whenever you like.`, `sign in again` (`/auth/login`), `home`. `src/logged-out.njk` in the source carries the same text. |
 | `person/index.html`, static strings | `Loading person record…`, `Loading high-resolution media…`, `Download original` | `loading…`, `loading the full-size photo…`, `download original` |
@@ -195,7 +195,7 @@ The version is `<sha8>` of the file's bytes as the build produced them, or as th
 
 ### References in the pages
 
-The build versions every HTML file under `<site-dir>`, except under the top-level directories `js`, `css`, `fonts`, `images`, `media`, `uploads`, `_data`, `family`, `event`, `note` and `place`. Today that is the 14 pages in `PAGES`.
+The build versions every HTML file under `<site-dir>`, except under the top-level directories `js`, `css`, `fonts`, `images`, `media`, `uploads`, `_data`, `family`, `event`, `note` and `place`. Today that is the 16 pages in `PAGES`.
 
 | Reference | Versioned |
 |---|---|
@@ -288,7 +288,7 @@ A build writes only the files whose bytes changed, creating directories as neede
 | Scope | Files |
 |---|---|
 | Stylesheets | Every `.css` file under `islands/src/`: the seven theme partials, `auth-edge/auth-edge.css`, `comments.css`, `posts.css`, `shell.css`, `islands/notifications.css` and `islands/search.css` |
-| Inline styles | The `<style>` elements and `style=""` attributes of `11ty/posts/index.html`, `11ty/me/index.html`, `11ty/me/notifications/index.html`, `11ty/me/links/index.html` and `11ty/offline.html` |
+| Inline styles | The `<style>` elements and `style=""` attributes of `11ty/posts/index.html`, `11ty/me/index.html`, `11ty/me/notifications/index.html`, `11ty/me/links/index.html`, `11ty/tree/index.html` and `11ty/offline.html` |
 
 The ten Eleventy pages and `main.css` are not linted.
 
@@ -314,7 +314,7 @@ The `node:test` suites read `11ty/`, or the scratch site that `HFY_SITE` names. 
 | [`asset-versions.test.mjs`](../../islands/tests/asset-versions.test.mjs) | The rewrite rules of `versionHtml`, `versionManifestCss` and the stamps, on fixtures. Then the site: every same-origin script, stylesheet and manifest reference in every page carries the hash of the file on disk, and none is left unversioned. Both stamps match the files on disk, and `sw.js` does not mention `feature-flags`. Island entries import only relative, content-hashed chunks that exist. `loadIsland` requests `<name>.js` and `<name>.css` with the stamped `?v`, and an island without a stamp the bare URL. The worker names its cache from its `?v`, precaches the versioned URLs and deletes every other cache on activate. `theme.cssUrl` carries the hash of `css/auth-edge.css`, a check skipped under `HFY_SITE`. |
 | [`asset-versions.spec.mjs`](../../islands/tests/asset-versions.spec.mjs) | Playwright, at 375, 688 and 1024 px, with the bare URLs of the changed files answered with stale content: the pages request only versioned scripts, stylesheets and manifest, the worker is registered at `/sw.js?v=<sha8>`, and the shell is the current one |
 | [`copy.test.mjs`](../../islands/tests/copy.test.mjs) | Every page in `COPY_PAGES` is in `PAGES`. Each of the ten pages has no `RETIRED` text, has the `FOOTER`, has its `TITLES` title with no `!` and no run of capitals, and is unchanged by another `applyCopy`. The home page has one closed lowercase `h1`, the lede paragraph, no `h3`, and the two calls to action. The about heading is lowercase except for the family name, and the family's story is untouched. The hero photographs' `width` and `height` match the JPEG files. No page shows the shouted navbar brand. `applyCopy` rewrites only the old copy. |
-| [`kit-aliases.test.mjs`](../../islands/tests/kit-aliases.test.mjs) | Re-reads the short variables that the installed `@io-kit/shell`, `@io-kit/content` and `@io-kit/notify` CSS reads, and fails on any that `10-kit-aliases.css` does not map. The file is one `html:root` block, each alias is a single `var(--io-*)` of a token the theme declares, and the mapping matches the DVP-TSK-A73 table. The header names DVP-TSK-A73, the three kit versions and the deletion condition, and the installed kit versions are still 0.6.6, 0.3.1 and 0.4.0. It also fails when the kit no longer reads any short variable, the signal to delete the file and the test. |
+| [`kit-aliases.test.mjs`](../../islands/tests/kit-aliases.test.mjs) | Re-reads the short variables that the installed `@io-kit/shell`, `@io-kit/content` and `@io-kit/notify` CSS reads, and fails on any that `10-kit-aliases.css` does not map. The file is one `html:root` block, each alias is a single `var(--io-*)` of a token the theme declares, and the mapping matches the DVP-TSK-A73 table. The header names DVP-TSK-A73, the three kit versions and the deletion condition, and the installed kit versions are still 0.6.6, 0.3.2 and 0.4.0. It also fails when the kit no longer reads any short variable, the signal to delete the file and the test. |
 | [`theme-lint.test.mjs`](../../islands/tests/theme-lint.test.mjs) | The [theme lint](#theme-lint), plus a self-test of its rules and exemptions |
 | [`bundle.test.mjs`](../../islands/tests/bundle.test.mjs) | The outputs exist and are not empty, including `css/hfy-theme.css`, `css/auth-edge.css`, 12 faces and 3 licences. `.gitignore` does not ignore them. `node build.mjs --check` exits 0 (with `--site` under `HFY_SITE`). |
 | [`theme-foundation.spec.mjs`](../../islands/tests/theme-foundation.spec.mjs) | Playwright, with the flags and islands held back: each page is themed at first paint with the brand faces and no Google font request; the shell hint; an island's stylesheet settles before its module is requested; a page without block B gets the fallback link after `main.css`; printing uses the daylight theme without JavaScript; the offline page |

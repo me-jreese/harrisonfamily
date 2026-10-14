@@ -154,7 +154,7 @@ test("a photo without tags has no layer and no list (flag on)", async ({ page })
   expect(await figure(page, 0).locator("ul.photo-tags__names").count()).toBe(1);
 });
 
-test("names list: under the caption, in the data's order, labelled, and the image points at it", async ({ page }) => {
+test("names list: under the caption, in the data's order, labelled, and the image points at it; each chip is a name link and a show button", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openPerson(page);
   await ready(page, 0);
@@ -162,14 +162,31 @@ test("names list: under the caption, in the data's order, labelled, and the imag
   const list = fig.locator("ul.photo-tags__names");
   await expect(list).toHaveAttribute("aria-label", "in this photo");
   expect(await fig.evaluate((f) => f.querySelector(".gallery-caption").nextElementSibling.querySelector("ul.photo-tags__names") !== null)).toBe(true);
-  await expect(list.locator("button.photo-tags__name")).toHaveText(["Spouse Example", "Father Example", "Child Example"]);
+  await expect(list.locator(".photo-tags__name")).toHaveText(["Spouse Example", "Father Example", "Child Example"]);
   const id = await list.getAttribute("id");
   expect((await fig.locator("img").getAttribute("aria-describedby")).split(" ")).toContain(id);
+  // P2-R53 (HFY-TSK-323): the name is a link to the person's page with the chip's text colour and no underline, also while hovered
+  const names = list.locator("a.hfy-person-name.photo-tags__name");
+  await expect(names).toHaveCount(3);
+  const look = (a) => a.evaluate((el) => { const cs = getComputedStyle(el); return [el.getAttribute("href"), cs.textDecorationLine, cs.color === getComputedStyle(el.parentElement).color, cs.cursor, el.getBoundingClientRect().height >= 43.9]; });
+  for (const [i, gid] of ["I9002", "I9012", "I9015"].entries()) {
+    expect(await look(names.nth(i))).toEqual([`/person/?id=${gid}`, "none", true, "pointer", true]);
+    await names.nth(i).hover();
+    expect(await look(names.nth(i))).toEqual([`/person/?id=${gid}`, "none", true, "pointer", true]);
+  }
+  // ...and beside it a 44px icon button that shows where the person is (the chip's old disclosure)
+  await expect(list.locator("button.photo-tags__show")).toHaveCount(3);
+  for (const [i, who] of ["Spouse Example", "Father Example", "Child Example"].entries()) {
+    await expect(list.locator("button.photo-tags__show").nth(i)).toHaveAttribute("aria-label", `show where ${who} is in the photo`);
+  }
   for (const b of await list.locator("button").all()) {
     expect(await b.getAttribute("aria-expanded")).toBe("false");
     expect(await page.locator(`#${await b.getAttribute("aria-controls")}`).count()).toBe(1);
-    expect((await b.boundingBox()).height).toBeGreaterThanOrEqual(43.9);
+    const box = await b.boundingBox();
+    expect(box.height).toBeGreaterThanOrEqual(43.9);
+    expect(box.width).toBeGreaterThanOrEqual(43.9);
   }
+  await page.mouse.move(5, 5);
   // clicking the thumbnail still opens the lightbox
   await fig.locator("button.media-lightbox-trigger").click({ position: { x: 5, y: 5 } });
   await expect(page.locator("#mediaLightboxImage")).toBeVisible();
@@ -180,14 +197,15 @@ test("1280 hover on a name: its region is highlighted and the hovercard shows th
   await openPerson(page);
   await ready(page, 0);
   const fig = figure(page, 0);
-  const first = fig.locator("button.photo-tags__name").nth(0);
+  const first = fig.locator(".photo-tags__name").nth(0);
+  const show = fig.locator("button.photo-tags__show").nth(0);
   const region = fig.locator('.photo-tags__region[data-tag="0"]');
   await first.hover();
   const card = fig.locator(".photo-tags__item").nth(0).locator('[role="tooltip"]');
   await expect(card).toBeVisible();
   await expect(region).toHaveClass(/is-active/);
   await expect(region.locator(".photo-tags__label")).toBeVisible();
-  expect(await first.getAttribute("aria-describedby")).toBe(await card.getAttribute("id"));
+  expect(await show.getAttribute("aria-describedby")).toBe(await card.getAttribute("id"));
   const dt = await card.locator("dt").allTextContents();
   expect(dt).toEqual(["area", "attributes", "notes", "citations", "source"]);
   await expect(card).toContainText("left · 10% from the left, 20% from the top, 20% wide, 30% tall");
@@ -215,17 +233,23 @@ test("1280 hover on a name: its region is highlighted and the hovercard shows th
   await page.mouse.move(5, 5);
   await expect(card).toBeHidden();
   await expect(region).not.toHaveClass(/is-active/);
+  // hovering the show button does the same
+  await show.hover();
+  await expect(card).toBeVisible();
+  await expect(region).toHaveClass(/is-active/);
+  await page.mouse.move(5, 5);
+  await expect(card).toBeHidden();
   // a name with no area: the card says so
-  await fig.locator("button.photo-tags__name").nth(2).hover();
+  await fig.locator(".photo-tags__name").nth(2).hover();
   await expect(fig.locator(".photo-tags__item").nth(2).locator('[role="tooltip"]')).toContainText("no area marked");
   expect(await fig.locator('.photo-tags__region[data-tag="2"]').count()).toBe(0);
   // the portrait flag on the second tag
-  await fig.locator("button.photo-tags__name").nth(1).hover();
+  await fig.locator(".photo-tags__name").nth(1).hover();
   await expect(fig.locator(".photo-tags__item").nth(1).locator('[role="tooltip"]')).toContainText("Father Example · their portrait");
   await expect(fig.locator(".photo-tags__item").nth(1).locator('[role="tooltip"]')).toContainText("tagged on the site");
 });
 
-test("1280 keyboard focus on a name shows the card and the region; Enter pins the panel with the page link; the thumbnail's focus shows every label", async ({ page }) => {
+test("1280 keyboard: Tab reaches the name link, then its show button, whose focus shows the card and the region; Enter pins the panel with the page link; the thumbnail's focus shows every label", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openPerson(page);
   await ready(page, 0);
@@ -237,7 +261,11 @@ test("1280 keyboard focus on a name shows the card and the region; Enter pins th
   await expect(fig.locator(".photo-tags__region .photo-tags__label").first()).toBeVisible();
   await expect(fig.locator(".photo-tags__region .photo-tags__label").nth(1)).toBeVisible();
   await page.keyboard.press("Tab");
-  const first = fig.locator("button.photo-tags__name").nth(0);
+  const name = fig.locator("a.photo-tags__name").nth(0);
+  await expect(name).toBeFocused();
+  expect(await name.evaluate((a) => [a.matches(":focus-visible"), getComputedStyle(a).outlineStyle])).toEqual([true, "solid"]);
+  await page.keyboard.press("Tab");
+  const first = fig.locator("button.photo-tags__show").nth(0);
   await expect(first).toBeFocused();
   await expect(fig.locator('.photo-tags__item [role="tooltip"]').nth(0)).toBeVisible();
   await expect(fig.locator('.photo-tags__region[data-tag="0"]')).toHaveClass(/is-active/);
@@ -256,11 +284,11 @@ test("1280 keyboard focus on a name shows the card and the region; Enter pins th
 
 test.describe("touch at 375", () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 375, height: 812 } });
-  test("a tap toggles the pinned panel: the same data, the page link, full width under the list; no hover-only information", async ({ page }) => {
+  test("a tap on the show button toggles the pinned panel: the same data, the page link, full width under the list; no hover-only information; a tap on the name opens the page", async ({ page }) => {
     await openPerson(page);
     await ready(page, 0);
     const fig = figure(page, 0);
-    const first = fig.locator("button.photo-tags__name").nth(0);
+    const first = fig.locator("button.photo-tags__show").nth(0);
     await first.tap();
     const panel = page.locator(`#${await first.getAttribute("aria-controls")}`);
     await expect(panel).toBeVisible();
@@ -274,12 +302,25 @@ test.describe("touch at 375", () => {
     const open = panel.locator("a.photo-tags__open");
     await expect(open).toHaveAttribute("href", "/person/?id=I9002");
     expect((await open.boundingBox()).height).toBeGreaterThanOrEqual(43.9);
+    // P2-R46 (HFY-TSK-323): the name heading the panel links to the person's page with the line's own look, never underlined, and is a
+    // 44px target; the hovercard (a tooltip) keeps the name as plain text
+    const who = panel.locator(".photo-tags__who > a.hfy-person-name");
+    await expect(who).toHaveText("Spouse Example");
+    await expect(who).toHaveAttribute("href", "/person/?id=I9002");
+    expect(await who.evaluate((a) => {
+      const cs = getComputedStyle(a);
+      const line = getComputedStyle(a.parentElement);
+      const r = a.getBoundingClientRect();
+      const hit = (dy) => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2 + dy)?.closest("a") === a;
+      return { deco: cs.textDecorationLine, color: cs.color === line.color, weight: cs.fontWeight === line.fontWeight, cursor: cs.cursor, band: hit(-21) && hit(21) };
+    })).toEqual({ deco: "none", color: true, weight: true, cursor: "pointer", band: true });
+    await expect(fig.locator('.photo-tags__item [role="tooltip"]').nth(0).locator("a")).toHaveCount(0);
     await expect(fig.locator('.photo-tags__region[data-tag="0"]')).toHaveClass(/is-active/);
     // full width under the list: the panel spans the figure
     const [pb, fb] = await Promise.all([panel.boundingBox(), fig.boundingBox()]);
     expect(pb.width).toBeGreaterThan(fb.width - 4);
     // a second tap on another name moves the pin; a tap on the same name closes it
-    const second = fig.locator("button.photo-tags__name").nth(1);
+    const second = fig.locator("button.photo-tags__show").nth(1);
     await second.tap();
     await expect(panel).toBeHidden();
     await expect(fig.locator('.photo-tags__region[data-tag="0"]')).not.toHaveClass(/is-active/);
@@ -287,6 +328,9 @@ test.describe("touch at 375", () => {
     await second.tap();
     await expect(fig.locator('.photo-tags__region[data-tag="1"]')).not.toHaveClass(/is-active/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+    // P2-R53: the name itself goes to the person's page
+    await fig.locator("a.photo-tags__name", { hasText: "Father Example" }).tap();
+    await expect(page).toHaveURL(/\/person\/\?id=I9012$/);
   });
 });
 
@@ -297,11 +341,11 @@ test("a missing image shows only the names list; a tag with a null rect says 'no
   const fig = figure(page, 3);
   await fig.scrollIntoViewIfNeeded();
   await expect(fig.locator(".gallery-photo--missing")).toBeVisible();
-  await expect(fig.locator("button.photo-tags__name")).toHaveText(["Sibling Example", "Spouse Example"]);
+  await expect(fig.locator(".photo-tags__name")).toHaveText(["Sibling Example", "Spouse Example"]);
   expect(await fig.locator(".photo-tags__layer, .photo-tags__region").count()).toBe(0);
-  await fig.locator("button.photo-tags__name").nth(1).click();
+  await fig.locator("button.photo-tags__show").nth(1).click();
   await expect(fig.locator(".photo-tags__panel").nth(1)).toContainText("no area marked");
-  await fig.locator("button.photo-tags__name").nth(0).click();
+  await fig.locator("button.photo-tags__show").nth(0).click();
   await expect(fig.locator(".photo-tags__panel").nth(0)).toContainText("center · 25% from the left, 25% from the top, 50% wide, 50% tall");
 });
 
@@ -312,11 +356,13 @@ test("text only: <img onerror> in a name, attribute, note and citation creates n
   await openPerson(page);
   await ready(page, 4);
   const fig = figure(page, 4);
-  await fig.locator("button.photo-tags__name").hover();
+  await fig.locator(".photo-tags__name").hover();
   const card = fig.locator('[role="tooltip"]');
   await expect(card).toBeVisible();
   await expect(card).toContainText(EVIL);
-  await fig.locator("button.photo-tags__name").click();
+  await expect(fig.locator(".photo-tags__name")).toHaveText(EVIL);
+  await expect(fig.locator("button.photo-tags__show")).toHaveAttribute("aria-label", `show where ${EVIL} is in the photo`);
+  await fig.locator("button.photo-tags__show").click();
   await expect(fig.locator(".photo-tags__panel")).toContainText(EVIL);
   expect(await fig.locator(".photo-tags__names img, .photo-tags__block img, .photo-tags__layer img, [class*='photo-tags'] img").count()).toBe(0);
   expect(await page.locator('img[src="x"]').count()).toBe(0);
@@ -439,7 +485,7 @@ test("1280 lightbox: hovering a region shows its label; the names list highlight
   await expect(page.locator('#mediaLightbox [role="tooltip"]').nth(0)).toBeVisible();
   await page.mouse.move(5, 5);
   await expect(page.locator('#mediaLightbox [role="tooltip"]').nth(0)).toBeHidden();
-  await page.locator("#mediaLightbox button.photo-tags__name").nth(1).hover();
+  await page.locator("#mediaLightbox .photo-tags__name").nth(1).hover();
   await expect(regions.nth(0)).toHaveClass(/is-active/);
   await expect(page.locator('#mediaLightbox [role="tooltip"]').nth(1)).toBeVisible();
 });
@@ -460,7 +506,7 @@ for (const [name, viewport] of [["375", { width: 375, height: 812 }], ["1280", {
     await page.setViewportSize(viewport);
     await openPerson(page);
     await ready(page, 0);
-    await figure(page, 0).locator("button.photo-tags__name").nth(0).click();
+    await figure(page, 0).locator("button.photo-tags__show").nth(0).click();
     await expect(figure(page, 0).locator(".photo-tags__panel").nth(0)).toBeVisible();
     await figure(page, 1).scrollIntoViewIfNeeded();
     expect(await axeViolations(page, { include: "#person-media-section" })).toEqual([]);
@@ -478,9 +524,9 @@ test("1280 someone outside the page's tree gets no relationship line (the 'famil
   await openPerson(page);
   await ready(page, 2);
   const fig = figure(page, 2);
-  await fig.locator("button.photo-tags__name").nth(0).click(); // Sibling Example: a sibling of this page's person
+  await fig.locator("button.photo-tags__show").nth(0).click(); // Sibling Example: a sibling of this page's person
   await expect(fig.locator(".photo-tags__panel").nth(0).locator(".photo-tags__site")).toHaveText("from this site, not the tag: a sibling of this page's person");
-  await fig.locator("button.photo-tags__name").nth(1).click(); // Stranger Example: not in the tree
+  await fig.locator("button.photo-tags__show").nth(1).click(); // Stranger Example: not in the tree
   const panel = fig.locator(".photo-tags__panel").nth(1);
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("Stranger Example");
@@ -493,15 +539,15 @@ test("1280 a shown hovercard follows its anchor on scroll and resize", async ({ 
   await openPerson(page);
   await ready(page, 0);
   const fig = figure(page, 0);
-  const name = fig.locator("button.photo-tags__name").nth(0);
-  await name.evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - 250)); // the name sits well inside the viewport, with room for the card below it
+  const name = fig.locator("button.photo-tags__show").nth(0);
+  await name.evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - 250)); // the chip sits well inside the viewport, with room for the card below it
   await name.focus();
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Tab"); // keyboard modality: focus-visible
   const card = fig.locator(".photo-tags__item").nth(0).locator('[role="tooltip"]');
   await expect(card).toBeVisible();
   const gap = async () => page.evaluate(() => {
-    const b = document.querySelector("#person-media-grid .gallery-item button.photo-tags__name").getBoundingClientRect();
+    const b = document.querySelector("#person-media-grid .gallery-item .photo-tags__item").getBoundingClientRect(); // the card hangs under the chip
     const c = document.querySelector("#person-media-grid .gallery-item [role=tooltip]:not([hidden])").getBoundingClientRect();
     return { below: Math.abs(c.top - b.bottom), left: Math.abs(c.left - b.left) };
   });

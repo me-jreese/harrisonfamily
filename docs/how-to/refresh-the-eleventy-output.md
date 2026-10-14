@@ -1,6 +1,6 @@
 # How to refresh `11ty/` from the Eleventy source without losing E5 files
 
-Never refresh `11ty/` with a plain `rsync -a --delete` from the source. That command deletes every repo-owned file that the source output lacks, or replaces it with the source's older copy: the 12 E5-only files, the committed island bundles, and the islands build's theme layer, sign-in stylesheet and fonts. It reverts 2 edited scripts. It also strips the family-voice copy and the `?v=` asset versions from every page it overwrites, and the `auth-v2.js` tag too while the source's layout lacks it. A refresh from a source whose layout has not been ported also brings the retired Google sign-in and the Lunr search back (HFY-TSK-317). Three things do the most harm:
+Never refresh `11ty/` with a plain `rsync -a --delete` from the source. That command deletes every repo-owned file that the source output lacks, or replaces it with the source's older copy: the 14 E5-only files, the committed island bundles, and the islands build's theme layer, sign-in stylesheet and fonts. It reverts 2 edited scripts. It also strips the family-voice copy and the `?v=` asset versions from every page it overwrites, and the `auth-v2.js` tag too while the source's layout lacks it. A refresh from a source whose layout has not been ported also brings the retired Google sign-in and the Lunr search back (HFY-TSK-317). Three things do the most harm:
 
 - `js/person-page.js` loses the `authV2` data path and waits for the legacy `X-HFY-Session` token, which an edge sign-in never mints. That breaks person pages while the [private data gate](cut-over-to-the-private-data-gate.md) is attached, and production attached it on 2026-10-12.
 - `feature-flags.js` goes back to the pre-E5 script, which has no edge session, no `dataFetch` and no island loader.
@@ -37,7 +37,7 @@ SRC=<eleventy-source>
 
 The build can only reproduce a repository file that exists in the source. Each one is copied into `public/`, which Eleventy passes through to the site root unchanged, the base layout gets the `auth-v2.js` tag, and the retired sign-in and search pieces are removed from the source (mirror steps 3 and 5).
 
-The refresh in [step 3](#3-dry-run) excludes all 14 mirrored files, so it keeps the repository's copies even where the source's copies are older. It does not exclude the rendered pages, so the layout edits are required. Without them, the refresh strips the tag from every page it overwrites and writes the retired sign-in back, and the islands build does neither fix. Mirroring the files as well keeps the two copies in step, and the check below shows when they drift apart.
+The refresh in [step 3](#3-dry-run) excludes all 16 mirrored files, so it keeps the repository's copies even where the source's copies are older. It does not exclude the rendered pages, so the layout edits are required. Without them, the refresh strips the tag from every page it overwrites and writes the retired sign-in back, and the islands build does neither fix. Mirroring the files as well keeps the two copies in step, and the check below shows when they drift apart.
 
 The rest of what the repository adds to the pages needs no mirroring:
 
@@ -52,7 +52,7 @@ Never mirror `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` or `fonts/`
 for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/person-page.js \
          sw.js manifest.webmanifest offline.html \
          images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-         posts/index.html me/index.html me/notifications/index.html me/links/index.html family-login/index.html; do
+         posts/index.html me/index.html me/notifications/index.html me/links/index.html tree/index.html family-login/index.html; do
   cmp -s "11ty/$f" "$SRC/public/$f" && echo "mirrored: $f" || echo "missing or different: $f"
 done
 grep -c 'src="/js/auth-v2.js"' "$SRC/src/_includes/layouts/base.njk"
@@ -60,18 +60,18 @@ grep -rlE 'gsi/client|/api/check-allowed|/js/auth\.js|/js/search-navbar\.js|/js/
 for f in js/auth.js js/search-navbar.js js/search-results.js js/islands; do test ! -e "$SRC/public/$f" || echo "remove $SRC/public/$f"; done
 ```
 
-The mirror is done when the loop prints `mirrored` for all 14 files, the first `grep` prints `1`, and nothing else is printed: the second `grep` lists no source template that still names a retired script or endpoint, and no `remove` line appears. Otherwise, do only the parts that are missing:
+The mirror is done when the loop prints `mirrored` for all 16 files, the first `grep` prints `1`, and nothing else is printed: the second `grep` lists no source template that still names a retired script or endpoint, and no `remove` line appears. Otherwise, do only the parts that are missing:
 
 - A file reported as `missing or different`: mirror steps 1 and 2 below.
 - A `grep` count of `0`, or a file listed by the second `grep`: mirror step 3.
 - A `remove` line for `js/islands`: mirror step 4.
 - A `remove` line for `js/auth.js`, `js/search-navbar.js` or `js/search-results.js`: mirror step 5.
 
-The islands build rewrites seven of the mirrored files whenever a file they reference changes, so they drift from the source's copies:
+The islands build rewrites ten of the mirrored files whenever a file they reference changes, so they drift from the source's copies:
 
 - `js/feature-flags.js` and `sw.js`, through their `hfy-asset-versions` blocks;
 - `manifest.webmanifest`, through its colours;
-- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html` and `me/links/index.html`, through their head blocks and `?v=` versions.
+- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html` and `tree/index.html`, through their head blocks and `?v=` versions.
 
 For these, `missing or different` usually means only that a build has changed them since the last copy. Copy them again with mirror steps 1 and 2.
 
@@ -92,6 +92,7 @@ For these, `missing or different` usually means only that a build has changed th
 | `11ty/posts/index.html` | `public/posts/index.html` | Standalone, like the notifications page. |
 | `11ty/me/index.html` | `public/me/index.html` | The settings hub (`navMe`, HFY-TSK-091). Standalone, like the notifications page. |
 | `11ty/me/links/index.html` | `public/me/links/index.html` | The profile links editor (`profileLinks`, HFY-TSK-217). Standalone, like the notifications page. |
+| `11ty/tree/index.html` | `public/tree/index.html` | The family tree page (`familyViz`, HFY-TSK-201). Standalone, like the notifications page. |
 
 These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#steps). Do only those the check pointed you to.
 
@@ -120,7 +121,7 @@ These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#s
    for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/person-page.js \
             sw.js manifest.webmanifest offline.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/index.html me/notifications/index.html me/links/index.html family-login/index.html; do
+            posts/index.html me/index.html me/notifications/index.html me/links/index.html tree/index.html family-login/index.html; do
      mkdir -p "$SRC/public/$(dirname "$f")"
      cp "11ty/$f" "$SRC/public/$f"
    done
@@ -149,7 +150,7 @@ These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#s
    rm -f "$SRC/public/js/auth.js" "$SRC/public/js/search-navbar.js" "$SRC/public/js/search-results.js"
    ```
 
-Run [the check](#check-whether-the-mirror-is-done) again. It now prints 14 `mirrored` lines, `1`, and nothing else.
+Run [the check](#check-whether-the-mirror-is-done) again. It now prints 16 `mirrored` lines, `1`, and nothing else.
 
 After the mirror, make every hand change to these files in `11ty/` and copy it to the source. The refresh excludes them, so a change made only in the source never reaches `11ty/`. A change made only in `11ty/`, by hand or by an islands build, leaves the source's copy behind, and the check then reports it as `missing or different`.
 
@@ -200,7 +201,7 @@ rsync -ainc --delete --omit-dir-times \
   --exclude 'js/feature-flags.js' --exclude 'js/person-page.js' --exclude 'family-login/' \
   --exclude 'css/auth-edge.css' --exclude 'css/hfy-theme.css' --exclude 'fonts/' \
   --exclude 'sw.js' --exclude 'manifest.webmanifest' --exclude 'offline.html' \
-  --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' \
+  --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' --exclude 'tree/' \
   "$SRC/_site/" 11ty/
 ```
 
@@ -239,7 +240,7 @@ If rsync warns that it cannot delete `_data` because the directory is not empty,
      --exclude 'js/feature-flags.js' --exclude 'js/person-page.js' --exclude 'family-login/' \
      --exclude 'css/auth-edge.css' --exclude 'css/hfy-theme.css' --exclude 'fonts/' \
      --exclude 'sw.js' --exclude 'manifest.webmanifest' --exclude 'offline.html' \
-     --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' \
+     --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' --exclude 'tree/' \
      "$SRC/_site/" 11ty/
    ```
 
@@ -298,7 +299,7 @@ Never edit the head blocks, the family-voice copy, a `?v=` or an `hfy-asset-vers
    ```sh
    for f in _data/flags.json js/auth-v2.js sw.js manifest.webmanifest offline.html family-login/index.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/index.html me/notifications/index.html me/links/index.html; do
+            posts/index.html me/index.html me/notifications/index.html me/links/index.html tree/index.html; do
      test -f "11ty/$f" || echo "missing: $f"
    done
    ```

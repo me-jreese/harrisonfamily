@@ -229,6 +229,15 @@ html.hfy-shell-v2 .io-sheet__title {
   font-size: var(--io-typography-size-lg);
   font-weight: var(--io-typography-weight-regular);
 }
+/* The account sheet's title is the member's name as a link to their own page (ruling P2-R46; a.hfy-person-name, 20-base.css): the
+   header is tapped, so the link is a 44px target (tap.min), a transparent band centred on the name, at least tap.min wide. */
+html.hfy-shell-v2 .hfy-account .io-sheet__title > a.hfy-person-name { position: relative; }
+html.hfy-shell-v2 .hfy-account .io-sheet__title > a.hfy-person-name::after {
+  content: "";
+  position: absolute;
+  inset-block: calc(50% - var(--io-shell-tap-min) / 2);
+  inset-inline: min(0%, calc(50% - var(--io-shell-tap-min) / 2));
+}
 
 /* Kit root cause (@io-kit/shell 0.6.6 io-kit.css .io-sheet__close): the close button's border is color-mix(--fg 28%), the Enceladus --fg,
    2.44:1 on surface.raised (under the 3:1 non-text floor). It takes the DS border.strong (3.78:1 on raised). Record against DVP-TSK-A73. */

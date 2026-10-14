@@ -33,11 +33,12 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`labels.js`](../../api/src/labels.js) | Author labels: `cleanLabel`, `fallbackLabel` and the cached person-record resolver `createLabelResolver` (see [Author label](#author-label)). Used by the cookie path and the MCP path. |
 | [`mcp.js`](../../api/src/mcp.js) | The MCP mount: `isMcpPath`, `loadMcpConfig`, the bearer edge, the tool registry built from `ROUTES`, and the actor a tool runs as. See [MCP server](mcp-server.md). |
 | [`mcp-caps.js`](../../api/src/mcp-caps.js) | Build-time views of the MCP surface for `gen-caps`: the `tools/list` result and the `@io-kit/parity` caps document. |
-| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
+| [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups, the feature gate's `uat` group and the `gramps-owner` group of the sync API), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
 | [`comment-photos.js`](../../api/src/comment-photos.js) | Comment photo attachments: `normalizeNew` (the shape check), and `createUploadPhotos` with its `parse`, `owned` and `bind` (the `UPLOAD#` binding, `headUpload` and `checkLocation`). `uploadPhotosFor` wires it over the API's S3 client. See [Comment photos](#comment-photos). |
 | [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
+| [`contrib-read.js`](../../api/src/contrib-read.js) | The contributions read side: `createContribReader` (the `list`, `stats` and `site` behind `/contributions`), the pure feed-line rule `pickLine` with its `CANDIDATES` and `lineText`, `hrefOf`, and the default `proposalVisible`. See [Contributions read API](#contributions-read-api). |
 | [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). `headUpload(bucket, key)`: the `HeadObject` of a comment photo, with a 2 s timeout. See [Comment photos](#comment-photos). |
@@ -50,6 +51,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`sync/checker.js`](../../api/src/sync/checker.js) | The privacy checker inside it: redaction policy v1, detection only, with RFC 6901 pointers, for one object list (`privacyVerdict`) or a batch against the store view (`batchViolations`). |
 | [`sync/schema.js`](../../api/src/sync/schema.js) | The Gramps 6.0.6 JSON Schema per class and the `MediaRef.rect` rule. |
 | [`sync/view.js`](../../api/src/sync/view.js), [`sync/errors.js`](../../api/src/sync/errors.js) | The store view the validator reads (heads, id guard, referrers, destructive budget) and `SyncError`. |
+| [`sync/auth.js`](../../api/src/sync/auth.js), [`sync/guard.js`](../../api/src/sync/guard.js), [`sync/routes.js`](../../api/src/sync/routes.js) | The desktop sync API's front door (HFY-TSK-172): the `sync-bearer` authenticator with `requireOwner`, `requireStepUp` and `requireConflictDecision`; the `SYNC_API_ENABLED` switch, the handshake and the per-request middleware; and the `sync.meta` and `sync.bind` routes. See [The sync API](#the-sync-api). |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation, the server-chosen object key and the `UPLOAD#` binding. |
@@ -66,7 +68,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | Package | Version (lockfile) | Used for |
 | --- | --- | --- |
 | `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
-| `@io-kit/comments` | 0.2.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
+| `@io-kit/comments` | 0.3.1 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.5.0 | The notification routes (five push routes and three inbox routes), the inbox store, persist-first delivery (`createDelivery`), subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
@@ -99,7 +101,7 @@ Every request goes through these steps in order. The first step that fails decid
 4. **Route match.** `/api` is removed and the rest is matched against `ROUTES`. Path parameters are URL-decoded with `decodeURIComponent`. A path parameter with malformed percent-encoding (for example `%E0%A4%A`) makes it throw, which is `500 internal`, before the session is checked. No path match is `404 not_found`. A path that matches with a different method is `405 method_not_allowed`. That includes `OPTIONS` and `HEAD`: the API does no CORS handling. The exception is a path whose every route is behind a [feature gate](#feature-gate) that is closed to the caller: the session is read, and the answer is `404 not_found`, so the wrong method does not reveal a dark route.
 5. **Session.** The session cookie is verified (see [Session verification](#session-verification)). A missing or invalid cookie is not refused yet.
 6. **Feature gate.** A route that declares a feature or a server switch is refused when it is closed to the caller ([Feature gate](#feature-gate)): `404 not_found`, the same response as a route that does not exist, or a switch's own error. This runs before the session is required, so a signed-out caller also gets `404` from a dark route.
-7. **Session required.** Without a verified session: `401 unauthenticated`. Every route requires a session, reads included.
+7. **Session required.** Without a verified session: `401 unauthenticated`. Every route requires a session, reads included. A route with `auth: "sync-bearer"` (`/api/sync/*`) takes steps 5 to 7 differently: see [The sync API](#the-sync-api).
 8. **Content type**, for `POST`, `PUT` and `PATCH` only. `content-type` must start with `application/json`, ignoring case. Otherwise `415 unsupported_media_type`.
 9. **Body**, for `POST`, `PUT` and `PATCH` only. A base64-encoded body is decoded. An empty body counts as `{}`. A body that does not parse is `400 validation` ("invalid JSON body"). A body that parses to anything other than an object (an array, `null`, a string or a number) is `400 validation` ("body must be a JSON object"). `DELETE` bodies are not read here.
 10. **Route handler.**
@@ -117,6 +119,7 @@ The rest of this page describes the `/api/*` responses. The MCP mount's response
 | JSON responses from the API, including errors and `204` | `content-type: application/json; charset=utf-8`, `cache-control: no-store`, `vary: authorization, cookie` |
 | Notification routes | The kit's `content-type: application/json`, plus `cache-control: no-store` added by the handler. No `vary`. |
 | Origin-check `403` | `content-type: application/json`, `cache-control: no-store` |
+| `401` from a `sync-bearer` route | the JSON headers, plus `www-authenticate: Bearer realm="harrisonfamily.us/api/sync"` (an `HttpError` may carry `headers`) |
 
 A `204` response has an empty body.
 
@@ -154,7 +157,7 @@ Two statuses exist for validation. Checks on the request itself (body parsing, a
 
 ## Routes
 
-All paths are under `/api`, and every route needs a session. Routes ignore body and query fields they do not name. The route names in the first column are the action names in [`caps.json`](#capsjson).
+All paths are under `/api`, and every route needs a session, except the `sync-bearer` routes of [The sync API](#the-sync-api), which need the desktop client's bearer token instead. Routes ignore body and query fields they do not name. The route names in the first column are the action names in [`caps.json`](#capsjson).
 
 | Name | Method | Path | Input | Success | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -171,6 +174,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
 | `uploads.presign` | POST | `/uploads` | body `contentType`, `size`, optional `purpose` (`post` default, or `comment`); a `filename` is ignored | `201` | Presigned S3 PUT under `uploads/posts/`, or `uploads/comments/` for `purpose` `comment` (jpeg, png or webp only; needs `commentPhotosV1`) |
+| `contributions.list` | GET | `/contributions` | query `author` (required), `cursor`, `limit` (1 to 50, default 10) | `200` `{items, cursor}` | Newest first. Not an MCP tool. Behind `requireFeature("contribV1")`. See [Contributions read API](#contributions-read-api). |
+| `contributions.stats` | GET | `/contributions/stats` | query `author` | `200` `{author, total, by_kind, first_at?}` | A member's counters, zeros for an unknown member. Behind `contribV1`. Not an MCP tool. |
+| `contributions.site` | GET | `/contributions/stats` | none (no `author`) | `200` `{total, line, computed_at}` | The site total and the feed line, through the cached `CSTAT#site/LINE` row. Shares its path with `contributions.stats`: `?author=` picks that route. Behind `contribV1`. Not an MCP tool. |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
@@ -184,9 +190,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Five routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, and the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Eight routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get` and `links.put` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put` and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -580,6 +586,60 @@ The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. `contribOp
 
 A withdraw or republish hides or shows the event only if it exists, so a post whose event is missing still changes visibility; the backfill repairs that orphan. If a comment's author deletes it while a thread purge is running, the purge re-reads its events and commits the batch once more, so the revoke happens once. Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
 
+## Contributions read API
+
+[`contrib-read.js`](../../api/src/contrib-read.js) reads what the [ledger](#contributions-ledger) writes (HFY-TSK-256, BRD2 D2-17). The three routes are dark behind `requireFeature("contribV1")`: `404` for everyone, signed in or not, until the flag is on or the caller is in the `uat` group. `contributions.stats` and `contributions.site` share `GET /contributions/stats`; a route's `when(query)` member, which `matchRoute` reads, sends a request with `?author=` to the first and one without to the second.
+
+### List
+
+`GET /contributions?author=<gramps_id>&cursor=&limit=` queries `CONTRIB#<author>` for `E#` items, newest first, and returns `{items, cursor}`. `author` is required (`400 validation` if missing or not a gramps id); `limit` is a whole number from 1 to 50 (default 10, else `400 validation`); a cursor that this route did not issue is `400 cursor_invalid`. An unknown author gives `{items: [], cursor: null}`.
+
+A row is `{id, kind, at, weight, photos, ref: {type, id, thread?}, subject?, href, hidden?}`. It carries no body text, no actor and no origin. `cursor` is opaque and `null` at the end. A page is filled across events the viewer cannot see: the route reads up to five pages of events to find `limit` visible ones, and hands back a cursor to continue when it gives up. `items.length < limit` therefore does not mean the end while `cursor` is not `null`: a client keeps paging until `cursor` is `null`.
+
+Who sees which event:
+
+| Event | Shown to |
+| --- | --- |
+| `hidden` (a withdrawn post, a moderated item) | The author and admins, with `hidden: true`. Nobody else. |
+| A post event, or a comment on a `post:<id>` thread | A viewer for whom `canView` of the current post is true (the author, admins, and everyone while it is published and not hidden by moderation). A withdrawn or deleted post hides the event, and so does a post that could not be read. |
+| A comment on a `proposal:<ulid>` thread | The proposal's visibility set only: the proposer, admins and the owners of the targeted pages. A third member gets nothing, and so does anyone when the proposal is gone. |
+| Anything else (a person-thread comment, a record, tag, accepted proposal or graduated photo) | Every signed-in member. A `proposal` ref event (`proposal_accepted`) is written only when a proposal is accepted, and an accepted proposal is public, so it needs no proposal check. Person pages are not per-viewer in the design, so a person-thread or record event needs no target check either. |
+
+The checks read the current posts and proposals with `BatchGet` in chunks of at most 20 distinct keys (`POST#<id>/META`, `PROP#<ulid>/META`). Unprocessed keys are retried once; an event whose item is still unread is omitted, so the check fails closed. A page with nothing to check makes no `BatchGet`. The default proposal rule is `proposalVisible`: the proposer, the member whose page the proposal is about (`subject.gramps_id`), the members listed in `owners[]` if the proposal store records them, and admins. `proposal-store-api` (or `proposal-decision-api`) has a hard dependency here: it must write `owners[]` for every targeted page, or replace the rule through `createContribReader({proposalVisible})`. Until then the circle is narrower than the design and fails closed.
+
+`href` is computed by the server:
+
+| Ref | `href` |
+| --- | --- |
+| `post` | `/posts/?id=<post id>` |
+| `comment` on a person thread | `/person/?id=<gramps id>#comment-<ulid>` |
+| `comment` on a post thread | `/posts/?id=<post id>#comment-<ulid>` |
+| `comment` on a proposal thread | `/person/?id=<gramps id of the page the proposal is about>#comment-<ulid>` |
+| `proposal`, `record`, `tag` | `/person/?id=<subject>` |
+| `media` | `/person/?id=<subject>#photos` |
+
+`href` is `null` when the page cannot be named.
+
+### Stats
+
+`GET /contributions/stats?author=<gramps_id>` reads `CSTAT#person:<author>/TOTAL` and returns `{author, total, by_kind: {post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}`. Every value is clamped at 0, and an unknown author reads as zeros, not `404`. Hidden events still count (hide and withdraw change no counter), so a withdrawn or moderated contribution still raises the total and `by_kind` that other members see. Only a count leaks, never content; a test pins this.
+
+### Site total and the feed line
+
+`GET /contributions/stats` (no `author`) returns `{total, line, computed_at}`. `line` is `{x, y, unit, window_days, text}`, for example `12 contributions in the past 3 days`, or `null` when no window reaches 3 (the page then shows its no-number line).
+
+The line is cached in `CSTAT#site/LINE`. A read serves the cached row while it is under one hour old (`LINE_TTL_MS`), reading nothing more than the total and the row. Past an hour it reads the `D#` day rows of the last 366 days (and the `M#` month rows when the site is at least 730 days old), recomputes with `pickLine`, and writes the row back with a 2 hour `ttl`. A failed cache write is logged and the computed line is still served. The clock is `deps.now`, so tests inject it.
+
+`pickLine(buckets, today, firstAt, prev?)` is pure:
+
+1. **Windows**, shortest first: 1 to 6 days, 7, 14 and 21 days (weeks), 30, 60, 90 and 180 days (months), then 365 days times 1 to 10 (years). A window is eligible only when the site's history is at least as long, so a young site never claims a long span. Windows over 400 days sum `M#` month buckets (12 per year, the partial current month included), so `window_days` is approximate for them. The years stop at 10 (`MAX_YEARS`); the design sets no upper bound. Concurrent cold requests each recompute and write the row, which is harmless.
+2. **Hot**: the shortest eligible window of 30 days or fewer with `X >= 5` and `X >= P`, where `X` is the sum of the window's buckets, today included, and `P` the same number of buckets before it.
+3. **Volume**: otherwise the shortest eligible window with `X >= 3`.
+4. **Null**: otherwise, so a "1 contribution in the past day" line is never produced.
+5. **Dwell**: a pick cached earlier on the same UTC day is kept, with its current count, while its window is still eligible with `X >= 3` and the fresh pick is within one candidate step of it.
+
+A negative or non-numeric bucket reads as 0. The golden table is in [`contrib-read.test.js`](../../api/test/contrib-read.test.js).
+
 ## Audit records
 
 Every post create, update, visibility change and delete, every comment create, edit and delete, and every profile links write that changes something writes one audit item ([`txn.js`](../../api/src/txn.js), `auditItem`).
@@ -949,6 +1009,24 @@ Three op fields are **provisional**: `renumber: true` (a Person update that chan
 - **Extra items.** `extra` (`{puts, deletes, updates, checks}`, the `transact()` shapes) commits in the same transaction, as do the items of registered contributors. A failed condition on one of the caller's own items surfaces as the `TxnCancelled`, with the caller's `tag`.
 - **Validator.** `applyBatch` runs the server validator ([below](#the-server-validator)) on every call, from every origin, before the version check; `ctx.validate(view)` runs after it as an extra layer (a `createValidator({...})` result replaces it, to change its options), and `ctx.unsafeNoValidate: true` skips the default (the seed and tests only). A withdraw op must carry `reason: "private"`; any other reason, or none, is `400 validation`. This is a contract change for callers: no moderation or graduation code in the tree sends a sync `withdraw` today, and the moderation and graduation tasks must send the reason.
 
+### The cloud ID policy
+
+`api/src/sync/id-policy.js` holds the Q2-03 policy (HFY-TSK-246). `ctx.idPolicy` (built with `createIdPolicy({ mode, accessRequestOf, completeAccessRequest })`) or the `HFY_ID_POLICY` environment variable picks one branch from the `q2-03-id-block` answer; the other branch is off. With neither set, every create needs a `gramps_id`, as before.
+
+| Mode | Web-origin create (`self`, `admin`, `proposal`, `graduation`, `tag`, `moderation`) | Desktop |
+| --- | --- | --- |
+| `mint` | An empty or absent `gramps_id` is minted from `SYNC#HEAD.id_next.<Class>` (`I8000` to `I8999`, `F8000`, ...). The counter is written by the same `TransactWriteItems` as the record, under the `SYNC#HEAD` seq condition and the `GID#` claim; a taken number is skipped; past 8999 the answer is `409 id_block_exhausted`. A web-origin id that is supplied and inside the block is `409 reserved_id_block`. | A create into the block, or an update that moves an object into it, is `409 reserved_id_block`. A minted Person id is permanent (retired on delete, withdraw or merge, never released). |
+| `assign` | The `gramps_id` stays empty; no `GID#` item is written; the renderer gives the person no file. | The first empty-to-ID update is allowed once, under the `GID#` guard (`gramps_id_taken`, `gramps_id_retired`), and is not `renumber_blocked`. Any later change of a Person id is `409 renumber_blocked`. A web origin assigning an id is `renumber_blocked` too. The block is not reserved. After the commit, `completeAccessRequest(requestId, grampsId)` runs for a Person that `accessRequestOf` ties to an access request; a failure is logged and never fails the write. |
+
+**Status and open links (HFY-TSK-246).**
+
+- **The mode must be set before the push routes are wired.** The rule covers the routes that call `applyBatch`: the sessions, batches and media routes of `sync-push-routes`. The handshake and bind routes of HFY-TSK-172 (`sync.meta`, `sync.bind`) are already in `ROUTES` and never call `applyBatch`, so they need no mode and can be turned on with `SyncApiEnabled=1` while `HFY_ID_POLICY` is unset. With no mode the store keeps the pre-Q2-03 behaviour and neither branch is active. A production profile should fail when the push routes are wired if `HFY_ID_POLICY` is unset; the gate task does that. `policyOf(ctx)` validates once per ctx; a bad value is logged as `id_policy_misconfigured` and answered `500 id_policy_misconfigured`. Call it at wiring time to fail early.
+- **The branch is a deploy-time setting, not read from the recorded answer.** Acceptance criterion 3 (the branch is taken from the `q2-03-id-block` answer) stays **open** until io or the gate task wires that answer to `HFY_ID_POLICY`. Consumers that must reference the answer: `render-lambda` (no person file without an ID) and `addon-push` (the assignment test). Both are Python with `unittest` suites (the renderer in `gramps/hfygramps/render/`, the add-on standard-library only), so neither can import `id-policy.js`. They take the branch from another carrier, such as the `HFY_ID_POLICY` value or the recorded `q2-03-id-block` answer.
+- **Assign mode, who assigns.** Only the desktop gives an ID-less object an id, for every class: any other origin is `409 renumber_blocked` (Person) or `409 assign_desktop_only` (other classes). The assignment is GID-guarded for every class.
+- **Mint mode, the block.** A web-origin create or update cannot supply an id inside the block unless the store already minted it for that object.
+- **Access-request completion is best effort.** `completeAccessRequest` runs after the commit, with no outbox. A crash between the commit and the call leaves the request open, and a replay returns the receipt without re-running it. `accessRequestOf` and `completeAccessRequest` are supplied by `surf-access-admin-api`, which should also add a reconcile pass that completes any request whose Person already holds an id.
+- **Deploy proof.** Acceptance criterion 4 (the green `io-kit-deploy` run for the merge commit) cannot exist before merge; the code is reachable from no route.
+
 ### The server validator
 
 [`validator.js`](../../api/src/sync/validator.js) is the gate in front of the transaction (HFY-TSK-245, sync design 5.7 and 7.2). `applyBatch` calls it as `validate(view)` with `{ops, origin, principal, on_behalf_of, sync_head, record, store, stepUp, expected}`, runs it again after every lost seq race, and builds nothing until it passes. It reads the batch as it will stand once it commits: the store view overlaid with the batch's creates, updates, deletes and withdraws. A refusal is a `SyncError` whose `details.violations` list `{rule, class, handle, pointer, op_id}`: where, never what. The first family that finds anything answers:
@@ -986,6 +1064,78 @@ One `GID#` write per distinct id decides the batch as a whole, so a swap or a ro
 - A contributor, `fn(batch, origin)`, returns extra transaction items for the batch's own transaction. It runs on every attempt, so it must be pure. The self-edit and tag contribution ops come only from the contributor that `hfy-record-change-fanout` registers; no caller adds them.
 - An after-commit hook, `fn({batch_id, origin, seq_from, seq_to})`, runs once per committed batch, after the commit, and never for a replay or a refused batch. A hook that throws is logged by name and code and never fails the write. If the process dies between the commit and the hook, the hook does not run for that batch.
 - Record-change notifications do not come from here. They come from the render outbox.
+
+## The sync API
+
+`/api/sync/*` is the desktop add-on's door into the cloud record store (HFY-TSK-172; design: HFY-PLN-002 sync.md section 7, BRD2 section 11.1). Its routes have `auth: "sync-bearer"` in `ROUTES` and `caps.json`. This page covers the shared middleware and the routes that need no validator, `GET /api/sync/meta` and `POST /api/sync/bind`. The push routes (`sessions`, `batches`, `media`) and the pull routes (`snapshot`, `changes`) are added by their own tasks as more entries in `SYNC_ROUTES` ([`sync/routes.js`](../../api/src/sync/routes.js)); they inherit everything below.
+
+### What a sync request goes through
+
+The handler runs these steps in place of steps 5 to 7 of the [request pipeline](#request-pipeline). The first that fails decides the response. Errors use the usual `{error, message, details?}` body.
+
+| Step | Check | Failure |
+| --- | --- | --- |
+| 1 | **Switch.** `SYNC_API_ENABLED` must be `1` (stack parameter `SyncApiEnabled`, default `0`). It runs before the token is read, so a closed API answers everyone alike. | `404 not_enabled` |
+| 2 | **Bearer.** `Authorization: Bearer <access token>`. The session cookie is never read here, so an `hfy-admin` cookie alone cannot reach a sync route. RS256 through the auth edge's JWKS; `iss` is the auth edge issuer, `aud` includes `https://harrisonfamily.us/api/sync`, `client_id` is `hfy-sync-desktop` and `token_use` is `access`. Every failure is one answer, so a caller learns nothing about which check failed. | `401 unauthenticated` with a `WWW-Authenticate: Bearer` challenge |
+| 3 | **Body size.** A body over 2 MiB. | `413 batch_too_large` |
+| 4 | **Handshake.** The four `X-HFY-*` headers below, against the terms in `SYNC#HEAD`. | `426 upgrade_required`, `409 redaction_version_mismatch` |
+| 5 | **Owner.** The subject must be in the `gramps-owner` group of `config/groups.json`. The token's own `groups` claim is ignored, and so are emails; an unreadable or malformed file means nobody is the owner. | `403 not_owner` |
+| 6 | **Pause.** A write route while `SYNC#HEAD.writes_enabled` is `false`. (`applyBatch()` repeats the check for every origin.) | `503 sync_paused` |
+| 7 | Content type and body, as for every route. | `415`, `400` |
+
+The route handler then gets `c.sync`: `{head, terms, handshake, treeId, writesEnabled, store, checkTree(), requireStepUp(reason), stepUp()}`. `checkTree()` is `403 tree_mismatch` unless `X-HFY-Tree-Id` equals the bound tree (a store with no bound tree passes); the push and pull routes call it, `meta` and `bind` do not. `stepUp()` is the boolean a push route passes to `applyBatch()` as `stepUp`.
+
+The validation order of sync.md 7.2 puts the handshake before authorization. The implementation authenticates the bearer first (step 2) because the handshake terms live in a table read that an unauthenticated caller should not trigger; the visible order for a valid token is as designed.
+
+### Handshake
+
+Every call carries these headers (any case). A value is never echoed back.
+
+| Header | Accepted | Otherwise |
+| --- | --- | --- |
+| `X-HFY-Sync-Client: hfy_sync/<semver>` | at least `min_client` (`SYNC#HEAD.min_client`, default `0.1.0`) | `426`, `details.reason` `client_header` or `client_too_old` |
+| `X-HFY-Gramps-Version: 6.0.6` | major.minor `6.0` | `426`, `gramps_version` |
+| `X-HFY-Gramps-Schema: 21` | a member of `SYNC#HEAD.accepted_schema` (default `[21]`) | `426`, `schema` |
+| `X-HFY-Redaction-Version: 1` | equal to `SYNC#HEAD.redaction_version` (default `1`) | `409 redaction_version_mismatch`; a missing header is `426`, `redaction_header` |
+| `X-HFY-Tree-Id: <uuid>` | read by `checkTree()` only | `403 tree_mismatch` |
+
+A `426` carries `details: {reason, min_client, accepted: {gramps, schema}, redaction_version}`, so the add-on can tell the owner what to install.
+
+### Step-up
+
+`stepUpFresh` (in [`sync/auth.js`](../../api/src/sync/auth.js)) is true when `amr` includes `mfa` and `auth_time` is at most 300 s old. `passkey`, `hwk` and `swk` alone do not count (HFY-R67). A missing, zero, non-numeric or future `auth_time` is stale (`auth_time` is never refreshed, HFY-R64). The rules that use it:
+
+| Action | Rule | Where |
+| --- | --- | --- |
+| A rebind (`POST /api/sync/bind` with `rebind: true` on a bound store) | fresh step-up, else `403 step_up_required` (`details.reason` `rebind`) | `sync.bind` |
+| Delete ops, and withdraws above the delete/withdraw budget | fresh step-up, else `403 step_up_required`. The route passes `c.sync.stepUp()` as `applyBatch()`'s `stepUp`; [the validator](#the-server-validator) decides whether an op or the budget needs it. | the push route |
+| A conflict decision | `requireConflictDecision(actor)`: gramps-owner **and** step-up. An `hfy-admin` cookie alone is refused (`403 not_owner`), because a cookie actor carries no `sync` member. | the conflict route |
+
+### `GET /api/sync/meta`
+
+Owner bearer, any state of the store. Returns `{api_version: 1, min_client, accepted: {gramps, schema}, redaction_version, tree_id, bound: {dbid, fingerprint} | null, head_seq, rendered_seq, writes_enabled, seeded, merges_enabled, limits: {max_ops, max_obj_bytes, max_body_bytes}, id_block, retired_person_ids}`.
+
+- `merges_enabled` is `true` only when `SYNC#HEAD.merges_enabled` is literally `true`; it stays `false` until `identity-merge-rekey` ships.
+- `retired_person_ids` lists every Person id whose head is a tombstone (deleted, withdrawn or merged away), sorted, from the `RECS#Person` index. The add-on holds a local create that reuses one (D44); the server refuses it anyway with `409 gramps_id_retired`. The index is eventually consistent and the server stays the authority. Renumbers are blocked in this release; when they ship, the list must also read retired `GID#` items.
+- `id_block` is the range the cloud mints from (`I8000-I8999` and the other classes' prefixes); a desktop create may not use it. Under `HFY_ID_POLICY=assign` nothing is minted and the validator does not reserve the block ([The cloud ID policy](#the-cloud-id-policy)); the handshake still reports it, so the add-on holds ids in it either way.
+- `bound` never includes the tree-name hash. `rendered_seq` is `SYNC#RENDER.rendered_seq`, `0` before the first render.
+
+### `POST /api/sync/bind`
+
+Body `{dbid, fingerprint, tree_name_sha256, rebind?}`: `dbid` 1 to 128 characters of `A-Za-z0-9._-`, `fingerprint` 8 to 256 characters of `A-Za-z0-9._:-`, `tree_name_sha256` 64 lowercase hex characters, `rebind` a boolean. A bad field is `400 validation` with `details.fields[0].field`.
+
+- **First bind** (nothing bound): mints `tree_id` (a UUID) and stores `tree_id`, `bound: {dbid, fingerprint, tree_name_sha256, bound_at, by}` and `bound_at` on `SYNC#HEAD`, with an `AUDIT#sync:bind` item in the same transaction. Returns `{tree_id}`. It changes no other `SYNC#HEAD` attribute, so the seq counter, `seeded` and `writes_enabled` are untouched.
+- **Already bound**: `409 already_bound` when `rebind` is absent, or when the body names the tree already bound.
+- **Rebind** (`rebind: true`, a different tree): needs a fresh step-up (`403 step_up_required`), keeps the existing `tree_id` and is audited. A `rebind: true` on an unbound store is a plain first bind.
+- The write is conditional on `bound_at`, so two racing binds cannot both win; the loser is `409 already_bound`.
+- While writes are paused (`SYNC#HEAD.writes_enabled` false) a bind is `503 sync_paused`.
+
+The tree marker uuid, the similarity guard and the sidecar are the add-on's side of binding (sync.md 8.3 step 1).
+
+### Switch and group settings
+
+- `SYNC_API_ENABLED` (`0` or `1`) is read from the environment on every request.
+- `gramps-owner` is a group in `config/groups.json` with `subjects` only: `{"groups": {"gramps-owner": {"subjects": ["<gramps_id>"]}}}`. It grants no MCP tool and no feature. Publishing `groups.json` needs io's go-ahead ([AGENTS.md](../../AGENTS.md)).
 
 ## Environment
 
@@ -1083,7 +1233,8 @@ The person-record lookups are cached in memory, per container:
 | `name` | `hfy-api` |
 | `version` | `0.1.0` (`API_VERSION` in `routes.js`) |
 | `base_path` | `/api` |
-| `auth` | `{scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true}` |
+| `auth` | `{scheme: "session-cookie", issuer_env: "SESSION_ISSUER", reads_require_session: true, sync_bearer: {scheme, issuer, audience, client_id, group, step_up}}` |
+| `sync` | `{api_version, enabled_by: "SYNC_API_ENABLED", min_client, accepted, handshake_headers, limits}` |
 | `subjects` | `["person:<gramps_id>", "post:<ulid>"]` |
 | `actions` | One per route: `{name, method, path, auth: "session", write, summary}`, plus `gate` when the route declares one: `{feature}`, `{switch}` or `{exempt}` ([Feature gate](#feature-gate)). `write` is true for every method except GET. |
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |

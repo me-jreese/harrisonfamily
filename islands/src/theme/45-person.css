@@ -209,10 +209,13 @@
   min-height: var(--io-control-tap-min);
   margin: 0;
 }
+/* A relative's name links to their page with no underline in any state (ruling P2-R46, HFY-TSK-323; the id selector outranks every
+   link-state rule); the link colour still marks it. */
 #person-family-data .family-link {
   display: inline-flex;
   align-items: center;
   min-height: var(--io-control-tap-min);
+  text-decoration: none;
 }
 #person-family-data .family-meta { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
 
@@ -581,4 +584,7 @@
   display: none;
 }
 [data-slot="tree-link"]:not(:empty) { margin-top: var(--io-space-3); }
+/* "see in the family tree" (familyViz, lib/tree-link.js): a 44px-high link, link colour, no underline in any state, a focus ring. */
+[data-slot="tree-link"] > a[data-tree-link] { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); text-decoration: none; }
+[data-slot="tree-link"] > a[data-tree-link]:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
 #hfy-person-social[hidden] { display: none; }
