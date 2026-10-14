@@ -35,6 +35,7 @@ function Check({ siteKey, onToken, onFail, resetKey }) {
         action: TURNSTILE_ACTION,
         theme: "dark",
         callback: (t) => cb.current.onToken(t),
+        "refresh-expired": "auto", // an idle token lapses after about five minutes; the widget fetches a new one on its own
         "expired-callback": () => cb.current.onToken(""),
         "error-callback": () => { cb.current.onToken(""); cb.current.onFail(); }
       });

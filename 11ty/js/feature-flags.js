@@ -32,7 +32,7 @@
         "css": "38a33f05"
       },
       "join": {
-        "js": "65b1bc6e",
+        "js": "8dfbf1b4",
         "css": "88b160fb"
       },
       "join-entry": {

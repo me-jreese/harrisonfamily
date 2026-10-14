@@ -171,6 +171,11 @@ test("each edge answer means what the design says", () => {
   assert.equal(verifyOutcome({ status: 410, body: { detail: "code_expired" } }).resend, true);
   assert.equal(verifyOutcome({ status: 429, body: { detail: "too_many_attempts" } }).resend, true);
 
+  assert.equal(verifyOutcome({ status: 0, body: {} }).text, COPY.unavailable); // network failure: a plain failure line, no ticket
+  assert.equal(verifyOutcome({ status: 0, body: {} }).ok, undefined);
+  assert.equal(submitOutcome({ status: 0, body: {} }).text, COPY.unavailable);
+  assert.equal(submitOutcome({ status: 0, body: {} }).settled, undefined);
+
   assert.deepEqual(submitOutcome({ status: 201, body: { ok: true, state: "pending" } }), { ok: true });
   assert.deepEqual(submitOutcome({ status: 409, body: { detail: "already_requested" } }), { settled: "requested" });
   assert.deepEqual(submitOutcome({ status: 409, body: { detail: "already_member" } }), { settled: "member" });
@@ -252,6 +257,7 @@ test("Turnstile is the one third-party script, asked for by the join island with
   const owners = ["src/islands/join.jsx", "src/lib/turnstile.js"];
   for (const f of ["src/islands/join-entry.jsx", "src/islands/about-cta.jsx", "src/islands/shell.jsx"]) assert.doesNotMatch(readFileSync(join(islandsDir, f), "utf8"), /turnstile/i, f);
   assert.ok(owners.every((f) => /turnstile/i.test(readFileSync(join(islandsDir, f), "utf8"))));
+  assert.match(readFileSync(join(islandsDir, "src/islands/join.jsx"), "utf8"), /"refresh-expired": "auto"/); // an idle token renews itself
 });
 
 test("the Legacy Form validator bundles for the islands' browser target and runs from the bundle", async () => {

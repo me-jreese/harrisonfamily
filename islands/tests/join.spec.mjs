@@ -17,8 +17,8 @@ const ANSWERS = {
 };
 
 // window.turnstile, enough for the island: render() hands over a token at once, reset() hands over a fresh one.
-const TURNSTILE_JS = `(function(){var n=0,o={};window.__ts={renders:[],resets:0};window.turnstile={
-  render:function(el,opts){var id=++n;o[id]=opts;window.__ts.renders.push(opts.action);el.setAttribute("data-ts-widget",String(id));opts.callback("ts-token-"+id+"-0");return id},
+const TURNSTILE_JS = `(function(){var n=0,o={};window.__ts={renders:[],refresh:[],resets:0};window.turnstile={
+  render:function(el,opts){var id=++n;o[id]=opts;window.__ts.renders.push(opts.action);window.__ts.refresh.push(opts["refresh-expired"]);el.setAttribute("data-ts-widget",String(id));opts.callback("ts-token-"+id+"-0");return id},
   reset:function(id){window.__ts.resets++;o[id]&&o[id].callback("ts-token-"+id+"-"+window.__ts.resets)},
   remove:function(id){delete o[id]}}})();`;
 
@@ -46,7 +46,7 @@ async function stub(page, { flag = true, session = null, config = { status: 200,
     const route = new URL(req.url()).pathname.replace("/auth/access-request", "").replace("/", "") || "submit";
     const body = req.postDataJSON();
     state.calls.push({ route, method: req.method(), headers: req.headers(), body });
-    if (replies[route]) { const out = await replies[route](body, state); return r.fulfill({ status: out.status, json: out.json ?? {}, headers: out.headers }); }
+    if (replies[route]) { const out = await replies[route](body, state); if (out.abort) return r.abort(); return r.fulfill({ status: out.status, json: out.json ?? {}, headers: out.headers }); }
     if (route === "start") { state.starts += 1; return r.fulfill({ status: 202, json: { ok: true } }); }
     if (route === "verify") {
       return body.code === CODE && body.email === EMAIL
@@ -288,7 +288,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("409 at submit: 'already requested' and 'already on the list' end the flow with a sign-in link for a member", async ({ page }) => {
-      for (const [detail, heading] of [["already_requested", "we already have your request. we'll email you when we've looked at it."], ["already_member", "good news, you're already on the list."]]) {
+      for (const [detail, heading] of [["already_requested", "we already have your request. we'll email you."], ["already_member", "you're already on the list."]]) {
         await page.unrouteAll({ behavior: "ignoreErrors" });
         await open(page, { replies: { submit: () => ({ status: 409, json: { detail } }) } });
         await toStep3(page);
@@ -411,6 +411,28 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(starts).toHaveLength(2);
       expect(starts[1].turnstileToken).not.toBe(starts[0].turnstileToken);
       await expect(again).toHaveAttribute("aria-disabled", "true");
+    });
+
+    test("a network failure on the code and on the submit: the failure is announced, the step stays, the answers are kept; the check asks to refresh itself", async ({ page }) => {
+      let cut = true;
+      await open(page, { replies: { verify: (b) => (cut ? { abort: true } : { status: 200, json: { ticket: TICKET } }), submit: () => ({ abort: true }) } });
+      await toStep2(page);
+      await page.getByLabel("6-digit code").fill(CODE);
+      await page.getByRole("button", { name: "check it" }).click();
+      await expect(page.locator("[data-join-failure]")).toHaveText("that didn't work. try again in a minute.");
+      await expect(page.locator("[data-join-failure]")).toHaveAttribute("role", "alert");
+      await expect(stepHeading(page, "check your email")).toBeVisible();
+      await expect(page.getByLabel("6-digit code")).toHaveValue(CODE);
+      cut = false;
+      await page.getByRole("button", { name: "check it" }).click();
+      await expect(stepHeading(page, "tell us about you")).toBeFocused();
+      await fillAnswers(page);
+      await page.getByLabel("this is about me, not someone else").check();
+      await page.getByRole("button", { name: "send my request" }).click();
+      await expect(page.locator("[data-join-failure]")).toHaveText("that didn't work. try again in a minute.");
+      await expect(page.getByLabel("what year were you born?")).toHaveValue(ANSWERS.birthYear);
+      expect(await draftOf(page)).not.toBeNull();
+      expect(await page.evaluate(() => window.__ts.refresh)).toContain("auto"); // an idle step 3 does not strand the visitor on an expired token
     });
 
     test("use a different email: back to step 1 with the address to change", async ({ page }) => {

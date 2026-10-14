@@ -470,6 +470,7 @@ describe("sign-in and denied pages: the 'ask to join' link follows ACCESS_REQUES
     expect(link.href).toBe("/join/");
     expect("data-hfy-join" in link.attrs).toBe(true);
     expect(kids[kids.length - 1].textContent).toBe("copy my email");
+    expect(kids.map((c) => c.textContent)).toEqual(["ask to join", "copy my email"]); // the order in the banner: message text, ask to join, copy my email
     expect(JSON.stringify(link)).not.toContain("stranger");
     ctx.ioFail("msg-pw", { body: { detail: "invalid_credentials" } }); // another failure: the link goes with the message
     expect(els["msg-pw"].children).toHaveLength(0);
