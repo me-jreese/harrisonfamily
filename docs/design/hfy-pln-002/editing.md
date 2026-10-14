@@ -898,10 +898,10 @@ New names avoid the existing `notifyV2` (digest risk). The loader routes go in `
 | `not_found` (404) | all | Editing off, no such record, or proposal not visible | – | "this page isn't available." |
 | `ambiguous_id` (409) | edit bundle | gramps_id maps to more than one object | lists the handles | Admin: choose one. Member: "text an admin." |
 | `validation` (400) | schema, semantics | Invalid value, date, reference or call name | `errors[]` pointers | Inline at the field (`mapServerProblem`) |
-| `not_allowed` (403) | field policy | Op on an admin, desk or never path | `errors[]` paths | "only an admin can change this." |
+| `not_allowed` (403) | field policy | Op on an admin, desk or never path. Detail `kind: "url_not_link"` when a Person Url is not one of the link kinds (Web Home, or a Custom type named for a link kind): desktop-only (HFY-TSK-329; edit-api-core maps `desk` to this response, mapping of Web Home / Custom names awaits io confirmation) | `errors[]` paths, `kind` | "only an admin can change this." |
 | `contact_info` (422) | guard | Phone, address or email detected | spans only, never echoed, logs carry counts only | Inline highlight: "this looks like a phone number or street address… please remove it." Submit stays disabled. |
 | `dob_not_allowed` (422) | guard | Day or month on a birth date, or a DOB phrase | spans | "we only keep the birth year on the site." |
-| `never_in_cloud` (422) | guard, schema | Address, location, e-mail URL, SSN or ID attribute, street-level place | – | "we don't keep this on the site." |
+| `never_in_cloud` (422) | guard, schema | Address, location, e-mail URL (detail `kind: "url_email"`, field policy), SSN or ID attribute, street-level place | `kind` |  "we don't keep this on the site." |
 | `version_conflict` (409) | `records.apply` | Direct group's base is stale | `current` versions | Refetch and replay automatically, then "this page just changed — please check." |
 | `precondition_failed` (412) | proposals | Etag changed: amended, or another admin decided | fresh view | Card re-renders: "this suggestion changed; please look again." |
 | `rebase_conflict` (409) | decision | Record changed and the ops overlap | state → stale, proposer notified | Admin: conflict rows plus "edit then approve". Proposer: "needs a quick update". |

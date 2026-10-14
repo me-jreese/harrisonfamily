@@ -5,10 +5,11 @@
 // also fills the host once if it is already there. A visitor, a signed-out reader, a person with no links, the route answering 404
 // (flag off at the API) or any error shows nothing at all.
 import "./person-links.css";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api } from "../lib/api.js";
-import { ADD_LINKS, CHIP_REL, EDIT_LINKS, LINKS_PATH, SECTION_TITLE, chipsFrom } from "../lib/profile-links.js";
+import { getMe } from "../lib/me.js";
+import { ADD_LINKS, CHIP_REL, CLEAR_COPY, EDIT_LINKS, LINKS_PATH, SECTION_TITLE, chipsFrom, clearBody } from "../lib/profile-links.js";
 
 const reads = new Map();
 /** One GET per person per page: a hero rebuild does not ask again. A failed read is forgotten so the next render can retry. */
@@ -34,23 +35,73 @@ export function Chip({ chip }) {
   );
 }
 
+/** The hfy-admin's clear-only control (HFY-TSK-329): one button, a confirmation, then PUT with `null` for every set platform. */
+function ClearLinks({ personId, data, onData }) {
+  const [phase, setPhase] = useState("idle"); // idle | ask | busy
+  const [note, setNote] = useState("");
+  const askRef = useRef(null);
+  useEffect(() => { if (phase === "ask") askRef.current?.focus(); }, [phase]);
+  const url = `/people/${encodeURIComponent(personId)}/links`;
+  const refresh = (d) => {
+    reads.set(personId, Promise.resolve(d));
+    onData(d);
+  };
+  async function clear() {
+    setPhase("busy");
+    setNote("");
+    try {
+      const res = await api.put(url, clearBody(data.links, data.version));
+      refresh({ ...data, links: res?.links ?? {}, version: res?.version ?? data.version });
+      setNote(CLEAR_COPY.done);
+    } catch (err) {
+      if (err && err.status === 409) {
+        try { refresh(await api.get(url)); } catch { /* the latest could not be fetched: keep what is shown */ }
+        setNote(CLEAR_COPY.conflict);
+      } else setNote(CLEAR_COPY.failed);
+    }
+    setPhase("idle");
+  }
+  return (
+    <div className="hfy-links__admin" data-hfy-links="admin">
+      {phase === "idle" && chipsFrom(data.links).length > 0 && (
+        <button type="button" className="hfy-links__clear" data-hfy-links="clear" onClick={() => setPhase("ask")}>{CLEAR_COPY.clear}</button>
+      )}
+      {phase !== "idle" && (
+        <div className="hfy-links__confirm" role="group" aria-label={CLEAR_COPY.clear}>
+          <p className="hfy-links__ask">{CLEAR_COPY.ask}</p>
+          <button type="button" className="hfy-links__clear hfy-links__clear--confirm" data-hfy-links="confirm" ref={askRef} disabled={phase === "busy"} onClick={clear}>
+            {phase === "busy" ? CLEAR_COPY.clearing : CLEAR_COPY.confirm}
+          </button>
+          <button type="button" className="hfy-links__clear" data-hfy-links="cancel" disabled={phase === "busy"} onClick={() => setPhase("idle")}>{CLEAR_COPY.cancel}</button>
+        </div>
+      )}
+      <p className="hfy-links__note" role="status">{note}</p>
+    </div>
+  );
+}
+
 export function PersonLinks({ personId }) {
   const [data, setData] = useState(null);
+  const [admin, setAdmin] = useState(false);
   const titleId = useId();
   useEffect(() => {
     let live = true;
     readLinks(personId).then((d) => { if (live) setData(d); });
+    getMe().then((me) => { if (live) setAdmin(me?.admin === true); });
     return () => { live = false; };
   }, [personId]);
 
   if (!data || typeof data !== "object") return null;
   const chips = chipsFrom(data.links);
   const owner = data.can?.edit === true;
-  if (!chips.length && !owner) return null;
+  // An admin on someone else's page may only clear (the API's 403 for anything else); the control stays after a clear to say so.
+  const canClear = admin && !owner;
+  if (!chips.length && !owner && !canClear) return null;
+  if (!chips.length && canClear && !data.cleared) return null;
   return (
     <section className="hfy-links" aria-labelledby={titleId}>
       <h2 className="hfy-links__title" id={titleId}>{SECTION_TITLE}</h2>
-      <ul className="person-links hfy-links__list" aria-labelledby={titleId}>
+      {(chips.length > 0 || owner) && <ul className="person-links hfy-links__list" aria-labelledby={titleId}>
         {chips.map((chip) => <Chip key={chip.platform} chip={chip} />)}
         {owner && (
           <li>
@@ -59,7 +110,8 @@ export function PersonLinks({ personId }) {
             </a>
           </li>
         )}
-      </ul>
+      </ul>}
+      {canClear && <ClearLinks personId={personId} data={data} onData={(d) => setData({ ...d, cleared: true })} />}
     </section>
   );
 }

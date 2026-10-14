@@ -24,7 +24,7 @@
         "css": "38a33f05"
       },
       "links-editor": {
-        "js": "2947fb7d",
+        "js": "384053f9",
         "css": "a475a3dd"
       },
       "my-posts": {
@@ -32,23 +32,23 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "1a3568ea",
+        "js": "6c363506",
         "css": "be703fb4"
       },
       "person": {
-        "js": "c775251e",
+        "js": "83f78f35",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "1c364cd9",
-        "css": "930bb673"
+        "js": "4f5e63ee",
+        "css": "fcacbc39"
       },
       "photo-tags": {
         "js": "3d566647",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "b2333423",
+        "js": "ec5ba293",
         "css": "890fde1c"
       },
       "search": {
