@@ -2,12 +2,8 @@ stack: static
 branch: main
 node_version: "22"
 build:
-  cmd: bash scripts/ci/patch-client-id.sh && bash scripts/ci/package-lambda.sh
+  cmd: echo "11ty/ is committed output; nothing to build"
   out: 11ty
-  env:
-    HFY_GOOGLE_CLIENT_ID: {secret: HFY_GOOGLE_CLIENT_ID}
-artifacts:
-  - dist/hfy-check-allowed.zip
 tests:
   - bash scripts/ci/check-no-family-data.sh
   - bash scripts/infra/test/run.sh
@@ -15,7 +11,7 @@ tests:
   - node --test 'scripts/ci/test/**/*.test.mjs'
   - node scripts/ci/check-client-licenses.mjs
 parity:
-  mode: report
+  mode: block
 secrets_scan: trufflehog
 deploy:
   aws_role_secret: AWS_DEPLOY_ROLE_TO_ASSUME
@@ -34,9 +30,6 @@ deploy:
         - "uploads/*"
         - "README.md"
       invalidate: ["/*"]
-    - kind: lambda
-      name: hfy-check-allowed
-      zip: dist/hfy-check-allowed.zip
   smoke:
     - https://harrisonfamily.us/
     - https://harrisonfamily.us/family-login/

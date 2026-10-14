@@ -90,27 +90,27 @@ test("home: the hero 'sign in' goes straight to /auth/login?returnTo=/ once the 
   await expect(button).toHaveAttribute("href", "/auth/login?returnTo=%2F");
 });
 
-test("home: /auth/session unreachable, the hero 'sign in' keeps the legacy /family-login/ entry", async ({ page }) => {
+test("home: /auth/session unreachable, the hero 'sign in' keeps its static /auth/login entry", async ({ page }) => {
   await hermetic(page, { session: "unreachable" });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   const button = page.locator('main a.btn[data-feature="familyLoginLink"]');
-  await expect(button).toHaveAttribute("href", "/family-login/");
+  await expect(button).toHaveAttribute("href", "/auth/login");
   await page.waitForTimeout(500);
-  await expect(button).toHaveAttribute("href", "/family-login/");
+  await expect(button).toHaveAttribute("href", "/auth/login");
 });
 
-test("/family-login/ shows family-voice copy while it waits (authV2 off, so it stays)", async ({ page }) => {
-  await hermetic(page, { session: "unreachable", flags: { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false } });
-  await page.goto("/family-login/", { waitUntil: "domcontentloaded" });
-  const card = page.locator("main .card-body");
-  await expect(card).toContainText("sign in with your Google account to see the family pages.");
-  await expect(card).toContainText("not on the list yet? text J.");
-  const text = await card.innerText();
-  expect(text).not.toMatch(/approved Google account|site administrator|authentication status|Please sign in/);
+test("/family-login/ is a redirect page: a lowercase line, a sign-in link, and a no-script refresh to /auth/login (HFY-TSK-317)", async ({ page }) => {
+  const html = await (await page.request.get("/family-login/")).text();
+  const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+  expect(main.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()).toBe("taking you to sign in. sign in");
+  expect(main).toContain('<a href="/auth/login">sign in</a>');
+  expect(html).toContain('<noscript><meta http-equiv="refresh" content="0; url=/auth/login"></noscript>');
+  expect(html).toContain('<meta name="robots" content="noindex">');
+  expect(html).not.toMatch(/gsi\/client|auth\.js|feature-flags|check-allowed/);
 });
 
 test("the meta description is in the family voice on every page that had the Eleventy default", async ({ page }) => {
-  for (const path of ["/search/", "/family-login/", "/logged-out/", "/person/", "/private/"]) {
+  for (const path of ["/search/", "/logged-out/", "/person/", "/private/"]) {
     const html = await (await page.request.get(path)).text();
     expect(html, path).toContain('<meta name="description" content="the Harrison family archive. family members sign in to see the private pages." />');
     expect(html, path).not.toMatch(/gramps, 11ty and bootstrap/);

@@ -20,8 +20,6 @@ export const SIGN_OUT = "sign out";
 export const SIGNED_OUT = "sign in to change your settings.";
 /** Signed out at the edge: the edge sign-in, back to the hub afterwards. */
 export const SIGN_IN_HREF = "/auth/login?returnTo=%2Fme%2F";
-/** authV2 off or /auth/session unreachable: the legacy entry, which hands `next` to the edge when authV2 is on (the shell's rule). */
-export const LEGACY_SIGN_IN_HREF = "/family-login/?next=%2Fme%2F";
 
 function Row({ row }) {
   const id = useId();
@@ -71,7 +69,7 @@ function Settings() {
   return (
     <section className="hfy-settings" aria-busy={pending}>
       {pending && <div className="hfy-settings__skeleton" role="status" aria-label="loading" />}
-      {!pending && !signedIn && <SignInGate href={session ? SIGN_IN_HREF : LEGACY_SIGN_IN_HREF} />}
+      {!pending && !signedIn && <SignInGate href={SIGN_IN_HREF} />}
       {signedIn && <Hub />}
     </section>
   );

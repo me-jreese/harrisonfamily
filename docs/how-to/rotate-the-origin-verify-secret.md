@@ -93,7 +93,7 @@ The scripts merge their origins and behaviors into the live configuration in pla
 - two `cache behaviors ... (in evaluation order)` lines, `before` and `after`, that list the same behaviors in the same order;
 - no diff lines, because the only difference is the redacted header value;
 - `(only the X-Origin-Verify header value differs)`;
-- from `add-api-behavior.sh` only, `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`, naming the legacy API Gateway origin. The line names HFY-TSK-069, the cutover task, but the cutover kept the legacy Lambda and this pin, so the line is expected.
+- from `add-api-behavior.sh` only, `legacy /api/check-allowed stays on origin <origin-id> via /api/check-allowed* (ordered before /api/*; retired by HFY-TSK-069)`, naming the legacy API Gateway origin. The line names HFY-TSK-069, the cutover task, but neither the cutover nor HFY-TSK-317 removed the legacy Lambda or this pin (no page calls it any more), so the line is expected.
 
 Stop, and do not go on to Step 3, if a dry run shows any of these:
 

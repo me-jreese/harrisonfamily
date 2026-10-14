@@ -1,7 +1,7 @@
 // shared/ contract (HFY-PLN-002 D2-10): every shared/*.mjs is pure ESM that runs in the browser and in a Cloudflare Worker as
 // well as in Lambda, so it may import only relative shared files: no bare specifier, no node: builtin, no aws module.
 // NOTE: shared/package.json must keep "main" pointing at this file: that is what makes the bare `node --test shared/` run it.
-// Also runnable explicitly: `node --test shared/shared.test.mjs`. Not CI-gated yet (ci.manifest.yaml builds only package-lambda.sh).
+// Also runnable explicitly: `node --test shared/shared.test.mjs`. Not CI-gated yet (the ci.manifest.yaml tests do not run it).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, lstatSync, readlinkSync } from "node:fs";

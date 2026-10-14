@@ -9,8 +9,8 @@
 //   block B, immediately AFTER main.css: <link rel=stylesheet href=/css/hfy-theme.css?v=<sha8>>, so the cascade is
 //     main.css first and the theme second. (Its ?v is the same sha8 of the file that assets.mjs writes on every other script,
 //     stylesheet and manifest reference of the page, so the two stay consistent; the main.css anchor matches with or without it.)
-// Pages without main.css (posts/, me/, me/notifications/, offline.html) get A then B right after </title>.
-// offline.html gets no early hint: it never loads feature-flags.js (so nothing would mount the shell or clear the class), and
+// Pages without main.css (posts/, me/, me/notifications/, offline.html, family-login/) get A then B right after </title>.
+// offline.html and family-login/ get no early hint: they never load feature-flags.js (so nothing would mount the shell or clear the class), and
 // html.hfy-shell-v2 there would leave the shell's pre-mount placeholder bars (theme partial 60) painted on the offline page.
 // After an Eleventy refresh rewrites a page, `cd islands && npm run build` puts the blocks back. Workspace port: partials/head.njk
 // gets block A before the main.css link and block B after it (11ty/README.md).
@@ -62,8 +62,9 @@ export function resolveToken(themeCss, name) {
   throw new Error(`theme.css: cannot resolve ${name}`);
 }
 
-/** Pages that never mount the shell (no feature-flags.js): block A carries no early hint there. */
-export const NO_HINT = new Set(["offline.html"]);
+/** Pages that never mount the shell (no feature-flags.js): block A carries no early hint there. offline.html is the offline fallback;
+ *  family-login/ is the redirect page to /auth/login (HFY-TSK-317). */
+export const NO_HINT = new Set(["offline.html", "family-login/index.html"]);
 
 /** The two blocks for a given build: { a, b } as single-line-per-tag strings without indentation. */
 export function headBlocks({ themeColor, cssHref, preloadHref, hint = true }) {

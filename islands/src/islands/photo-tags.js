@@ -26,10 +26,8 @@ async function catchUp() {
   if (!id || !grid || !grid.querySelector(".gallery-item")) return;
   try {
     const flags = window.HFYFeatureFlags;
-    const edge = (await (flags && flags.dataFetchInit && flags.dataFetchInit())) || null;
-    const token = edge ? null : flags && flags.requireSessionToken && flags.requireSessionToken();
     const url = `/person/${encodeURIComponent(id)}.json`;
-    const init = edge || { credentials: "include", headers: token ? { "X-HFY-Session": token } : {} };
+    const init = { credentials: "same-origin" };
     const res = await (flags && flags.dataFetch ? flags.dataFetch(url, init, { interactive: false }) : fetch(url, init));
     const data = res.ok ? await res.json() : null;
     // A merged person's JSON is the stub {mergedInto}: the page is redirecting, there is nothing to draw.

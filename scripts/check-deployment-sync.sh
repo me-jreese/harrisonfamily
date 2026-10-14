@@ -90,10 +90,8 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'js/islands/' \
     --exclude 'js/auth-v2.js' \
     --exclude 'js/feature-flags.js' \
-    --exclude 'js/search-navbar.js' \
-    --exclude 'js/search-results.js' \
     --exclude 'js/person-page.js' \
-    --exclude 'js/auth.js' \
+    --exclude 'family-login/' \
     --exclude 'css/auth-edge.css' \
     --exclude 'css/hfy-theme.css' \
     --exclude 'fonts/' \
@@ -104,14 +102,16 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'posts/' \
     --exclude 'me/'
   # The excludes after .DS_Store are repo-owned files the Eleventy workspace does not produce (11ty/README.md, HFY-R46/R58).
-  # js/person-page.js carries the authV2 data-gate path (HFY-TSK-080) that the workspace copy lacks. js/auth.js carries the authV2
-  # One Tap suppression (HFY-TSK-069); css/auth-edge.css is the auth edge's own stylesheet (auth/edge.manifest.json theme.cssUrl,
-  # HFY-TSK-069), which the workspace does not produce. css/hfy-theme.css and fonts/ are islands/build.mjs outputs (the
+  # js/person-page.js carries the authV2 data-gate path (HFY-TSK-080) that the workspace copy lacks. family-login/ is the static
+  # redirect page to /auth/login (HFY-TSK-317), which the workspace's Google sign-in page is not; css/auth-edge.css is the auth
+  # edge's own stylesheet (auth/edge.manifest.json theme.cssUrl, HFY-TSK-069), which the workspace does not produce. css/hfy-theme.css and fonts/ are islands/build.mjs outputs (the
   # design-system theme layer and the self-hosted faces). Keep this list equal to the
   # 11ty/README.md refresh rsync (scripts/infra/test/run.sh checks it).
 fi
 
 if [ "$needs_lambda_check" -eq 1 ]; then
+  # lambda/hfy-check-allowed is retired from the sign-in path (HFY-TSK-317) but its source and the deploy-role grant stay until a
+  # later task deletes the Lambda (P2-R42), so the drift check stays until then.
   run_rsync_check \
     "Lambda hfy-check-allowed (scripts/auth/check-allowed-lambda -> lambda/hfy-check-allowed)" \
     "$PROJECT_ROOT/scripts/auth/check-allowed-lambda" \

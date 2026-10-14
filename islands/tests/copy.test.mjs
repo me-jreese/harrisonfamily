@@ -134,9 +134,10 @@ test("/logged-out/ is in the family voice and signs in again at the edge", () =>
   assert.equal(main.replace(/<[^>]+>/g, " ").trim(), main.replace(/<[^>]+>/g, " ").trim().toLowerCase(), "all lowercase");
 });
 
-test("the /family-login/ copy that shows before the redirect to the edge sign-in is in the voice", () => {
+test("/family-login/ is the redirect page to the edge sign-in (HFY-TSK-317): lowercase, no Google sign-in copy", () => {
   const html = read("family-login/index.html");
-  assert.match(html, /sign in with your Google account to see the family pages\./);
-  assert.match(html, /not on the list yet\? text J\./);
-  assert.doesNotMatch(html, /approved Google account|site administrator|authentication status/);
+  const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+  assert.equal(main.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(), "taking you to sign in. sign in");
+  assert.match(main, /<a href="\/auth\/login">sign in<\/a>/);
+  assert.doesNotMatch(html, /approved Google account|site administrator|authentication status|gsi\/client/);
 });
