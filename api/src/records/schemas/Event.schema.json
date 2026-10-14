@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "47de90ecc87dcb8280cc3b47688685a2b660a202fd9d74793d5f32b6f47adec8",
+  "x-hfy-sha256": "747479033234e18a84f4261f3007633ed2be713a9496164b934155f20662577f",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Event",
   "title": "Event",
@@ -26,7 +26,9 @@
     "citation_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Citations",
       "type": "array",
@@ -50,7 +52,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "media_list": {
       "items": {
@@ -63,7 +67,9 @@
     "note_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Notes",
       "type": "array",
@@ -75,7 +81,8 @@
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "pattern": "^[A-Za-z0-9_-]*$"
     },
     "private": {
       "title": "Private",
@@ -84,7 +91,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
@@ -98,6 +107,7 @@
     "_class"
   ],
   "type": "object",
+  "x-hfy-note": "Birth-like events: the schema accepts any day and month; the no-date-of-birth rule is enforced by the guard (redaction-v1 isBirthLike, edit-guard-wiring), not here.",
   "x-hfy": {
     "generator": "scripts/records/gen-edit-schemas.mjs",
     "policy": "redaction-v1",
@@ -122,7 +132,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -131,7 +143,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -518,7 +532,7 @@
           }
         }
       ],
-      "x-hfy-note": "The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
+      "x-hfy-note": "This schema does not enforce the no-date-of-birth rule: any day and month is valid here. A birth-like event never reaches the cloud with a day or month (redaction-v1 isBirthLike), enforced by the guard (edit-guard-wiring, BRD2 D2-32). The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
     },
     "EventType": {
       "title": "Event type",
@@ -1227,7 +1241,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -1236,7 +1252,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -1267,7 +1285,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "required": [

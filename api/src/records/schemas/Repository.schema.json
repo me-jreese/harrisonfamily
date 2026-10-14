@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "1864b15eeae70340ef4059ba9a092823c6fa3e41cc58a3e06289a7c1cca72813",
+  "x-hfy-sha256": "6880115d4e0116fd9dfa29dbf709afcb9ff9964502fdf9a35cf825e54ffeefd1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Repository",
   "title": "Repository",
@@ -24,7 +24,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "name": {
       "title": "Name",
@@ -35,7 +37,9 @@
     "note_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Notes",
       "type": "array",
@@ -48,7 +52,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
@@ -287,7 +293,8 @@
           "title": "Path",
           "type": "string",
           "maxLength": 2000,
-          "pattern": "^(?!(?:[Mm][Aa][Ii][Ll][Tt][Oo]|[Tt][Ee][Ll]|[Ss][Mm][Ss]|[Cc][Aa][Ll][Ll][Tt][Oo]|[Ff][Aa][Cc][Ee][Tt][Ii][Mm][Ee]|[Ss][Kk][Yy][Pp][Ee]|[Ww][Hh][Aa][Tt][Ss][Aa][Pp][Pp]):)[^\\p{Cc}]*(?<!\\s)$"
+          "minLength": 1,
+          "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^\\s\\p{Cc}]+$"
         },
         "private": {
           "title": "Private",

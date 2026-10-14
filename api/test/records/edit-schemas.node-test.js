@@ -223,11 +223,10 @@ describe("validation with synthetic records", () => {
     bad("Person", { ...FIXTURES.Person(), address_list: [] });
   });
 
-  it("rejects LDS ordinances, alternate locations, Place codes and Repository addresses", () => {
+  it("rejects LDS ordinances, alternate locations and Repository addresses", () => {
     bad("Person", { ...FIXTURES.Person(), lds_ord_list: [] });
     bad("Family", { ...FIXTURES.Family(), lds_ord_list: [] });
     bad("Place", { ...FIXTURES.Place(), alt_loc: [{ _class: "Location", city: "Sampleton" }] });
-    bad("Place", { ...FIXTURES.Place(), code: "00000" });
     bad("Repository", { ...FIXTURES.Repository(), address_list: [] });
   });
 
@@ -237,7 +236,51 @@ describe("validation with synthetic records", () => {
     bad("Repository", { ...FIXTURES.Repository(), urls: [url(1)] });
     bad("Place", { ...FIXTURES.Place(), urls: [url(2, "mailto:someone@example.invalid")] });
     bad("Person", { ...person, urls: [url(2, "TEL:+10000000000")] });
-    ok("Person", { ...person, urls: [url(2), url(3), url(4, "ftp://example.invalid/f")] });
+    ok("Person", { ...person, urls: [url(2), url(3), url(4, "http://example.invalid/f")] });
+  });
+
+  it("allows only http(s) links, whatever leads them", () => {
+    const person = FIXTURES.Person();
+    const paths = [" mailto:x@example.invalid", "\u00a0mailto:x@example.invalid", "\u2003tel:+10000000000", " tel:123", "\tsms:1",
+      "javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "//example.invalid/x", "ftp://example.invalid/f", "https://", "https://a b",
+      " https://example.invalid", "https://example.invalid\u00a0", "https://example.invalid/\u0000"];
+    for (const path of paths) bad("Person", { ...person, urls: [url(2, path)] });
+    ok("Person", { ...person, urls: [url(2, "HTTPS://example.invalid/Path?q=1#f")] });
+  });
+
+  it("keeps handles and references to identifier characters", () => {
+    const person = FIXTURES.Person();
+    for (const handle of ["a\u0000\n<script>", "", "a b", "<x>", "a".repeat(51)]) {
+      bad("Person", { ...person, handle });
+      bad("Person", { ...person, family_list: [handle] });
+      bad("Person", { ...person, citation_list: [handle] });
+      bad("Person", { ...person, event_ref_list: [{ ...person.event_ref_list[0], ref: handle }] });
+      bad("Citation", { ...FIXTURES.Citation(), source_handle: handle });
+    }
+    bad("Family", { ...FIXTURES.Family(), father_handle: "<x>" });
+    ok("Family", { ...FIXTURES.Family(), father_handle: null });
+    ok("Event", { ...FIXTURES.Event(), place: "" });
+  });
+
+  it("allows only relative media paths", () => {
+    const media = FIXTURES.Media();
+    for (const path of ["../../x.jpg", "a/../x.jpg", "/etc/passwd", "file:///x.jpg", "C:\\x.jpg", "a\\b.jpg", "javascript:x", " a.jpg"]) {
+      bad("Media", { ...media, path });
+      bad("Media", { ...media, thumb: path });
+    }
+    ok("Media", { ...media, path: "photos/sample..v2.jpg", thumb: "" });
+  });
+
+  it("keeps Place.code, bounded, for the field policy to scope by place type", () => {
+    const place = FIXTURES.Place();
+    ok("Place", { ...place, code: "AB-12" });
+    ok("Place", { ...place, code: "" });
+    for (const code of [" AB", "A".repeat(21), "A\u0000", "<b>"]) bad("Place", { ...place, code });
+    assert.ok(schemas.Place.properties.code["x-hfy-note"]);
+    assert.deepEqual(schemas.Place["x-hfy"].dropped, ["alt_loc"]);
+    const policy = readJson(join(REPO, "gramps", "redaction", "redaction-v1.json"));
+    const rule = JSON.stringify(policy).includes('"place.code.local_only"');
+    assert.ok(rule, "redaction-v1 carries the place.code rule that enforces the per-type scope");
   });
 
   it("rejects an attribute of type 3, 6, 10, 11, 12 or 14 and accepts the others", () => {
@@ -266,6 +309,7 @@ describe("validation with synthetic records", () => {
     bad("Place", { ...FIXTURES.Place(), place_type: typed("PlaceType", 0, "") });
     bad("Place", { ...FIXTURES.Place(), place_type: typed("PlaceType", 99) });
     assert.equal(schemas.Place.$defs.PlaceType["x-hfy-custom-deny"].pattern, NEVER.customHomeLike.pattern);
+    for (const word of ["Family Home", "my HOUSE", "farm road", "Apartment 4"]) bad("Place", { ...FIXTURES.Place(), place_type: typed("PlaceType", 0, word) });
   });
 
   it("closes every enum: unknown codes and stray strings fail, customs are marked for the registry", () => {
@@ -285,6 +329,9 @@ describe("validation with synthetic records", () => {
     bad("Person", { ...person, primary_name: { ...name(), first_name: " Testa" } });
     ok("Person", { ...person, primary_name: { ...name(), first_name: "Mary-Jo O’Sample", nick: "" } });
     ok("Person", { ...person, primary_name: { ...name(), first_name: "Élise" } });
+    // Pinned decision: empty name parts are valid (optional Gramps fields), digits, slashes and commas are not.
+    ok("Person", { ...person, primary_name: { ...name(), suffix: "", title: "", call: "" } });
+    for (const part of ["Jr/Sr", "Jr,", "III 3"]) bad("Person", { ...person, primary_name: { ...name(), suffix: part } });
     bad("Event", { ...FIXTURES.Event(), description: "x".repeat(501) });
     bad("Event", { ...FIXTURES.Event(), description: "line\u0007bell" });
     bad("Citation", { ...FIXTURES.Citation(), page: "p".repeat(501) });
@@ -305,6 +352,13 @@ describe("validation with synthetic records", () => {
     bad("Event", { ...event, date: date({ dateval: [1, 1, 1900] }) });
     bad("Event", { ...event, date: date({ text: "about then" }) });
     ok("Event", { ...event, date: date({ modifier: 6, dateval: [0, 0, 0, false], text: "about then" }) });
+  });
+
+  it("does not enforce the no-date-of-birth rule: the guard (isBirthLike) owns it", () => {
+    const birth = { ...FIXTURES.Event(), type: typed("EventType", 12), date: date({ dateval: [15, 6, 1900, false] }) };
+    ok("Event", birth);
+    assert.match(schemas.Event["x-hfy-note"], /isBirthLike/);
+    assert.match(schemas.Person.$defs.Date["x-hfy-note"], /isBirthLike/);
   });
 });
 

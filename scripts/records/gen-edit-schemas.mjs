@@ -6,7 +6,8 @@
 //
 // Inputs, and only these: gramps/schema/gramps-6.0.6.schema.json (the Gramps get_schema() export) and
 // gramps/schema/gramps-6.0.6.labels.json (its _DATAMAP type tables with their labels). The generator opens no
-// database, reads no tree data and takes no database path. `--root <dir>` moves the repository root (tests use it).
+// database, reads no tree data and takes no database path. gramps-6.0.6.sha256 is read only to verify those two
+// inputs (integrity metadata, never a data source). `--root <dir>` moves the repository root (tests use it).
 //
 // Outputs:
 //   api/src/records/schemas/<Class>.schema.json   JSON Schema 2020-12, one per class, secondary objects in $defs,
@@ -42,7 +43,10 @@ export const NEVER = {
     Person: ["address_list", "lds_ord_list"],
     Family: ["lds_ord_list"],
     Repository: ["address_list"],
-    Place: ["alt_loc", "code"],
+    // Place.code stays in the schema: BRD2 3.3 and IF-04 make "Place code on administrative types" a member proposal
+    // row. The per-type rule (local-only below the administrative level, rule place.code.local_only) belongs to the
+    // field policy and the guard; the schema only bounds the value.
+    Place: ["alt_loc"],
   },
   // Classes that exist only inside the dropped fields.
   classes: ["Address", "LdsOrd", "Location"],
@@ -83,10 +87,21 @@ const TYPE_TITLES = {
 // applied by the server before validation (x-hfy-normalize); the pattern rejects what survives them.
 const LINE = "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$";
 const PARAGRAPHS = "^(?!\\s)(?:[^\\p{Cc}]|[\\n\\t])*(?<!\\s)$";
+// Name parts use `*`, not editing.md 6.1's `+`: Gramps name parts (nick, call, suffix and so on) are optional and
+// stored as "". Pinned by a test; edit-field-policy owns any further restriction (for example a wider suffix set).
 const NAME_PART = "^(?!\\s)[\\p{L}\\p{M} .'’-]*(?<!\\s)$";
+const PLACE_CODE = "^(?!\\s)[A-Za-z0-9 ._/-]*(?<!\\s)$";
+// Handles and references: ASCII identifier characters only.
+const HANDLE = "^[A-Za-z0-9_-]+$";
+const HANDLE_OR_EMPTY = "^[A-Za-z0-9_-]*$";
+// Links are an allow-list: http(s) only, no whitespace (any Unicode space) and no control characters. This rejects
+// javascript:, data:, file:, protocol-relative and every contact scheme (NEVER.urlSchemes) in one rule.
+const HTTP_URL = "^[Hh][Tt][Tt][Pp][Ss]?://[^\\s\\p{Cc}]+$";
+// Media paths are relative to the media root: no scheme, no absolute path, no backslash, no `..` segment.
+const MEDIA_PATH = "^(?!\\s)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\p{Cc}\\\\]*(?<!\\s)$";
 const COORDINATE = "^(?:[+-]?[0-9]{1,3}(?:\\.[0-9]{1,2})?)?$";
 const caseless = (word) => [...word].map((c) => `[${c.toUpperCase()}${c.toLowerCase()}]`).join("");
-const NO_CONTACT_SCHEME = `^(?!(?:${NEVER.urlSchemes.map(caseless).join("|")}):)[^\\p{Cc}]*(?<!\\s)$`;
+const CUSTOM_PLACE_ALLOWED = `^(?!\\s)(?!.*(?:${NEVER.customHomeLike.pattern.split("|").map(caseless).join("|")}))[^\\p{Cc}]*(?<!\\s)$`;
 
 const NAME_PARTS = {
   Name: ["first_name", "call", "nick", "famnick", "title", "suffix", "group_as"],
@@ -134,7 +149,7 @@ function typeDef(name, table) {
     if (entry.value === table.custom) {
       customBranch = {
         title: "Custom (your own wording)",
-        properties: { value: { const: entry.value }, string: { type: "string", minLength: 1, maxLength: 100, pattern: LINE } },
+        properties: { value: { const: entry.value }, string: { type: "string", minLength: 1, maxLength: 100, pattern: name === "PlaceType" ? CUSTOM_PLACE_ALLOWED : LINE } },
         required: ["value", "string"],
         "x-hfy-custom-registry": name,
       };
@@ -193,7 +208,7 @@ function dateDef() {
         else: { properties: { text: { maxLength: 0 } } },
       },
     ],
-    "x-hfy-note": "The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js.",
+    "x-hfy-note": "This schema does not enforce the no-date-of-birth rule: any day and month is valid here. A birth-like event never reaches the cloud with a day or month (redaction-v1 isBirthLike), enforced by the guard (edit-guard-wiring, BRD2 D2-32). The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js.",
   };
 }
 
@@ -247,14 +262,25 @@ class Deriver {
       if (drop.has(key)) continue;
       properties[key] = key === "_class" ? value : this.node(value, name, key);
     }
-    return { ...node, properties };
+    const out = { ...node, properties };
+    if (name === "Event") out["x-hfy-note"] = "Birth-like events: the schema accepts any day and month; the no-date-of-birth rule is enforced by the guard (redaction-v1 isBirthLike, edit-guard-wiring), not here.";
+    return out;
   }
 
   leaf(node, cls, prop) {
     const key = `${cls}.${prop}`;
     const out = { ...node };
     const isString = node.type === "string" || (Array.isArray(node.type) && node.type.includes("string"));
-    if (isString && !("maxLength" in node)) {
+    const handleLike = isString && (prop === "handle" || prop === "ref" || /_handle$/.test(prop) || /_list$/.test(prop) || key === "Event.place");
+    if (handleLike) {
+      const nullable = Array.isArray(node.type) && node.type.includes("null");
+      out.maxLength = 50;
+      if (nullable || key === "Event.place") out.pattern = HANDLE_OR_EMPTY;
+      else {
+        out.minLength = 1;
+        out.pattern = HANDLE;
+      }
+    } else if (isString && !("maxLength" in node)) {
       if (NAME_PARTS[cls]?.includes(prop)) {
         out.maxLength = 100;
         out.pattern = NAME_PART;
@@ -263,7 +289,15 @@ class Deriver {
         out.pattern = COORDINATE;
       } else if (key === "Url.path") {
         out.maxLength = LENGTHS[key];
-        out.pattern = NO_CONTACT_SCHEME;
+        out.minLength = 1;
+        out.pattern = HTTP_URL;
+      } else if (key === "Media.path" || key === "Media.thumb") {
+        out.maxLength = LENGTHS[key];
+        out.pattern = MEDIA_PATH;
+      } else if (key === "Place.code") {
+        out.maxLength = 20;
+        out.pattern = PLACE_CODE;
+        out["x-hfy-note"] = "Local-only unless the place type is administrative (rule place.code.local_only, PS-15): the field policy and the guard enforce the per-type rule; this schema only bounds the value.";
       } else if (key === "StyledText.string") {
         out.maxLength = 10000;
         out.pattern = PARAGRAPHS;

@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "8a5931c33fa9af4e9a4c12771abe21368291057fe1fbceac3859e2079caba7df",
+  "x-hfy-sha256": "64fc0001e4c63b3c9fccf6c8931386ad75fb736fea98217a7bff801536494ed6",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Media",
   "title": "Media",
@@ -32,7 +32,9 @@
     "citation_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Citations",
       "type": "array",
@@ -56,7 +58,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "mime": {
       "title": "MIME",
@@ -67,8 +71,9 @@
     "note_list": {
       "items": {
         "type": "string",
-        "maxLength": 200,
-        "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+        "maxLength": 50,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Notes",
       "type": "array",
@@ -78,7 +83,7 @@
       "title": "Path",
       "type": "string",
       "maxLength": 500,
-      "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+      "pattern": "^(?!\\s)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\p{Cc}\\\\]*(?<!\\s)$"
     },
     "private": {
       "title": "Private",
@@ -87,7 +92,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
@@ -100,7 +107,7 @@
         "string"
       ],
       "maxLength": 500,
-      "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+      "pattern": "^(?!\\s)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\p{Cc}\\\\]*(?<!\\s)$"
     }
   },
   "required": [
@@ -131,7 +138,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -140,7 +149,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -527,7 +538,7 @@
           }
         }
       ],
-      "x-hfy-note": "The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
+      "x-hfy-note": "This schema does not enforce the no-date-of-birth rule: any day and month is valid here. A birth-like event never reaches the cloud with a day or month (redaction-v1 isBirthLike), enforced by the guard (edit-guard-wiring, BRD2 D2-32). The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
     }
   }
 }

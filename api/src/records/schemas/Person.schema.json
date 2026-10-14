@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "940071d1d30b7609317fd11ea795282015ec264dab3d244cddcf016a21480519",
+  "x-hfy-sha256": "d8f324c7c8a489fdb762214baec77b50e4c72954b687db5705dfb0f92d89d818",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Person",
   "title": "Person",
@@ -39,7 +39,9 @@
     "citation_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Citations",
       "type": "array",
@@ -61,7 +63,9 @@
     "family_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Families",
       "type": "array",
@@ -94,7 +98,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "media_list": {
       "items": {
@@ -107,7 +113,9 @@
     "note_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Notes",
       "type": "array",
@@ -116,7 +124,9 @@
     "parent_family_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Parent families",
       "type": "array",
@@ -140,7 +150,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
@@ -186,7 +198,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -195,7 +209,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -582,7 +598,7 @@
           }
         }
       ],
-      "x-hfy-note": "The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
+      "x-hfy-note": "This schema does not enforce the no-date-of-birth rule: any day and month is valid here. A birth-like event never reaches the cloud with a day or month (redaction-v1 isBirthLike), enforced by the guard (edit-guard-wiring, BRD2 D2-32). The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
     },
     "EventRef": {
       "additionalProperties": false,
@@ -603,7 +619,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -612,7 +630,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -625,7 +645,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Event",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         },
         "role": {
           "$ref": "#/$defs/EventRoleType"
@@ -966,7 +988,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -975,7 +999,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -1006,7 +1032,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "required": [
@@ -1032,7 +1060,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -1072,7 +1102,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -1453,7 +1485,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -1462,7 +1496,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -1475,7 +1511,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         },
         "rel": {
           "title": "Association",
@@ -1548,7 +1586,8 @@
           "title": "Path",
           "type": "string",
           "maxLength": 2000,
-          "pattern": "^(?!(?:[Mm][Aa][Ii][Ll][Tt][Oo]|[Tt][Ee][Ll]|[Ss][Mm][Ss]|[Cc][Aa][Ll][Ll][Tt][Oo]|[Ff][Aa][Cc][Ee][Tt][Ii][Mm][Ee]|[Ss][Kk][Yy][Pp][Ee]|[Ww][Hh][Aa][Tt][Ss][Aa][Pp][Pp]):)[^\\p{Cc}]*(?<!\\s)$"
+          "minLength": 1,
+          "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^\\s\\p{Cc}]+$"
         },
         "private": {
           "title": "Private",

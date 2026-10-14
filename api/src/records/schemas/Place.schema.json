@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "8bfda2d56d18c64e98a453df2d6efe52771e5b8b59c796f6f09f8d8d88ca8ad2",
+  "x-hfy-sha256": "0569f651612499bf3d0fe4d91bd782e6cf5c9df1d1079faa6333d42c5e711901",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Place",
   "title": "Place",
@@ -26,11 +26,20 @@
     "citation_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Citations",
       "type": "array",
       "maxItems": 500
+    },
+    "code": {
+      "title": "Code",
+      "type": "string",
+      "maxLength": 20,
+      "pattern": "^(?!\\s)[A-Za-z0-9 ._/-]*(?<!\\s)$",
+      "x-hfy-note": "Local-only unless the place type is administrative (rule place.code.local_only, PS-15): the field policy and the guard enforce the per-type rule; this schema only bounds the value."
     },
     "gramps_id": {
       "title": "Gramps ID",
@@ -41,7 +50,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "lat": {
       "title": "Latitude",
@@ -69,7 +80,9 @@
     "note_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Notes",
       "type": "array",
@@ -93,7 +106,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
@@ -125,8 +140,7 @@
     "sourceSchemaSha256": "865219475947fc1b80e554251dc2290b8abf18f2c1179427e288bf3c10880c72",
     "sourceLabelsSha256": "755b82c1b5814f3b445c9618e6d6b8b111029200c7f5634c3b9a14cf070c327a",
     "dropped": [
-      "alt_loc",
-      "code"
+      "alt_loc"
     ],
     "normalize": [
       "NFC",
@@ -145,7 +159,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -154,7 +170,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -541,7 +559,7 @@
           }
         }
       ],
-      "x-hfy-note": "The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
+      "x-hfy-note": "This schema does not enforce the no-date-of-birth rule: any day and month is valid here. A birth-like event never reaches the cloud with a day or month (redaction-v1 isBirthLike), enforced by the guard (edit-guard-wiring, BRD2 D2-32). The day must fit the month, the calendar must be Gregorian or Julian for members and no date is in the future: these run in api/src/records/semantics.js."
     },
     "MediaRef": {
       "additionalProperties": false,
@@ -562,7 +580,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -571,7 +591,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -602,7 +624,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "required": [
@@ -655,7 +679,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "required": [
@@ -935,7 +961,7 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 100,
-              "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+              "pattern": "^(?!\\s)(?!.*(?:[Hh][Oo][Uu][Ss][Ee]|[Hh][Oo][Mm][Ee]|[Rr][Ee][Ss][Ii][Dd][Ee][Nn][Cc][Ee]|[Aa][Dd][Dd][Rr][Ee][Ss][Ss]|[Aa][Pp][Aa][Rr][Tt][Mm][Ee][Nn][Tt]|[Aa][Pp][Tt]|[Ll][Oo][Tt]|[Ff][Aa][Rr][Mm]))[^\\p{Cc}]*(?<!\\s)$"
             }
           },
           "required": [
@@ -969,7 +995,8 @@
           "title": "Path",
           "type": "string",
           "maxLength": 2000,
-          "pattern": "^(?!(?:[Mm][Aa][Ii][Ll][Tt][Oo]|[Tt][Ee][Ll]|[Ss][Mm][Ss]|[Cc][Aa][Ll][Ll][Tt][Oo]|[Ff][Aa][Cc][Ee][Tt][Ii][Mm][Ee]|[Ss][Kk][Yy][Pp][Ee]|[Ww][Hh][Aa][Tt][Ss][Aa][Pp][Pp]):)[^\\p{Cc}]*(?<!\\s)$"
+          "minLength": 1,
+          "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^\\s\\p{Cc}]+$"
         },
         "private": {
           "title": "Private",

@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "0ac4c16a3285698c564384f22e5ff6cea152b0020c0ef354a3a6ed1a0503161e",
+  "x-hfy-sha256": "4607019aeb204fcd5fdfa7d02881c33aa1d6826b59204f6a276c0e51562d2b30",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Source",
   "title": "Source",
@@ -44,7 +44,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "media_list": {
       "items": {
@@ -57,7 +59,9 @@
     "note_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Notes",
       "type": "array",
@@ -84,7 +88,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
@@ -125,7 +131,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -134,7 +142,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -363,7 +373,9 @@
         "citation_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Citations",
           "type": "array",
@@ -372,7 +384,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -403,7 +417,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "required": [
@@ -432,7 +448,9 @@
         "note_list": {
           "items": {
             "maxLength": 50,
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "title": "Notes",
           "type": "array",
@@ -445,7 +463,9 @@
         "ref": {
           "maxLength": 50,
           "title": "Handle",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "required": [

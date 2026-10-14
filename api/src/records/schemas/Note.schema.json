@@ -1,5 +1,5 @@
 {
-  "x-hfy-sha256": "c8675562248d1101744faee960f724158cc27f94f2bc9255c2c64fb2403502d3",
+  "x-hfy-sha256": "1c5cfcce20fc8e9277358bb16f084457ba79cd5c40c61c7073120f5037552113",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hfy:records/Note",
   "title": "Note",
@@ -38,7 +38,9 @@
     "handle": {
       "maxLength": 50,
       "title": "Handle",
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "private": {
       "title": "Private",
@@ -47,7 +49,9 @@
     "tag_list": {
       "items": {
         "maxLength": 50,
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$"
       },
       "title": "Tags",
       "type": "array",
