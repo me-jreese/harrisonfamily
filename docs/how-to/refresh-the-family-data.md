@@ -121,13 +121,12 @@ The graph is the one static file, `person/graph.json`, that the family-tree page
 ```sh
 node <project>/repo/graph/bin/build-graph.mjs --from-gramps-copy <gramps-copy>/sqlite.db \
   --out workspace-local/harrisonfamily-frontend \
-  --verify-against workspace-local/harrisonfamily-frontend/person \
-  --max-gzip-bytes 25600
+  --verify-against workspace-local/harrisonfamily-frontend/person
 ```
 
 - `--out` writes `person/graph.json` (a temp file, then a rename) and `media/faces/` under the staging directory. Without `--out` the run is a dry run that projects and verifies and writes nothing, so start with that.
 - `--verify-against` compares each person's `living` flag with the `isLiving` in the `person/<gramps-id>.json` that step 1 wrote. A mismatch stops the build (exit `5`) and writes nothing. It also fails (exit `2`) if no person file matches, so run step 1 first.
-- `--max-gzip-bytes 25600` holds the file to 25 KB gzipped, today's budget for this tree. The builder's own default is 150 KiB. Over the budget the build exits `3` and writes nothing.
+- The size ceiling is the builder's default, 150 KiB gzipped. Over it the build exits `3` and writes nothing. The design target is 25 KB gzipped at about 230 people ([`graph/README.md`](../../graph/README.md)), so the dry run's summary is the check: note the gzipped size and the number of people, and record both on the HFY record. If the size is near 25 KB, add `--max-gzip-bytes 25600` to hold that target on later runs. This flag is an addition to the design's reference command, there to hold the target, not a requirement. Do not set it below what your tree needs.
 - The build uses the offline gazetteer when `$HFY_GAZETTEER_DIR` holds one ([`graph/README.md`](../../graph/README.md#geocoding)). Without it, the build continues with Gramps coordinates only. It never touches the network.
 - The run writes a local report to `<project>/workspace-local/graph-build-report.json`. The report names Gramps IDs, so keep it local: it sits outside the synced staging directory.
 - The exit codes are in the [graph README](../../graph/README.md). Exit `4` means the privacy check refused the graph, `6` means Gramps is open on the copy.
@@ -139,7 +138,15 @@ node <project>/repo/graph/bin/build-graph.mjs --verify workspace-local/harrisonf
   --verify-against workspace-local/harrisonfamily-frontend/person
 ```
 
-It must exit `0`. Stop on any other code: the file is not syncable. `sync_to_s3.py` needs no change, because step 4 already syncs `person/` and `media/`, and the site deploy already excludes both ([`ci.manifest.yaml`](../../ci.manifest.yaml)). Step 3 rewrites `person/index.json` from the person files, so after it check that the manifest does not list `graph` as a person. Step 4's dry run should show `person/graph.json` and the files under `media/faces/` as the only new uploads beyond your changes.
+It must exit `0`. Stop on any other code: the file is not syncable. `sync_to_s3.py` needs no change, because step 4 already syncs `person/` and `media/`, and the site deploy already excludes both ([`ci.manifest.yaml`](../../ci.manifest.yaml)). Step 3 globs the person files, and `graph.json` sits in the same directory, so after step 3 run the check below before step 4. Step 4's dry run should show `person/graph.json` and the files under `media/faces/` as the only new uploads beyond your changes.
+
+Check that step 3 left the graph out of both search files (run it after step 3, before step 4). Both counts must be `0`. Record the result on the HFY record under the HFY-R16 prefix:
+
+```sh
+grep -ciE 'graph\.json|"graph"' workspace-local/harrisonfamily-frontend/person/index.json workspace-local/harrisonfamily-frontend/person/search-index.json
+```
+
+Any other count means `graph.json` was indexed as a person: stop, and do not sync.
 
 Repeat step 2b after every export, because a new export changes who is living and which media exist.
 
@@ -254,21 +261,25 @@ The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in
 5. **The graph is published, and private.** First verify the copy in the bucket, then probe it from outside.
 
    ```sh
-   scratch=$(mktemp -d)
-   aws s3 cp s3://<site-bucket>/person/graph.json "$scratch/graph.json"
-   node <project>/repo/graph/bin/build-graph.mjs --verify "$scratch/graph.json"
-   rm -rf "$scratch"
+   scratch=$(mktemp -d); trap 'rm -rf "$scratch"' EXIT
+   aws s3 cp s3://<site-bucket>/person/graph.json "$scratch/graph.json" \
+     && node <project>/repo/graph/bin/build-graph.mjs --verify "$scratch/graph.json"
    ```
 
-   It must exit `0`, as it did on the staged file. Then probe the live site. The first two probes run from a shell with no cookies:
+   The trap removes the private copy when the shell exits, even if a step fails.
+
+   It must exit `0`, as it did on the staged file. Then probe the live site from a shell with no cookies. These probes apply with the data gate attached. If it is not attached, the site is ungated: expect `200` on the plain probe, and go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point) before you go on.
 
    ```sh
    curl -sS -o /dev/null -D - https://<site>/person/graph.json | grep -iE '^(HTTP|cache-control)'
+   curl -sS -o /dev/null -w '%{http_code}\n' 'https://<site>/person/graph.json?x=1' https://<site>/Person/graph.json
    curl -sS -o /dev/null -w '%{http_code}\n' https://<site>/tree/
+   curl -sS https://<site>/tree/ | grep -c schemaVersion
    ```
 
    - Signed out, `/person/graph.json` returns `401` with `cache-control: private, no-store`. Any `200` means the data is public: stop, and go to [Find your starting point](cut-over-to-the-private-data-gate.md#find-your-starting-point).
-   - Signed out, `/tree/` returns `200` or `404` and no family data. It is `404` until the tree page ships.
+   - Signed out, the two variants (a query string, a different case) must not print `200`. A `200` is a gate bypass: stop, as above.
+   - Signed out, `/tree/` returns `200` or `404`, and the last probe, which counts `schemaVersion` in its body, prints `0` (no graph content). It is `404` until the tree page ships.
    - Signed in, a fetch of `/person/graph.json` returns `200` with `schemaVersion` `1`. In a browser window signed in to the site, run `fetch('/person/graph.json', {credentials: 'include'}).then(async r => [r.status, (await r.json()).schemaVersion])` in the console. It prints `[200, 1]`. Do not save the response or paste any of it anywhere.
 6. **The checkout is clean.** `git status` in your checkout shows no changes from this procedure. Any change there means a script wrote into the repository. Find out why before you commit anything.
 
@@ -283,7 +294,7 @@ The CloudFront invalidation does not reach Cloudflare, which proxies `<site>` in
 | `[ERROR] No person files found in <dir>` | `--person-dir` names the wrong directory | Point it at `workspace-local/harrisonfamily-frontend/person` |
 | A person page shows no tree | Step 1 ran after step 2, or step 2 ran without `--attach` or with the default directories | Repeat step 2, then steps 4 and 5 |
 | `build-graph` exits `5` (`LIVING_MISMATCH`) | The copy of the tree differs from the one step 1 exported, or step 1 is older than the copy | Copy the tree again, rerun step 1, then step 2b |
-| `build-graph` exits `3` (`SIZE_BUDGET`) | The graph is over 25 KB gzipped at `--max-gzip-bytes 25600` | Do not raise the number to get past it. The budget is a design decision: raise it on the HFY record |
+| `build-graph` exits `3` (`SIZE_BUDGET`) | The graph is over the size ceiling (150 KiB by default, or the `--max-gzip-bytes` you passed) | Do not raise the number to get past it. The budget is a design decision: raise it on the HFY record |
 | `build-graph` exits `4` (`PRIVACY_VIOLATION`) | The privacy check refused the graph. The message names JSON pointers and rules, never values | Fix the record in Gramps, copy the tree and rerun. Never sync a graph that failed |
 | A new person is missing from search | Step 3 was skipped or ran against the default directory, or, without the gate, the invalidation has not finished | Repeat step 3, then steps 4 and 5 |
 | A changed tree or photo still shows the old version | Cloudflare serves a copy of the `/media/` file that it cached while the gate was not attached. Neither the gate nor the CloudFront invalidation removes it | With io's go-ahead, purge the data prefixes in Cloudflare, as in [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md#4-optional-purge-cloudflare) |

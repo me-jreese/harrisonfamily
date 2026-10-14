@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { HERE, run } from './helpers.mjs';
+import { HERE } from './helpers.mjs';
 
 const DOC = readFileSync(join(HERE, '..', '..', 'docs', 'how-to', 'refresh-the-family-data.md'), 'utf8');
 
@@ -20,20 +20,32 @@ describe('refresh-the-family-data.md step 2b (AC1)', () => {
     assert.match(step, /--from-gramps-copy/);
     assert.match(step, /--verify-against/);
     assert.match(step, /--verify workspace-local/);
-    assert.doesNotMatch(step, /sync_to_s3\.py\s+--/); // no sync change
+    assert.doesNotMatch(step, /^\s*(python3 )?\S*sync_to_s3\.py/m); // no sync command in 2b: the sync is unchanged
+    assert.ok(step.indexOf('--verify workspace-local') > 0);
   });
 
   it('verifies the published copy and probes it live (AC2, AC3)', () => {
     const verify = DOC.slice(at('## Verify'), at('## Troubleshooting'));
     assert.match(verify, /build-graph\.mjs --verify "\$scratch\/graph\.json"/);
     assert.match(verify, /\b401\b[^\n]*private, no-store/);
-    assert.match(verify, /\/tree\/[^\n]*\n?[^\n]*`200` or `404`/);
+    assert.match(verify, /- Signed out, `\/tree\/` returns `200` or `404`[^\n]*prints `0`/);
+    assert.match(verify, /graph\.json\?x=1/);
+    assert.match(verify, /\/Person\/graph\.json/);
+    assert.match(verify, /trap 'rm -rf "\$scratch"' EXIT/);
     assert.match(verify, /schemaVersion/);
   });
 
+  it('stages and verifies before the sync, and checks the search files after step 3', () => {
+    assert.ok(at('--verify workspace-local') < at('### 4.'));
+    const step = DOC.slice(at('### 2b.'), at('### 3.'));
+    assert.match(step, /grep -ciE 'graph\\\.json\|"graph"'/);
+    assert.match(step, /HFY-R16/);
+  });
+
   it('names only flags the CLI accepts', () => {
-    const r = run(['--help']);
-    const usage = r.stdout + r.stderr;
+    // Static read of the USAGE constant: running the CLI would import d3-dag and need npm ci.
+    const src = readFileSync(join(HERE, '..', 'src', 'cli.mjs'), 'utf8');
+    const usage = src.slice(src.indexOf('const USAGE'), src.indexOf('`;', src.indexOf('const USAGE')));
     for (const flag of ['--from-gramps-copy', '--verify-against', '--verify', '--out', '--max-gzip-bytes']) {
       assert.ok(usage.includes(flag), flag);
       assert.ok(DOC.includes(flag), flag);
@@ -42,6 +54,7 @@ describe('refresh-the-family-data.md step 2b (AC1)', () => {
 
   it('writes no real data: no Gramps id pattern appears in the runbook text for the graph', () => {
     const step = DOC.slice(at('### 2b.'), at('### 3.'));
+    assert.doesNotMatch(DOC.slice(at('### 2b.'), at('### 3.')) + DOC.slice(at('## Verify'), at('## Troubleshooting')), /\b[IFCEMPN]\d{4,}\b/);
     assert.doesNotMatch(step, /\bI\d{4}\b/);
   });
 });
