@@ -19,11 +19,15 @@ RETRY_DELAYS_S = (1, 4, 16)  # idempotent calls retry three times at these gaps
 HTTP_TIMEOUT_S = 30
 LOGIN_TIMEOUT_S = 300  # sync.md 8.5: the loopback server waits five minutes
 OAUTH_CLIENT_ID = "hfy-sync-desktop"
-SYNC_RESOURCE = "https://harrisonfamily.us/api/sync"
+SYNC_RESOURCE = "https://harrisonfamily.us/api/sync"  # the production resource; any other server derives <server>/api/sync (oauth.sync_resource)
+CALLBACK_CONN_TIMEOUT_S = 5  # a loopback connection that sends nothing is dropped after this long
 OAUTH_SCOPE = "sync"
 STEP_UP_MAX_AGE_S = 300
-KEYCHAIN_SERVICE = "hfy_sync"
-KEYCHAIN_ACCOUNT = "refresh-token"
+KEYCHAIN_SERVICE = "us.harrisonfamily.hfy_sync"  # sync.md 6
+# sync.md 6 names the account "<issuer>|<sub>". The refresh path has to find the item before any token (so any `sub`) is known, so
+# the account is "<issuer>|owner": one item per issuer, and a new sign-in replaces it. Recorded as a deviation in gramps/README.md.
+KEYCHAIN_ACCOUNT_OWNER = "owner"
+KEYCHAIN_ACCOUNT = DEFAULT_SERVER + "/auth|" + KEYCHAIN_ACCOUNT_OWNER
 
 ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind")
 IMPLEMENTED_ACTIONS = ("status", "bind", "login")  # the rest wait for addon-pull-apply and addon-push

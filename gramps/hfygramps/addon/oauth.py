@@ -49,11 +49,16 @@ def pkce_pair():
     return verifier, _b64u(hashlib.sha256(verifier.encode("ascii")).digest())
 
 
+def sync_resource(server):
+    """The resource indicator (RFC 8707) for a server: <server>/api/sync, so the token audience matches the host that gets it."""
+    return transport.check_server(server) + "/api/sync"
+
+
 def authorize_url(server, redirect_uri, challenge, state, step_up=False):
     params = [
         ("response_type", "code"), ("client_id", consts.OAUTH_CLIENT_ID), ("redirect_uri", redirect_uri),
         ("code_challenge", challenge), ("code_challenge_method", "S256"), ("state", state),
-        ("resource", consts.SYNC_RESOURCE), ("scope", consts.OAUTH_SCOPE),
+        ("resource", sync_resource(server)), ("scope", consts.OAUTH_SCOPE),
     ]
     if step_up:
         params += [("prompt", "login"), ("max_age", str(consts.STEP_UP_MAX_AGE_S))]
@@ -81,6 +86,7 @@ def _token_post(http, server, fields):
 class _Callback(http.server.BaseHTTPRequestHandler):
     server_version = "hfy-sync"
     sys_version = ""
+    timeout = consts.CALLBACK_CONN_TIMEOUT_S  # applied to the connection socket: a silent client cannot stall the single-threaded loop
 
     def log_message(self, fmt, *args):  # no request line (it carries the code) in any log
         pass
@@ -108,7 +114,8 @@ class _Callback(http.server.BaseHTTPRequestHandler):
             return self._reply(409, "Already used.")
         if not hmac.compare_digest(q.get("state", "").encode("utf-8"), srv.expected_state.encode("utf-8")):
             return self._reply(400, "This sign-in link is not for this session. Close this tab and run hfy-sync login again.")
-        if srv.expected_issuer and "iss" in q and q["iss"] != srv.expected_issuer:
+        # The auth server always sends `iss` (authorization_response_iss_parameter_supported, RFC 9207), so a callback without it is refused.
+        if srv.expected_issuer and q.get("iss") != srv.expected_issuer:
             return self._reply(400, "Wrong issuer.")
         srv.result = {k: q[k] for k in ("code", "error") if k in q}
         self._reply(200, "Signed in. You can close this tab and go back to Gramps.")
@@ -152,9 +159,9 @@ def login(server, keychain, http=None, open_browser=webbrowser.open, timeout=con
         raise LoginError("login_denied", consts.EXIT_SIGN_IN, "login", message="The sign-in was not completed (%s)." % ("error" if "error" in result else "no code"))
     body = _token_post(http, server, {
         "grant_type": "authorization_code", "code": result["code"], "redirect_uri": redirect_uri, "code_verifier": verifier,
-        "client_id": consts.OAUTH_CLIENT_ID, "resource": consts.SYNC_RESOURCE,
+        "client_id": consts.OAUTH_CLIENT_ID, "resource": sync_resource(server),
     })
-    keychain.store(body["refresh_token"])  # before anything else uses the access token
+    keychain.store(body["refresh_token"], recreate=True)  # before anything else uses the access token
     return {"access_token": body["access_token"], "expires_in": int(body.get("expires_in") or 0)}
 
 
@@ -191,16 +198,28 @@ class TokenManager:
         if not current:
             raise AuthRequired()
         self._token = None
-        try:
-            body = _token_post(self.http, self.server, {
-                "grant_type": "refresh_token", "refresh_token": current, "client_id": consts.OAUTH_CLIENT_ID, "resource": consts.SYNC_RESOURCE,
-            })
-        except AuthRequired:
+        body = None
+        for attempt in (0, 1):
             try:
-                self.keychain.delete()  # a dead token only invites a loop; the family is revoked server side
-            except KeychainError:
-                pass
-            raise
+                body = _token_post(self.http, self.server, {
+                    "grant_type": "refresh_token", "refresh_token": current, "client_id": consts.OAUTH_CLIENT_ID,
+                    "resource": sync_resource(self.server),
+                })
+                break
+            except AuthRequired:
+                # Another process (the CLI and a Gramps run) may have rotated the token since we read it. If the Keychain now holds
+                # a different value, that is the winner's live token: keep it and retry once with it. Delete only a token that is
+                # still the one we sent.
+                try:
+                    latest = self.keychain.read()
+                    if attempt == 0 and latest and latest != current:
+                        current = latest
+                        continue
+                    if latest == current:
+                        self.keychain.delete()  # a dead token only invites a loop; the family is revoked server side
+                except KeychainError:
+                    pass
+                raise
         try:
             self.keychain.store(body["refresh_token"])  # persisted (and read back) before the new access token is used
         except KeychainError:

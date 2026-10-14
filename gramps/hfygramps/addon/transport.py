@@ -221,7 +221,7 @@ def check_server(server):
     parsed = urllib.parse.urlsplit(server)
     if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1")):
         raise ValueError("the sync server must be an https URL")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
         raise ValueError("the sync server URL must be a bare origin")
     return server.rstrip("/")
 
@@ -244,7 +244,6 @@ class Client:
             url += "?" + urllib.parse.urlencode(query)
         headers = dict(self.versions.headers())
         headers["Accept"] = "application/json"
-        headers["Authorization"] = "Bearer %s" % self.token_provider()
         data = None
         if body is not None:
             data = json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -253,7 +252,17 @@ class Client:
             headers["Idempotency-Key"] = idempotency_key
         headers.update(extra_headers or {})
         idempotent = method in ("GET", "HEAD") or bool(idempotency_key)
-        return self.http.send(method, url, headers, data, idempotent=idempotent)
+        headers["Authorization"] = "Bearer %s" % self.token_provider()
+        try:
+            return self.http.send(method, url, headers, data, idempotent=idempotent)
+        except TransportError as exc:
+            # A 401 before the local expiry (revocation, clock skew): refresh once and replay. Only a call that is safe to repeat
+            # (GET, or the same Idempotency-Key) is replayed; the provider must be able to force a refresh.
+            refresh = getattr(self.token_provider, "refresh", None)
+            if exc.status != 401 or not idempotent or refresh is None:
+                raise
+            headers["Authorization"] = "Bearer %s" % refresh()
+            return self.http.send(method, url, headers, data, idempotent=idempotent)
 
     def get(self, path, query=None):
         return self.request("GET", path, query=query)

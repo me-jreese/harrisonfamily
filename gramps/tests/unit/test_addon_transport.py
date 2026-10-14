@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.parse
@@ -30,6 +31,7 @@ import test_addon_runtime as R  # noqa: E402
 from hfygramps.addon import consts, keychain, oauth, runner, transport  # noqa: E402
 
 TRUSTED = "/Applications/Gramps.app/Contents/MacOS/Gramps"
+ITEM = "us.harrisonfamily.hfy_sync/https://harrisonfamily.us/auth|owner"  # sync.md 6, account simplified to <issuer>|owner
 VERSIONS = transport.Versions("6.0.6", 21, tree_id="11111111-2222-4333-8444-555555555555")
 
 
@@ -374,9 +376,16 @@ mode = os.environ.get("FAKE_SECURITY_MODE", "ok")
 def save():
     json.dump(items, open(state, "w"))
 
-def add(args):
+def add(args, update):
     opts = dict(zip(args[::2], args[1::2]))
-    items[opts["-s"] + "/" + opts["-a"]] = {"password": opts["-w"], "trusted": opts.get("-T")}
+    key = opts["-s"] + "/" + opts["-a"]
+    if key in items:
+        if not update:  # the real tool: errSecDuplicateItem
+            print("security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.", file=sys.stderr)
+            return
+        items[key]["password"] = opts["-w"]  # -U updates the secret and keeps the old access list
+    else:
+        items[key] = {"password": opts["-w"], "trusted": opts.get("-T")}
     save()
 
 argv = sys.argv[1:]
@@ -390,7 +399,7 @@ if argv[:1] == ["-i"]:
     for line in text.splitlines():
         parts = shlex.split(line)
         if parts and parts[0] == "add-generic-password":
-            add([p for p in parts[1:] if p != "-U"])
+            add([p for p in parts[1:] if p != "-U"], "-U" in parts)
 elif argv[0] == "find-generic-password":
     key = argv[argv.index("-s") + 1] + "/" + argv[argv.index("-a") + 1]
     if mode == "locked":
@@ -454,7 +463,7 @@ class KeychainStorage(KeychainCase):
         self.assertEqual(command[0], "add-generic-password")
         self.assertEqual(command[command.index("-T") + 1], TRUSTED)
         with open(self.state) as fh:
-            item = json.load(fh)["hfy_sync/refresh-token"]
+            item = json.load(fh)[ITEM]
         self.assertEqual(item["trusted"], TRUSTED)
 
     def test_a_rotated_token_replaces_the_old_one(self):
@@ -462,6 +471,31 @@ class KeychainStorage(KeychainCase):
         kc.store(self.TOKEN)
         kc.store(self.TOKEN[:-4] + "ZZZZ")
         self.assertEqual(kc.read(), self.TOKEN[:-4] + "ZZZZ")
+
+    def test_the_item_name_is_the_designed_one(self):
+        self.assertEqual((consts.KEYCHAIN_SERVICE, consts.KEYCHAIN_ACCOUNT), ("us.harrisonfamily.hfy_sync", "https://harrisonfamily.us/auth|owner"))
+        self.assertEqual(keychain.account_for("http://127.0.0.1:9/"), "http://127.0.0.1:9/auth|owner")
+        keychain.Keychain(account=keychain.account_for("https://harrisonfamily.us"), trusted_app=TRUSTED)
+
+    def test_a_sign_in_recreates_an_existing_item_so_T_always_applies(self):
+        with open(self.state, "w") as fh:
+            json.dump({ITEM: {"password": "hfyrt_old000000000001", "trusted": "/old/other-tool"}}, fh)
+        kc = self.kc()
+        kc.store(self.TOKEN, recreate=True)
+        with open(self.state) as fh:
+            self.assertEqual(json.load(fh)[ITEM], {"password": self.TOKEN, "trusted": TRUSTED})
+        self.assertEqual(kc.read(), self.TOKEN)
+        self.assertNotIn(" -U ", self.stdin_text())
+        order = [c[0] for c in self.calls()]
+        self.assertLess(order.index("delete-generic-password"), order.index("-i"))
+
+    def test_rotation_keeps_the_item_and_does_not_delete_first(self):
+        kc = self.kc()
+        kc.store(self.TOKEN, recreate=True)
+        kc.store(self.TOKEN[:-4] + "ZZZZ")
+        self.assertEqual(kc.read(), self.TOKEN[:-4] + "ZZZZ")
+        self.assertEqual([c[0] for c in self.calls()].count("delete-generic-password"), 1)  # the one before the first store
+        self.assertIn(" -U ", self.stdin_text().splitlines()[-1])
 
     def test_a_missing_item_reads_as_none_and_delete_is_quiet(self):
         kc = self.kc()
@@ -506,6 +540,7 @@ class AuthServer:
         self.token_agents = []
         self.token_status = None  # force a status on /auth/token
         self.api_seen = []
+        self.reject_access = set()  # access tokens the API answers 401 to
         auth = self
 
         class H(BaseHTTPRequestHandler):
@@ -536,13 +571,19 @@ class AuthServer:
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                 elif parts.path == "/api/sync/meta":
-                    auth.api_seen.append({k.lower(): v for k, v in self.headers.items()})
+                    seen = {k.lower(): v for k, v in self.headers.items()}
+                    auth.api_seen.append(seen)
+                    if seen.get("authorization", "")[len("Bearer "):] in auth.reject_access:
+                        return self.send_json(401, {"error": "invalid_token", "message": "m"})
                     self.send_json(200, {"api_version": 1})
                 else:
                     self.send_json(404, {"error": "not_found", "message": "m"})
 
             def do_POST(self):  # noqa: N802
                 n = int(self.headers.get("Content-Length") or 0)
+                if self.path.startswith("/api/sync/"):
+                    self.rfile.read(n)
+                    return self.send_json(401, {"error": "invalid_token", "message": "m"})
                 form = dict(urllib.parse.parse_qsl(self.rfile.read(n).decode()))
                 auth.token_posts.append(form)
                 auth.token_agents.append(self.headers.get("User-Agent"))
@@ -607,7 +648,7 @@ class LoginFlow(KeychainCase):
         out = self.login()
         q = self.auth.authorize_query
         self.assertEqual((q["response_type"], q["client_id"], q["code_challenge_method"], q["resource"], q["scope"]),
-                         ("code", "hfy-sync-desktop", "S256", "https://harrisonfamily.us/api/sync", "sync"))
+                         ("code", "hfy-sync-desktop", "S256", self.auth.base + "/api/sync", "sync"))
         self.assertRegex(q["code_challenge"], r"^[A-Za-z0-9_-]{43}$")
         self.assertNotIn("prompt", q)
         self.assertEqual(out["expires_in"], 3600)
@@ -657,7 +698,7 @@ class LoginFlow(KeychainCase):
     def test_a_denied_sign_in_and_a_timeout_are_exit_77(self):
         def deny(url):
             q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
-            threading.Thread(target=lambda: urllib.request.urlopen(q["redirect_uri"] + "?error=access_denied&state=" + q["state"], timeout=10).read(),
+            threading.Thread(target=lambda: urllib.request.urlopen(q["redirect_uri"] + "?error=access_denied&iss=" + urllib.parse.quote(self.auth.base + "/auth", safe="") + "&state=" + q["state"], timeout=10).read(),
                              daemon=True).start()
             return True
         # the state is read from the URL above, so the denial is authentic
@@ -668,6 +709,76 @@ class LoginFlow(KeychainCase):
         with self.assertRaises(oauth.LoginError) as cm:
             oauth.login(self.auth.base, self.kc(), http=self.http(), open_browser=lambda url: True, timeout=300, clock=lambda: next(ticks))
         self.assertEqual((cm.exception.code, cm.exception.exit_code), ("login_timeout", 77))
+
+    def test_a_silent_connection_cannot_stall_the_login(self):
+        import socket
+        socks = []
+        self.addCleanup(lambda: [x.close() for x in socks])
+        orig = oauth._Callback.timeout
+        oauth._Callback.timeout = 0.3
+        self.addCleanup(setattr, oauth._Callback, "timeout", orig)
+        results = []
+        follow = browser_follows(results)
+
+        def open_browser(url):
+            q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+            port = urllib.parse.urlsplit(q["redirect_uri"]).port
+            c = socket.create_connection(("127.0.0.1", port), timeout=5)  # connects, sends nothing (a preconnect)
+            socks.append(c)
+            return follow(url)
+        started = time.monotonic()
+        out = oauth.login(self.auth.base, self.kc(), http=self.http(), open_browser=open_browser)
+        self.assertTrue(out["access_token"])
+        self.assertLess(time.monotonic() - started, 4)
+
+    def test_a_silent_connection_does_not_hide_the_deadline(self):
+        import socket
+        socks = []
+        self.addCleanup(lambda: [x.close() for x in socks])
+        orig = oauth._Callback.timeout
+        oauth._Callback.timeout = 0.2
+        self.addCleanup(setattr, oauth._Callback, "timeout", orig)
+        wall = time.monotonic
+
+        def open_browser(url):
+            port = urllib.parse.urlsplit(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))["redirect_uri"]).port
+            socks.append(socket.create_connection(("127.0.0.1", port), timeout=5))
+            return True
+        t0 = wall()
+        with self.assertRaises(oauth.LoginError) as cm:
+            oauth.login(self.auth.base, self.kc(), http=self.http(), open_browser=open_browser, timeout=1.0)
+        self.assertEqual(cm.exception.code, "login_timeout")
+        self.assertLess(wall() - t0, 4)
+
+    def test_a_callback_without_iss_is_refused(self):
+        seen = []
+
+        def open_browser(url):
+            q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+
+            def go():
+                try:
+                    urllib.request.urlopen(q["redirect_uri"] + "?code=x&state=" + q["state"], timeout=10)
+                except urllib.error.HTTPError as exc:
+                    seen.append(exc.code)
+                urllib.request.urlopen(url, timeout=10).read()
+            threading.Thread(target=go, daemon=True).start()
+            return True
+        oauth.login(self.auth.base, self.kc(), http=self.http(), open_browser=open_browser)
+        self.assertEqual(seen, [400])
+
+    def test_a_sign_in_replaces_an_item_with_an_old_access_list(self):
+        with open(self.state, "w") as fh:
+            json.dump({ITEM: {"password": "hfyrt_old000000000001", "trusted": "/old/other-tool"}}, fh)
+        self.login()
+        with open(self.state) as fh:
+            self.assertEqual(json.load(fh)[ITEM]["trusted"], TRUSTED)
+
+    def test_the_resource_follows_the_server(self):
+        self.login()
+        self.assertEqual(self.auth.authorize_query["resource"], self.auth.base + "/api/sync")
+        self.assertEqual(self.auth.token_posts[0]["resource"], self.auth.base + "/api/sync")
+        self.assertEqual(oauth.sync_resource("https://harrisonfamily.us"), consts.SYNC_RESOURCE)
 
     def test_the_loopback_server_is_closed_afterwards(self):
         self.login()
@@ -753,6 +864,62 @@ class Tokens(KeychainCase):
         with self.assertRaises(oauth.AuthRequired):  # and now there is nothing to try
             self.manager()()
         self.assertEqual(len(self.auth.token_posts), 1)
+
+    def test_a_concurrent_rotation_by_another_process_is_kept_and_retried(self):
+        """Process B rotates the token between our read and our send: we must not delete B's live token."""
+        auth = self.auth
+        winner = {}
+        real_post = oauth._token_post
+        calls = []
+
+        def racing_post(http, server, fields):
+            calls.append(fields["refresh_token"])
+            if len(calls) == 1:  # B wins the race: it spends the seed and stores its rotated token
+                body = real_post(http, server, fields)
+                self.kc().store(body["refresh_token"])
+                winner.update(body)
+            return real_post(http, server, fields)  # for us the first send is now a reuse -> invalid_grant
+        oauth._token_post = racing_post
+        self.addCleanup(setattr, oauth, "_token_post", real_post)
+        m = self.manager()
+        token = m()
+        self.assertTrue(token.startswith("access-"))
+        self.assertEqual(calls[0], "hfyrt_seed00000000000001")
+        self.assertEqual(calls[1], winner["refresh_token"], "the retry carries the token B stored")
+        self.assertEqual(len(calls), 2)  # our send, then the retry with B's token
+        self.assertTrue(auth.refresh[self.kc().read()], "the Keychain holds a live token, not nothing")
+
+    def test_a_dead_token_that_is_still_the_stored_one_is_deleted(self):
+        self.auth.refresh["hfyrt_seed00000000000001"] = False
+        with self.assertRaises(oauth.AuthRequired):
+            self.manager()()
+        self.assertIsNone(self.kc().read())
+
+    def test_a_401_refreshes_once_and_replays_a_get(self):
+        m = self.manager()
+        client = transport.Client(self.auth.base, VERSIONS, m, http=self.http())
+        self.auth.reject_access = {"access-1"}  # the first access token is rejected despite its local expiry
+        self.assertEqual(client.meta(), {"api_version": 1})
+        self.assertEqual([h["authorization"] for h in self.auth.api_seen], ["Bearer access-1", "Bearer access-2"])
+        self.assertEqual(len(self.auth.token_posts), 2)
+
+    def test_a_second_401_is_not_replayed_again_and_a_keyless_post_is_never_replayed(self):
+        m = self.manager()
+        client = transport.Client(self.auth.base, VERSIONS, m, http=self.http())
+        self.auth.reject_access = {"access-1", "access-2"}
+        with self.assertRaises(transport.TransportError) as cm:
+            client.meta()
+        self.assertEqual((cm.exception.status, cm.exception.exit_code), (401, 77))
+        self.assertEqual(len(self.auth.api_seen), 2)
+        before = len(self.auth.token_posts)
+        with self.assertRaises(transport.TransportError):
+            client.post("/api/sync/anything", {"a": 1})
+        self.assertEqual(len(self.auth.token_posts), before)
+
+    def test_a_server_url_with_a_path_is_not_a_bare_origin(self):
+        with self.assertRaises(ValueError):
+            transport.check_server("https://harrisonfamily.us/api")
+        self.assertEqual(transport.check_server("https://harrisonfamily.us/"), "https://harrisonfamily.us")
 
     def test_no_stored_token_is_sign_in_needed(self):
         self.kc().delete()

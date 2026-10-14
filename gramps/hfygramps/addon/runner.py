@@ -188,7 +188,7 @@ def _login(options, config, log, services):
         log.line("login: dry run")
         return (consts.OK, consts.EXIT_OK, "none", None)
     try:
-        kc = services.get("keychain") or keychain.Keychain()
+        kc = services.get("keychain") or keychain.Keychain(account=keychain.account_for(transport.check_server(server)))
         oauth.login(server, kc, http=services.get("http"), open_browser=services.get("open_browser", webbrowser.open),
                     timeout=services.get("timeout", consts.LOGIN_TIMEOUT_S), step_up=options.step_up)
     except ValueError:

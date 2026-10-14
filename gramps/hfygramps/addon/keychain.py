@@ -18,7 +18,7 @@ from . import consts
 
 SECURITY = "/usr/bin/security"
 _SAFE = re.compile(r"^[A-Za-z0-9._~+/=-]{8,512}$")  # what a refresh token looks like (hfyrt_ + base64url); nothing needing shell quoting
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._:/|-]{1,128}$")  # service, and "<issuer>|owner" (sync.md 6)
 _SAFE_PATH = re.compile(r"^/[A-Za-z0-9._/@+ -]{1,1024}$")
 
 ITEM_NOT_FOUND = 44  # security's exit status for errSecItemNotFound
@@ -30,6 +30,11 @@ class KeychainError(Exception):
     def __init__(self, message, locked=False):
         Exception.__init__(self, message)
         self.locked = locked
+
+
+def account_for(server):
+    """The Keychain account for a sync server: "<issuer>|owner" (sync.md 6, simplified; see consts.KEYCHAIN_ACCOUNT)."""
+    return "%s/auth|%s" % (server.rstrip("/"), consts.KEYCHAIN_ACCOUNT_OWNER)
 
 
 class Keychain:
@@ -53,11 +58,19 @@ class Keychain:
         except (OSError, subprocess.SubprocessError) as exc:
             raise KeychainError("The security command could not run (%s)." % type(exc).__name__)
 
-    def store(self, token):
-        """Creates or updates the item (`-U`), then reads it back. Raises KeychainError unless the stored value equals `token`."""
+    def store(self, token, recreate=False):
+        """Writes the item, then reads it back. Raises KeychainError unless the stored value equals `token`.
+
+        `-U` updates an existing item but keeps its old access list, so `-T` only counts on a new item. A sign-in therefore passes
+        `recreate=True`: any existing item is deleted first and the item is created fresh, with `-T` applied. Rotation keeps `-U`
+        (delete-then-add would lose the only copy of the new token if the add failed).
+        """
         if not isinstance(token, str) or not _SAFE.match(token):
             raise KeychainError("The token is not in a form the Keychain command accepts.")
-        command = 'add-generic-password -U -s "%s" -a "%s" -T "%s" -w "%s"\n' % (self.service, self.account, self.trusted_app, token)
+        if recreate:
+            self.delete()
+        command = 'add-generic-password %s-s "%s" -a "%s" -T "%s" -w "%s"\n' % (
+            "" if recreate else "-U ", self.service, self.account, self.trusted_app, token)
         proc = self._call(["-i"], stdin=command)
         # `security -i` can exit 0 after printing an error, so the read-back below is the real check.
         locked = self._looks_locked(proc)
