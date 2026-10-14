@@ -9,7 +9,8 @@ import { KitShell, ScrollTopZone, SearchLauncher, Sheet, useBreakpoint, useShell
 import { mountAt } from "../lib/mount.jsx";
 import { suggestPeople } from "../lib/people-corpus.js";
 import { navPathname, ownRoute } from "../lib/family-route.js";
-import { SETTINGS_ROUTE, navItems, onSettings } from "../lib/nav.js";
+import { SETTINGS_ROUTE, gearLabel, navItems, onSettings, waitingCount } from "../lib/nav.js";
+import { forgetMe, getMe } from "../lib/me.js";
 import { signOut } from "../lib/sign-out.js";
 import { SLOT_ORDER, barSlots } from "../lib/bar-slots.js";
 import { PersonName } from "../lib/person-name.jsx";
@@ -140,11 +141,29 @@ function MagnifierIcon() {
 
 // The gear (HFY-TSK-091, navMe): the settings hub, signed in only (settings need a session), before the account control. A 44px link
 // with a single-weight gear drawn as a currentColor mask (shell.css), gold when current: on /me/ and its sub-paths.
-function Gear() {
+// With accessRequests on, an admin sees a dot while family requests wait, and the label says how many (HFY-TSK-264). GET /api/me is asked only then,
+// so a page without the flag costs no request; the requests page announces a decision (hfy:access-requests-changed) and the count is read again.
+function useWaiting(on) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!on) return undefined;
+    let live = true;
+    const read = () => getMe().then((me) => { if (live) setN(waitingCount(me)); });
+    read();
+    const again = () => { forgetMe(); read(); };
+    window.addEventListener("hfy:access-requests-changed", again);
+    return () => { live = false; window.removeEventListener("hfy:access-requests-changed", again); };
+  }, [on]);
+  return n;
+}
+
+function Gear({ requests }) {
   const current = onSettings(window.location.pathname);
+  const waiting = useWaiting(requests);
   return (
-    <a className="hfy-gear" href={SETTINGS_ROUTE} aria-label="settings" aria-current={current ? "page" : undefined} data-hfy-gear data-slot="gear">
+    <a className="hfy-gear" href={SETTINGS_ROUTE} aria-label={gearLabel(waiting)} aria-current={current ? "page" : undefined} data-hfy-gear data-slot="gear" data-badge={waiting > 0 ? "true" : undefined}>
       <span className="hfy-gear__icon" aria-hidden="true" />
+      {waiting > 0 && <span className="hfy-gear__dot" aria-hidden="true" data-hfy-gear-dot />}
     </a>
   );
 }
@@ -164,13 +183,13 @@ function SlotHost({ name, entry }) {
 // .hfy-bar__end: the four ordered slots (HFY-TSK-138, review DL-13): bell, chat, gear, account. The gear (navMe, signed in) and the
 // account control are the shell's own; the bell and the chat entry render only once their island has filled them, and render nothing
 // (no element, no space) before.
-function BarEnd({ navMe, notifyV2, sub }) {
+function BarEnd({ navMe, notifyV2, sub, requests }) {
   const reg = barSlots();
   useSyncExternalStore(reg.subscribe, reg.snapshot, reg.snapshot);
   return (
     <div className="hfy-bar__end">
       {SLOT_ORDER.map((name) => {
-        if (name === "gear") return navMe && sub ? <Gear key={name} /> : null;
+        if (name === "gear") return navMe && sub ? <Gear key={name} requests={requests} /> : null;
         if (name === "account") return <Account key={name} notifyV2={notifyV2} navMe={navMe} />;
         const entry = reg.get(name);
         return entry ? <SlotHost key={name} name={name} entry={entry} /> : null;
@@ -187,6 +206,8 @@ function Shell({ flags }) {
   // mounted with (resolved before the mount, below) instead of false: the bottom bar never paints five cells and then four.
   const navMe = useFlag("navMe", flags.navMe === true);
   const familyViz = useFlag("familyViz", flags.familyViz === true);
+  // accessRequests (HFY-TSK-264): the gear carries the admins' dot; the flag keeps /api/me out of every other page.
+  const accessRequests = useFlag("accessRequests");
   // The own-page tab opens the member's own page once the edge session names them; until then (pending, signed out, authV2 off) it is
   // the stable /private/ redirect, which decides the same way. Only an authenticated session with a sub gives an own page.
   const session = useEdgeSession();
@@ -212,7 +233,7 @@ function Shell({ flags }) {
             suggest={searchV2 ? suggestPeople : undefined}
             icon={<><MagnifierIcon /><span className="hfy-bar__search-hint" aria-hidden="true">search the family</span></>}
           />
-          <BarEnd navMe={navMe} notifyV2={notifyV2} sub={sub} />
+          <BarEnd navMe={navMe} notifyV2={notifyV2} sub={sub} requests={accessRequests} />
         </ScrollTopZone>
         <Offline />
         <Content />

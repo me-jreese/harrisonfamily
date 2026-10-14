@@ -36,5 +36,12 @@ export function navItems({ navMe = false, familyViz = false, notifyV2 = false, s
   return items.map((i, n) => ({ ...i, icon: " ", order: n + 1 }));
 }
 
+/** The count GET /api/me gives an admin as badges.accessRequests: a whole number above 0, else 0 (a missing, negative or non-number badge is none). */
+export const waitingCount = (me) => (Number.isInteger(me?.badges?.accessRequests) && me.badges.accessRequests > 0 ? me.badges.accessRequests : 0);
+/** The gear's accessible name (HFY-TSK-264): "settings", or with requests waiting "settings, 2 family requests waiting" (one: "1 family request waiting"). */
+export const gearLabel = (n) => (n > 0 ? `settings, ${n} family ${n === 1 ? "request" : "requests"} waiting` : "settings");
+/** The hub row's dim line for "family requests". */
+export const waitingLine = (n) => (n > 0 ? `${n} waiting` : "nobody waiting");
+
 /** True on the settings hub and its sub-paths (/me/, /me/notifications/), where the gear is marked current. */
 export const onSettings = (pathname) => pathname === "/me" || pathname.startsWith(SETTINGS_ROUTE);
