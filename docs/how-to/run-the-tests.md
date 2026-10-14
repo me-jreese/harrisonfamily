@@ -172,7 +172,7 @@ Failure output goes to `islands/test-results/`, which is gitignored.
 scripts/infra/test/run.sh
 ```
 
-[`run.sh`](../../scripts/infra/test/run.sh) puts a stub `aws` first on `PATH`, so no call reaches AWS. It runs four of the five behavior scripts against fixture distribution configs, the CloudFront Function tests and [`publish-append-index.sh`](../../scripts/infra/publish-append-index.sh), the checks on `app-stack.yaml`, `github-roles.yaml` and the two `us-east-1` edge stack templates, the gate's packaging script [`package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh), and `check-deployment-sync.sh` in a scratch Git repository. `add-mcp-behavior.sh` is covered by the `mcp-infra` file of the API suite instead (step 1). The [test suites table](../reference/repository-operations.md#test-suites) lists every check.
+[`run.sh`](../../scripts/infra/test/run.sh) puts a stub `aws` first on `PATH`, so no call reaches AWS. It runs four of the five behavior scripts against fixture distribution configs, the CloudFront Function tests and [`publish-append-index.sh`](../../scripts/infra/publish-append-index.sh), the checks on `app-stack.yaml`, `github-roles.yaml` and the two `us-east-1` edge stack templates, the check that the `/privacy/` and `/terms/` pages carry the approved privacy and terms amendment, the gate's packaging script [`package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh), and `check-deployment-sync.sh` in a scratch Git repository. `add-mcp-behavior.sh` is covered by the `mcp-infra` file of the API suite instead (step 1). The [test suites table](../reference/repository-operations.md#test-suites) lists every check.
 
 Some checks compare files that are edited by hand, and fail when the files disagree. Change them together:
 

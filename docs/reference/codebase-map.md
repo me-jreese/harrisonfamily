@@ -493,6 +493,7 @@ Paths:
   - `run.sh`: offline tests for `scripts/infra`, `scripts/ci/package-edge-gate.sh`, `scripts/check-deployment-sync.sh`, the repo-owned `11ty/` paths and the CloudFront Function.
   - `test_app_stack.py`: static checks on `app-stack.yaml` and `github-roles.yaml`.
   - `test_edge_gate_stack.py` and `test_mcp_edge401_stack.py`: static checks on the two us-east-1 templates.
+  - `test_privacy_terms_pages.py`: `11ty/privacy/index.html` and `11ty/terms/index.html` carry each required section of the approved privacy and terms amendment, `docs/drafts/privacy-terms-2026-10-update.md` (HFY-TSK-239).
   - `stub/aws`, `cf-echo.jq`, `fixtures/live-like.json` and `fixtures/live-with-uploads.json`: test doubles.
 - [`tests/login-flow/`](../../tests/login-flow/): Playwright specs `login-flow.spec.ts` and `auth-v2.spec.ts`.
 - [`scripts/mcp/token-smoke.sh`](../../scripts/mcp/token-smoke.sh): a live MCP token check.

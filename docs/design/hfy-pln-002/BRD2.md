@@ -991,8 +991,8 @@ Effort weights: medium = 2 working days, high = 3, and an io gate counts at its 
 | `tag-edit-e2e` | harrisonfamily | site-ci | tag-editor-ui, tag-roundtrip-e2e | R-31, R-29, R-09 |
 | `edit-docs` | harrisonfamily | site-ci | proposal-decision-api, relationship-api | R-06, R-07, R-08, R-09, R-24 |
 | `edit-flag-flip` | harrisonfamily | change set RG-7 | edit-e2e-d11-audit, edit-docs, cutover-live-render, privacy-terms-publish, q2-01-approvers, q2-15-web-parity, log-hygiene-suite, site-csp-headers | R-06, R-07, R-08, R-09, R-24 |
-| `tag-edit-flip` | harrisonfamily | site-ci | tag-edit-e2e, edit-flag-flip | R-31, R-29, R-30 |
-| `hfy-social-flip-2` | harrisonfamily | site-ci | hfy-social-flip-1, hfy-follow-ui, hfy-record-change-fanout, hfy-moderation-ui, hfy-moderation-queue-page, hfy-graduate-ui, hfy-moderation-record-targets, cutover-live-render, q2-01-approvers, log-hygiene-suite, site-csp-headers | R-02, R-10, R-11, R-12, R-32 |
+| `tag-edit-flip` | harrisonfamily | site-ci | tag-edit-e2e, edit-flag-flip, privacy-terms-publish | R-31, R-29, R-30 |
+| `hfy-social-flip-2` | harrisonfamily | site-ci | hfy-social-flip-1, hfy-follow-ui, hfy-record-change-fanout, hfy-moderation-ui, hfy-moderation-queue-page, hfy-graduate-ui, hfy-moderation-record-targets, cutover-live-render, q2-01-approvers, log-hygiene-suite, site-csp-headers, privacy-terms-publish | R-02, R-10, R-11, R-12, R-32 |
 | `surf-flag-flips` | harrisonfamily | change set RG-7 | surf-ses-turnstile-ops, surf-onthisday-store-source, surf-first-password, privacy-terms-publish, q2-01-approvers, cutover-live-render, log-hygiene-suite, site-csp-headers, surf-join-page, surf-access-admin-ui, surf-access-admin-api, surf-access-submit | R-14, R-23, R-42, R-21 |
 | `viz-v2-retire-graphviz` | harrisonfamily | site-ci | viz-mvp-flip, person-page-mount-points | R-22, R-03 |
 | `viz-graphviz-retire-flip` | harrisonfamily | site-ci | viz-v2-retire-graphviz, cutover-live-render | R-22, R-03 |

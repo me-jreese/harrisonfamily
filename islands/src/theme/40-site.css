@@ -185,8 +185,10 @@ html.hfy-shell-v2 .site-footer {
 .privacy-policy p, .privacy-policy li { color: var(--io-color-semantic-text); }
 .privacy-policy hr { border-color: var(--io-color-semantic-border); opacity: 1; }
 .privacy-policy .table { max-width: none; }
-/* three columns of long words at 375: let cells break rather than push the page sideways */
+/* long words at 375: the label and purpose columns keep their words whole (so they are sized to fit them); the last column
+   takes the rest and breaks a word only when it must, so the table never pushes the page sideways */
 .privacy-policy .table :is(th, td) { overflow-wrap: anywhere; }
+.privacy-policy .table :is(th, td):not(:last-child) { overflow-wrap: break-word; }
 
 /* ---------------------------------------------------------------- tap targets on plain link rows (contact, privacy) */
 .link-light, .link-primary {

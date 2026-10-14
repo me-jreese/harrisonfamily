@@ -8489,7 +8489,8 @@
   ],
   "depends_on": [
    "tag-edit-e2e",
-   "edit-flag-flip"
+   "edit-flag-flip",
+   "privacy-terms-publish"
   ],
   "acceptance_criteria": [
    "The D-11 audit evidence for photoTagEdit (16 px inputs, 44 px targets, one control height per row, no horizontal scroll at 375, axe clean, installed iPhone PWA) is linked, with screenshots under the task asset prefix (HFY-R16), and io's UAT approval is recorded verbatim.",
@@ -8542,7 +8543,8 @@
    "cutover-live-render",
    "q2-01-approvers",
    "log-hygiene-suite",
-   "site-csp-headers"
+   "site-csp-headers",
+   "privacy-terms-publish"
   ],
   "acceptance_criteria": [
    "config/admins.json still holds the moderators io named (Q2-01), re-verified through GET /api/me.",
