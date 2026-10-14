@@ -167,7 +167,9 @@ test("structure: focus section with h2, grouped lists of re-centre buttons, one 
   await expect(outline(page).locator("details").nth(1)).toHaveAttribute("open", "");
   await expect(outline(page).locator("details").nth(0)).not.toHaveAttribute("open", "");
   await expect(outline(page).locator("details").last().locator("summary")).toContainText("not yet connected");
-  await expect(page.locator("[role=tree], [role=treeitem], [tabindex]:not([tabindex='-1'])")).toHaveCount(0);
+  // No tree widget, and no tab stop other than the natively focusable controls. (The cards view, <family-navigator>, has its own tab pattern with
+  // a roving tabindex: it is what this page adds on top of the outline, not part of it.)
+  await expect(page.locator("[role=tree], [role=treeitem], [data-tree-focus] [tabindex]:not([tabindex='-1']), [data-tree-outline] [tabindex]:not([tabindex='-1'])")).toHaveCount(0);
 });
 
 test("grandparents are a collapsed fold; the outline re-centres and marks the current person", async ({ page }) => {
@@ -550,5 +552,6 @@ test("cards: a chart chunk that fails to load leaves the outline and the focus n
   await expect(focusName(page)).toHaveText("Ada Example");
   await expect(outline(page)).toBeVisible();
   await expect(page.locator("family-navigator")).toHaveCount(0);
+  await expect(page.locator("[data-tree-chart-failed]")).toHaveText("the chart didn't load. the outline below has everything.");
   await expect.poll(() => errors.some((e) => e.includes("CHART_CHUNK_FAILED"))).toBe(true);
 });

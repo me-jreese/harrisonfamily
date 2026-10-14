@@ -3,34 +3,49 @@
 // (?focus, else the viewer, else the default person) kept in sync with the history, and a plain focus card with the person's close
 // relatives as re-centring buttons. HFY-TSK-202 (viz-outline-navigator) made that card the FocusNavigator and added the GenerationOutline
 // beside it; both always render, are plain semantic HTML and call the same `onFocus`. The chart (HFY-TSK-145, viz-mvp-visual: the
-// framework-free <family-navigator> cards view) is a lazy chunk beside them and reads the same graph.
+// framework-free <family-navigator> cards view) is a lazy chunk beside them and reads the same graph. HFY-TSK-301 (viz-mvp-visual-fallback)
+// adds the cards | outline toggle (?view=, localStorage "hfy:tree-view"; lib/tree-view.js) and the outline-only mode that a chart chunk that
+// will not load falls back to (CHART_CHUNK_FAILED).
 //
 //   GET /person/graph.json  200 render | 401 (after the refresh retry) sign in, back here | 403/404 "being prepared" | bad body: retry
 import "./tree.css";
-import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
+import { initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 
 export const COPY = {
   prepared: "the family tree is being prepared. you can find anyone through search.",
   error: "the family tree didn't load. try again.",
   signedOut: "sign in to see the family tree.",
   offline: "the family tree needs a connection.",
-  notFound: "we couldn't find that person, so here is someone to start from."
+  notFound: "we couldn't find that person, so here is someone to start from.",
+  chartFailed: "the chart didn't load. the outline below has everything."
 };
 
-// The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element, the cards are
-// simply absent: the focus navigator and the outline below it have the same information. (The visible message is viz-mvp-visual-fallback.)
-const ChartView = lazy(() => import("../lib/tree-chart.jsx"));
+// The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element (the chunk
+// defines it as it evaluates, so the import rejects), the page drops to outline-only mode: TreeApp says so in COPY.chartFailed and keeps the
+// focus navigator and the outline, which hold the same information (CHART_CHUNK_FAILED, viz.md section 17).
+//
+// The import is started as soon as the page wants the cards (not when the chart first renders), in parallel with the graph fetch, and the
+// first ready paint waits for it, CHART_WAIT_MS at most: a chart that arrives after the focus navigator pushes the focus navigator and the
+// outline down the page, which is layout shift. The outline never waits longer than that for the cards. (No React.lazy: a lazy component
+// whose promise has already resolved still renders its fallback once, and that is the shift again.)
+let chartImport = null;
+const loadChart = () => (chartImport ||= import("../lib/tree-chart.jsx"));
+export const CHART_WAIT_MS = 2500;
 
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
   static getDerivedStateFromError() { return { failed: true }; }
-  // Deliberately minimal (a console line only): viz-mvp-visual-fallback owns the visible message and may replace this boundary.
-  componentDidCatch() { console.error("HFY tree: CHART_CHUNK_FAILED"); }
+  // A render error inside the chart (the chunk loaded but the element or the sheet threw) is the same fallback.
+  componentDidCatch() {
+    console.error("HFY tree: CHART_CHUNK_FAILED");
+    this.props.onFailed?.();
+  }
   render() { return this.state.failed ? null : this.props.children; }
 }
 
@@ -159,6 +174,17 @@ export function GenerationOutline({ graph, focus, onFocus }) {
   );
 }
 
+/** The cards | outline switch: two buttons in a group, the current one pressed. Both are always real buttons, 44 px at every width. */
+export function ViewToggle({ view, onChoose }) {
+  return (
+    <div className="hfy-tree__views" role="group" aria-label="view" data-tree-views>
+      {["cards", "outline"].map((v) => (
+        <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v}</button>
+      ))}
+    </div>
+  );
+}
+
 export function TreeApp() {
   const session = useEdgeSession();
   const sub = memberSub(session);
@@ -168,6 +194,16 @@ export function TreeApp() {
   const [online, setOnline] = useState(() => navigator.onLine !== false);
   // Who asked for the re-centre: "cards" (the <family-navigator>, which looks after its own focus) or "list" (the lists, the outline, Back).
   const via = useRef("list");
+  // "cards" | "outline": ?view=, else what this browser remembered, else the cards (lib/tree-view.js; storage failures are survived there).
+  const [view, setView] = useState(() => initialView(location.search));
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // The cards chunk could not load (or the browser refused the element): outline-only for the rest of this page view.
+  const [chartFailed, setChartFailed] = useState(false);
+  // The chart component once its chunk has loaded; `waited` is set when the first paint has waited long enough for it.
+  const [Chart, setChart] = useState(null);
+  const [waited, setWaited] = useState(false);
+  const painted = useRef(false);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -185,9 +221,29 @@ export function TreeApp() {
     return () => ctl.abort();
   }, [attempt, online]);
 
+  useEffect(() => {
+    if (view !== "cards" || Chart || chartFailed) return undefined;
+    let live = true;
+    loadChart().then(
+      (m) => { if (live) setChart(() => m.default); },
+      () => {
+        if (!live) return;
+        console.error("HFY tree: CHART_CHUNK_FAILED");
+        setChartFailed(true);
+      }
+    );
+    return () => { live = false; };
+  }, [view, Chart, chartFailed]);
+
   // Back and forward restore the previous focus (the page pushes one history entry per re-centre).
   useEffect(() => {
-    const onPop = () => { via.current = "list"; setFocus(focusParam(location.search)); };
+    const onPop = () => {
+      via.current = "list";
+      setFocus(focusParam(location.search));
+      // The view is the reader's choice, not part of a history entry: an older entry's address must not flip it back.
+      const v = viewParam(location.search);
+      if (v && v !== viewRef.current) history.replaceState(null, "", viewUrl(location, viewRef.current));
+    };
     addEventListener("popstate", onPop);
     return () => removeEventListener("popstate", onPop);
   }, []);
@@ -205,6 +261,19 @@ export function TreeApp() {
   useEffect(() => {
     if (resolved && resolved.id && resolved.id !== focusParam(location.search)) history.replaceState(null, "", focusUrl(location, resolved.id));
   }, [resolved]);
+  // The first ready paint waits for the chart chunk, but never longer than CHART_WAIT_MS after the graph arrived.
+  const holding = Boolean(resolved?.id) && !painted.current && view === "cards" && !Chart && !chartFailed && !waited;
+  useEffect(() => {
+    if (!holding) return undefined;
+    const t = setTimeout(() => setWaited(true), CHART_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [holding]);
+  useEffect(() => { if (resolved?.id && !holding) painted.current = true; });
+  const onView = useCallback((v) => {
+    setView(v);
+    writeStoredView(v);
+    history.replaceState(null, "", viewUrl(location, v));
+  }, []);
   const [spoken, setSpoken] = useState("");
   const announced = useRef(null);
   useEffect(() => {
@@ -226,14 +295,22 @@ export function TreeApp() {
   }
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
+  if (holding) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   return (
     <div className="hfy-tree hfy-tree--ready">
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
-      <ChartBoundary>
-        <Suspense fallback={<div className="hfy-tree__skeleton" aria-hidden="true" data-tree-chart-loading />}>
-          <ChartView graph={graph} focus={resolved.id} onFocus={onFocus} />
-        </Suspense>
-      </ChartBoundary>
+      {chartFailed ? (
+        <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
+      ) : (
+        <>
+          <ViewToggle view={view} onChoose={onView} />
+          {view === "cards" ? (
+            <ChartBoundary onFailed={() => setChartFailed(true)}>
+              {Chart ? <Chart graph={graph} focus={resolved.id} onFocus={onFocus} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-chart-loading />}
+            </ChartBoundary>
+          ) : null}
+        </>
+      )}
       <FocusNavigator graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} via={via} />
       <GenerationOutline graph={graph} focus={resolved.id} onFocus={onFocus} />
       <p className="hfy-tree__live" aria-live="polite" data-tree-live>{spoken}</p>

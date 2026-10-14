@@ -48,13 +48,32 @@
   border-radius: var(--io-radius-md);
   background: var(--io-color-semantic-surface-sunken);
 }
+/* The chart's own placeholder (shown only when the chunk is slower than CHART_WAIT_MS) reserves most of a screen, so the cards arriving moves
+   less of what is on screen. The page itself reserves a screen (the inline rule in 11ty/tree/index.html), so the footer never moves (CLS). */
+.hfy-tree__skeleton--chart { min-height: 60vh; }
+
+/* The cards | outline switch (HFY-TSK-301): a group of two 44 px buttons, the pressed one marked by the accent border and the raised surface. */
+.hfy-tree__views { display: flex; flex-wrap: wrap; gap: var(--io-space-2); margin-bottom: var(--io-space-3); }
+.hfy-tree .hfy-tree__view {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-tree .hfy-tree__view[aria-pressed="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-surface-raised); font-weight: var(--io-typography-weight-semibold); }
 
 /* The page: the focus navigator, then the generation outline (side by side from the wide breakpoint). */
 .hfy-tree__outline { margin-top: var(--io-space-5); }
 .hfy-tree__outline h2 { margin: 0 0 var(--io-space-3); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
 @media (min-width: 64rem) {
   .hfy-tree--ready { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--io-space-5); align-items: start; }
-  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live) { grid-column: 1 / -1; }
+  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live, .hfy-tree__views) { grid-column: 1 / -1; }
   .hfy-tree__outline { margin-top: 0; }
 }
 
