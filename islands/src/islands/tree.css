@@ -52,7 +52,14 @@
    focus navigator has painted does not move the navigator or the outline (CLS); the navigator itself never waits for the chunk. */
 .hfy-tree__skeleton--chart,
 .hfy-tree__chart { min-height: 60vh; }
-.hfy-tree__skeleton--chart { margin-bottom: var(--io-space-5); }
+/* The six movement buttons of the loaded navigator (family-navigator.css .hfy-nav__moves) are reserved too: three rows of 44 px (+ gaps) on a
+   phone, one row from 43rem. This is coupled to that layout: if the buttons wrap to a different row count, change both. Without it the tallest
+   cards push CLS over 0.1 when a late chunk arrives (tests/tree-nav.spec.mjs CLS test, HFY-TSK-300). */
+.hfy-tree__skeleton--chart {
+  min-height: calc(60vh + var(--io-control-tap-min) * 3 + var(--io-space-2) * 3 + var(--io-space-3));
+  margin-bottom: var(--io-space-5);
+}
+@media (min-width: 43rem) { .hfy-tree__skeleton--chart { min-height: calc(60vh + var(--io-control-tap-min) + var(--io-space-3)); } }
 @media (min-width: 64rem) { .hfy-tree__skeleton--chart { grid-column: 1 / -1; } }
 
 /* The cards | outline switch (HFY-TSK-301): a group of two 44 px buttons, the pressed one marked by the accent border and the raised surface. */

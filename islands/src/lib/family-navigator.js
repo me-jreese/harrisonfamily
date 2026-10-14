@@ -21,6 +21,22 @@
 // is below 16 px). The element picks the layout from matchMedia and redraws when the window crosses 43rem; the detail panel and the
 // "generations" Sheet are the island's (lib/tree-chart.jsx).
 //
+// Moving about (HFY-TSK-300, viz-mvp-visual-nav; ADR 4.2 and 9.1):
+//   - six visible buttons, always drawn: to parents, to children, previous and next sibling, previous and next partner family (navigator-model
+//     navMoves). The first four re-centre (hfy-focus); the partner-family pair selects a tab. A button with nowhere to go is aria-disabled and
+//     stays in the tab order, so the keyboard is never dropped by a press at the end of a list.
+//   - arrow keys walk the cards (_step): up to the parents (and from a parent to its parents), down to the children, left and right along a
+//     line, and from the partner card on to the next or previous partner family. Enter and Space are the buttons' own. No letter or digit does
+//     anything. A key with no card to go to is left to the page, which scrolls.
+//   - touch: the element handles no touch event. It sets touch-action: pan-y, and only the children row, the siblings row and the tabs scroll
+//     sideways, natively (family-navigator.css), so a vertical drag that starts on a card scrolls the page.
+//   - after a re-centre that the keyboard started, focus is put on the new focus card (the one place the new person's name is a control);
+//     a re-centre from the outline or Back is the page's (tree.jsx moves focus to the focus navigator's heading).
+//     AC3 AMENDMENT (recorded in the acceptance evidence): the AC says "focus moves to the new focus card's heading". A heading cannot be put
+//     inside a <button>, and arrow-key walking needs the keyboard to stay on the cards, so for a re-centre started in the cards the "heading" is
+//     the focus card button, whose accessible name leads with the person's name. The page's plain h2 gets focus on the outline and Back paths.
+//   - the element has no live region. The island's one polite region announces each re-centre (tree.jsx).
+//
 // The 375 px layout draws: the focus card, a parents strip, one tab per union
 // ("with <partner>" or "partner not recorded"), that union's partner and children as a scroll-snap row, and the siblings as a row.
 // Every person is one <button> with an accessible name like "Ben Example, father, 1878 to unknown". The focus card's name is "Ada Example,
@@ -30,13 +46,15 @@
 // a card here is a re-centre control (a <button>), and a link cannot be nested in a button, so the card's name is plain text inside it.
 // The person link is carried where a link is valid: the details Sheet (its title, the parents, the partner and the children are PersonName
 // links, and "view page" goes to the person) and the generation outline. tests/tree.spec.mjs "hfy-details" asserts those links.
-import { COPY, navigatorModel } from "./navigator-model.js";
+import { COPY, navMoves, navigatorModel } from "./navigator-model.js";
 
 export const TAG = "family-navigator";
 export const EVENT_FOCUS = "hfy-focus";
 export const EVENT_DETAILS = "hfy-details";
 
 let serial = 0;
+/** How long after this element emitted hfy-focus a focus change still counts as the answer to it. */
+const ASK_WINDOW_MS = 1000;
 
 /** A tiny element builder: h("li", {class: "x"}, child, "text"). Text goes in as text nodes, so a name can never inject markup. */
 function h(tag, attrs, ...kids) {
@@ -65,6 +83,11 @@ export class FamilyNavigator extends Base {
     this._ro = null;
     this._frame = 0;
     this._expanded = new Set();
+    this._moves = [];
+    this._ring = [];
+    this._refocus = false;
+    this._askedAt = -Infinity;
+    this._entering = false;
     this._uid = `hfy-nav-${(serial += 1)}`;
     this._onClick = (e) => this._click(e);
     this._onKey = (e) => this._key(e);
@@ -76,7 +99,15 @@ export class FamilyNavigator extends Base {
   get focus() { return this._focus; }
   set focus(id) {
     const next = id || null;
-    if (next !== this._focus) { this._union = 0; this._expanded.clear(); }
+    if (next !== this._focus) {
+      this._union = 0;
+      this._expanded.clear();
+      // A re-centre this element asked for, with the keyboard still in it, puts the keyboard on the new focus card. One the page made (Back,
+      // forward, the outline) is the page's to focus, even if document.activeElement is still inside here. A re-centre (not the first draw) eases in.
+      this._refocus = Date.now() - this._askedAt < ASK_WINDOW_MS && this.contains(document.activeElement);
+      this._askedAt = -Infinity;
+      this._entering = this._focus !== null;
+    }
     this._focus = next;
     this._queue();
   }
@@ -127,6 +158,9 @@ export class FamilyNavigator extends Base {
   }
 
   _emit(name, id) {
+    // The element itself asked for this re-centre (a tap, Enter/Space or a move button): note it, so the focus setter can tell it from a re-centre
+    // the page made (Back, forward, the outline) while the keyboard happened to still be inside the element. Expires, in case the page declined.
+    if (name === EVENT_FOCUS) this._askedAt = Date.now();
     this.dispatchEvent(new CustomEvent(name, { detail: { id }, bubbles: true, composed: true }));
   }
 
@@ -138,6 +172,15 @@ export class FamilyNavigator extends Base {
       this._render(`more:${key}`);
       return;
     }
+    const move = e.target.closest?.("[data-move]");
+    if (move && this.contains(move)) {
+      if (move.getAttribute("aria-disabled") === "true") return;
+      const key = move.getAttribute("data-move");
+      const mv = this._moves.find((x) => x.key === key);
+      if (mv?.to) this._emit(EVENT_FOCUS, mv.to);
+      else if (mv && mv.union !== null) this._select(mv.union, `move:${key}`);
+      return;
+    }
     const card = e.target.closest?.("[data-person]");
     if (card && this.contains(card)) {
       this._emit(card.getAttribute("data-role") === "focus" ? EVENT_DETAILS : EVENT_FOCUS, card.getAttribute("data-person"));
@@ -147,18 +190,78 @@ export class FamilyNavigator extends Base {
     if (tab && this.contains(tab)) this._select(Number(tab.getAttribute("data-union")), `tab:${tab.getAttribute("data-union")}`);
   }
 
-  // The tab pattern's arrow keys. Nothing else is handled here: cards are buttons, so Enter and Space already activate them.
+  // The keys: the tab pattern's arrows on a tab, the card walk on a card or a "+N more" button. Nothing else is handled (no single-character
+  // shortcuts), and Enter and Space are the buttons' own.
   _key(e) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const tab = e.target.closest?.("[role=tab]");
-    if (!tab || !this.contains(tab) || e.altKey || e.ctrlKey || e.metaKey) return;
-    const tabs = [...this.querySelectorAll("[role=tab]")];
-    const at = tabs.indexOf(tab);
-    const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[e.key];
-    if (to === undefined) return;
+    if (tab && this.contains(tab)) {
+      const tabs = [...this.querySelectorAll("[role=tab]")];
+      const at = tabs.indexOf(tab);
+      const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      const next = (to + tabs.length) % tabs.length;
+      // Focus follows the tab (the WAI-ARIA tab pattern): without this _render would refocus the OLD tab, which is now tabindex -1.
+      this._select(next, `tab:${next}`);
+      return;
+    }
+    if (e.shiftKey) return; // the card walk is unshifted arrows only; the tabs above keep their own Shift behaviour as before
+    const dir = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[e.key];
+    const from = e.target.closest?.("[data-person], [data-more]");
+    if (!dir || !from || !this.contains(from)) return;
+    const to = this._step(from, dir);
+    if (!to) return; // nowhere to go: the key stays the page's (an arrow scrolls)
     e.preventDefault();
-    const next = (to + tabs.length) % tabs.length;
-    // Focus follows the tab (the WAI-ARIA tab pattern): without this _render would refocus the OLD tab, which is now tabindex -1.
-    this._select(next, `tab:${next}`);
+    if (to instanceof Element) to.focus();
+    else this._select(to.union, "role:partner");
+  }
+
+  // Where an arrow key goes from `from`: a card or "+N more" button to focus, {union: i} to select another partner family, or null.
+  // Cards carry data-line (the row they are drawn in) and data-role; hidden ones (behind "+N more") are skipped.
+  _step(from, dir) {
+    const lineOf = (el) => el.getAttribute("data-line") || el.closest("ul")?.querySelector("[data-line]")?.getAttribute("data-line") || "";
+    const items = [...this.querySelectorAll("[data-person], [data-more]")].filter((el) => !el.closest("[hidden]"));
+    const roleOf = (el) => el.getAttribute("data-role");
+    const first = (pick) => items.find(pick) || null;
+    const role = roleOf(from);
+    if (dir === "left" || dir === "right") {
+      const step = dir === "left" ? -1 : 1;
+      // Stacked, the brothers and sisters are a separate row from the focus card, so the focus card and the brothers and sisters walk one
+      // chain in birth order (the same order as the previous and next sibling buttons).
+      if ((role === "focus" || role === "sibling") && !this._wide) {
+        const at = this._ring.indexOf(from.getAttribute("data-person"));
+        const to = at < 0 ? undefined : this._ring[at + step];
+        return to ? first((el) => el.getAttribute("data-person") === to) : null;
+      }
+      const line = lineOf(from);
+      const same = items.filter((el) => lineOf(el) === line);
+      const next = same[same.indexOf(from) + step];
+      if (next) return next;
+      if (role === "partner") {
+        const to = this._union + step;
+        return to >= 0 && to < (this._unionCount || 0) ? { union: to } : null;
+      }
+      return null;
+    }
+    // Up and down are meanings, not screen positions: up is towards the parents, down towards the children. Stacked (the phone), the partner's
+    // card sits between the focus card and the children, so it is a step on the way down.
+    const partner = first((el) => roleOf(el) === "partner");
+    const focus = first((el) => roleOf(el) === "focus");
+    const child = first((el) => roleOf(el) === "child");
+    const parent = first((el) => roleOf(el) === "parent");
+    if (dir === "up") {
+      if (role === "grandparent") return null;
+      if (role === "child") return !this._wide && partner ? partner : focus;
+      if (role === "partner" && !this._wide) return focus;
+      if (role === "parent") return first((el) => roleOf(el) === "grandparent" && el.getAttribute("data-via") === from.getAttribute("data-pi"));
+      return parent; // the focus, the partner (grid) and the brothers and sisters: up to the parents
+    }
+    if (role === "child" || from.hasAttribute("data-more")) return null;
+    if (role === "grandparent") return first((el) => roleOf(el) === "parent" && el.getAttribute("data-pi") === from.getAttribute("data-via"));
+    if (role === "parent") return focus;
+    if (role === "focus" && !this._wide && partner) return partner;
+    return child; // the focus, the partner and the brothers and sisters: down to the children
   }
 
   // `focusKey` is the data-key the render puts keyboard focus on; omitted, focus stays on whatever had it.
@@ -168,14 +271,14 @@ export class FamilyNavigator extends Base {
     this._render(focusKey);
   }
 
-  _card(c) {
+  _card(c, line = null, extra = {}) {
     const isFocus = c.kind === "focus";
     const role = ROLE_PAIR[c.kind];
     const face = c.face ? h("img", { class: "hfy-nav__face", src: c.face, alt: "", width: 160, height: 160, loading: "lazy", decoding: "async" }) : null;
     if (face) face.addEventListener("error", () => face.replaceWith(h("span", { class: "hfy-nav__initials", "aria-hidden": "true" }, c.initials)), { once: true });
     return h(
       "button",
-      { type: "button", class: `hfy-nav__card${isFocus ? " hfy-nav__card--focus" : ""}`, "data-person": c.id, "data-role": c.kind, "data-key": `card:${c.id}`, "aria-label": c.label },
+      { type: "button", class: `hfy-nav__card${isFocus ? " hfy-nav__card--focus" : ""}`, "data-person": c.id, "data-role": c.kind, "data-line": line, "data-pi": extra.pi, "data-via": extra.via, "data-key": `card:${c.id}`, "aria-label": c.label },
       h("span", { class: "hfy-nav__avatar", "data-pair": role, "aria-hidden": "true" }, face || h("span", { class: "hfy-nav__initials" }, c.initials)),
       h(
         "span",
@@ -189,8 +292,8 @@ export class FamilyNavigator extends Base {
     );
   }
 
-  _row(cards, label) {
-    return h("ul", { class: "hfy-nav__row", "aria-label": label }, cards.map((c) => h("li", { class: "hfy-nav__item" }, this._card(c))));
+  _row(cards, label, line) {
+    return h("ul", { class: "hfy-nav__row", "aria-label": label }, cards.map((c) => h("li", { class: "hfy-nav__item" }, this._card(c, line))));
   }
 
   _section(id, title, ...body) {
@@ -213,10 +316,21 @@ export class FamilyNavigator extends Base {
     const panel = h(
       "div",
       { class: "hfy-nav__panel", role: "tabpanel", id: `${this._uid}-panel`, "aria-labelledby": `${this._uid}-tab-${at}` },
-      u.partner ? h("div", { class: "hfy-nav__partner" }, this._card(u.partner)) : null,
-      u.children.length ? this._row(u.children, `children, ${u.tab}`) : h("p", { class: "hfy-nav__none" }, COPY.childrenNone)
+      u.partner ? h("div", { class: "hfy-nav__partner" }, this._card(u.partner, "partner")) : null,
+      u.children.length ? this._row(u.children, `children, ${u.tab}`, "kids") : h("p", { class: "hfy-nav__none" }, COPY.childrenNone)
     );
     return this._section("unions", title, tabs, panel);
+  }
+
+  // The six movement buttons (navMoves): always all six, the ones with nowhere to go aria-disabled.
+  _toolbar() {
+    return h(
+      "div", { class: "hfy-nav__moves", role: "group", "aria-label": "move around the family" },
+      this._moves.map((mv) => h("button", {
+        type: "button", class: "hfy-nav__move", "data-move": mv.key, "data-key": `move:${mv.key}`, "aria-label": mv.label,
+        "aria-disabled": mv.to === null && mv.union === null ? "true" : null
+      }, mv.text))
+    );
   }
 
   // ---- the four-row grid (from 43rem) ----
@@ -244,9 +358,9 @@ export class FamilyNavigator extends Base {
     const gp = m.grandparents;
     const grandparents = this._band(
       "grandparents", "grandparents",
-      gp.message ? h("p", { class: "hfy-nav__none" }, gp.message) : this._line("gp", "grandparents", gp.cards.map((c) => (c ? this._card(c) : this._missing(COPY.grandparentMissing))), "hfy-nav__line--center")
+      gp.message ? h("p", { class: "hfy-nav__none" }, gp.message) : this._line("gp", "grandparents", gp.cards.map((c, i) => (c ? this._card(c, "gp", { via: Math.floor(i / 2) }) : this._missing(COPY.grandparentMissing))), "hfy-nav__line--center")
     );
-    const parentNodes = [...m.parents.cards.map((c) => this._card(c)), ...(m.parents.placeholder ? [this._missing(m.parents.placeholder)] : [])];
+    const parentNodes = [...m.parents.cards.map((c, i) => this._card(c, "parents", { pi: i })), ...(m.parents.placeholder ? [this._missing(m.parents.placeholder)] : [])];
     const parents = this._band("parents", "parents", parentNodes.length ? this._line("parents", "parents", parentNodes, "hfy-nav__line--center") : h("p", { class: "hfy-nav__none" }, m.parents.message));
 
     const at = Math.min(this._union, Math.max(m.unions.length - 1, 0));
@@ -256,9 +370,9 @@ export class FamilyNavigator extends Base {
       "family", "family",
       h(
         "div", { class: "hfy-nav__famrow" },
-        h("div", { class: "hfy-nav__cell hfy-nav__cell--sibs" }, m.siblings.length ? this._line("sibs", "brothers and sisters", m.siblings.map((c) => this._card(c))) : null),
-        h("div", { class: "hfy-nav__cell hfy-nav__cell--focus hfy-nav__focus" }, this._card(m.focus)),
-        h("div", { class: "hfy-nav__cell hfy-nav__cell--partner" }, u ? (u.partner ? this._card(u.partner) : this._missing(COPY.partnerMissing)) : null)
+        h("div", { class: "hfy-nav__cell hfy-nav__cell--sibs" }, m.siblings.length ? this._line("sibs", "brothers and sisters", m.siblings.map((c) => this._card(c, "family"))) : null),
+        h("div", { class: "hfy-nav__cell hfy-nav__cell--focus hfy-nav__focus" }, this._card(m.focus, "family")),
+        h("div", { class: "hfy-nav__cell hfy-nav__cell--partner" }, u ? (u.partner ? this._card(u.partner, "family") : this._missing(COPY.partnerMissing)) : null)
       ),
       tabbed
         ? h(
@@ -270,7 +384,7 @@ export class FamilyNavigator extends Base {
         )
         : null
     );
-    const kids = u ? (u.children.length ? this._line(`kids:${u.id}`, `children${u.partner ? `, ${u.tab}` : ""}`, u.children.map((c) => this._card(c)), "hfy-nav__line--center") : h("p", { class: "hfy-nav__none" }, COPY.childrenNone)) : h("p", { class: "hfy-nav__none" }, COPY.noUnions);
+    const kids = u ? (u.children.length ? this._line(`kids:${u.id}`, `children${u.partner ? `, ${u.tab}` : ""}`, u.children.map((c) => this._card(c, "kids")), "hfy-nav__line--center") : h("p", { class: "hfy-nav__none" }, COPY.childrenNone)) : h("p", { class: "hfy-nav__none" }, COPY.noUnions);
     const children = h(
       "section",
       tabbed
@@ -328,9 +442,16 @@ export class FamilyNavigator extends Base {
 
   _render(focusKey = null) {
     if (!this.isConnected) return;
-    const had = focusKey || (this.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null);
+    const refocus = this._refocus;
+    const entering = this._entering;
+    this._refocus = false;
+    this._entering = false;
+    const had = refocus ? "role:focus" : focusKey || (this.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null);
     const m = this._graph && this._focus ? navigatorModel(this._graph, this._focus) : null;
     if (!m) { this.replaceChildren(); return; }
+    this._unionCount = m.unions.length;
+    this._moves = navMoves(m, this._union);
+    this._ring = m.ring.map((r) => r.id);
     const title = `family chart centred on ${m.name}. the outline has the same information.`;
     let body;
     if (this._wide) {
@@ -339,21 +460,22 @@ export class FamilyNavigator extends Base {
       const parents = m.parents.cards.length
         ? h(
           "ul", { class: "hfy-nav__strip", "aria-label": "parents" },
-          m.parents.cards.map((c) => h("li", { class: "hfy-nav__item" }, this._card(c))),
+          m.parents.cards.map((c, i) => h("li", { class: "hfy-nav__item" }, this._card(c, "parents", { pi: i }))),
           m.parents.placeholder ? h("li", { class: "hfy-nav__item" }, h("p", { class: "hfy-nav__missing" }, m.parents.placeholder)) : null
         )
         : h("p", { class: "hfy-nav__none" }, m.parents.message);
       body = [
-        h("div", { class: "hfy-nav__focus" }, this._card(m.focus)),
+        h("div", { class: "hfy-nav__focus" }, this._card(m.focus, "focus")),
         this._section("parents", "parents", parents),
         this._unions(m),
-        m.siblings.length ? this._section("siblings", "brothers and sisters", this._row(m.siblings, "brothers and sisters")) : null
+        m.siblings.length ? this._section("siblings", "brothers and sisters", this._row(m.siblings, "brothers and sisters", "sibs")) : null
       ];
     }
     const root = h(
-      "section", { class: `hfy-nav${this._wide ? " hfy-nav--wide" : ""}`, "aria-labelledby": `${this._uid}-title`, "data-nav-focus": m.id, "data-nav-layout": this._wide ? "grid" : "stack" },
+      "section", { class: `hfy-nav${this._wide ? " hfy-nav--wide" : ""}${entering ? " hfy-nav--enter" : ""}`, "aria-labelledby": `${this._uid}-title`, "data-nav-focus": m.id, "data-nav-layout": this._wide ? "grid" : "stack" },
       h("h2", { id: `${this._uid}-title`, class: "hfy-nav__title" }, title),
       m.notice ? h("p", { class: "hfy-nav__notice", "data-nav-notice": "" }, m.notice) : null,
+      this._toolbar(),
       ...body
     );
     this.replaceChildren(root);
@@ -361,7 +483,11 @@ export class FamilyNavigator extends Base {
     this._fit();
     // A re-render must not drop the keyboard: put focus back on the same control (a card that became the focus card has the same key).
     // (Matched by comparing the attribute, never by building a selector from a graph id: an odd character in an id cannot throw here.)
-    if (had) ([...this.querySelectorAll("[data-key]")].find((e) => e.getAttribute("data-key") === had) || this.querySelector(".hfy-nav__card--focus"))?.focus({ preventScroll: true });
+    // "role:focus" and "role:partner" name a card by what it is (the new focus card, the selected partner), not by whose it is.
+    if (had) {
+      const byRole = had.startsWith("role:") ? this.querySelector(`.hfy-nav__card[data-role="${had.slice(5)}"]`) : null;
+      (byRole || [...this.querySelectorAll("[data-key]")].find((e) => e.getAttribute("data-key") === had) || this.querySelector(".hfy-nav__card--focus"))?.focus({ preventScroll: true });
+    }
   }
 }
 

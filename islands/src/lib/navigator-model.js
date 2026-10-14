@@ -184,8 +184,57 @@ export function navigatorModel(graph, focus) {
     },
     grandparents: grandparentSlots(graph, parents),
     unions,
-    siblings: siblings.map((s) => personCard(graph, s.id, "sibling", { half: s.half }))
+    siblings: siblings.map((s) => personCard(graph, s.id, "sibling", { half: s.half })),
+    ring: siblingRing(graph, focus, siblings.map((s) => ({ id: s.id, name: graph.person(s.id).name })))
   };
+}
+
+/** The visible words of the six movement buttons (HFY-TSK-300, viz ADR 9.1 item 1), in the order they are drawn. */
+export const MOVES = [
+  { key: "parents", text: "to parents" },
+  { key: "children", text: "to children" },
+  { key: "prev-sibling", text: "previous sibling" },
+  { key: "next-sibling", text: "next sibling" },
+  { key: "prev-union", text: "previous partner family" },
+  { key: "next-union", text: "next partner family" }
+];
+
+/**
+ * The six movement buttons for a model and the selected partner family `at`: [{key, text, label, to, union}].
+ *   to     the person the button re-centres on (parents: the first recorded parent; children: the first child of the selected family;
+ *          previous and next sibling: the neighbour in birth order), or null when there is none
+ *   union  the index of the partner family the button selects (it does not re-centre), or null
+ * A button with nothing to go to is still listed (with to and union null): the element draws it as unavailable, so the six directions are always there.
+ * `label` is the accessible name: the words plus where the button goes.
+ */
+export function navMoves(m, at = 0) {
+  const sel = Math.min(Math.max(at, 0), Math.max(m.unions.length - 1, 0));
+  const spot = m.ring.findIndex((r) => r.id === m.id);
+  const parent = m.parents.cards[0] || null;
+  const child = m.unions[sel]?.children[0] || null;
+  const prevSib = spot > 0 ? m.ring[spot - 1] : null;
+  const nextSib = spot >= 0 && spot < m.ring.length - 1 ? m.ring[spot + 1] : null;
+  const prevUnion = sel > 0 ? sel - 1 : null;
+  const nextUnion = sel < m.unions.length - 1 ? sel + 1 : null;
+  const where = {
+    parents: [parent ? parent.id : null, null, parent ? (m.parents.cards.length > 1 ? `starting with ${parent.name}` : parent.name) : "none recorded"],
+    children: [child ? child.id : null, null, child ? (m.unions[sel].children.length > 1 ? `starting with ${child.name}` : child.name) : "none recorded"],
+    "prev-sibling": [prevSib ? prevSib.id : null, null, prevSib ? `older, ${prevSib.name}` : "none"],
+    "next-sibling": [nextSib ? nextSib.id : null, null, nextSib ? `younger, ${nextSib.name}` : "none"],
+    "prev-union": [null, prevUnion, prevUnion !== null ? m.unions[prevUnion].tab : "none"],
+    "next-union": [null, nextUnion, nextUnion !== null ? m.unions[nextUnion].tab : "none"]
+  };
+  return MOVES.map((mv) => ({ key: mv.key, text: mv.text, to: where[mv.key][0], union: where[mv.key][1], label: `${mv.text}, ${where[mv.key][2]}` }));
+}
+
+/**
+ * The brothers and sisters and the focus person in one fixed order, oldest first (an unknown birth year goes last, the recorded order breaks
+ * ties). "Previous sibling" and "next sibling" step along it. [{id, name}]
+ */
+function siblingRing(graph, focus, siblings) {
+  const rows = [{ id: focus, name: graph.person(focus).name }, ...siblings.map((s) => ({ id: s.id, name: s.name }))];
+  const year = (id) => { const y = graph.person(id).birthYear; return Number.isFinite(y) ? y : Infinity; };
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => (year(a.r.id) === year(b.r.id) ? a.i - b.i : year(a.r.id) < year(b.r.id) ? -1 : 1)).map((x) => x.r);
 }
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

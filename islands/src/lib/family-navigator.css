@@ -53,7 +53,11 @@
 .hfy-tree__skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .hfy-tree__skip:focus { position: static; display: inline-flex; align-items: center; width: auto; height: auto; min-height: var(--io-control-tap-min); clip-path: none; margin-bottom: var(--io-space-2); }
 
-family-navigator { display: block; min-width: 0; max-width: 100%; }
+/* Touch (HFY-TSK-300): the element handles no touch event of its own. pan-y leaves a vertical drag, which starts on a card as often as not, to
+   the page; the three things that scroll sideways (the children row, the brothers and sisters row and the tabs) say so themselves, and their
+   scrolling is the browser's. (The brothers and sisters row shares .hfy-nav__row, and was already a scroll-snap row, so it is a deliberate
+   widening of the AC's "children row and the union tabs": the page still never scrolls sideways.) A page that scrolls vertically under a finger is what the element must never take away. */
+family-navigator { display: block; min-width: 0; max-width: 100%; touch-action: pan-y; }
 .hfy-nav { box-sizing: border-box; min-width: 0; max-width: 100%; }
 .hfy-nav__title { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .hfy-tree .hfy-nav__notice { margin: 0 0 var(--io-space-3); padding: var(--io-space-2) var(--io-space-3); border: 1px dashed var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); color: var(--io-color-semantic-text-dim); }
@@ -129,11 +133,31 @@ family-navigator { display: block; min-width: 0; max-width: 100%; }
 }
 
 /* Children and siblings: a row that scrolls inside itself, one card snapping into place at a time. The page never scrolls sideways. */
-.hfy-nav__row { align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; padding-bottom: var(--io-space-2); }
+.hfy-nav__row { touch-action: pan-x pan-y; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; padding-bottom: var(--io-space-2); }
 .hfy-nav__row > .hfy-nav__item { flex: 0 0 auto; width: calc(var(--io-space-9) * 2.5); scroll-snap-align: start; }
 
+/* The six movement buttons: to parents, to children, previous and next sibling, previous and next partner family. Two to a line on a phone, all six
+   on one line from 43rem. A button with nowhere to go is dimmed (aria-disabled) and stays in the tab order. Coupling: islands/src/islands/tree.css reserves this block's height in the loading skeleton (3 rows of tap targets on a phone, 1 from 43rem); change the row count in both. */
+.hfy-nav__moves { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--io-space-2); margin: var(--io-space-3) 0 0; }
+@media (min-width: 43rem) { .hfy-nav__moves { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.hfy-tree .hfy-nav__move {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: var(--io-space-1) var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-tree .hfy-nav__move:hover { border-color: var(--io-color-semantic-accent); }
+.hfy-tree .hfy-nav__move[aria-disabled="true"] { color: var(--io-color-semantic-text-dim); border-style: dashed; cursor: default; }
+.hfy-tree .hfy-nav__move[aria-disabled="true"]:hover { border-color: var(--io-color-semantic-border); }
+
 /* One tab per union. */
-.hfy-nav__tabs { display: flex; gap: var(--io-space-2); margin-bottom: var(--io-space-2); overflow-x: auto; }
+.hfy-nav__tabs { display: flex; gap: var(--io-space-2); margin-bottom: var(--io-space-2); overflow-x: auto; touch-action: pan-x pan-y; }
 .hfy-tree .hfy-nav__tab {
   box-sizing: border-box;
   flex: 0 0 auto;
@@ -213,3 +237,10 @@ family-navigator { display: block; min-width: 0; max-width: 100%; }
 .hfy-tree-details .hfy-tree__link { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }
 /* A name in the Sheet, the panel and its lists is a link, so it is a 44 px target (the panel is inside .hfy-tree, the Sheet is not). */
 .hfy-tree-details .hfy-person-name, .hfy-tree__panel-name .hfy-person-name { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); }
+
+/* ---- Motion (HFY-TSK-300). A re-centre eases the new family in: it fades up from a little below, in the base duration token (200 ms; the ADR's
+   ceiling is 250 ms). Only a re-centre does this (family-navigator.js adds --enter), never the first draw or a tab change. Under
+   prefers-reduced-motion: reduce it is instant: tree.css switches every animation and transition inside .hfy-tree off, and the kit's own
+   reduced-motion block zeroes the duration token this reads, so either one alone would do it. There is no slide to fall back from. ---- */
+@keyframes hfy-nav-in { from { opacity: 0; transform: translateY(var(--io-space-2)); } to { opacity: 1; transform: none; } }
+.hfy-nav--enter { animation: hfy-nav-in var(--io-motion-duration-base) var(--io-motion-easing-standard) both; }
