@@ -981,6 +981,8 @@ describe("wired like the Lambda: createAccessRequestRoutes", () => {
     expect(bodyOf(await off.ar.handle("/access-request/start", post("/access-request/start", {})))).toEqual({ detail: "closed" });
     const unset = wired({});
     expect((await unset.ar.handle("/access-request/config", getConfig())).statusCode).toBe(503);
+    // isOpen() is what the edge's denied page reads for its "ask to join" link (HFY-TSK-140): exactly the flag the routes read
+    expect([wired(ENV).ar.isOpen(), off.ar.isOpen(), unset.ar.isOpen()]).toEqual([true, false, false]);
     const noAlarm = wired({ ...ENV, JOIN_MAIL_ALARMS: "" });
     expect((await noAlarm.ar.handle("/access-request/start", post("/access-request/start", { email: "new@example.com", turnstileToken: "t" }))).statusCode).toBe(503);
     expect(noAlarm.sesCalls).toEqual([]);

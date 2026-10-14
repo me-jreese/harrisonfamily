@@ -1,0 +1,23 @@
+/* The signed-out "new here? ask to join." line on /, /about/ and /contact/ (join-entry.jsx, HFY-TSK-140). Aliases only. A quiet dim
+   line; the link is its own 44-high target. */
+.hfy-join-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-space-1);
+  margin: var(--io-space-3) 0 0;
+  color: var(--io-color-semantic-text-dim);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-md);
+  line-height: var(--io-typography-leading-normal);
+}
+.hfy-join-entry .hfy-join-entry__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  color: var(--io-color-semantic-link);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: underline;
+}
+.hfy-join-entry .hfy-join-entry__link:hover { color: var(--io-color-semantic-link-hover); }
+.hfy-join-entry .hfy-join-entry__link:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }

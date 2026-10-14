@@ -98,31 +98,40 @@ export function gisFocusRing(html) {
  * copies it; where the clipboard is refused the button selects the field instead. Every other message clears the mark (ioMsg replaces
  * the text, so the button goes with it). Pages without a kit ioFail (forgot, reset, link) or without a nonce are left alone.
  */
-export const ALLOWLIST_NOTICE_SCRIPT = '(function(){if(typeof ioFail!=="function"||typeof ioMsg!=="function")return;' +
+const ALLOWLIST_HEAD = '(function(){if(typeof ioFail!=="function"||typeof ioMsg!=="function")return;' +
   'var kitMsg=ioMsg,kitFail=ioFail,LABEL="copy my email",DONE="copied";' +
   'window.ioMsg=function(id,t){kitMsg(id,t);var e=document.getElementById(id);if(e){e.removeAttribute("data-detail");e.removeAttribute("aria-atomic")}};' +
   'window.ioFail=function(id,r){kitFail(id,r);var e=document.getElementById(id);var d=r&&r.body&&r.body.detail;' +
-  'if(!e||d!=="not_allowlisted")return;e.setAttribute("data-detail",d);' +
-  'var f=document.getElementById("email");var a=f&&f.value?String(f.value).trim():"";if(!a)return;' +
+  'if(!e||d!=="not_allowlisted")return;e.setAttribute("data-detail",d);';
+// HFY-TSK-140 (surfaces.md 7.10): with ACCESS_REQUESTS=on the same banner also carries a quiet "ask to join" link to /join/. A same-origin
+// link with no query string: the typed address never travels in a URL. It is added before the copy button and replaced with the text by ioMsg.
+const ALLOWLIST_JOIN = 'var j=document.createElement("a");j.href="/join/";j.setAttribute("data-hfy-join","");j.textContent="ask to join";' +
+  'e.appendChild(j);';
+const ALLOWLIST_TAIL = 'var f=document.getElementById("email");var a=f&&f.value?String(f.value).trim():"";if(!a)return;' +
   'e.setAttribute("aria-atomic","false");' + // the role=alert message is no longer re-read whole when the button says "copied"
   'var b=document.createElement("button");b.type="button";b.setAttribute("data-copy-email","");b.textContent=LABEL;' +
   'function pick(){f.focus();f.select()}' +
   'b.addEventListener("click",function(){try{navigator.clipboard.writeText(a).then(function(){b.textContent=DONE;' +
   'setTimeout(function(){b.textContent=LABEL},2000)},pick)}catch(x){pick()}});e.appendChild(b)}})();';
-export function allowlistNotice(html) {
+export const ALLOWLIST_NOTICE_SCRIPT = ALLOWLIST_HEAD + ALLOWLIST_TAIL;
+export const ALLOWLIST_NOTICE_JOIN_SCRIPT = ALLOWLIST_HEAD + ALLOWLIST_JOIN + ALLOWLIST_TAIL;
+export function allowlistNotice(html, { join = false } = {}) {
   if (typeof html !== "string" || !/function ioFail\(/.test(html) || html.includes("data-hfy-allowlist")) return html;
   const nonce = /<script\b[^>]*\bnonce="([^"]+)"/i.exec(html)?.[1];
   if (!nonce || !/<\/body>/i.test(html)) return html;
-  return html.replace(/<\/body>/i, `<script nonce="${nonce}" data-hfy-allowlist>${ALLOWLIST_NOTICE_SCRIPT}</script></body>`);
+  const script = join ? ALLOWLIST_NOTICE_JOIN_SCRIPT : ALLOWLIST_NOTICE_SCRIPT;
+  return html.replace(/<\/body>/i, `<script nonce="${nonce}" data-hfy-allowlist>${script}</script></body>`);
 }
 /**
  * The same state on the denied page (the kit's 403 HTML page for a callback or a form post the allowlist refused): its one sentence is
  * the allowlist message, so it gets the same banner (auth-edge.css styles p[data-state="not_allowlisted"]). There is no address to copy
  * on that page. Only the kit's denied markup (h1, then the sentence) of a 403 is touched.
  */
-export function deniedNotice(html, statusCode) {
+export function deniedNotice(html, statusCode, { join = false } = {}) {
   if (statusCode !== 403 || typeof html !== "string") return html;
-  return html.replace(/(<main>(?:<img[^>]*>)?<h1>[^<]*<\/h1>)<p>/, '$1<p data-state="not_allowlisted">');
+  const marked = html.replace(/(<main>(?:<img[^>]*>)?<h1>[^<]*<\/h1>)<p>/, '$1<p data-state="not_allowlisted">');
+  // HFY-TSK-140: with ACCESS_REQUESTS=on the denied page also offers "ask to join" (a plain /join/ link; no address in the URL).
+  return join ? marked.replace(/(<p data-state="not_allowlisted">[\s\S]*?<\/p>)/, '$1<p data-hfy-join>new here? <a href="/join/">ask to join.</a></p>') : marked;
 }
 
 /**
@@ -209,6 +218,8 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
   const siteOrigin = String(manifest.authOrigin ?? `https://${manifest.site}`).replace(/\/+$/, "");
   const returnOrigins = (manifest.returnOrigins ?? []).map((o) => String(o).replace(/\/+$/, ""));
   const safe = (v) => safeReturnTo(v, siteOrigin, returnOrigins);
+  /** True while ACCESS_REQUESTS is on: the sign-in and denied pages then link to /join/ (HFY-TSK-140). An edge built without access requests never does. */
+  const joinOpen = () => { try { return accessRequests?.isOpen?.() === true; } catch { return false; } };
 
   /** 429 when any forgot-password window is exhausted; undefined to let the request through. Only counts requests the kit would act on. */
   async function forgotLimited(event) {
@@ -307,7 +318,8 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
     // backToSite (the signed-in /auth/link has no way back to the site).
     if (isHtml && typeof out.body === "string") {
       const page = gisFocusRing(gisButtonDark(out.body.replace(ABS_LINK, `$1${MOUNT}/$2`)));
-      out.body = rel === "/link" ? backToSite(page) : allowlistNotice(deniedNotice(kitVoice(page), out.statusCode));
+      const join = joinOpen();
+      out.body = rel === "/link" ? backToSite(page) : allowlistNotice(deniedNotice(kitVoice(page), out.statusCode, { join }), { join });
     }
     return out;
   }
