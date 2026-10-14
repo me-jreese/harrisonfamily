@@ -96,7 +96,8 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'offline.html' \
     --exclude 'images/pwa-*.png' \
     --exclude 'posts/' \
-    --exclude 'me/'
+    --exclude 'me/' \
+    --exclude 'tree/'
   # The excludes after .DS_Store are repo-owned files the Eleventy workspace does not produce (11ty/README.md, HFY-R46/R58).
   # js/person-page.js carries the authV2 data-gate path (HFY-TSK-080) that the workspace copy lacks. family-login/ is the static
   # redirect page to /auth/login (HFY-TSK-317), which the workspace's Google sign-in page is not; css/auth-edge.css is the auth

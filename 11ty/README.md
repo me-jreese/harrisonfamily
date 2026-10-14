@@ -68,6 +68,6 @@ rsync -a --delete -n -i \
   --exclude css/hfy-theme.css --exclude fonts/ \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \
   --exclude 'images/pwa-*.png' \
-  --exclude posts/ --exclude me/ --exclude uploads/ \
+  --exclude posts/ --exclude me/ --exclude tree/ --exclude uploads/ \
   <eleventy-source>/_site/ <repo>/11ty/
 ```
