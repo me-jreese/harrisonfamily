@@ -105,7 +105,7 @@ Paths:
 - [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `photo-tags.js` (the pure geometry, rect words and tag cleaning), `photo-tags-ui.js` (the DOM part of the photo tags island), `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css`, `islands/src/guard.css` and `islands/src/photo-tags.css` sit beside the directory.
 - [`islands/build.mjs`](../../islands/build.mjs): the build. It bundles the islands with esbuild and writes the outputs in [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - [`islands/kit-content.mjs`](../../islands/kit-content.mjs): how the build and the `node:test` suites load `@io-kit/content/react`. Its esbuild plugin keeps the kit's `DocumentEditor` from bundling Cloudscape's stylesheets into the posts islands, and the build fails if an island bundles `DocumentEditor`.
-- [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract` and `lint:css`. Every dependency is pinned to an exact version.
+- [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract`, `lint:css` and `measure:search`. Every dependency is pinned to an exact version.
 - [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs): the configuration of the island specs. See [Tests](#tests).
 - [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh): runs `npm ci` and `npm run build:islands`, then checks that `shell.js` and `shell.css` exist and prints `built islands -> 11ty/js/islands`. The build it runs writes every other output too, although the script checks only those two files.
 - [`11ty/js/islands/`](../../11ty/js/islands/): the committed build output.
@@ -501,8 +501,8 @@ Paths:
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): `node:test`.
 - [`tests/client/`](../../tests/client/): `node:test` suites `auth-continuity.test.mjs` and `data-fetch.test.mjs`.
 - [`islands/tests/`](../../islands/tests/):
-  - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
-  - Playwright specs: `asset-versions`, `auth-continuity`, `d11-fixes`, `flags-fallback`, `islands-look`, `legacy-pages`, `notifications`, `person`, `person-page`, `posts`, `qa-fixes`, `qa2-fixes`, `search`, `shell`, `sw` and `theme-foundation`.
+  - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `feed-conformance`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
+  - Playwright specs: `asset-versions`, `auth-continuity`, `d11-fixes`, `flags-fallback`, `islands-look`, `legacy-pages`, `notifications`, `notifications-roundtrip`, `person`, `person-page`, `posts`, `qa-fixes`, `qa2-fixes`, `search`, `shell`, `sw` and `theme-foundation`.
   - Fixtures, all synthetic: `fixtures/islands-look.json`, `fixtures/person-legacy.json`, `fixtures/person-synthetic.json` and `fixtures/tree-synthetic.svg`.
 - [`scripts/cloudfront/test/`](../../scripts/cloudfront/test/): `node:test` suite `append-index.test.mjs` and its case table `append-index.cases.json`.
 - [`scripts/infra/test/`](../../scripts/infra/test/):
