@@ -59,9 +59,14 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     if (!c) throw new CommentError("not_found", `comment ${id}`);
     return c;
   }
-  /** A comment is text, a photo, or both: the trimmed body may be empty only while the comment holds at least one photo. */
+  /**
+   * A comment is text, a photo, or both: the trimmed body may be empty only while the comment holds at least one photo.
+   * `body` is a required string on create and edit, photo or not (the kit's CreateInput/EditInput): a missing or non-string
+   * body is refused rather than read as "", so a PATCH that leaves `body` out cannot wipe a photo comment's text.
+   */
   function body(raw, photoCount = 0) {
-    const text = typeof raw === "string" ? raw.trim() : "";
+    if (typeof raw !== "string") throw new CommentError("validation", "body is required", "body");
+    const text = raw.trim();
     if (text === "" && photoCount === 0) throw new CommentError("validation", "body is required", "body");
     if (text.length > maxLength) throw new CommentError("validation", `body exceeds ${maxLength} characters`, "body");
     return text;

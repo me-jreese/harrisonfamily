@@ -123,6 +123,18 @@ describe("comment attachments: create", () => {
     expect(none.body.error).toBe("validation");
   });
 
+  it("a photo comment without a body field is 422 \"body is required\": only an explicit empty string goes with a photo", async () => {
+    const up = await presign();
+    const before = comments().length;
+    for (const over of [{}, { body: null }, { body: 0 }]) {
+      const r = await create({ ...over, attachments: [att(up)] });
+      expect(r.status, JSON.stringify(over)).toBe(422);
+      expect(r.body).toMatchObject({ error: "validation", message: "body is required", details: { field: "body" } });
+    }
+    expect(comments().length).toBe(before);
+    expect(upload(up).attached).toBeUndefined();
+  });
+
   it("takes up to 4 photos, not 5", async () => {
     const four = await Promise.all([1, 2, 3, 4].map(() => presign()));
     expect((await create({ body: "four", attachments: four.map((u) => att(u)) })).status).toBe(201);
@@ -249,6 +261,33 @@ describe("comment attachments: edit", () => {
     expect(audits().length).toBe(before);
     const words = await patch(made.id, { body: "new words" });
     expect(words.body.attachments).toHaveLength(2);
+  });
+
+  it("a PATCH that leaves out body, or sends a non-string one, is 422 \"body is required\" and keeps the text, photos and audit trail", async () => {
+    const before = audits().length;
+    for (const edit of [{}, { attachments: [att(first, { alt: "new alt" })] }, { body: null }, { body: 7, attachments: made.attachments }]) {
+      const r = await patch(made.id, edit);
+      expect(r.status, JSON.stringify(edit)).toBe(422);
+      expect(r.body).toMatchObject({ error: "validation", message: "body is required", details: { field: "body" } });
+    }
+    const [row] = comments().filter((c) => c.comment?.id === made.id);
+    expect(row.comment.body).toBe("caption");
+    expect(row.comment.attachments).toEqual(made.attachments);
+    expect(row.comment.edited_at).toBeUndefined();
+    expect(audits().length).toBe(before);
+  });
+
+  it("with commentPhotosV1 off, a PATCH without body still cannot wipe a photo comment's text", async () => {
+    let flags = { commentPhotosV1: true };
+    const sw = makeApi({ flags: () => Promise.resolve(flags) });
+    const t = await signToken("I0001");
+    const up = (await sw.call("POST", "/api/uploads", { token: t, body: { contentType: "image/jpeg", size: 9, purpose: "comment" } })).body;
+    const c = (await sw.call("POST", "/api/comments", { token: t, body: { subject: SUBJECT, body: "hello", attachments: [att(up)] } })).body;
+    flags = { commentPhotosV1: false };
+    const r = await sw.call("PATCH", `/api/comments/${c.id}`, { token: t, body: { subject: SUBJECT } });
+    expect(r.status).toBe(422);
+    expect(r.body.message).toBe("body is required");
+    expect(sw.ddb.all().find((i) => i.comment?.id === c.id).comment.body).toBe("hello");
   });
 
   it("cannot add a photo: your own fresh upload is 422, another member's key is 403 upload_not_owned, and nothing attaches", async () => {

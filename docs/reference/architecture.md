@@ -32,7 +32,9 @@ browser ──HTTPS──▶ Cloudflare (proxies <site>) ──HTTPS──▶ Cl
 
 hfy-api         ▶ DynamoDB hfy-app
                 ▶ S3 <config-bucket>/config/ (admins.json; groups.json for MCP)
-                ▶ S3 <site-bucket>: presigned PUT into uploads/posts/; GetObject on person/* (author labels)
+                ▶ S3 <site-bucket>: presigned PUT into uploads/posts/ and uploads/comments/;
+                  ranged GetObject on both (location check), HEAD on comment photos;
+                  GetObject on person/* (author labels)
                 ▶ JWKS from https://<site>/auth/.well-known/jwks.json (back through Cloudflare and CloudFront)
                 ▶ Secrets Manager (VAPID secret) and web push services (subscription endpoints), only when HasVapid
 hfy-auth-edge   ▶ DynamoDB hfy-app (refresh tokens, links, passkeys and their challenges, MCP codes and tokens, rate counters)
@@ -189,6 +191,7 @@ None of the buckets is managed by a stack.
 | Root | The static site, synced from `11ty/` | The `s3_static` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), run by [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) | No (this is what the sync owns) |
 | `person/`, `family/`, `event/`, `note/`, `place/`, `media/` | Private Gramps data and media. Served through the six gated behaviors | The private data sync ([How to refresh the family data from Gramps](../how-to/refresh-the-family-data.md)), which syncs these six prefixes and nothing else | Yes: `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` |
 | `uploads/posts/<ulid>/photo.<ext>` | Photos attached to member posts (`UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js), HFY-R58). The server names every new upload `photo.<ext>`; older uploads keep the uploader's cleaned file name. Served through the `/uploads/*` CloudFront behavior, in its public or members-only state ([Request routing](#request-routing)) | Browsers, by presigned PUT issued by `hfy-api` | Yes: `uploads/*`. The deploy role also denies `s3:PutObject` and `s3:DeleteObject` here ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml), `ProtectMemberUploads`) |
+| `uploads/comments/<ulid>/photo.<ext>` | Photos attached to member comments, behind `commentPhotosV1` (`COMMENT_UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js); [API: Comment photos](api.md#comment-photos)). JPEG, PNG or WebP only, named `photo.<ext>` by the server. Removing a photo from a comment, or deleting the comment, leaves the object in place. Served through the same `/uploads/*` behavior as post photos | Browsers, by presigned PUT issued by `hfy-api` for `purpose` `comment` | Yes: `uploads/*`, under the same deploy-role denial |
 | `media/posts/<ulid>/<name>` | Legacy: photos uploaded before HFY-R58, if any remain. Nothing moved them | No writer since HFY-R58 | Yes, under `media/*`. The private data sync deletes them unless run with `--no-delete` |
 | `js/islands/` | Island bundles | The `11ty/` sync, from the committed build output (HFY-R58) | No (this is site output) |
 | `css/hfy-theme.css`, `css/auth-edge.css`, `fonts/` | The design system's theme layer, the auth edge's sign-in stylesheet, and the self-hosted brand fonts with content-hashed file names ([Theme and asset build](theme-and-asset-build.md)) | The `11ty/` sync, from the committed islands-build output | No (this is site output) |
@@ -367,7 +370,7 @@ Written by `hfy-api`:
 | gramps_id guard | `GID#<Class>#<gramps-id>` | `META` | - | - (a Person item is never deleted) | `api/src/sync/apply.js` |
 | gramps_id alias | `IDALIAS#<Class>#<old-gramps-id>` | `META` | - | - (never deleted) | `api/src/sync/apply.js` |
 | Record batch audit | `AUDIT#records:<batch-id>` | `<iso-time>#<uid>` | `AUDIT` / same as SK | - | `api/src/sync/apply.js`, through `auditItem` |
-| Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post attaches the upload | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) |
+| Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post or comment of the upload's `purpose` attaches it | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) (`purpose` `post`) or by [`api/src/comment-photos.js`](../../api/src/comment-photos.js) in the comment write of [`api/src/comments.js`](../../api/src/comments.js) (`purpose` `comment`) |
 | Allowlist grant, one per email | `ALLOW#<email>` | `META` | `ALLOWSUB#<gramps-id>` / `ALLOW#<email>` (its own PK) | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js) (writes), read by `hfy-auth-edge` |
 | Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |

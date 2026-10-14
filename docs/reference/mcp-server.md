@@ -160,6 +160,8 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 
 No other route is a tool: comment edits and reactions, post edits and visibility changes, uploads, notification settings and profile links are reachable only from the site. [`api/parity/map.yaml`](../../api/parity/map.yaml) pairs each tool with the route handler a person uses for the same action, and [`api/parity/routes.yaml`](../../api/parity/routes.yaml) lists the site pages that call those handlers.
 
+Comment photos ([API: Comment photos](api.md#comment-photos), behind `commentPhotosV1`) are site-only too. `hfy_comments_create` has no `attachments` argument, and `comments.update` and `uploads.presign` are not tools. A photo-only comment, whose `body` is the empty string, cannot be made through MCP: `args` drops an empty `body`, and the route then answers `body is required`.
+
 ### Arguments
 
 Every input schema is an object with `additionalProperties: false`. The `required` lists below are copied from `routes.js`. Each tool's `args` function maps its arguments onto the `params`, `query` and `body` the route handler receives.
@@ -403,5 +405,3 @@ These are differences between the code, its comments and its configuration, as o
 - [Codebase map](codebase-map.md): where each capability lives.
 - [The identity model](../explanation/identity-model.md) and [How member content stays accountable](../explanation/member-content-design.md): the reasoning.
 - [How to deploy the app stack and its CloudFront behaviors](../how-to/deploy-the-app-stack.md), [How to deploy and update the Lambda@Edge functions](../how-to/deploy-the-edge-functions.md), [How to connect an MCP client and run an admin delete](../how-to/connect-an-mcp-client.md), [How to add or remove a family member's access](../how-to/manage-family-access.md), [How to run the test suites](../how-to/run-the-tests.md), [How to diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md).
-
-Comment photo `attachments` (`POST`/`PATCH /api/comments`, behind `commentPhotosV1`) are HTTP-only for now: the MCP comment tools expose no `attachments` field, and `hfy_comments_create` still requires `body` (the HTTP route allows an empty body on a photo-only comment). Add the field when the feature is on.
