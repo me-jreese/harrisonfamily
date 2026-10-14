@@ -27,6 +27,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `family-login/index.html` | A redirect page to `/auth/login` (HFY-TSK-317), carrying `?next=<path>` over as `returnTo`, so old bookmarks of the retired Google sign-in page still work. The source's page is the Google sign-in, which the refresh must not bring back. |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | The PWA shell (HFY-TSK-064). Every islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. The worker is registered at `/sw.js?v=<sha8 of sw.js>` and names its cache after that hash. |
 | `tree/` | The page of the `tree` island (`familyViz`, HFY-TSK-201): `main.hfy-page`, the heading "family", the island host and a no-JavaScript line. Public and static; the graph it shows is gated. |
+| `edit/` | The page of the `editor` island (`recordEdit`, HFY-TSK-212): `main.hfy-page`, the heading "edit", the island host and a no-JavaScript line. Public and static; the record it edits comes from the gated `/api/edit/` routes, which answer `404` while `HFY_EDITING` is off. |
 | `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068), and `me/index.html`, the settings hub of the `navMe` island `settings` (HFY-TSK-091), `me/links/index.html`, the profile links editor of the `profileLinks` island `links-editor` (HFY-TSK-217), and `me/inbox/index.html`, the notification inbox page of the `inboxV1` island `inbox-page` (HFY-TSK-185). |
 | `private/index.html` | The route of the shell's own-page tab: "me" since the `navMe` flip (HFY-TSK-223), "family" with `navMe` off (HFY-TSK-091). Its title is "your page" (`islands/copy.mjs`). It is a redirect page with no person data. Signed in, it sends the visitor to their own page, `/person/?id=<gramps id>`; signed out, to the edge sign-in, which returns to `/private/`. It replaced the 2025 "Person Directory" dev scaffold. It is not `/family/`, which is a gated data prefix. The refresh excludes `private/`; the source's matching page is `src/private/index.njk`. |
 | `README.md` | This file. |
@@ -68,6 +69,6 @@ rsync -a --delete -n -i \
   --exclude css/hfy-theme.css --exclude fonts/ \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \
   --exclude 'images/pwa-*.png' \
-  --exclude posts/ --exclude me/ --exclude tree/ --exclude uploads/ \
+  --exclude posts/ --exclude me/ --exclude tree/ --exclude edit/ --exclude uploads/ \
   <eleventy-source>/_site/ <repo>/11ty/
 ```
