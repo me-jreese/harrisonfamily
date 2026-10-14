@@ -3,7 +3,7 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt } from "./features.js";
+import { describeGate, gateExempt, requireFeature } from "./features.js";
 
 export const API_NAME = "hfy-api";
 export const API_VERSION = "0.1.0";
@@ -70,6 +70,16 @@ export const ROUTES = defineRoutes([
     name: "me.get", method: "GET", path: "/me", summary: "Who you are: id, label, admin, server-computed can.*, and admin badges (no MCP tool)",
     gate: gateExempt("identity route: every surface reads it before it knows which flags are on (BRD2 10.1, io-approved)"),
     handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount, log: c.log })),
+  },
+  {
+    name: "links.get", method: "GET", path: "/people/:id/links", summary: "A person's profile links, their version and whether you can edit them (no MCP tool)",
+    gate: requireFeature("profileLinks"),
+    handler: async (c) => ok(await c.links.get(c.params.id)),
+  },
+  {
+    name: "links.put", method: "PUT", path: "/people/:id/links", summary: "Set or clear profile links ({links: {platform: string|null}, version}): the owner sets or clears, an admin only clears (no MCP tool)",
+    gate: requireFeature("profileLinks"),
+    handler: async (c) => ok(await c.links.put(c.params.id, c.body)),
   },
   {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first (cursor), with reactions",
@@ -170,6 +180,6 @@ export function buildCaps() {
     comments: { reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param: "required on PATCH/DELETE/react (query or body)" },
     mcp: { resource: MCP_RESOURCE, tools: ROUTES.filter((r) => r.mcp).map((r) => ({ name: r.mcp.tool, action: r.name, write: r.write })) },
     notifications: { types: NOTIFY_TYPES, default_level: 0 },
-    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility"] },
+    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"] },
   };
 }

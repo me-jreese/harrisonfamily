@@ -2,7 +2,7 @@
 
 The family graph builder (HFY-PLN-002, task `viz-graph-builder`). It turns `_class`-tagged Gramps JSON lines into `person/graph.json` (schema v1), the one static file the family-tree page reads. The design is in the plan's visualization domain, sections 5.1 to 5.3 and 17.
 
-This package is private. Its one runtime dependency is `sharp` (Apache-2.0, exact pin, 0.35.x, Node 20.9 or later), used only to crop faces; it and its libvips binaries (LGPL) stay in `graph/node_modules` and never reach the site output. `ajv` is a dev dependency, and the tests use it to cross-check the built-in schema validator. Node 22 or later.
+This package is private. Its runtime dependencies are `d3-dag` (exact pin 1.2.2, the poster layout; see [Layout](#layout)) and `sharp` (Apache-2.0, exact pin, 0.35.x, Node 20.9 or later), used only to crop faces; they and their dependencies (sharp's libvips binaries are LGPL, javascript-lp-solver is Unlicense) stay in `graph/node_modules` and never reach the site output, and none appears in another lockfile in the repository. `ajv` is a dev dependency, and the tests use it to cross-check the built-in schema validator. Node 22 or later.
 
 ## Run it
 
@@ -89,6 +89,18 @@ node graph/bin/build-graph.mjs lines.jsonl --gazetteer <dir> --out <staging>
 
 Singletons are their own components at generation 0, with one level each, as the design's step 7 says. The design's invented example shows a singleton with `generation: null` and no `generations[]` entry; the prose is followed here.
 
+## Layout
+
+`src/layout.mjs` (`viz-graph-v2-layout`, the viz ADR's section 4.7) adds the optional `layout` block: x and y for the desktop poster, computed here at build time by d3-dag 1.2.2, so no layout code ships to the client. Schema minor 3.
+
+- **The graph d3-dag sees.** Two kinds of node, people and unions, with links partner to union to child. A child of two unions has two parents; a person in two unions is laid out once.
+- **Ranks.** A person sits at rank 2 x generation. A union with partners sits at 2 x (its highest partner generation) + 1. A partnerless union sits at 2 x (its lowest child generation) - 1. Without these, parentless siblings and their generation split across layers.
+- **Operators.** `layeringSimplex` with those ranks, `decrossTwoLayer` and `coordGreedy`, node size 180 x 90. Never `coordSimplex` (217 s and 1,750 s at 2,000 synthetic people, against 12.9 s and 8.8 s) and never `decrossOpt` (NP-complete).
+- **What is left out.** Only components with at least 2 laid-out people are laid out. Singletons and every `generation: null` person (a `GRAPH_CYCLE` member or a descendant of one) are filtered before d3-dag runs, because d3-dag 1.2.2 lays a cyclic graph out without an error.
+- **Output.** Per component: `width`, `height`, `people[]` and `unions[]` as `{ id, x, y }`, and `bends[]` as `{ s, t, points }` for the links that span more than one layer only. Coordinates are integers, every array is sorted by id, and shuffled input gives a byte-identical file. The block is derived, so it is not part of the snapshot digest.
+- **`engine` is `"d3-dag 1.2.2"`, with a space.** `verify()` scans every string outside `/source/` and rejects any `@` as an e-mail address, so `"d3-dag@1.2.2"` is `PRIVACY_VIOLATION` (exit 4). The same scan rejects a version that looks like a day-precise date (`1.10.12`), so a later pin change re-runs `test/layout.test.mjs` before it merges. `source.builder` keeps `hfy-graph@<version>` under its `/source/` exemption and strict pattern.
+- **Budgets** (`test/layout-budget.test.mjs`, seeded synthetic families): graph.json gzipped with the layout block and photoEdges, at most 25 KB at 231 people and 150 KB at 2,000; layout time (the elapsed time of the layout call, which is what is asserted; the CPU time and the load average are printed beside it) at most 5 s at 231 people, run everywhere; at most 60 s at 2,000 people, only when `HFY_GRAPH_PERF=1` (the worker and io's machine, never a shared CI runner). The 2,000-person size case runs the full 2,000-person layout, so it is gated on `HFY_GRAPH_PERF=1` too. `photoEdges` is simulated in the size test (about 3 tagged photos per person, the density where the ADR says the budget is at risk) until `viz-graph-v2-data` emits the real block; re-run against it then. A miss fails the test. The remedy is an amendment to the ADR (for example a separate gated layout file), never a silent change to a number. The cloud builder (`viz-graph-cloud-source`) runs the same layout in Lambda, so its timeout has to allow tens of seconds at 2,000 people.
+
 ## Face crops
 
 `src/faces.mjs` (`viz-face-crops`, the design's section 5.5, VIZ-D9) crops each person's face from `Person.media_list[0]`, Gramps' person image, unless that MediaRef or its Media is private.
@@ -103,7 +115,7 @@ Singletons are their own components at generation 0, with one level each, as the
 
 ## Photo co-occurrence (`photoEdges`)
 
-`projectRecords()` in `src/project.mjs` (`viz-graph-v2-data`, the viz ADR's section 4.7) emits `photoEdges`, an optional top-level block added in schema minor 2. The `layout` block is a separate task and a separate bump.
+`projectRecords()` in `src/project.mjs` (`viz-graph-v2-data`, the viz ADR's section 4.7) emits `photoEdges`, an optional top-level block added in schema minor 2; the `layout` block followed as minor 3.
 
 ```json
 "photoEdges": [ { "media": "O9001", "people": ["I9001", "I9003"] } ]
@@ -122,5 +134,7 @@ Singletons are their own components at generation 0, with one level each, as the
 ```sh
 cd graph && npm ci && node --test
 ```
+
+`HFY_GRAPH_PERF=1 node --test` also runs the 2,000-person layout-time budget (60 s, elapsed time, so run it on a quiet machine) and the 2,000-person size budgets, which are skipped otherwise.
 
 The suites use synthetic fixtures only (invented names, places and ids). `UPDATE_GOLDEN=1 node --test test/build.test.mjs` rewrites the messy-genealogy golden after an intended output change. Never put a real name, date, Gramps id or contact detail in a fixture.
