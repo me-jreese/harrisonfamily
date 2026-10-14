@@ -93,6 +93,11 @@ class VectorCasesTest(unittest.TestCase):
                 self.assertEqual(scanner.scan_text(text), spans)
 
 
+#: A hang guard, not a benchmark. These inputs take well under 0.5 s of CPU on a quiet machine; a regex that backtracks
+#: quadratically on them takes minutes. CPU time (not wall-clock) keeps a loaded CI runner from failing the suite.
+CPU_GUARD_SECONDS = 10.0
+
+
 class GuaranteesTest(unittest.TestCase):
     def test_kinds_and_spans_only_and_nothing_logged(self):
         """AC5: a finding is {kind, start, end, rule}; the matched text is never returned, printed or logged."""
@@ -174,11 +179,11 @@ class GuaranteesTest(unittest.TestCase):
             "-" * 20000, "1" * 20000, "May " * 5000, "12 a " * 4000 + "Street",
         ]
         for s in inputs:
-            t0 = time.monotonic()
+            t0 = time.process_time()
             scanner.scan_text(s)
-            self.assertLess(time.monotonic() - t0, 2.0, s[:12])
+            self.assertLess(time.process_time() - t0, CPU_GUARD_SECONDS, s[:12])
 
-    def test_100k_character_inputs_finish_in_under_1s(self):
+    def test_100k_character_inputs_finish_in_linear_time(self):
         """Linear URL, keyword and box scans (the shared/privacy-guard.test.mjs inputs)."""
         n = 100000
 
@@ -191,9 +196,9 @@ class GuaranteesTest(unittest.TestCase):
             "p" + " " * n + "x", "pmb" + " " * n + "x", "01-" * (n // 3) + "01",
         ]
         for s in inputs:
-            t0 = time.monotonic()
+            t0 = time.process_time()
             scanner.scan_text(s)
-            self.assertLess(time.monotonic() - t0, 1.0, ascii(s[:16]))
+            self.assertLess(time.process_time() - t0, CPU_GUARD_SECONDS, ascii(s[:16]))
 
 
 if __name__ == "__main__":

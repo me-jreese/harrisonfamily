@@ -25,7 +25,15 @@ const ledger = (w) => {
   return { counters, events };
 };
 const total = (w, who) => ledger(w).counters[who ? `CSTAT#person:${who}|TOTAL` : "CSTAT#site|TOTAL"]?.n ?? 0;
-const upload = (n) => ({ kind: "image", url: `/uploads/posts/01J0000000000000000000000${n}/a.jpg`, mime: "image/jpeg" });
+// `n` member-upload photos for `token`, each presigned through POST /api/uploads, so a post may attach them (content.js bindUploads).
+const photos = async (w, token, n) => {
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    const up = (await w.call("POST", "/api/uploads", { token, body: { contentType: "image/jpeg", size: 9 } })).body;
+    out.push({ kind: "image", url: up.publicUrl, mime: "image/jpeg" });
+  }
+  return out;
+};
 
 describe("contribOps", () => {
   it("builds the event and the five counters with the BRD2 section 4 keys", () => {
@@ -215,7 +223,7 @@ describe("posts earn credit once, hide with withdraw, and lose it on delete", ()
   it("a post with 3 photos adds 4; deleting it returns every counter to 0", async () => {
     const w = makeApi();
     const t = await signToken("I0001");
-    const r = await publish(w, t, { subject: "I0009", attachments: [upload(1), upload(2), upload(3)] });
+    const r = await publish(w, t, { subject: "I0009", attachments: await photos(w, t, 3) });
     expect(r.status).toBe(201);
     const { counters, events } = ledger(w);
     expect(events).toHaveLength(1);
@@ -237,7 +245,7 @@ describe("posts earn credit once, hide with withdraw, and lose it on delete", ()
   it("a draft earns nothing; its first publish earns once; withdraw and republish only hide and show", async () => {
     const w = makeApi();
     const t = await signToken("I0001");
-    const d = (await w.call("POST", "/api/posts", { token: t, body: { body: "draft", attachments: [upload(1)] } })).body;
+    const d = (await w.call("POST", "/api/posts", { token: t, body: { body: "draft", attachments: await photos(w, t, 1) } })).body;
     expect(ledger(w).counters).toEqual({});
 
     const vis = (visibility) => w.call("POST", `/api/posts/${d.id}/visibility`, { token: t, body: { visibility } });
@@ -288,7 +296,7 @@ describe("posts earn credit once, hide with withdraw, and lose it on delete", ()
     const t = await signToken("I0001");
     const p = (await publish(w, t)).body;
     const before = JSON.stringify(ledger(w));
-    expect((await w.call("PATCH", `/api/posts/${p.id}`, { token: t, body: { body: "edited", attachments: [upload(1), upload(2)] } })).status).toBe(200);
+    expect((await w.call("PATCH", `/api/posts/${p.id}`, { token: t, body: { body: "edited", attachments: await photos(w, t, 2) } })).status).toBe(200);
     expect(JSON.stringify(ledger(w))).toBe(before);
   });
 
@@ -297,7 +305,7 @@ describe("posts earn credit once, hide with withdraw, and lose it on delete", ()
     const t = await signToken("I0001");
     const p = (await publish(w, t)).body; // published with no photos: weight 1
     expect(total(w)).toBe(1);
-    await w.call("PATCH", `/api/posts/${p.id}`, { token: t, body: { attachments: [upload(1), upload(2)] } });
+    await w.call("PATCH", `/api/posts/${p.id}`, { token: t, body: { attachments: await photos(w, t, 2) } });
     expect(total(w)).toBe(1); // the two photos added later are not credited
     expect(ledger(w).events[0]).toMatchObject({ weight: 1, photos: 0 });
     expect((await w.call("DELETE", `/api/posts/${p.id}`, { token: t })).status).toBe(204);
@@ -322,6 +330,30 @@ describe("posts earn credit once, hide with withdraw, and lose it on delete", ()
     const r = await publish(w, await signToken("I0001"));
     expect(r.status).toBeGreaterThanOrEqual(500);
     expect(w.ddb.all()).toEqual([]);
+  });
+
+  it("a write the R-18 guard refuses earns nothing: the guard runs before the transaction", async () => {
+    const w = makeApi();
+    const t = await signToken("I0001");
+    expect((await publish(w, t, { body: "call me on 555-0142 after dinner" })).status).toBe(422);
+    expect((await w.call("POST", "/api/comments", { token: t, body: { subject: "person:I0009", body: "write to cousin.ann@example.org" } })).status).toBe(422);
+    expect(ledger(w)).toEqual({ counters: {}, events: [] });
+  });
+
+  it("the upload bindings and the credit are one transaction: another member's upload is refused and nothing is credited", async () => {
+    const w = makeApi();
+    const [ann, olive] = await Promise.all(["I0001", "I0002"].map((s) => signToken(s)));
+    const theirs = await photos(w, olive, 1);
+    const r = await publish(w, ann, { attachments: theirs });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("upload_not_owned");
+    expect(ledger(w)).toEqual({ counters: {}, events: [] });
+    // a photo of one's own binds and credits in the same write
+    const mine = await photos(w, ann, 1);
+    const ok = await publish(w, ann, { attachments: mine });
+    expect(ok.status).toBe(201);
+    expect(w.ddb.all().find((i) => i.PK.startsWith("UPLOAD#") && i.key === mine[0].url.replace(/^.*?\/uploads\//, "uploads/"))).toMatchObject({ attached: ok.body.id });
+    expect(total(w, "I0001")).toBe(2);
   });
 });
 
@@ -392,7 +424,7 @@ describe("purgeThread revokes the thread's credits with merged counter updates",
   it("deleting the post through the API purges the discussion and its credits", async () => {
     const w = makeApi();
     const [ann, olive, admin] = await Promise.all(["I0001", "I0002", "I0099"].map((s) => signToken(s)));
-    const p = (await w.call("POST", "/api/posts", { token: ann, body: { body: "news", visibility: "published", attachments: [upload(1)] } })).body;
+    const p = (await w.call("POST", "/api/posts", { token: ann, body: { body: "news", visibility: "published", attachments: await photos(w, ann, 1) } })).body;
     for (let i = 0; i < 31; i += 1) await w.call("POST", "/api/comments", { token: olive, body: { subject: `post:${p.id}`, body: `c${i}` } });
     expect(total(w)).toBe(2 + 31);
     expect((await w.call("DELETE", `/api/posts/${p.id}`, { token: admin })).status).toBe(204);

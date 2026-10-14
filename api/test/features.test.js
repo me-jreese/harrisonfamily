@@ -12,6 +12,7 @@ import { ROUTES, buildCaps, defineRoutes } from "../src/routes.js";
 import { HttpError } from "../src/http.js";
 import { createGroupResolver, parseGroupsConfig, UAT_GROUP } from "../src/policy.js";
 import { createNotifier } from "../src/notify.js";
+import { InMemoryNotificationStore } from "@io-kit/notify/server";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MIN = 60_000;
@@ -388,9 +389,13 @@ describe("caps: every PLN-002 route declares a feature or a server switch; only 
 
 describe("persist-first inbox writes wait for featureOn('inboxV1', recipient) (AC4)", () => {
   const sub = { endpoint: "https://push.example.test/s1", keys: { p256dh: "p", auth: "a" } };
+  // The kit's in-memory NotificationStore, recording every add so a test can assert who got what.
   const fakeInbox = () => {
-    const items = [];
-    return { items, put: async (principal, item) => { items.push({ principal, ...item }); return { unread: items.filter((i) => i.principal === principal).length }; } };
+    const store = new InMemoryNotificationStore();
+    store.items = [];
+    const add = store.add.bind(store);
+    store.add = async (principal, input) => { store.items.push({ principal, type: input.type, navigate: input.navigate, fields: input.fields }); return add(principal, input); };
+    return store;
   };
 
   it("flag off: no inbox item is stored and the push carries no app_badge; flag on: stored first, badge in the push", async () => {
@@ -406,7 +411,7 @@ describe("persist-first inbox writes wait for featureOn('inboxV1', recipient) (A
 
     flags.inboxV1 = true;
     await w.call("POST", "/api/comments", { token: olive, body: { subject: `person:${MEMBER}`, body: "again" } });
-    expect(inbox.items).toEqual([{ principal: MEMBER, type: "comment_on_my_record", navigate: `/person/?id=${MEMBER}`, actorLabel: "I0002" }]);
+    expect(inbox.items).toEqual([{ principal: MEMBER, type: "comment_on_my_record", navigate: `/person/?id=${MEMBER}`, fields: { actor: "I0002" } }]);
     expect(w.sent.at(-1).payload.notification.app_badge).toBe(1);
   });
 

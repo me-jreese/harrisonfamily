@@ -1,5 +1,5 @@
-// Notification registry (four HFY types, level 0 by default) and best-effort fan-out.
-import { buildDeclarativePush, sendToPrincipal } from "@io-kit/notify/server";
+// Notification registry (four HFY types, level 0 by default) and best-effort fan-out: persist first into the kit inbox store, push second.
+import { createDelivery } from "@io-kit/notify/server";
 import { logSafeError } from "./http.js";
 
 /** Level 0 is content-free; level 1 may name the actor. Recipients opt in to level 1 per type. */
@@ -9,10 +9,11 @@ export const TEMPLATE_REGISTRY = {
     // The lock-screen preview on /me/notifications/ mirrors these word for word (islands/src/islands/notifications.jsx CATALOG).
     comment_on_my_record: { title: "Harrison Family", level0: "someone commented on your page.", level1: "{actor} commented on your page." },
     reply_to_me: { title: "Harrison Family", level0: "someone replied to you.", level1: "{actor} replied to you." },
-    new_family_post: { title: "Harrison Family", level0: "there's a new family post.", level1: "{actor} shared a new family post." },
+    // Push-only: the timeline is its in-app surface, and an inbox item per member for every post would be noise (BRD2 D2-15; inbox:false).
+    new_family_post: { title: "Harrison Family", level0: "there's a new family post.", level1: "{actor} shared a new family post.", inbox: false },
     mention: { title: "Harrison Family", level0: "you were mentioned.", level1: "{actor} mentioned you." },
   },
-  whitelist: ["actor"],
+  whitelist: ["actor", "subject", "item", "count"],
 };
 /** `@I0044` in a comment body mentions that gramps person (= principal id). */
 export const mentionsOf = (body) => [...new Set([...String(body).matchAll(/(?:^|[^\w@])@(I\d{4,8})\b/g)].map((m) => m[1]))].slice(0, 10);
@@ -20,15 +21,15 @@ export const NOTIFY_TYPES = Object.keys(TEMPLATE_REGISTRY.features);
 
 /** The flag that gates persist-first inbox writes and the push app_badge (HFY-TSK-238 AC4; BRD2 D2-15, 10.1). */
 export const INBOX_FLAG = "inboxV1";
-/** Push-only types never become inbox items (BRD2 D2-15: new_family_post, and chat_message when chat lands). */
-export const PUSH_ONLY_TYPES = new Set(["new_family_post"]);
+/** Push-only types never become inbox items (BRD2 D2-15: new_family_post, and chat_message when chat lands): the registry's `inbox:false`. */
+export const PUSH_ONLY_TYPES = new Set(Object.entries(TEMPLATE_REGISTRY.features).filter(([, t]) => t.inbox === false).map(([k]) => k));
 
 /**
  * deps: { subscriptions, preferences, webpush, vapid, listPrincipals, log, inbox?, featureOn? }.
- * `inbox.put(principal, {type, navigate, actorLabel}) => {unread?}` is the persist-first store (hfy-inbox-delivery-api wires the
- * @io-kit/notify inbox store here). An item is stored, and the push carries `app_badge` (the unread count), only while
- * `featureOn("inboxV1", recipient)` (src/features.js): no inbox item exists for anyone while the flag is off, except uat recipients.
- * Without `featureOn` the inbox is off (fail closed).
+ * `inbox` is the kit NotificationStore (index.js: DynamoNotificationStore on the app table). Delivery is the kit's `createDelivery`: persist first, then
+ * push with `app_badge` set to the unread count the write returned. An item is stored, and the push carries `app_badge`, only while
+ * `featureOn("inboxV1", recipient)` (src/features.js): no inbox item exists for anyone while the flag is off, except uat recipients. Recipients with the
+ * flag off get the push alone, with no badge. Without `featureOn` the inbox is off (fail closed). Without VAPID keys the inbox still stores.
  * Never throws: delivery is a nicety and must not fail a write.
  */
 export function createNotifier(deps) {
@@ -36,6 +37,10 @@ export function createNotifier(deps) {
   const enabled = () => Boolean(deps.webpush && deps.vapid);
   const active = () => enabled() || Boolean(deps.inbox);
   const inboxOn = async (principal) => Boolean(deps.inbox && deps.featureOn) && (await deps.featureOn(INBOX_FLAG, principal)) === true;
+  const kitLog = (event, data) => log.error?.(`notify ${event}`, data);
+  const common = { registry: TEMPLATE_REGISTRY, preferences: deps.preferences, subscriptions: deps.subscriptions, webpush: deps.webpush, vapid: deps.vapid, log: kitLog };
+  const deliverStored = createDelivery({ ...common, store: deps.inbox });
+  const deliverPushOnly = createDelivery(common);
   /** Producers run after a committed write: no push and no inbox configured => no reads at all; any failure is logged and swallowed. */
   const guarded = (label, fn) => async (...args) => {
     if (!active()) return;
@@ -45,32 +50,28 @@ export function createNotifier(deps) {
       log.error?.(`${label} failed`, logSafeError(e));
     }
   };
-  async function notify(feature, recipients, { navigate, actorLabel, exclude = [] }) {
+  async function notify(feature, recipients, { navigate, actorLabel, exclude = [], detail, group }) {
     if (!active()) return { sent: 0 };
-    const skip = new Set(exclude);
-    let sent = 0;
-    await Promise.allSettled(
-      [...new Set(recipients)]
-        .filter((r) => !skip.has(r))
-        .map(async (principal) => {
-          try {
-            let badge;
-            if (!PUSH_ONLY_TYPES.has(feature) && (await inboxOn(principal))) {
-              const stored = await deps.inbox.put(principal, { type: feature, navigate, actorLabel }); // persist first, then push
-              if (Number.isInteger(stored?.unread) && stored.unread >= 0) badge = stored.unread;
-            }
-            if (!enabled()) return;
-            const prefs = await deps.preferences.get(principal);
-            const payload = buildDeclarativePush({ registry: TEMPLATE_REGISTRY, feature, prefs, navigate, fields: { actor: actorLabel }, ...(badge === undefined ? {} : { appBadge: badge }) });
-            if (!payload) return;
-            const r = await sendToPrincipal({ store: deps.subscriptions, webpush: deps.webpush, vapid: deps.vapid, principal, payload });
-            sent += r.sent;
-          } catch (e) {
-            log.error?.("notify failed", feature, logSafeError(e));
-          }
-        }),
-    );
-    return { sent };
+    try {
+      const skip = new Set(exclude);
+      const toStore = [];
+      const pushOnly = [];
+      for (const principal of new Set(recipients)) {
+        if (skip.has(principal)) continue;
+        // A failed flag read means no inbox write for that recipient, but the push still goes.
+        const stored = !PUSH_ONLY_TYPES.has(feature) && (await inboxOn(principal).catch(() => false));
+        (stored ? toStore : pushOnly).push(principal);
+      }
+      const input = { feature, navigate, fields: { actor: actorLabel }, ...(detail ? { detail } : {}), ...(group ? { group } : {}) };
+      const [a, b] = await Promise.all([
+        toStore.length ? deliverStored({ ...input, recipients: toStore }) : { pushed: 0 },
+        pushOnly.length && enabled() ? deliverPushOnly({ ...input, recipients: pushOnly }) : { pushed: 0 },
+      ]);
+      return { sent: a.pushed + b.pushed };
+    } catch (e) {
+      log.error?.("notify failed", feature, logSafeError(e));
+      return { sent: 0 };
+    }
   }
 
   return {

@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "Notecity",
+  "grampsId": "P9002",
+  "handle": "55404a8e9b32f2759bf1fad4004e",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Vectorland",
+      "grampsId": "P9001",
+      "handle": "418d233fd657b2fe34e7c93a6785",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 4,
+    "string": "City"
+  },
+  "urls": []
+}

@@ -152,6 +152,13 @@ class AppStack(unittest.TestCase):
             if isinstance(s, dict) and s.get("Sid") != "PersonRecords":
                 self.assertNotIn("person/", str(s.get("Resource", "")))
 
+    # privacy-guard-existing-paths AC9: the DOB refusal on posts and comments is a switch, default off, until io answers Q2-17 line 5.
+    def test_dob_guard_switch_defaults_off(self):
+        p = self.t["Parameters"]["GuardDob"]
+        self.assertEqual(p["Default"], "off")
+        self.assertEqual(p["AllowedValues"], ["off", "on"])
+        self.assertEqual(self.r["Function"]["Properties"]["Environment"]["Variables"]["HFY_GUARD_DOB"], {"Ref": "GuardDob"})
+
     def test_uploads_response_headers_policy(self):
         cfg = self.r["UploadsResponseHeadersPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
         sec = cfg["SecurityHeadersConfig"]

@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1960
+  },
+  "description": null,
+  "grampsId": "E9002",
+  "handle": "90f39f66e04e95fb69702c37c71d",
+  "label": "Fixture Gathering",
+  "place": {
+    "displayName": "Lamp Landmark",
+    "grampsId": "P9005",
+    "handle": "9f7ae687c57a7d318756d75703d5",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 0,
+    "string": "Fixture Gathering"
+  }
+}

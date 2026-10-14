@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1890
+  },
+  "description": null,
+  "grampsId": "E0015",
+  "handle": "23bbba04aa92314e4440d4d1ced6",
+  "label": "Residence",
+  "place": {
+    "displayName": "The Homestead",
+    "grampsId": "P0004",
+    "handle": "0e1e5d636de2d60b22cca1ad2787",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 42,
+    "string": "Residence"
+  }
+}

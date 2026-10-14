@@ -18,6 +18,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "d3-dag": "1.2.2",
     "sharp": "0.35.5"
   }
 }

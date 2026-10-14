@@ -142,7 +142,8 @@ describe("--apply", () => {
     const w = makeApi();
     await legacy(w.ddb);
     const t = await signToken("I0003");
-    const live = (await w.call("POST", "/api/posts", { token: t, body: { body: "new", visibility: "published", attachments: [img(4)] } })).body;
+    const up = (await w.call("POST", "/api/uploads", { token: t, body: { contentType: "image/jpeg", size: 9 } })).body; // a live post attaches a presigned upload
+    const live = (await w.call("POST", "/api/posts", { token: t, body: { body: "new", visibility: "published", attachments: [{ kind: "image", url: up.publicUrl, mime: "image/jpeg" }] } })).body;
     await w.call("POST", "/api/comments", { token: t, body: { subject: "person:I0009", body: "new" } });
     expect(w.ddb.all().find((r) => r.PK === "CSTAT#site" && r.SK === "TOTAL").n).toBe(3); // only the live writes so far
     await run(ctx(w.ddb, { apply: true, now: () => Date.now() }));

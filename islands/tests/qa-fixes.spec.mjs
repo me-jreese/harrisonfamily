@@ -25,7 +25,7 @@ async function stub(page, { signedIn = true, cursor = null, ownComment = false }
   await page.route(/\/person\/I\d+\.json/, (r) => r.fulfill({ json: FX.person }));
   await page.route("**/person/index.json", (r) => r.fulfill({ json: FX.manifest }));
   await page.route("**/person/search-index.json", (r) => r.fulfill({ json: { documents: FX.manifest.people.map((p) => ({ grampsId: p.grampsId, searchText: p.displayName.toLowerCase() })) } }));
-  await page.route("**/api/uploads", (r) => { s.uploads += 1; const b = r.request().postDataJSON(); return r.fulfill({ status: 201, json: { uploadUrl: `http://127.0.0.1/put/${b.filename}`, publicUrl: `/media/tall.svg?u=${s.uploads}`, headers: { "Content-Type": b.contentType } } }); });
+  await page.route("**/api/uploads", (r) => { s.uploads += 1; const b = r.request().postDataJSON(); return r.fulfill({ status: 201, json: { uploadUrl: `http://127.0.0.1/put/photo`, publicUrl: `/media/tall.svg?u=${s.uploads}`, headers: { "Content-Type": b.contentType } } }); });
   await page.route("http://127.0.0.1/put/**", (r) => r.fulfill({ status: 200, body: "" }));
   await page.route(/\/api\/posts(\/[^/?]+)?(\?.*)?$/, (r) => {
     const u = new URL(r.request().url());

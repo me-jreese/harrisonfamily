@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1960
+  },
+  "description": "First residence (fictional)",
+  "grampsId": "E0039",
+  "handle": "62932b91e5d19c53754eb1425964",
+  "label": "Residence",
+  "place": null,
+  "type": {
+    "code": 42,
+    "string": "Residence"
+  }
+}

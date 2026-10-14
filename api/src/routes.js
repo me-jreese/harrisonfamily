@@ -3,7 +3,7 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt } from "./features.js";
+import { describeGate, gateExempt, requireFeature } from "./features.js";
 
 export const API_NAME = "hfy-api";
 export const API_VERSION = "0.1.0";
@@ -72,6 +72,16 @@ export const ROUTES = defineRoutes([
     handler: async (c) => ok(await buildMe(c.actor, { accessRequestCount: c.accessRequestCount, log: c.log })),
   },
   {
+    name: "links.get", method: "GET", path: "/people/:id/links", summary: "A person's profile links, their version and whether you can edit them (no MCP tool)",
+    gate: requireFeature("profileLinks"),
+    handler: async (c) => ok(await c.links.get(c.params.id)),
+  },
+  {
+    name: "links.put", method: "PUT", path: "/people/:id/links", summary: "Set or clear profile links ({links: {platform: string|null}, version}): the owner sets or clears, an admin only clears (no MCP tool)",
+    gate: requireFeature("profileLinks"),
+    handler: async (c) => ok(await c.links.put(c.params.id, c.body)),
+  },
+  {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first (cursor), with reactions",
     handler: async (c) => {
       const subject = need(c.query.subject, "subject");
@@ -129,14 +139,18 @@ export const ROUTES = defineRoutes([
     handler: async (c) => { await c.content.delete(c.params.id); await c.afterPostDeleted(c.params.id); return ok(undefined, 204); },
   },
   {
-    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB) under uploads/posts/; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
-    handler: async (c) => ok(await c.uploads.presign(c.actor, { filename: c.body.filename, contentType: c.body.contentType, size: c.body.size }), 201),
+    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB) at uploads/posts/<ulid>/photo.<ext>, bound to you for 24 h; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
+    handler: async (c) => ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size }), 201),
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.
   { name: "notifications.vapid-public-key", method: "GET", path: "/notifications/vapid-public-key", summary: "VAPID application server key", handler: (c) => c.notifyHandler() },
   { name: "notifications.subscribe", method: "POST", path: "/notifications/subscribe", summary: "Register a push subscription", handler: (c) => c.notifyHandler() },
   { name: "notifications.unsubscribe", method: "DELETE", path: "/notifications/subscribe", summary: "Remove a push subscription", handler: (c) => c.notifyHandler() },
   { name: "notifications.preferences.get", method: "GET", path: "/notifications/preferences", summary: "Read notification preferences", handler: (c) => c.notifyHandler() },
+  // The inbox (hfy-inbox-delivery-api; BRD2 D2-15, D2-28): served by the kit handler, dark until inboxV1 is on (or the caller is uat). No `mcp` member and no policy row.
+  { name: "notifications.inbox.list", method: "GET", path: "/notifications/inbox", summary: "List your notification inbox, newest first (filter=unread|all, cursor, limit)", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
+  { name: "notifications.inbox.count", method: "GET", path: "/notifications/inbox/unread-count", summary: "Count your unread notifications", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
+  { name: "notifications.inbox.read", method: "POST", path: "/notifications/inbox/read", summary: "Mark notifications read: {ids} or {all:true}", gate: requireFeature("inboxV1"), handler: (c) => c.notifyHandler() },
   { name: "notifications.preferences.put", method: "PUT", path: "/notifications/preferences", summary: "Save notification preferences", handler: (c) => c.notifyHandler() },
 ]);
 
@@ -170,6 +184,6 @@ export function buildCaps() {
     comments: { reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param: "required on PATCH/DELETE/react (query or body)" },
     mcp: { resource: MCP_RESOURCE, tools: ROUTES.filter((r) => r.mcp).map((r) => ({ name: r.mcp.tool, action: r.name, write: r.write })) },
     notifications: { types: NOTIFY_TYPES, default_level: 0 },
-    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility"] },
+    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"] },
   };
 }

@@ -9,6 +9,7 @@ import { api, getSession } from "./api.js";
 import { createHfyCommentSource } from "./comment-source.js";
 import { canModerate, getMe } from "./me.js";
 import { formatTime, watchTimeTitles } from "./time.js";
+import { watchContactGuard } from "./contact-guard.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable.
 export const linkify = { pattern: /\bI\d{4,}\b/, href: (id) => `/person/?id=${encodeURIComponent(id)}` };
@@ -126,6 +127,18 @@ export function guardCommentDeletes(root, labels = LABELS) {
   return () => { root.removeEventListener("click", onClick, true); close(false); };
 }
 
+// The R-18 pre-check (privacy-guard-existing-paths AC2) on the new-comment box and every edit box: the span is marked, the DS copy
+// sits under the box, post (or save) is disabled until the hit is removed, and the text is kept (lib/contact-guard.js).
+export const COMMENT_GUARD = {
+  fields: ".io-comments-composer textarea.io-comments-input",
+  submitOf: (form) => form.querySelector('button[type="submit"]'),
+  // The kit's own rule (@io-kit/comments 0.1.0 Composer): enabled with some text, within the length cap, and not sending.
+  enabledOf: (form) => {
+    const box = form.querySelector("textarea");
+    return Boolean(box) && !box.disabled && box.value.trim() !== "" && !form.querySelector(".io-comments-counter[data-over]");
+  },
+};
+
 export function Comments({ subject }) {
   const [session, setSession] = useState(undefined);
   const [moderator, setModerator] = useState(false);
@@ -138,6 +151,7 @@ export function Comments({ subject }) {
   useEffect(() => watchPlaceholders(root.current), []);
   useEffect(() => watchDeleteButtons(root.current), []);
   useEffect(() => guardCommentDeletes(root.current), []);
+  useEffect(() => watchContactGuard(root.current, COMMENT_GUARD), []);
   const sid = session?.authenticated ? session.sub : null;
   // HFY-TSK-298 (BRD2 D2-12): moderator rights come only from the shared GET /api/me (admin, or can.moderate when present); a 401 or a
   // failure means not a moderator. The kit gates each delete control on that comment's server-computed can.* itself.

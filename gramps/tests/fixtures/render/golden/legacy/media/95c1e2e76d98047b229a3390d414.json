@@ -1,0 +1,67 @@
+{
+  "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+  "grampsId": "O0001",
+  "handle": "95c1e2e76d98047b229a3390d414",
+  "mime": "image/jpeg",
+  "missing": false,
+  "regions": [
+    {
+      "attributes": [],
+      "notes": [],
+      "person": {
+        "displayName": "Maple Fixturely",
+        "grampsId": "I0013",
+        "handle": "f1f7cb7d5d3a1bb2a38b887534a6"
+      },
+      "rect": [
+        10,
+        10,
+        40,
+        40
+      ]
+    },
+    {
+      "attributes": [],
+      "notes": [],
+      "person": {
+        "displayName": "Maple Fixturely",
+        "grampsId": "I0013",
+        "handle": "f1f7cb7d5d3a1bb2a38b887534a6"
+      },
+      "rect": [
+        50,
+        10,
+        90,
+        40
+      ]
+    },
+    {
+      "attributes": [],
+      "notes": [],
+      "person": {
+        "displayName": "Nettle Fixturely",
+        "grampsId": "I0014",
+        "handle": "b3c2407f526a59370b99ab7062f6"
+      },
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "attributes": [],
+      "notes": [],
+      "person": {
+        "displayName": "Orchid Fixturely",
+        "grampsId": "I0015",
+        "handle": "dc7a86bea5186bd8e33fd5ea683f"
+      },
+      "rect": null
+    }
+  ],
+  "s3Key": "media/95c1e2e76d98047b229a3390d414.jpg",
+  "size": 632,
+  "title": "Group photo (fictional)"
+}

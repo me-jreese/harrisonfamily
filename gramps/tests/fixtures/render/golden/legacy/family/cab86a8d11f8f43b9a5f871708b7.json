@@ -1,0 +1,27 @@
+{
+  "children": [],
+  "events": [],
+  "father": null,
+  "grampsId": "F0007",
+  "handle": "cab86a8d11f8f43b9a5f871708b7",
+  "mother": {
+    "displayName": "Iris Samplefield",
+    "gender": "female",
+    "grampsId": "I0009",
+    "handle": "a65743e0b4847e76a32f8785fe1e",
+    "isLiving": true,
+    "lifespan": {
+      "birth": {
+        "year": null
+      },
+      "death": {
+        "year": null
+      },
+      "summary": ""
+    }
+  },
+  "type": {
+    "code": 0,
+    "string": "Married"
+  }
+}

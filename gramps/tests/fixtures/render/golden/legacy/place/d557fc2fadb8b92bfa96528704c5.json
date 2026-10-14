@@ -1,0 +1,34 @@
+{
+  "code": null,
+  "displayName": "Example Street",
+  "grampsId": "P0006",
+  "handle": "d557fc2fadb8b92bfa96528704c5",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Exampleville",
+      "grampsId": "P0002",
+      "handle": "2274a9f6cb93e7050af9f7b80471",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 7,
+    "string": "Street"
+  },
+  "urls": [
+    {
+      "_class": "Url",
+      "desc": "",
+      "path": "https://places.example.org/street",
+      "private": false,
+      "type": {
+        "_class": "UrlType",
+        "string": "",
+        "value": 2
+      }
+    }
+  ]
+}

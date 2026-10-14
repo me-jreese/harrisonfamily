@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1873
+  },
+  "description": null,
+  "grampsId": "E0007",
+  "handle": "cb1fb260cbf06c27cb3e80dfcf84",
+  "label": "Baptism",
+  "place": {
+    "displayName": "Sample Hall",
+    "grampsId": "P0007",
+    "handle": "5817b548b286c5bed4b007b6e744",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 15,
+    "string": "Baptism"
+  }
+}

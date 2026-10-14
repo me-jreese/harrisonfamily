@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1950
+  },
+  "description": "Moved into the lane house",
+  "grampsId": "E9001",
+  "handle": "722c5b40d2b2d136bcfa67566345",
+  "label": "Residence",
+  "place": {
+    "displayName": "Quill Lane",
+    "grampsId": "P9003",
+    "handle": "b72d28c95288f538a57e7a2da25c",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 42,
+    "string": "Residence"
+  }
+}

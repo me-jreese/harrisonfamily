@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 0
+  },
+  "description": null,
+  "grampsId": "E9004",
+  "handle": "b9fb80dd89cf0a372fa15fe66523",
+  "label": "Residence",
+  "place": {
+    "displayName": "The Summer Home",
+    "grampsId": "P9004",
+    "handle": "bca43347c8d814b471dd5152b28c",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 42,
+    "string": "Residence"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "about": "sha256 of the live ETL files the legacy golden came from.",
+  "files": {
+    "scripts/etl/common.py": "d91a5e25557fe8200e897f0b4f03ec14c82a31f97c7f00e79f0e2b65d53d4af5",
+    "scripts/etl/export_person_data.py": "b24f39f7181e9de156001faed52c70cbdbea6f8339a7fce4652e56075dd5eb5c",
+    "scripts/etl/gramps_labels.py": "23a9564585e98a66bccdb4dcc835cbd57caf235f48d4233a082bae36f7f31a42",
+    "scripts/etl/note_tags.py": "223bcd79b455bf29ced02128c461479d0a94a95e2b3d241fc5bcc28a0e9e9628",
+    "scripts/etl/privacy_scan.py": "4680a4d574f1565e1344421056963a14f415bdb4496bfaac80ea6b440e413ad4",
+    "scripts/etl/publish_policy.py": "382cff7d8645bc945ed17aba449773b58fefadd03ece6d884432a56ed6bd038a",
+    "scripts/etl/transform.py": "609e81dc55033c69818905e739e233f76cce1d3f0d3ca5d30dfd8c7c1aee6aa6",
+    "scripts/search/build_search_index.js": "7e52e19eacfc8f0b56cf5e6ed9178097a152fc338687653721990887fef6f673"
+  }
+}
