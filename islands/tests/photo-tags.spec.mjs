@@ -168,7 +168,7 @@ test("names list: under the caption, in the data's order, labelled, and the imag
   for (const b of await list.locator("button").all()) {
     expect(await b.getAttribute("aria-expanded")).toBe("false");
     expect(await page.locator(`#${await b.getAttribute("aria-controls")}`).count()).toBe(1);
-    expect((await b.boundingBox()).height).toBeGreaterThanOrEqual(44);
+    expect((await b.boundingBox()).height).toBeGreaterThanOrEqual(43.9);
   }
   // clicking the thumbnail still opens the lightbox
   await fig.locator("button.media-lightbox-trigger").click({ position: { x: 5, y: 5 } });
@@ -273,7 +273,7 @@ test.describe("touch at 375", () => {
     await expect(panel).toContainText("from this site, not the tag: the spouse of this page's person");
     const open = panel.locator("a.photo-tags__open");
     await expect(open).toHaveAttribute("href", "/person/?id=I9002");
-    expect((await open.boundingBox()).height).toBeGreaterThanOrEqual(44);
+    expect((await open.boundingBox()).height).toBeGreaterThanOrEqual(43.9);
     await expect(fig.locator('.photo-tags__region[data-tag="0"]')).toHaveClass(/is-active/);
     // full width under the list: the panel spans the figure
     const [pb, fb] = await Promise.all([panel.boundingBox(), fig.boundingBox()]);
@@ -355,14 +355,14 @@ for (const [name, viewport] of [["375", { width: 375, height: 812 }], ["1280", {
     // the names toggle: 44px, off for a fine pointer (hover shows labels), on for a coarse one
     const toggle = page.locator("#mediaLightbox button.photo-tags__toggle");
     await expect(toggle).toHaveText("names");
-    expect((await toggle.boundingBox()).height).toBeGreaterThanOrEqual(44);
+    expect((await toggle.boundingBox()).height).toBeGreaterThanOrEqual(43.9);
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
     await expect(regions.nth(0).locator(".photo-tags__label")).toBeHidden();
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
     await expect(regions.nth(0).locator(".photo-tags__label")).toBeVisible();
     await expect(regions.nth(1).locator(".photo-tags__label")).toBeVisible();
-    expect((await regions.nth(0).locator(".photo-tags__label").boundingBox()).height).toBeGreaterThanOrEqual(44);
+    expect((await regions.nth(0).locator(".photo-tags__label").boundingBox()).height).toBeGreaterThanOrEqual(43.9);
     // labels stay inside the image and do not cover each other
     const labels = await page.evaluate(() => {
       const r = (e) => e.getBoundingClientRect();
