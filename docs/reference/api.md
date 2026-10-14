@@ -621,7 +621,24 @@ Comments removed with their post are audited too, each in the same transaction a
 | `new_family_post` | Harrison Family | there's a new family post. | {actor} shared a new family post. |
 | `mention` | Harrison Family | you were mentioned. | {actor} mentioned you. |
 
-The text is `TEMPLATE_REGISTRY` in [`notify.js`](../../api/src/notify.js), written in the design system's family voice: every title is the site name, and the bodies are lowercase and say "page", never "record". The lock-screen preview on `/me/notifications/` (the `CATALOG` in [`islands/src/islands/notifications.jsx`](../../islands/src/islands/notifications.jsx)) repeats the same strings word for word. No code or test ties the two together; they are kept equal by hand. [`api.test.js`](../../api/test/api.test.js) and [`producers.test.js`](../../api/test/producers.test.js) check the API's bodies. Pushes carry the text that the deployed `hfy-api` holds, so a change to it reaches members only after an `hfy-api` redeploy ([Packaging and deploy](#packaging-and-deploy)).
+The registry also holds the PLN-002 types. The field whitelist is `actor`, `subject`, `item`, `count`. `new_family_post` and `chat_message` are push-only (`inbox:false`); every other type is stored in the inbox while `inboxV1` is on. `notifyContract()` in `notify.js` is the one source that `hfy-inbox-ui`'s `CATALOG` and the chat routes compare against, and [`notify-producers.test.js`](../../api/test/notify-producers.test.js) pins it.
+
+| Type | Recipients | Producer | Group key |
+| --- | --- | --- | --- |
+| `comment_on_my_record`, `reply_to_me` | as above | `onComment` | `thread:<t>` |
+| `proposal_submitted` | admins except the proposer | `onProposalSubmitted` | `proposals` |
+| `proposal_accepted`, `proposal_declined`, `proposal_needs_changes`, `proposal_stale` | the proposer | `onProposalDecided` | none |
+| `record_updated_mine` | the record's owner, when a member and not the actor | `onRecordChanged` | `rec:<subject>` |
+| `record_updated_followed` | followers, not the actor | `onRecordChanged` | `rec:<subject>` |
+| `records_updated_followed_digest` | a follower with more than 3 pages in one call | `onRecordChanged` | `recdigest` |
+| `moderation_hidden`, `moderation_request`, `moderation_question`, `moderation_unhidden` | the item's author, not the actor | `onModeration` | none |
+| `moderation_resolved` | the admin who asked | `onModeration` | `mod:<target>` |
+| `photo_graduated` | the photo's author, not the actor | `onGraduated` | none |
+| `chat_message` | the chat service's recipient (push only, no message text) | `notify` | none |
+
+Producers run after a commit and never fail the write. `onRecordChanged` is called only by the render-outbox consumer (`hfy-record-change-fanout`) and takes `silent: true` for imports, seeding and backfills. A producer whose source (`getAdmins`, `listMembers`, `followersOf`) is absent notifies nobody. An admin's note is the inbox `detail` and is never pushed.
+
+The text is `TEMPLATE_REGISTRY` in [`notify.js`](../../api/src/notify.js), written in the design system's family voice: every title is the site name, and the bodies are lowercase and say "page", never "record". The lock-screen preview on `/me/notifications/` (the `CATALOG` in [`islands/src/islands/notifications.jsx`](../../islands/src/islands/notifications.jsx)) repeats the same strings word for word. [`notifications-roundtrip.spec.mjs`](../../islands/tests/notifications-roundtrip.spec.mjs) checks that its types are the registry's, less the pinned PLN-002 types that are not in the `CATALOG` yet, and that their strings match. [`api.test.js`](../../api/test/api.test.js) and [`producers.test.js`](../../api/test/producers.test.js) check the API's bodies. Pushes carry the text that the deployed `hfy-api` holds, so a change to it reaches members only after an `hfy-api` redeploy ([Packaging and deploy](#packaging-and-deploy)).
 
 Level 0 carries no content. Level 1 adds the actor's display label, the `author.label` of the comment or post, which is never an email address ([Session verification](#session-verification)). The kit cleans it and cuts it to 80 characters. Each recipient chooses per type in their preferences. A type with no stored preference is enabled at level 0. If a level-1 message cannot be rendered, level 0 is sent.
 
@@ -669,6 +686,16 @@ Notification fan-out runs after the write has committed and never fails the requ
 - **Push on.** Finding the recipients and sending to them are both guarded. A failure is logged (for example `comment notification failed (write already committed)`, `publish notification failed` or `notify failed`) and the response is the write's normal success.
 - A failed send to one recipient does not stop the others.
 
+### Producer notes (HFY-TSK-253)
+
+- The acting admin is excluded from `onProposalDecided` and `onModeration` recipients, so deciding or moderating your own item notifies nobody.
+- Callers must validate an admin `note` with the shared contact-information validator (R-18) before calling a producer. The producer only caps `detail` at 1000 characters, and the inbox UI must render `detail` as text, never HTML.
+- The decline type is `proposal_declined` (editing.md still says `proposal_rejected`; other domains must use `proposal_declined`).
+- Beyond the design table, `many` strings exist for `proposal_submitted`, `record_updated_mine`, `record_updated_followed` and `moderation_resolved`, and `records_updated_followed_digest` has an `inboxText`. `notifyContract()` exposes `many`, `inboxText` and the `groups` templates so the inbox CATALOG comparison test covers them. The CATALOG extension itself belongs to hfy-inbox-ui and hfy-chat-api-service-routes.
+- `comment_on_my_record` and `reply_to_me` share the group `thread:<t>` (social.md); the kit coalesces by recipient and group, so a recipient who gets both types on one thread sees one item that keeps the first type.
+- `onRecordChanged` runs follower lookups 8 at a time and handles at most 500 subjects per call. It has no caller until hfy-record-change-fanout, which must dedupe on `rec:<seq>:<subject>` and pass `silent: true` for seed and import sessions.
+- Member principals come from `config/userGrampsID.json`; the API role's `config/*` `s3:GetObject` grant (app-stack.yaml, AdminList statement) covers it. An empty set logs a warning and fails closed.
+
 ### Notification routes
 
 These responses come from the kit. Kit errors have the shape `{"error": "<text>"}`, with no `message`.
@@ -687,7 +714,7 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 - The three inbox routes exist only when an inbox store is wired, and are 404 outside `uat` while `inboxV1` is off.
 - The kit stores an inbox item whether or not the recipient disabled that type in preferences: preferences gate only the push, and the inbox keeps the item for the recipient (ruling P2-R35).
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
-- `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
+- `PUT` replaces the whole preference record. The kit does not check type names against the registry, so any type name is stored. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
 
 ## Comment photos
@@ -1062,7 +1089,7 @@ The person-record lookups are cached in memory, per container:
 | `content` | `{source: "posts", capabilities, post_types, visibilities}`. `capabilities`: `list`, `get`, `createDraft`, `update`, `setVisibility`, `delete`, `drafts` and `audit` are true; `subscribe` and `since` are false; `attachments` is `"metadata-only"`; `filters` are `subject`, `type`, `author`, `visibility`. |
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
 | `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
-| `notifications` | `{types: <the four types>, default_level: 0}` |
+| `notifications` | `{types: NOTIFY_TYPES, default_level: 0}`. `NOTIFY_TYPES` is every type in `TEMPLATE_REGISTRY`, in registry order, PLN-002 types included. |
 | `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"]}` |
 
 `actions` and `mcp.tools` are derived from `ROUTES`. The other fields are written by hand in `buildCaps` and differ from the code in two places:

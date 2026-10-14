@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { makeApi, signToken } from "./world.js";
 import { ROUTES, buildCaps } from "../src/routes.js";
+import { NOTIFY_TYPES } from "../src/notify.js";
 
 const sub = { endpoint: "https://push.example.test/s1", keys: { p256dh: "p", auth: "a" } };
 let w, ann, olive, admin, third;
@@ -142,7 +143,8 @@ describe("caps.json (AC2)", () => {
     expect(caps.actions.map((a) => a.name)).toEqual(ROUTES.map((r) => r.name));
     expect(new Set(caps.actions.map((a) => a.name)).size).toBe(caps.actions.length);
     expect(caps.content.capabilities).toMatchObject({ drafts: true, subscribe: false, audit: true });
-    expect(caps.notifications.types).toEqual(["comment_on_my_record", "reply_to_me", "new_family_post", "mention"]);
+    expect(caps.notifications.types).toEqual(NOTIFY_TYPES);
+    expect(caps.notifications.types.slice(0, 4)).toEqual(["comment_on_my_record", "reply_to_me", "new_family_post", "mention"]);
     for (const n of ["comments.list", "comments.create", "comments.update", "comments.delete", "comments.react", "posts.list", "posts.get", "posts.create", "posts.update", "posts.visibility", "posts.delete"])
       expect(caps.actions.map((a) => a.name)).toContain(n);
   });
