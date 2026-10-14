@@ -115,7 +115,8 @@ test("posts at >=688: cards on surface.raised; meta 16px in text.dim; rows are h
   await stub(page);
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.goto(`/posts/?${FLAGS}`, { waitUntil: "domcontentloaded" });
-  const card = page.locator("[data-hfy-posts] .hfy-posts__item").first();
+  // A post row, not a loading skeleton row (also .hfy-posts__item): the skeleton is visible first and has no meta to measure.
+  const card = page.locator("[data-hfy-posts] .hfy-posts__item:has(.iok-content-card)").first();
   await expect(card).toBeVisible();
   const look = await card.evaluate((li) => {
     const cs = getComputedStyle(li);
