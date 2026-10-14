@@ -551,6 +551,40 @@ print(bool(re.match(p["CodeKey"]["AllowedPattern"], os.environ["KEY"])) and bool
 else echo "  (node, zip or openssl missing: package-edge-gate.sh checks skipped)"; fi
 
 # ---------------------------------------------------------------------------------------------------------------------
+CURRENT="package-render.sh: the hfy-sync-render zip (HFY-TSK-176)"
+if command -v zip >/dev/null && command -v python3 >/dev/null; then
+  RPKG="$T/rpkg"; mkdir -p "$RPKG/scripts/ci" "$RPKG/lambda" "$RPKG/gramps"   # a scratch copy: the build writes $RPKG/dist, never the repo's dist/
+  cp "$ROOT/scripts/ci/package-render.sh" "$RPKG/scripts/ci/"
+  cp -R "$ROOT/lambda/hfy-sync-render" "$RPKG/lambda/"
+  cp -R "$ROOT/gramps/hfygramps" "$RPKG/gramps/"
+  find "$RPKG" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+  render_key() { printf '%s\n' "$1" | sed -n 's/^RenderCodeKey=//p'; }
+  R1=$(bash "$RPKG/scripts/ci/package-render.sh"); RKEY1=$(render_key "$R1")
+  RHEX=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$RPKG/dist/hfy-sync-render.zip")
+  eq "RenderCodeKey is lambda/hfy-sync-render-<first 12 hex of the zip SHA-256>.zip" "$RKEY1" "lambda/hfy-sync-render-${RHEX:0:12}.zip"
+  eq "dist/hfy-sync-render.params holds the same key" "$(cat "$RPKG/dist/hfy-sync-render.params")" "RenderCodeKey=$RKEY1"
+  RLIST=$(python3 -c 'import sys,zipfile; print("\n".join(i.filename for i in zipfile.ZipFile(sys.argv[1]).infolist()))' "$RPKG/dist/hfy-sync-render.zip")
+  for f in handler.py hfy_render/engine.py hfy_render/privacy.py hfy_render/aws.py hfygramps/__init__.py hfygramps/scanner.py hfygramps/render/site.py hfygramps/render/transform.py; do
+    contains "the zip holds $f" "$RLIST" "$f"
+  done
+  for f in hfygramps/merge.py hfygramps/projection.py hfygramps/canonical.py hfygramps/addon hfygramps/schema_check.py tests __pycache__ .pyc .list .files; do
+    lacks "the zip does not hold $f" "$RLIST" "$f"
+  done
+  eq "the zip imports with nothing else on the path, and RENDER_MODE=off is a no-op" "$(cd "$T" && RENDER_MODE=off python3 -I -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import handler, hfy_render.engine, hfy_render.privacy, hfygramps.render
+print(handler.handler({"source": "schedule"}, None)["status"], hfygramps.render.__file__.startswith(sys.argv[1]))' "$RPKG/dist/hfy-sync-render.zip")" "noop True"
+  R2=$(bash "$RPKG/scripts/ci/package-render.sh")
+  eq "the build is reproducible: same sources, same key" "$(render_key "$R2")" "$RKEY1"
+  echo "# a renderer fix" >> "$RPKG/lambda/hfy-sync-render/hfy_render/engine.py"
+  R3=$(bash "$RPKG/scripts/ci/package-render.sh")
+  check "a code change gives a new RenderCodeKey" test "$(render_key "$R3")" != "$RKEY1"
+  rm -f "$RPKG/lambda/hfy-sync-render/hfy_render/keys.py"
+  if bash "$RPKG/scripts/ci/package-render.sh" >/dev/null 2>&1; then fail "a package that cannot import must not build"; else ok; fi
+else echo "  (zip or python3 missing: package-render.sh checks skipped)"; fi
+
+# ---------------------------------------------------------------------------------------------------------------------
 CURRENT="check-deployment-sync.sh: repo-owned 11ty files (person-page-not-repo-owned)"
 excludes_of() { grep -oE -- "--exclude '?[^ ']+'?" "$1" | sed -E "s/^--exclude '?//; s/'?\$//" | sort -u; }
 SYNC_EX=$(sed -n '/needs_eleventy_check" -eq 1/,/^fi$/p' "$ROOT/scripts/check-deployment-sync.sh" > "$T/sync-11ty.txt"; excludes_of "$T/sync-11ty.txt")
