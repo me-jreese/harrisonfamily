@@ -340,6 +340,18 @@ html .msg button[data-copy-email] {
   border-color: var(--io-auth-border-strong);
 }
 
+/* HFY-TSK-140: the "ask to join" link (accessRequests; auth/src/edge.js adds it only while ACCESS_REQUESTS is on). Inside the allowlist
+   banner it is a quiet inline link on its own row; on the denied page it is a line under the banner. Either way it is one 44-high target. */
+html .msg a[data-hfy-join],
+html p[data-hfy-join] a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-h-md);
+  color: var(--io-auth-link);
+  text-decoration: underline;
+}
+html p[data-hfy-join] { margin: var(--io-space-3) 0 0; font-size: var(--io-auth-font-size-sm); color: var(--io-auth-text-dim); }
+
 /* 6. Focus: one rule system-wide, a solid ring in focus (gold in dark) with the control offset. */
 html :focus-visible {
   outline: var(--io-auth-focus-ring) solid var(--io-auth-focus);

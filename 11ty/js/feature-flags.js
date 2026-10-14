@@ -8,7 +8,7 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "c3225327",
+        "js": "9fc6d310",
         "css": "11377c0e"
       },
       "edit-entry": {
@@ -16,7 +16,7 @@
         "css": "718ffc08"
       },
       "editor": {
-        "js": "0a70447e",
+        "js": "b5b0f633",
         "css": "ad64e40d"
       },
       "follow": {
@@ -24,31 +24,39 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "b1460d3d",
+        "js": "98c25e23",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "ee01571f",
+        "js": "45765c99",
         "css": "38a33f05"
       },
+      "join": {
+        "js": "65b1bc6e",
+        "css": "88b160fb"
+      },
+      "join-entry": {
+        "js": "4890d79a",
+        "css": "e44c3a91"
+      },
       "links-editor": {
-        "js": "f244fa86",
+        "js": "d530ca6f",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "6677641e",
+        "js": "3176f388",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "d36a8a28",
+        "js": "fd96c809",
         "css": "be703fb4"
       },
       "person": {
-        "js": "c6c98b34",
+        "js": "acdf1c12",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "cd8f9920",
+        "js": "a61d6edb",
         "css": "fcacbc39"
       },
       "photo-tags": {
@@ -56,11 +64,11 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "a2584eee",
+        "js": "69497148",
         "css": "890fde1c"
       },
       "search": {
-        "js": "316407f7",
+        "js": "30a17fd1",
         "css": "9e007813"
       },
       "settings": {
@@ -68,21 +76,21 @@
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "37de354e",
+        "js": "1b1559ca",
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "3138e96a",
+        "js": "b6ed2501",
         "css": "8f618380"
       },
       "tree": {
-        "js": "efad24e5",
+        "js": "7476e4e0",
         "css": "2824a799"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "f78c3f3d"
+    "sw": "b391c875"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -748,6 +756,17 @@
   resolveFlags().then((flags) => {
     if (flags.aboutCta !== true || !/^\/about\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("about-cta", { onError() { /* the story stands on its own */ } });
+  });
+
+  // HFY-TSK-140: accessRequests mounts the three-step join island on the static, public /join/ page, and the signed-out "new here? ask to
+  // join." line (island join-entry, which renders nothing for a member) on /, /about/ and /contact/. With the flag off neither bundle is
+  // requested: /join/ keeps its "isn't open yet" note and the three pages are as before. The edge's ACCESS_REQUESTS stack flag is the
+  // other half; the join island asks /auth/access-request/config and shows the closed state when that says closed.
+  resolveFlags().then((flags) => {
+    if (flags.accessRequests !== true) return;
+    const path = window.location.pathname;
+    if (/^\/join\/?(index\.html)?$/.test(path)) loadIsland("join", { onError() { /* the page keeps its "isn't open yet" note */ } });
+    else if (/^\/(about\/|contact\/)?(index\.html)?$/.test(path)) loadIsland("join-entry", { onError() { /* the page stands without the line */ } });
   });
 
   // HFY-TSK-201: familyViz mounts the family tree island on the static /tree/ page (the page is public; its data fetch is gated). With the
