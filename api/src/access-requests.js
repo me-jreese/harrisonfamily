@@ -4,6 +4,7 @@
 //   GET  /api/access-requests/:id        one request: the requester's email MASKED (first character plus domain), the answers, the Gramps preview
 //   POST /api/access-requests/:id/decision   { decision: "link" | "new" | "decline", version, ... }
 //   POST /api/access-requests/:id/revoke     { version, reason?, confirmedOutside }
+//   POST /api/allow-grants/revoke            { sub | grampsId, reason?, confirmedOutside }   revoke by the ALLOW# entries of a member, with no request needed (P2-R60)
 //   POST /api/access-requests/:id/resend-notice   the owner re-sends the member's notice of a held second email that never reached them
 //   GET  /api/second-email                   the MEMBER's own held second emails they can still answer: { items: [{ id, noticed, until }] }
 //   POST /api/second-email/:id               { response: "confirm" | "object" }   the MEMBER answers the 72 hour notice (not an admin route)
@@ -30,8 +31,8 @@
 // at least one mail to an existing address), and isAllowedNow never admits a held item without it. Delivery stamps `noticedAt` and moves
 // `effectiveAt` to 72 hours after it, so the member always has the full window. When no notice got through, the link answers
 // `memberNotified: false` and the owner re-sends it (POST .../resend-notice); until then the address stays closed.
-// A request stays reachable by its id only for its retention (DECIDED_TTL_SECONDS, surfaces.md 7.9), and revoke goes through the request, so an
-// active grant older than that cannot be revoked here (an open issue for io: docs/how-to/manage-family-access.md "Revoke").
+// A request stays reachable by its id only for its retention (DECIDED_TTL_SECONDS, surfaces.md 7.9; kept at 30 days, P2-R60), so an active grant
+// older than that is revoked through its ALLOW# entries instead (revokeGrant, P2-R60): by the member's sub (their Gramps ID), whatever the request's age.
 import { HttpError } from "./http.js";
 import { serverSwitch } from "./features.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
@@ -48,6 +49,9 @@ export const STORE_CURRENT_CITY = true;
 export const DECIDED_TTL_SECONDS = 30 * 86400;
 export const AWAITING_TTL_SECONDS = 90 * 86400;
 /** The member's objection window for a second email (PS-13). */
+/** Templates sent to a member's existing addresses (the general identity); every other template goes to a requester (the Join identity). */
+const MEMBER_TEMPLATES = new Set(["second_email_notice"]);
+export const MAX_REVOKE_ITEMS = 10;
 export const HOLD_MS = 72 * 3600 * 1000;
 export const MAX_NOTE_CHARS = 500;
 export const MAX_REASON_CHARS = 200;
@@ -398,11 +402,17 @@ export function createAccessRequests(deps) {
       return undefined;
     }
   }
-  /** One system template to one address; true when SES took it. */
+  /**
+   * One system template to one address; true when SES took it. Mail to a REQUESTER goes through the Join identity (`deps.requesterMailer`, its own
+   * configuration set and MAIL FROM subdomain, P2-R61, Q2-09) and fails closed without it: it never falls back to the general identity, so abuse of the
+   * request form cannot pause the mail members rely on. The member's notice (second_email_notice) goes to addresses that already sign in, so it
+   * keeps the general identity (`deps.mailer`).
+   */
   async function mailTo(to, template, vars = {}) {
-    if (!deps.mailer) return false;
+    const mailer = MEMBER_TEMPLATES.has(template) ? deps.mailer : deps.requesterMailer;
+    if (!mailer) return false;
     try {
-      await deps.mailer.send({ template, to, vars });
+      await mailer.send({ template, to, vars });
       return true;
     } catch (e) {
       log.error?.("access request mail failed (the decision stands)", errName(e));
@@ -679,6 +689,52 @@ export function createAccessRequests(deps) {
     return { state: "revoked" };
   }
 
+  // ---- revoke by the member's ALLOW# entries (P2-R60) ------------------------------------------------------------------------------
+  /**
+   * Revokes every active ALLOW# entry of member `sub`, with no request needed: the request is deleted 30 days after its decision (P2-R60 keeps that
+   * retention), but the ALLOW# entry lives while the access does. One transaction per call: each entry to revoked (kept, so it still overrides io's S3
+   * file), its allow.revoke audit, one accessreq.revoke audit per request that is still around and active (that request moves to revoked and its guard
+   * opens), and an allowgrant.revoke audit. Step-up and `confirmedOutside: true` as for the request revoke. Answers `{ revoked: [{ email: masked }] }`; no mail.
+   */
+  async function revokeGrant(actor, body) {
+    requireAdmin(actor);
+    const b = isObj(body) ? body : null;
+    if (!b) throw validation([{ pointer: "", detail: "the body is an object" }]);
+    const errors = [];
+    for (const k of Object.keys(b)) if (!["sub", "grampsId", "reason", "confirmedOutside"].includes(k)) errors.push({ pointer: `/${k}`, detail: "not a field of this request" });
+    const given = ["sub", "grampsId"].filter((k) => b[k] !== undefined);
+    if (given.length !== 1) errors.push({ pointer: "/sub", detail: "give the member's Gramps ID as sub (or grampsId), once" });
+    else if (typeof b[given[0]] !== "string" || !GID_RE.test(b[given[0]])) errors.push({ pointer: `/${given[0]}`, detail: "a Gramps ID" });
+    if (b.confirmedOutside !== true) errors.push({ pointer: "/confirmedOutside", detail: "confirm with this person outside the site first" });
+    if (b.reason !== undefined && b.reason !== null && (typeof b.reason !== "string" || b.reason.length > MAX_REASON_CHARS)) errors.push({ pointer: "/reason", detail: `reason is text of at most ${MAX_REASON_CHARS} characters` });
+    if (errors.length) throw validation(errors);
+    requireRecentSignIn(actor, now());
+    const sub = b[given[0]];
+    const reason = typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : undefined;
+    if (reason) guard("access-requests", "revoke", [["/reason", reason]]);
+    const items = (await listAllowBySub(ddb, cmds, table, sub)).filter((it) => it.state === "active" && it.sub === sub);
+    if (!items.length) throw new HttpError(404, "not_found", "that member has no active grant");
+    if (items.length > MAX_REVOKE_ITEMS) throw problem(422, "too_many", "that member has more grants than one revoke takes; ask io", {});
+    const at = iso();
+    const ttl = sec() + DECIDED_TTL_SECONDS;
+    const parts = { puts: [], updates: [] };
+    for (const it of items) {
+      const rv = revokeItems({ email: emailOfAllowItem(it), sub, at, by: actor.id, ...(reason ? { reason } : {}), uid: uid(), table });
+      parts.puts.push(...rv.puts);
+      parts.updates.push(...rv.updates);
+      // The request that gave this grant, when it still exists and is still active: it moves to revoked in the same transaction (its version guards it).
+      const req = typeof it.requestId === "string" && ID_RE.test(it.requestId) ? await loadRequest(it.requestId) : null;
+      if (req && req.state === "active" && req.decision?.grampsId === sub) {
+        const decision = { ...(req.decision ?? {}), revoked: { by: actor.id, at, confirmedOutside: true, ...(reason ? { reason } : {}) } };
+        parts.puts.push(audit("accessreq.revoke", req, actor.id, at, { state: req.state }, { state: "revoked", sub, confirmedOutside: true }, reason));
+        parts.updates.push(update(req, { state: "revoked", at, ttl, decision }), guardUpdate(req, "declined", ttl));
+      }
+    }
+    parts.puts.push({ item: auditItem({ op: "allowgrant.revoke", id: `allowsub:${sub}`, principalId: actor.id, at, before: { active: items.length }, after: { active: 0, confirmedOutside: true }, ...(reason ? { reason } : {}) }, uid(), table) });
+    await commit(parts);
+    return { revoked: items.map((it) => ({ email: maskEmail(emailOfAllowItem(it)) })) };
+  }
+
   // ---- the member answers a second email ------------------------------------------------------------------------------------------
   /**
    * The member's own second emails that they can still answer (GET /api/second-email): `{ items: [{ id, noticed, until }] }`, by id. `id` is what the
@@ -838,5 +894,5 @@ export function createAccessRequests(deps) {
     await createSystem(store, { kind: n > 0 ? "create" : "edit", ops, origin: "access_request", requestId: `${req.id}-facts`, base_versions: { [key]: head.version } });
   }
 
-  return { list, get: getOne, decide, revoke, resendNotice, listSecondEmails, respondSecondEmail, completeAccessRequest, afterComplete, completeById, accessRequestOf };
+  return { list, get: getOne, decide, revoke, revokeGrant, resendNotice, listSecondEmails, respondSecondEmail, completeAccessRequest, afterComplete, completeById, accessRequestOf };
 }

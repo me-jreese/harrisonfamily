@@ -120,6 +120,18 @@ const mailer = env.SES_FROM_ADDRESS && env.SES_CONFIGURATION_SET
     },
   })
   : undefined;
+// Requester mail (approved, declined, awaiting record) goes through the Join identity and its own configuration set (HFY-TSK-331, P2-R61, Q2-09), never the
+// general one above: without JOIN_* the decision still commits and answers emailSent:false (fail closed).
+const requesterMailer = env.JOIN_FROM_ADDRESS && env.JOIN_SES_CONFIGURATION_SET
+  ? createSesMailer({
+    from: env.JOIN_FROM_ADDRESS, configurationSet: env.JOIN_SES_CONFIGURATION_SET,
+    send: async (input) => {
+      const mod = await import("@aws-sdk/client-sesv2");
+      sesClient ??= new mod.SESv2Client({});
+      return sesClient.send(new mod.SendEmailCommand(input));
+    },
+  })
+  : undefined;
 
 const authenticate = createAuthenticator({
   issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth",
@@ -149,7 +161,7 @@ const isOwner = async (sub) => (await getGroups({ sub })).includes(OWNER_GROUP);
 
 // HFY-TSK-141: the access-request domain the desktop's first id assignment (assign mode, Q2-03) completes through: the policy asks which request a created
 // Person came from, then links it. The approval path (mint mode) uses the handler's own instance. HFY_ID_POLICY is read as everywhere (unset = off).
-const accessRequests = createAccessRequests({ ddb, cmds, table, now: () => Date.now(), uid: () => ulid(Date.now()), mailer, getAdmins, isOwner, personFacts, readEntries, guardDob: guardDobFromEnv(env), log: console });
+const accessRequests = createAccessRequests({ ddb, cmds, table, now: () => Date.now(), uid: () => ulid(Date.now()), mailer, requesterMailer, getAdmins, isOwner, personFacts, readEntries, guardDob: guardDobFromEnv(env), log: console });
 // A bad HFY_ID_POLICY value must not stop the whole API at start-up: leave the policy unset here and let policyOf() report it as 500 id_policy_misconfigured per request.
 let idPolicy;
 try {
@@ -207,7 +219,7 @@ export const handler = async (event, context) => {
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
-      features, isOwner, mailer, personFacts, readEntries, idPolicy,
+      features, isOwner, mailer, requesterMailer, personFacts, readEntries, idPolicy,
       ...p,
     });
   }

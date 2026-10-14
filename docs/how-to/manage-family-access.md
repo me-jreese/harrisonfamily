@@ -265,7 +265,9 @@ A `link` for a person who **already signs in with another address** is refused w
 
 ## Remove access granted through a request
 
-Revoke the request, not the file: `POST /api/access-requests/<id>/revoke` with the request's current `version`, `confirmedOutside: true` and an optional `reason`. It needs a sign-in at most 15 minutes old. One transaction sets the `ALLOW#` item and the request to `revoked`, adds the audits and lets the address ask again. Nobody is emailed. The request must still exist: it is deleted 30 days after the decision, and then this route answers `404` (an open issue for io; for older access ask io to revoke the `ALLOW#` item). Access ends at the next sign-in or refresh: an `io_id` already issued lives out its hour. If io's file also lists the address, the revoked item still wins.
+Revoke the request, not the file: `POST /api/access-requests/<id>/revoke` with the request's current `version`, `confirmedOutside: true` and an optional `reason`. It needs a sign-in at most 15 minutes old. One transaction sets the `ALLOW#` item and the request to `revoked`, adds the audits and lets the address ask again. Nobody is emailed. Access ends at the next sign-in or refresh: an `io_id` already issued lives out its hour. If io's file also lists the address, the revoked item still wins.
+
+**More than 30 days after the decision.** The request is deleted 30 days after it is decided, and then that route answers `404`. Revoke by the member's grant instead: `POST /api/allow-grants/revoke` with `{"sub": "<the member's Gramps ID>", "confirmedOutside": true, "reason": "..."}`. It needs the same recent sign-in and confirmation. It revokes every active `ALLOW#` entry of that member (the answer lists the masked addresses), writes an `allow.revoke` audit for each and an `allowgrant.revoke` audit for the call, and also moves a request that still exists to `revoked`. `404` means the member has no active grant. Nobody is emailed. **Verify** with the check in [Allowlist grants in DynamoDB](#allowlist-grants-in-dynamodb): it prints `"state": "revoked"`.
 
 ## Remove a member
 
