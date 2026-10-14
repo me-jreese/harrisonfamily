@@ -121,6 +121,56 @@ describe("the bundle shape", () => {
     expect(byHandle.body).toEqual(r.body);
     expect((await w.get(`/api/edit/Person/${ME}`, ME)).body.relation).toBe("own");
   });
+  it("also carries the places of the related events and the sources of the related citations, for the editor's pickers (HFY-TSK-156)", async () => {
+    const w = await world();
+    const place = { _class: "Place", handle: h(6001), gramps_id: "P0001", change: 1, private: false, name: { _class: "PlaceName", value: "Synthville", lang: "" }, place_type: typ("PlaceType", 3) };
+    const source = { _class: "Source", handle: h(7001), gramps_id: "S0001", change: 1, private: false, title: "A synthetic ledger" };
+    const cit = { _class: "Citation", handle: h(8001), gramps_id: "C0001", change: 1, private: false, source_handle: source.handle, page: "p. 1", confidence: 2 };
+    const ev = event(7, date(0, 0, 1950), { place: place.handle });
+    const p = person(7, { event_ref_list: [primary(ev)], citation_list: [cit.handle] });
+    await w.apply([place, source, cit, ev, p].map(create));
+    const r = await w.get(`/api/edit/Person/${p.gramps_id}`, ME);
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.body.related).sort()).toEqual([`Citation:${cit.handle}`, `Event:${ev.handle}`, `Place:${place.handle}`, `Source:${source.handle}`].sort());
+    expect(r.body.related[`Place:${place.handle}`].obj.name.value).toBe("Synthville");
+    expect(r.body.related[`Source:${source.handle}`].obj.title).toBe("A synthetic ledger");
+    expect(r.body.related[`Place:${place.handle}`].version).toBe(1);
+    // an event with no place and a citation with no source add nothing
+    const q1 = await w.get(`/api/edit/Person/${OTHER}`, ME);
+    expect(Object.keys(q1.body.related).some((k) => k.startsWith("Place:") || k.startsWith("Source:"))).toBe(false);
+  });
+  it("puts the second-level places and sources through the same read-side view: a member sees a fine date on them at year precision, an admin as stored (HFY-TSK-156)", async () => {
+    const w = await world();
+    const fine = date(9, 11, 1971);
+    const place = { _class: "Place", handle: h(6002), gramps_id: "P0002", change: 1, private: false, name: { _class: "PlaceName", value: "Otherton", lang: "", date: fine }, place_type: typ("PlaceType", 3) };
+    const source = { _class: "Source", handle: h(7002), gramps_id: "S0002", change: 1, private: false, title: "Another ledger", abbrev: "" };
+    const cit = { _class: "Citation", handle: h(8002), gramps_id: "C0002", change: 1, private: false, source_handle: source.handle, page: "p. 2", confidence: 2, date: fine };
+    const ev = event(8, date(0, 0, 1950), { place: place.handle });
+    const p = person(8, { event_ref_list: [primary(ev)], citation_list: [cit.handle] });
+    await w.apply([place, source, cit, ev, p].map(create));
+    const member = (await w.get(`/api/edit/Person/${p.gramps_id}`, ME)).body;
+    const admin = (await w.get(`/api/edit/Person/${p.gramps_id}`, ADMIN)).body;
+    expect(member.related[`Place:${place.handle}`].obj.name.date.dateval.slice(0, 3)).toEqual([0, 0, 1971]);
+    expect(admin.related[`Place:${place.handle}`].obj.name.date.dateval.slice(0, 3)).toEqual([9, 11, 1971]);
+    expect(member.related[`Citation:${cit.handle}`].obj.date.dateval.slice(0, 3)).toEqual([0, 0, 1971]);
+  });
+  it("holds at most 200 related objects across both levels: a first level of 200 leaves no room for a place (HFY-TSK-156)", async () => {
+    const w = await world();
+    const places = Array.from({ length: 200 }, (_, i) => ({ _class: "Place", handle: h(6100 + i), gramps_id: `P${String(100 + i).padStart(4, "0")}`, change: 1, private: false, name: { _class: "PlaceName", value: `Synthplace ${i}`, lang: "" }, place_type: typ("PlaceType", 3) }));
+    const evs = places.map((pl, i) => event(100 + i, date(0, 0, 1950), { place: pl.handle }));
+    const full = person(20, { event_ref_list: evs.map(primary) });
+    const short = person(21, { event_ref_list: evs.slice(0, 199).map(primary) });
+    const all = [...places, ...evs, full, short].map(create);
+    for (let i = 0; i < all.length; i += 20) await w.apply(all.slice(i, i + 20));
+    const keys = (b) => Object.keys(b.related);
+    const atCap = (await w.get(`/api/edit/Person/${full.gramps_id}`, ADMIN)).body;
+    expect(keys(atCap)).toHaveLength(200);
+    expect(keys(atCap).some((k) => k.startsWith("Place:"))).toBe(false);
+    // one short of the cap, the second level fills the last place
+    const oneShort = (await w.get(`/api/edit/Person/${short.gramps_id}`, ADMIN)).body;
+    expect(keys(oneShort)).toHaveLength(200);
+    expect(keys(oneShort).filter((k) => k.startsWith("Place:"))).toEqual([`Place:${places[0].handle}`]);
+  });
   it("shows a related Person as a stub with a year-only lifespan and no other fields", async () => {
     const w = await world();
     const r = await w.get(`/api/edit/Family/${w.fam.gramps_id}`, ME);

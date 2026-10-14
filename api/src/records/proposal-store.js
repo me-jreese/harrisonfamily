@@ -6,7 +6,7 @@
 //   POST   /api/proposals/:id/withdraw   If-Match: etag                    the proposer withdraws
 //   createSystem(ctx, input)                                               a system proposal for the access-request flow (not a route)
 //
-// POST /api/proposals/:id/decision is proposal-decision-api's. The document, its items and the etag live in proposals.js; this file reads and
+// POST /api/proposals/:id/decision is proposal-decision-api's (proposal-decision.js). The document, its items and the etag live in proposals.js; this file reads and
 // rewrites them. Every state change here is ONE transaction: META (moved between PROPQ#<state> partitions), IDX#BY, every IDX#REC copy and the
 // AUDIT#proposal item, with META conditioned on the etag that was read (a concurrent change cancels the write: 412 with the fresh view).
 //
@@ -30,8 +30,13 @@ export const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 export const LIST_VIEWS = Object.freeze(["queue", "mine", "about-me"]);
 export const DEFAULT_LIMIT = 25;
 export const MAX_LIMIT = 50;
-/** The states a queue shows when no `state` is asked for: what an admin can decide. */
-export const QUEUE_STATES = Object.freeze(["pending"]);
+/**
+ * The states a queue shows when no `state` is asked for: what an admin can decide (proposal-decision.js reads this list as its DECIDABLE_STATES).
+ * `stale` is a stored state: the decision route writes it when an approval's rebase meets a conflict (editing design 7.4 step 3, HFY-TSK-209), and an
+ * admin can still decide it, so it stays in the queue. HFY-TSK-184's review had dropped it while nothing wrote the state; HFY-TSK-209's review put it back.
+ * The `stale` flag of a ProposalView is a different thing: it is computed on read (staleOf) and never stored.
+ */
+export const QUEUE_STATES = Object.freeze(["pending", "stale"]);
 const MAX_ABOUT_FAMILIES = 30;
 const BODY_FIELDS = new Set(["ops", "base_versions", "note"]);
 
@@ -102,21 +107,32 @@ async function staleOf(ctx, p, memo = new Map()) {
   return false;
 }
 
-/** The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13). */
-const viewOf = async (ctx, actor, p, memo) => {
+/**
+ * The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13), and so does the admin's
+ * decision reason (HFY-TSK-209: a member of the page's circle sees the verdict, never the private note). The deciding sign-in time (auth_time) is
+ * for admins only: the proposer does not see it.
+ */
+export const viewOf = async (ctx, actor, p, memo) => {
   const view = proposalView(p, actor, { stale: await staleOf(ctx, p, memo) });
-  if (actor.admin === true || p.proposer?.id === actor.id) return view;
+  if (actor.admin === true) return view;
+  // The admin's sign-in time is session metadata for admins and the audit: the proposer does not see it either.
+  const dropAuthTime = (d) => { const { auth_time: authTime, ...rest } = d; return rest; }; // eslint-disable-line no-unused-vars
+  if (p.proposer?.id === actor.id) return view.decision ? { ...view, decision: dropAuthTime(view.decision) } : view;
   const { owners, request_id: requestId, ...rest } = view; // eslint-disable-line no-unused-vars
+  if (rest.decision) {
+    const { reason, ...decision } = dropAuthTime(rest.decision); // eslint-disable-line no-unused-vars
+    rest.decision = decision;
+  }
   return rest;
 };
 
 /** If-Match as a bare etag (quotes and a weak prefix stripped), or null when the header is absent. */
-function ifMatchOf(c) {
+export function ifMatchOf(c) {
   const raw = headerOf(c.event?.headers, "if-match");
   if (raw === undefined) return null;
   return raw.trim().replace(/^W\//, "").replace(/^"(.*)"$/, "$1");
 }
-const replyHeaders = (p) => ({ etag: `"${p.etag}"`, "cache-control": "private, no-store", vary: "Cookie" });
+export const replyHeaders = (p) => ({ etag: `"${p.etag}"`, "cache-control": "private, no-store", vary: "Cookie" });
 
 // ---- GET /api/proposals -----------------------------------------------------------------------------------------------------------
 function limitOf(raw) {
@@ -152,8 +168,8 @@ export async function proposalsList(c) {
   const { actor } = c;
   const view = c.query.view ?? "mine";
   if (!LIST_VIEWS.includes(view)) throw problem(400, "validation", "view is queue, mine or about-me", { errors: [{ pointer: "/view", detail: "view is queue, mine or about-me" }] });
+  // `state=stale` lists the stored state (what a conflicting approval left), not the computed `stale` flag: a pending proposal whose page moved stays under pending.
   const state = c.query.state;
-  if (state === "stale") throw problem(400, "validation", "stale is a flag on a suggestion, not a state: filter on `stale`", { errors: [{ pointer: "/state", detail: "stale is computed on read; ask for pending and filter on the stale flag" }] });
   if (state !== undefined && state !== "" && !PROPOSAL_STATES.includes(state)) throw problem(400, "validation", "that state is not known", { errors: [{ pointer: "/state", detail: "state is not known" }] });
   if (view === "queue" && actor.admin !== true) throw new HttpError(403, "not_admin", "only an admin can see the queue");
   const limit = limitOf(c.query.limit);
@@ -187,7 +203,7 @@ export async function proposalsList(c) {
 }
 
 // ---- GET /api/proposals/:id ---------------------------------------------------------------------------------------------------------
-async function rebaseOf(ctx, actor, p) {
+export async function rebaseOf(ctx, actor, p) {
   if (!OPEN_STATES.includes(p.state)) return { status: "current", conflicts: [] };
   const keys = sortedUnique(arr(p.ops).map(existingKey).filter(Boolean));
   const objects = {};
@@ -235,7 +251,7 @@ async function loadForWrite(c, { verb }) {
   if (given !== p.etag) throw await preconditionFailed(c, p);
   return p;
 }
-async function preconditionFailed(c, p) {
+export async function preconditionFailed(c, p) {
   return new HttpError(412, "precondition_failed", "this suggestion changed since you opened it", { proposal: await viewOf(c.store, c.actor, p) });
 }
 

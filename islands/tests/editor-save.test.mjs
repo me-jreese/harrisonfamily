@@ -6,7 +6,7 @@ import { PERSON_SECTIONS, createModeResolver } from "../src/lib/editor-model.js"
 import { ApiError, createApi } from "../src/lib/api.js";
 import { applyOps, validateOps } from "../../api/src/records/ops.js";
 import {
-  SAVE_COPY, NOTE_MAX, UNDO_WINDOW_MS, allSaveText, barText, changesBody, confirmLabel, countOps, newIdempotencyKey, noteCountText, opsFromDrafts, planGroups, replaySeed, problemFor, reviewerLine, savedToast, undoBody, undoLeftMs
+  SAVE_COPY, NOTE_MAX, UNDO_WINDOW_MS, allSaveText, barText, baseVersionsFor, changesBody, confirmLabel, countOps, modeOfOp, newIdempotencyKey, noteCountText, opsFromDrafts, planGroups, replayDrafts, replaySeed, problemFor, reviewerLine, savedToast, settledUnitsOf, undoBody, undoLeftMs
 } from "../src/lib/editor-save.js";
 
 const POLICY = JSON.parse(readFileSync(new URL("./fixtures/edit-policy-person.json", import.meta.url), "utf8"));
@@ -16,12 +16,12 @@ const SECTIONS = PERSON_SECTIONS.filter((s) => s.form);
 
 describe("opsFromDrafts", () => {
   it("makes no op for values equal to the record's, trimmed, or for a missing optional field", () => {
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Test", nick: "  Tess ", title: "" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "Test", nick: "  Tess ", title: "" } } });
     assert.deepEqual(ops, []);
   });
 
   it("makes one set op per changed field, with the served value as the base (null when the record lacks the property)", () => {
-    const { ops, labels } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Tester", nick: "Tess", title: " Dr " } } });
+    const { ops, labels } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "Tester", nick: "Tess", title: " Dr " } } });
     assert.deepEqual(ops, [
       { id: "names.first_name", op: "set", obj: KEY, path: "/primary_name/first_name", base: "Test", value: "Tester" },
       { id: "names.title", op: "set", obj: KEY, path: "/primary_name/title", base: null, value: "Dr" }
@@ -30,13 +30,13 @@ describe("opsFromDrafts", () => {
   });
 
   it("a cleared field is a set to the empty string over the old value", () => {
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Test" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "Test" } } });
     assert.deepEqual(ops, [{ id: "names.nick", op: "set", obj: KEY, path: "/primary_name/nick", base: "Tess", value: "" }]);
   });
 
   it("a cleared field is accepted by the API's op engine, and its inverse puts the old text back (contract)", () => {
     // The server has no "unset" op: a set to "" over the stored text is how a field is cleared (api/test/changes.test.js "clearing a stored phone number").
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Test", title: "Dr" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "Test", title: "Dr" } } });
     assert.deepEqual(ops.map((o) => [o.id, o.base, o.value]), [["names.nick", "Tess", ""], ["names.title", null, "Dr"]]);
     assert.deepEqual(validateOps(ops), []);
     const r = applyOps({ [KEY]: OBJ }, ops);
@@ -49,7 +49,7 @@ describe("opsFromDrafts", () => {
   });
 
   it("op ids fit the API's id rule and a section without a draft makes none", () => {
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "A", call: "B", nick: "C", title: "D", suffix: "E" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "A B", call: "B", nick: "C", title: "D", suffix: "E" } } });
     assert.equal(ops.length, 5);
     for (const op of ops) assert.match(op.id, /^[A-Za-z0-9_.:-]{1,64}$/);
     assert.deepEqual(opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: {} }).ops, []);
@@ -57,7 +57,7 @@ describe("opsFromDrafts", () => {
 
   it("replaying the same drafts over a fresher record rebuilds the bases (the 409 path)", () => {
     const fresh = { ...OBJ, primary_name: { ...OBJ.primary_name, first_name: "Other" } };
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: fresh, drafts: { names: { first_name: "Tester", nick: "Tess" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: fresh, drafts: { names: { surname: "Person", first_name: "Tester", nick: "Tess" } } });
     assert.deepEqual(ops.map((o) => [o.id, o.base, o.value]), [["names.first_name", "Other", "Tester"]]);
   });
 });
@@ -65,34 +65,34 @@ describe("opsFromDrafts", () => {
 describe("replaySeed", () => {
   it("lays only the member's changed fields over the fresh record, so another person's change is neither lost nor reverted", () => {
     const fresh = { ...OBJ, primary_name: { ...OBJ.primary_name, title: "Rev", nick: "Other" } };
-    const drafts = { names: { first_name: "Test", nick: "Tessa" } }; // the member changed the nickname only (the title was never on the record they edited)
+    const drafts = { names: { surname: "Person", first_name: "Test", nick: "Tessa" } }; // the member changed the nickname only (the title was never on the record they edited)
     const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: fresh, drafts });
-    assert.deepEqual(seed, { names: { first_name: "Test", nick: "Tessa", title: "Rev" } });
+    assert.deepEqual(seed, { names: { surname: "Person", first_name: "Test", nick: "Tessa", title: "Rev" } });
     // the ops rebuilt from the seed change the nickname only, over the fresh base
     const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: fresh, drafts: seed });
     assert.deepEqual(ops.map((o) => [o.id, o.base, o.value]), [["names.nick", "Other", "Tessa"]]);
   });
   it("a field the member cleared stays cleared", () => {
-    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: OBJ, drafts: { names: { first_name: "Test" } } });
-    assert.deepEqual(seed, { names: { first_name: "Test" } });
+    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: OBJ, drafts: { names: { surname: "Person", first_name: "Test" } } });
+    assert.deepEqual(seed, { names: { surname: "Person", first_name: "Test" } });
   });
 });
 
 describe("replaySeed with settled ops (the refetch after a save)", () => {
   const fresh = { ...OBJ, primary_name: { ...OBJ.primary_name, nick: "Tessa" } }; // the save stored the nickname
   it("an edit the server just took is not laid over the fresh record again, one typed since is", () => {
-    const drafts = { names: { first_name: "Test", nick: "Tessa", title: "Dr" } }; // title typed after the save
+    const drafts = { names: { surname: "Person", first_name: "Test", nick: "Tessa", title: "Dr" } }; // title typed after the save
     const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: fresh, drafts, settled: { "names.nick": "Tessa" } });
-    assert.deepEqual(seed, { names: { first_name: "Test", nick: "Tessa", title: "Dr" } });
+    assert.deepEqual(seed, { names: { surname: "Person", first_name: "Test", nick: "Tessa", title: "Dr" } });
     const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: fresh, drafts: seed });
     assert.deepEqual(ops.map((o) => [o.id, o.base, o.value]), [["names.title", null, "Dr"]]);
   });
   it("a suggestion that went to review is settled too: the form goes back to the record, not to the suggested text", () => {
-    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: OBJ, drafts: { names: { first_name: "Tester", nick: "Tess", title: "Dr" } }, settled: { "names.first_name": "Tester" } });
-    assert.deepEqual(seed, { names: { first_name: "Test", nick: "Tess", title: "Dr" } });
+    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: OBJ, drafts: { names: { surname: "Person", first_name: "Tester", nick: "Tess", title: "Dr" } }, settled: { "names.first_name": "Tester" } });
+    assert.deepEqual(seed, { names: { surname: "Person", first_name: "Test", nick: "Tess", title: "Dr" } });
   });
   it("a settled field edited again to something else is kept", () => {
-    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: fresh, drafts: { names: { first_name: "Test", nick: "Tessie" } }, settled: { "names.nick": "Tessa" } });
+    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: fresh, drafts: { names: { surname: "Person", first_name: "Test", nick: "Tessie" } }, settled: { "names.nick": "Tessa" } });
     assert.equal(seed.names.nick, "Tessie");
   });
 });
@@ -101,7 +101,7 @@ describe("bar", () => {
   const resolver = createModeResolver(POLICY);
   const member = { admin: false, relation: "own" };
   it("counts the ops by the policy table", () => {
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Tester", nick: "Tessa", title: "Dr" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "Tester", nick: "Tessa", title: "Dr" } } });
     const c = countOps(ops, resolver, "Person", member);
     assert.deepEqual(c, { total: 3, direct: 2, review: 1 });
     assert.equal(barText(c), "3 changes — 2 save now, 1 goes to review");
@@ -112,7 +112,7 @@ describe("bar", () => {
     assert.equal(barText({ total: 0, direct: 0, review: 0 }), "");
   });
   it("an admin's ops all save now", () => {
-    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Tester", nick: "Tess" } } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { surname: "Person", first_name: "Tester", nick: "Tess" } } });
     assert.deepEqual(countOps(ops, resolver, "Person", { admin: true, relation: "other" }), { total: 1, direct: 1, review: 0 });
   });
 });
@@ -254,5 +254,77 @@ describe("SAVE_COPY", () => {
   it("names the two sheet groups as the design does", () => {
     assert.equal(SAVE_COPY.groupDirect, "saves now");
     assert.equal(SAVE_COPY.groupReview, "sent for review");
+  });
+});
+
+// ---- the person sections in the save flow (HFY-TSK-156) ----------------------------------------------------------------------------
+describe("list sections in the save flow", () => {
+  const resolver = createModeResolver(JSON.parse(readFileSync(new URL("./fixtures/edit-policy-all.json", import.meta.url), "utf8")));
+  const ev = (type, dt) => ({ _class: "Event", type: { _class: "EventType", value: type, string: "" }, date: dt });
+  const dt = (y) => ({ _class: "Date", calendar: 0, modifier: 0, quality: 0, dateval: [0, 0, y, false], text: "", sortval: 1 });
+  const bundle = {
+    key: KEY, version: 7,
+    obj: { ...OBJ, event_ref_list: [{ _class: "EventRef", ref: "he1", role: { _class: "EventRoleType", value: 1, string: "" } }], note_list: ["hn1"] },
+    related: { "Event:he1": { version: 3, obj: ev(19, dt(2001)) }, "Note:hn1": { version: 2, obj: { _class: "Note", text: { _class: "StyledText", string: "Hi", tags: [] } } } }
+  };
+  const all = PERSON_SECTIONS;
+  const member = { admin: false, relation: "own" };
+  const build = (drafts, viewer = member) => opsFromDrafts({ key: KEY, sections: all, obj: bundle.obj, bundle, viewer, drafts });
+  const newEvent = { events: { edits: {}, removed: [], added: [{ tid: "n1", values: { type: "21", date: dt(1999), place: { ref: "", name: "Newtown" }, description: "" } }], order: null } };
+
+  it("the base versions name the target and each related object the ops touch, and no new object", () => {
+    const { ops } = build({ ...newEvent, notes: { edits: { hn1: { text: "Hello" } }, removed: [], added: [], order: null } });
+    assert.deepEqual(baseVersionsFor(bundle, ops), { [KEY]: 7, "Note:hn1": 2 });
+    assert.deepEqual(changesBody({ target: KEY, version: 7, ops, baseVersions: baseVersionsFor(bundle, ops) }).base_versions, { [KEY]: 7, "Note:hn1": 2 });
+    assert.deepEqual(baseVersionsFor(bundle, []), { [KEY]: 7 });
+  });
+
+  it("a change of several ops counts once: a new event with a new place is one change", () => {
+    const built = build(newEvent);
+    assert.equal(built.ops.length, 3);
+    const c = countOps(built.ops, resolver, "Person", member, built.units);
+    assert.equal(c.total, 1);
+    assert.equal(c.direct + c.review, 1);
+    assert.equal(countOps(built.ops, resolver, "Person", member).total, 3);
+  });
+
+  it("the bar counts by the table: a new place goes to review for a member; an admin's saves now", () => {
+    const built = build(newEvent);
+    assert.deepEqual(countOps(built.ops, resolver, "Person", member, built.units), { total: 1, direct: 0, review: 1 });
+    const admin = { admin: true, relation: "other" };
+    assert.deepEqual(countOps(build(newEvent, admin).ops, resolver, "Person", admin, built.units), { total: 1, direct: 1, review: 0 });
+    // a note edited on the member's own page saves now; a fact, whose table rows are conditional, is hinted without them
+    const two = build({ notes: { edits: { hn1: { text: "Hello" } }, removed: [], added: [], order: null }, facts: { edits: {}, removed: [], added: [{ tid: "n1", values: { type: "15", value: "x" } }], order: null } });
+    assert.deepEqual(countOps(two.ops, resolver, "Person", member, two.units), { total: 2, direct: 2, review: 0 });
+  });
+
+  it("modeOfOp judges a create by the class's main field and an op by the class its object is", () => {
+    assert.equal(modeOfOp({ op: "create", obj: "new:1", cls: "Place", value: {} }, resolver, "Person", member), "proposal");
+    assert.equal(modeOfOp({ op: "create", obj: "new:1", cls: "Note", value: {} }, resolver, "Person", member), "direct");
+    assert.equal(modeOfOp({ op: "set", obj: "Note:hn1", path: "/text", base: null, value: {} }, resolver, "Person", { admin: false, relation: "other" }), "proposal");
+  });
+
+  it("replayDrafts keeps the form fields the member changed and the list changes that still apply, and drops what the save stored", () => {
+    const fresh = { ...bundle, version: 8, related: { ...bundle.related, "Note:hn1": { version: 3, obj: { _class: "Note", text: { _class: "StyledText", string: "Hello", tags: [] } } } } };
+    const drafts = {
+      names: { surname: "Person", first_name: "Test", nick: "Tessa" },
+      notes: { edits: { hn1: { text: "Hello" } }, removed: [], added: [{ tid: "n1", values: { text: "Another" } }, { tid: "n2", values: { text: "Saved" } }], order: null }
+    };
+    const out = replayDrafts({ sections: all, oldBundle: bundle, freshBundle: fresh, drafts, settledUnits: new Set(["notes/a:n2"]) });
+    assert.equal(out.names.nick, "Tessa");
+    assert.deepEqual(out.notes.edits, {});
+    assert.deepEqual(out.notes.added.map((a) => a.tid), ["n1"]);
+    // no list draft left, no key
+    assert.equal(replayDrafts({ sections: all, oldBundle: bundle, freshBundle: bundle, drafts: { names: {} } }).notes, undefined);
+  });
+
+  it("settledUnitsOf: a change is settled only when every one of its ops was stored", () => {
+    const built = build(newEvent);
+    const stored = Object.fromEntries(built.ops.map((o) => [o.id, o.value]));
+    assert.deepEqual([...settledUnitsOf(built, stored)], ["events/a:n1"]);
+    const partial = { ...stored };
+    delete partial[built.ops[2].id];
+    assert.deepEqual([...settledUnitsOf(built, partial)], []);
+    assert.deepEqual([...settledUnitsOf(built, {})], []);
   });
 });

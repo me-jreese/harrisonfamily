@@ -5,6 +5,7 @@
 // answer (editing.md 8.3). The server decides on every write: the counts here come from the bundle's policy table and are a hint, the sheet's
 // groups come from the dry run.
 import { sectionValues } from "./editor-model.js";
+import { LIST_ADAPTERS, draftKey, listDraftIsEmpty, makeLookups, replayListDraft, sameValue, sectionOps } from "./editor-sections.js";
 
 /** The client offers the returned inverse ops for 10 minutes (editing.md 7.3 "Atomicity"). */
 export const UNDO_WINDOW_MS = 10 * 60 * 1000;
@@ -50,34 +51,20 @@ const plural = (n, one, many) => (n === 1 ? one : many);
 
 // ---- the draft -> ops ---------------------------------------------------------------------------------------------------
 
-const readPath = (obj, pointer) => String(pointer).split("/").filter(Boolean).reduce((o, k) => (isObj(o) ? o[k] : undefined), obj);
 const trimmed = (v) => (typeof v === "string" ? v.trim() : "");
 
 /**
- * The EditOps for the member's form values. `sections` are the registry sections with a `form` (editor-model.js), `drafts` maps a section id to
- * the form's current args (a cleared field is missing from them). One `set` op per field whose trimmed text differs from the record's:
- * `base` is what the bundle served (null when the record lacks the property, which `set` then creates), `value` the new text ("" clears it).
- * -> { ops, labels }: `labels` maps an op id to the field's words, for an error that names an op.
+ * The EditOps for the member's drafts (editor-sections.js sectionOps). `sections` are the registry sections (editor-model.js); `drafts` maps a
+ * section id to the names form's args, and `<section>` or `<section>:<list>` to a list section's draft. The names form makes one `set` op per
+ * field whose trimmed text differs from the record's, `base` what the bundle served (null when the record lacks the property, which `set`
+ * then creates), `value` the new text ("" clears it); the lists make adds, sets and removes by key segment. `bundle` is the edit bundle
+ * ({ obj, related }); a caller with only the record passes `obj`.
+ * -> { ops, labels, units }: `labels` maps an op id to the field's words, for an error that names an op; `units` maps an op id to the change it
+ * belongs to (a change can be several ops: a new event is the place, the event and the reference).
  */
-export function opsFromDrafts({ key, sections, obj, drafts }) {
-  const ops = [];
-  const labels = {};
-  for (const section of sections) {
-    const form = section.form;
-    const draft = drafts && drafts[section.id];
-    if (!form || !isObj(draft)) continue;
-    for (const [field, title] of form.fields) {
-      const path = `${form.prefix}/${field}`;
-      const stored = readPath(obj, path);
-      const before = typeof stored === "string" ? stored : "";
-      const after = trimmed(draft[field]);
-      if (after === before.trim()) continue;
-      const id = `${section.id}.${field}`;
-      ops.push({ id, op: "set", obj: key, path, base: typeof stored === "string" ? stored : null, value: after });
-      labels[id] = title;
-    }
-  }
-  return { ops, labels };
+export function opsFromDrafts({ key, sections, obj, drafts, bundle, viewer }) {
+  const b = bundle || { key, obj, related: {} };
+  return sectionOps({ key, bundle: b.obj === undefined ? { ...b, obj } : b, sections, drafts, viewer });
 }
 
 /**
@@ -85,34 +72,95 @@ export function opsFromDrafts({ key, sections, obj, drafts }) {
  * fields the member changed (against the record they edited) laid over them, so a field somebody else changed meanwhile is neither lost nor
  * silently reverted. `settled` maps an op id to the value the server just took (a save that went through): an edit still equal to it is
  * done and is not laid over the fresh record again, so only what the member typed after the save survives. -> { [sectionId]: args }.
+ * (The forms only; replayDrafts below adds the list sections.)
  */
 export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = {} }) {
-  const ops = opsFromDrafts({ key, sections, obj: oldObj, drafts }).ops.filter((o) => !(Object.hasOwn(settled, o.id) && settled[o.id] === o.value));
+  void key;
   const out = {};
   for (const section of sections) {
     if (!section.form) continue;
+    const draft = drafts && drafts[section.id];
     const values = sectionValues(freshObj, section.form);
-    for (const op of ops) {
-      if (!op.id.startsWith(`${section.id}.`)) continue;
-      const field = op.path.slice(section.form.prefix.length + 1);
-      if (op.value === "") delete values[field];
-      else values[field] = op.value;
+    const before = sectionValues(oldObj, section.form);
+    if (isObj(draft)) {
+      for (const [field] of section.form.fields) {
+        const after = trimmed(draft[field]);
+        if (after === trimmed(before[field])) continue;
+        if (Object.hasOwn(settled, `${section.id}.${field}`) && settled[`${section.id}.${field}`] === after) continue;
+        if (after === "") delete values[field];
+        else values[field] = after;
+      }
     }
     out[section.id] = values;
   }
   return out;
 }
 
-/** How many of the ops save now and how many go to review, by the bundle's policy table (a hint: the dry run decides). */
-export function countOps(ops, resolver, cls, viewer) {
+/**
+ * Every draft after the record changed under it: the forms by replaySeed, the lists by replayListDraft (what still applies against the fresh
+ * bundle, minus the units already stored). `settledUnits` is a set of `<section>/<unit>` strings.
+ */
+export function replayDrafts({ sections, oldBundle, freshBundle, drafts, settled = {}, settledUnits = new Set(), schemas = {} }) {
+  const out = replaySeed({ sections, key: freshBundle.key, oldObj: oldBundle.obj, freshObj: freshBundle.obj, drafts, settled });
+  const lookups = makeLookups(freshBundle, schemas);
+  for (const s of sections) {
+    for (const id of s.lists || []) {
+      const dk = draftKey(s.id, id);
+      if (!drafts || drafts[dk] === undefined) continue;
+      const next = replayListDraft({ adapter: LIST_ADAPTERS[id], draft: drafts[dk], fresh: freshBundle, lookups, settled: settledUnits, section: dk });
+      if (!listDraftIsEmpty(next)) out[dk] = next;
+    }
+  }
+  return out;
+}
+
+/** The units whose every op the server just took (`settled`: op id -> value), from the ops built for the same drafts. A set of `<section>/<unit>`. */
+export function settledUnitsOf(built, settled) {
+  const done = new Map();
+  for (const op of built.ops) {
+    const unit = built.units[op.id];
+    if (!unit) continue;
+    const ok = Object.hasOwn(settled, op.id) && sameValue(settled[op.id], op.value);
+    done.set(unit, (done.get(unit) ?? true) && ok);
+  }
+  return new Set([...done].filter(([, ok]) => ok).map(([unit]) => unit));
+}
+
+// The pointer a `create` op is judged at, by class (it has no path): the object's main field.
+const CREATE_POINTER = Object.freeze({ Event: "/type", Note: "/text", Place: "/name", Source: "/title", Citation: "/page", Media: "/desc" });
+const classOfOp = (op, fallback) => {
+  const m = /^(Person|Family|Event|Place|Source|Citation|Repository|Media|Note):/.exec(typeof op.obj === "string" ? op.obj : "");
+  return m ? m[1] : typeof op.cls === "string" ? op.cls : fallback;
+};
+
+/** The policy code the table gives an op for this viewer (a hint: the dry run decides). */
+export function modeOfOp(op, resolver, cls, viewer) {
+  const c = classOfOp(op, cls);
+  return resolver.resolve(c, typeof op.path === "string" ? op.path : CREATE_POINTER[c] || "", viewer, { lenient: true });
+}
+
+/**
+ * How many changes save now and how many go to review, by the bundle's policy table (a hint: the dry run decides). `units` maps an op id to
+ * the change it belongs to; ops of one change count once, as "review" when any of them is (a group saves now only if every op in it does).
+ * Without `units` every op is its own change.
+ */
+export function countOps(ops, resolver, cls, viewer, units = null) {
+  const groups = new Map();
+  ops.forEach((op, i) => {
+    const unit = units && units[op.id] ? units[op.id] : `#${i}`;
+    const code = modeOfOp(op, resolver, cls, viewer);
+    const g = groups.get(unit) || { direct: true, review: false, other: false };
+    if (code === "proposal") g.review = true;
+    else if (code !== "direct") g.other = true;
+    groups.set(unit, g);
+  });
   let direct = 0;
   let review = 0;
-  for (const op of ops) {
-    const code = resolver.resolve(cls, op.path, viewer);
-    if (code === "direct") direct += 1;
-    else if (code === "proposal") review += 1;
+  for (const g of groups.values()) {
+    if (g.review) review += 1;
+    else if (!g.other) direct += 1;
   }
-  return { total: ops.length, direct, review };
+  return { total: groups.size, direct, review };
 }
 
 /** The sticky bar's line: "3 changes — 2 save now, 1 goes to review". "" when nothing changed. */
@@ -136,9 +184,24 @@ export function newIdempotencyKey() {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * The versions of the stored objects the ops address: the target's, and those of the related objects the bundle served (an event, a note, a
+ * citation). An object an op creates (`new:n`) has none.
+ */
+export function baseVersionsFor(bundle, ops) {
+  const out = { [bundle.key]: bundle.version };
+  for (const op of ops) {
+    const k = typeof op.obj === "string" ? op.obj : "";
+    if (!k || /^new:\d+$/.test(k) || k in out) continue;
+    const rel = bundle.related && bundle.related[k];
+    if (rel && Number.isInteger(rel.version)) out[k] = rel.version;
+  }
+  return out;
+}
+
 /** The POST /api/changes body: the target, the versions the member's edits were made against, the ops and an optional note for the reviewer. */
-export function changesBody({ target, version, ops, dryRun = false, note = "" }) {
-  const body = { target, base_versions: { [target]: version }, ops };
+export function changesBody({ target, version, ops, dryRun = false, note = "", baseVersions = null }) {
+  const body = { target, base_versions: baseVersions || { [target]: version }, ops };
   if (note) body.note = note;
   if (dryRun) body.dry_run = true;
   return body;

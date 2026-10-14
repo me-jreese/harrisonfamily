@@ -12,12 +12,12 @@
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "52d2ea83",
-        "css": "718ffc08"
+        "js": "b37a3c48",
+        "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "b5b0f633",
-        "css": "ad64e40d"
+        "js": "281a6dbf",
+        "css": "6a93fa82"
       },
       "follow": {
         "js": "00d35b3c",
@@ -48,7 +48,7 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "fd96c809",
+        "js": "cf32228f",
         "css": "be703fb4"
       },
       "person": {
@@ -68,7 +68,7 @@
         "css": "890fde1c"
       },
       "search": {
-        "js": "30a17fd1",
+        "js": "6021386e",
         "css": "9e007813"
       },
       "settings": {
@@ -76,7 +76,7 @@
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "1b1559ca",
+        "js": "1654d27d",
         "css": "dfe52562"
       },
       "timeline": {
@@ -90,7 +90,7 @@
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "b391c875"
+    "sw": "7c3f0e10"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
