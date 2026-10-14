@@ -3,6 +3,8 @@
 // can pin it (tests/photo-tags.test.mjs). Everything here returns plain strings and numbers; the island puts them into the page as
 // text nodes only (a tag name, an attribute or a note is member-editable text and is never parsed as markup).
 
+import { personHref as personHrefOf } from "./person-name.js";
+
 /** The tree vocabulary the DS uses for a person's place on a page; "family" is anyone else. */
 export const ROLES = ["focus", "parent", "grandparent", "sibling", "spouse", "child", "grandchild", "family"];
 
@@ -183,8 +185,8 @@ export function readingOrder(views) {
     .map(({ i }) => i);
 }
 
-/** `/person/?id=<id>` for a tag that names a Gramps id, else null. */
-export const personHref = (view) => (view.grampsId ? `/person/?id=${encodeURIComponent(view.grampsId)}` : null);
+/** `/person/?id=<id>` for a tag that names a Gramps person id, else null (lib/person-name.js, the one rule for name links). */
+export const personHref = (view) => personHrefOf(view.grampsId);
 
 /** The lightbox region's accessible name: `{name}, {role}. open their page`. */
 export const regionLabel = (view) => `${view.name}, ${view.role === "focus" ? "this person" : view.role}. open their page`;

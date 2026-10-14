@@ -10,9 +10,11 @@ import { createHfyCommentSource } from "./comment-source.js";
 import { canModerate, getMe } from "./me.js";
 import { formatTime, watchTimeTitles } from "./time.js";
 import { watchContactGuard } from "./contact-guard.js";
+import { MENTION_SOURCE, authorHref, personPath } from "./person-name.jsx";
 
-// R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable.
-export const linkify = { pattern: /\bI\d{4,}\b/, href: (id) => `/person/?id=${encodeURIComponent(id)}` };
+// R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable. Every comment author's name
+// links to their page too (Thread authorHref, HFY-TSK-323, ruling P2-R46); both come from lib/person-name.jsx.
+export const linkify = { pattern: new RegExp(`\\b${MENTION_SOURCE}\\b`), href: personPath };
 
 export const LABELS = {
   addComment: "add a comment",
@@ -36,18 +38,11 @@ export const LABELS = {
   readOnly: "read only",
 };
 
-// @io-kit/comments 0.1.0 Composer takes no placeholder prop (kit follow-up); DS Comments: the input reads "say something".
-function watchPlaceholders(root) {
-  if (!root || typeof MutationObserver === "undefined") return () => {};
-  const apply = () => root.querySelectorAll(".io-comments-composer .io-comments-input:not([placeholder])").forEach((el) => el.setAttribute("placeholder", "say something"));
-  apply();
-  const mo = new MutationObserver(apply);
-  mo.observe(root, { subtree: true, childList: true });
-  return () => mo.disconnect();
-}
+// DS Comments: the new-comment input reads "say something" (Thread `placeholder`, @io-kit/comments 0.2.0 and later).
+export const PLACEHOLDER = "say something";
 
-// DS Comments: the quiet delete button reads --io-comments-danger. @io-kit/comments 0.1.0 Comment gives it no hook (the edit, delete and
-// moderation buttons share one class), so the delete button is found by its label and tagged; comments.css colours the tag.
+// DS Comments: the quiet delete button reads --io-comments-danger. @io-kit/comments 0.3.1 Comment still gives it no hook (the edit, delete
+// and moderation buttons share one class), so the delete button is found by its label and tagged; comments.css colours the tag.
 function watchDeleteButtons(root, labels = LABELS) {
   if (!root || typeof MutationObserver === "undefined") return () => {};
   const apply = () => root.querySelectorAll(".io-comments-actions > .io-comments-control").forEach((b) => {
@@ -62,8 +57,8 @@ function watchDeleteButtons(root, labels = LABELS) {
 
 /**
  * DS Comments / Voice: ask a scoped question before deleting — `delete this comment?` -> delete / keep, inline, no dialog.
- * Kit root cause (@io-kit/comments 0.1.0, dist/src/react.js Comment): the own-comment delete button calls props.onDelete directly;
- * there is no confirm state and no deleteConfirm / keep label. Upstream: a confirm step in Comment (labels deleteConfirm, keep); then
+ * Kit root cause (@io-kit/comments 0.1.0 through 0.3.1, dist/src/react.js Comment): the own-comment delete button calls props.onDelete
+ * directly; there is no confirm state and no deleteConfirm / keep label. Upstream: a confirm step in Comment (labels deleteConfirm, keep); then
  * delete this guard. HFY override: a capture-phase click listener on the section stops the first click on an own comment's delete
  * (before React's root listener sees it), hides that comment's actions row and shows the inline prompt in its place. "delete"
  * re-dispatches the original click (let through once); "keep" (or Escape) restores the row and returns focus to the delete button.
@@ -132,7 +127,8 @@ export function guardCommentDeletes(root, labels = LABELS) {
 export const COMMENT_GUARD = {
   fields: ".io-comments-composer textarea.io-comments-input",
   submitOf: (form) => form.querySelector('button[type="submit"]'),
-  // The kit's own rule (@io-kit/comments 0.1.0 Composer): enabled with some text, within the length cap, and not sending.
+  // The kit's own rule (@io-kit/comments 0.3.1 Composer, with no photo picker here): enabled with some text, within the length cap, and
+  // not sending.
   enabledOf: (form) => {
     const box = form.querySelector("textarea");
     return Boolean(box) && !box.disabled && box.value.trim() !== "" && !form.querySelector(".io-comments-counter[data-over]");
@@ -148,7 +144,6 @@ export function Comments({ subject }) {
   useEffect(() => { getSession().then(setSession); }, []);
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => watchTimeTitles(root.current), []);
-  useEffect(() => watchPlaceholders(root.current), []);
   useEffect(() => watchDeleteButtons(root.current), []);
   useEffect(() => guardCommentDeletes(root.current), []);
   useEffect(() => watchContactGuard(root.current, COMMENT_GUARD), []);
@@ -178,7 +173,7 @@ export function Comments({ subject }) {
       )}
       {viewer && (
         <>
-          <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} adminIds={[]} composerRows={1} formatTime={formatTime} labels={LABELS} />
+          <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} />
           <p className="hfy-ping" role="status" aria-live="polite">{ping}</p>
         </>
       )}
