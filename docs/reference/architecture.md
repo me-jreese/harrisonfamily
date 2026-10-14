@@ -351,6 +351,7 @@ Written by `hfy-api`:
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
 | Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
+| Record follow, one per principal and person | `RSUB#<principal>` | `REC#person:<gramps-id>` | `RECSUB#person:<gramps-id>` | `<principal>` | [`api/src/subscriptions.js`](../../api/src/subscriptions.js) |
 | Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |
 | Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js); not reachable from a route yet |
 | Record change log | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | - | `api/src/sync/apply.js` |
