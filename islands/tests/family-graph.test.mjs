@@ -108,10 +108,10 @@ test("relationLabel: direct kin, in-laws of the tree's shape, and null for the r
   assert.equal(L("I9007", "I9004"), "uncle");
   assert.equal(L("I9009", "I9003"), "aunt");
   assert.equal(L("I9004", "I9007"), "niece");
-  assert.equal(L("I9007", "I9009"), "cousin");
-  assert.equal(L("I9007", "I9011"), null);
+  assert.equal(L("I9007", "I9009"), "first cousin");
+  assert.equal(L("I9007", "I9011"), "not yet connected");
   assert.equal(L("I9007", "nope"), null);
-  assert.equal(L("I9001", "I9006"), null, "a daughter-in-law is not in the namer");
+  assert.equal(L("I9001", "I9006"), "daughter-in-law");
 });
 
 test("half siblings need two recorded parents each and exactly one shared; cousin is not a sibling", () => {
@@ -122,5 +122,5 @@ test("half siblings need two recorded parents each and exactly one shared; cousi
   ] });
   assert.deepEqual(h.siblings("x"), [{ id: "y", half: true }]);
   assert.equal(relationLabel(h, "x", "y"), "half-sibling");
-  assert.equal(relationLabel(h, "x", "d"), null, "unrelated pair has no label");
+  assert.equal(relationLabel(h, "x", "d"), "not yet connected", "unrelated pair in a bare graph");
 });
