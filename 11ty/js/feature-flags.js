@@ -8,8 +8,8 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "d86071e9",
-        "css": "24d74883"
+        "js": "459c3035",
+        "css": "7d6cf784"
       },
       "inbox": {
         "js": "fe44d358",
@@ -24,31 +24,31 @@
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "8a07c8d8",
-        "css": "24a8cc2d"
+        "js": "07d3bb73",
+        "css": "5a80e679"
       },
       "notifications": {
         "js": "cfb46f0e",
         "css": "56799f74"
       },
       "person": {
-        "js": "c9cf8677",
-        "css": "3909ca3c"
+        "js": "bc3b6ca7",
+        "css": "fc1191e0"
       },
       "person-links": {
         "js": "65b1ee44",
         "css": "930bb673"
       },
       "photo-tags": {
-        "js": "72b2d893",
-        "css": "bf6043c1"
+        "js": "3d566647",
+        "css": "b4b1459b"
       },
       "posts": {
-        "js": "dea54f06",
-        "css": "c678e2b1"
+        "js": "931f1e2d",
+        "css": "dc46d8d9"
       },
       "search": {
-        "js": "a34fe804",
+        "js": "3dd13244",
         "css": "9e007813"
       },
       "settings": {
@@ -56,21 +56,21 @@
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "7313488a",
-        "css": "53cdeb03"
+        "js": "a409229d",
+        "css": "dfe52562"
       },
       "timeline": {
-        "js": "2e984270",
-        "css": "e839f302"
+        "js": "347ae61d",
+        "css": "169edbe4"
       },
       "tree": {
-        "js": "390e26c1",
-        "css": "66b35626"
+        "js": "2f729552",
+        "css": "ba6f1885"
       }
     },
-    "theme": "00520cc3",
+    "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "ff3c8dad"
+    "sw": "2944cc78"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

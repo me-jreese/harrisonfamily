@@ -1,0 +1,1 @@
+import{c as o,e}from"./chunk-ZIKLJ5JR.js";import{c as p}from"./chunk-757B6RUO.js";import{c as a}from"./chunk-LOKUJV26.js";var r=a(p(),1);function R({id:f,name:S,children:E,className:s}){let n=o(f),N=s?`${e} ${s}`:e,t=E??S;return n?(0,r.jsx)("a",{className:N,href:n,children:t}):(0,r.jsx)("span",{className:N,children:t})}export{R as a};

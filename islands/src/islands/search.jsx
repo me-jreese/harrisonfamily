@@ -10,6 +10,7 @@ import { CollectionSearch } from "@io-kit/search-ui";
 import { cloudscapeUi, useColorMode } from "@io-kit/search-ui/cloudscape";
 import { mountAt } from "../lib/mount.jsx";
 import { SEARCH_COPY, peopleSource, peopleProperties, filterTokensFromParams } from "../lib/people-corpus.js";
+import { personPath } from "../lib/person-name.jsx";
 
 // Cloudscape's half of the theme is static: search.css imports `hfy:cloudscape-theme`, which islands/build.mjs generates at build time
 // from lib/cloudscape-theme.js (Cloudscape generateThemeStylesheet over var(--io-search-*) values). Kit root cause and upstream there.
@@ -87,7 +88,7 @@ function Row({ row }) {
   // DS (theme QA before / after): "living" is a text.dim word after the lifespan, "b. 1975 · living".
   const meta = f.living ? `${f.lifespan ? `${f.lifespan} · ` : ""}living` : f.lifespan;
   return (
-    <a className="hfy-search__row" href={`/person/?id=${encodeURIComponent(row.id)}`}>
+    <a className="hfy-search__row" href={personPath(row.id)}>
       {f.photo ? <img className="hfy-search__photo" src={f.photo} alt="" /> : <span className="hfy-search__photo hfy-search__photo--none" aria-hidden="true">{(f.given || row.title || "").trim().charAt(0)}</span>}
       <span className="hfy-search__body">
         <span className="hfy-search__name">{row.title}</span>

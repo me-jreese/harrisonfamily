@@ -166,25 +166,33 @@ async function checkBudget(view, ops) {
 
 async function checkIds(view, liveOps) {
   const { store, origin } = view;
-  const bad = [];
-  for (const op of liveOps) {
-    if (op.class === "Tag") continue;
-    const id = op.obj.gramps_id;
-    if (typeof id !== "string" || !ID_SHAPE.test(id) || id.includes("..")) bad.push({ rule: "id.shape", class: op.class, handle: op.handle, pointer: "/gramps_id", op_id: op.op_id });
-    else if (RESERVED_NAMES.includes(id.toLowerCase())) bad.push({ rule: "id.reserved_name", class: op.class, handle: op.handle, pointer: "/gramps_id", op_id: op.op_id });
-  }
-  if (bad.length) throw refuse(422, "integrity_violation", "a gramps_id is not allowed", bad);
-
-  const conflict = (op) => ({ op_id: op.op_id, class: op.class, handle: op.handle });
+  const mode = view.id_policy?.mode; // "mint" | "assign" | undefined (HFY-TSK-246, id-policy.js)
   const stored = new Map(); // "Class#handle" -> the stored head, read once
   const headOf = async (op) => {
     const key = refKey(op.class, op.handle);
     if (!stored.has(key)) stored.set(key, await store.get(op.class, op.handle));
     return stored.get(key);
   };
+  const bad = [];
+  for (const op of liveOps) {
+    if (op.class === "Tag") continue;
+    const id = op.obj.gramps_id;
+    // Assign mode: a web-origin create, or a web-origin update of an object that is ID-less already, keeps an empty id until the desktop assigns one.
+    if (id === "" && mode === "assign" && HARD_ORIGINS.includes(origin)) {
+      if (op.op === "create") continue;
+      const prev = await headOf(op);
+      if (prev && !prev.deleted && prev.gramps_id === "") continue;
+    }
+    if (typeof id !== "string" || !ID_SHAPE.test(id) || id.includes("..")) bad.push({ rule: "id.shape", class: op.class, handle: op.handle, pointer: "/gramps_id", op_id: op.op_id });
+    else if (RESERVED_NAMES.includes(id.toLowerCase())) bad.push({ rule: "id.reserved_name", class: op.class, handle: op.handle, pointer: "/gramps_id", op_id: op.op_id });
+  }
+  if (bad.length) throw refuse(422, "integrity_violation", "a gramps_id is not allowed", bad);
+
+  const conflict = (op) => ({ op_id: op.op_id, class: op.class, handle: op.handle });
   // The cloud block is the website's to mint: a desktop or seed op may neither create an id in it nor move an existing object into it.
+  // Under assign mode (Q2-03 declined) nothing is minted, so the block is not reserved.
   const block = [];
-  if (origin === "desktop" || origin === "seed") {
+  if ((origin === "desktop" || origin === "seed") && mode !== "assign") {
     for (const op of liveOps) {
       if (!BLOCK[op.class]?.test(op.obj.gramps_id)) continue;
       if (op.op === "create") block.push(op);
@@ -202,8 +210,10 @@ async function checkIds(view, liveOps) {
     if (op.class !== "Person") continue;
     const prev = await headOf(op);
     const old = prev && !prev.deleted ? prev.gramps_id : undefined;
+    // The desktop's first assignment under assign mode (empty to an id, once) is not a renumber; the GID claim is checked in applyBatch.
+    const assigning = mode === "assign" && origin === "desktop" && op.op === "update" && old === "" && op.obj.gramps_id !== "" && op.renumber !== true;
     // The provisional `renumber` flag is not a way round the rule: a renumber is refused with or without it.
-    if ((old !== undefined && old !== op.obj.gramps_id) || op.renumber === true) renumber.push(op);
+    if (!assigning && ((old !== undefined && old !== op.obj.gramps_id) || op.renumber === true)) renumber.push(op);
     if (old === op.obj.gramps_id) continue;
     // A retired id is never claimed again, by anyone, its own person included; a recreated tombstone is a retired person.
     const guard = await store.gid("Person", op.obj.gramps_id);

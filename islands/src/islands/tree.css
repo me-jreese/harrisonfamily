@@ -45,6 +45,15 @@
   background: var(--io-color-semantic-surface-sunken);
 }
 
+/* The page: the focus navigator, then the generation outline (side by side from the wide breakpoint). */
+.hfy-tree__outline { margin-top: var(--io-space-5); }
+.hfy-tree__outline h2 { margin: 0 0 var(--io-space-3); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+@media (min-width: 64rem) {
+  .hfy-tree--ready { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--io-space-5); align-items: start; }
+  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live) { grid-column: 1 / -1; }
+  .hfy-tree__outline { margin-top: 0; }
+}
+
 /* The focus card: name, years, the relation to the viewer and a "view page" link. */
 .hfy-tree__focus { padding: var(--io-space-4); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); }
 .hfy-tree__focus h2 { margin: 0 0 var(--io-space-1); font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-display-sm); font-weight: var(--io-typography-weight-regular); line-height: var(--io-typography-leading-tight); }
@@ -69,3 +78,43 @@
 .hfy-tree .hfy-tree__person:hover { background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-link-hover); }
 .hfy-tree__link { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }
 .hfy-tree__live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Relatives and outline entries: the name, then the role (or the years) in the dim colour (the button's aria-label joins them with a comma). */
+.hfy-tree .hfy-tree__person { flex-wrap: wrap; column-gap: var(--io-space-2); text-align: start; }
+.hfy-tree .hfy-tree__person[aria-current="true"] { border-color: var(--io-color-semantic-accent); font-weight: var(--io-typography-weight-semibold); }
+.hfy-tree__rel { color: var(--io-color-semantic-text-dim); }
+.hfy-tree__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.hfy-tree__group > p { margin: 0; }
+
+/* Native details: one per generation, and the grandparents fold. */
+.hfy-tree :is(.hfy-tree__level, .hfy-tree__fold) { margin: 0 0 var(--io-space-2); }
+.hfy-tree :is(.hfy-tree__level, .hfy-tree__fold) > summary {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  font-weight: var(--io-typography-weight-semibold);
+  cursor: pointer;
+}
+.hfy-tree :is(.hfy-tree__level, .hfy-tree__fold) > summary:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+.hfy-tree :is(.hfy-tree__level, .hfy-tree__fold) > ul { list-style: none; margin: var(--io-space-2) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--io-space-2); }
+.hfy-tree .hfy-tree__more {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  margin-top: var(--io-space-2);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-tree :is(summary, .hfy-tree__more):focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+
+/* Re-centring is instant under reduced motion; nothing here animates otherwise either. */
+@media (prefers-reduced-motion: reduce) { .hfy-tree, .hfy-tree * { transition: none; animation: none; scroll-behavior: auto; } }

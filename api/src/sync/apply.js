@@ -17,7 +17,11 @@
 //
 // The server validator (validator.js, HFY-TSK-245) runs on every call, from every origin, before the version check.
 //
-// Not here: ID minting (store-id-policy), record-change notifications (the render outbox, D2-02), HTTP mapping (the sync and edit routes).
+// ID policy (id-policy.js, HFY-TSK-246): a web-origin create may leave gramps_id empty. Under ctx.idPolicy mode "mint" the id is minted from
+// SYNC#HEAD.id_next.<Class> in the same transaction (the SYNC#HEAD update writes the new counter, the GID# claim guards the id); under
+// mode "assign" it stays empty and the desktop's first assignment is allowed once. With no mode, every create needs an id.
+//
+// Not here: record-change notifications (the render outbox, D2-02), HTTP mapping (the sync and edit routes).
 import { randomUUID } from "node:crypto";
 import { HttpError, logSafeError } from "../http.js";
 import { TxnCancelled, TxnTokenMismatch, assertTxnSize, auditItem, counterUpdate, mergeUpdates, transact } from "../txn.js";
@@ -29,6 +33,7 @@ import {
   BUDGET_TTL_SECONDS, CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, budgetBucket, budgetKey,
   getBatchReceipt, getGid, getRecordItem, getSyncHead, gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
+import { completeAssignments, isAssignment, isWebAssignment, mintIds, policyOf, WEB_ORIGINS } from "./id-policy.js";
 import { defaultValidate, isFullValidator } from "./validator.js";
 import { createStoreView } from "./view.js";
 
@@ -41,7 +46,7 @@ const bad = (code, message, details) => new SyncError(400, code, message, detail
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 // ---- request shape ---------------------------------------------------------------------------------------------------
-function normaliseOps(rawOps) {
+function normaliseOps(rawOps, { origin, policy }) {
   if (!Array.isArray(rawOps) || rawOps.length === 0) throw bad("validation", "ops must be a non-empty array");
   if (rawOps.length > MAX_OPS) throw new SyncError(413, "batch_too_large", `a batch holds at most ${MAX_OPS} ops`);
   const seenIds = new Set();
@@ -85,10 +90,13 @@ function normaliseOps(rawOps) {
       if (!isObj(obj)) throw bad("validation", `${at}.obj must be an object`);
       if (obj._class !== raw.class) throw bad("validation", `${at}.obj._class must be ${raw.class}`);
       if (obj.handle !== raw.handle) throw bad("validation", `${at}.obj.handle must equal ${at}.handle`);
-      if (raw.class !== "Tag" && (typeof obj.gramps_id !== "string" || obj.gramps_id.length < 1 || obj.gramps_id.length > 64)) throw bad("validation", `${at}.obj.gramps_id is required`);
+      // A web-origin create may leave gramps_id empty when a policy is set (minted or assigned later); an update may carry the empty id of an
+      // ID-less object unchanged (the validator checks it against the stored one). Anything else needs 1 to 64 characters.
+      const mayBeEmpty = policy.mode !== undefined && WEB_ORIGINS.includes(origin) && (raw.op === "update" ? obj.gramps_id === "" : obj.gramps_id === undefined || obj.gramps_id === "");
+      if (raw.class !== "Tag" && !mayBeEmpty && (typeof obj.gramps_id !== "string" || obj.gramps_id.length < 1 || obj.gramps_id.length > 64)) throw bad("validation", `${at}.obj.gramps_id is required`);
       let objJson;
       try {
-        objJson = objectJson(obj);
+        objJson = objectJson(raw.class !== "Tag" && mayBeEmpty ? { ...obj, gramps_id: "" } : obj);
       } catch {
         throw bad("validation", `${at}.obj is not canonical JSON`);
       }
@@ -97,7 +105,7 @@ function normaliseOps(rawOps) {
       bytes += 2 * n;
       norm.obj = JSON.parse(objJson);
       norm.objJson = objJson;
-      norm.gramps_id = raw.class === "Tag" ? "" : obj.gramps_id;
+      norm.gramps_id = raw.class === "Tag" ? "" : norm.obj.gramps_id;
       if (raw.blob !== undefined) {
         // The blob descriptor rides on the head item next to obj_json, so it is capped and counted (the item limit is 400 KB).
         if (raw.class !== "Media" || !isObj(raw.blob)) throw bad("validation", `${at}.blob is only for a Media object and must be an object`);
@@ -210,7 +218,7 @@ const gidId = (cls, id) => `${cls}#${id}`;
  * `gids` the GID items (undefined when absent) read for every id the batch claims or gives up.
  * Returns { writes: [{ id, cls, id, kind: "claim"|"retire"|"release", handle, reason?, prior }], aliases: [...] }.
  */
-function planGids(ops, heads, head, gids) {
+function planGids(ops, heads, head, gids, { policy, origin }) {
   const claims = new Map(); // gid id -> { cls, grampsId, handle }
   const gives = new Map(); // gid id -> { cls, grampsId, handle, reason }
   const aliases = [];
@@ -228,12 +236,17 @@ function planGids(ops, heads, head, gids) {
         throw new SyncError(409, "gramps_id_retired", "that person's gramps_id is retired and the person is not recreated through a batch", { class: op.class, gramps_id: item.gramps_id });
       }
       const prev = item && item.deleted !== true ? item.gramps_id : undefined;
-      if (prev !== undefined && prev !== op.gramps_id) {
+      // The desktop's first assignment under assign mode (empty to an id) is neither a renumber nor a release: it only claims the new id.
+      // Any other change of an empty id is a renumber, and a Person renumber is refused.
+      if (isWebAssignment(policy, origin, op, prev)) throw new SyncError(409, "assign_desktop_only", "only the desktop assigns a gramps_id to an ID-less object", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });
+      const assigning = isAssignment(policy, origin, op, prev);
+      if (prev !== undefined && prev !== op.gramps_id && !assigning) {
         if (isPermanentIdClass(op.class) && op.renumber !== true) throw new SyncError(409, "renumber_blocked", "a person's gramps_id cannot change", { conflicts: [{ op_id: op.op_id, class: op.class, handle: op.handle }] });
         giveUp(op.class, prev, op.handle, "renumbered");
         if (isPermanentIdClass(op.class)) aliases.push({ cls: op.class, oldId: prev, handle: op.handle, current: op.gramps_id, reason: "renumber" });
       }
       if (prev === op.gramps_id) continue; // the id is already this object's: no GID write
+      if (op.gramps_id === "") continue; // an ID-less object holds no GID item
       const key = gidId(op.class, op.gramps_id);
       const other = claims.get(key);
       if (other && other.handle !== op.handle) throw new SyncError(409, "gid_conflict", "two objects in this batch claim one gramps_id", { class: op.class, gramps_id: op.gramps_id });
@@ -331,14 +344,15 @@ export async function applyBatch(ctx, req) {
   if (!ORIGINS.includes(origin)) throw bad("validation", "origin is not a known origin");
   if (onBehalfOf !== undefined && (typeof onBehalfOf !== "string" || !onBehalfOf)) throw bad("validation", "onBehalfOf must be a string");
   if (typeof idempotencyKey !== "string" || idempotencyKey.length < 1 || idempotencyKey.length > 200) throw new SyncError(428, "idempotency_key_required", "an Idempotency-Key is required");
-  const ops = normaliseOps(req.ops);
+  const policy = policyOf(ctx);
+  const baseOps = normaliseOps(req.ops, { origin, policy });
   if (extra !== undefined && !isObj(extra)) throw bad("validation", "extra must be a transaction fragment");
   const expectedKeys = normaliseExpected(expected);
 
   const batchId = batchIdFor(principal, idempotencyKey);
   let requestHash;
   try {
-    requestHash = sha256(canonicalJson(JSON.parse(JSON.stringify({ origin, on_behalf_of: onBehalfOf ?? null, ops: ops.map(wire), extra: extra ?? null }))));
+    requestHash = sha256(canonicalJson(JSON.parse(JSON.stringify({ origin, on_behalf_of: onBehalfOf ?? null, ops: baseOps.map(wire), extra: extra ?? null }))));
   } catch {
     throw bad("validation", "the batch is not canonical JSON");
   }
@@ -357,6 +371,13 @@ export async function applyBatch(ctx, req) {
     const receipt = await getBatchReceipt(store, batchId);
     if (receipt) return replay(receipt);
     checkStoreGate(headItemNow, origin);
+
+    // 1b. Mint the ids of web-origin creates (mint mode). Redone on every attempt: the counter is read from this attempt's SYNC#HEAD.
+    const { ops, idNext } = await mintIds({
+      policy, origin, ops: baseOps, head: headItemNow,
+      getGid: (cls, id) => getGid(store, cls, id),
+      rebuild: (op, obj) => ({ ...op, gramps_id: obj.gramps_id, obj: JSON.parse(objectJson(obj)), objJson: objectJson(obj) }),
+    });
 
     // 2. Read the view: the head of every object and the GID item of every id the batch touches.
     const heads = new Map();
@@ -379,6 +400,7 @@ export async function applyBatch(ctx, req) {
         origin,
         principal,
         on_behalf_of: onBehalfOf,
+        id_policy: { mode: policy.mode },
         sync_head: headItemNow ? { seq: headItemNow.seq ?? 0, tree_id: headItemNow.tree_id, live_heads: headItemNow.live_heads } : undefined,
         record: (cls, handle) => parseHead(heads.get(`${cls}#${handle}`)),
         store: ctx.storeView ? ctx.storeView(store, readOnly) : createStoreView(store, readOnly),
@@ -388,7 +410,7 @@ export async function applyBatch(ctx, req) {
       for (const validate of validators) await validate(view);
     }
     const versions = checkVersions(ops, heads);
-    const plan = planGids(ops, heads, headItemNow, gids);
+    const plan = planGids(ops, heads, headItemNow, gids, { policy, origin });
 
     // 4. Build the transaction.
     const nowMs = now();
@@ -404,6 +426,7 @@ export async function applyBatch(ctx, req) {
     const after = [];
     let liveDelta = 0; // the change in live heads, for SYNC#HEAD.live_heads
     let destructive = 0; // deletes and withdraws, for the budget counter
+    const assigned = []; // the desktop's first id assignments (assign mode), for completeAccessRequest after the commit
     ops.forEach((op, i) => {
       const seq = seqFrom + i;
       if (op.op === "marker") {
@@ -420,6 +443,7 @@ export async function applyBatch(ctx, req) {
         destructive += 1;
       }
       const grampsId = live ? op.gramps_id : prev.gramps_id;
+      if (live && isAssignment(policy, origin, op, prev && prev.deleted !== true ? prev.gramps_id : undefined)) assigned.push({ class: op.class, handle: op.handle, gramps_id: op.gramps_id });
       const fields = { class: op.class, handle: op.handle, gramps_id: grampsId, version, seq, deleted: !live, objJson: live ? op.objJson : null, blob: op.blob, reason: live ? undefined : op.reason, at, by: principal, origin };
       const cond =
         !prev
@@ -472,7 +496,7 @@ export async function applyBatch(ctx, req) {
     const lh = headItemNow?.live_heads;
     const countable = typeof lh === "number" || (lh === undefined && (headItemNow?.seq ?? 0) === 0);
     const updates = [
-      headUpdate(headItemNow, seqTo, at, origin, countable ? liveDelta : 0),
+      headUpdate(headItemNow, seqTo, at, origin, countable ? liveDelta : 0, idNext),
     ];
     if (destructive > 0) {
       updates.push(counterUpdate(budgetKey(budgetBucket(nowMs)), { count: destructive }, { ttl: Math.floor(nowMs / 1000) + BUDGET_TTL_SECONDS, ifNotExists: { entity: "syncbudget" } }));
@@ -529,6 +553,7 @@ export async function applyBatch(ctx, req) {
         log.warn?.("after_commit_failed", logSafeError(e, { route: "applyBatch" }));
       }
     }
+    await completeAssignments({ policy, assigned, store, log, safe: logSafeError });
     return { batch_id: batchId, seq_from: seqFrom, seq_to: seqTo, results, replayed: false };
   }
 }
@@ -537,7 +562,7 @@ export async function applyBatch(ctx, req) {
  * The SYNC#HEAD update. Its condition pins the seq AND the gate state that was read (writes_enabled, and seeded for a non-seed
  * origin), so a pause or an un-seed between the gate check and the commit fails the transaction; the retry re-reads and re-gates.
  */
-function headUpdate(headItemNow, seqTo, at, origin, liveDelta = 0) {
+function headUpdate(headItemNow, seqTo, at, origin, liveDelta = 0, idNext) {
   const key = headKey();
   const names = { "#s": "seq", "#u": "updated_at" };
   const values = { ":to": seqTo, ":at": at };
@@ -545,7 +570,14 @@ function headUpdate(headItemNow, seqTo, at, origin, liveDelta = 0) {
     names["#lh"] = "live_heads";
     values[":lh"] = liveDelta;
   }
-  const base = { key, update: liveDelta !== 0 ? "SET #s = :to, #u = :at ADD #lh :lh" : "SET #s = :to, #u = :at", tag: "sync:head" };
+  // The whole id_next map is written, not one member: the seq pin below means nobody else wrote SYNC#HEAD since it was read.
+  let set = "#s = :to, #u = :at";
+  if (idNext !== undefined) {
+    names["#idn"] = "id_next";
+    values[":idn"] = idNext;
+    set += ", #idn = :idn";
+  }
+  const base = { key, update: liveDelta !== 0 ? `SET ${set} ADD #lh :lh` : `SET ${set}`, tag: "sync:head" };
   if (!headItemNow) return { ...base, condition: "attribute_not_exists(PK)", names, values };
   const pins = [];
   if (headItemNow.seq === undefined) pins.push("attribute_not_exists(#s)");
