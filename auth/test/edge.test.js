@@ -620,7 +620,7 @@ describe("returnTo / next cannot leave the site (login-returnto-tab-open-redirec
 });
 
 /** An edge wired with fakes for the password authenticator, the Cognito lifecycle and the rate limiter. */
-async function fakeEdge({ limiter, forgotLimits, firstPassword } = {}) {
+async function fakeEdge({ limiter, forgotLimits, firstPassword, ...timing } = {}) {
   const s = await generateKeyPair("RS256", { extractable: true });
   const pub = { ...(await exportJWK(s.publicKey)), kid: "hfy-session-1", alg: "RS256", use: "sig" };
   const calls = { forgot: [], verify: [], reset: [] };
@@ -638,7 +638,7 @@ async function fakeEdge({ limiter, forgotLimits, firstPassword } = {}) {
   const e = createAuthEdge({
     manifest, identity, publicJwk: pub, lifecycle, nonce: () => "n0nce", log: { error: () => {} },
     verify: { issuers: [manifest.session.issuer], audiences: [manifest.session.audience], jwks: createLocalJWKSet({ keys: [pub] }) },
-    ...(limiter ? { limiter } : {}), ...(forgotLimits ? { forgotLimits } : {}), ...(firstPassword ? { firstPassword } : {}),
+    ...(limiter ? { limiter } : {}), ...(forgotLimits ? { forgotLimits } : {}), ...(firstPassword ? { firstPassword } : {}), ...timing,
   });
   return { edge: e, calls };
 }
@@ -692,13 +692,47 @@ describe("first password through the forgot-password code (SURF-D18, io's Q2-12)
     expect(c.names()).toEqual(["AdminGetUser", "AdminCreateUser", "AdminSetUserPassword"]);
     expect(c.calls[1][1]).toMatchObject({ Username: "ana@example.com", MessageAction: "SUPPRESS", UserAttributes: expect.arrayContaining([{ Name: "email_verified", Value: "true" }]) });
     expect(c.calls[2][1]).toMatchObject({ Username: "ana@example.com", Permanent: true });
-    expect(calls.forgot).toHaveLength(1); // the kit's flow still runs, after provisioning
+    expect(calls.forgot).toEqual(["ana@example.com"]); // the kit's flow still runs, after provisioning, for the address that was provisioned (not the padded, mixed-case input)
+  });
+  it("a base64 body is forwarded normalized too", async () => {
+    const c = fakeCognito();
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    const ev = forgot("  ANA@example.com");
+    const res = await e({ ...ev, body: Buffer.from(ev.body).toString("base64"), isBase64Encoded: true });
+    expect(res.statusCode).toBe(200);
+    expect(calls.forgot).toEqual(["ana@example.com"]);
+  });
+  it("while on, the forgot answer takes at least forgotMinMs for every address (allowlisted or not), and never for a limited request", async () => {
+    const run = async (email, extra = {}) => {
+      let t = 0;
+      const slept = [];
+      const c = fakeCognito();
+      const { edge: e } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: { ...c.firstPassword, ...extra }, forgotMinMs: 1000, now: () => t, sleep: async (ms) => { slept.push(ms); t += ms; } });
+      const res = await e(forgot(email));
+      return { res, slept, e };
+    };
+    expect((await run("ana@example.com")).slept).toEqual([1000]);
+    expect((await run("stranger@example.com")).slept).toEqual([1000]);
+    expect((await run("ana@example.com", { isOpen: () => false })).slept).toEqual([]); // dark: unchanged behaviour
+    const { e, slept } = await run("ana@example.com");
+    slept.length = 0;
+    for (let i = 0; i < 2; i++) await e(forgot("ana@example.com"));
+    slept.length = 0;
+    expect((await e(forgot("ana@example.com"))).statusCode).toBe(429);
+    expect(slept).toEqual([]);
   });
   it("allowlisted with a Cognito user: no create, no password, the kit sends the code", async () => {
-    const c = fakeCognito({ users: { "ana@example.com": { UserStatus: "CONFIRMED" } } });
+    const c = fakeCognito({ users: { "ana@example.com": { UserStatus: "CONFIRMED", UserAttributes: [{ Name: "email_verified", Value: "true" }] } } });
     const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
     expect((await e(forgot("ana@example.com"))).statusCode).toBe(200);
     expect(c.names()).toEqual(["AdminGetUser"]);
+    expect(calls.forgot).toEqual(["ana@example.com"]);
+  });
+  it("allowlisted with an unconfirmed self-signed-up user: repaired and given a random password, then the kit sends the code", async () => {
+    const c = fakeCognito({ users: { "ana@example.com": { UserStatus: "UNCONFIRMED" } } });
+    const { edge: e, calls } = await fakeEdge({ limiter: memoryRateLimiter(), firstPassword: c.firstPassword });
+    expect((await e(forgot("ana@example.com"))).statusCode).toBe(200);
+    expect(c.names()).toEqual(["AdminGetUser", "AdminConfirmSignUp", "AdminUpdateUserAttributes", "AdminSetUserPassword"]);
     expect(calls.forgot).toEqual(["ana@example.com"]);
   });
   it("not allowlisted: no Cognito admin call at all, and the answer is the same 200 as for a member", async () => {

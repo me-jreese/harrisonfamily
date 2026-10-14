@@ -51,19 +51,36 @@ export function cognitoProvisioner({ userPoolId, send, resolver }) {
 /** A random permanent password nobody sees: 32 random bytes, with one of each class Cognito's policy asks for (upper, lower, number). */
 export const randomPassword = (bytes = randomBytes) => `Aa1${bytes(32).toString("base64url")}`;
 
+/** Retries a Cognito admin call that was throttled (TooManyRequestsException), up to `retries` times with a short growing pause. Any other error is rethrown at once. */
+const retrying = (send, { retries = 2, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) => async (name, input) => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send(name, input);
+    } catch (e) {
+      if (e?.name !== "TooManyRequestsException" || attempt >= retries) throw e;
+      await sleep(100 * (attempt + 1));
+    }
+  }
+};
+
 /**
  * First password for an allowlisted member who has no Google account (SURF-D18, io's Q2-12 decision; supersedes the HFY-R58 "only at /auth/link" sentence).
  * The edge calls `provision(email)` on POST /auth/password/forgot, after the rate limiter and before the kit sends Cognito's reset code:
  *   - not allowlisted (or the allowlist cannot be read): "not_allowlisted", and no Cognito call of any kind;
- *   - allowlisted and the pool user exists: "exists", and nothing is created (a user stuck in FORCE_CHANGE_PASSWORD, left by a call that failed
- *     between create and set-password, is given the random password again, because the kit's forgot flow cannot reset that state);
+ *   - allowlisted and the pool user exists and is usable (CONFIRMED, email verified): "exists", and nothing is changed;
+ *   - allowlisted and the pool user exists but the kit's forgot flow cannot reset it (a deliberate addition to surfaces.md 7.7, which says existing
+ *     users get no change): FORCE_CHANGE_PASSWORD (left by a call that failed between create and set-password), UNCONFIRMED, or email_verified not
+ *     true (a self-signed-up user from before the pool was locked down). It is repaired the way /auth/link repairs it (confirm, mark verified) and given a
+ *     random permanent password, which also voids any password a pre-registering stranger chose: "repaired";
  *   - allowlisted and no pool user: AdminCreateUser (invite suppressed, email_verified true), then AdminSetUserPassword with a random permanent
  *     password, and "created".
  * The password is never shown or sent: the account is useless until the mailbox owner enters the code the kit's forgot flow mails, so the
- * pre-registration attack that identity-model.md describes stays closed. Any Cognito failure rejects (the edge answers 502).
+ * pre-registration attack that identity-model.md describes stays closed. A throttled admin call is retried briefly; any other Cognito failure rejects
+ * (the edge answers 502).
  */
-export function cognitoFirstPassword({ userPoolId, send, resolver, password = randomPassword }) {
+export function cognitoFirstPassword({ userPoolId, send: rawSend, resolver, password = randomPassword, sleep }) {
   const pool = { UserPoolId: userPoolId };
+  const send = retrying(rawSend, { sleep });
   const setRandom = (Username) => send("AdminSetUserPassword", { ...pool, Username, Password: password(), Permanent: true });
   return {
     async provision(rawEmail) {
@@ -83,8 +100,16 @@ export function cognitoFirstPassword({ userPoolId, send, resolver, password = ra
         if (e?.name !== "UserNotFoundException") throw e;
       }
       if (user) {
-        if (user.UserStatus === "FORCE_CHANGE_PASSWORD") await setRandom(email);
-        return "exists";
+        const unconfirmed = user.UserStatus === "UNCONFIRMED";
+        const unverified = String(attrOf(user, "email_verified") ?? "") !== "true";
+        if (user.UserStatus !== "FORCE_CHANGE_PASSWORD" && !unconfirmed && !unverified) return "exists";
+        if (unconfirmed) await send("AdminConfirmSignUp", { ...pool, Username: email });
+        if (unverified) {
+          // the address is verified here by the allowlist and by the code the mailbox owner must enter, never by Cognito self-service
+          await send("AdminUpdateUserAttributes", { ...pool, Username: email, UserAttributes: [{ Name: "email_verified", Value: "true" }] });
+        }
+        await setRandom(email);
+        return "repaired";
       }
       try {
         await send("AdminCreateUser", {

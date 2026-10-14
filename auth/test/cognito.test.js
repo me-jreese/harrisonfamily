@@ -82,18 +82,40 @@ describe("cognitoFirstPassword.provision (SURF-D18, io's Q2-12)", () => {
     });
     expect(c.calls[2][1]).toEqual({ UserPoolId: POOL, Username: "ana@example.com", Password: "Aa1-random-for-test", Permanent: true });
   });
-  it("allowlisted, pool user exists: creates nothing and sets no password", async () => {
-    for (const status of ["CONFIRMED", "UNCONFIRMED", "RESET_REQUIRED"]) {
-      const c = cognito({ "ana@example.com": { UserStatus: status, UserAttributes: [{ Name: "sub", Value: "cog-a" }] } });
+  const verified = (status, extra = []) => ({ UserStatus: status, UserAttributes: [{ Name: "sub", Value: "cog-a" }, { Name: "email_verified", Value: "true" }, ...extra] });
+  it("allowlisted, usable pool user exists: creates nothing and sets no password", async () => {
+    for (const status of ["CONFIRMED", "RESET_REQUIRED"]) {
+      const c = cognito({ "ana@example.com": verified(status) });
       expect(await make(c).provision("ana@example.com")).toBe("exists");
       expect(c.names()).toEqual(["AdminGetUser"]);
     }
   });
   it("a user stuck in FORCE_CHANGE_PASSWORD (a create that never reached set-password) is given the random password", async () => {
-    const c = cognito({ "ana@example.com": { UserStatus: "FORCE_CHANGE_PASSWORD" } });
-    expect(await make(c).provision("ana@example.com")).toBe("exists");
+    const c = cognito({ "ana@example.com": verified("FORCE_CHANGE_PASSWORD") });
+    expect(await make(c).provision("ana@example.com")).toBe("repaired");
     expect(c.names()).toEqual(["AdminGetUser", "AdminSetUserPassword"]);
     expect(c.calls[1][1]).toMatchObject({ Username: "ana@example.com", Permanent: true });
+  });
+  it("a self-signed-up user (UNCONFIRMED, or email not verified) is confirmed, verified and given a random password, as /auth/link does", async () => {
+    const unconfirmed = cognito({ "ana@example.com": { UserStatus: "UNCONFIRMED", UserAttributes: [{ Name: "sub", Value: "cog-a" }] } });
+    expect(await make(unconfirmed).provision("ana@example.com")).toBe("repaired");
+    expect(unconfirmed.names()).toEqual(["AdminGetUser", "AdminConfirmSignUp", "AdminUpdateUserAttributes", "AdminSetUserPassword"]);
+    expect(unconfirmed.calls[2][1]).toMatchObject({ UserAttributes: [{ Name: "email_verified", Value: "true" }] });
+    expect(unconfirmed.calls[3][1]).toEqual({ UserPoolId: POOL, Username: "ana@example.com", Password: "Aa1-random-for-test", Permanent: true });
+    const unverified = cognito({ "ana@example.com": { UserStatus: "CONFIRMED", UserAttributes: [{ Name: "sub", Value: "cog-a" }, { Name: "email_verified", Value: "false" }] } });
+    expect(await make(unverified).provision("ana@example.com")).toBe("repaired");
+    expect(unverified.names()).toEqual(["AdminGetUser", "AdminUpdateUserAttributes", "AdminSetUserPassword"]);
+  });
+  it("a throttled admin call is retried briefly; a call that stays throttled rejects", async () => {
+    const throttled = () => Object.assign(new Error("Rate exceeded"), { name: "TooManyRequestsException" });
+    const base = cognito();
+    let left = 2;
+    const flaky = async (name, input) => { if (name === "AdminGetUser" && left-- > 0) throw throttled(); return base.send(name, input); };
+    const slept = [];
+    expect(await make({ send: flaky }, { sleep: async (ms) => { slept.push(ms); } }).provision("ana@example.com")).toBe("created");
+    expect(slept).toEqual([100, 200]);
+    const always = async () => { throw throttled(); };
+    await expect(make({ send: always }, { sleep: async () => {} }).provision("ana@example.com")).rejects.toMatchObject({ name: "TooManyRequestsException" });
   });
   it("not allowlisted, or an unreadable allowlist: no Cognito call of any kind", async () => {
     const c = cognito();

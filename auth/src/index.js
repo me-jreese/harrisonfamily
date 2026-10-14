@@ -111,7 +111,7 @@ async function init() {
     readEntries: async () => parseAllowlist(await readObject(m.resolver.bucket, m.resolver.key)),
   });
   return createAuthEdge({
-    manifest: m, identity, accessRequests, firstPassword, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
+    manifest: m, identity, accessRequests, firstPassword, forgotMinMs: FORGOT_MIN_MS, publicJwk, ...(passkeys ? { passkeys, passkeyClientScript: loadPasskeyBrowserBundle() } : {}), ...(oauth ? { oauth } : {}), lifecycle: cognitoLifecycle(cog),
     limiter, // POST /auth/password/forgot (HFY-R58 ruling 5) and the access-request routes (surfaces.md 7.5)
     verify: { issuers: [m.session.issuer], audiences: [m.session.audience], jwks: createLocalJWKSet({ keys: [publicJwk] }) },
   });
@@ -189,6 +189,9 @@ async function cognitoAdmin(userPoolId, resolver) {
   const client = new cip.CognitoIdentityProviderClient({});
   return cognitoProvisioner({ userPoolId, resolver, send: (name, input) => client.send(new cip[`${name}Command`](input)) });
 }
+
+/** SURF-D18: while FIRST_PASSWORD is on, POST /auth/password/forgot answers no sooner than this (ms), so latency does not reveal an allowlisted address. Well inside the 15 s Lambda timeout. */
+const FORGOT_MIN_MS = 1500;
 
 /** SURF-D18: the first-password provisioner behind the FIRST_PASSWORD kill switch (stack parameter FirstPassword, default off). */
 async function cognitoFirstPasswordRoute(userPoolId, resolver, env = process.env) {
