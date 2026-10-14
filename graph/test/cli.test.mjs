@@ -238,6 +238,25 @@ describe('--verify and --verify-against', () => {
     assert.equal(run(['--verify', graphPath(out), '--quiet']).status, 0);
   });
 
+  it('--verify passes a staged synthetic output that carries photoEdges, and rejects a handle smuggled into the block', () => {
+    const dir = scratch();
+    const photo = { _class: 'Media', handle: 'h_photo', gramps_id: 'O1', path: 'ZZSENT/photo.jpg', private: false };
+    const tagged = objects().map((o) => (o._class === 'Person' ? { ...o, media_list: [{ _class: 'MediaRef', ref: 'h_photo', rect: null, private: false }] } : o));
+    const out = join(dir, 'out');
+    const r = run([writeJsonl(join(dir, 'in.jsonl'), [...tagged, photo]), '--out', out, ...common(dir)]);
+    assert.equal(r.status, 0, r.stderr);
+    const g = JSON.parse(readFileSync(graphPath(out), 'utf8'));
+    assert.equal(g.minor, 3);
+    assert.deepEqual(g.photoEdges.map((e) => e.media), ['O1']);
+    assert.equal(run(['--verify', graphPath(out), '--quiet']).status, 0);
+    g.photoEdges[0].handle = 'h_photo';
+    const f = join(dir, 'tampered.json');
+    writeFileSync(f, JSON.stringify(g));
+    const bad = run(['--verify', f]);
+    assert.equal(bad.status, 4);
+    assert.match(bad.stderr, /\/photoEdges\/0\/handle \[schema:additionalProperties\]/);
+  });
+
   it('--verify rejects a tampered file with exit 4 and pointers only', () => {
     const dir = scratch();
     const g = JSON.parse(readFileSync(GOLDEN, 'utf8'));

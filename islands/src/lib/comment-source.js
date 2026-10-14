@@ -3,6 +3,7 @@
 // from the comments (HFY-TSK-298).
 import { CommentError } from "@io-kit/comments";
 import { ApiError } from "./api.js";
+import { GUARD_CODES, GUARD_COPY, learnFromRefusal, precheck } from "./contact-precheck.js";
 
 const CODES = new Set(["unauthenticated", "forbidden", "not_found", "validation", "step_up_required", "self_react", "cursor_invalid", "server"]);
 
@@ -16,8 +17,16 @@ const COPY = {
 };
 const say = (code, op) => (code === "unauthenticated" ? COPY.signedOut : code === "step_up_required" ? COPY.stepUp : op === "create" ? COPY.notPosted : COPY.failed);
 
+// R-18 (privacy-guard-existing-paths): the API's 422 contact_info / dob_not_allowed is shown with its DS copy, and the text stays
+// in the composer (the kit keeps it on a failed add or save). Not "try again": the same text would be refused again.
 const wrap = async (p, op) => {
   try { return await p; } catch (e) {
+    if (e instanceof ApiError && GUARD_CODES.includes(e.code)) {
+      learnFromRefusal(e.code);
+      const err = new CommentError("validation", GUARD_COPY[e.code], "body");
+      err.cause = e;
+      throw err;
+    }
     const code = e instanceof ApiError ? (CODES.has(e.code) ? e.code : e.status === 401 ? "unauthenticated" : "server") : "server";
     const err = new CommentError(code, say(code, op), e instanceof ApiError ? e.field : undefined);
     err.cause = e;
@@ -25,17 +34,31 @@ const wrap = async (p, op) => {
   }
 };
 
+/**
+ * The composer's own pre-check (lib/contact-guard.js, drawing lib/contact-precheck.js) normally keeps a refused text from being sent at all; this is the last
+ * client step before the request, so a text that slipped past the DOM (a keyboard path the decoration missed) is still held here.
+ * Throws (or, for edit, returns a rejected promise) with the DS copy; returns undefined for a clean text.
+ */
+function refuseContactInfo(body, asPromise = false) {
+  const v = precheck(body);
+  if (!v) return undefined;
+  const err = new CommentError("validation", v.message, "body");
+  if (asPromise) return Promise.reject(err);
+  throw err;
+}
+
 /** `onAdded(comment)` fires after the server stored a new comment (the island's 3 s "posted" ping). */
 export function createHfyCommentSource(api, { onAdded } = {}) {
   const enc = encodeURIComponent;
   return {
     list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit } }), "list"),
     async create(threadId, input) {
+      refuseContactInfo(input.body);
       const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");
       if (onAdded) onAdded(c);
       return c;
     },
-    edit: (threadId, id, input) => wrap(api.patch(`/comments/${enc(id)}`, { body: input.body }, { query: { subject: threadId } }), "edit"),
+    edit: (threadId, id, input) => refuseContactInfo(input.body, true) || wrap(api.patch(`/comments/${enc(id)}`, { body: input.body }, { query: { subject: threadId } }), "edit"),
     async delete(threadId, id, opts = {}) {
       await wrap(api.del(`/comments/${enc(id)}`, { query: { subject: threadId, reason: opts.reason } }), "delete");
     },

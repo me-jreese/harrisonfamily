@@ -1,6 +1,6 @@
 # gramps
 
-Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228); the schema export (HFY-TSK-231) is the last section; other tasks add `hfygramps/`, the addon and more beside it.
+Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231) is the last section; other tasks add the addon and more beside them.
 
 Every value under `gramps/tests/fixtures/` is fictional. Phones are 555-01xx, mail is example.org, addresses are documentation-style, names are invented. Never copy a record, date, name or contact detail from the real tree into this directory (D-03).
 
@@ -66,6 +66,37 @@ python3 gramps/redaction/render_reference.py        # rewrite the reference page
 python3 -m unittest discover gramps/tests/unit      # schema, rules, vectors, oracle, fixture tree, drift
 ```
 
+## The site renderer
+
+`hfygramps/render/` renders the whole data site from one store view: `render_site(objects) -> {s3_key: bytes}`. It is the live ETL's D-02-fixed transforms (`scripts/etl/transform.py`, `export_person_data.py`) and `scripts/search/build_search_index.js`, ported to pure Python 3.12 functions with the standard library only. It opens no file, SQLite database or socket (a test patches `open` and `socket` to prove it), reads no clock and uses no randomness. Nothing calls it yet: the render Lambda (`render-lambda`) is its first caller.
+
+| Piece | What it does |
+| --- | --- |
+| `site.py` | `render_site(objects, *, media_files=None, generated_at=..., text_gate=None)`; `render(...)` returns the same files plus a counts-only `RenderReport`. |
+| `transform.py`, `labels.py`, `note_tags.py` | The ETL's transforms, label tables and note markup, name for name. Events keep the legacy ordering key `(date.sortval, label)`; `sortval` is never published. |
+| `search_index.py` | `person/index.json` and `person/search-index.json`, in `build_search_index.js`'s shapes and `JSON.stringify` format, stamped with the caller's `generated_at`. |
+| `places.py` | Street-level and home-like places (Street 7, Building 19, Number 20, Farm 18, and custom types matching `house\|home\|residence\|address\|apartment\|apt\|lot\|farm`) are never published; what points at one is re-pointed to its nearest kept ancestor. The custom-type pattern is the spec's, unanchored on purpose (it also matches inside `Charlotte` or `Allotment`: over-exclusion fails safe, and a narrower match than the projection's would publish a place the projection holds back). |
+| `policy.py`, `text_scan.py` | Private objects and elements, and AGE, FATHER_AGE, MOTHER_AGE, TIME, SSN and ID attribute values, never publish. A second text gate (an io-visible change from the live ETL's allowlist) withholds any note, region note, MediaRef attribute value, citation title, event description or media description that the R-18 detector (`scanner.py`) or the live ETL's own scanner flags; a place URL whose path or description is flagged, or that is a contact link or an e-mail type, is dropped; a note LINK value that is flagged, or that carries userinfo, becomes plain text. |
+
+Interim rule copy. The place-type lists (`places.py`) and the sensitive-attribute lists (`policy.py`) are a local copy of rules whose one source is `gramps/redaction/redaction-v1.json` (BRD2 D2-32: the projection, validator, edit guard and renderer import it; nobody keeps a local list). That file ships with `redaction-policy-v1`. Until then `test_render_rules.RuleSourceAgreement` fails if the file appears in the tree and disagrees, and `render-lambda` / `projection-py` own replacing the lists with an import (TODO in both modules). The renderer sits behind the projection, which removes these places and attributes first; nothing but that test keeps the two copies in step today.
+
+Free text the renderer does not gate itself: person, family and place names, `Place.title` and `Place.code`. They come from the store view, where the projection's scan (sync.md 5.4) has already run, and the render Lambda's output re-check (BRD2 section 11.1) is the second line.
+
+`objects` is the redaction projection's output, `{handle: Gramps 6 object}` or any iterable of such objects. `media_files` is `{media handle: {"checksum", "size", "ext"}}` for the blobs that exist (a media object with no entry renders `missing: true`); the store view blanks `Media.path`, so `ext` gives the stored extension.
+
+### Parity with the live ETL
+
+`gramps/tests/fixtures/render/` holds the parity run: `parity.py` builds P(fixture), the synthetic tree plus a few hand-written fictional objects (the note vectors, MediaRef attributes, notes and citations, a custom role). `project()` there is a stand-in for the redaction projection of sync.md 5.1 (private flag and holds only); `projection-py` replaces it, and then the golden is regenerated. `golden/legacy/` is what the live ETL and `build_search_index.js` write for it, and `expected-deltas.json` lists every difference from `render_site`, pointer by pointer, each under a rule in `deltas.py`. Besides the rule list the document records `manifest_order` (the legacy place and media manifests are pinned to the renderer's order, so they match by construction), `fixture_basis` (P(fixture) is the supplemented tree plus a stand-in projection, so the parity claim is only as strong as that stand-in) and `renderer_only` (the text gate). Today the only rule is the excluded places; private, held, orphan-of-private and text-gated objects are listed as cases that both sides leave out. `test_render_parity.py` requires everything else to be byte-identical.
+
+The live ETL is not in this repository. A worker that has it regenerates the golden:
+
+```bash
+HFY_LEGACY_PROJECT=<project> python3.12 gramps/tests/fixtures/render/make_legacy_golden.py          # rewrite
+HFY_LEGACY_PROJECT=<project> python3.12 gramps/tests/fixtures/render/make_legacy_golden.py --check  # byte comparison, writes nothing
+```
+
+`<project>` is the folder that holds `scripts/etl` and `scripts/search`. The script copies them to a throwaway directory, runs them on a SQLite copy of P(fixture) and pins the clock, the directory order and (for the two manifests) the set order, so the output does not depend on the machine. It needs `node` and refuses to write when a difference has no rule. `golden/legacy-source.json` records the sha256 of the live files the golden came from. The tests need none of this: CI runs them against the committed files.
+
 ## The Gramps schema export
 
 `gramps/scripts/gen-schema.py` is the single source of Gramps schema truth (HFY-TSK-231). Store, validator and edit-schema code read its committed output and never call `get_schema()` themselves. It reads only the class definitions in the bundled Gramps 6.0.6 library; it opens no family database, no sqlite file and no tree.
@@ -89,3 +120,34 @@ python3 -m unittest discover gramps/tests/unit                                  
 The fixture's float-rect object (listed under `rect_float` in `synthetic-tree.census.json`; `[12.5, ...]`) is a deliberate hostile input for the sync design, and `get_schema()` types a rect as integers, so the schema refuses it. The checkers (`schema_check.py` and the vitest) derive the expected-invalid set from that census key, require each such object to fail with rect errors only, and require every other object to validate. The ruling that "every fixture object validates" is relaxed for this hostile input is an open question for io; the schema stays strict. The float rule relies on the fixture's literal `12.5` style values: JavaScript cannot tell `10.0` from `10` after `JSON.parse`, while Python keeps `10.0` as a float and rejects it.
 
 What the checks prove, and what they do not. Validation is closed-world on keys, not on completeness: every object requires only `_class`, so a missing key is not caught (drift in the serialized key set is caught by the generator's empty-instance proof, on the Gramps host). The validators are small subsets that raise on any keyword they do not implement; swap them for a standard validator when validator-js lands. CI (`ci.manifest.yaml`) runs the unit tests, which check the sha256 manifest, the recorded version and the fixture; that gate does not prove the goldens match what Gramps generates, because hand-edited goldens with a recomputed manifest would pass it. Reproducibility is proven only by `gen-schema.py --check` on a Mac with the Gramps 6.0.6 bundle (`io-mac-gramps`), run by hand or on that host. Commit the three schema files together.
+
+## The projection
+
+`gramps/hfygramps/projection.py` is the desktop side of the policy, `P` of sync.md section 5 (HFY-TSK-241). It is standard library only and imports nothing from Gramps, so it runs in Gramps' bundled Python and in CI.
+
+```python
+from hfygramps.projection import project_tree, project, update_birthlike_sticky
+
+projected, holds = project_tree(objects, base=base, files=files, released=released, sticky=sticky)
+result = project(objects, base=base, files=files, released=released, sticky=sticky)   # + excluded, withdrawn, fired, sticky
+```
+
+`objects` are Gramps `json_data` dicts. `projected` maps every handle to what the cloud receives, or `None` when it must not have the object. `holds` lists `{handle, rule, scope, pointer}` for what was held back (`scope` `"object"` or `"field"`); `hold_reason(rule_id)` is the sentence the preview shows. The context is the sidecar's: `base` (the last synced objects, which a hold falls back to), `files` (what the addon learned from the bytes on disk: `exif_gps`, `md5`, `readable`), `released` (media handles io released) and `sticky` (the `birthlike_sticky` event handles). `result.sticky` is the set to store after the run, and removing a handle from it is io's release in the GUI.
+
+What it does beyond the rule list of the reference page, always in the safe direction:
+
+- A projected object never has Gramps' `change` stamp (derived; the cloud object has none), so `P(lift(C, L)) == C` can hold.
+- `birth_ref_index` and `death_ref_index` follow the same event reference through the filtered `event_ref_list`, and become -1 when it is gone.
+- `dob_exact` checks every `Date` of every class against every local full birth date (also a date without a `_class`), and the text of a date as it checks free text. Free text is folded first (look-alike digits, invisible characters, accents, spacing, case) and then read structurally, not against a list of strings: every run of three numbers, month names or day words joined only by date separators is a full date when some assignment of it to year, month and day equals a local full birth date. That covers any order (Y-M-D, D-M-Y, M-D-Y), any separator (`- . / , space`, `of`, `de`), month names and abbreviations in English, French, Spanish, German, Italian, Portuguese and Dutch, ordinals and day words (`fifth`, `twenty-first`), two-digit years (any century) and compact `YYYYMMDD`, `DDMMYYYY` and `MMDDYYYY`. The day and month alone hold within 60 characters of a birth keyword or of that person's given name, call name or nickname, as a month name next to a day, or as two numbers joined by `/` or `-`, or `d.m.` with its closing dot; a bare `3 5` or `5.3` is not read as a date (too often a count or a decimal). One pass over a text finds all of this, so the cost does not grow with the number of birth days in the tree.
+- An event in `birthlike_sticky` keeps day and month local, and counts as birth-like for the dates of its citations and for birth-linked media. An event that is birth-like now, was birth-like in the synced base, or shares a local birth date joins the set (`birthlike_sticky_additions`); a Birth retyped to Residence therefore stays sticky. Adding the events that are birth-like now and the ones that share a local birth date, not only those birth-like at the base, is deliberate: it widens what is protected, never what is shown. A run sees one base, so the set accumulates across syncs only if the addon (or the merge engine) stores what `update_birthlike_sticky(stored, objects, base, released)` returns and passes it back as `sticky` on the next sync. Release is explicit: a handle listed in `released` is removed from the stored set and no rule adds it back for as long as it is listed; it ends the persistence only, so an event that is a Birth today, or whose date is a local full birth date today, is still reduced by the ordinary rules while that holds.
+- The cloud's own copy of a held object (`base[handle]`, kept while the object is held) goes through the references phase like any other object, so it never names an object that has since become excluded or held, and its birth and death indexes follow.
+- A field hold puts back the last synced value of the same list element, found by what the element is (its other fields), not by its index, so an element inserted or removed earlier in a list cannot make a held value overwrite another element's; an element with no counterpart in the base holds the object whole. The pointer of a field hold is the pointer in the projected object, after the references phase removed list elements; a hold on an element that phase removes is dropped.
+- A held `MediaRef` rectangle falls back to the rectangle of the same reference (`ref#n`) in the base, so reordering a list cannot move it.
+- `project_coordinate`, `lift_coordinate`, `project_rect` and `lift_rect` are the two lift rules this module owns (precision comes back while the rounded value is unchanged; the full frame and a held rectangle come back); the rest of lift belongs to the merge engine. The golden vectors in `gramps/redaction/vectors/` exercise `P` (the full frame to null, a degenerate or float rectangle held, rounded coordinates); the lift side of coordinates and rectangles is covered by unit tests in `test_projection.py`, not by vectors.
+
+`gramps/hfygramps/canonical.py` writes the canonical JSON and the sha256 of a stored object (`object_json`, `object_hash`; no `change` key; integers only; keys sorted by code point). `shared/canonical.mjs` is the JavaScript original of the same function, and both pass `shared/canonical.vectors.json`, which `gramps/redaction/make_canonical_vectors.py` writes (`--check` compares bytes). `gramps/tests/unit/test_canonical.py` also runs the JavaScript module with `node` when it is installed, over the vectors and over every projected object of the synthetic tree.
+
+```bash
+python3 -m unittest discover gramps/tests/unit     # includes test_projection.py and test_canonical.py
+node --test shared/                                 # includes canonical.test.mjs
+```

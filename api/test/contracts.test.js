@@ -4,9 +4,10 @@ import { registerContentContract, FIXTURE_POSTS } from "@io-kit/content/testing"
 import { registerCommentContract } from "@io-kit/comments/testing";
 import { createContentSource, seedPosts } from "../src/content.js";
 import { createCommentSource } from "../src/comments.js";
-import { TABLE, cmds, createFakeDdb, createUlidFactory, ticker, ulidTime } from "./world.js";
+import { TABLE, UPLOAD_PHOTO, bindUploadPhoto, checkUploadPhoto, cmds, createFakeDdb, createUlidFactory, ticker, ulidTime } from "./world.js";
 
-const api = { describe, it: (name, fn) => it(name, fn) };
+// @io-kit/content 0.1.1+ reports a case the host cannot run (a capability it does not declare) through `skip`, so it shows as skipped, never as passed.
+const api = { describe, it: (name, fn) => it(name, fn), skip: (name, fn) => it.skip(name, fn) };
 
 registerContentContract(
   {
@@ -16,11 +17,14 @@ registerContentContract(
       const now = ticker(Math.max(0, ...FIXTURE_POSTS.map((p) => ulidTime(p.id))));
       const ulid = createUlidFactory();
       const audit = [];
-      return { audit, as: (actor) => createContentSource({ ddb, cmds, table: TABLE, actor, now, ulid, uid: () => ulid(now()), audit: (e) => void audit.push(e) }) };
+      await bindUploadPhoto(ddb, "I0001", now()); // CS-19's photo is the author's own unattached upload (privacy-guard-existing-paths)
+      return { audit, as: (actor) => createContentSource({ ddb, cmds, table: TABLE, actor, now, ulid, uid: () => ulid(now()), audit: (e) => void audit.push(e), checkUpload: checkUploadPhoto }) };
     },
     author: { id: "I0001", label: "Ann Author" },
     other: { id: "I0002", label: "Olive Other" },
     admin: { id: "I0099", label: "Admin", admin: true },
+    // CS-19 (photo-only posts) posts an image: the store only takes the author's own member upload, not the kit's example.test url.
+    photo: UPLOAD_PHOTO,
   },
   api,
   "hfy posts (CS) over DynamoDB fake",

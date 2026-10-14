@@ -1,0 +1,39 @@
+/* The R-18 composer pre-check (lib/contact-guard.js; privacy-guard-existing-paths AC2). DS voice and colours: the danger token
+   marks the span and carries the one-line copy under the field; every value aliases a token (lint no-literal-token-values).
+   The mark layer sits exactly over its field (contact-guard copies the field's text metrics and box onto it) and paints only
+   the marks: its own text is transparent, so the field's text shows through unchanged and stays editable underneath. */
+.hfy-guard__layer {
+  position: absolute;
+  z-index: 1;
+  margin: 0;
+  overflow: hidden;
+  border-style: solid;
+  border-color: transparent;
+  background: transparent;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+.hfy-guard__layer[data-single] { white-space: pre; }
+.hfy-guard__mark {
+  border-radius: var(--io-radius-sm);
+  background: color-mix(in srgb, var(--io-color-semantic-danger) 22%, transparent);
+  color: transparent;
+  text-decoration: underline wavy var(--io-color-semantic-danger);
+  text-decoration-skip-ink: none;
+}
+/* The field itself: a danger outline while it holds a hit (the kit styles its own border; this wins on specificity). */
+textarea[data-hfy-guard-invalid], input[data-hfy-guard-invalid] {
+  border-color: var(--io-color-semantic-danger);
+  box-shadow: 0 0 0 1px var(--io-color-semantic-danger);
+}
+.hfy-guard__msg {
+  margin: var(--io-space-2) 0 0;
+  color: var(--io-color-semantic-danger);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-typography-leading-normal);
+  text-transform: none;
+}

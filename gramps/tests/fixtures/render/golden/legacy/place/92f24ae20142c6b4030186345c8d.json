@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "Sample Farm",
+  "grampsId": "P0003",
+  "handle": "92f24ae20142c6b4030186345c8d",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Exampleville",
+      "grampsId": "P0002",
+      "handle": "2274a9f6cb93e7050af9f7b80471",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 18,
+    "string": "Farm"
+  },
+  "urls": []
+}

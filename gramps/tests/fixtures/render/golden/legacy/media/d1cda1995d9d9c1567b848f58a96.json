@@ -1,0 +1,65 @@
+{
+  "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+  "grampsId": "O9001",
+  "handle": "d1cda1995d9d9c1567b848f58a96",
+  "mime": "image/jpeg",
+  "missing": false,
+  "regions": [
+    {
+      "attributes": [
+        {
+          "type": "Description",
+          "value": "Standing at left"
+        },
+        {
+          "type": "Mood",
+          "value": "Cheerful"
+        }
+      ],
+      "notes": [
+        {
+          "grampsId": "N9101",
+          "handle": "be7e073a8e2b19787d18b37c3a42",
+          "html": "<p>Standing at the left of the porch.</p>",
+          "raw": "Standing at the left of the porch."
+        }
+      ],
+      "person": {
+        "displayName": "Quill Notevector",
+        "grampsId": "I9001",
+        "handle": "7e5350b92612325e4d398cfedf96"
+      },
+      "rect": [
+        5,
+        5,
+        45,
+        95
+      ]
+    },
+    {
+      "attributes": [],
+      "notes": [
+        {
+          "grampsId": "N9101",
+          "handle": "be7e073a8e2b19787d18b37c3a42",
+          "html": "<p>Standing at the left of the porch.</p>",
+          "raw": "Standing at the left of the porch."
+        }
+      ],
+      "person": {
+        "displayName": "Rowan Tagvector",
+        "grampsId": "I9002",
+        "handle": "646aced328190be987524cae5dfa"
+      },
+      "rect": [
+        50,
+        5,
+        95,
+        95
+      ]
+    }
+  ],
+  "s3Key": "media/d1cda1995d9d9c1567b848f58a96.jpg",
+  "size": 632,
+  "title": "Porch group photo (fictional)"
+}

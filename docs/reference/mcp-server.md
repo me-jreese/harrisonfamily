@@ -158,7 +158,7 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 | `hfy_posts_create` | `posts.create` | `POST /api/posts` | true | none | Always a draft: the tool sets `visibility: "draft"` and has no visibility argument. Publishing is a person's action in the site. No `attachments` argument. |
 | `hfy_posts_delete` | `posts.delete` | `DELETE /api/posts/:id` | true | destructive, idempotent | Admin with a fresh step-up only. Also removes the post's comment thread. |
 
-No other route is a tool: comment edits and reactions, post edits and visibility changes, uploads and notification settings are reachable only from the site. [`api/parity/map.yaml`](../../api/parity/map.yaml) pairs each tool with the route handler a person uses for the same action, and [`api/parity/routes.yaml`](../../api/parity/routes.yaml) lists the site pages that call those handlers.
+No other route is a tool: comment edits and reactions, post edits and visibility changes, uploads, notification settings and profile links are reachable only from the site. [`api/parity/map.yaml`](../../api/parity/map.yaml) pairs each tool with the route handler a person uses for the same action, and [`api/parity/routes.yaml`](../../api/parity/routes.yaml) lists the site pages that call those handlers.
 
 ### Arguments
 
@@ -184,6 +184,7 @@ Every input schema is an object with `additionalProperties: false`. The `require
 | The route returns a body | `content: [{type: "text", text: <the body as JSON>}]`, plus `structuredContent` (the body) when the body is an object |
 | The route returns no body (a delete's `204`) | The same, for `{"ok": true, "action": "<route action>"}` |
 | The route throws (validation, not found, conflict) | `isError: true` with `content` holding the error's message only. The HTTP status and error code are not returned. The error is logged as `tool <name> failed`. |
+| The contact-information guard refuses the text (`hfy_posts_create` body or title, `hfy_comments_create` body) | `isError: true` with `content` holding the guard's copy only ("this looks like a phone number or street address. …", or "we only keep the birth year on the site." while `HFY_GUARD_DOB` is `on`). Nothing is stored, and the matched text is not returned ([API: Contact-information guard](api.md#contact-information-guard)). |
 | The policy denies the call | `isError: true`, `content` holding the reason's message (or its code when it has none), and `structuredContent: {reason: {code, message?}}` |
 | The tool is hidden from the caller, or does not exist | JSON-RPC error `-32602`, `Unknown tool: <name>`. A hidden tool and an unknown one cannot be told apart (M-07). |
 | `name` missing, `arguments` not an object, or `mode` not `dry_run` or `execute` | JSON-RPC error `-32602` |

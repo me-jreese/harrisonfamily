@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1975
+  },
+  "description": null,
+  "grampsId": "E9007",
+  "handle": "4bec3915d4b20e8bb288445f97a9",
+  "label": "Marriage",
+  "place": {
+    "displayName": "Notecity",
+    "grampsId": "P9002",
+    "handle": "55404a8e9b32f2759bf1fad4004e",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 1,
+    "string": "Marriage"
+  }
+}

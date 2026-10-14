@@ -54,7 +54,8 @@ describe("post shape validation (post-shape-unvalidated)", () => {
     expect(r.status).toBe(201);
     expect(r.body.attachments).toEqual([{ kind: "image", url: up.publicUrl, mime: "image/jpeg", alt: "the garden", width: 640, height: 480 }]);
     expect(r.body.subject).toBe("I0001"); // bare gramps id, as the own-page composer sends it
-    const relative = await create({ attachments: [{ kind: "image", url: `/${up.key}`, mime: "image/jpeg" }], subject: null, title: null });
+    const up2 = (await w.call("POST", "/api/uploads", { token: ann, body: { contentType: "image/jpeg", size: 10 } })).body; // an upload attaches once
+    const relative = await create({ attachments: [{ kind: "image", url: `/${up2.key}`, mime: "image/jpeg" }], subject: null, title: null });
     expect(relative.status).toBe(201);
     expect(relative.body).not.toHaveProperty("subject");
     expect(relative.body).not.toHaveProperty("title");

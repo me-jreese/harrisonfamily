@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "sometime in spring 1877, per the register",
+    "year": 0
+  },
+  "description": null,
+  "grampsId": "E0010",
+  "handle": "e35655bfb312911973feb53d8b21",
+  "label": "Birth",
+  "place": null,
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

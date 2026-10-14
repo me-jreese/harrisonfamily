@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "Coordinate Cove",
+  "grampsId": "P0005",
+  "handle": "9688ece0ec581a44add8c300d065",
+  "latitude": "12.345678",
+  "longitude": "-23.456789",
+  "parents": [
+    {
+      "displayName": "Exampleville",
+      "grampsId": "P0002",
+      "handle": "2274a9f6cb93e7050af9f7b80471",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 6,
+    "string": "Locality"
+  },
+  "urls": []
+}

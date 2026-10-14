@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1976
+  },
+  "description": null,
+  "grampsId": "E9008",
+  "handle": "d0556447016691d91e51a710b07c",
+  "label": "Fixture Ceremony",
+  "place": {
+    "displayName": "The Summer Home",
+    "grampsId": "P9004",
+    "handle": "bca43347c8d814b471dd5152b28c",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 0,
+    "string": "Fixture Ceremony"
+  }
+}

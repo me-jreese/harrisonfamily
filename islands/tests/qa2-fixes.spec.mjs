@@ -33,7 +33,7 @@ async function stub(page, { signedIn = true, ownComment = false, manifestDelay =
   await page.route("**/person/search-index.json", (r) => r.fulfill({ json: { documents: FX.manifest.people.map((p) => ({ grampsId: p.grampsId, searchText: p.displayName.toLowerCase() })) } }));
   const TALL_PNG = pngOf(400, 500);
   await page.route("**/media/**", (r) => r.fulfill({ body: TALL_PNG, contentType: "image/png" }));
-  await page.route("**/api/uploads", (r) => { s.uploads += 1; const b = r.request().postDataJSON(); return r.fulfill({ status: 201, json: { uploadUrl: `http://127.0.0.1/put/${b.filename}`, publicUrl: `/media/p.png?u=${s.uploads}`, headers: { "Content-Type": b.contentType } } }); });
+  await page.route("**/api/uploads", (r) => { s.uploads += 1; const b = r.request().postDataJSON(); return r.fulfill({ status: 201, json: { uploadUrl: `http://127.0.0.1/put/photo`, publicUrl: `/media/p.png?u=${s.uploads}`, headers: { "Content-Type": b.contentType } } }); });
   await page.route("http://127.0.0.1/put/**", (r) => r.fulfill({ status: 200, body: "" }));
   await page.route(/\/api\/posts(\/[^/?]+)?(\?.*)?$/, (r) => {
     const u = new URL(r.request().url());

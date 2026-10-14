@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1895
+  },
+  "description": null,
+  "grampsId": "E0025",
+  "handle": "fb4c5987011c531caf764fa3bf97",
+  "label": "Residence",
+  "place": {
+    "displayName": "Example Street",
+    "grampsId": "P0006",
+    "handle": "d557fc2fadb8b92bfa96528704c5",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 42,
+    "string": "Residence"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "The Homestead",
+  "grampsId": "P0004",
+  "handle": "0e1e5d636de2d60b22cca1ad2787",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Exampleville",
+      "grampsId": "P0002",
+      "handle": "2274a9f6cb93e7050af9f7b80471",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 0,
+    "string": "Home"
+  },
+  "urls": []
+}

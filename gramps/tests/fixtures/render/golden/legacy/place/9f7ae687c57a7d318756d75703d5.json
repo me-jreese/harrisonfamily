@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "Lamp Landmark",
+  "grampsId": "P9005",
+  "handle": "9f7ae687c57a7d318756d75703d5",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Notecity",
+      "grampsId": "P9002",
+      "handle": "55404a8e9b32f2759bf1fad4004e",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 0,
+    "string": "Landmark"
+  },
+  "urls": []
+}

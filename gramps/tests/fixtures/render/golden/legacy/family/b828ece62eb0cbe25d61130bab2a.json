@@ -1,0 +1,42 @@
+{
+  "children": [],
+  "events": [],
+  "father": {
+    "displayName": "Nettle Fixturely",
+    "gender": "female",
+    "grampsId": "I0014",
+    "handle": "b3c2407f526a59370b99ab7062f6",
+    "isLiving": true,
+    "lifespan": {
+      "birth": {
+        "year": 1964
+      },
+      "death": {
+        "year": null
+      },
+      "summary": "1964\u2013"
+    }
+  },
+  "grampsId": "F0004",
+  "handle": "b828ece62eb0cbe25d61130bab2a",
+  "mother": {
+    "displayName": "Orchid Fixturely",
+    "gender": "male",
+    "grampsId": "I0015",
+    "handle": "dc7a86bea5186bd8e33fd5ea683f",
+    "isLiving": true,
+    "lifespan": {
+      "birth": {
+        "year": 1966
+      },
+      "death": {
+        "year": null
+      },
+      "summary": "1966\u2013"
+    }
+  },
+  "type": {
+    "code": 3,
+    "string": "Unknown"
+  }
+}

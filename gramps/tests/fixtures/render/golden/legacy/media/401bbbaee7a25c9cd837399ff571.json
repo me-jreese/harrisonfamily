@@ -1,0 +1,22 @@
+{
+  "checksum": null,
+  "grampsId": "O0002",
+  "handle": "401bbbaee7a25c9cd837399ff571",
+  "mime": "image/jpeg",
+  "missing": true,
+  "regions": [
+    {
+      "attributes": [],
+      "notes": [],
+      "person": {
+        "displayName": "Nettle Fixturely",
+        "grampsId": "I0014",
+        "handle": "b3c2407f526a59370b99ab7062f6"
+      },
+      "rect": null
+    }
+  ],
+  "s3Key": "media/401bbbaee7a25c9cd837399ff571.jpg",
+  "size": null,
+  "title": "Photo with embedded location (fictional)"
+}

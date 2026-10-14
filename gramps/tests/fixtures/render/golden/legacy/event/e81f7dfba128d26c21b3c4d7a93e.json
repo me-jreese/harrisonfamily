@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1900
+  },
+  "description": "Fixture pilgrimage",
+  "grampsId": "E0016",
+  "handle": "e81f7dfba128d26c21b3c4d7a93e",
+  "label": "Fixture Pilgrimage",
+  "place": null,
+  "type": {
+    "code": 0,
+    "string": "Fixture Pilgrimage"
+  }
+}
