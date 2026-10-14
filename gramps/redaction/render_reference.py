@@ -99,7 +99,7 @@ def render(policy):
     add("An event is birth-like when any of these holds, for %s:" % bl["appliesTo"])
     add("")
     add("- Its type is one of: %s." % named(bl["eventTypes"]))
-    add("- Its type is Custom (%d) and the type name matches %s (a substring match; ASCII case folding only)." % (bl["customType"]["value"], code(pattern(bl["customType"]))))
+    add("- Its type is Custom (%d) and the type name matches %s (a substring match; ASCII case folding only, and a deliberate over-match that fails closed: Birthright and Baptist are held back like a birth)." % (bl["customType"]["value"], code(pattern(bl["customType"]))))
     if bl["birthRefIndex"]:
         add("- Some person references it at its `birth_ref_index`, whatever its type.")
     add("")
@@ -157,12 +157,13 @@ def render(policy):
     add("- Schemes: %s." % ", ".join(code(s + ":") for s in u["schemes"]))
     add("- Hosts, matched by registrable-domain suffix and never by substring: %s." % ", ".join(code(h) for h in u["hosts"]))
     add("- Paths: %s." % ", ".join(code(p["host"] + p["prefix"]) for p in u["paths"]))
+    add("- A backslash is read as a slash before the scheme, host and path are split, as a browser does.")
     add("")
     add("### Places")
     add("")
     p = policy["places"]
     add("- Excluded by type: %s." % named(p["excludedTypes"]))
-    add("- Excluded when the type is Custom (%d) and its name matches %s. This is a substring match, so a name that merely contains one of the words is excluded too." % (p["customHomeLike"]["value"], code(pattern(p["customHomeLike"]))))
+    add("- Excluded when the type is Custom (%d) and its name matches %s. This is a substring match, so a name that merely contains one of the words (Chapter, Charlotte, Pilot, Homestead District) is excluded too. The over-match is deliberate and fails closed: it drops a harmless place and never lets a home through." % (p["customHomeLike"]["value"], code(pattern(p["customHomeLike"]))))
     add("- A place code stays only for: %s. Every other type keeps it local." % named(p["administrativeTypes"]))
     add("- Alternate-location fields blanked: %s." % ", ".join(code(f) for f in p["locationFields"]))
     add("- Coordinates: a plain decimal (%s) is rounded half away from zero to %d decimals, and a value with no more decimals keeps its text; anything else is blanked." % (code(p["coordinatePattern"]), p["coordinateDecimals"]))

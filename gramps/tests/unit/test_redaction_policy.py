@@ -325,6 +325,50 @@ class RulesHelpers(unittest.TestCase):
         self.assertNotIn("contact.url.channel", got("https://wa.me.example.org/x"))
         self.assertNotIn("contact.url.channel", got("https://example.org/wa.me"))
         self.assertEqual(got("https://example.org/a", 2, "Call 555-0123"), ["contact.url.scan_hit"])
+        # a browser reads a backslash as a slash, so these are the same hosts
+        self.assertIn("contact.url.channel", got("https:\\\\wa.me\\15550100"))
+        self.assertIn("contact.url.channel", got("https:\\t.me\\a"))
+        self.assertNotIn("contact.url.channel", got("https:\\\\notwa.me\\x"))
+
+    def test_malformed_shapes_read_as_absent_and_never_raise(self):
+        """A nested value of the wrong shape must not raise out of a predicate; a date that is not an object is a leak."""
+        ev = {"_class": "Event", "handle": "e1", "type": {"value": R.pointer_get({"a": 1}, "/a")}, "citation_list": "c1"}
+        for bad_refs in (["x"], [None], [5], [[]], "x", 7, {"ref": "e1"}):
+            person = {"_class": "Person", "handle": "p1", "birth_ref_index": 0, "event_ref_list": bad_refs}
+            self.assertFalse(R.is_birth_like(ev, [person, ev]), bad_refs)
+            self.assertEqual(R.Tree([person, ev]).birth_citation_handles(), set(), bad_refs)
+        fam = {"_class": "Family", "handle": "f1", "event_ref_list": ["x", {"ref": "e1", "citation_list": "c9"}, {"ref": "e1", "citation_list": ["c2"]}]}
+        birth = {"_class": "Event", "handle": "e1", "type": {"value": 12}, "citation_list": 5}
+        self.assertEqual(R.Tree([fam, birth]).birth_citation_handles(), {"c2"})
+        for bad_type in ("Birth", 12, [12], None):
+            self.assertFalse(R.is_birth_like({"handle": "e2", "type": bad_type}, []), bad_type)
+        self.assertFalse(R.is_birth_like({"handle": "e2", "type": {"value": 0, "string": 5}}, []))
+        for bad in (None, "1900", 1900, [], ["x"]):
+            red = R.reduce_date(bad)
+            self.assertEqual((red["dateval"], red["text"], red["sortval"]), ([0, 0, 0, False], "", 0), bad)
+            self.assertEqual(R.date_violations(red), [])
+        self.assertEqual(R.date_violations(None), [])
+        for bad in ("1900", 1900, [], ["x"]):
+            self.assertEqual(R.date_violations(bad), [""], bad)  # fail closed: the whole value is a leak
+        self.assertEqual(R.date_violations({"dateval": "x", "text": 5}), ["/text"])
+        self.assertEqual(R.reduce_date({"dateval": ["a", "b", "c", False], "text": 5, "calendar": 0})["sortval"], 0)
+        self.assertEqual(R.reduce_date({"dateval": [1, 2, "1900", False], "text": ["x"]})["dateval"], [0, 0, "1900", False])
+        self.assertIsNone(R.place_exclusion_rule({"place_type": "Farm"}))
+        self.assertIsNone(R.place_exclusion_rule(None))
+        self.assertIsNone(R.place_exclusion_rule({"place_type": {"value": 0, "string": ["Home"]}}))
+        self.assertTrue(R.place_code_is_local({"place_type": 4}))
+        self.assertIsNone(R.attribute_rule({"_class": "Attribute", "type": "Age"}))
+        self.assertEqual(R.url_rules({"path": 5, "desc": ["x"], "type": 3}, lambda t: False), [])
+        self.assertEqual(R.url_rules(None, lambda t: False), [])
+
+    def test_the_custom_name_patterns_over_match_on_purpose(self):
+        """A substring match is the rule (the AC fixes it); a harmless custom name is held back, never let through."""
+        for name in ("Chapter", "Charlotte", "Pilot", "Homestead District", "Farmland"):
+            self.assertEqual(R.place_exclusion_rule({"place_type": {"value": 0, "string": name}}), "place.exclude.custom_home_like", name)
+        for name in ("Plantation", "Campground", "Courtyard", ""):
+            self.assertIsNone(R.place_exclusion_rule({"place_type": {"value": 0, "string": name}}), name)
+        for name in ("Birthright", "Baptist visit", "Christendom"):
+            self.assertTrue(R.is_birth_like({"handle": "e", "type": {"value": 0, "string": name}}, []), name)
 
     def test_pointer_patterns(self):
         o = {"a": [{"private": True, "x": 1}, {"x": 2}], "b": {"c": [1, 2]}}

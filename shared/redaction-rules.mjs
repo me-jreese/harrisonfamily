@@ -8,9 +8,20 @@
 //   const tree = buildTree(objects);                 // Gramps json_data objects, one plain object each
 //   isBirthLike(event, tree, policy);                // the only birth-like list anywhere
 //
-// No function here logs, throws on odd input or returns a matched value.
+// Scope: this port holds the date, place, coordinate, attribute, rect and birth-like predicates. The URL channel rules (url_rules),
+// the path-pattern matcher (match_pointers) and the pointer helpers exist only in gramps/hfygramps/rules.py; the validator task
+// ports them before it relies on them. Nothing in the API imports this file yet.
+//
+// No function here logs or returns a matched value. A nested value of the wrong shape (an event_ref_list entry that is not an
+// object, a type or a date that is not an object, a citation_list that is not an array) reads as absent, never throws. A date that
+// is not an object is treated as a leak: dateViolations reports it (pointer "") and reduceDate replaces it by an empty date. A
+// top-level argument that is not an object (isBirthLike(null, ...)) is a caller error: a caller that gets an exception holds the
+// record (fail closed). The same rules hold in the Python original.
 
 const isInt = (v) => typeof v === "number" && Number.isInteger(v);
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const obj = (v) => (isObj(v) ? v : {});
+const arr = (v) => (Array.isArray(v) ? v : []);
 const values = (named) => new Set(named.map((x) => x.value));
 // ASCII-only semantics, like Python's re.ASCII: no u flag, so a non-ASCII look-alike never matches an ASCII pattern.
 export const compilePattern = (spec) => new RegExp(spec.pattern, (spec.flags || "").includes("i") ? "i" : "");
@@ -23,8 +34,8 @@ export function buildTree(objects) {
   const birthRefHandles = new Set();
   for (const p of list) {
     if (p._class !== "Person") continue;
-    const refs = Array.isArray(p.event_ref_list) ? p.event_ref_list : [];
-    if (isInt(p.birth_ref_index) && p.birth_ref_index >= 0 && p.birth_ref_index < refs.length) birthRefHandles.add(refs[p.birth_ref_index] && refs[p.birth_ref_index].ref);
+    const refs = arr(p.event_ref_list);
+    if (isInt(p.birth_ref_index) && p.birth_ref_index >= 0 && p.birth_ref_index < refs.length && isObj(refs[p.birth_ref_index])) birthRefHandles.add(refs[p.birth_ref_index].ref);
   }
   return { objects: list, byHandle, birthRefHandles, _birthCitations: null };
 }
@@ -35,12 +46,12 @@ const asTree = (t) => (t && t.byHandle instanceof Map ? t : buildTree(t));
  *  and any event a person references at its birth_ref_index. For everyone, living or deceased. */
 export function isBirthLike(event, tree, policy) {
   const pol = policy.birthLike;
-  const etype = (event && event.type) || {};
+  const etype = obj(event.type);
   if (isInt(etype.value)) {
     if (values(pol.eventTypes).has(etype.value)) return true;
     if (etype.value === pol.customType.value && compilePattern(pol.customType).test(typeof etype.string === "string" ? etype.string : "")) return true;
   }
-  return asTree(tree).birthRefHandles.has(event && event.handle);
+  return asTree(tree).birthRefHandles.has(event.handle);
 }
 
 /** Handles of the citations referenced by a birth-like event or by an EventRef that points at one. */
@@ -48,12 +59,13 @@ export function birthCitationHandles(tree, policy) {
   const t = asTree(tree);
   if (t._birthCitations) return t._birthCitations;
   const out = new Set();
-  for (const e of t.objects) if (e._class === "Event" && isBirthLike(e, t, policy)) for (const c of e.citation_list || []) out.add(c);
+  for (const e of t.objects) if (e._class === "Event" && isBirthLike(e, t, policy)) for (const c of arr(e.citation_list)) out.add(c);
   for (const h of t.objects) {
     if (h._class !== "Person" && h._class !== "Family") continue;
-    for (const ref of h.event_ref_list || []) {
-      const ev = t.byHandle.get(ref && ref.ref);
-      if (ev && isBirthLike(ev, t, policy)) for (const c of ref.citation_list || []) out.add(c);
+    for (const ref of arr(h.event_ref_list)) {
+      if (!isObj(ref)) continue;
+      const ev = t.byHandle.get(ref.ref);
+      if (ev && isBirthLike(ev, t, policy)) for (const c of arr(ref.citation_list)) out.add(c);
     }
   }
   t._birthCitations = out;
@@ -78,27 +90,30 @@ export function sdn(calendar, year, month, day) {
 
 export function reducedSortval(dateval, calendar, policy) {
   const year = dateval.length > 2 ? dateval[2] : 0;
-  if (!year || !policy.dates.sortvalCalendars.includes(calendar)) return 0;
+  if (!year || !isInt(year) || !policy.dates.sortvalCalendars.includes(calendar)) return 0;
   return sdn(calendar, year, 1, 1);
 }
 
 /** Pointers (relative to the date) where a birth-like date still shows a day, a month or non-year text. */
 export function dateViolations(date, policy) {
   const cfg = policy.dates;
+  if (date === null || date === undefined) return [];
+  if (!isObj(date)) return [""];
   const out = [];
-  const dv = Array.isArray(date.dateval) ? date.dateval : [];
+  const dv = arr(date.dateval);
   for (const i of cfg.dayMonthIndexes) if (i < dv.length && dv[i]) out.push(`/dateval/${i}`);
-  const text = typeof date.text === "string" ? date.text : "";
-  if (text && !new RegExp(cfg.bareYearTextPattern).test(text)) out.push("/text");
+  const text = date.text;
+  if (text !== null && text !== undefined && typeof text !== "string") out.push("/text");
+  else if (text && !new RegExp(cfg.bareYearTextPattern).test(text)) out.push("/text");
   return out;
 }
 
 /** The birth-like projection of one Gramps Date: no day or month, empty text, TEXTONLY turned into its first four-digit year
- *  (or an empty date), sortval recomputed. Returns a new object. */
+ *  (or an empty date), sortval recomputed. Returns a new object. A value that is not an object becomes an empty Date. */
 export function reduceDate(date, policy) {
   const cfg = policy.dates;
-  const out = JSON.parse(JSON.stringify(date));
-  let dv = Array.isArray(out.dateval) ? out.dateval : [0, 0, 0, false];
+  const out = isObj(date) ? JSON.parse(JSON.stringify(date)) : { _class: "Date", calendar: 0, format: null, modifier: 0, newyear: 0, quality: 0 };
+  let dv = Array.isArray(out.dateval) && out.dateval.length ? out.dateval : [0, 0, 0, false];
   for (const i of cfg.dayMonthIndexes) if (i < dv.length) dv[i] = 0;
   if (out.modifier === cfg.textOnlyModifier) {
     const m = new RegExp(cfg.textOnlyYearPattern).exec(typeof out.text === "string" ? out.text : "");
@@ -116,14 +131,14 @@ export function reduceDate(date, policy) {
 /** The rule id that excludes this place by its type, or null. */
 export function placeExclusionRule(place, policy) {
   const pol = policy.places;
-  const ptype = (place && place.place_type) || {};
+  const ptype = obj(obj(place).place_type);
   if (values(pol.excludedTypes).has(ptype.value)) return "place.exclude.type";
   if (ptype.value === pol.customHomeLike.value && compilePattern(pol.customHomeLike).test(typeof ptype.string === "string" ? ptype.string : "")) return "place.exclude.custom_home_like";
   return null;
 }
 
 /** True when the place code stays local: every type below the administrative level. */
-export const placeCodeIsLocal = (place, policy) => !values(policy.places.administrativeTypes).has(((place && place.place_type) || {}).value);
+export const placeCodeIsLocal = (place, policy) => !values(policy.places.administrativeTypes).has(obj(obj(place).place_type).value);
 
 /** A latitude or longitude string rounded half away from zero to the policy's decimals. "" stays "", a value that is not a
  *  plain decimal returns null (blank it): a finer value must never pass. */
@@ -150,8 +165,8 @@ export const coordinateIsFine = (text, policy) => text !== "" && roundCoordinate
 
 /** "birth.attribute.age_time", "contact.attribute.government_id" or null for one Gramps Attribute element. */
 export function attributeRule(attr, policy) {
-  if (!attr || attr._class !== "Attribute") return null;
-  const value = (attr.type || {}).value;
+  if (!isObj(attr) || attr._class !== "Attribute") return null;
+  const value = obj(attr.type).value;
   if (values(policy.attributes.ageAndTime).has(value)) return "birth.attribute.age_time";
   if (values(policy.attributes.governmentId).has(value)) return "contact.attribute.government_id";
   return null;

@@ -10,6 +10,13 @@ need a decision (the projection, the checker, the renderer, tests) the same answ
 ``shared/redaction-rules.mjs`` is the JavaScript port of the same predicates; both run the vectors in
 ``gramps/redaction/vectors/``. Standard library only, Python 3.12 and later (the core must run in Gramps' bundled Python and
 in CI's stock python3). Nothing here logs or prints, and no function returns a matched value in an error.
+
+Malformed input: a nested value of the wrong shape (an ``event_ref_list`` entry that is not an object, a ``type`` or a date that is
+not an object, a ``citation_list`` that is not a list, a non-string path or text) is read as absent, never raised on, so a
+predicate answers for the rest of the object. A date that is not an object is the one case the date helpers treat as a leak:
+``date_violations`` reports it (pointer ``""``) and ``reduce_date`` replaces it by an empty date. A *top-level* argument that is
+not an object at all (``is_birth_like(None, ...)``) is a caller error and may raise: a caller that gets an exception from a
+record holds that record (fail closed) and never lets it through.
 """
 
 import copy
@@ -21,6 +28,19 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 POLICY_PATH = os.path.join(_HERE, "..", "redaction", "redaction-v1.json")
 
 _cache = {}
+
+
+def _obj(value):
+    """``value`` when it is an object, else an empty one: a nested value of the wrong shape reads as absent."""
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value):
+    return value if isinstance(value, list) else []
+
+
+def _int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def load_policy(path=None):
@@ -77,8 +97,8 @@ class Tree:
             out = set()
             for p in self.of_class("Person"):
                 idx = p.get("birth_ref_index")
-                refs = p.get("event_ref_list") or []
-                if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(refs):
+                refs = _list(p.get("event_ref_list"))
+                if _int(idx) and 0 <= idx < len(refs) and isinstance(refs[idx], dict):
                     out.add(refs[idx].get("ref"))
             self._birth_ref = out
         return self._birth_ref
@@ -89,12 +109,14 @@ class Tree:
             out = set()
             for e in self.of_class("Event"):
                 if is_birth_like(e, self, policy):
-                    out.update(e.get("citation_list") or [])
+                    out.update(_list(e.get("citation_list")))
             for holder in self.of_class("Person") + self.of_class("Family"):
-                for ref in holder.get("event_ref_list") or []:
+                for ref in _list(holder.get("event_ref_list")):
+                    if not isinstance(ref, dict):
+                        continue
                     ev = self.by_handle.get(ref.get("ref"))
                     if ev is not None and is_birth_like(ev, self, policy):
-                        out.update(ref.get("citation_list") or [])
+                        out.update(_list(ref.get("citation_list")))
             self._birth_citations = out
         return self._birth_citations
 
@@ -111,12 +133,13 @@ def is_birth_like(event, tree, policy=None):
     """True for Birth 12, Adult Christening 14, Baptism 15, Bless 18, Christen 22, Stillbirth 45, a custom type whose name
     matches the birth pattern, and any event a person references at its ``birth_ref_index``. For everyone, living or deceased."""
     pol = (policy or load_policy())["birthLike"]
-    etype = event.get("type") or {}
+    etype = _obj(event.get("type"))
     value = etype.get("value")
-    if isinstance(value, int) and not isinstance(value, bool):
+    if _int(value):
         if value in _values(pol["eventTypes"]):
             return True
-        if value == pol["customType"]["value"] and compile_pattern(pol["customType"]).search(etype.get("string") or ""):
+        string = etype.get("string")
+        if value == pol["customType"]["value"] and isinstance(string, str) and compile_pattern(pol["customType"]).search(string):
             return True
     return event.get("handle") in as_tree(tree).birth_ref_handles
 
@@ -148,37 +171,45 @@ def sdn(calendar, year, month, day):
 def reduced_sortval(dateval, calendar, policy=None):
     """sdn(year, 1, 1) in the date's calendar; 0 when the year is 0 or the calendar is not Gregorian or Julian."""
     year = dateval[2] if len(dateval) > 2 else 0
-    if not year or calendar not in (policy or load_policy())["dates"]["sortvalCalendars"]:
+    if not year or not _int(year) or calendar not in (policy or load_policy())["dates"]["sortvalCalendars"]:
         return 0
     return sdn(calendar, year, 1, 1)
 
 
 def date_violations(date, policy=None):
-    """Pointers (relative to the date) where a birth-like date still shows a day, a month or non-year text."""
+    """Pointers (relative to the date) where a birth-like date still shows a day, a month or non-year text. A date that is present
+    but not an object is one violation, the pointer ``""`` (the whole value); ``None`` has none."""
     pol = (policy or load_policy())["dates"]
+    if date is None:
+        return []
+    if not isinstance(date, dict):
+        return [""]
     out = []
-    dv = date.get("dateval") or []
+    dv = _list(date.get("dateval"))
     for i in pol["dayMonthIndexes"]:
         if i < len(dv) and dv[i]:
             out.append("/dateval/%d" % i)
-    text = date.get("text") or ""
-    if text and not re.fullmatch(pol["bareYearTextPattern"], text, re.ASCII):
+    text = date.get("text")
+    if text is not None and not isinstance(text, str):
+        out.append("/text")
+    elif text and not re.fullmatch(pol["bareYearTextPattern"], text, re.ASCII):
         out.append("/text")
     return out
 
 
 def reduce_date(date, policy=None):
     """The birth-like projection of one Gramps Date: no day or month in either half, empty text, TEXTONLY turned into its
-    first four-digit year (or an empty date), sortval recomputed. Returns a new dict; ``P(P(x)) == P(x)``."""
+    first four-digit year (or an empty date), sortval recomputed. Returns a new dict; ``P(P(x)) == P(x)``. A value that is not an
+    object becomes an empty Date."""
     pol = policy or load_policy()
     cfg = pol["dates"]
-    out = copy.deepcopy(date)
-    dv = list(out.get("dateval") or [0, 0, 0, False])
+    out = copy.deepcopy(date) if isinstance(date, dict) else {"_class": "Date", "calendar": 0, "format": None, "modifier": 0, "newyear": 0, "quality": 0}
+    dv = list(_list(out.get("dateval")) or [0, 0, 0, False])
     for i in cfg["dayMonthIndexes"]:
         if i < len(dv):
             dv[i] = 0
     if out.get("modifier") == cfg["textOnlyModifier"]:
-        m = re.search(cfg["textOnlyYearPattern"], out.get("text") or "", re.ASCII)
+        m = re.search(cfg["textOnlyYearPattern"], out["text"] if isinstance(out.get("text"), str) else "", re.ASCII)
         dv = [0, 0, int(m.group(1)) if m else 0, False]
         out["modifier"] = 0
     out["dateval"] = dv
@@ -189,7 +220,7 @@ def reduce_date(date, policy=None):
 
 def date_ymd(date, second=False):
     """(year, month, day) of the first (or second) half of a date, or None when it is not day-precise."""
-    dv = date.get("dateval") or []
+    dv = _list(_obj(date).get("dateval"))
     base = 4 if second else 0
     if len(dv) >= base + 3 and dv[base] and dv[base + 1] and dv[base + 2]:
         return (dv[base + 2], dv[base + 1], dv[base])
@@ -203,11 +234,12 @@ def date_ymd(date, second=False):
 def place_exclusion_rule(place, policy=None):
     """The rule id that excludes this place by its type, or None."""
     pol = (policy or load_policy())["places"]
-    ptype = place.get("place_type") or {}
+    ptype = _obj(_obj(place).get("place_type"))
     value = ptype.get("value")
-    if value in _values(pol["excludedTypes"]):
+    if _int(value) and value in _values(pol["excludedTypes"]):
         return "place.exclude.type"
-    if value == pol["customHomeLike"]["value"] and compile_pattern(pol["customHomeLike"]).search(ptype.get("string") or ""):
+    string = ptype.get("string")
+    if _int(value) and value == pol["customHomeLike"]["value"] and isinstance(string, str) and compile_pattern(pol["customHomeLike"]).search(string):
         return "place.exclude.custom_home_like"
     return None
 
@@ -215,7 +247,7 @@ def place_exclusion_rule(place, policy=None):
 def place_code_is_local(place, policy=None):
     """True when the place code stays local: every type below the administrative level."""
     admin = _values((policy or load_policy())["places"]["administrativeTypes"])
-    return (place.get("place_type") or {}).get("value") not in admin
+    return _obj(_obj(place).get("place_type")).get("value") not in admin
 
 
 def round_coordinate(text, policy=None):
@@ -251,15 +283,20 @@ def coordinate_is_fine(text, policy=None):
 # URLs and attributes.
 
 
+_SPECIAL_SCHEMES = ("http", "https", "ftp", "ws", "wss")
+
+
 def _url_parts(raw):
     """(scheme, host, path) of a Gramps Url path: lower-case scheme and host, path with its leading slash."""
-    s = (raw or "").strip()
+    s = (raw if isinstance(raw, str) else "").strip().replace("\\", "/")  # a browser reads a backslash as a slash
     m = re.match(r"([A-Za-z][A-Za-z0-9+.\-]*):(.*)$", s, re.S)
     scheme = ""
     rest = s
     if m and not re.match(r"[0-9]+(/|$)", m.group(2)):  # "host:8080/x" is a port, not a scheme
         scheme, rest = m.group(1).lower(), m.group(2)
-    if rest.startswith("//"):
+    if scheme in _SPECIAL_SCHEMES:
+        rest = rest.lstrip("/")  # a browser takes https:/host and https:///host as https://host
+    elif rest.startswith("//"):
         rest = rest[2:]
     elif scheme:
         return scheme, "", rest
@@ -277,7 +314,8 @@ def url_rules(url, scan_text, policy=None):
     """The contact rule ids that make this Gramps Url element local-only. ``scan_text`` is the shared detector's function."""
     pol = (policy or load_policy())["urls"]
     out = []
-    if (url.get("type") or {}).get("value") == pol["emailType"]:
+    url = _obj(url)
+    if _obj(url.get("type")).get("value") == pol["emailType"]:
         out.append("contact.url.email_type")
     scheme, host, path = _url_parts(url.get("path"))
     channel = scheme in pol["schemes"] or any(_host_matches(host, h) for h in pol["hosts"])
@@ -285,17 +323,18 @@ def url_rules(url, scan_text, policy=None):
         channel = any(_host_matches(host, p["host"]) and path.lower().startswith(p["prefix"]) for p in pol["paths"])
     if channel:
         out.append("contact.url.channel")
-    if scan_text(url.get("path") or "") or scan_text(url.get("desc") or ""):
+    path_text, desc_text = url.get("path"), url.get("desc")
+    if scan_text(path_text if isinstance(path_text, str) else "") or scan_text(desc_text if isinstance(desc_text, str) else ""):
         out.append("contact.url.scan_hit")
     return out
 
 
 def attribute_rule(attr, policy=None):
     """``birth.attribute.age_time``, ``contact.attribute.government_id`` or None for one Gramps Attribute element."""
-    if attr.get("_class") != "Attribute":
+    if _obj(attr).get("_class") != "Attribute":
         return None
     pol = (policy or load_policy())["attributes"]
-    value = (attr.get("type") or {}).get("value")
+    value = _obj(attr.get("type")).get("value")
     if value in _values(pol["ageAndTime"]):
         return "birth.attribute.age_time"
     if value in _values(pol["governmentId"]):

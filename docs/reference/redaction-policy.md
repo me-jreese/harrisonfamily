@@ -38,7 +38,7 @@ The one list of birth-like events. The projection, the server validator, the edi
 An event is birth-like when any of these holds, for everyone, living or deceased:
 
 - Its type is one of: Birth 12, Adult Christening 14, Baptism 15, Bless 18, Christen 22, Stillbirth 45.
-- Its type is Custom (0) and the type name matches `/birth|bapt|christen|naissance|geburt|nacimiento/i` (a substring match; ASCII case folding only).
+- Its type is Custom (0) and the type name matches `/birth|bapt|christen|naissance|geburt|nacimiento/i` (a substring match; ASCII case folding only, and a deliberate over-match that fails closed: Birthright and Baptist are held back like a birth).
 - Some person references it at its `birth_ref_index`, whatever its type.
 
 Day and month mean `dateval` indexes 0, 1, 4, 5. A date of a birth-like event is reduced to:
@@ -165,11 +165,12 @@ Each rule has an id, a class, the Gramps classes it applies to, a path pattern, 
 - Schemes: `mailto:`, `tel:`, `sms:`, `callto:`, `facetime:`, `skype:`, `whatsapp:`.
 - Hosts, matched by registrable-domain suffix and never by substring: `m.me`, `ig.me`, `wa.me`, `t.me`, `telegram.me`, `messenger.com`, `api.whatsapp.com`, `signal.me`.
 - Paths: `instagram.com/m/`.
+- A backslash is read as a slash before the scheme, host and path are split, as a browser does.
 
 ### Places
 
 - Excluded by type: Street 7, Farm 18, Building 19, Number 20.
-- Excluded when the type is Custom (0) and its name matches `/house|home|residence|address|apartment|apt|lot|farm/i`. This is a substring match, so a name that merely contains one of the words is excluded too.
+- Excluded when the type is Custom (0) and its name matches `/house|home|residence|address|apartment|apt|lot|farm/i`. This is a substring match, so a name that merely contains one of the words (Chapter, Charlotte, Pilot, Homestead District) is excluded too. The over-match is deliberate and fails closed: it drops a harmless place and never lets a home through.
 - A place code stays only for: Country 1, State 2, County 3, Province 8, Region 9, Department 10. Every other type keeps it local.
 - Alternate-location fields blanked: `street`, `locality`, `postal`, `phone`.
 - Coordinates: a plain decimal (`^[+-]?[0-9]+(\.[0-9]+)?$`) is rounded half away from zero to 2 decimals, and a value with no more decimals keeps its text; anything else is blanked.

@@ -103,7 +103,13 @@ describe("shared/redaction-rules.mjs against the golden vectors", () => {
         const want = v.expected.projection[o.handle];
         if (!want) continue;
         expect(want.code, `${v.id} ${o.handle} code`).toBe(placeCodeIsLocal(o, policy) ? "" : o.code);
-        for (const k of ["lat", "long"]) expect(roundCoordinate(o[k], policy) || "", `${v.id} ${o.handle} ${k}`).toBe(want[k]);
+        // null means "blank it": the vector says "" for a value that is not a plain decimal, and null must not pass for ""
+        for (const k of ["lat", "long"]) {
+          const got = roundCoordinate(o[k], policy);
+          if (got === null) expect(want[k], `${v.id} ${o.handle} ${k} blanked`).toBe("");
+          else expect(got, `${v.id} ${o.handle} ${k}`).toBe(want[k]);
+          expect(got === null || typeof got === "string", `${v.id} ${o.handle} ${k} type`).toBe(true);
+        }
         for (const k of ["lat", "long"]) expect(coordinateIsFine(o[k], policy), `${v.id} ${o.handle} ${k}`).toBe(o[k] !== want[k]);
       }
     }
@@ -152,6 +158,47 @@ describe("shared/redaction-rules.mjs against the golden vectors", () => {
     expect(isBirthLike(ev("Bırth"), tree, policy)).toBe(false); // dotless i
     expect(isBirthLike(ev("Kaptism"), tree, policy)).toBe(false); // Kelvin sign
     expect(isBirthLike(ev("Residence"), tree, policy)).toBe(false);
+    // the whole non-ASCII path: any non-ASCII letter that folds to an ASCII one under Unicode rules stays out, in both ports
+    for (const s of ["ＢＩＲＴＨ", "bırth", "BİRTH", "b\u0430ptism", "christ\u0435n", "naıssance", "Kaptism", "ge\u200bburt"]) {
+      expect(isBirthLike(ev(s), tree, policy), s).toBe(false);
+    }
+    // a substring match over-matches on purpose and fails closed
+    for (const s of ["Birthright", "Baptist visit", "Christendom"]) expect(isBirthLike(ev(s), tree, policy), s).toBe(true);
+    for (const s of ["Chapter", "Charlotte", "Pilot", "Homestead District", "Farmland"]) {
+      expect(placeExclusionRule({ place_type: { value: 0, string: s } }, policy), s).toBe("place.exclude.custom_home_like");
+    }
+    for (const s of ["Plantation", "Campground", "Courtyard", ""]) expect(placeExclusionRule({ place_type: { value: 0, string: s } }, policy), s).toBeNull();
+  });
+
+  it("reads a nested value of the wrong shape as absent and never throws; a date that is not an object is a leak", () => {
+    const ev = { _class: "Event", handle: "e1", type: { value: 5 }, citation_list: "c1" };
+    for (const refs of [["x"], [null], [5], [[]], "x", 7, { ref: "e1" }]) {
+      const person = { _class: "Person", handle: "p1", birth_ref_index: 0, event_ref_list: refs };
+      expect(isBirthLike(ev, [person, ev], policy), JSON.stringify(refs)).toBe(false);
+      expect([...birthCitationHandles([person, ev], policy)], JSON.stringify(refs)).toEqual([]);
+    }
+    const fam = { _class: "Family", handle: "f1", event_ref_list: ["x", { ref: "e1", citation_list: "c9" }, { ref: "e1", citation_list: ["c2"] }] };
+    const birth = { _class: "Event", handle: "e1", type: { value: 12 }, citation_list: 5 };
+    expect([...birthCitationHandles([fam, birth], policy)]).toEqual(["c2"]);
+    for (const t of ["Birth", 12, [12], null]) expect(isBirthLike({ handle: "e2", type: t }, [], policy), String(t)).toBe(false);
+    expect(isBirthLike({ handle: "e2", type: { value: 0, string: 5 } }, [], policy)).toBe(false);
+    for (const bad of [null, undefined, "1900", 1900, [], ["x"]]) {
+      const red = reduceDate(bad, policy);
+      expect([red.dateval, red.text, red.sortval], String(bad)).toEqual([[0, 0, 0, false], "", 0]);
+      expect(dateViolations(red, policy)).toEqual([]);
+    }
+    expect(dateViolations(null, policy)).toEqual([]);
+    expect(dateViolations(undefined, policy)).toEqual([]);
+    for (const bad of ["1900", 1900, [], ["x"]]) expect(dateViolations(bad, policy), String(bad)).toEqual([""]);
+    expect(dateViolations({ dateval: "x", text: 5 }, policy)).toEqual(["/text"]);
+    expect(reduceDate({ dateval: ["a", "b", "c", false], text: 5, calendar: 0 }, policy).sortval).toBe(0);
+    expect(reduceDate({ dateval: [1, 2, "1900", false], text: ["x"] }, policy).dateval).toEqual([0, 0, "1900", false]);
+    expect(placeExclusionRule({ place_type: "Farm" }, policy)).toBeNull();
+    expect(placeExclusionRule(null, policy)).toBeNull();
+    expect(placeExclusionRule({ place_type: { value: 0, string: ["Home"] } }, policy)).toBeNull();
+    expect(placeCodeIsLocal({ place_type: 4 }, policy)).toBe(true);
+    expect(attributeRule({ _class: "Attribute", type: "Age" }, policy)).toBeNull();
+    expect(attributeRule(null, policy)).toBeNull();
   });
 
   it("is driven by the policy file and names its rules", () => {

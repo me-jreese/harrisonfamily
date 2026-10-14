@@ -309,7 +309,8 @@ birth_type_vector("birth.type.stillbirth_45", "Stillbirth 45 is birth-like", STI
 # custom types
 custom = [("c1", "Birth Registration", True), ("c2", "Taufe und Geburt", True), ("c3", "NAISSANCE", True), ("c4", "Acta de Nacimiento", True),
           ("c5", "Baptism record", True), ("c6", "Christened at home", True), ("c7", "Residence", False), ("c8", "Census", False),
-          ("c9", "Graduation", False), ("c10", "", False)]
+          ("c9", "Graduation", False), ("c10", "", False),
+          ("c11", "Birthright Quaker", True), ("c12", "Baptist church visit", True)]  # a substring match over-matches: both are held back (fail closed)
 evs = [EV(h, CUSTOM_EV, DATE(2, 6, 1880) if like else DATE(3, 7, 1881), s=s) for h, s, like in custom]
 p = PE("p1", [e["handle"] for e in evs])
 out = {e["handle"]: (C(e, date=DY(1880)) if like else copy.deepcopy(e)) for e, (_, _, like) in zip(evs, custom)}
@@ -526,14 +527,15 @@ vec("contact", "contact.url.email_type", "A URL of type Email is local-only; a s
 
 urls = [URL("mailto:alder@example.org"), URL("tel:+1-555-555-0100"), URL("sms:+15555550101"), URL("https://wa.me/15555550102"),
         URL("https://chat.t.me/alder"), URL("https://www.instagram.com/m/alder"), URL("https://www.instagram.com/alder"),
-        URL("https://example.org/profile/alder"), URL("https://notwa.me.example.org/x")]
+        URL("https://example.org/profile/alder"), URL("https://notwa.me.example.org/x"), URL("https:\\\\wa.me\\15555550103")]
 p = PE("p1", urls=urls)
-vec("contact", "contact.url.channel", "Contact-channel schemes, hosts (and their subdomains) and Instagram message paths are local-only; profile and look-alike hosts stay",
+vec("contact", "contact.url.channel", "Contact-channel schemes, hosts (and their subdomains) and Instagram message paths are local-only (a backslash reads as a slash); profile and look-alike hosts stay",
     ["contact.url.channel", "contact.url.scan_hit"], [p], {"p1": C(p, urls=[urls[6], urls[7], urls[8]])},
-    server=[V("contact.url.channel", "p1", "/urls/%d" % i) for i in range(6)] +
-           [V("contact.url.scan_hit", "p1", "/urls/%d" % i) for i in range(6)] +
-           [V("scan.contact_url", "p1", "/urls/%d/path" % i) for i in range(6)] +
-           [V("scan.email", "p1", "/urls/0/path"), V("scan.phone", "p1", "/urls/1/path"), V("scan.phone", "p1", "/urls/2/path")])
+    server=[V("contact.url.channel", "p1", "/urls/%d" % i) for i in (0, 1, 2, 3, 4, 5, 9)] +
+           [V("contact.url.scan_hit", "p1", "/urls/%d" % i) for i in (0, 1, 2, 3, 4, 5, 9)] +
+           [V("scan.contact_url", "p1", "/urls/%d/path" % i) for i in (0, 1, 2, 3, 4, 5, 9)] +
+           [V("scan.email", "p1", "/urls/0/path"), V("scan.phone", "p1", "/urls/1/path"), V("scan.phone", "p1", "/urls/2/path"),
+            V("scan.phone", "p1", "/urls/9/path")])
 
 u_keep = URL("https://example.org/about", URL_WEB_HOME, "Family page")
 p = PE("p1", urls=[URL("https://example.org/about", URL_WEB_HOME, "Call me on 555-0123"), URL("https://example.org/call-555-0124", URL_WEB_HOME, ""), u_keep])
@@ -608,13 +610,14 @@ vec("places", "place.repoint.no_ancestor", "A top-level excluded place leaves no
     {"pl1": None, "pl2": C(child, placeref_list=[]), "ev1": C(ev, place="")}, excluded=[X("pl1", "place.exclude.type")],
     server=[V("place.exclude.type", "pl1", "/place_type"), V("place.repoint", "pl2", "/placeref_list/0/ref"), V("place.repoint", "ev1", "/place")])
 
-hs = [("pl%d" % (i + 1), s) for i, s in enumerate(["Home", "My residence", "Apartment 4", "APT", "Lot 9", "farmstead", "Chapter House", "Address book", "House of Oak"])]
+hs = [("pl%d" % (i + 1), s) for i, s in enumerate(["Home", "My residence", "Apartment 4", "APT", "Lot 9", "farmstead", "Chapter House", "Address book", "House of Oak",
+                                                                                                     "Chapter", "Charlotte", "Pilot", "Homestead District"])]
 nots = [("pl%d" % (i + 20), s) for i, s in enumerate(["Plantation", "Campground", "Courtyard"])]
 places = [PL(h, name=s, t=PL_CUSTOM, ts=s) for h, s in hs + nots]
 places.append(PL("pl30", name="Homeville", t=PL_CITY, ts="Home"))
 places.append(PL("pl31", name="Typed Home", t=PL_CUSTOM, ts=""))
 out = {p["handle"]: (None if p["handle"] in {h for h, _ in hs} else copy.deepcopy(p)) for p in places}
-vec("places", "place.exclude.custom_home_like", "Custom place types matching house|home|residence|address|apartment|apt|lot|farm are excluded (a substring match: Chapter holds apt); other types and non-custom types keep their place",
+vec("places", "place.exclude.custom_home_like", "Custom place types matching house|home|residence|address|apartment|apt|lot|farm are excluded (a substring match, so Chapter, Charlotte, Pilot and Homestead District are excluded too: it over-matches on purpose and fails closed); other types and non-custom types keep their place",
     ["place.exclude.custom_home_like"], places, out,
     excluded=[X(h, "place.exclude.custom_home_like") for h, _ in hs],
     server=[V("place.exclude.custom_home_like", h, "/place_type") for h, _ in hs])
