@@ -3,7 +3,7 @@
 // gramps_id) plus the DynamoDB ALLOW# items through GSI1PK = ALLOWSUB#<sub>. First match per sub (the smallest live address), sorted.
 // An ALLOW# item of either state overrides the file for its email, as everywhere else (shared/allowlist-store.mjs).
 // Nothing here logs an address: failures are a fixed label and an error name.
-import { emailOfAllowItem, isActiveAllowItem, listAllowBySub, normalizeAllowEmail } from "./shared/allowlist-store.mjs";
+import { emailOfAllowItem, isAllowedNow, listAllowBySub, normalizeAllowEmail } from "./shared/allowlist-store.mjs";
 
 /** At most this many admins are notified (a bound on reads and mail per request; the family has a handful). */
 export const MAX_ADMINS = 20;
@@ -44,7 +44,7 @@ export function createAdminDirectory({ readAdmins, readEntries, ddb, cmds, table
       for (const sub of subs) {
         const items = ddb ? await listAllowBySub(ddb, cmds, table, sub) : [];
         const overridden = new Set(items.map(emailOfAllowItem));
-        const live = items.filter(isActiveAllowItem).map(emailOfAllowItem);
+        const live = items.filter((it) => isAllowedNow(it, now())).map(emailOfAllowItem);
         for (const [email, p] of entries ?? []) if (p?.sub === sub && !overridden.has(normalizeAllowEmail(email))) live.push(normalizeAllowEmail(email));
         const first = [...new Set(live)].sort()[0];
         if (first) out.add(first);

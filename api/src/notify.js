@@ -157,7 +157,7 @@ export function createNotifier(deps) {
         pushOnly.length && enabled() ? deliverPushOnly({ ...input, recipients: pushOnly }) : { pushed: 0 },
       ]);
       if (toStore.length && TEMPLATE_REGISTRY.features[feature]?.inbox !== false) lost += Math.max(0, toStore.length - (a.stored ?? 0));
-      return { sent: a.pushed + b.pushed, lost };
+      return { sent: a.pushed + b.pushed, lost, ...(a.stored > 0 ? { stored: a.stored } : {}) }; // `stored`: inbox items written (access-request notices need to know the member can see one)
     } catch (e) {
       log.error?.("notify failed", feature, logSafeError(e));
       return { sent: 0, lost: lost + 1 };

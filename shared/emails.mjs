@@ -32,6 +32,26 @@ export const TEMPLATES = Object.freeze({
       "we will never email you a link to sign in.",
     ],
   }),
+  // A second email for a person who already has access (PS-13): the grant takes effect after the member's 72 hour objection window, so the
+  // requester is told the date and nothing about the member. `when` is a UTC date (YYYY-MM-DD) the caller computes.
+  approved_later: ({ when } = {}) => ({
+    subject: "you're approved",
+    lines: [
+      `you're approved. you can sign in starting ${typeof when === "string" && /^\d{4}-\d{2}-\d{2}$/.test(when) ? when : "in a few days"}.`,
+      "- if this is a gmail address, tap continue with google.",
+      "- otherwise tap forgot password? and we'll email you a code to set one.",
+      "we will never email you a link to sign in.",
+    ],
+  }),
+  // To every email the member already signs in with, when an admin asks to add another one to their account (PS-13). No requester detail.
+  second_email_notice: () => ({
+    subject: "a new sign-in email on your account",
+    lines: [
+      "someone in the family asked to add another email to your account on the family site. it will be added in 3 days.",
+      "if that's you, open the family site and look at your notifications to confirm it now. if it isn't you, say so there and it won't be added.",
+      "we will never email you a link to sign in.",
+    ],
+  }),
   awaiting_record: () => ({
     subject: "you're approved",
     lines: ["you're approved. we're adding you to the family tree now. we'll email you again when you can sign in."],

@@ -239,6 +239,28 @@ class SyncInfra(unittest.TestCase):
         self.assertEqual(edge["JOIN_MAIL_ALARMS"], {"Fn::Sub": "${JoinBounceAlarmName},${JoinComplaintAlarmName}"})
         self.assertEqual(self.r["RenderFunction"]["Properties"]["Environment"]["Variables"]["RENDER_MODE"], {"Ref": "RenderMode"})
 
+    # HFY-TSK-141 (surf-access-admin-api AC5): the api sends the admin routes' mail (approved, declined, awaiting_record, the second-email notice) with the
+    # ses:SendEmail grant app-stack-sync-infra gave its role, and with the env it already carries. This task changes no IAM and adds no parameter.
+    def test_api_mail_for_the_access_request_admin_routes_uses_the_sync_infra_grant(self):
+        api = self.r["Function"]["Properties"]["Environment"]["Variables"]
+        self.assertEqual(api["SES_FROM_ADDRESS"], {"Ref": "SesFromAddress"})
+        self.assertEqual(api["SES_CONFIGURATION_SET"], {"Ref": "SesConfigurationSet"})
+        ses = [s for s in statements(self.r["Role"]) if isinstance(s, dict) and s.get("Fn::If", [""])[0] == "HasSes"]
+        self.assertEqual(len(ses), 1)
+        st = ses[0]["Fn::If"][1]
+        self.assertEqual((st["Sid"], st["Effect"], st["Action"]), ("SendEmail", "Allow", "ses:SendEmail"))
+        self.assertEqual(st["Resource"][0], {"Ref": "SesIdentityArn"})
+        self.assertEqual(st["Condition"], {"StringEquals": {"ses:FromAddress": {"Ref": "SesFromAddress"}}})
+        # the code reads exactly these two names, and the access-request switch stays on the edge (the admin routes sit behind the accessRequests flag)
+        index = (ROOT / "api" / "src" / "index.js").read_text()
+        self.assertIn("env.SES_FROM_ADDRESS && env.SES_CONFIGURATION_SET", index)
+        self.assertNotIn("ACCESS_REQUESTS", api)
+
+    # The RG-dark change-set prep found the live alarms under other names than the old defaults: the defaults are the live names now.
+    def test_join_alarm_defaults_are_the_live_alarm_names(self):
+        self.assertEqual(self.p["JoinBounceAlarmName"]["Default"], "hfy-ses-access-request-bounce-rate")
+        self.assertEqual(self.p["JoinComplaintAlarmName"]["Default"], "hfy-ses-access-request-complaint-rate")
+
     # AC1: bucket
     def test_sync_bucket(self):
         b = self.r["SyncBucket"]

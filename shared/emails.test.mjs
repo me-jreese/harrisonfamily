@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FOOTER, TEMPLATE_IDS, renderEmail } from "./emails.mjs";
 
-test("the eight system templates exist", () => {
-  assert.deepEqual([...TEMPLATE_IDS].sort(), ["admin_new", "already_member", "already_requested", "approved", "awaiting_record", "code", "declined", "received"]);
+test("the ten system templates exist", () => {
+  assert.deepEqual([...TEMPLATE_IDS].sort(), ["admin_new", "already_member", "already_requested", "approved", "approved_later", "awaiting_record", "code", "declined", "received", "second_email_notice"]);
 });
 
 test("every message is plain text with the footer, no link and no html", () => {
@@ -29,4 +29,16 @@ test("the declined note appears only when given", () => {
 test("an unknown template throws", () => {
   assert.throws(() => renderEmail("nope"), /unknown email template/);
   assert.throws(() => renderEmail("constructor"), /unknown email template/);
+});
+
+test("approved_later names a date only, and never the member whose account gets the email", () => {
+  assert.match(renderEmail("approved_later", { when: "2030-01-04" }).text, /you can sign in starting 2030-01-04\./);
+  assert.match(renderEmail("approved_later", { when: "not a date <b>" }).text, /starting in a few days\./);
+  assert.doesNotMatch(renderEmail("approved_later", { when: "2030-01-04" }).text, /account|member|already/);
+});
+
+test("second_email_notice is content-free: it says someone asked, never who or which address", () => {
+  const { text } = renderEmail("second_email_notice", { email: "x@example.test", name: "Sam" });
+  assert.match(text, /in 3 days/);
+  assert.doesNotMatch(text, /example\.test|Sam|@/);
 });

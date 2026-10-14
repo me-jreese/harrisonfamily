@@ -471,6 +471,18 @@ const TRIVIAL_SKIP = new Set(["_class", "handle"]);
 const isTrivial = (v) => v === "" || v === null || v === false || (Array.isArray(v) && v.length === 0) || (isObj(v) && !isTyped(v) && Object.keys(v).length === 0);
 const same = (a, b) => (a === undefined || b === undefined ? a === b : canonicalJson(a) === canonicalJson(b));
 
+// The members of a NEW object that the server computes and overwrites: `change` is the write time and the semantics pass recomputes a Person's
+// birth_ref_index and death_ref_index. A create that carries them (a system Person create from an access request, a relationship proposal's whole
+// Person) writes nothing the client chose, so they are not judged as a "derived" write. This is for a create only: a set, add or remove of the same
+// path is still derived, so no member edit is loosened (HFY-TSK-141). Every other member of the object is judged as before.
+const SERVER_OWNED_ON_CREATE = Object.freeze(["change", "birth_ref_index", "death_ref_index"]);
+function withoutServerOwned(value) {
+  if (!SERVER_OWNED_ON_CREATE.some((k) => Object.hasOwn(value, k))) return value;
+  const out = { ...value };
+  for (const k of SERVER_OWNED_ON_CREATE) delete out[k];
+  return out;
+}
+
 /** The pointer segments of an op path, as strings: a property is its name, a tuple index its digits, a list-element key is "*". */
 export function pointerSegments(path) {
   return parsePath(path).map((s) => (s.t === "prop" ? s.name : s.t === "index" ? String(s.i) : "*"));
@@ -749,7 +761,7 @@ export async function classifyOps(ops, ctx = {}) {
     } else if (op.op === "create") {
       if (!admin && relation === "own" && cls === "Family") take(fp.resolve("Family", ["father_handle"], viewer)); // the Q2-15 spouse-children row
       else if (!admin && !(relation === "own" && (cls === "Event" || cls === "Note"))) take(P);
-      if (isObj(op.value)) walkChanges([], op.value, undefined, emit);
+      if (isObj(op.value)) walkChanges([], withoutServerOwned(op.value), undefined, emit);
       const t = cls === "Event" ? eventTypeValue(op.value) : null;
       if (KIND_OF_TYPE[t]) kinds.add(KIND_OF_TYPE[t]);
     } else if (op.op === "delete") {

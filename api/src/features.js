@@ -4,7 +4,8 @@
 //   the deployed flags file or the caller is in the `uat` group of config/groups.json. Signed out counts as "not uat", so a dark route is a
 //   404 to everyone outside the group, never a 401 that would reveal it.
 // - serverSwitch(name, check) is the alternative for the high-risk surfaces whose security boundary is a stack switch (HFY_EDITING,
-//   ACCESS_REQUESTS, chat service auth, SYNC_API_ENABLED). The declaring task supplies `check`, so a declared switch is always enforced.
+//   ACCESS_REQUESTS, chat service auth, SYNC_API_ENABLED). The declaring task supplies `check`, so a declared switch is always enforced. A switch
+//   whose check is a rule of the route's own rather than the stack switch alone says so in `rule`, which caps.json publishes beside the name.
 // - gateExempt(reason) marks the one io-approved exemption, GET /api/me (BRD2 10.1). test/features.test.js fails for any other.
 // - featureOn(name, principal) is the same rule for producers, for example the persist-first inbox writes (featureOn("inboxV1", recipient)).
 //
@@ -44,11 +45,13 @@ export function requireFeature(name) {
  * for a signed-out caller): return true to continue, false for 404 not_found, or throw the switch's own HttpError (for example 404 not_enabled
  * for SYNC_API_ENABLED, 503 when chat service keys are unset). `check` also receives `params` (the matched path parameters) and `ctx`
  * ({ddb, cmds, table, now}) when the handler supplies them (the records routes read them to let a member reach their own record).
+ * `rule` (optional) describes what `check` enforces when that is more than the stack switch, for caps.json (the member's second-email routes).
  */
-export function serverSwitch(name, check) {
+export function serverSwitch(name, check, { rule } = {}) {
   if (!SERVER_SWITCHES.includes(name)) throw new TypeError(`serverSwitch: unknown switch ${JSON.stringify(name)} (one of ${SERVER_SWITCHES.join(", ")})`);
   if (typeof check !== "function") throw new TypeError(`serverSwitch(${name}): a check function is required, so the switch is enforced where it is declared`);
-  return Object.freeze({ type: "switch", name, check });
+  if (rule !== undefined && (typeof rule !== "string" || rule.trim() === "")) throw new TypeError(`serverSwitch(${name}): rule is a description of what the check enforces`);
+  return Object.freeze({ type: "switch", name, check, ...(rule !== undefined ? { rule } : {}) });
 }
 
 /** ROUTES entry member: an explicit, reviewed exemption from the gate. Only GET /api/me may carry it (BRD2 10.1; test/features.test.js). */
@@ -57,11 +60,11 @@ export function gateExempt(reason) {
   return Object.freeze({ type: "exempt", reason });
 }
 
-/** The caps.json view of a route's gate: {feature}, {switch} or {exempt}; undefined for an ungated (pre-PLN-002) route. */
+/** The caps.json view of a route's gate: {feature}, {switch, rule?} or {exempt}; undefined for an ungated (pre-PLN-002) route. */
 export function describeGate(gate) {
   if (!gate) return undefined;
   if (gate.type === "feature") return { feature: gate.name };
-  if (gate.type === "switch") return { switch: gate.name };
+  if (gate.type === "switch") return { switch: gate.name, ...(gate.rule ? { rule: gate.rule } : {}) };
   if (gate.type === "exempt") return { exempt: gate.reason };
   return { unknown: true };
 }
