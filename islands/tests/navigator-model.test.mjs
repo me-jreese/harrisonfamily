@@ -205,3 +205,72 @@ test("detailsModel counts: parents, then partners and children, with a plain lin
   assert.deepEqual(detailsModel(wide, "I7105").counts, [COPY.parentsNone, "1 child"]);
   assert.deepEqual(detailsModel(wide, "I7150").counts, [COPY.parentsNone, COPY.noUnions]);
 });
+
+// ---- HFY-TSK-300 (viz-mvp-visual-nav): the six movement buttons ----
+
+import { MOVES, navMoves } from "../src/lib/navigator-model.js";
+
+test("navMoves: the six directions, always listed, in the order they are drawn", () => {
+  const m = navigatorModel(g, "I8001");
+  const moves = navMoves(m, 0);
+  assert.deepEqual(moves.map((x) => x.key), ["parents", "children", "prev-sibling", "next-sibling", "prev-union", "next-union"]);
+  assert.deepEqual(moves.map((x) => x.text), ["to parents", "to children", "previous sibling", "next sibling", "previous partner family", "next partner family"]);
+  assert.deepEqual(MOVES.map((x) => x.key), moves.map((x) => x.key));
+  // a person with nothing to go to still gets all six, each with to and union null
+  const lone = navMoves(navigatorModel(g, "I8050"), 0);
+  assert.equal(lone.length, 6);
+  assert.ok(lone.every((x) => x.to === null && x.union === null));
+  assert.ok(lone.every((x) => /, (none|none recorded)$/.test(x.label)), lone.map((x) => x.label).join(" | "));
+});
+
+test("navMoves: parents and children go to the first recorded one, with the name in the accessible label", () => {
+  const m = navigatorModel(g, "I8001");
+  const by = Object.fromEntries(navMoves(m, 0).map((x) => [x.key, x]));
+  assert.equal(by.parents.to, m.parents.cards[0].id);
+  assert.equal(by.parents.label, `to parents, starting with ${m.parents.cards[0].name}`);
+  assert.equal(by.children.to, m.unions[0].children[0].id);
+  // a second union has its own first child
+  const second = Object.fromEntries(navMoves(m, 1).map((x) => [x.key, x]));
+  assert.equal(second.children.to, m.unions[1].children[0].id);
+  // one recorded parent: the label names just that parent
+  const oneParent = navMoves(navigatorModel(g, "I8030"), 0)[0];
+  assert.equal(oneParent.to, "I8031");
+  assert.equal(oneParent.label, "to parents, Mae Reed");
+});
+
+test("navMoves: previous and next sibling follow birth order (oldest first), not the recorded order", () => {
+  const m = navigatorModel(g, "I8001"); // Pip 1950, Robin 1952, Kit 1955
+  assert.deepEqual(m.ring.map((r) => r.id), ["I8004", "I8001", "I8005"]);
+  const by = Object.fromEntries(navMoves(m, 0).map((x) => [x.key, x]));
+  assert.equal(by["prev-sibling"].to, "I8004");
+  assert.equal(by["prev-sibling"].label, "previous sibling, older, Pip Quill");
+  assert.equal(by["next-sibling"].to, "I8005");
+  assert.equal(by["next-sibling"].label, "next sibling, younger, Kit Quill");
+  // the oldest has no previous, the youngest has no next
+  assert.equal(navMoves(navigatorModel(g, "I8004"), 0).find((x) => x.key === "prev-sibling").to, null);
+  assert.equal(navMoves(navigatorModel(g, "I8005"), 0).find((x) => x.key === "next-sibling").to, null);
+});
+
+test("navMoves: the partner-family pair selects a union and never re-centres; the ends are unavailable", () => {
+  const m = navigatorModel(g, "I8001");
+  assert.ok(m.unions.length >= 3);
+  const first = Object.fromEntries(navMoves(m, 0).map((x) => [x.key, x]));
+  assert.equal(first["prev-union"].union, null);
+  assert.equal(first["next-union"].union, 1);
+  assert.equal(first["next-union"].to, null);
+  assert.equal(first["next-union"].label, `next partner family, ${m.unions[1].tab}`);
+  const last = Object.fromEntries(navMoves(m, m.unions.length - 1).map((x) => [x.key, x]));
+  assert.equal(last["next-union"].union, null);
+  assert.equal(last["prev-union"].union, m.unions.length - 2);
+  // an index past the end is clamped, as the element clamps a stale selection
+  assert.equal(navMoves(m, 99).find((x) => x.key === "next-union").union, null);
+});
+
+test("navMoves: an unknown birth year sorts last, and the recorded order breaks a tie", () => {
+  // I8010 has no year; the ring never drops anyone and always holds the focus
+  for (const id of ["I8001", "I8010", "I8040", "I8030"]) {
+    const m = navigatorModel(g, id);
+    assert.ok(m.ring.some((r) => r.id === id), id);
+    assert.equal(new Set(m.ring.map((r) => r.id)).size, m.ring.length);
+  }
+});

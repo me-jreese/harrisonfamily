@@ -69,3 +69,33 @@ test("the built island loads the chart as a lazy chunk that holds <family-naviga
   assert.doesNotMatch(readFileSync(join(out, "chunks", hit[0]), "utf8"), /family-chart|topola|\bolli\b|d3-dag/i);
   assert.ok(relative(out, join(out, "chunks", hit[0])).startsWith("chunks"));
 });
+
+// HFY-TSK-300 (viz-mvp-visual-nav) AC6: the navigation model (six buttons, arrow keys, touch, motion) is our own code, so data-navigator@3.0.0 is
+// not adopted and Olli is not added. If a later task adopts data-navigator it adds its client-license-gate override in the same PR and replaces
+// this test with one that lists it.
+test("data-navigator and Olli are in no manifest, no lockfile entry and no navigator bundle", async () => {
+  const pkg = JSON.parse(readFileSync(join(islandsDir, "package.json"), "utf8"));
+  const names = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies, ...pkg.overrides });
+  assert.deepEqual(names.filter((n) => /data-navigator|olli|ua-parser-js/i.test(n)), []);
+  const lock = JSON.parse(readFileSync(join(islandsDir, "package-lock.json"), "utf8"));
+  assert.deepEqual(Object.keys(lock.packages || {}).filter((n) => /node_modules\/(data-navigator|@?olli|ua-parser-js)/i.test(n)), []);
+  for (const entry of ["src/lib/family-navigator.js", "src/lib/tree-chart.jsx"]) {
+    const inputs = await inputsOf(entry);
+    assert.deepEqual(inputs.filter((p) => /data-navigator|olli|ua-parser-js/i.test(p)), [], entry);
+  }
+  const out = join(site, "js", "islands");
+  for (const f of [join(out, "tree.js"), ...readdirSync(join(out, "chunks")).filter((f) => f.endsWith(".js")).map((f) => join(out, "chunks", f))]) {
+    assert.doesNotMatch(readFileSync(f, "utf8"), /data-navigator|ua-parser|@olli|\bolli\b/i, f);
+  }
+});
+
+test("the navigation is the element's own code: no touch, pointer or wheel listener, no live region, and no single-character shortcut", () => {
+  const src = readFileSync(join(islandsDir, "src", "lib", "family-navigator.js"), "utf8").replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(src, /touchstart|touchmove|touchend|pointerdown|pointermove|setPointerCapture|["']wheel["']/);
+  assert.doesNotMatch(src, /aria-live|role["']?:\s*["'](status|alert|log)/);
+  // the handler reads e.key only through two lookup tables, and every key those name is an arrow, Home or End
+  const reads = [...src.matchAll(/\{([^{}]*)\}\[e\.key\]/g)];
+  assert.equal(reads.length, 2, "e.key is read outside the two lookup tables");
+  assert.equal([...src.matchAll(/e\.key/g)].length, 2);
+  for (const r of reads) for (const k of r[1].split(",").map((x) => x.split(":")[0].trim())) assert.match(k, /^(Arrow(Up|Down|Left|Right)|Home|End)$/, `unexpected key ${k}`);
+});
