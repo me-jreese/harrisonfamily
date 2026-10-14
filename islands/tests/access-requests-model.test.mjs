@@ -185,3 +185,12 @@ test("result and error words (surfaces.md 7.10, DS voice: lowercase, no exclamat
     assert.ok(!/\brecord\b/i.test(t), `says page, not record: ${t}`);
   }
 });
+
+test("free-text birth place: the city must equal the first segment, not just start it", () => {
+  const row = { grampsId: "I9100", displayName: "Tessa Example", givenName: "Tessa", surname: "Example", isLiving: true };
+  const req = { givenNames: "Tessa", maidenSurname: "Example", birthPlace: "York, Exampleland" };
+  assert.ok(!scoreCandidate(req, { ...row, birthPlace: "Yorktown, Exampleland" }).reasons.includes("birthplace"));
+  assert.ok(!scoreCandidate({ ...req, birthPlace: "Ann" }, { ...row, birthPlace: "Annapolis, Exampleland" }).reasons.includes("birthplace"));
+  assert.ok(scoreCandidate(req, { ...row, birthPlace: "York, Exampleland" }).reasons.includes("birthplace"));
+  assert.ok(!scoreCandidate(req, { ...row, birthPlace: "York, Otherland" }).reasons.includes("birthplace"));
+});

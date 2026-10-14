@@ -185,6 +185,7 @@ for (const [name, viewport] of VIEWPORTS) {
       await page.getByLabel("confirmed with this person outside the site").check();
       await act(page, "let-in").click();
       await expect(page.locator('[data-hfy-problem="reload"]')).toContainText("this request changed while you were looking");
+      await expect(act(page, "reload")).toBeVisible();
       await expect(act(page, "second-email")).toHaveCount(0);
       await act(page, "let-in").click();
       await expect(page.locator('[data-hfy-problem="second"]')).toBeVisible();

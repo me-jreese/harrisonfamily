@@ -170,6 +170,18 @@ export function matchPlaces(raw, rows) {
   return out;
 }
 
+/** A row's free-text birth place against the requested one: the first comma segment must equal the city, and the state must appear when given. */
+function textPlaceMatches(wanted, have) {
+  if (typeof have !== "string" || !have) return false;
+  const { city, state } = parsePlace(String(wanted ?? ""));
+  const c = fold(city);
+  if (!c) return false;
+  const segs = have.split(",").map(fold);
+  if (segs[0] !== c) return false;
+  const st = fold(state);
+  return !st || segs.slice(1).includes(st);
+}
+
 /**
  * Score one family-index row against a request (`{givenNames, maidenSurname, birthYear, birthPlace}`). `placeHandles` is the set of
  * handles matchPlaces found for the request's birthplace. Returns `{score, reasons[]}`; a row with neither a surname nor a given-name match
@@ -191,8 +203,7 @@ export function scoreCandidate(req, row, { placeHandles = new Set() } = {}) {
     else if (d === 1) { score += SCORE.yearNear; reasons.push("birth year within 1"); }
     else if (d === 2) { score += SCORE.yearFar; reasons.push("birth year within 2"); }
   }
-  const hasPlace = (typeof row?.birthPlaceHandle === "string" && placeHandles.has(row.birthPlaceHandle))
-    || (typeof row?.birthPlace === "string" && row.birthPlace && fold(row.birthPlace).startsWith(fold(parsePlace(String(req?.birthPlace ?? "")).city)) && fold(parsePlace(String(req?.birthPlace ?? "")).city) !== "");
+  const hasPlace = (typeof row?.birthPlaceHandle === "string" && placeHandles.has(row.birthPlaceHandle)) || textPlaceMatches(req?.birthPlace, row?.birthPlace);
   if (hasPlace) { score += SCORE.place; reasons.push("birthplace"); }
   return { score, reasons };
 }

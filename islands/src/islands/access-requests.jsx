@@ -56,11 +56,12 @@ let indexes = null;
 const loadIndexes = () => (indexes ??= Promise.all([loadData("/person/index.json"), loadData("/place/index.json")]).then(([p, pl]) => ({ people: rowsOf(p), places: rowsOf(pl) })));
 
 // ---- small pieces ----------------------------------------------------------------------------------------------------------------------
-function Problem({ problem }) {
+function Problem({ problem, onReload }) {
   if (!problem) return null;
   return (
     <div className="hfy-requests__problem" role="alert" data-hfy-problem={problem.kind}>
       <p>{problem.text}</p>
+      {problem.kind === "reload" && onReload && <button type="button" className="hfy-requests__btn" onClick={onReload} data-hfy-act="reload">reload this request</button>}
       {problem.kind === "signin" && <a className="hfy-requests__signin" href={signInHref(true)}>sign in again</a>}
       {problem.kind === "field" && problem.errors?.length > 0 && (
         <ul>{problem.errors.map((e, i) => <li key={i}>{typeof e.detail === "string" ? e.detail : String(e.pointer || "")}</li>)}</ul>
@@ -155,7 +156,7 @@ function PreviewEditor({ preview, onChange, places }) {
 }
 
 // ---- the actions of a waiting request ----------------------------------------------------------------------------------------------------
-function Actions({ detail, name, onDone, onProblem, problem, busy, setBusy }) {
+function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, setBusy }) {
   const base = useId();
   const [mode, setMode] = useState(null); // null | { kind: "link", cand } | "new" | "decline"
   const [confirmed, setConfirmed] = useState(false);
@@ -249,7 +250,7 @@ function Actions({ detail, name, onDone, onProblem, problem, busy, setBusy }) {
           </div>
         </form>
       )}
-      <Problem problem={problem} />
+      <Problem problem={problem} onReload={onReload} />
     </section>
   );
 }
@@ -257,7 +258,7 @@ function Actions({ detail, name, onDone, onProblem, problem, busy, setBusy }) {
 // ---- removing access ----------------------------------------------------------------------------------------------------------------------
 // TODO(HFY-TSK-331): revoking is keyed by the ALLOW# entry (ruling P2-R60), which HFY-TSK-331 adds as its own route; until it merges this
 // calls the request-based revoke (POST /api/access-requests/:id/revoke), which works while the request is still inside its retention.
-function Revoke({ detail, name, onDone, onProblem, problem, busy, setBusy }) {
+function Revoke({ detail, name, onDone, onProblem, onReload, problem, busy, setBusy }) {
   const base = useId();
   const [open, setOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -289,7 +290,7 @@ function Revoke({ detail, name, onDone, onProblem, problem, busy, setBusy }) {
           </div>
         </form>
       )}
-      <Problem problem={problem} />
+      <Problem problem={problem} onReload={onReload} />
     </section>
   );
 }
@@ -302,18 +303,32 @@ function Detail({ id, onBack, onChanged, headingRef, showBack }) {
   const [problem, setProblem] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  const [people, setPeople] = useState([]);
+  const current = useRef(id);
+  current.current = id;
+  useEffect(() => {
+    let live = true;
+    loadIndexes().then((i) => { if (live) setPeople(i.people); });
+    return () => { live = false; };
+  }, []);
+
   const load = useCallback(async () => {
+    const asked = id;
     try {
-      setDetail(await api.get(`/access-requests/${encodeURIComponent(id)}`));
+      const got = await api.get(`/access-requests/${encodeURIComponent(asked)}`);
+      if (current.current !== asked) return; // a late answer for a row the admin has moved off
+      setDetail(got);
       setError(null);
     } catch (err) {
+      if (current.current !== asked) return;
       setError(describeError(err));
     }
   }, [id]);
   useEffect(() => { setDetail(null); setError(null); setResult(null); setProblem(null); load(); }, [id, load]);
 
   const done = (line) => { setResult(line); load(); onChanged(); };
-  if (error) return <div className="hfy-requests__detail"><Problem problem={error} /></div>;
+  const reload = () => { setProblem(null); setError(null); load(); onChanged(); };
+  if (error) return <div className="hfy-requests__detail"><Problem problem={error} onReload={reload} /></div>;
   if (!detail) return <div className="hfy-requests__detail"><div className="hfy-requests__skeleton" role="status" aria-label="loading" /></div>;
 
   const name = requesterName(detail.form) || "this person";
@@ -321,6 +336,7 @@ function Detail({ id, onBack, onChanged, headingRef, showBack }) {
   const answers = answersOf(detail.form);
   const waiting = detail.state === "pending" || detail.state === "awaiting_record";
   const linkedId = typeof detail.decision?.grampsId === "string" ? detail.decision.grampsId : null;
+  const linkedName = (linkedId && (people.find((r) => r?.grampsId === linkedId)?.displayName || detail.decision?.displayName)) || linkedId;
   return (
     <div className="hfy-requests__detail" data-hfy-detail={detail.id}>
       {showBack && <button type="button" className="hfy-requests__back" onClick={onBack} data-hfy-back>back to the list</button>}
@@ -334,11 +350,11 @@ function Detail({ id, onBack, onChanged, headingRef, showBack }) {
           <div><dt>{COPY.emailHidden}</dt><dd data-hfy-email>{detail.email}</dd></div>
           {answers.map((a) => <div key={a.key}><dt>{a.label}</dt><dd>{a.value}</dd></div>)}
         </dl>
-        {detail.state === "active" && linkedId && <p className="hfy-requests__note" data-hfy-linked>let in as <PersonName id={linkedId} name={linkedId} />.</p>}
+        {detail.state === "active" && linkedId && <p className="hfy-requests__note" data-hfy-linked>let in as <PersonName id={linkedId} name={linkedName} />.</p>}
         {detail.state === "awaiting_record" && <p className="hfy-requests__note">approved. waiting for their page in the tree. when it's there, find them below and press it's them.</p>}
         {detail.hold && <p className="hfy-requests__note">a second email is on hold until {String(detail.hold.until).slice(0, 10)}.</p>}
-        {waiting && <Actions detail={detail} name={name} onDone={done} onProblem={setProblem} problem={problem} busy={busy} setBusy={setBusy} />}
-        {detail.state === "active" && <Revoke detail={detail} name={name} onDone={done} onProblem={setProblem} problem={problem} busy={busy} setBusy={setBusy} />}
+        {waiting && <Actions detail={detail} name={name} onDone={done} onProblem={setProblem} onReload={reload} problem={problem} busy={busy} setBusy={setBusy} />}
+        {detail.state === "active" && <Revoke detail={detail} name={name} onDone={done} onProblem={setProblem} onReload={reload} problem={problem} busy={busy} setBusy={setBusy} />}
       </article>
     </div>
   );
