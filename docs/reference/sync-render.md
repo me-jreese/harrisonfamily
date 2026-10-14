@@ -146,6 +146,8 @@ On a scheduled run, at most once every 24 hours (or on `{"reconcile": true}`), t
 | `{"force": true}` | Runs a full pass although `rendered_seq` already equals the head seq. |
 | `{"reconcile": true}` | Runs the reconcile now. |
 
+`api/scripts/sync-admin.mjs render` sends these payloads for the operator, with `--full`, `--allow-mass-delete` and `--prune-foreign`, and only with io's go-ahead ([Operate the sync store](../how-to/operate-the-sync-store.md)).
+
 ## Package and tests
 
 `bash scripts/ci/package-render.sh` builds `dist/hfy-sync-render.zip`: `handler.py`, `hfy_render/`, and from `gramps/` only `hfygramps/__init__.py`, `scanner.py` and `render/`. It checks that the stage imports on its own, builds with fixed mtimes and sorted entries (the same sources give the same bytes), and prints `RenderCodeKey=lambda/hfy-sync-render-<first 12 hex of the zip's SHA-256>.zip`. A code change is a new key. `bash scripts/infra/test/run.sh` checks the package (contents, key, reproducibility, import from the zip alone).
