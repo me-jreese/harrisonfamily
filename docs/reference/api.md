@@ -53,7 +53,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 
 | Package | Version (lockfile) | Used for |
 | --- | --- | --- |
-| `@io-kit/content` | 0.1.0 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
+| `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
 | `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
@@ -63,7 +63,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `web-push` | 3.6.7 | Push delivery. Imported only when the VAPID keys load. |
 | `@aws-sdk/*` | 3.1000.0 | DynamoDB document client, S3 and the S3 request presigner, Secrets Manager |
 
-[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version except `@io-kit/content` (`^0.1.0`) and `@io-kit/notify` (`^0.4.0`), which the lockfile holds at the versions above.
+[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version. [`api/test/kit-pins.test.js`](../../api/test/kit-pins.test.js) checks that every `@io-kit` pin in `api/` and `islands/` is exact and matches its lockfile.
 
 `@io-kit/auth` is pinned to the same version here and in [`auth/package.json`](../../auth/package.json). The moves from 2.1.1 to 2.1.2 and then 2.2.0 changed only the kit's edge code, which renders the auth edge's pages: the referrer policy, the theme's font origins and the page styling ([Identity services](identity-services.md)). The `/server` code that the API imports is unchanged, so [Session verification](#session-verification) behaves as it did under 2.1.1.
 
@@ -243,11 +243,11 @@ Posts are implemented in [`content.js`](../../api/src/content.js) against the `@
 | `author` | `{id, label}` | The caller's member id (gramps id) and display label. The label is never an email address ([Session verification](#session-verification)). |
 | `subject` | string, optional | A record id the post is about: a bare Gramps ID, `person:<gramps-id>`, `post:<ulid>` or another plain identifier. It must match `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`, otherwise `422` with `details.field` `subject`. Indexes the post under `SUBJECT#<subject>`. |
 | `title` | string, optional | At most 200 characters, otherwise `422` with `details.field` `title`. |
-| `body` | string | Required and not blank. At most 20,000 characters (JavaScript string length). Stored as sent, not trimmed. Otherwise `422`. |
+| `body` | string | Required. At most 20,000 characters (JavaScript string length), otherwise `422` "body too long". Stored as sent, not trimmed. It may be empty or blank only while the post has at least one attachment, a photo-only post (HFY-TSK-315); a post with neither is `422` "body is required" with `details.field` `body`. A body that is not a string is the same error. |
 | `attachments` | array | At most 10, each a member upload. See [Attachments](#attachments). Otherwise `422` with `details.field` `attachments`. |
 | `visibility` | `draft`, `published` or `withdrawn` | See below |
 | `created_at`, `updated_at` | ISO 8601 | |
-| `can` | `{edit, publish, delete}` | Computed for the caller on every response |
+| `can` | `{edit, publish, delete, moderate}` | Computed for the caller on every response. `moderate` is always `false`: the posts store does not declare the kit's `moderation` capability. |
 
 On create, a `title` or `subject` of `null` means "not set". On `PATCH`, `null` removes it. The serialized post, after these checks, may be at most 100 KB (UTF-8 bytes of its JSON); a larger post is `422` with `details.field` `body` ("post is too large"). The cap keeps every post item, and the audit item that holds both `before` and `after`, well inside DynamoDB's 400 KB item limit.
 
@@ -316,7 +316,7 @@ The browser is meant to remove location data before the upload, so this check is
 
 - Every single-post read and write first loads the post and checks that the caller may see it. A post the caller may not see is `404 not_found`, for writes too.
 - Create and `PATCH` run the [contact-information guard](#contact-information-guard) before any write.
-- `PATCH` replaces `body` and `attachments` when given, sets `title` and `subject` when given, and removes them when they are `null`. It always refreshes `updated_at` and writes an audit item, even when nothing else changed. Removing `subject` also deletes the post's `IDX#SUBJECT` item.
+- `PATCH` replaces `body` and `attachments` when given, sets `title` and `subject` when given, and removes them when they are `null`. The body rule applies to the post the patch leaves: emptying a photo post's body is accepted, and removing the last attachment of a post whose body is blank is `422` "body is required". It always refreshes `updated_at` and writes an audit item, even when nothing else changed. Removing `subject` also deletes the post's `IDX#SUBJECT` item.
 - A transaction cancelled by a failed condition is `409 conflict` ("record changed concurrently"); one that stays cancelled by `TransactionConflict` after its retries is `503 busy`. See [Concurrent writes](#concurrent-writes). Any other store failure is `503 unavailable`.
 - **Delete takes the thread with it.** After the post's items and audit item are committed, the handler removes the `post:<ulid>` thread: every comment and reaction in it, with one `delete` audit item per comment (`reason` `post deleted`, `principal` the member who deleted the post), at most 100 items per transaction. This runs after the response's write has committed and never fails the request. A failure is logged as `post thread purge failed (write already committed)` and leaves the remaining thread items in place.
 
