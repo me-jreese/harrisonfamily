@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DynamoPreferencesStore, DynamoSubscriptionStore, InMemoryNotificationStore } from "@io-kit/notify/server";
 import { createFakeDdb, cmds } from "./fake-ddb.js";
+import { TEMPLATE_REGISTRY as sharedRegistry } from "../src/shared/notify-registry.mjs";
 import { DIGEST_OVER, NOTIFY_TYPES, PUSH_ONLY_TYPES, TEMPLATE_REGISTRY, createMemberSet, createNotifier, notifyContract, queryFollowers, safePath } from "../src/notify.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -36,12 +37,18 @@ describe("TEMPLATE_REGISTRY contract", () => {
     "proposal_submitted", "proposal_accepted", "proposal_declined", "proposal_needs_changes", "proposal_stale",
     "record_updated_mine", "record_updated_followed", "records_updated_followed_digest",
     "moderation_hidden", "moderation_request", "moderation_question", "moderation_unhidden", "moderation_resolved",
-    "photo_graduated", "chat_message",
+    "photo_graduated", "access_request_new", "chat_message",
   ];
   it("holds exactly the PLN-002 types, and the field whitelist is [actor, subject, item, count]", () => {
     expect(NOTIFY_TYPES).toEqual(EXPECTED);
     expect(TEMPLATE_REGISTRY.whitelist).toEqual(["actor", "subject", "item", "count"]);
     expect(notifyContract().whitelist).toEqual(["actor", "subject", "item", "count"]);
+  });
+  it("access_request_new is the auth edge's admin inbox type: content-free, an inbox item, shared with auth/ through shared/notify-registry.mjs", () => {
+    const t = notifyContract().types.access_request_new;
+    expect(t).toMatchObject({ inbox: true, level0: "someone asked to join.", level1: "someone asked to join.", many: null, inboxText: null });
+    expect(notifyContract().groups.access_request_new).toBeUndefined();
+    expect(TEMPLATE_REGISTRY).toBe(sharedRegistry);
   });
   it("pins the inbox flags: only new_family_post and chat_message are push-only", () => {
     const flags = Object.fromEntries(Object.entries(notifyContract().types).map(([k, v]) => [k, v.inbox]));

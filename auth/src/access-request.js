@@ -2,9 +2,9 @@
 //   GET  /auth/access-request/config   -> { open, turnstileSiteKey }
 //   POST /auth/access-request/start    -> 202 { ok:true } always: emails ONE of a code, "already on the list" or "we have your request"
 //   POST /auth/access-request/verify   -> 200 { ticket, expiresAt } once the mailbox is proven
-// The submit route (POST /auth/access-request) belongs to surf-access-submit; it plugs into the same gate(), botCheck() and
-// submitAdmission() exported on the object createAccessRequest returns, so it inherits the kill switch, the CSRF checks, Turnstile, the
-// submit limits and the 100-pending queue cap.
+//   POST /auth/access-request          -> 201 { ok:true, state:"pending" }: the submit (task surf-access-submit), one transaction
+// The submit route runs through the same gate(), botCheck() and submitAdmission() the other routes use, so it inherits the kill switch,
+// the CSRF checks, Turnstile, the submit limits and the 100-pending queue cap.
 //
 // Privacy (R-18, R-19; surfaces.md 7.9): the email, the code and the ticket are never logged. Every log line is a fixed label plus an
 // error NAME (an SES or DynamoDB message can quote the address). Rate-limit keys are hashed (ratelimit.js). Codes and tickets are stored
@@ -17,7 +17,7 @@
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { clientIp, rateKey } from "./ratelimit.js";
 import { normalizeAllowEmail } from "./shared/allowlist-store.mjs";
-import { isHoneypotTripped } from "./shared/legacy-form.mjs";
+import { FIELDS, isHoneypotTripped, validateForm } from "./shared/legacy-form.mjs";
 
 export const ROUTE_PREFIX = "/access-request";
 export const CODE_TTL_SECONDS = 15 * 60;
@@ -28,6 +28,17 @@ export const TURNSTILE_URL = "https://challenges.cloudflare.com/turnstile/v0/sit
 export const TURNSTILE_ACTION = "join";
 export const TURNSTILE_TIMEOUT_MS = 3000;
 export const MAX_BODY_BYTES = 16 * 1024;
+/** A pending request, and the duplicate guard that goes with it, lives 90 days (surfaces.md 7.9; a decision shortens it to 30). */
+export const REQUEST_TTL_SECONDS = 90 * 86400;
+/** The most admin addresses one request mails. */
+export const MAX_ADMIN_MAILS = 10;
+/**
+ * Q2-11(a), living people's current city: io has not recorded an answer, so this defaults to the privacy-preserving no: the form never collects it.
+ * Flip to true (city and state only, the year moved) only when io answers yes; that answer is a precondition of RG-4.
+ * The submit passes it to validateForm explicitly (shared/legacy-form.mjs).
+ * Bad, expired or used tickets answer 403 {detail:"ticket_expired"} (AC and BRD2), not the 401 that surfaces.md 7.2 still shows; join-page code against 403.
+ */
+export const STORE_CURRENT_CITY = false;
 
 /**
  * Surfaces.md 7.5, in the order they are applied. They run one after the other and stop at the first denial, so a request that a narrow
@@ -94,6 +105,20 @@ export const codeMac = (pepper, email, code) => hmac(pepper, `${email}:${code}`)
 export const ticketKey = (ticket) => ({ PK: `ACCESSTICKET#${createHash("sha256").update(String(ticket)).digest("hex")}`, SK: "META" });
 export const codeKey = (hash) => ({ PK: `ACCESSCODE#${hash}`, SK: "META" });
 export const requestEmailKey = (hash) => ({ PK: `ACCESSREQEMAIL#${hash}`, SK: "META" });
+export const requestKey = (id) => ({ PK: `ACCESSREQ#${id}`, SK: "META" });
+
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/** A 26-character ULID (48-bit millisecond time, 80 random bits), so the pending queue sorts oldest first. */
+export function ulid(ms) {
+  let t = "";
+  for (let n = Math.floor(ms), i = 0; i < 10; i += 1, n = Math.floor(n / 32)) t = CROCKFORD[n % 32] + t;
+  const r = randomBytes(10);
+  let bits = 0n;
+  for (const b of r) bits = (bits << 8n) | BigInt(b);
+  let tail = "";
+  for (let i = 0; i < 16; i += 1, bits >>= 5n) tail = CROCKFORD[Number(bits & 31n)] + tail;
+  return t + tail;
+}
 
 const sameMac = (a, b) => {
   const x = Buffer.from(String(a));
@@ -160,6 +185,8 @@ export function createMailAlarmGate({ describeAlarms, names, ttlMs = 30_000, now
  * - `limiter` is {hit(key, {limit, windowSeconds})} (ratelimit.js). `secrets.turnstile()` and `secrets.pepper()` return the secret strings.
  * - `mailer.send({ template, to, vars })` (mailer.js). `isMember(email)` is the composite allowlist resolver, true for a granted email.
  * - `mailAlarm.isFiring()` (createMailAlarmGate). `fetch` is for Turnstile. `random()` returns a code in [0, 1e6).
+ * - `admins` is optional: { inbox(), emails() } (admin-notify.js and admins.js). `inbox()` writes one inbox item per admin and `emails()`
+ *   returns the admin addresses; without it the submit sends the requester's receipt and nothing else.
  * - `mailConfigured()` is false while the join From address or its SES configuration set is unset: the code route then answers 503
  *   unavailable before it spends anything (mail without the configuration set would send no bounce or complaint feedback, so the alarm
  *   gate would watch nothing; it fails closed).
@@ -171,7 +198,7 @@ export function createMailAlarmGate({ describeAlarms, names, ttlMs = 30_000, now
  * 503 unavailable and log the label "no-client-ip", instead of putting every such caller into one shared ip bucket.
  */
 export function createAccessRequest({
-  flag, siteOrigin, siteHost, turnstileSiteKey = "", ddb, cmds, table, limiter, secrets, mailer, isMember, mailAlarm, mailConfigured = () => true,
+  flag, siteOrigin, siteHost, turnstileSiteKey = "", ddb, cmds, table, limiter, secrets, mailer, isMember, mailAlarm, mailConfigured = () => true, admins,
   fetch: fetchImpl, random = () => randomInt(0, 1_000_000), now = () => Date.now(), log = console,
 }) {
   const origin = String(siteOrigin).replace(/\/+$/, "");
@@ -400,13 +427,142 @@ export function createAccessRequest({
     }
   }
 
+  /**
+   * The submit (surfaces.md 7.2 "Submit step"). In this order, so a junk request spends as little as possible:
+   *   1. the shared gate (kill switch, POST, JSON, x-requested-with, Origin); a filled honeypot gets a fake 201 and nothing else;
+   *   2. the ticket: absent, unknown, expired or already used is 403 (the visitor starts again at step 1; their draft is kept client side);
+   *   3. the form: the shared schema with the R-18 detector on every free-text field, and the email equal to the ticket's (400, no budget
+   *      spent and the ticket kept, so a typo costs nothing);
+   *   4. Turnstile, then the queue cap and the joinsubmit limits (submitAdmission);
+   *   5. already a member / already has an open request (409; safe to say, the ticket proves the mailbox);
+   *   6. ONE TransactWriteItems: delete the ticket (it is good once), put the ACCESSREQEMAIL# guard (only when none is open), put ACCESSREQ#
+   *      and a PII-free AUDIT# item;
+   *   7. after the commit, best effort and in parallel: the requester's receipt, one inbox item per admin and one mail per admin address.
+   *      Any of them failing is logged as a label and an error name and the answer is still 201.
+   */
+  async function submit(event) {
+    const denied = gate(event);
+    if (denied) return denied;
+    const b = bodyOf(event);
+    if (isHoneypotTripped(b) || isHoneypotTripped(b.form)) return json(201, { ok: true, state: "pending" }); // a bot filled the trap: success, and nothing done
+    const badTicket = () => json(403, { detail: "ticket_expired" });
+    const ticket = typeof b.ticket === "string" && /^[A-Za-z0-9_-]{20,128}$/.test(b.ticket) ? b.ticket : "";
+    if (!ticket) return badTicket();
+    const ip = clientIp(event);
+    if (ip === "unknown") return unavailable("no-client-ip", new Error("no client address"));
+
+    let held;
+    try {
+      held = (await ddb.send(new cmds.GetCommand({ TableName: table, Key: ticketKey(ticket), ConsistentRead: true })))?.Item;
+    } catch (e) {
+      return unavailable("ticket", e);
+    }
+    if (!held || !(held.expiresAt > nowSec()) || typeof held.email !== "string" || typeof held.emailHash !== "string") return badTicket();
+
+    const form = b.form && typeof b.form === "object" && !Array.isArray(b.form) ? b.form : {};
+    const checked = validateForm({ ...form, email: form.email ?? held.email }, { now: now(), storeCurrentCity: STORE_CURRENT_CITY });
+    const fields = checked.ok ? [] : [...checked.fields];
+    if (form.email !== undefined && normalizeJoinEmail(form.email) !== held.email && !fields.some((f) => f.field === "email")) fields.push({ field: "email", code: "invalid" });
+    if (fields.length) {
+      const order = new Map(FIELDS.map((f, i) => [f.key, i]));
+      fields.sort((x, y) => (order.get(x.field) ?? 99) - (order.get(y.field) ?? 99));
+      return json(400, { detail: "validation", fields });
+    }
+
+    const bot = await botCheck(b.turnstileToken, ip);
+    if (bot === "unavailable") return json(503, { detail: "unavailable" });
+    if (bot === "failed") return json(403, { detail: "bot_check_failed" });
+    const over = await submitAdmission(event);
+    if (over) return over;
+
+    const email = held.email;
+    const hash = held.emailHash;
+    try {
+      const [member, open] = await Promise.all([isMember(email), hasOpenRequest(hash)]);
+      if (member) return json(409, { detail: "already_member" });
+      if (open) return json(409, { detail: "already_requested" });
+    } catch (e) {
+      return unavailable("lookup", e);
+    }
+
+    const at = nowSec();
+    const iso = new Date(now()).toISOString();
+    const id = ulid(now());
+    const ttl = at + REQUEST_TTL_SECONDS;
+    const { email: _email, ...answers } = checked.value; // the address lives on the request item, never inside the form
+    try {
+      await ddb.send(new cmds.TransactWriteCommand({
+        TransactItems: [
+          { Delete: { TableName: table, Key: ticketKey(ticket), ConditionExpression: "attribute_exists(PK)" } }, // 0: a ticket is good once
+          {
+            Put: {
+              TableName: table, Item: { ...requestEmailKey(hash), entity: "accessreqemail", requestId: id, state: "pending", createdAt: iso, ttl },
+              ConditionExpression: "attribute_not_exists(PK) OR #state IN (:declined, :expired) OR #ttl <= :now", // 1: one open request per address
+              ExpressionAttributeNames: { "#state": "state", "#ttl": "ttl" },
+              ExpressionAttributeValues: { ":declined": "declined", ":expired": "expired", ":now": at },
+            },
+          },
+          {
+            Put: {
+              TableName: table, ConditionExpression: "attribute_not_exists(PK)",
+              Item: {
+                ...requestKey(id), entity: "accessreq", id, state: "pending", version: 1, createdAt: iso, updatedAt: iso, email, emailHash: hash,
+                form: answers, GSI1PK: "ACCESSREQS#pending", GSI1SK: id, ttl,
+              },
+            },
+          },
+          {
+            Put: { // no PII: the id and the state only (surfaces.md 7.9)
+              TableName: table,
+              Item: {
+                PK: `AUDIT#accessreq:${id}`, SK: `${iso}#${ulid(now())}`, GSI1PK: "AUDIT", GSI1SK: `${iso}#${id}`, entity: "audit", op: "accessreq.submit",
+                id, principal: "anonymous", at: iso, before: null, after: { id, state: "pending" },
+              },
+            },
+          },
+        ],
+      }));
+    } catch (e) {
+      if (e?.name === "TransactionCanceledException" || e?.name === "ConditionalCheckFailedException") {
+        const code = (i) => e?.CancellationReasons?.[i]?.Code;
+        if (code(0) === "ConditionalCheckFailed") return badTicket(); // used or expired in between
+        if (code(1) === "ConditionalCheckFailed") return json(409, { detail: "already_requested" }); // a second submit won the guard
+        try { // no reasons reported: the ticket decides (gone means someone else used it)
+          const again = (await ddb.send(new cmds.GetCommand({ TableName: table, Key: ticketKey(ticket), ConsistentRead: true })))?.Item;
+          return again ? json(409, { detail: "already_requested" }) : badTicket();
+        } catch (e2) {
+          return unavailable("commit", e2);
+        }
+      }
+      return unavailable("commit", e);
+    }
+
+    // Committed. Nothing below can change the answer.
+    const best = async (step, fn) => {
+      try {
+        await fn();
+      } catch (e) {
+        log.error?.(JSON.stringify({ msg: "access-request notice failed", step, error: e instanceof Error && e.name ? e.name : "error" }));
+      }
+    };
+    await Promise.all([
+      best("received", () => mailer.send({ template: "received", to: email, vars: {} })),
+      best("admin-inbox", async () => { if (admins?.inbox) await admins.inbox(); }),
+      best("admin-mail", async () => {
+        const to = admins?.emails ? (await admins.emails()).slice(0, MAX_ADMIN_MAILS) : [];
+        await Promise.all(to.map((addr) => best("admin-mail-one", () => mailer.send({ template: "admin_new", to: addr, vars: {} }))));
+      }),
+    ]);
+    return json(201, { ok: true, state: "pending" });
+  }
+
   function config(event) {
     const denied = gate(event, { method: "GET" });
     if (denied) return denied;
     return json(200, { open: true, turnstileSiteKey });
   }
 
-  const ROUTES = { "/access-request/config": config, "/access-request/start": start, "/access-request/verify": verify };
+  const ROUTES = { "/access-request": submit, "/access-request/config": config, "/access-request/start": start, "/access-request/verify": verify };
   return {
     /** The response for an access-request route, or undefined when `rel` (the path below /auth) is not one of this task's routes. */
     async handle(rel, event) {
