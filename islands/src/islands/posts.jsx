@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ArticleView } from "@io-kit/content/react";
 import { mountIsland } from "../lib/mount.jsx";
 import { Banner, CARD_LABELS, COPY, PostList, PostRow, Skeletons, formatTime, friendlyError, source, usePosts, useTimeTitles, withPhotoAlt } from "../lib/posts-ui.jsx";
+import { ContribLine } from "../lib/contrib-line.jsx";
 import { Comments } from "../lib/comments-ui.jsx";
 
 function One({ id }) {
@@ -50,7 +51,7 @@ function List() {
 
 export function Posts() {
   const id = new URLSearchParams(location.search).get("id");
-  return <div className="hfy-posts" data-hfy-posts>{id ? <One id={id} /> : <><h1 className="hfy-h">posts</h1><List /></>}</div>;
+  return <div className="hfy-posts" data-hfy-posts>{id ? <One id={id} /> : <><h1 className="hfy-h">posts</h1><ContribLine /><List /></>}</div>;
 }
 
 const run = () => mountIsland("posts", Posts);

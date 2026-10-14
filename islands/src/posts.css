@@ -144,6 +144,8 @@ h1.hfy-h { font-size: var(--io-typography-size-display-sm); line-height: var(--i
 }
 /* The shell owns the page gutter. */
 html.hfy-shell-v2 .hfy-posts { padding-inline: 0; }
+/* The feed line under the timeline heading and the /posts/ h1 (contribV1): text.dim, body size (16). */
+.hfy-contrib-line { margin: 0 0 var(--io-content-space-4); color: var(--io-content-text-dim); font-family: var(--io-content-font-ui); font-size: var(--io-content-font-size); line-height: var(--io-typography-leading-relaxed); }
 /* Visually hidden, still announced (a page heading the layout does not draw). */
 .hfy-vh {
   position: absolute;
