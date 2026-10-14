@@ -611,6 +611,23 @@ Comments removed with their post are audited too, each in the same transaction a
 | `new_family_post` | Harrison Family | there's a new family post. | {actor} shared a new family post. |
 | `mention` | Harrison Family | you were mentioned. | {actor} mentioned you. |
 
+The registry also holds the PLN-002 types. The field whitelist is `actor`, `subject`, `item`, `count`. `new_family_post` and `chat_message` are push-only (`inbox:false`); every other type is stored in the inbox while `inboxV1` is on. `notifyContract()` in `notify.js` is the one source that `hfy-inbox-ui`'s `CATALOG` and the chat routes compare against, and [`notify-producers.test.js`](../../api/test/notify-producers.test.js) pins it.
+
+| Type | Recipients | Producer | Group key |
+| --- | --- | --- | --- |
+| `comment_on_my_record`, `reply_to_me` | as above | `onComment` | `thread:<t>` |
+| `proposal_submitted` | admins except the proposer | `onProposalSubmitted` | `proposals` |
+| `proposal_accepted`, `proposal_declined`, `proposal_needs_changes`, `proposal_stale` | the proposer | `onProposalDecided` | none |
+| `record_updated_mine` | the record's owner, when a member and not the actor | `onRecordChanged` | `rec:<subject>` |
+| `record_updated_followed` | followers, not the actor | `onRecordChanged` | `rec:<subject>` |
+| `records_updated_followed_digest` | a follower with more than 3 pages in one call | `onRecordChanged` | `recdigest` |
+| `moderation_hidden`, `moderation_request`, `moderation_question`, `moderation_unhidden` | the item's author, not the actor | `onModeration` | none |
+| `moderation_resolved` | the admin who asked | `onModeration` | `mod:<target>` |
+| `photo_graduated` | the photo's author, not the actor | `onGraduated` | none |
+| `chat_message` | the chat service's recipient (push only, no message text) | `notify` | none |
+
+Producers run after a commit and never fail the write. `onRecordChanged` is called only by the render-outbox consumer (`hfy-record-change-fanout`) and takes `silent: true` for imports, seeding and backfills. A producer whose source (`getAdmins`, `listMembers`, `followersOf`) is absent notifies nobody. An admin's note is the inbox `detail` and is never pushed.
+
 The text is `TEMPLATE_REGISTRY` in [`notify.js`](../../api/src/notify.js), written in the design system's family voice: every title is the site name, and the bodies are lowercase and say "page", never "record". The lock-screen preview on `/me/notifications/` (the `CATALOG` in [`islands/src/islands/notifications.jsx`](../../islands/src/islands/notifications.jsx)) repeats the same strings word for word. No code or test ties the two together; they are kept equal by hand. [`api.test.js`](../../api/test/api.test.js) and [`producers.test.js`](../../api/test/producers.test.js) check the API's bodies. Pushes carry the text that the deployed `hfy-api` holds, so a change to it reaches members only after an `hfy-api` redeploy ([Packaging and deploy](#packaging-and-deploy)).
 
 Level 0 carries no content. Level 1 adds the actor's display label, the `author.label` of the comment or post, which is never an email address ([Session verification](#session-verification)). The kit cleans it and cuts it to 80 characters. Each recipient chooses per type in their preferences. A type with no stored preference is enabled at level 0. If a level-1 message cannot be rendered, level 0 is sent.

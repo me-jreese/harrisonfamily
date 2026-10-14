@@ -50,8 +50,10 @@ describe("persist-first without VAPID_SECRET (AC2)", () => {
     await w.subscriptions.put(OWNER, sub);
     await comment(w, `person:${OWNER}`, "one");
     await comment(w, `person:${OWNER}`, "two");
-    expect(w.sent.map((s) => s.payload.notification.app_badge)).toEqual([1, 2]);
-    expect(await inbox.unreadCount(OWNER)).toBe(2);
+    // Comment types group by thread:<t> (HFY-TSK-253): the second comment coalesces into the one unread item, so the badge stays 1.
+    expect(w.sent.map((s) => s.payload.notification.app_badge)).toEqual([1, 1]);
+    expect(await inbox.unreadCount(OWNER)).toBe(1);
+    expect((await inbox.list(OWNER)).items[0]).toMatchObject({ count: 2, group: `thread:person:${OWNER}` });
   });
 
   it("an inbox store failure never fails the comment write, and the push still goes without app_badge", async () => {
@@ -65,7 +67,7 @@ describe("persist-first without VAPID_SECRET (AC2)", () => {
   });
 
   it("new_family_post is push-only (inbox:false), and the registry whitelist is widened", () => {
-    expect([...PUSH_ONLY_TYPES]).toEqual(["new_family_post"]);
+    expect([...PUSH_ONLY_TYPES]).toEqual(["new_family_post", "chat_message"]);
     expect(TEMPLATE_REGISTRY.features.new_family_post.inbox).toBe(false);
     expect(TEMPLATE_REGISTRY.whitelist).toEqual(["actor", "subject", "item", "count"]);
   });
@@ -118,15 +120,15 @@ describe("inbox routes (AC3)", () => {
     await comment(w, `person:${OWNER}`, "b");
     await comment(w, `person:${UAT}`, "c");
 
-    expect((await get(w, "/api/notifications/inbox/unread-count")).body).toEqual({ unread: 2 });
+    expect((await get(w, "/api/notifications/inbox/unread-count")).body).toEqual({ unread: 1 }); // a and b share a thread and coalesce
     const list = await get(w, "/api/notifications/inbox");
     expect(list.status).toBe(200);
-    expect(list.body.items).toHaveLength(2);
-    expect(list.body.items[0]).toMatchObject({ type: "comment_on_my_record", read: false, title: "Harrison Family", body: `${OLIVE} commented on your page.`, navigate: `/person/?id=${OWNER}` });
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0]).toMatchObject({ type: "comment_on_my_record", read: false, title: "Harrison Family", count: 2, body: "2 new comments on your page.", navigate: `/person/?id=${OWNER}` });
 
     const read = await w.call("POST", "/api/notifications/inbox/read", { token: await signToken(OWNER), body: { ids: [list.body.items[0].id] } });
     expect(read.status).toBe(200);
-    expect((await get(w, "/api/notifications/inbox/unread-count")).body).toEqual({ unread: 1 });
+    expect((await get(w, "/api/notifications/inbox/unread-count")).body).toEqual({ unread: 0 });
     expect((await get(w, "/api/notifications/inbox/unread-count", UAT)).body).toEqual({ unread: 1 }); // untouched by the owner's read
 
     const all = await w.call("POST", "/api/notifications/inbox/read", { token: await signToken(OWNER), body: { all: true } });
