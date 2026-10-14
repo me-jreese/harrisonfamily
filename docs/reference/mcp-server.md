@@ -403,3 +403,5 @@ These are differences between the code, its comments and its configuration, as o
 - [Codebase map](codebase-map.md): where each capability lives.
 - [The identity model](../explanation/identity-model.md) and [How member content stays accountable](../explanation/member-content-design.md): the reasoning.
 - [How to deploy the app stack and its CloudFront behaviors](../how-to/deploy-the-app-stack.md), [How to deploy and update the Lambda@Edge functions](../how-to/deploy-the-edge-functions.md), [How to connect an MCP client and run an admin delete](../how-to/connect-an-mcp-client.md), [How to add or remove a family member's access](../how-to/manage-family-access.md), [How to run the test suites](../how-to/run-the-tests.md), [How to diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md).
+
+Comment photo `attachments` (`POST`/`PATCH /api/comments`, behind `commentPhotosV1`) are HTTP-only for now: the MCP comment tools expose no `attachments` field, and `hfy_comments_create` still requires `body` (the HTTP route allows an empty body on a photo-only comment). Add the field when the feature is on.

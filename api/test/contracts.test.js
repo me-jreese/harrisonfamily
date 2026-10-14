@@ -38,7 +38,7 @@ registerCommentContract(
       const now = ticker();
       const ulid = createUlidFactory();
       const audit = [];
-      return { audit, as: (viewer) => createCommentSource({ ddb, cmds, table: TABLE, viewer, now, ulid, uid: () => ulid(now()), maxLength: 1000, audit: (e) => void audit.push(e), photos: contractPhotos }) };
+      return { audit, as: (viewer) => createCommentSource({ ddb, cmds, table: TABLE, viewer, now, ulid, uid: () => ulid(now()), maxLength: 1000, audit: (e) => void audit.push(e), photos: contractPhotos /* test-only policy; the production UPLOAD#/HEAD binding is covered over HTTP in comment-photos.test.js */ }) };
     },
     threadId: "person:I0001",
     author: roles("I0003", "Ann Author"),

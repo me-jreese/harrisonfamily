@@ -6,6 +6,10 @@
 //                               then checkLocation (400 photo_has_location), and returns the transact() updates that attach each
 //                               upload (SET attached, REMOVE ttl) on the same conditions, so a binding that changes after this
 //                               read cancels the whole write (403 upload_not_owned).
+// Known limits: (1) HEAD and checkLocation run before the transaction and the presigned PUT stays valid for UPLOAD_EXPIRES_SECONDS
+// (300 s), so until it expires the uploader could overwrite the object after verification; only their own photo is exposed and
+// the window is accepted. (2) Removing a photo from a comment (or deleting the comment) drops it from the comment only: the
+// UPLOAD# row stays attached and the S3 object is not deleted, so it is not gone from storage and must not be described as such.
 // The server chooses every object name (uploads.js), the client's file name never reaches a key, and the attachment id is the
 // upload's ulid.
 import { CommentError } from "@io-kit/comments";
