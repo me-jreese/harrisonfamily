@@ -16,6 +16,7 @@ import { createSubscriptions } from "./subscriptions.js";
 import { createContribReader } from "./contrib-read.js";
 import { unauthenticated } from "./sync/auth.js";
 import { syncContext } from "./sync/guard.js";
+import { isPersonWithdrawn } from "./sync/store.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -72,6 +73,7 @@ export function createHandler(deps) {
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
       photos: uploadPhotosFor({ ddb, cmds, table, bucket: mediaBucket, base: deps.mediaPublicBase, now, s3: deps.s3 }), // HEAD + checkLocation + UPLOAD# binding for comment photos
       getPost: (id) => content.get(id),
+      isWithdrawn: (grampsId) => isPersonWithdrawn({ ddb, cmds, table }, grampsId), // a withdrawn person's thread is 404 to all but an admin (HFY-TSK-178)
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
         const postAuthorId = c.threadId.startsWith("post:") ? (await content.get(c.threadId.slice(5))).author.id : undefined;
