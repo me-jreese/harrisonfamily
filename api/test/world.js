@@ -44,8 +44,8 @@ export const checkUploadPhoto = async () => ({ contentType: UPLOAD_PHOTO.mime })
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 export const pem = privateKey.export({ type: "pkcs8", format: "pem" });
-export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUDIENCE } = {}) =>
-  new SignJWT({ client_id: aud, token_use: "access", name })
+export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUDIENCE, authTime } = {}) =>
+  new SignJWT({ client_id: aud, token_use: "access", name, ...(authTime !== undefined ? { auth_time: authTime } : {}) })
     .setProtectedHeader({ alg: "RS256", kid: "hfy-session-1" })
     .setSubject(sub).setIssuer(iss).setAudience(aud).setIssuedAt().setExpirationTime(exp)
     .sign(privateKey);

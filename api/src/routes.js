@@ -9,6 +9,7 @@ import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
+import { proposalsDecide } from "./records/proposal-decision.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
@@ -258,6 +259,12 @@ export const ROUTES = defineRoutes([
   {
     name: "proposals.withdraw", method: "POST", path: "/proposals/:id/withdraw", summary: "The proposer withdraws an open suggestion, with If-Match: the etag (no MCP tool)",
     gate: editingGate(), handler: proposalsWithdraw,
+  },
+  // The decision (HFY-TSK-209; editing.md 7.4): an admin approves (rebase and one applyBatch transaction), denies or asks for changes. Behind HFY_EDITING like the
+  // routes above. No `mcp` member: approving is a human action in the site UI (DEC-E5), so there is no decide tool.
+  {
+    name: "proposals.decide", method: "POST", path: "/proposals/:id/decision", summary: "An admin decides a pending or stale suggestion {verdict: approve|deny|needs_changes, reason? (required for deny and needs_changes), amend?: {ops, base_versions}} with If-Match: the etag and an Idempotency-Key: approve rebases onto the page as it is now and commits the records, the proposal, the audit and the proposer's credit in one transaction; 200 {proposal, applied?: {versions}}; 403 not_admin, 401 step_up_required (a destructive approval needs a sign-in within 900 s), 409 rebase_conflict (the suggestion is now stale), 409 invalid_state, 412 precondition_failed (details.proposal is the fresh view), 422 from the privacy guard (no MCP tool)",
+    gate: editingGate(), handler: proposalsDecide,
   },
 ]);
 

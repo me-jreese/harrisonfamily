@@ -6,7 +6,7 @@
 //   POST   /api/proposals/:id/withdraw   If-Match: etag                    the proposer withdraws
 //   createSystem(ctx, input)                                               a system proposal for the access-request flow (not a route)
 //
-// POST /api/proposals/:id/decision is proposal-decision-api's. The document, its items and the etag live in proposals.js; this file reads and
+// POST /api/proposals/:id/decision is proposal-decision-api's (proposal-decision.js). The document, its items and the etag live in proposals.js; this file reads and
 // rewrites them. Every state change here is ONE transaction: META (moved between PROPQ#<state> partitions), IDX#BY, every IDX#REC copy and the
 // AUDIT#proposal item, with META conditioned on the etag that was read (a concurrent change cancels the write: 412 with the fresh view).
 //
@@ -102,21 +102,28 @@ async function staleOf(ctx, p, memo = new Map()) {
   return false;
 }
 
-/** The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13). */
-const viewOf = async (ctx, actor, p, memo) => {
+/**
+ * The view for `actor`. owners[] (other people's ids) and request_id stay with the proposer and the admins (D2-13), and so do the admin's
+ * decision reason and the deciding sign-in time (HFY-TSK-209: a member of the page's circle sees the verdict, never the private note).
+ */
+export const viewOf = async (ctx, actor, p, memo) => {
   const view = proposalView(p, actor, { stale: await staleOf(ctx, p, memo) });
   if (actor.admin === true || p.proposer?.id === actor.id) return view;
   const { owners, request_id: requestId, ...rest } = view; // eslint-disable-line no-unused-vars
+  if (rest.decision) {
+    const { reason, auth_time: authTime, ...decision } = rest.decision; // eslint-disable-line no-unused-vars
+    rest.decision = decision;
+  }
   return rest;
 };
 
 /** If-Match as a bare etag (quotes and a weak prefix stripped), or null when the header is absent. */
-function ifMatchOf(c) {
+export function ifMatchOf(c) {
   const raw = headerOf(c.event?.headers, "if-match");
   if (raw === undefined) return null;
   return raw.trim().replace(/^W\//, "").replace(/^"(.*)"$/, "$1");
 }
-const replyHeaders = (p) => ({ etag: `"${p.etag}"`, "cache-control": "private, no-store", vary: "Cookie" });
+export const replyHeaders = (p) => ({ etag: `"${p.etag}"`, "cache-control": "private, no-store", vary: "Cookie" });
 
 // ---- GET /api/proposals -----------------------------------------------------------------------------------------------------------
 function limitOf(raw) {
@@ -187,7 +194,7 @@ export async function proposalsList(c) {
 }
 
 // ---- GET /api/proposals/:id ---------------------------------------------------------------------------------------------------------
-async function rebaseOf(ctx, actor, p) {
+export async function rebaseOf(ctx, actor, p) {
   if (!OPEN_STATES.includes(p.state)) return { status: "current", conflicts: [] };
   const keys = sortedUnique(arr(p.ops).map(existingKey).filter(Boolean));
   const objects = {};
@@ -235,7 +242,7 @@ async function loadForWrite(c, { verb }) {
   if (given !== p.etag) throw await preconditionFailed(c, p);
   return p;
 }
-async function preconditionFailed(c, p) {
+export async function preconditionFailed(c, p) {
   return new HttpError(412, "precondition_failed", "this suggestion changed since you opened it", { proposal: await viewOf(c.store, c.actor, p) });
 }
 
