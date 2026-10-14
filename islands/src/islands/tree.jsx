@@ -2,12 +2,12 @@
 // This task owns the shell of the page: fetching the gated graph with the session-continuity rules (HFY-R66), the page states, the focus
 // (?focus, else the viewer, else the default person) kept in sync with the history, and a plain focus card with the person's close
 // relatives as re-centring buttons. HFY-TSK-202 (viz-outline-navigator) made that card the FocusNavigator and added the GenerationOutline
-// beside it; both always render, are plain semantic HTML and call the same `onFocus`. The chart (viz-mvp-visual)
-// is a lazy chunk beside them and reads the same graph.
+// beside it; both always render, are plain semantic HTML and call the same `onFocus`. The chart (HFY-TSK-145, viz-mvp-visual: the
+// framework-free <family-navigator> cards view) is a lazy chunk beside them and reads the same graph.
 //
 //   GET /person/graph.json  200 render | 401 (after the refresh retry) sign in, back here | 403/404 "being prepared" | bad body: retry
 import "./tree.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
@@ -21,6 +21,17 @@ export const COPY = {
   offline: "the family tree needs a connection.",
   notFound: "we couldn't find that person, so here is someone to start from."
 };
+
+// The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element, the cards are
+// simply absent: the focus navigator and the outline below it have the same information. (The visible message is viz-mvp-visual-fallback.)
+const ChartView = lazy(() => import("../lib/tree-chart.jsx"));
+
+class ChartBoundary extends Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch() { console.error("HFY tree: CHART_CHUNK_FAILED"); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
 
 /** The graph fetch: the page's session-aware dataFetch when feature-flags.js is there (refresh once on a 401, then sign in with returnTo). */
 const fetcher = (url, init) => (window.HFYFeatureFlags?.dataFetch ? window.HFYFeatureFlags.dataFetch(url, init) : fetch(url, init));
@@ -56,13 +67,15 @@ function Group({ title, people, onFocus, empty = null }) {
 }
 
 /** The focus card and the relatives as re-centring buttons: plain semantic HTML, always rendered (viz.md 12.3). */
-export function FocusNavigator({ graph, focus, viewer, onFocus }) {
+export function FocusNavigator({ graph, focus, viewer, onFocus, via = null }) {
   const p = graph.person(focus);
   const heading = useRef(null);
   const first = useRef(true);
-  // Focus moves to the new card's heading after a re-centre (never on the first paint: that would scroll the page on load).
+  // Focus moves to the new card's heading after a re-centre (never on the first paint: that would scroll the page on load), except when the
+  // cards view asked for it: the element keeps the keyboard on its own new focus card, and this heading is far below it.
   useEffect(() => {
     if (first.current) { first.current = false; return; }
+    if (via?.current === "cards") return;
     heading.current?.focus();
   }, [focus]);
   const rel = viewer ? relationLabel(graph, viewer, focus) : null;
@@ -126,7 +139,7 @@ export function GenerationOutline({ graph, focus, onFocus }) {
     setOpen((prev) => { const n = new Set(prev); n.delete(`+${k}`); n.delete(`-${k}`); n.add(`${on ? "+" : "-"}${k}`); return n; });
   };
   return (
-    <nav className="hfy-tree__outline" aria-label="generations" data-tree-outline>
+    <nav className="hfy-tree__outline" id="hfy-tree-outline" tabIndex={-1} aria-label="generations" data-tree-outline>
       <h2>generations</h2>
       {model.levels.map((l) => (
         <details key={l.index} className="hfy-tree__level" open={isOpen(key(l.index), l.index === focusLevel)} onToggle={toggle(key(l.index), l.index === focusLevel)} data-tree-level={l.index}>
@@ -151,6 +164,8 @@ export function TreeApp() {
   const [attempt, setAttempt] = useState(0);
   const [focus, setFocus] = useState(() => focusParam(location.search));
   const [online, setOnline] = useState(() => navigator.onLine !== false);
+  // Who asked for the re-centre: "cards" (the <family-navigator>, which looks after its own focus) or "list" (the lists, the outline, Back).
+  const via = useRef("list");
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -170,7 +185,7 @@ export function TreeApp() {
 
   // Back and forward restore the previous focus (the page pushes one history entry per re-centre).
   useEffect(() => {
-    const onPop = () => setFocus(focusParam(location.search));
+    const onPop = () => { via.current = "list"; setFocus(focusParam(location.search)); };
     addEventListener("popstate", onPop);
     return () => removeEventListener("popstate", onPop);
   }, []);
@@ -179,7 +194,8 @@ export function TreeApp() {
   // The session probe resolves after the graph on some loads; hold the first paint until it has, so the viewer's own page is not flashed
   // as the default person. (A null session, authV2 off or unreachable, is "settled": undefined is the only pending value.)
   const resolved = useMemo(() => (graph && session !== undefined ? resolveFocus(graph, { focus, sub }) : null), [graph, session, focus, sub]);
-  const onFocus = useCallback((id) => {
+  const onFocus = useCallback((id, from = "list") => {
+    via.current = from;
     history.pushState(null, "", focusUrl(location, id));
     setFocus(id);
   }, []);
@@ -211,7 +227,12 @@ export function TreeApp() {
   return (
     <div className="hfy-tree hfy-tree--ready">
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
-      <FocusNavigator graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} />
+      <ChartBoundary>
+        <Suspense fallback={<div className="hfy-tree__skeleton" aria-hidden="true" data-tree-chart-loading />}>
+          <ChartView graph={graph} focus={resolved.id} onFocus={onFocus} />
+        </Suspense>
+      </ChartBoundary>
+      <FocusNavigator graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} via={via} />
       <GenerationOutline graph={graph} focus={resolved.id} onFocus={onFocus} />
       <p className="hfy-tree__live" aria-live="polite" data-tree-live>{spoken}</p>
     </div>

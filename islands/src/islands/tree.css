@@ -1,5 +1,6 @@
 /* /tree/: the family tree page shell (tree.jsx, HFY-TSK-201). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
    --io-radius-*, --io-typography-* (theme-lint no-literal-token-values). The outline, navigator and chart tasks add their own rules. */
+@import "../lib/family-navigator.css";
 .hfy-tree {
   box-sizing: border-box;
   max-width: calc(10 * var(--io-space-9));
