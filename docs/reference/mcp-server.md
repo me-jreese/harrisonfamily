@@ -150,7 +150,7 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 
 | Tool | Route action | HTTP route | `write` | Annotations | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `hfy_comments_list` | `comments.list` | `GET /api/comments` | false | readOnly, idempotent | Oldest first, with reactions |
+| `hfy_comments_list` | `comments.list` | `GET /api/comments` | false | readOnly, idempotent | Oldest first by default; `order` `desc` for newest first, with reactions |
 | `hfy_comments_create` | `comments.create` | `POST /api/comments` | true | none | A reply when `parentId` is given. Sends notifications. |
 | `hfy_comments_delete` | `comments.delete` | `DELETE /api/comments/:id` | true | destructive, idempotent | Admin with a fresh step-up only |
 | `hfy_posts_list` | `posts.list` | `GET /api/posts` | false | readOnly, idempotent | Newest first |
@@ -166,7 +166,7 @@ Every input schema is an object with `additionalProperties: false`. The `require
 
 | Tool | `required` | Other properties | Passed to the route as |
 | --- | --- | --- | --- |
-| `hfy_comments_list` | `["subject"]` | `cursor`, `limit` (integer, 1 to 100) | query `subject`, `cursor`, `limit` |
+| `hfy_comments_list` | `["subject"]` | `order` (`asc` or `desc`), `cursor`, `limit` (integer, 1 to 100) | query `subject`, `order`, `cursor`, `limit` |
 | `hfy_comments_create` | `["subject", "body"]` | `parentId`; `body` has `maxLength` 1000 | body `subject`, `body`, `parentId` |
 | `hfy_comments_delete` | `["subject", "id"]` | `reason` | param `id`; query `subject`, `reason` |
 | `hfy_posts_list` | `[]` | `subject`, `type` (`post`, `article`, `document`), `author`, `visibility` (`draft`, `published`, `withdrawn`), `cursor`, `limit` (integer, 1 to 100) | query, the same names |

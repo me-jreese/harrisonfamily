@@ -55,7 +55,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | Package | Version (lockfile) | Used for |
 | --- | --- | --- |
 | `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
-| `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
+| `@io-kit/comments` | 0.2.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
@@ -148,9 +148,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | Name | Method | Path | Input | Success | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `me.get` | GET | `/me` | none | `200 {id, label, admin, can: {moderate, graduate, approve}}`, plus `badges: {accessRequests}` for admins only | Not an MCP tool. `admin` is `actor.admin` from `config/admins.json`, and `can.*` is computed on the server; clients never infer admin from `can.delete`. `badges.accessRequests` counts the GSI1 partition `ACCESSREQS#pending` (`0` when empty). If the badge count fails it is logged and `badges` is omitted (id, label, admin and `can.*` still return). Fields are additive only: later tasks add `ownRecord` and `editing`. Exempt from the [feature gate](#feature-gate) (`gateExempt`). `no-store`. |
-| `comments.list` | GET | `/comments` | query `subject` (required), `cursor`, `limit` | `200` thread | Oldest first |
-| `comments.create` | POST | `/comments` | body `subject`, `body`, optional `parentId` | `201` comment | Sends notifications |
-| `comments.update` | PATCH | `/comments/:id` | body `body`; `subject` in the body or the query | `200` comment | Author only |
+| `comments.list` | GET | `/comments` | query `subject` (required), `order` (`asc` default, or `desc` for newest first), `cursor`, `limit` | `200` thread | A cursor works only with the order that issued it: the other order answers `400 cursor_invalid` |
+| `comments.create` | POST | `/comments` | body `subject`, `body`, optional `parentId`, optional `attachments` | `201` comment | Sends notifications. `attachments` (up to 4; an empty `body` is allowed with one) is dark until `commentPhotosV1` is on: see [Comment photos](#comment-photos) |
+| `comments.update` | PATCH | `/comments/:id` | body `body`, optional `attachments`; `subject` in the body or the query | `200` comment | Author only. Photos can be removed or re-described, never added |
 | `comments.delete` | DELETE | `/comments/:id` | query `subject` (required), optional `reason` | `204` | Author or admin. `subject` is read from the query only. |
 | `comments.react` | POST | `/comments/:id/react` | body `emoji`; `subject` in the body or the query | `200` `{removed, reaction?}` | Set or toggle off |
 | `posts.list` | GET | `/posts` | query `cursor`, `limit`, `subject`, `type`, `author`, `visibility` | `200` `{items, cursor}` | Newest first |
@@ -159,7 +159,7 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.update` | PATCH | `/posts/:id` | body, all optional: `title`, `subject`, `body`, `attachments` | `200` post | Author only. `null` clears `title` or `subject`. |
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
-| `uploads.presign` | POST | `/uploads` | body `contentType`, `size` (a `filename` is ignored) | `201` | Presigned S3 PUT under `uploads/posts/` |
+| `uploads.presign` | POST | `/uploads` | body `contentType`, `size`, optional `purpose` (`post` default, or `comment`); a `filename` is ignored | `201` | Presigned S3 PUT under `uploads/posts/`, or `uploads/comments/` for `purpose` `comment` (jpeg, png or webp only; needs `commentPhotosV1`) |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
@@ -368,7 +368,7 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 { "thread": { "id": "<subject>", "topic": "default", "comments": [], "reactions": {}, "cursor": "<next>" }, "cursor": "<next>" }
 ```
 
-- Comments are oldest first, by id. `limit` defaults to 50 and is clamped to 1 through 200. A `limit` that is not a number is not clamped: it becomes `NaN` and is sent as the DynamoDB query's `Limit`. If the query succeeds, `comments` is empty and there is no cursor. If DynamoDB rejects the value, the response is `500 internal`.
+- Comments are oldest first, by id, unless `order=desc` (newest first); a cursor encodes the order that issued it. `limit` defaults to 50 and is clamped to 1 through 200. A `limit` that is not a number is not clamped: it becomes `NaN` and is sent as the DynamoDB query's `Limit`. If the query succeeds, `comments` is empty and there is no cursor. If DynamoDB rejects the value, the response is `500 internal`.
 - `cursor` is the base64url encoding of the last comment id on the page. It appears, both inside `thread` and at the top level, only when more comments remain. A value that does not decode to a ULID is `400 cursor_invalid`.
 - `reactions` maps a target to its reactions, oldest first. Targets are `comment:<id>` for the comments on the page, plus `root`. No route creates `root` reactions. A reaction is `{emoji, by, created_at}`.
 
@@ -644,6 +644,17 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
 - `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
+
+## Comment photos
+
+hfy-comments-photos-desc-api (BRD2 9.2). Behind `commentPhotosV1` (default off; a dark call is `404 not_found`).
+
+1. `POST /uploads` with `purpose: "comment"` writes `UPLOAD#<ulid>` `{owner, purpose: "comment", key, contentType, ttl 24 h}` and returns `uploads/comments/<ulid>/photo.<ext>`. The name is the server's; a client file name is ignored. HEIC is refused (`400 validation`).
+2. `comments.create` takes `attachments`: at most 4 of `{url, mime, width?, height?, alt?}`. `url` is `<MEDIA_PUBLIC_BASE>/uploads/comments/<ulid>/<name>` or the same path relative; `mime` is jpeg, png or webp; `alt` is 500 characters or fewer; `width` and `height` are integers from 1 to 100000. The stored attachment is `{id: <upload ulid>, kind: "image", url: /uploads/comments/<ulid>/<name>, mime, width?, height?, alt?}`.
+3. Each photo must be the actor's own upload with purpose `comment`, unexpired and not yet attached, or the write is `403 upload_not_owned`. The API then HEADs the object (it exists, its `ContentType` equals the declared `mime` and the type presigned, and it is at most 10 MB; 2 s timeout, in parallel) and reads the first 256 KiB with `checkLocation`: `400 upload_missing` when HEAD answers 404 or the type differs, `400 photo_has_location` when the bytes carry a position or place.
+4. The comment write attaches each upload in the same transaction (`SET attached = <comment id> REMOVE ttl`, conditional on owner, purpose and not attached), so a binding that changes after the read cancels the write (`403 upload_not_owned`, nothing stored).
+5. `body` may be empty while the comment holds a photo. `body` and every `alt` run the contact-information guard (`422 contact_info`, pointer `/attachments/<n>/alt`).
+6. `comments.update` can remove attachments or change an `alt` (matched by `url`, ids kept); an unchanged body and photo list is a no-op with no audit entry. It cannot add a photo: another member's key is `403 upload_not_owned`, anything else `422 validation` on `attachments`. Deleting a comment keeps its objects.
 
 ## Uploads
 

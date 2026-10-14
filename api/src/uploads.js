@@ -18,6 +18,10 @@ export const UPLOAD_PREFIX = "uploads/posts";
 /** How long an upload stays attachable (UPLOAD# ttl, BRD2 table layout: +24 h until attached). */
 export const UPLOAD_BINDING_SECONDS = 24 * 60 * 60;
 export const UPLOAD_PURPOSE_POST = "post";
+export const UPLOAD_PURPOSE_COMMENT = "comment";
+export const COMMENT_UPLOAD_PREFIX = "uploads/comments";
+/** Comment photos take only what the browser's re-encode sends (hfy-comment-photos-ui): never HEIC. */
+export const COMMENT_IMAGE_TYPES = Object.freeze(["image/jpeg", "image/png", "image/webp"]);
 
 export const uploadKeys = (id) => ({ PK: `UPLOAD#${id}`, SK: "META" });
 /** The one object name the server gives a post photo: photo.<ext>, the extension set by the declared type. */
@@ -32,17 +36,20 @@ export function createUploads({ presignPut, uid, ddb, cmds, table, now = () => D
     async presign(actor, input) {
       if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
       const { contentType, size } = input ?? {};
+      const purpose = input?.purpose ?? UPLOAD_PURPOSE_POST;
+      if (purpose !== UPLOAD_PURPOSE_POST && purpose !== UPLOAD_PURPOSE_COMMENT) throw new HttpError(400, "validation", "purpose must be post or comment");
       if (typeof contentType !== "string" || !Object.hasOwn(IMAGE_TYPES, contentType)) throw new HttpError(400, "validation", "only jpeg, png, webp and heic images are accepted");
+      if (purpose === UPLOAD_PURPOSE_COMMENT && !COMMENT_IMAGE_TYPES.includes(contentType)) throw new HttpError(400, "validation", "comment photos are jpeg, png or webp");
       if (!Number.isInteger(size) || size <= 0) throw new HttpError(400, "validation", "size must be a positive integer");
       if (size > MAX_UPLOAD_BYTES) throw new HttpError(400, "validation", "image exceeds 10 MB");
       const id = uid();
-      const key = `${UPLOAD_PREFIX}/${id}/${photoName(contentType)}`;
+      const key = `${purpose === UPLOAD_PURPOSE_COMMENT ? COMMENT_UPLOAD_PREFIX : UPLOAD_PREFIX}/${id}/${photoName(contentType)}`; // server-chosen name: input.filename is never read
       const at = now();
       try {
         await ddb.send(new cmds.PutCommand({
           TableName: table,
           Item: {
-            ...uploadKeys(id), entity: "upload", owner: actor.id, purpose: UPLOAD_PURPOSE_POST, key, contentType, size,
+            ...uploadKeys(id), entity: "upload", owner: actor.id, purpose, key, contentType, size,
             created_at: new Date(at).toISOString(), ttl: Math.floor(at / 1000) + UPLOAD_BINDING_SECONDS,
           },
           ConditionExpression: "attribute_not_exists(PK)",
