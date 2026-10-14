@@ -14,7 +14,7 @@ All values on this page come from the code in this repository and from the `@io-
 | MCP authorization server | [`auth/src/oauth.js`](../../auth/src/oauth.js), inside `hfy-auth-edge` | Same Lambda | `/auth/authorize`, `/auth/token`, `/auth/register`, `/auth/revoke`, `/auth/userinfo` and the discovery documents | On in the stack, which sets `MCP_REDIRECT_URIS` from `McpRedirectUris`, whose default is non-empty. An empty value turns it off (see [MCP authorization server](#mcp-authorization-server)). |
 | Private data gate (`hfy-edge-gate`) | [`edge-gate/`](../../edge-gate/) | Lambda@Edge, viewer-request, `nodejs22.x`, x86_64. Stack `hfy-edge-gate` in us-east-1. | The CloudFront behaviors that [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh) attaches it to: `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` and `/uploads/*` | Attached to the six data behaviors on 2026-10-12 at 12:40Z (HFY-R67). For `/uploads/*`, see [Where the gate is attached](#where-the-gate-is-attached). A second verifier of `io_id`, alongside the API and `/auth/session`. It protects only the behaviors that carry its association; a variant spelling that misses them gets a `404` from `HFYAppendIndex` instead (see [Gated behaviors](#gated-behaviors)). See [Private data gate: hfy-edge-gate](#private-data-gate-hfy-edge-gate). |
 | `hfy-check-allowed` | [`lambda/hfy-check-allowed/`](../../lambda/hfy-check-allowed/) | AWS Lambda, defined outside this repository | `/api/check-allowed`, through the `/api/check-allowed*` CloudFront pin | Retired from the code and the pipeline (HFY-TSK-317): no page calls it and no workflow deploys it. The function, its API Gateway origin and the pin are still in AWS until io retires them. See [Retired legacy sign-in](#retired-legacy-sign-in). |
-| `getAllowlist` | [`functions/get-allowlist/`](../../functions/get-allowlist/) | Google Cloud Function (2nd gen), Python 3.11 | IAM-authenticated HTTP trigger | Retired from the pipeline: [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) runs only when started by hand. Not used in any sign-in path. The function is not deleted. |
+| `getAllowlist` | None: deleted (HFY-TSK-325) | Was a Google Cloud Function (2nd gen), Python 3.11 | Nothing: deleted | Deleted on 2026-10-14 with io's approval, with its Secret Manager secret. It was never used in any sign-in path. See [getAllowlist (deleted)](#getallowlist-deleted). |
 
 ## Auth edge
 
@@ -852,7 +852,7 @@ The `loadIsland` calls in [`11ty/js/feature-flags.js`](../../11ty/js/feature-fla
 
 ## Retired legacy sign-in
 
-HFY-TSK-317 retired the legacy Google sign-in from the code and the pipeline. It deleted nothing in AWS or Google Cloud (ruling P2-R42). What is gone, and what remains:
+HFY-TSK-317 retired the legacy Google sign-in from the code and the pipeline. It deleted nothing in AWS or Google Cloud (ruling P2-R42). The Google Cloud pieces were deleted later, on 2026-10-14, with io's approval (HFY-TSK-325); the AWS pieces remain. What is gone, and what remains:
 
 | Piece | State |
 | --- | --- |
@@ -863,7 +863,7 @@ HFY-TSK-317 retired the legacy Google sign-in from the code and the pipeline. It
 | Lunr search | Gone. `js/search-navbar.js` and `js/search-results.js` are deleted, the navbar search markup is out of the pages, and `/search/` has only the Search 1.0 island. |
 | `/family-login/` | A static redirect page to `/auth/login` (see [Client consumers](#client-consumers)). |
 | `hfy-check-allowed` | The kit manifest has no `lambda` target, so no push deploys it, and a rollback no longer touches it. The function and the `/api/check-allowed*` pin that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps stay in AWS, with the deploy role's grant on the function, until io retires them through an app-stack change set. Its source stays in [`lambda/hfy-check-allowed/`](../../lambda/hfy-check-allowed/) as the record of what is deployed. |
-| `getAllowlist` | [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) has only a `workflow_dispatch` trigger. |
+| `getAllowlist` | Deleted on 2026-10-14 with io's approval: the function with its Cloud Run service, the `harrisonfamily-allowlist` secret it read, and the only user-managed key of the service account that deployed it. HFY-TSK-325 removed `deploy-gcf-legacy.yml`, the source in `functions/get-allowlist/` and `gcloud/allowlist-fn/`, and the pre-commit sync check's comparison of them. |
 
 The pin still routes a request to `/api/check-allowed` to the function (see [Repository operations](repository-operations.md#the-legacy-apicheck-allowed-pin)). What the deployed function does, for whoever still calls it by hand:
 
@@ -928,16 +928,11 @@ Responses also send `Access-Control-Allow-Methods: POST,OPTIONS`, `Access-Contro
 - The legacy Lambda treats each mapping value as opaque, so an object-form entry written for the edge is returned to legacy clients as an object in `grampsId`.
 - Both services deny an email whose Gramps ID is empty.
 
-### getAllowlist
+### getAllowlist (deleted)
 
-[`functions/get-allowlist/main.py`](../../functions/get-allowlist/main.py) is a Google Cloud Function with the entry point `get_allowlist`.
+`getAllowlist` was a Google Cloud Function (2nd gen, `python311`, `us-west2`, entry point `get_allowlist`) behind an IAM-authenticated HTTP trigger. It returned `200 {"allowlist": <secret value>}` from the latest version of the Secret Manager secret `harrisonfamily-allowlist`. Nothing in any sign-in path used it: it served only as a manual check that an allowlist update had reached Secret Manager.
 
-| Item | Value |
-| --- | --- |
-| Deployment | By hand only: start [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) from the Actions tab. It runs `--gen2`, `--runtime=python311`, `--region=us-west2`, `--trigger-http`, `--no-allow-unauthenticated` (only IAM-authenticated callers can invoke it). A deploy with `--allow-unauthenticated` would make the stored email list public. Nothing rolls this deploy back. |
-| Reads | Secret Manager secret `HFY_ALLOWLIST_SECRET` (default `harrisonfamily-allowlist`), latest version. The value may be a full `projects/...` resource path, or a secret name that is combined with `GCP_PROJECT`. |
-| Returns | `200 {"allowlist": <secret value>}`, parsed as JSON when possible and otherwise the raw string. A failure returns `500 {"error":"allowlist_unavailable"}`. The function does not check the HTTP method. |
-| Used by | Nothing in any sign-in path. It was used only as a manual check that an allowlist update had reached Secret Manager. |
+With io's approval, the function, its Cloud Run service, the secret and the deploy service account's only user-managed key were deleted on 2026-10-14. HFY-TSK-325 removed its deploy workflow and source from the repository, so nothing can redeploy it. The last source is in the Git history: `git log --diff-filter=D --oneline -- functions/get-allowlist` names the commit that removed it.
 
 ## Related pages
 

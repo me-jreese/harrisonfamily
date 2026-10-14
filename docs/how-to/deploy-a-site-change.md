@@ -1,6 +1,6 @@
 # How to deploy a change to the static site
 
-Use this page to ship a change to `11ty/` (the pages, the committed output of the islands build and [`flags.json`](../../11ty/_data/flags.json)), and to confirm that it is live. The pipeline deploys the static site only: no Lambda, and the legacy `getAllowlist` Cloud Function ships only when started by hand (HFY-TSK-317).
+Use this page to ship a change to `11ty/` (the pages, the committed output of the islands build and [`flags.json`](../../11ty/_data/flags.json)), and to confirm that it is live. The pipeline deploys the static site only: no Lambda (HFY-TSK-317). The legacy `getAllowlist` Cloud Function and its workflow are gone (deleted on 2026-10-14, HFY-TSK-325).
 
 Some changes do not ship this way:
 
@@ -16,7 +16,7 @@ Values in angle brackets, such as `<site>`, `<repo>`, `<app-stack>`, `<distribut
 
 ## What ships
 
-A push to `main` starts one workflow run, whatever the change touched: **[`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml)**, the kit pipeline. It builds a release from the commit (the build command only echoes: `11ty/` is committed output), syncs `11ty/` to `<site-bucket>` with `--delete`, invalidates `/*` on CloudFront and waits for the invalidation, then requests `https://<site>/` and `https://<site>/family-login/`. If either smoke request fails, it redeploys the release of the previous successful run. [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml), which deploys `getAllowlist`, no longer runs on a push; it starts only from the Actions tab.
+A push to `main` starts one workflow run, whatever the change touched: **[`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml)**, the kit pipeline. It builds a release from the commit (the build command only echoes: `11ty/` is committed output), syncs `11ty/` to `<site-bucket>` with `--delete`, invalidates `/*` on CloudFront and waits for the invalidation, then requests `https://<site>/` and `https://<site>/family-login/`. If either smoke request fails, it redeploys the release of the previous successful run.
 
 The sync never writes or deletes the family data prefixes or member uploads: it excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`.
 

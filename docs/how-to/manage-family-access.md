@@ -25,13 +25,7 @@ The retired legacy Lambda admits an email only when its digest is listed **and**
 - **The private source files.** `userGrampsID.json` and `harrisonfamily-allowlist.json` are in `<project>/docs/dev`. `<project>` is the directory that contains the repository checkout, as defined in [Placeholders](../reference/private-data-and-secrets.md#placeholders). The repo's [`allowlist/`](../../allowlist/) holds sanitized samples of the email array and of the digest list (see [`allowlist/README.md`](../../allowlist/README.md)). There is no sample of `userGrampsID.json`. Do not edit the samples, and do not copy the real files into the repo. Edit only the copies in `<project>/docs/dev`. A copy kept only in `workspace-local/` is never published.
 - **The publisher.** The script is `<project>/scripts/infra/publish_allowlists.sh`. It is not in this repository. It reads its source files from `docs/dev` two levels above its own location, so run the copy in `<project>`.
 - **AWS credentials** with `s3:GetObject`, `s3:PutObject` and `s3:PutObjectAcl` on `<config-bucket>/config/*`, and `secretsmanager:GetSecretValue` on `HFY_ALLOWLIST_HMAC_SECRET`. The script uploads with `--acl private`, which needs `s3:PutObjectAcl`. It uses `AWS_PROFILE` (default `default`) and `AWS_REGION` (default `us-west-2`). The same S3 permissions cover `admins.json` and `groups.json`.
-- **gcloud authenticated, in the legacy project.** The script's last step still adds a version to the legacy Google secret in the active gcloud project, and it fails without gcloud. `<gcp-project>` is the `GCP_PROJECT_ID` value in [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) (see [Repository operations: Placeholders](../reference/repository-operations.md#placeholders)).
-
-  ```sh
-  gcloud auth login
-  gcloud config set project <gcp-project>
-  ```
-
+- **No gcloud login.** The script's last step still adds a version to the legacy Google secret `harrisonfamily-allowlist`, but that secret was deleted on 2026-10-14 with io's approval (HFY-TSK-325). The step now fails in any gcloud project, after both S3 uploads have succeeded (see [2. Publish](#2-publish)), so you do not log in to gcloud or pick a project for it.
 - **Optional, for the Cognito step:** `cloudformation:DescribeStacks` on `<app-stack>`, and `cognito-idp:AdminGetUser` and `cognito-idp:AdminDisableUser` on its user pool.
 - **For a change of Gramps ID or email, or an operator's passkey removal:** `cloudformation:DescribeStacks` on `<app-stack>`, `dynamodb:GetItem` and `dynamodb:DeleteItem` on its table, and `dynamodb:Query` on the table's `GSI1` index.
 - **For signing a member out on every device:** `cloudformation:DescribeStacks` on `<app-stack>`, and `dynamodb:Scan`, `dynamodb:GetItem` and `dynamodb:PutItem` on its table.
@@ -76,11 +70,11 @@ The script runs these steps in order and stops at the first failure:
 
 1. Uploads `userGrampsID.json` to `s3://<config-bucket>/config/userGrampsID.json`, replacing the object.
 2. Reads the HMAC key from Secrets Manager, computes the digest of each email in `harrisonfamily-allowlist.json` (trimmed and lower-cased, blanks skipped), and uploads the digests to `config/allowed_hashes.json`, replacing the object. It fails if the file is not a JSON array.
-3. Runs `gcloud secrets versions add harrisonfamily-allowlist` with the email array, in the active gcloud project.
+3. Runs `gcloud secrets versions add harrisonfamily-allowlist` with the email array, in the active gcloud project. That secret was deleted on 2026-10-14 (HFY-TSK-325), so this step fails on every run.
 
-It prints `[DONE] Allowlist artifacts published.` when all three succeed. The local files are the source of truth: each run overwrites the S3 objects with them.
+It would print `[DONE] Allowlist artifacts published.` only when all three succeed, so until step 3 is removed from the script (outside this repository), a run ends with the step 3 error instead. The local files are the source of truth: each run overwrites the S3 objects with them.
 
-If step 2 fails, the edge already has the new mapping, but the retired legacy Lambda still denies the new member. If step 3 fails, both S3 objects are current and only the unused Google copy is stale. In either case, fix the cause and run the script again. A re-run is safe.
+If step 2 fails, the edge already has the new mapping, but the retired legacy Lambda still denies the new member: fix the cause and run the script again. A re-run is safe. A failure at step 3 is expected and needs no re-run: both S3 objects are already current, and the Google copy no longer exists.
 
 The script also reads environment overrides for the bucket, the object keys and the secret names. They are listed under [`publish_allowlists.sh`](../reference/private-data-and-secrets.md#publish_allowlistssh). Set one only if the matching reader was configured differently: the resolver in [`auth/edge.manifest.json`](../../auth/edge.manifest.json), or the retired legacy Lambda's environment.
 
@@ -214,7 +208,7 @@ The `uat` group of `config/groups.json` names the members who test new features 
 
 Since HFY-TSK-134, the auth edge reads approved access from two places: io's S3 file, `userGrampsID.json`, and `ALLOW#<email>` items in the app stack's table. The items are written only by `hfy-api`, through the audited grant and revoke transactions in [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), which the access-request admin routes use. Nothing in this repository writes one yet, so a table with no `ALLOW#` item behaves exactly like the file alone.
 
-**The file publisher never touches them.** `publish_allowlists.sh` overwrites the S3 objects and the legacy secret and nothing else. Republishing the file therefore cannot create, change or delete a grant, and a grant survives every republish. The reverse also holds: editing the file does not change an email that has an `ALLOW#` item.
+**The file publisher never touches them.** `publish_allowlists.sh` overwrites the two S3 objects and nothing else (its write to the legacy Google secret fails, because the secret was deleted). Republishing the file therefore cannot create, change or delete a grant, and a grant survives every republish. The reverse also holds: editing the file does not change an email that has an `ALLOW#` item.
 
 **Precedence: the DynamoDB item wins, active or revoked.**
 
