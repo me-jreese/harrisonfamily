@@ -191,15 +191,16 @@ Paths:
   - `origin.js`: the `X-Origin-Verify` check.
   - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `comment-photos.js`: comment photo attachments behind `commentPhotosV1`: the shape check, the `UPLOAD#` binding of `purpose` `comment` uploads, and the `HeadObject` and location checks before the write ([API: Comment photos](api.md#comment-photos)).
   - `contrib.js`: the contributions ledger (HFY-TSK-255): builders for the `CONTRIB#` event and its five `CSTAT#` counter updates (`contribOps`, `revokeOps`, `hideOps`, `mergeOps`), which `content.js` and `comments.js` commit in the same transaction as the write that earned or lost the credit, and the event read `getEvent` ([API: Contributions ledger](api.md#contributions-ledger)).
   - `links.js`: profile links (HFY-TSK-193), the store behind `GET` and `PUT /api/people/:id/links`: one `PLINKS#<gramps-id>` item per person, written with an `AUDIT#plinks:<gramps-id>` item and a version check. The owner sets or clears, an admin only clears, and both routes are behind `profileLinks`. It validates with `shared/profile-links.mjs` ([API: Profile links](api.md#profile-links)).
   - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
-  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
+  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos, and `headUpload`, the `HeadObject` of a comment photo with a 2 s timeout.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `allowlist-store.js`: the `ALLOW#` grant and revoke transaction items (conditional, audited) and the composite member reader that the auth edge and any later allowlist consumer, such as the chat directory route, share (HFY-TSK-134).
   - `notify.js`: push notifications and their templates.
-  - `uploads.js`: the upload route and the `UPLOAD#` binding.
+  - `uploads.js`: the upload route (`purpose` `post` or `comment`) and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
   - `sync/store.js`, `sync/apply.js`, `sync/hooks.js`: the cloud record store: key and item builders, `applyBatch()` (one `TransactWriteItems` per batch with the dense seq, receipt, GID guard and audit), and the commit-hook registry. No route reaches them yet ([API: The cloud record store](api.md#the-cloud-record-store)).
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
@@ -223,7 +224,7 @@ Facts:
 - Every `/api` route needs the auth-edge session cookie (`io_id`), which the API verifies against the edge's public JWKS. The MCP paths never read that cookie: they are bearer-gated. See [MCP server](#mcp-server).
 - Admins are the gramps IDs listed in `config/admins.json` in `<config-bucket>`. The list fails closed: when the file is absent or unreadable, nobody is an admin, so posts and comments have no moderators.
 - An author label is never an email address. It is the session's `name` when that is a usable label without `@`, else the person's `displayName` from `person/<gramps-id>.json` in `<site-bucket>`, else the gramps ID. The role may read `person/*` in that bucket for this lookup only. Labels are cached per container.
-- `POST /api/uploads` returns a presigned S3 PUT for a key under `uploads/posts/<ulid>/` in the site bucket. The content type is signed, so S3 rejects a PUT with a different `Content-Type`.
+- `POST /api/uploads` returns a presigned S3 PUT for a key under `uploads/posts/<ulid>/` in the site bucket, or under `uploads/comments/<ulid>/` for `purpose` `comment`, which needs `commentPhotosV1`. The content type is signed, so S3 rejects a PUT with a different `Content-Type`.
 - The browser PUTs to the bucket's S3 endpoint, not through CloudFront, so a members-only `/uploads/*` never sees an upload (`api/test/presign.test.js`). Reading a photo back goes through CloudFront's `/uploads/*` behavior: see [Infrastructure](#infrastructure).
 - Push notifications are sent only when the stack parameter `VapidSecretName` names a VAPID secret. The live secret is `harrisonfamily/api/vapid`, a JSON `{subject, publicKey, privateKey}` whose `subject` is an `https://` URL, so no email address goes to the push services. Without the secret, subscriptions and preferences are stored but nothing is sent. See [How to turn on push notifications](../how-to/turn-on-push-notifications.md).
 - The push templates in `notify.js` (`TEMPLATE_REGISTRY`) and the lock-screen preview on `/me/notifications/` (`CATALOG` in `islands/src/islands/notifications.jsx`) carry the same text. They are kept in step by hand; no test compares them.
