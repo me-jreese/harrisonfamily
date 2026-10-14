@@ -33,6 +33,7 @@ Neutral descriptions of the machinery. Consult these; you don't read them front 
 - [Front end](reference/front-end.md) — what `11ty/` contains: the feature flags and preview override, the `authV2` data path, the island loader and islands, and the PWA shell.
 - [Theme and asset build](reference/theme-and-asset-build.md) — everything the islands build writes besides the bundles, from the theme layer and fonts to the `?v=<sha8>` asset versions, and the checks that hold them.
 - [Repository operations](reference/repository-operations.md) — the CI workflows, deploy role, scripts, hooks and test suites that build, check and ship the repo.
+- [Redaction policy v1](reference/redaction-policy.md) — what never goes to the cloud as a declarative rule file: the one birth-like list, the rules by class, the tables they read and the golden vectors. Generated from `gramps/redaction/redaction-v1.json`.
 - [Private data and secrets inventory](reference/private-data-and-secrets.md) — every private asset and secret by name and location, the family-data contract and the placeholder vocabulary.
 - [App backend cost estimate](reference/cost-estimate.md) — the estimated monthly AWS cost of the app backend line by line, and the static-site baseline.
 

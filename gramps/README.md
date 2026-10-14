@@ -55,3 +55,13 @@ gramps/tests/gramps/run.sh test_template_tree.py
 `run.sh` makes a temporary `GRAMPSHOME` and `HOME`, imports the fixture once into a template tree with the Gramps CLI, finishes the template with `prepare_template.py`, copies that tree for each test file, and runs the test against its own copy (`HFY_TREE_NAME`). It then checks that the template did not change. `prepare_template.py` sets the template's media path to `gramps/tests/fixtures/`, so every Media path (`media/...`) resolves to its committed file; without it Gramps resolves relative media paths against GLib's Pictures folder, which on macOS is the account's real `~/Pictures` whatever `HOME` says. It also restores the two rects the XML format drops, from the JSONL, so the template equals `synthetic-tree.jsonl` object for object. It never reads `~/Library/Application Support/gramps/grampsdb`: every step, the stdlib helpers included, runs in the bundled Python under the audit hook with the real Gramps folders and the real `~/Pictures` forbidden, and the script fails if a violation is logged or the hook saw no file access at all. Negative controls prove the hook refuses the real `grampsdb` and `~/Pictures` paths (by the audit event alone, so nothing there is opened even if the hook were broken) and blocks a real `open()` and a sqlite connect of a file in a throwaway forbidden directory. `fixture_trees.py` is the stdlib helper tests use to find and copy trees; `fresh_copy(self, GRAMPSHOME)` gives one test method its own copy, removed when the test ends.
 
 The lane needs a Mac with Gramps 6.0.6 (the `io-mac-gramps` runner). CI does not run it.
+
+## The redaction policy
+
+`gramps/redaction/redaction-v1.json` is the one declarative source of what never goes to the cloud (HFY-TSK-230): every rule with an id, class, path pattern and action, the single `isBirthLike` list, and the tables the rules read. `redaction-v1.schema.json` is its JSON Schema, `vectors/*.json` are the golden vectors that the projection, the server validator, the edit guard and the renderer must pass, and `make_vectors.py` and `render_reference.py` write the vectors and [`docs/reference/redaction-policy.md`](../docs/reference/redaction-policy.md). `hfygramps/rules.py` loads the policy and holds the pure predicates; `shared/redaction-rules.mjs` is the JavaScript port. Change a rule in the JSON, regenerate both, and commit them together; the unit tests fail when anything drifts.
+
+```bash
+python3 gramps/redaction/make_vectors.py            # rewrite the vectors (--check compares bytes)
+python3 gramps/redaction/render_reference.py        # rewrite the reference page (--check compares bytes)
+python3 -m unittest discover gramps/tests/unit      # schema, rules, vectors, oracle, fixture tree, drift
+```
