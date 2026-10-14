@@ -155,10 +155,14 @@ export const FIELD_POLICY_ROWS = Object.freeze([
 ]);
 
 /** Why a Person Url op is refused on the web, as the structured reason in `kinds` (editing.md 13): `url_email` (R-18, never) or
- *  `url_not_link` (desktop-only). Null when the op is not about a withheld Url. Takes the same ctx as the WHEN predicates. */
+ *  `url_not_link` (desktop-only). Null when the op is not about a withheld Url. Takes the same ctx as the WHEN predicates.
+ *  A key that matches no stored Url (`unresolved`: the Url changed since the page loaded, as `@k=` hashes its content) still
+ *  fails closed in the table, but says nothing about a Url type: the reason is judged on what the op itself carries, so a stale
+ *  key alone gives none. */
 export function urlReason(ctx) {
-  if (WHEN.emailUrl(ctx)) return "url_email";
-  return WHEN.nonLinkUrl(ctx) ? "url_not_link" : null;
+  const c = ctx.unresolved ? { ...ctx, unresolved: false } : ctx;
+  if (WHEN.emailUrl(c)) return "url_email";
+  return WHEN.nonLinkUrl(c) ? "url_not_link" : null;
 }
 
 /** The Birth and Death structure rules (IF-02), evaluated on the ops of a submission, not on a pointer. */
@@ -266,10 +270,11 @@ const anyTyped = (value, test) => {
   if (isTyped(value) && test(value)) return true;
   return Object.values(value).some((x) => anyTyped(x, test));
 };
-// The values a never-type predicate judges: the new value, the old value and the stored element the op addresses (all three, so a
-// retype away from a withheld type and an edit of a withheld element are caught, not only the creation of one). `unresolved`: the
-// op's key matched no stored element, so nothing can be judged and the stricter row applies.
-const seen = (c) => [c.value, c.old, c.element];
+// The values a never-type predicate judges: the new value, the old value, the stored element the op addresses, and the attribute or
+// URL elements the op writes, as they stand after it (`written`, see classifyOps). All four, so a retype away from a withheld type,
+// an edit of a withheld element and a retype through one field of the type (`/type/value`, `/type/string`) are caught, not only the
+// creation of one. `unresolved`: the op's key matched no stored element, so nothing can be judged and the stricter row applies.
+const seen = (c) => [c.value, c.old, c.element, c.written];
 // The Url types the web may write on a Person: Web Home (the website link) and a Custom type named for one of the seven link kinds
 // (surfaces.md 6.1). Unknown, Web Search, FTP, E-mail and any other custom string are not link kinds.
 const WEB_HOME = 2;
@@ -291,8 +296,8 @@ const hasNonLinkUrl = (c) => !!c.unresolved || seen(c).some((v) => urlTypes(v).s
 const MERGED_GID = /^\s*merged gramps ids?\s*$/i;
 
 /** Predicates. ctx: { checks: [{obj, tree}] (the target object before and after the ops), value (the new value at this pointer),
- *  old (the stored value there), element (the stored list element the op addresses), unresolved, policy (redaction-v1) }. A predicate
- *  that cannot tell answers for the stricter row. */
+ *  old (the stored value there), element (the stored list element the op addresses), written (the attribute or URL elements the op
+ *  writes, as they stand after it), unresolved, policy (redaction-v1) }. A predicate that cannot tell answers for the stricter row. */
 const WHEN = {
   birthLike: (c) => c.checks.length === 0 || c.checks.some(({ obj, tree }) => obj && isBirthLike(obj, tree, c.policy)),
   dayMonthInValue: (c) => {
@@ -532,6 +537,37 @@ function storedElement(root, segs) {
   const upTo = segs[j + 1] && segs[j + 1].t !== "prop" && segs[j + 1].t !== "index" ? segs.slice(0, j + 2) : segs.slice(0, j + 1);
   return locate(root, upTo).value;
 }
+// The path of the attribute or URL list an op path writes into (the last such list on it), or null.
+function concernListPath(segs) {
+  let j = -1;
+  segs.forEach((s, i) => { if (s.t === "prop" && LISTS_OF_CONCERN.has(s.name)) j = i; });
+  return j < 0 ? null : segs.slice(0, j + 1);
+}
+const listAt = (root, segs) => {
+  const v = root === undefined || root === null ? undefined : locate(root, segs).value;
+  return Array.isArray(v) ? v : [];
+};
+// The elements of `after` that `before` does not hold, by content (a multiset difference): what an op wrote into a list.
+function addedElements(after, before) {
+  const left = new Map();
+  for (const el of before) {
+    const c = canonicalJson(el);
+    left.set(c, (left.get(c) ?? 0) + 1);
+  }
+  const out = [];
+  for (const el of after) {
+    const c = canonicalJson(el);
+    const n = left.get(c) ?? 0;
+    if (n > 0) left.set(c, n - 1);
+    else out.push(el);
+  }
+  return out;
+}
+// The op with its base replaced by the stored value, so it shows what it would write even when its own base is stale or forged.
+function withStoredBase(op, stored) {
+  const { base_hash: _hash, base_version: _version, ...rest } = op;
+  return { ...rest, base: stored === undefined ? null : stored };
+}
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const clsOf = (op) => (/^new:\d+$/.test(op.obj) ? op.cls : op.obj.slice(0, op.obj.indexOf(":")));
@@ -610,6 +646,41 @@ export async function classifyOps(ops, ctx = {}) {
     return "own";
   };
 
+  // The attribute and URL elements an op writes, as they stand after it, for the never, desk and link-kind predicates (`written` in
+  // their ctx). A leaf op such as /urls/@k=<h>/type/value names no Url in its value, so the element it produces is judged instead.
+  // Two views, both judged: the op alone on the stored object (with the stored value as its base), and the op in the batch after
+  // the earlier ops that apply, so a retype split across ops on one element (one changes the type's value, another its string) is
+  // judged on the element they produce together.
+  const mintOpt = ctx.mint ? { mint: ctx.mint } : {};
+  let chain = null; // chain[i] = { before, after } around op i; after is null when op i does not apply there
+  const chainAt = (i) => {
+    if (!chain) {
+      chain = [];
+      const kept = [];
+      let state = { objects: base, minted: {} };
+      for (const o of ops) {
+        const r = applyOps(base, kept.concat([o]), mintOpt);
+        chain.push({ before: state, after: r.ok ? r : null });
+        if (r.ok) {
+          kept.push(o);
+          state = r;
+        }
+      }
+    }
+    return chain[i];
+  };
+  const writtenBy = (i, op, cls, isNew, listSegs, stored) => {
+    const out = [];
+    if (!isNew && base[op.obj] !== undefined && op.op !== "move") {
+      const solo = applyOps({ [op.obj]: base[op.obj] }, [op.op === "add" ? op : withStoredBase(op, stored)], mintOpt);
+      if (solo.ok) out.push(...addedElements(listAt(solo.objects[op.obj], listSegs), listAt(base[op.obj], listSegs)));
+    }
+    const { before, after: done } = chainAt(i);
+    const objIn = (res) => (isNew ? (res.minted?.[op.obj] ? res.objects[`${cls}:${res.minted[op.obj]}`] : undefined) : res.objects[op.obj]);
+    if (done) out.push(...addedElements(listAt(objIn(done), listSegs), listAt(objIn(before), listSegs)));
+    return out;
+  };
+
   const eventType = (h) => eventTypeValue(afterIdx[`Event:${h}`] ?? baseIdx[`Event:${h}`]);
   const resolveTemp = (v) => (typeof v === "string" && minted[v] ? minted[v] : v);
   const surfaceTouched = (op, cls) =>
@@ -647,9 +718,11 @@ export async function classifyOps(ops, ctx = {}) {
       unresolved = loc.keyMissing;
       element = op.op === "add" ? undefined : storedElement(base[op.obj], parsed); // an add names the list, not an element in it
     }
+    const listSegs = typeof op.path === "string" ? concernListPath(isNew ? parsePath(op.path) : parsed) : null;
+    const written = listSegs ? writtenBy(i, op, cls, isNew, listSegs, stored) : undefined;
     const reasons = new Set();
     const emit = (segs, nv, ov) => {
-      const wctx = { checks, value: nv, old: ov, element, unresolved, policy: redaction };
+      const wctx = { checks, value: nv, old: ov, element, written, unresolved, policy: redaction };
       const c = fp.resolve(cls, segs, viewer, wctx);
       take(c);
       if (cls === "Person" && segs[0] === "urls" && (c === "never" || c === "desk")) {
