@@ -7,8 +7,7 @@
 //   guard.assertObjects(resultingObjects, { surface: "changes", opIdFor });   // throws RecordGuardError (422)
 //   guard.assertValue(note, "proposal.note");  guard.assertValue(stubs, "intent.stubs");
 //
-// No route calls it yet; its first caller is `edit-api-core` (then `relationship-api`, `proposal-store-api`), so it ships in the
-// hfy-api zip unreachable.
+// POST /api/changes (records/changes.js, HFY-TSK-183) calls it before the partition; `relationship-api` and `proposal-store-api` follow.
 import { existsSync, readFileSync } from "node:fs";
 import { COPY as TEXT_COPY } from "../shared/privacy-guard.mjs";
 import { CODES, countsPerCode, createEditGuard } from "../shared/edit-guard.mjs";
