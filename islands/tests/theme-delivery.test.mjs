@@ -15,7 +15,7 @@ const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const site = process.env.HFY_SITE ? resolve(process.env.HFY_SITE) : join(islandsDir, "..", "11ty");
 const read = (p) => readFileSync(join(site, p), "utf8");
 const surface = resolveToken(readFileSync(join(islandsDir, "node_modules/@io-kit/tokens/dist/harrisonfamily/theme.css"), "utf8"), "--io-color-semantic-surface");
-const REPO_ONLY = new Set(["posts/index.html", "me/index.html", "me/notifications/index.html", "me/links/index.html", "me/inbox/index.html", "tree/index.html", "edit/index.html", "join/index.html", "offline.html", "family-login/index.html"]);
+const REPO_ONLY = new Set(["posts/index.html", "me/index.html", "me/notifications/index.html", "me/links/index.html", "me/inbox/index.html", "tree/index.html", "edit/index.html", "me/review/index.html", "join/index.html", "offline.html", "family-login/index.html"]);
 const FONT_ORIGINS = /fonts\.googleapis\.com|fonts\.gstatic\.com|use\.typekit|fonts\.bunny|fonts\.adobe/i;
 const SKIP_DIRS = new Set(["js", "css", "fonts", "images", "media", "uploads", "_data", "family", "event", "note", "place"]);
 

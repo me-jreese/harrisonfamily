@@ -2,7 +2,7 @@
 // One column of 56px rows (control.h.lg; a row grows only where its dim line wraps), each a link with an icon, a label and one dim
 // line, then "sign out" (the account sheet's own signOut). Shown only to a visitor the shell treats as signed in (lib/edge-session.js):
 // everyone else, including authV2 off or /auth/session unreachable, gets the sign-in line, as the bar shows them "sign in" and no gear.
-// A row with a `flag` shows only while that flag is on ("your links" with profileLinks, HFY-TSK-217). "family requests" for admins
+// A row with a `flag` shows only while that flag is on ("your links" with profileLinks, HFY-TSK-217); one with `anyFlag` while any of them is ("suggestions" with recordEdit or proposalReview, HFY-TSK-259). "family requests" for admins
 // with accessRequests and GET /api/me joins this list in its own task.
 import "./settings.css";
 import { useEffect, useId, useState } from "react";
@@ -16,6 +16,7 @@ export const ROWS = [
   { id: "inbox", label: "inbox", href: "/me/inbox/", line: "what's new for you, and what you've read", flag: "inboxV1" },
   { id: "links", label: "your links", href: "/me/links/", line: "facebook, instagram and the rest, on your page", flag: "profileLinks" },
   // "sessions" in io's brief: the kit's account page lists the sign-in methods and passkeys.
+  { id: "review", label: "suggestions", href: "/me/review/", line: "changes you've suggested, and ones about your page", anyFlag: ["recordEdit", "proposalReview"] },
   { id: "sign-in", label: "sign-in and devices", href: "/auth/link", line: "google, password, face or fingerprint" }
 ];
 export const SIGN_OUT = "sign out";
@@ -39,7 +40,7 @@ function useFlags() {
 }
 
 /** The rows to show: those with no flag, and those whose flag is on. */
-export const visibleRows = (rows, flags) => rows.filter((row) => !row.flag || flags[row.flag] === true);
+export const visibleRows = (rows, flags) => rows.filter((row) => (row.anyFlag ? row.anyFlag.some((f) => flags[f] === true) : !row.flag || flags[row.flag] === true));
 
 function Row({ row }) {
   const id = useId();

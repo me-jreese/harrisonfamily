@@ -1,0 +1,158 @@
+/* /me/review/: the review island (review.jsx, lib/review-ui.jsx; HFY-TSK-259). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
+   --io-radius-* and --io-typography-* (theme-lint no-literal-token-values). Under 64rem one view at a time: the list, then the card (with a back
+   link and its actions in a sticky footer above the shell's bottom bar). From 64rem the list and the card sit side by side, 40/60. Targets are
+   --io-control-tap-min (44px), inputs the 16px floor so iOS does not zoom, and no state is told by colour alone. */
+.hfy-reviewpage, .hfy-review {
+  box-sizing: border-box;
+  min-width: 0;
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  line-height: var(--io-typography-leading-normal);
+}
+.hfy-review { display: grid; gap: var(--io-space-4); }
+.hfy-review__skeleton { min-height: calc(3 * var(--io-control-h-lg)); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); }
+.hfy-review__note { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-review__ok { margin: 0; padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-success); font-weight: var(--io-typography-weight-semibold); }
+.hfy-review__problem { display: grid; gap: var(--io-space-2); margin: 0; padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-danger); overflow-wrap: anywhere; }
+.hfy-review__problem p { margin: 0; }
+.hfy-review__gate { display: grid; gap: var(--io-space-3); justify-items: start; }
+.hfy-review__gate p { margin: 0; }
+.hfy-review a.hfy-review__signin, .hfy-review__signin {
+  display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-text); font-weight: var(--io-typography-weight-semibold); text-decoration: none;
+}
+
+/* the tabs: links that look like a segmented row; the current one is bold and underlined, not only coloured */
+.hfy-review__tabs { display: flex; flex-wrap: wrap; gap: var(--io-space-1) var(--io-space-3); border-bottom: 1px solid var(--io-color-semantic-border); }
+.hfy-review a.hfy-review__tab {
+  display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); padding: 0 var(--io-space-2);
+  color: var(--io-color-semantic-text-dim); font-weight: var(--io-typography-weight-semibold); text-decoration: none;
+  border-bottom: var(--io-control-focus-ring) solid transparent;
+}
+.hfy-review a.hfy-review__tab:hover { color: var(--io-color-semantic-text); }
+.hfy-review a.hfy-review__tab[aria-current="page"] { color: var(--io-color-semantic-text); border-bottom-color: var(--io-color-semantic-accent); text-decoration: none; }
+.hfy-review a.hfy-review__tab:focus-visible, .hfy-review button:focus-visible, .hfy-review__sheet button:focus-visible,
+.hfy-review input:focus-visible, .hfy-review textarea:focus-visible, .hfy-review__sheet textarea:focus-visible, .hfy-review__detail:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset);
+}
+
+/* the list/detail frame: one view under 64rem, side by side from it */
+.hfy-review__split { display: grid; gap: var(--io-space-4); min-width: 0; }
+.hfy-review__list, .hfy-review__detail { display: grid; gap: var(--io-space-3); min-width: 0; align-content: start; }
+.hfy-review__detail { padding-bottom: var(--io-space-4); }
+.hfy-review__back {
+  justify-self: start; display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); padding: 0 var(--io-space-2); margin: 0;
+  border: 0; background: transparent; color: var(--io-color-semantic-link); font: inherit; font-weight: var(--io-typography-weight-semibold); cursor: pointer; text-decoration: underline;
+}
+
+/* the filter chips */
+.hfy-review__chips { display: flex; flex-wrap: wrap; gap: var(--io-space-2); }
+.hfy-review .hfy-review__chipbtn {
+  box-sizing: border-box; min-height: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: transparent; color: var(--io-color-semantic-text);
+  font: inherit; cursor: pointer;
+}
+.hfy-review .hfy-review__chipbtn[aria-pressed="true"] { background: var(--io-color-semantic-accent); border-color: var(--io-color-semantic-accent); color: var(--io-color-semantic-accent-text); font-weight: var(--io-typography-weight-semibold); }
+
+/* the rows */
+.hfy-review__items { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--io-space-2); }
+.hfy-review__item { display: grid; gap: var(--io-space-1); padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); min-width: 0; }
+.hfy-review__item[data-selected="true"] { border-color: var(--io-color-semantic-accent); border-width: var(--io-control-focus-ring); }
+.hfy-review__meta { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-1) var(--io-space-2); color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-review .hfy-review__open {
+  box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-1) var(--io-space-2); width: 100%; min-height: var(--io-control-tap-min); margin: 0; padding: var(--io-space-1) 0;
+  border: 0; background: transparent; color: var(--io-color-semantic-text); font: inherit; text-align: left; cursor: pointer;
+}
+.hfy-review__first { flex: 1 1 calc(3 * var(--io-space-9)); min-width: 0; overflow-wrap: anywhere; font-weight: var(--io-typography-weight-semibold); }
+.hfy-review__kind, .hfy-review__chip {
+  display: inline-flex; align-items: center; padding: var(--io-space-1) var(--io-space-2); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md);
+  color: var(--io-color-semantic-text); font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); line-height: var(--io-typography-leading-tight);
+}
+.hfy-review__chip[data-hfy-stale="true"] { border-style: dashed; }
+.hfy-review__age { white-space: nowrap; }
+
+/* the card */
+.hfy-review__card { display: grid; gap: var(--io-space-4); min-width: 0; padding: var(--io-space-4); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); }
+.hfy-review__cardhead { display: grid; gap: var(--io-space-2); justify-items: start; min-width: 0; }
+.hfy-review__h3 { margin: 0; font-size: var(--io-typography-size-lg); overflow-wrap: anywhere; }
+.hfy-review__h4 { margin: 0; font-size: var(--io-typography-size-md); }
+.hfy-review__ops { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--io-space-3); }
+.hfy-review__ops > li { display: grid; gap: var(--io-space-1); min-width: 0; }
+.hfy-review__sentence { overflow-wrap: anywhere; font-weight: var(--io-typography-weight-semibold); }
+.hfy-review__ba { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--io-space-1) var(--io-space-2); overflow-wrap: anywhere; }
+.hfy-review__tag { color: var(--io-color-semantic-text-dim); }
+.hfy-review__diff { flex-basis: 100%; }
+.hfy-review__diff del { text-decoration: line-through; color: var(--io-color-semantic-text-dim); }
+.hfy-review__diff ins { text-decoration: underline; font-weight: var(--io-typography-weight-semibold); }
+.hfy-review__warn, .hfy-review__noteblock, .hfy-review__conflicts { display: grid; gap: var(--io-space-2); padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); min-width: 0; }
+.hfy-review__warn { border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); }
+.hfy-review__conflicts { border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-danger); }
+.hfy-review__warn ul { margin: 0; padding-left: var(--io-space-5); }
+.hfy-review__noteblock p, .hfy-review__conflicts p { margin: 0; overflow-wrap: anywhere; }
+.hfy-review__three { margin: 0; display: grid; gap: var(--io-space-1); }
+.hfy-review__three > div { display: flex; flex-wrap: wrap; gap: var(--io-space-1) var(--io-space-2); }
+.hfy-review__three dt { color: var(--io-color-semantic-text-dim); }
+.hfy-review__three dd { margin: 0; font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+
+/* the actions: a sticky footer under 64rem (above the shell's bottom bar), inline from it */
+.hfy-review__actions {
+  position: sticky; bottom: var(--io-space-2); z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2); min-width: 0;
+  padding: var(--io-space-2) var(--io-space-3); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface-raised); box-shadow: var(--io-elevation-2);
+}
+html.hfy-shell-v2:has(.io-shell[data-bp="compact"]) .hfy-review__actions { bottom: calc(var(--io-control-h-lg) + var(--io-safe-bottom) + var(--io-space-2)); }
+.hfy-review__actions > p { flex-basis: 100%; margin: 0; }
+.hfy-review__row { display: flex; flex-wrap: wrap; gap: var(--io-space-2) var(--io-space-3); justify-content: flex-end; }
+.hfy-review__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2); }
+.hfy-review__confirm p { margin: 0; font-weight: var(--io-typography-weight-semibold); }
+.hfy-review .hfy-review__btn, .hfy-review__sheet .hfy-review__btn {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: transparent; color: var(--io-color-semantic-text);
+  font: inherit; font-weight: var(--io-typography-weight-semibold); cursor: pointer;
+}
+.hfy-review .hfy-review__btn--primary, .hfy-review__sheet .hfy-review__btn--primary { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-accent); color: var(--io-color-semantic-accent-text); }
+.hfy-review .hfy-review__btn--danger, .hfy-review__sheet .hfy-review__btn--danger { border-color: var(--io-color-semantic-danger); color: var(--io-color-semantic-text); border-style: dashed; }
+.hfy-review .hfy-review__btn:disabled, .hfy-review__sheet .hfy-review__btn:disabled {
+  opacity: 1; border-color: var(--io-color-semantic-border); background: var(--io-color-semantic-surface-sunken); color: var(--io-color-semantic-text-dim); cursor: default; border-style: solid;
+}
+
+/* the amend form and the fields */
+.hfy-review__amend { display: grid; gap: var(--io-space-3); min-width: 0; padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); }
+.hfy-review__field { display: grid; gap: var(--io-space-1); min-width: 0; }
+.hfy-review__field label { font-weight: var(--io-typography-weight-semibold); }
+.hfy-review input[type="text"], .hfy-review textarea, .hfy-review__sheet textarea {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: var(--io-control-tap-min); margin: 0; padding: var(--io-space-2) var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui); font-size: var(--io-control-input-min-font); line-height: var(--io-typography-leading-normal);
+}
+.hfy-review textarea, .hfy-review__sheet textarea { min-height: calc(2 * var(--io-control-tap-min)); resize: vertical; }
+.hfy-review textarea[aria-invalid="true"], .hfy-review__sheet textarea[aria-invalid="true"] { border-color: var(--io-color-semantic-danger); }
+.hfy-review__choice { display: grid; gap: var(--io-space-1); margin: 0; padding: 0; border: 0; min-width: 0; }
+.hfy-review__choice legend { padding: 0; }
+.hfy-review__radio, .hfy-review__check { display: flex; align-items: center; gap: var(--io-space-2); min-height: var(--io-control-tap-min); }
+.hfy-review__radio input, .hfy-review__check input { flex: none; width: var(--io-space-5); height: var(--io-space-5); margin: 0; }
+
+/* the reason sheet: a native modal dialog, a bottom sheet under 43rem and a centred panel from it */
+.hfy-review__sheet {
+  box-sizing: border-box; width: 100%; max-width: none; max-height: 90vh; margin: auto 0 0; padding: 0; overflow: auto;
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md) var(--io-radius-md) 0 0;
+  background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-normal);
+}
+.hfy-review__sheet::backdrop { background: var(--io-color-semantic-scrim); }
+.hfy-review__sheetpanel { box-sizing: border-box; display: grid; gap: var(--io-space-4); min-width: 0; padding: var(--io-space-4) var(--io-space-4) calc(var(--io-space-4) + var(--io-safe-bottom)); }
+.hfy-review__sheet .hfy-review__note, .hfy-review__sheet .hfy-review__problem { margin: 0; }
+.hfy-review__sheet .hfy-review__field { display: grid; gap: var(--io-space-1); }
+.hfy-review__sheet .hfy-review__row { justify-content: flex-end; }
+
+@media (min-width: 43rem) {
+  .hfy-review__sheet { width: calc(10 * var(--io-space-9)); max-width: calc(100vw - 2 * var(--io-space-4)); margin: auto; border-radius: var(--io-radius-md); }
+}
+
+@media (min-width: 64rem) {
+  .hfy-review__split { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); column-gap: var(--io-space-6); align-items: start; } /* 40/60 */
+  .hfy-review__actions { position: static; box-shadow: none; }
+  .hfy-review__detail { position: sticky; top: var(--io-space-4); }
+}
