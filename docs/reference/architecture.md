@@ -362,8 +362,12 @@ Written by `hfy-api`:
 | Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
+| Contribution event, one per credited contribution | `CONTRIB#<principal>` | `E#<ulid>` | `CONTRIBS` / `<ulid>` | - | [`api/src/contrib.js`](../../api/src/contrib.js) |
+| Self-edit daily marker (at most one self-edit credit per record per UTC day) | `CONTRIB#<principal>` | `CAP#self_edit#<subject>#<YYYY-MM-DD>` | - | 2 days after the write | [`api/src/contrib.js`](../../api/src/contrib.js) |
+| Site counters | `CSTAT#site` | `TOTAL`; `D#<YYYY-MM-DD>`; `M#<YYYY-MM>`; `LINE` (the feed-line cache, written by the read API) | - | `D#` rows 800 days after their day; `LINE` 2 hours | [`api/src/contrib.js`](../../api/src/contrib.js) |
+| Person counters | `CSTAT#person:<principal>` | `TOTAL`; `M#<YYYY-MM>` | - | - | [`api/src/contrib.js`](../../api/src/contrib.js) |
 
-Each post and comment change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
+Each post and comment change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item, and, when the change earns or loses a contribution, the `CONTRIB#` event and the `CSTAT#` counters ([API: Contributions ledger](api.md#contributions-ledger)). All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
 
 Written by `hfy-auth-edge`, through the `@io-kit/auth` 2.2.0 stores and the local stores wired in [`auth/src/index.js`](../../auth/src/index.js). `<scope>` is `email+ip` or `ip`, and the hash covers the email and client IP, so neither is stored:
 

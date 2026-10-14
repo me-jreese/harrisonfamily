@@ -390,7 +390,7 @@ On a `post:<ulid>` thread, every comment action except delete also requires that
 
 The API's items in the `hfy-app` table. The table definition and the auth edge's items are in [System architecture](architecture.md#dynamodb-table-hfy-app).
 
-The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), audit items ([`txn.js`](../../api/src/txn.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
+The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), audit items ([`txn.js`](../../api/src/txn.js)), contribution events and counters ([`contrib.js`](../../api/src/contrib.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
 
 What the items hold:
 
@@ -398,8 +398,31 @@ What the items hold:
 - Comment items carry `entity: "comment"` and `comment`.
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
 - Audit items are listed under [Audit records](#audit-records).
+- Contribution events and counters are listed under [Contributions ledger](#contributions-ledger). A credited post or comment carries `contrib: { id }`, the id of its event, on every stored copy.
 
 Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<id>` / `META`) and `gsiThread`. Neither is used, because comments live under `THREAD#<subject>` ([item layout](architecture.md#item-layout)).
+
+## Contributions ledger
+
+[`contrib.js`](../../api/src/contrib.js) credits members for what they add, and takes the credit back when it is deleted. Each credit is an event under `CONTRIB#<principal>` plus five counter updates, and they commit in the same `TransactWriteItems` call as the write that earned them ([item layout](architecture.md#item-layout)). The ledger is written whatever the `contribV1` flag says; the flag only gates the routes that read it.
+
+| Write | Ledger change |
+| --- | --- |
+| Comment create | Credit 1 (`kind: comment`). The stored comment gets `contrib: { id }`. |
+| Comment delete, by its author or an admin | Revoke the event of the comment's author. |
+| Post created published, or a draft's first publish | Credit 1 plus 1 per image attachment (`kind: post`), once per post. All three post items get `contrib: { id }`. A post with 3 photos adds 4. |
+| Withdraw, or return to draft | The event is hidden. No count changes. |
+| Republish | The event is shown again. No count changes. |
+| Post delete, by its author or an admin | Revoke the event of the post's author. |
+| Post delete, for each comment removed with the post | Revoke each comment's event. The revokes of one transaction are merged, so 30 comments by one author in one month are one decrement per counter key. |
+
+Not counted: edits of posts and comments, reactions, drafts, and desktop pushes. A comment made through an MCP tool is credited like any other and its event carries `via: "mcp"`; HTTP calls carry `via: "ui"`. An MCP post is always a draft, so it earns nothing until a person publishes it.
+
+An event is `{ entity: "contrib", id, kind, actor: { id, label }, at, weight, photos, via, ref: { type, id, thread? }, subject?, hidden? }`. It copies no body text. `weight` is what the event adds to `n`: 1 for the kind plus `photos`. The counter rows hold `n`, `n_<kind>` for `post`, `comment`, `proposal_accepted`, `self_edit`, `tag` and `photo_to_record`, `n_photo`, and on `TOTAL` rows `first_at`. Readers clamp a negative value to 0, because revoking a credit whose `D#` row has already expired leaves a negative row that expires within days.
+
+The builders are `contribOps`, `revokeOps`, `hideOps` and `mergeOps`. They return `{ puts, deletes, updates, checks }` fragments that a caller merges into its own `transact()` call. Credits for proposals, self-edits, tags and photo graduation are added by the code that owns those writes, through the same builders.
+
+Content written before the ledger has no events. [Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md) credits it and rebuilds the counters.
 
 ## Audit records
 
