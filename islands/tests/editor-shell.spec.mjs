@@ -116,7 +116,9 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(badgeOf(page, "nickname")).toHaveText("saves now");
       await expect(badgeOf(page, "title")).toHaveText("saves now");
       const badges = page.locator("[data-hfy-mode]");
-      expect(await badges.count()).toBe(5);
+      // six fields in the names form: given names, last name, call name, nickname, title, suffix (the list sections add theirs when a row opens)
+      expect(await badges.count()).toBe(6);
+      await expect(badgeOf(page, "last name at birth")).toHaveText("goes to review");
       for (const b of await badges.all()) {
         await expect(b.locator("svg[aria-hidden='true']")).toHaveCount(1);
         expect((await b.innerText()).trim().length).toBeGreaterThan(3);

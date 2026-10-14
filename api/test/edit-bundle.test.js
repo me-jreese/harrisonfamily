@@ -121,6 +121,24 @@ describe("the bundle shape", () => {
     expect(byHandle.body).toEqual(r.body);
     expect((await w.get(`/api/edit/Person/${ME}`, ME)).body.relation).toBe("own");
   });
+  it("also carries the places of the related events and the sources of the related citations, for the editor's pickers (HFY-TSK-156)", async () => {
+    const w = await world();
+    const place = { _class: "Place", handle: h(6001), gramps_id: "P0001", change: 1, private: false, name: { _class: "PlaceName", value: "Synthville", lang: "" }, place_type: typ("PlaceType", 3) };
+    const source = { _class: "Source", handle: h(7001), gramps_id: "S0001", change: 1, private: false, title: "A synthetic ledger" };
+    const cit = { _class: "Citation", handle: h(8001), gramps_id: "C0001", change: 1, private: false, source_handle: source.handle, page: "p. 1", confidence: 2 };
+    const ev = event(7, date(0, 0, 1950), { place: place.handle });
+    const p = person(7, { event_ref_list: [primary(ev)], citation_list: [cit.handle] });
+    await w.apply([place, source, cit, ev, p].map(create));
+    const r = await w.get(`/api/edit/Person/${p.gramps_id}`, ME);
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.body.related).sort()).toEqual([`Citation:${cit.handle}`, `Event:${ev.handle}`, `Place:${place.handle}`, `Source:${source.handle}`].sort());
+    expect(r.body.related[`Place:${place.handle}`].obj.name.value).toBe("Synthville");
+    expect(r.body.related[`Source:${source.handle}`].obj.title).toBe("A synthetic ledger");
+    expect(r.body.related[`Place:${place.handle}`].version).toBe(1);
+    // an event with no place and a citation with no source add nothing
+    const q1 = await w.get(`/api/edit/Person/${OTHER}`, ME);
+    expect(Object.keys(q1.body.related).some((k) => k.startsWith("Place:") || k.startsWith("Source:"))).toBe(false);
+  });
   it("shows a related Person as a stub with a year-only lifespan and no other fields", async () => {
     const w = await world();
     const r = await w.get(`/api/edit/Family/${w.fam.gramps_id}`, ME);

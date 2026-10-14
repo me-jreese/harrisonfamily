@@ -147,3 +147,70 @@ html.hfy-shell-v2:has(.io-shell[data-bp="compact"]) .hfy-editor__dock { bottom: 
 @media (min-width: 43rem) {
   .hfy-sheet { width: calc(10 * var(--io-space-9)); max-width: calc(100vw - 2 * var(--io-space-4)); margin: auto; border-radius: var(--io-radius-md); }
 }
+
+/* the person sections (editor-person-sections, HFY-TSK-156): the pending chip, the list editors and their rows, and the host widgets' markup.
+   Tokens only. A row is a title with its actions under it on a phone and beside it from 43rem; a row's panel opens inline under it. */
+.hfy-editor__chip {
+  justify-self: start; margin: 0; padding: var(--io-space-1) var(--io-space-3); border: 1px dotted var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md);
+  font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere;
+}
+.hfy-editor__list { display: grid; gap: var(--io-space-3); min-width: 0; }
+.hfy-editor__list + .hfy-editor__list, .hfy-editor form + .hfy-editor__list { margin-top: var(--io-space-4); }
+.hfy-editor__h3 { margin: 0; font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-list { display: grid; gap: var(--io-space-3); min-width: 0; }
+.hfy-list__note, .hfy-list__empty { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-rows { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--io-space-2); min-width: 0; }
+.hfy-row {
+  display: grid; gap: var(--io-space-2); min-width: 0; padding: var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken);
+}
+.hfy-row[data-state="removed"] .hfy-row__title { text-decoration: line-through; }
+.hfy-row[data-state="new"], .hfy-row[data-state="edited"] { border-color: var(--io-color-semantic-focus); }
+.hfy-row__main { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--io-space-1) var(--io-space-3); min-width: 0; }
+.hfy-row__title { font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-row__detail { color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-row__actions { display: flex; flex-wrap: wrap; gap: var(--io-space-2); min-width: 0; }
+.hfy-row__panel { display: grid; gap: var(--io-space-3); min-width: 0; padding-top: var(--io-space-3); border-top: 1px solid var(--io-color-semantic-border); }
+.hfy-chip {
+  display: inline-flex; align-items: center; padding: 0 var(--io-space-2); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md);
+  font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); line-height: var(--io-typography-leading-normal);
+}
+.hfy-chip[data-hfy-chip="removed"] { border-style: dashed; }
+.hfy-editor .hfy-row__actions button, .hfy-editor .hfy-list__add, .hfy-editor .hfy-row__done, .hfy-editor .hfy-ref__picked button {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: transparent; color: var(--io-color-semantic-text);
+  font: inherit; font-weight: var(--io-typography-weight-semibold); cursor: pointer;
+}
+.hfy-editor .hfy-list__add { justify-self: start; }
+.hfy-editor .hfy-row__done { justify-self: start; }
+.hfy-editor .hfy-row__actions button:focus-visible, .hfy-editor .hfy-list__add:focus-visible, .hfy-editor .hfy-row__done:focus-visible, .hfy-editor .hfy-ref__picked button:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset);
+}
+
+/* the kit form hooks the new widgets use */
+.hfy-editor .io-field { display: grid; gap: var(--io-space-1); min-width: 0; margin: 0; padding: 0; border: 0; }
+.hfy-editor fieldset.io-field legend { padding: 0; font-weight: var(--io-typography-weight-semibold); }
+.hfy-editor .io-description { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-editor .io-error { margin: 0; color: var(--io-color-semantic-danger); overflow-wrap: anywhere; }
+.hfy-editor .io-sr { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.hfy-given { display: flex; flex-wrap: wrap; gap: var(--io-space-1) var(--io-space-4); margin: 0; color: var(--io-color-semantic-text-dim); }
+.hfy-given__part strong { color: var(--io-color-semantic-text); overflow-wrap: anywhere; }
+.hfy-date { display: flex; flex-wrap: wrap; gap: var(--io-space-3); min-width: 0; }
+.hfy-date__cell { display: grid; gap: var(--io-space-1); flex: 1 1 calc(3 * var(--io-space-9)); min-width: 0; }
+.hfy-date__cell--narrow { flex: 0 1 calc(2 * var(--io-space-9)); }
+.hfy-editor .hfy-check { display: inline-flex; align-items: center; gap: var(--io-space-2); min-height: var(--io-control-tap-min); font-weight: var(--io-typography-weight-regular); }
+.hfy-editor .hfy-check input { flex: none; width: var(--io-space-5); height: var(--io-space-5); margin: 0; }
+.hfy-ref__picked { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2) var(--io-space-3); margin: 0; }
+.hfy-ref__list {
+  position: static; margin: 0; padding: 0; list-style: none; max-height: calc(5 * var(--io-control-tap-min)); overflow: auto;
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised);
+}
+.hfy-ref__list[hidden] { display: none; }
+.hfy-ref__list li { display: flex; align-items: center; min-height: var(--io-control-tap-min); padding: 0 var(--io-space-3); cursor: pointer; overflow-wrap: anywhere; }
+.hfy-ref__list li[aria-selected="true"] { background: var(--io-color-semantic-surface-sunken); outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: calc(-1 * var(--io-control-focus-ring)); }
+.hfy-ref__new { display: grid; gap: var(--io-space-1); min-width: 0; }
+
+@media (min-width: 43rem) {
+  .hfy-row { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  .hfy-row__panel { grid-column: 1 / -1; }
+}
