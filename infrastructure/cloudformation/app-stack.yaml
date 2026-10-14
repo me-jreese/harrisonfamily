@@ -148,6 +148,11 @@ Resources:
                 Effect: Allow
                 Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem]
                 Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              # HFY-TSK-178: the record-change fan-out reads the table stream (the RecordFanoutMapping below). Read-only, this table's stream only.
+              - Sid: RecordFanoutStream
+                Effect: Allow
+                Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator]
+                Resource: !GetAtt Table.StreamArn
               - Sid: AdminList
                 Effect: Allow
                 Action: s3:GetObject
@@ -239,6 +244,25 @@ Resources:
           SYNC_BUCKET: !Ref SyncBucketName
           SES_FROM_ADDRESS: !Ref SesFromAddress
           SES_CONFIGURATION_SET: !Ref SesConfigurationSet
+
+  # HFY-TSK-178 (hfy-record-change-fanout; BRD2 D2-02, review SI-20): record-change notifications come from the render outbox only. The renderer
+  # writes SYNC#RENDERED/<seq> in its live passes; this mapping wakes hfy-api for each insert (KEYS_ONLY stream: the consumer reads the item back).
+  # Nothing is inserted while RenderMode is off or shadow, and delivery is gated per recipient by the recordSubsV1 flag, so the mapping is inert
+  # until the cutover and the flag. A failed record is retried 3 times and then dropped (delivery is a nicety; the dedupe claims make a replay by
+  # `aws lambda invoke --payload '{"source":"record-fanout","seq":N}'` safe).
+  RecordFanoutMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref Function
+      EventSourceArn: !GetAtt Table.StreamArn
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+      MaximumRetryAttempts: 3
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"Keys":{"PK":{"S":["SYNC#RENDERED"]}}}}'
 
   FunctionUrl:
     Type: AWS::Lambda::Url

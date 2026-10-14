@@ -50,6 +50,8 @@ const GID = /^[A-Za-z0-9_-]{1,32}$/;
 /** The default admin review destination; the proposals domain overrides it per call with `navigate`. */
 export const PROPOSALS_REVIEW_PATH = "/admin/proposals/";
 export const INBOX_PATH = "/me/inbox/";
+/** Where a proposal thread notification lands (editing design 7.4: the review page, one proposal). */
+export const proposalPath = (id) => `/me/review/?id=${encodeURIComponent(id)}`;
 
 /** A same-origin path the server generates: starts with one "/" and carries no scheme, backslash or control character. */
 export const safePath = (p, fallback = INBOX_PATH) => (typeof p === "string" && /^\/(?!\/)[^\\\u0000-\u001f]*$/.test(p) ? p : fallback);
@@ -116,17 +118,25 @@ export function createNotifier(deps) {
   const common = { registry: TEMPLATE_REGISTRY, preferences: deps.preferences, subscriptions: deps.subscriptions, webpush: deps.webpush, vapid: deps.vapid, log: kitLog };
   const deliverStored = createDelivery({ ...common, store: deps.inbox });
   const deliverPushOnly = createDelivery(common);
-  /** Producers run after a committed write: no push and no inbox configured => no reads at all; any failure is logged and swallowed. */
-  const guarded = (label, fn) => async (...args) => {
-    if (!active()) return;
+  /**
+   * Producers run after a committed write: no push and no inbox configured => no reads at all; any failure is logged and swallowed.
+   * `report: true` (onRecordChanged only) returns what happened instead of undefined, so the render-outbox consumer can tell a delivery
+   * that was lost from one that was sent: `{ inactive: true }` when nothing is configured, `{ error: true, lost: 1 }` when the producer threw,
+   * otherwise the producer's own `{ lost }`. It still never throws.
+   */
+  const guarded = (label, fn, { report = false } = {}) => async (...args) => {
+    if (!active()) return report ? { inactive: true, lost: 0 } : undefined;
     try {
-      await fn(...args);
+      const out = await fn(...args);
+      return report ? out ?? { lost: 0 } : undefined;
     } catch (e) {
       log.error?.(`${label} failed`, logSafeError(e));
+      return report ? { error: true, lost: 1 } : undefined;
     }
   };
   async function notify(feature, recipients, { navigate, actorLabel, subjectLabel, item, count, exclude = [], detail, group }) {
-    if (!active()) return { sent: 0 };
+    if (!active()) return { sent: 0, lost: 0 };
+    let lost = 0; // durable (inbox) deliveries that did not happen: the consumer retries on these; a push that fails (a dead endpoint) is best-effort
     try {
       const skip = new Set(exclude);
       const toStore = [];
@@ -134,7 +144,7 @@ export function createNotifier(deps) {
       for (const principal of new Set(recipients)) {
         if (skip.has(principal)) continue;
         // A failed flag read means no inbox write for that recipient, but the push still goes.
-        const stored = !PUSH_ONLY_TYPES.has(feature) && (await inboxOn(principal).catch(() => false));
+        const stored = !PUSH_ONLY_TYPES.has(feature) && (await inboxOn(principal).catch(() => { lost += 1; return false; }));
         (stored ? toStore : pushOnly).push(principal);
       }
       const fields = {
@@ -146,22 +156,30 @@ export function createNotifier(deps) {
         toStore.length ? deliverStored({ ...input, recipients: toStore }) : { pushed: 0 },
         pushOnly.length && enabled() ? deliverPushOnly({ ...input, recipients: pushOnly }) : { pushed: 0 },
       ]);
-      return { sent: a.pushed + b.pushed };
+      if (toStore.length && TEMPLATE_REGISTRY.features[feature]?.inbox !== false) lost += Math.max(0, toStore.length - (a.stored ?? 0));
+      return { sent: a.pushed + b.pushed, lost };
     } catch (e) {
       log.error?.("notify failed", feature, logSafeError(e));
-      return { sent: 0 };
+      return { sent: 0, lost: lost + 1 };
     }
   }
 
   return {
     notify,
-    /** After a comment is stored: reply > mention > comment_on_my_record, one notification per recipient. */
-    onComment: guarded("comment notification", async (c, { parent } = {}, { postAuthorId, earlierCommenters = [] } = {}) => {
-      const navigate = c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : `/person/?id=${c.threadId.slice(7)}`;
+    /**
+     * After a comment is stored: reply > mention > comment_on_my_record, one notification per recipient. A `proposal:<ulid>` thread links to the review
+     * page and its owner is the proposer (`postAuthorId`); `visibleTo` (a Set of principal ids: the proposal's visibility set) limits every recipient of
+     * a reply, a mention or the owner notice to it, so a mention cannot tell an outsider that a suggestion exists (PS-09). A proposal thread with no
+     * `visibleTo` notifies nobody (fail closed).
+     */
+    onComment: guarded("comment notification", async (c, { parent } = {}, { postAuthorId, earlierCommenters = [], visibleTo } = {}) => {
+      const onProposal = c.threadId.startsWith("proposal:");
+      const navigate = onProposal ? proposalPath(c.threadId.slice(9)) : c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : `/person/?id=${c.threadId.slice(7)}`;
       const base = { navigate, actorLabel: c.author.label };
       const grouped = { ...base, group: `thread:${c.threadId}` }; // comment types coalesce per thread
+      const allowed = onProposal ? (visibleTo instanceof Set ? visibleTo : new Set()) : null;
       const done = new Set([c.author.id]);
-      const take = (ids) => ids.filter((i) => !done.has(i) && done.add(i));
+      const take = (ids) => ids.filter((i) => !done.has(i) && (allowed === null || allowed.has(i)) && done.add(i));
       // reply_to_me: the parent's author plus everyone who commented earlier on the same subject.
       await notify("reply_to_me", take([...(parent ? [parent.author.id] : []), ...earlierCommenters]), grouped);
       await notify("mention", take(mentionsOf(c.body)), base);
@@ -225,11 +243,13 @@ export function createNotifier(deps) {
      * never the actor and never the owner twice; a follower with more than DIGEST_OVER pages in one call gets one records_updated_followed_digest instead.
      * Idempotency across redelivery (dedupe key rec:<seq>:<subject>) is the consumer's; within a call a subject counts once.
      * `silent:true`, `import:true` or `seed:true` (SYNC#SESSION.seed) send nothing. More than BATCH_DIGEST_OVER distinct subjects: one digest per follower, one record_updated_mine per owner.
+     * Returns (never throws) `{ lost }`, plus `inactive: true` when no push or inbox is configured (nothing was sent) or `error: true` when the producer threw:
+     * the consumer treats `lost > 0` and `error` as a failed delivery and gives its claims back, and `inactive` as "not delivered, not retried" (see record-change-fanout.js).
      * Budget: at most MAX_SUBJECTS subjects, follower Queries LOOKUP_CONCURRENCY at a time; the consumer should chunk large passes and must dedupe before redelivery.
      */
     onRecordChanged: guarded("record change notification", async (changes, { silent = false, import: isImport = false, seed = false } = {}) => {
       // Seeds (SYNC#SESSION.seed=true, passed by the consumer as `seed`), explicit imports and backfills send nothing and read nothing.
-      if (silent === true || isImport === true || seed === true || !Array.isArray(changes)) return;
+      if (silent === true || isImport === true || seed === true || !Array.isArray(changes)) return { lost: 0 };
       const subjects = new Map();
       for (const ch of changes.slice(0, MAX_SUBJECTS)) {
         const gid = personIdOf(ch?.subject);
@@ -239,17 +259,18 @@ export function createNotifier(deps) {
         if (prev) { if (prev.actor?.id !== ch.actor?.id) prev.actor = null; continue; }
         subjects.set(ch.subject, { gid, actor: ch.actor ?? null, subjectLabel: ch.subjectLabel });
       }
-      if (!subjects.size) return;
+      if (!subjects.size) return { lost: 0 };
+      let lost = 0; // inbox writes that failed, flag reads that failed and follower lookups that failed: the consumer gives its claims back on any
       // A large batch is never refused: every follower gets one digest and every member owner one record_updated_mine.
       const bulk = subjects.size > BATCH_DIGEST_OVER;
       const members = deps.listMembers ? await deps.listMembers() : new Set();
       const followed = new Map(); // recipient -> [subject]
       const entries = [...subjects];
-      const lookups = await mapLimit(entries, LOOKUP_CONCURRENCY, ([subject]) => (deps.followersOf ? deps.followersOf(subject).catch((e) => { log.error?.("followers lookup failed", logSafeError(e)); return []; }) : []));
+      const lookups = await mapLimit(entries, LOOKUP_CONCURRENCY, ([subject]) => (deps.followersOf ? deps.followersOf(subject).catch((e) => { log.error?.("followers lookup failed", logSafeError(e)); lost += 1; return []; }) : []));
       for (const [idx, [subject, c]] of entries.entries()) {
         const actorId = c.actor?.id;
         const ownerNotified = members.has(c.gid) && c.gid !== actorId;
-        if (ownerNotified) await notify("record_updated_mine", [c.gid], { navigate: personPath(c.gid), actorLabel: labelOf(c.actor), group: `rec:${subject}` });
+        if (ownerNotified) lost += (await notify("record_updated_mine", [c.gid], { navigate: personPath(c.gid), actorLabel: labelOf(c.actor), group: `rec:${subject}` })).lost;
         for (const f of new Set(lookups[idx])) {
           if (f === actorId || f === c.gid) continue; // the actor knows; the owner is covered by record_updated_mine
           (followed.get(f) ?? followed.set(f, []).get(f)).push(subject);
@@ -258,14 +279,15 @@ export function createNotifier(deps) {
       const perSubject = new Map(); // subject -> recipients (small lists)
       for (const [recipient, subs] of followed) {
         if (bulk || subs.length > DIGEST_OVER) {
-          await notify("records_updated_followed_digest", [recipient], { navigate: INBOX_PATH, count: subs.length, group: "recdigest" });
+          lost += (await notify("records_updated_followed_digest", [recipient], { navigate: INBOX_PATH, count: subs.length, group: "recdigest" })).lost;
         } else for (const subject of subs) (perSubject.get(subject) ?? perSubject.set(subject, []).get(subject)).push(recipient);
       }
       for (const [subject, recipients] of perSubject) {
         const c = subjects.get(subject);
-        await notify("record_updated_followed", recipients, { navigate: personPath(c.gid), subjectLabel: c.subjectLabel, group: `rec:${subject}` });
+        lost += (await notify("record_updated_followed", recipients, { navigate: personPath(c.gid), subjectLabel: c.subjectLabel, group: `rec:${subject}` })).lost;
       }
-    }),
+      return { lost };
+    }, { report: true }),
     /** After a post becomes published: everyone subscribed except the author (the principal Scan only runs with push on; push-only type). */
     onPublished: guarded("publish notification", async (post) => {
       if (!enabled()) return;

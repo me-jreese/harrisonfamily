@@ -240,12 +240,15 @@ describe("a failing producer never fails a committed write", () => {
     ["onProposalDecided", [{ proposal: { id: "p", subject: "person:P9", proposer: { id: "P2" } }, decision: "accepted", by: { id: "A1" } }]],
     ["onModeration", [{ kind: "hidden", item: "post", authorId: "P2", by: { id: "A1" }, navigate: "/posts/" }]],
     ["onGraduated", [{ photo: { authorId: "P2" }, subject: "person:P9", by: { id: "A1" } }]],
-    ["onRecordChanged", [[{ subject: "person:P9", actor: null }]]],
   ])("%s resolves when every dependency throws", async (name, args) => {
     await expect(failing[name](...args)).resolves.toBeUndefined();
   });
+  // onRecordChanged never rejects either, but it REPORTS what was lost so the render-outbox consumer can retry (HFY-TSK-178).
+  it("onRecordChanged resolves when every dependency throws, and reports the loss", async () => {
+    await expect(failing.onRecordChanged([{ subject: "person:P9", actor: null }])).resolves.toEqual({ error: true, lost: 1 });
+  });
   it("a hostile input shape does not throw either", async () => {
-    await expect(failing.onRecordChanged(null)).resolves.toBeUndefined();
+    await expect(failing.onRecordChanged(null)).resolves.toEqual({ lost: 0 });
     await expect(failing.onModeration()).resolves.toBeUndefined();
   });
 });
