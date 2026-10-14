@@ -57,12 +57,23 @@ const bodyOf = (out, name) => {
   return body === undefined ? { ok: true, action: name } : body;
 };
 
+/** A reply that is RETURNED (not thrown) with a status of 400 or more is a tool error, never a success: the same HttpError a thrown failure would be. */
+const failIfError = (out, problem) => {
+  const status = out?.statusCode ?? out?.status;
+  if (typeof status !== "number" || status < 400) return;
+  let body = out.body;
+  if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = undefined; } }
+  const e = new HttpError(status, typeof body?.error === "string" ? body.error : "error", typeof body?.message === "string" ? body.message : `status ${status}`);
+  throw problem ? problemError(e) : e;
+};
+
 /** Handlers derived from the route registry: one per route with an `mcp` member. `invoke(principal, routeName, parts)` runs the route's own handler. */
 export function buildMcpRegistry(invoke) {
   return ROUTES.filter((r) => r.mcp).map((r) => ({
     name: tokenName(r), description: r.mcp.description, inputSchema: r.mcp.input, annotations: annotations(r), action: r.name,
     run: async (args, ctx) => {
       const out = await invoke(ctx.principal, r.name, r.mcp.args(args)).catch((e) => { throw r.mcp.problem ? problemError(e) : e; });
+      failIfError(out, r.mcp.problem);
       return bodyOf(out, r.name);
     },
     ...(r.mcp.preview ? { preview: async (args, principal) => bodyOf(await invoke(principal, r.name, r.mcp.preview(args)), r.name) } : {}),
@@ -81,12 +92,14 @@ const problemError = (e) => (e instanceof HttpError
  * The agent dry run with a real plan. The kit core answers a mutating tool call in dry_run mode with a ResolvedCall and never runs the handler. For a tool
  * with a `preview` (hfy_changes_submit), when that ResolvedCall is an allowed dry run the route's own dry_run plan is attached as `plan`, or the
  * problem as `planError`. The plan path writes nothing (changes.js: dry_run stops after planning, before any receipt, PROP# or IDX# row).
+ * DELIBERATE kit-core extension (RG-5 reviewers: this is host code wrapping server.fetch, not kit behaviour): it re-reads the request, handles single
+ * and batch tools/call messages, trusts the kit's own decision.effect, and passes every other message and any non-JSON reply through untouched.
+ * Upstreaming a `preview` hook to @io-kit/mcp would retire it.
  */
 export function withPlanPreview(server, registry) {
   const previews = new Map(registry.filter((h) => h.preview).map((h) => [h.name, h]));
-  const attach = async (request, principal, res) => {
-    let msg;
-    try { msg = JSON.parse(await request.text()); } catch { return res; }
+  // One JSON-RPC message and its reply. A tool without a preview, a non-dry-run reply or a non-tools/call message is returned untouched.
+  const attachOne = async (msg, principal, res) => {
     const h = msg?.method === "tools/call" ? previews.get(msg.params?.name) : undefined;
     const sc = res?.result?.structuredContent;
     if (!h || sc?.kind !== "resolved_call" || sc.mode !== "dry_run" || sc.decision?.effect !== "allow") return res;
@@ -101,12 +114,23 @@ export function withPlanPreview(server, registry) {
     const structuredContent = { ...sc, ...extra };
     return { ...res, result: { ...res.result, content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent } };
   };
+  // A JSON-RPC batch is previewed element by element: replies are matched to requests by id.
+  const attach = async (request, principal, res) => {
+    let msg;
+    try { msg = JSON.parse(await request.text()); } catch { return res; }
+    if (Array.isArray(msg) && Array.isArray(res)) {
+      return Promise.all(res.map((r) => attachOne(msg.find((m) => m?.id !== undefined && m.id === r?.id), principal, r)));
+    }
+    return Array.isArray(msg) || Array.isArray(res) ? res : attachOne(msg, principal, res);
+  };
   return {
     ...server,
     fetch: async (request, principal) => {
       const res = await server.fetch(request.clone(), principal);
       if (res.status !== 200 || previews.size === 0) return res;
-      const out = await attach(request, principal, await res.clone().json());
+      let body;
+      try { body = await res.clone().json(); } catch { return res; }
+      const out = await attach(request, principal, body);
       return new Response(JSON.stringify(out), { status: 200, headers: res.headers });
     },
   };

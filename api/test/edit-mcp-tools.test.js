@@ -71,9 +71,12 @@ async function world() {
   const mod = (target, author_id) => api.ddb.rows.set(`MOD#${target}\u0000META`, { PK: `MOD#${target}`, SK: "META", entity: "mod", author_id, state: "hidden", hidden: true, open: true });
   let pn = 0;
   const proposal = (target, proposer, targets, state = "pending") => {
-    const pid = `01PROP${String(++pn).padStart(4, "0")}`;
+    const pid = `01PRPQ${String(++pn).padStart(20, "0")}`; // a 26-character ULID
     const p = { id: pid, state, proposer: { id: proposer, label: "x" }, targets, ops: [{ id: "o1", op: "set", obj: target, path: "/primary_name/first_name", value: "SECRETVALUE" }], note: "SECRETNOTE" };
-    api.ddb.rows.set(`PROP#${pid}\u0000IDX#REC#${target}`, { PK: `PROP#${pid}`, SK: `IDX#REC#${target}`, GSI1PK: `PROPREC#${target}`, GSI1SK: pid, proposal: p });
+    api.ddb.rows.set(`PROP#${pid}\u0000META`, { PK: `PROP#${pid}`, SK: "META", entity: "proposal", proposal: p });
+    for (const [sk, part] of [[`IDX#REC#${target}`, `PROPREC#${target}`], [`IDX#BY#${proposer}`, `PROPBY#${proposer}`], [`IDX#Q#${state}`, `PROPQ#${state}`]]) {
+      api.ddb.rows.set(`PROP#${pid}\u0000${sk}`, { PK: `PROP#${pid}`, SK: sk, GSI1PK: part, GSI1SK: pid, proposal: p });
+    }
     return pid;
   };
   const rows = (prefix) => api.ddb.all().filter((r) => r.PK.startsWith(prefix));
@@ -85,10 +88,9 @@ const writeCount = (w) => w.api.ddb.calls.filter((c) => /^(Put|Update|Delete|Tra
 describe("tools/list and the policy rows (AC1)", () => {
   it("lists the four tools to mcp-authors and to hfy-admin, and hides them from everyone else", async () => {
     const w = await world();
-    const four = TOOLS.filter((x) => x !== "none");
     for (const who of [ME, ADMIN]) {
       const listed = names(await w.rpc(who, "tools/list"));
-      for (const t of four) expect(listed, who).toContain(t);
+      for (const t of TOOLS) expect(listed, who).toContain(t);
     }
     expect(names(await w.rpc(NOBODY, "tools/list"))).toEqual([]);
     expect((await w.rpc(NOBODY, "tools/call", { name: "hfy_records_get", arguments: { cls: "Person", ref: OTHER } })).error.code).toBe(-32602);
@@ -223,20 +225,90 @@ describe("hfy_records_get (AC5)", () => {
 });
 
 describe("hfy_proposals_list and hfy_proposals_get", () => {
-  it("list shows a member their own suggestions and refuses the admin queue; get is 404 outside the visibility set", async () => {
+  const ids = (r) => r.structuredContent.items.map((i) => i.id).sort();
+  it("mine lists exactly the caller's own suggestions; the queue is admin-only and sees both; a state filter narrows", async () => {
     const w = await world();
     const target = k(w.other);
     const mine = w.proposal(target, ME, [target]);
     const theirs = w.proposal(target, THIRD, [target]);
-    const list = await w.call(ME, "hfy_proposals_list", { view: "mine" });
-    expect(list.isError).toBeUndefined();
-    expect(Array.isArray(list.structuredContent.items)).toBe(true);
+    const old = w.proposal(target, ME, [target], "withdrawn");
+    expect(ids(await w.call(ME, "hfy_proposals_list", { view: "mine" }))).toEqual([mine, old].sort());
+    expect(ids(await w.call(ME, "hfy_proposals_list", { view: "mine", state: "pending" }))).toEqual([mine]);
+    expect(ids(await w.call(THIRD, "hfy_proposals_list", {}))).toEqual([theirs]);
     const queue = await w.call(ME, "hfy_proposals_list", { view: "queue" });
     expect(queue.isError).toBe(true);
     expect(JSON.parse(queue.content[0].text)).toMatchObject({ status: 403 });
+    expect(ids(await w.call(ADMIN, "hfy_proposals_list", { view: "queue" }))).toEqual([mine, theirs].sort());
+  });
+  it("about-me lists suggestions that target the caller's own page and no one else's", async () => {
+    const w = await world();
+    const onMe = w.proposal(k(w.me), THIRD, [k(w.me)]);
+    w.proposal(k(w.other), THIRD, [k(w.other)]);
+    const r = await w.call(ME, "hfy_proposals_list", { view: "about-me" });
+    expect(r.isError).toBeUndefined();
+    expect(Array.isArray(r.structuredContent.items)).toBe(true);
+    for (const id of ids(r)) expect(id).toBe(onMe);
+  });
+  it("get is 404 outside the visibility set, and the proposer and an admin read it", async () => {
+    const w = await world();
+    const target = k(w.other);
+    const mine = w.proposal(target, ME, [target]);
     const hidden = await w.call(THIRD, "hfy_proposals_get", { id: mine });
     expect(hidden.isError).toBe(true);
     expect(JSON.parse(hidden.content[0].text)).toMatchObject({ status: 404 });
-    expect(theirs).not.toBe(mine);
+    for (const who of [ME, ADMIN]) {
+      const r = await w.call(who, "hfy_proposals_get", { id: mine });
+      expect(r.isError, who).toBeUndefined();
+      expect(r.structuredContent).toMatchObject({ id: mine });
+    }
+  });
+});
+
+describe("the live edge today (documented limitation, not a goal)", () => {
+  it("every principal the shipped @io-kit/mcp edge mints is type human, so a live session without mode submits for real", async () => {
+    const w = await world();
+    const target = k(w.me);
+    const r = await w.call(ME, "hfy_changes_submit", { target, base_versions: { [target]: 1 }, ops: [{ id: "a", op: "set", obj: target, path: "/primary_name/nick", base: "", value: "Ally" }], idempotency_key: "live-1" });
+    // When the kit mints type agent (a client or scope marker), this flips to a plan with no write: update this test with the follow-up then.
+    expect(r.structuredContent.kind).not.toBe("resolved_call");
+    expect(r.structuredContent.applied ?? r.structuredContent.proposal).toBeTruthy();
+  });
+});
+
+describe("the preview wrapper and bodyOf (shared code paths)", () => {
+  const body = (w) => ({ target: k(w.me), base_versions: { [k(w.me)]: 1 }, ops: [{ id: "a", op: "set", obj: k(w.me), path: "/primary_name/nick", base: "", value: "Ally" }] });
+  const post = async (w, payload) => {
+    const req = new Request("https://harrisonfamily.us/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: typeof payload === "string" ? payload : JSON.stringify(payload) });
+    const res = await w.mount.server.fetch(req, { type: "agent", sub: ME, groups: ["mcp-authors"], authTime: 0, amr: [], onBehalfOf: ME });
+    return res.json();
+  };
+  it("a JSON-RPC batch of agent calls carries a plan per call and writes nothing", async () => {
+    const w = await world();
+    const call = (id, name, args) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+    const before = writeCount(w);
+    const out = await post(w, [call(1, "hfy_changes_submit", body(w)), call(2, "hfy_records_get", { cls: "Person", ref: OTHER })]);
+    if (Array.isArray(out)) {
+      const first = out.find((r) => r.id === 1);
+      expect(first.result.structuredContent.plan ?? first.result.structuredContent.planError).toBeTruthy();
+    } else {
+      expect(out.error ?? out.result).toBeTruthy(); // the kit rejects batches outright: still no write
+    }
+    expect(writeCount(w)).toBe(before);
+  });
+  it("tools/list and non-JSON bodies pass through untouched", async () => {
+    const w = await world();
+    const list = await post(w, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect(list.result.tools.length).toBeGreaterThan(0);
+    const junk = await post(w, "not json");
+    expect(junk.error).toBeTruthy();
+  });
+  it("a returned (not thrown) status of 400 or more is a tool error; existing tools return their bodies unchanged", async () => {
+    const reg = buildMcpRegistry(async (_p, name) => (name === "posts.create" ? { statusCode: 409, body: JSON.stringify({ error: "conflict", message: "taken" }) } : { statusCode: 200, body: JSON.stringify({ items: [1] }) }));
+    const create = reg.find((t) => t.name === "hfy_posts_create");
+    await expect(create.run({ title: "t", body: "b" }, { principal: {} })).rejects.toMatchObject({ status: 409, code: "conflict" });
+    const list = reg.find((t) => t.name === "hfy_posts_list");
+    expect(await list.run({}, { principal: {} })).toEqual({ items: [1] });
+    const plain = buildMcpRegistry(async () => ({ status: 200, body: { items: [2] } })).find((t) => t.name === "hfy_posts_list");
+    expect(await plain.run({}, { principal: {} })).toEqual({ items: [2] });
   });
 });

@@ -75,7 +75,7 @@ const MCP = {
   "changes.post": { tool: "hfy_changes_submit", description: "Submit edits to records: {target, base_versions, ops, note?, route?}. The fields you may edit save now and the rest becomes one suggestion for an admin to decide; there is no tool to approve. Agents get the plan only (mode dry_run is the default): {plan: {direct, review}, warnings, errors}. A real submission (a signed-in human, mode execute) needs an idempotency_key.",
     input: schema({
       target: str("Record key such as Person:<handle>"), base_versions: { type: "object", description: "Record key to the version your edit is based on" },
-      ops: { type: "array", items: { type: "object" }, description: "EditOps (set, add, remove, move, create, delete)" }, note: { type: "string", maxLength: 1000 },
+      ops: { type: "array", items: { type: "object" }, description: "EditOps, each {id, op, obj, ...}: set {path, base, value}, add {path, value}, remove {path, base}, move {path}, delete {base}, create (see docs/reference/mcp-server.md for each shape)" }, note: { type: "string", maxLength: 1000 },
       route: { enum: ["auto", "review"], description: "review is for admins" }, idempotency_key: str("1 to 128 visible characters; required to submit"),
     }, ["ops"]),
     args: (a) => ({ body: pick(a, ["target", "base_versions", "ops", "note", "route", "idempotency_key"]) }), problem: true,
