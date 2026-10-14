@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1874
+  },
+  "description": null,
+  "grampsId": "E0008",
+  "handle": "e2e851e70865096e016e9cf795b8",
+  "label": "Death",
+  "place": null,
+  "type": {
+    "code": 13,
+    "string": "Death"
+  }
+}

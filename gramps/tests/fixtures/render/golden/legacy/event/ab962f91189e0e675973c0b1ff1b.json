@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1949
+  },
+  "description": null,
+  "grampsId": "E9009",
+  "handle": "ab962f91189e0e675973c0b1ff1b",
+  "label": "Birth",
+  "place": {
+    "displayName": "Notecity",
+    "grampsId": "P9002",
+    "handle": "55404a8e9b32f2759bf1fad4004e",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

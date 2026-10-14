@@ -147,27 +147,43 @@ describe("caps.json (AC2)", () => {
   });
 });
 
-describe("uploads.presign (HFY-TSK-067)", () => {
+describe("uploads.presign (HFY-TSK-067; privacy-guard-existing-paths AC6)", () => {
   const ok = { filename: "Grandma's Garden (1).JPG", contentType: "image/jpeg", size: 2048 };
-  it("401 without a session; 201 returns uploadUrl + publicUrl under uploads/posts/<ulid>/<safe-name> (not media/, HFY-R58)", async () => {
+  it("401 without a session; 201 returns uploadUrl + publicUrl under uploads/posts/<ulid>/photo.<ext> (not media/, HFY-R58)", async () => {
     expect((await w.call("POST", "/api/uploads", { body: ok })).status).toBe(401);
     const r = await w.call("POST", "/api/uploads", { token: ann, body: ok });
     expect(r.status).toBe(201);
-    expect(r.body.publicUrl).toMatch(/^https:\/\/harrisonfamily\.us\/uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/grandma-s-garden-1\.jpg$/);
+    expect(r.body.publicUrl).toMatch(/^https:\/\/harrisonfamily\.us\/uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/photo\.jpg$/);
     expect(r.body.key.startsWith("media/")).toBe(false);
     expect(r.body.headers).toEqual({ "Content-Type": "image/jpeg" }); // the client must send exactly this: it is signed
     expect(r.body.uploadUrl).toContain(`https://presign.test/harrisonfamily-frontend/${r.body.key}`);
     expect(w.presigned.at(-1)).toMatchObject({ bucket: "harrisonfamily-frontend", contentType: "image/jpeg", size: 2048 });
   });
-  it("400 for non-images, oversize, bad size or missing filename", async () => {
-    for (const body of [{ ...ok, contentType: "application/pdf" }, { ...ok, contentType: "image/svg+xml" }, { ...ok, size: 10 * 1024 * 1024 + 1 }, { ...ok, size: 0 }, { ...ok, size: "9" }, { ...ok, filename: "" }]) {
+  it("400 for non-images, oversize or a bad size; the file name is optional and ignored", async () => {
+    for (const body of [{ ...ok, contentType: "application/pdf" }, { ...ok, contentType: "image/svg+xml" }, { ...ok, size: 10 * 1024 * 1024 + 1 }, { ...ok, size: 0 }, { ...ok, size: "9" }]) {
       expect((await w.call("POST", "/api/uploads", { token: ann, body })).status).toBe(400);
     }
-    expect((await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, size: 10 * 1024 * 1024, contentType: "image/heic" } })).status).toBe(201);
+    expect((await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, size: 10 * 1024 * 1024, contentType: "image/heic" } })).body.key).toMatch(/\/photo\.heic$/);
+    for (const filename of [undefined, "", 7, "../../../etc/passwd.png"]) {
+      const r = await w.call("POST", "/api/uploads", { token: ann, body: { contentType: "image/png", size: 9, ...(filename === undefined ? {} : { filename }) } });
+      expect(r.status).toBe(201);
+      expect(r.body.key).toMatch(/^uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/photo\.png$/);
+    }
   });
-  it("path traversal in the filename cannot escape the key prefix", async () => {
-    const r = await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, filename: "../../../etc/passwd.png" } });
-    expect(r.body.key).toMatch(/^uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/passwd\.jpg$/);
+  it("the client file name never reaches the key, the URL or the store", async () => {
+    const r = await w.call("POST", "/api/uploads", { token: ann, body: { ...ok, filename: "Jane Example 555-0142.jpg" } });
+    expect(JSON.stringify(r.body)).not.toMatch(/jane|example|0142/i);
+    expect(JSON.stringify(w.ddb.all())).not.toMatch(/jane|example|0142/i);
+    expect(JSON.stringify(w.presigned)).not.toMatch(/jane|example|0142/i);
+  });
+  it("binds the presign to its uploader: UPLOAD#<ulid> {owner, purpose, key, contentType, ttl 24 h}", async () => {
+    const r = await w.call("POST", "/api/uploads", { token: ann, body: ok });
+    const id = r.body.key.split("/")[2];
+    const item = w.ddb.all().find((i) => i.PK === `UPLOAD#${id}`);
+    expect(item).toMatchObject({ SK: "META", entity: "upload", owner: "I0001", purpose: "post", key: r.body.key, contentType: "image/jpeg", size: 2048 });
+    const created = Date.parse(item.created_at) / 1000;
+    expect(item.ttl - Math.floor(created)).toBe(24 * 60 * 60);
+    expect(item).not.toHaveProperty("attached");
   });
 });
 

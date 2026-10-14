@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1866
+  },
+  "description": null,
+  "grampsId": "E0036",
+  "handle": "fc16a4cdc0843ba83ffee9c28fac",
+  "label": "Marriage",
+  "place": {
+    "displayName": "Exampleville",
+    "grampsId": "P0002",
+    "handle": "2274a9f6cb93e7050af9f7b80471",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 1,
+    "string": "Marriage"
+  }
+}

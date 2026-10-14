@@ -1,0 +1,696 @@
+{
+  "about": "Every difference between the live ETL (plus build_search_index.js) and hfygramps.render on P(fixture). Written by make_legacy_golden.py; checked by test_render_parity.py.",
+  "changed": [
+    {
+      "changes": [
+        {
+          "legacy": "Sample Farm",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0003",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "92f24ae20142c6b4030186345c8d",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/06eb48e82e4e53f23d7154dadc6f.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Homestead",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0004",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "0e1e5d636de2d60b22cca1ad2787",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/23bbba04aa92314e4440d4d1ced6.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Homestead",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0004",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "0e1e5d636de2d60b22cca1ad2787",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/3082b5202c459fb5e81a84104364.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Sample Farm",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0003",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "92f24ae20142c6b4030186345c8d",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/3cb003eefc44476d714b99440394.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Quill Lane",
+          "pointer": "/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9003",
+          "pointer": "/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "b72d28c95288f538a57e7a2da25c",
+          "pointer": "/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "event/722c5b40d2b2d136bcfa67566345.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "12",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0010",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "47876697dc71ed8439b9b7957038",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/87eb53490d9d746a7a345d3e9074.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "event/b9fb80dd89cf0a372fa15fe66523.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Sample Hall",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0007",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "5817b548b286c5bed4b007b6e744",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/cb1fb260cbf06c27cb3e80dfcf84.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "event/d0556447016691d91e51a710b07c.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Example Street",
+          "pointer": "/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0006",
+          "pointer": "/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "d557fc2fadb8b92bfa96528704c5",
+          "pointer": "/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "event/fb4c5987011c531caf764fa3bf97.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/events/1/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/events/1/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/events/1/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "family/8d77b8cc2d0624a52640a88db99c.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Sample Farm",
+          "pointer": "/events/0/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0003",
+          "pointer": "/events/0/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "92f24ae20142c6b4030186345c8d",
+          "pointer": "/events/0/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        },
+        {
+          "legacy": "Sample Farm",
+          "pointer": "/lifespan/birth/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0003",
+          "pointer": "/lifespan/birth/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "92f24ae20142c6b4030186345c8d",
+          "pointer": "/lifespan/birth/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "person/I0001.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Sample Farm",
+          "pointer": "/events/0/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0003",
+          "pointer": "/events/0/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "92f24ae20142c6b4030186345c8d",
+          "pointer": "/events/0/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        },
+        {
+          "legacy": "Sample Farm",
+          "pointer": "/lifespan/birth/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0003",
+          "pointer": "/lifespan/birth/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "92f24ae20142c6b4030186345c8d",
+          "pointer": "/lifespan/birth/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "person/I0002.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Homestead",
+          "pointer": "/events/0/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0004",
+          "pointer": "/events/0/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "0e1e5d636de2d60b22cca1ad2787",
+          "pointer": "/events/0/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        },
+        {
+          "legacy": "Example Street",
+          "pointer": "/events/2/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0006",
+          "pointer": "/events/2/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "d557fc2fadb8b92bfa96528704c5",
+          "pointer": "/events/2/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        },
+        {
+          "legacy": "12",
+          "pointer": "/events/3/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0010",
+          "pointer": "/events/3/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "47876697dc71ed8439b9b7957038",
+          "pointer": "/events/3/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        },
+        {
+          "legacy": "The Homestead",
+          "pointer": "/lifespan/birth/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0004",
+          "pointer": "/lifespan/birth/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "0e1e5d636de2d60b22cca1ad2787",
+          "pointer": "/lifespan/birth/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "person/I0003.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "Sample Hall",
+          "pointer": "/events/0/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0007",
+          "pointer": "/events/0/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "5817b548b286c5bed4b007b6e744",
+          "pointer": "/events/0/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "person/I0005.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Homestead",
+          "pointer": "/events/3/place/displayName",
+          "render": "Exampleville"
+        },
+        {
+          "legacy": "P0004",
+          "pointer": "/events/3/place/grampsId",
+          "render": "P0002"
+        },
+        {
+          "legacy": "0e1e5d636de2d60b22cca1ad2787",
+          "pointer": "/events/3/place/handle",
+          "render": "2274a9f6cb93e7050af9f7b80471"
+        }
+      ],
+      "key": "person/I0009.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/events/1/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/events/1/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/events/1/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        },
+        {
+          "legacy": "Quill Lane",
+          "pointer": "/events/3/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9003",
+          "pointer": "/events/3/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "b72d28c95288f538a57e7a2da25c",
+          "pointer": "/events/3/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        },
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/familyTree/spouseFamilies/0/events/1/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/familyTree/spouseFamilies/0/events/1/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/familyTree/spouseFamilies/0/events/1/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "person/I9001.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/familyTree/spouseFamilies/0/events/1/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/familyTree/spouseFamilies/0/events/1/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/familyTree/spouseFamilies/0/events/1/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "person/I9002.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/familyTree/parentFamilies/0/events/1/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/familyTree/parentFamilies/0/events/1/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/familyTree/parentFamilies/0/events/1/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "person/I9003.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": "The Summer Home",
+          "pointer": "/familyTree/parentFamilies/0/events/1/place/displayName",
+          "render": "Notecity"
+        },
+        {
+          "legacy": "P9004",
+          "pointer": "/familyTree/parentFamilies/0/events/1/place/grampsId",
+          "render": "P9002"
+        },
+        {
+          "legacy": "bca43347c8d814b471dd5152b28c",
+          "pointer": "/familyTree/parentFamilies/0/events/1/place/handle",
+          "render": "55404a8e9b32f2759bf1fad4004e"
+        }
+      ],
+      "key": "person/I9004.json",
+      "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "entry": "0e1e5d636de2d60b22cca1ad2787",
+          "legacy": {
+            "displayName": "The Homestead",
+            "grampsId": "P0004",
+            "handle": "0e1e5d636de2d60b22cca1ad2787"
+          },
+          "render": null
+        },
+        {
+          "entry": "47876697dc71ed8439b9b7957038",
+          "legacy": {
+            "displayName": "12",
+            "grampsId": "P0010",
+            "handle": "47876697dc71ed8439b9b7957038"
+          },
+          "render": null
+        },
+        {
+          "entry": "5817b548b286c5bed4b007b6e744",
+          "legacy": {
+            "displayName": "Sample Hall",
+            "grampsId": "P0007",
+            "handle": "5817b548b286c5bed4b007b6e744"
+          },
+          "render": null
+        },
+        {
+          "entry": "92f24ae20142c6b4030186345c8d",
+          "legacy": {
+            "displayName": "Sample Farm",
+            "grampsId": "P0003",
+            "handle": "92f24ae20142c6b4030186345c8d"
+          },
+          "render": null
+        },
+        {
+          "entry": "b72d28c95288f538a57e7a2da25c",
+          "legacy": {
+            "displayName": "Quill Lane",
+            "grampsId": "P9003",
+            "handle": "b72d28c95288f538a57e7a2da25c"
+          },
+          "render": null
+        },
+        {
+          "entry": "bca43347c8d814b471dd5152b28c",
+          "legacy": {
+            "displayName": "The Summer Home",
+            "grampsId": "P9004",
+            "handle": "bca43347c8d814b471dd5152b28c"
+          },
+          "render": null
+        },
+        {
+          "entry": "d557fc2fadb8b92bfa96528704c5",
+          "legacy": {
+            "displayName": "Example Street",
+            "grampsId": "P0006",
+            "handle": "d557fc2fadb8b92bfa96528704c5"
+          },
+          "render": null
+        }
+      ],
+      "key": "place/index.json",
+      "rule": "excluded-place"
+    }
+  ],
+  "event_order": "Events are ordered by the legacy key (date.sortval, label), ties in input order, for persons and for families. sortval orders them and is never published. No difference from the live ETL.",
+  "excluded_places": [
+    "P0003",
+    "P0004",
+    "P0006",
+    "P0007",
+    "P0010",
+    "P9003",
+    "P9004"
+  ],
+  "fixture_basis": "P(fixture) is the synthetic tree plus the fictional objects in parity.supplement(), run through parity.project(), a STAND-IN for the redaction projection (private flag and holds only). The parity claim is only as strong as that stand-in. Regenerate the golden with make_legacy_golden.py once projection-py exists and replaces it.",
+  "manifest_order": "place/index.json and media/index.json: the live ETL lists entries in set-iteration order, which depends on PYTHONHASHSEED. make_legacy_golden.py pins the legacy run's order to (grampsId, handle), the order the renderer sorts by, so these two manifests match BY CONSTRUCTION, not by independent parity. The renderer's order is the deliberate one; the live ETL has none. person/index.json and the search-index files are ordered the same way on both sides.",
+  "no_delta_cases": {
+    "held": [
+      "I0011",
+      "N0002",
+      "N0003",
+      "N0005",
+      "N0006",
+      "N0009",
+      "N9102",
+      "O0004",
+      "O0006"
+    ],
+    "orphan_of_private": [
+      "E0019",
+      "E0037"
+    ],
+    "private": [
+      "C0003",
+      "C9003",
+      "E0017",
+      "E0018",
+      "F0006",
+      "I0010",
+      "N0007",
+      "N0008",
+      "N9103",
+      "O0005",
+      "O0006",
+      "P0008",
+      "R0002",
+      "S0002",
+      "S9003"
+    ],
+    "withheld_by_text_gate": [
+      "N0010"
+    ]
+  },
+  "normalised": [
+    "generatedAt: build_search_index.js stamps new Date(); the legacy run fixes it to the same value the renderer is given.",
+    "Directory order: build_search_index.js reads fs.readdirSync unsorted; the legacy run sorts it (name order), as the renderer does.",
+    "place/index.json and media/index.json: the live ETL lists entries in set-iteration order (it depends on PYTHONHASHSEED); both sides are sorted by (grampsId, handle).",
+    "Media blobs: the live ETL copies the binaries and the renderer never writes them; only the JSON files are compared."
+  ],
+  "only_in_legacy": [
+    {
+      "key": "place/0e1e5d636de2d60b22cca1ad2787.json",
+      "rule": "excluded-place"
+    },
+    {
+      "key": "place/47876697dc71ed8439b9b7957038.json",
+      "rule": "excluded-place"
+    },
+    {
+      "key": "place/5817b548b286c5bed4b007b6e744.json",
+      "rule": "excluded-place"
+    },
+    {
+      "key": "place/92f24ae20142c6b4030186345c8d.json",
+      "rule": "excluded-place"
+    },
+    {
+      "key": "place/b72d28c95288f538a57e7a2da25c.json",
+      "rule": "excluded-place"
+    },
+    {
+      "key": "place/bca43347c8d814b471dd5152b28c.json",
+      "rule": "excluded-place"
+    },
+    {
+      "key": "place/d557fc2fadb8b92bfa96528704c5.json",
+      "rule": "excluded-place"
+    }
+  ],
+  "only_in_render": [],
+  "renderer_only": [
+    "Text gate: the live ETL publishes a note, region note or MediaRef attribute value only from an io-approved per-object allowlist. The renderer publishes what the store view holds and withholds any text that default_text_gate flags (the R-18 detector or the live ETL's scanner). An io-visible decision. In P(fixture) only N0010 trips it (no_delta_cases.withheld_by_text_gate).",
+    "The same gate also covers Event.description, Media.desc (the media title falls back to the Gramps ID), the path and desc of a place URL (a contact URL or an e-mail type is dropped), citation titles and the value of a note LINK tag (userinfo in an href is refused). The live ETL publishes all of these as written. No case in P(fixture) trips them; test_render_rules.OtherFreeTextIsGated covers each."
+  ],
+  "rules": {
+    "excluded-place": {
+      "reference": "BRD2 section 11.1 (5.3), sync.md 5.3, D2-32, Q2-02 item 2",
+      "summary": "The renderer never publishes a street-level or home-like place (Street, Building, Number, Farm, or a custom type matching house|home|residence|address|apartment|apt|lot|farm). Its place file is not written, it leaves place/index.json, and every event or place reference to it is re-pointed to the nearest kept ancestor. The live ETL publishes all of them."
+    }
+  },
+  "version": 1
+}

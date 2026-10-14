@@ -101,8 +101,8 @@ Facts:
 
 Paths:
 
-- [`islands/src/islands/`](../../islands/src/islands/): one entry per island. The entries are `shell.jsx`, `search.jsx`, `person.jsx`, `my-posts.jsx`, `timeline.jsx`, `posts.jsx` and `notifications.jsx`, plus `search.css` and `notifications.css`.
-- [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css` and `islands/src/comments.css` sit beside the directory.
+- [`islands/src/islands/`](../../islands/src/islands/): one entry per island. The entries are `shell.jsx`, `search.jsx`, `person.jsx`, `my-posts.jsx`, `timeline.jsx`, `posts.jsx` and `notifications.jsx`, `settings.jsx`, `about-cta.jsx` and `photo-tags.js`, plus their stylesheets.
+- [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `photo-tags.js` (the pure geometry, rect words and tag cleaning), `photo-tags-ui.js` (the DOM part of the photo tags island), `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css`, `islands/src/guard.css` and `islands/src/photo-tags.css` sit beside the directory.
 - [`islands/build.mjs`](../../islands/build.mjs): the build. It bundles the islands with esbuild and writes the outputs in [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract` and `lint:css`. Every dependency is pinned to an exact version.
 - [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs): the configuration of the island specs. See [Tests](#tests).
@@ -188,17 +188,21 @@ Paths:
   - `mcp.js`: the MCP mount.
   - `mcp-caps.js`: build-time views of the MCP surface.
   - `origin.js`: the `X-Origin-Verify` check.
-  - `content.js`: posts.
+  - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
+  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `allowlist-store.js`: the `ALLOW#` grant and revoke transaction items (conditional, audited) and the composite member reader that the auth edge and any later allowlist consumer, such as the chat directory route, share (HFY-TSK-134).
   - `notify.js`: push notifications and their templates.
-  - `uploads.js`: the upload route.
+  - `uploads.js`: the upload route and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
   - `records/semantics.js`, `records/gcalendar.js`: the Gramps rules for edited records (dates and `sortval`, references, two-sided family links, ancestry cycles, derived birth and death indexes) and the port of Gramps' calendar arithmetic. Pure, and no route reaches them yet.
+  - `records/relationships.js`, `records/duplicates.js`: the relationship intent compiler (parents, children, spouse and unlink intents to Gramps Family and ChildRef EditOps, checked with `semantics.js`) and the accent-stripped duplicate-name matcher. Pure, and no route reaches them yet.
   - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
+- [`api/scripts/scan-contact-info.mjs`](../../api/scripts/scan-contact-info.mjs): the one-off, read-only scan of existing posts and comments for contact information; counts only ([API: Contact-information guard](api.md#contact-information-guard)).
 - [`api/scripts/gen-caps.mjs`](../../api/scripts/gen-caps.mjs): writes `api/dist/caps.json` from `routes.js`, `api/dist/policy.json` from `policy.js`, and `api/dist/mcp/tools.json` and `api/dist/mcp/parity-caps.json` from `mcp-caps.js`.
 - [`api/parity/`](../../api/parity/): the parity files of the MCP surface. See [MCP server](#mcp-server).
 - [`api/README.md`](../../api/README.md): a short pointer to the [API reference](api.md).
@@ -299,7 +303,7 @@ Paths:
 - [`edge-gate/src/index.mjs`](../../edge-gate/src/index.mjs): the Lambda@Edge entry. It reads `config.json`, which the package script bakes into the zip.
 - [`edge-gate/gate.config.json`](../../edge-gate/gate.config.json): the issuer, audience, JWKS URL, cookie name, sign-in path and timing settings.
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): the gate's tests. See [Tests](#tests).
-- [`graph/test/`](../../graph/test/): `node:test` suites `build`, `schema`, `verify`, `source`, `cli` and `generations`. `fixtures/gramps.mjs` builds the synthetic Gramps objects and `fixtures/messy.graph.golden.json` is the golden output.
+- [`graph/test/`](../../graph/test/): `node:test` suites `build`, `schema`, `verify`, `source`, `cli`, `generations` and `photo-edges`. `fixtures/gramps.mjs` builds the synthetic Gramps objects and `fixtures/messy.graph.golden.json` is the golden output.
 - [`infrastructure/cloudformation/edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml): the us-east-1 stack `hfy-edge-gate`, with the function, its role and a retained version. Its output `EdgeGateVersionArn` is the version to attach.
 - [`scripts/ci/package-edge-gate.sh`](../../scripts/ci/package-edge-gate.sh): builds `dist/hfy-edge-gate.zip`.
 - [`scripts/infra/add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh): attaches the gate to the data paths and `/uploads/*`, or detaches it with `--remove`.
@@ -485,7 +489,7 @@ Facts:
 Paths:
 
 - [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers` and `txn`. `fake-ddb.js` and `world.js` are helpers.
-- [`api/test/records/`](../../api/test/records/): `node:test` suites `ops.node-test.js` (the EditOp engine) and `semantics.node-test.js` (the Gramps rules, run against `fixtures/gramps-semantics.golden.json`, the values Gramps 6.0.6 computed). Run by `npm test` after Vitest.
+- [`api/test/records/`](../../api/test/records/): `node:test` suites `ops.node-test.js` (the EditOp engine), `semantics.node-test.js` (the Gramps rules, run against `fixtures/gramps-semantics.golden.json`, the values Gramps 6.0.6 computed) and `relationships.node-test.js` (the relationship compiler and the duplicate matcher, run against `fixtures/gramps-relationships.golden.json`, the objects Gramps 6.0.6 left after each scenario). Run by `npm test` after Vitest.
 - [`auth/test/`](../../auth/test/): Vitest. The suites are `cognito`, `edge`, `linkstore`, `oauth`, `origin`, `passkey`, `passkeystore` and `userinfo`. `fake-table.js` is a helper.
 - [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs): a Playwright end-to-end passkey test.
 - [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs): a Playwright end-to-end test of the styled sign-in pages.
@@ -503,7 +507,7 @@ Paths:
   - `test_privacy_terms_pages.py`: `11ty/privacy/index.html` and `11ty/terms/index.html` carry each required section of the approved privacy and terms amendment, `docs/drafts/privacy-terms-2026-10-update.md` (HFY-TSK-239).
   - `stub/aws`, `cf-echo.jq`, `fixtures/live-like.json` and `fixtures/live-with-uploads.json`: test doubles.
 - [`tests/login-flow/`](../../tests/login-flow/): Playwright specs `login-flow.spec.ts` and `auth-v2.spec.ts`.
-- [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py): `unittest`, standard library only. It runs [`scripts/records/check_gramps_goldens.py`](../../scripts/records/check_gramps_goldens.py) over the committed Gramps goldens and checks that tampering is caught.
+- [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py): `unittest`, standard library only. They run [`scripts/records/check_gramps_goldens.py`](../../scripts/records/check_gramps_goldens.py) and [`check_relationship_goldens.py`](../../scripts/records/check_relationship_goldens.py) over the committed Gramps goldens and check that tampering is caught.
 - [`scripts/mcp/token-smoke.sh`](../../scripts/mcp/token-smoke.sh): a live MCP token check.
 
 Facts:
@@ -623,7 +627,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `edge-gate/` | Private data gate |
 | `functions/`, `gcloud/`, `lambda/` | Legacy sign-in |
 | `graph/` | Family graph builder |
-| `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (the `tests` key of `ci.manifest.yaml` runs it on pull requests). `gramps/redaction/redaction-v1.json` is the redaction policy (schema, golden vectors in `gramps/redaction/vectors/`, generators `make_vectors.py` and `render_reference.py`); `gramps/hfygramps/rules.py` loads it and holds `is_birth_like`, the one birth-like predicate. See [Redaction policy v1](redaction-policy.md). |
+| `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (the `tests` key of `ci.manifest.yaml` runs it on pull requests). `gramps/hfygramps/render/` is the site renderer, `render_site(objects) -> {s3_key: bytes}`: the D-02-fixed ETL transforms and `build_search_index.js` as pure functions, with no caller yet (HFY-TSK-229). `gramps/tests/fixtures/` holds the synthetic tree and, under `render/`, the renderer's parity inputs, the live ETL's golden output and the expected-delta list. `gramps/redaction/redaction-v1.json` is the redaction policy (schema, golden vectors in `gramps/redaction/vectors/`, generators `make_vectors.py` and `render_reference.py`); `gramps/hfygramps/rules.py` loads it and holds `is_birth_like`, the one birth-like predicate. See [Redaction policy v1](redaction-policy.md). |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
 | `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/allowlist-store.mjs` is the read side of the DynamoDB allowlist (`ALLOW#` keys, `readAllowEntry`, `listAllowBySub`, `createCompositeMemberReader`); it takes the DynamoDB client and command classes as arguments, so it still imports nothing (HFY-TSK-134). `shared/redaction-rules.mjs` is the JavaScript port of the redaction predicates (`isBirthLike` and the date, place, coordinate, attribute and rect helpers); it takes the parsed `gramps/redaction/redaction-v1.json` as an argument and is tested against the golden vectors by `api/test/redaction-rules.test.js` ([Redaction policy v1](redaction-policy.md)). `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. `shared/legacy-form.mjs` is the join form's schema (`FIELDS`, `validateForm`, `mapToGramps`; surfaces.md 7.3): birth year only, male or female, place fields city and state only, every free-text field through the R-18 detector; `mapToGramps` takes `storeCurrentCity` (Q2-11(a)). It is not reachable from any deployed route yet. |

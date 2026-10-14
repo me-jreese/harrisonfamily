@@ -1,0 +1,34 @@
+[
+  {
+    "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+    "grampsId": "O0001",
+    "handle": "95c1e2e76d98047b229a3390d414",
+    "missing": false,
+    "s3Key": "media/95c1e2e76d98047b229a3390d414.jpg",
+    "size": 632
+  },
+  {
+    "checksum": null,
+    "grampsId": "O0002",
+    "handle": "401bbbaee7a25c9cd837399ff571",
+    "missing": true,
+    "s3Key": "media/401bbbaee7a25c9cd837399ff571.jpg",
+    "size": null
+  },
+  {
+    "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "grampsId": "O0003",
+    "handle": "ed8a4fb4a7a879a66b2156c0e906",
+    "missing": false,
+    "s3Key": "media/ed8a4fb4a7a879a66b2156c0e906.jpg",
+    "size": 0
+  },
+  {
+    "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+    "grampsId": "O9001",
+    "handle": "d1cda1995d9d9c1567b848f58a96",
+    "missing": false,
+    "s3Key": "media/d1cda1995d9d9c1567b848f58a96.jpg",
+    "size": 632
+  }
+]

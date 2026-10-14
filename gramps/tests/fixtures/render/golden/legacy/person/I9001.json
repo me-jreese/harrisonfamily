@@ -1,0 +1,538 @@
+{
+  "displayName": "Quill Notevector",
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 0
+      },
+      "description": null,
+      "grampsId": "E9005",
+      "handle": "f074efef32cc260ff78fe4d643ee",
+      "label": "Education",
+      "place": null,
+      "type": {
+        "code": 26,
+        "string": "Education"
+      }
+    },
+    {
+      "date": {
+        "text": "",
+        "year": 0
+      },
+      "description": null,
+      "grampsId": "E9004",
+      "handle": "b9fb80dd89cf0a372fa15fe66523",
+      "label": "Residence",
+      "place": {
+        "displayName": "The Summer Home",
+        "grampsId": "P9004",
+        "handle": "bca43347c8d814b471dd5152b28c",
+        "latitude": null,
+        "longitude": null
+      },
+      "type": {
+        "code": 42,
+        "string": "Residence"
+      }
+    },
+    {
+      "date": {
+        "text": "",
+        "year": 1949
+      },
+      "description": null,
+      "grampsId": "E9009",
+      "handle": "ab962f91189e0e675973c0b1ff1b",
+      "label": "Birth",
+      "place": {
+        "displayName": "Notecity",
+        "grampsId": "P9002",
+        "handle": "55404a8e9b32f2759bf1fad4004e",
+        "latitude": null,
+        "longitude": null
+      },
+      "type": {
+        "code": 12,
+        "string": "Birth"
+      }
+    },
+    {
+      "date": {
+        "text": "",
+        "year": 1950
+      },
+      "description": "Moved into the lane house",
+      "grampsId": "E9001",
+      "handle": "722c5b40d2b2d136bcfa67566345",
+      "label": "Residence",
+      "place": {
+        "displayName": "Quill Lane",
+        "grampsId": "P9003",
+        "handle": "b72d28c95288f538a57e7a2da25c",
+        "latitude": null,
+        "longitude": null
+      },
+      "type": {
+        "code": 42,
+        "string": "Residence"
+      }
+    },
+    {
+      "date": {
+        "text": "",
+        "year": 1960
+      },
+      "description": null,
+      "grampsId": "E9002",
+      "handle": "90f39f66e04e95fb69702c37c71d",
+      "label": "Fixture Gathering",
+      "place": {
+        "displayName": "Lamp Landmark",
+        "grampsId": "P9005",
+        "handle": "9f7ae687c57a7d318756d75703d5",
+        "latitude": null,
+        "longitude": null
+      },
+      "type": {
+        "code": 0,
+        "string": "Fixture Gathering"
+      }
+    },
+    {
+      "date": {
+        "text": "",
+        "year": 1971
+      },
+      "description": null,
+      "grampsId": "E9006",
+      "handle": "87958472f785348e6057d8d18270",
+      "label": "Event",
+      "place": null,
+      "type": {
+        "code": null,
+        "string": null
+      }
+    },
+    {
+      "date": {
+        "text": "",
+        "year": 1999
+      },
+      "description": null,
+      "grampsId": "E9003",
+      "handle": "6c6368d3ef37c06174560155aa52",
+      "label": "Death",
+      "place": {
+        "displayName": "Notecity",
+        "grampsId": "P9002",
+        "handle": "55404a8e9b32f2759bf1fad4004e",
+        "latitude": null,
+        "longitude": null
+      },
+      "type": {
+        "code": 13,
+        "string": "Death"
+      }
+    }
+  ],
+  "familyTree": {
+    "parentFamilies": [],
+    "spouseFamilies": [
+      {
+        "children": [
+          {
+            "displayName": "Sage Notevector",
+            "frel": {
+              "code": 2,
+              "string": "Adopted"
+            },
+            "gender": "unspecified",
+            "grampsId": "I9003",
+            "handle": "18a011dd2d19d5425ee7ab2e127f",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": null
+              },
+              "death": {
+                "year": null
+              },
+              "summary": ""
+            },
+            "mrel": {
+              "code": 5,
+              "string": "Foster"
+            }
+          },
+          {
+            "displayName": "Wren Notevector",
+            "frel": {
+              "code": 7,
+              "string": "Fixture ward"
+            },
+            "gender": "female",
+            "grampsId": "I9004",
+            "handle": "f75bd58905a0153b789f844e7b65",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": null
+              },
+              "death": {
+                "year": null
+              },
+              "summary": ""
+            },
+            "mrel": {
+              "code": 1,
+              "string": "Birth"
+            }
+          }
+        ],
+        "events": [
+          {
+            "date": {
+              "text": "",
+              "year": 1975
+            },
+            "description": null,
+            "grampsId": "E9007",
+            "handle": "4bec3915d4b20e8bb288445f97a9",
+            "label": "Marriage",
+            "place": {
+              "displayName": "Notecity",
+              "grampsId": "P9002",
+              "handle": "55404a8e9b32f2759bf1fad4004e",
+              "latitude": null,
+              "longitude": null
+            },
+            "role": {
+              "code": 8,
+              "string": "Family"
+            },
+            "type": {
+              "code": 1,
+              "string": "Marriage"
+            }
+          },
+          {
+            "date": {
+              "text": "",
+              "year": 1976
+            },
+            "description": null,
+            "grampsId": "E9008",
+            "handle": "d0556447016691d91e51a710b07c",
+            "label": "Fixture Ceremony",
+            "place": {
+              "displayName": "The Summer Home",
+              "grampsId": "P9004",
+              "handle": "bca43347c8d814b471dd5152b28c",
+              "latitude": null,
+              "longitude": null
+            },
+            "role": {
+              "code": 0,
+              "string": "Fixture Role"
+            },
+            "type": {
+              "code": 0,
+              "string": "Fixture Ceremony"
+            }
+          }
+        ],
+        "father": {
+          "displayName": "Quill Notevector",
+          "gender": "male",
+          "grampsId": "I9001",
+          "handle": "7e5350b92612325e4d398cfedf96",
+          "isLiving": false,
+          "lifespan": {
+            "birth": {
+              "year": 1949
+            },
+            "death": {
+              "year": 1999
+            },
+            "summary": "1949\u20131999"
+          }
+        },
+        "grampsId": "F9001",
+        "handle": "8d77b8cc2d0624a52640a88db99c",
+        "mother": {
+          "displayName": "Rowan Tagvector",
+          "gender": "female",
+          "grampsId": "I9002",
+          "handle": "646aced328190be987524cae5dfa",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1976
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1976\u2013"
+          }
+        },
+        "type": {
+          "code": 2,
+          "string": "Civil Union"
+        }
+      }
+    ]
+  },
+  "gender": "male",
+  "givenName": "Quill",
+  "grampsId": "I9001",
+  "handle": "7e5350b92612325e4d398cfedf96",
+  "isLiving": false,
+  "lifespan": {
+    "birth": {
+      "place": {
+        "displayName": "Notecity",
+        "grampsId": "P9002",
+        "handle": "55404a8e9b32f2759bf1fad4004e",
+        "latitude": null,
+        "longitude": null
+      },
+      "year": 1949
+    },
+    "death": {
+      "place": {
+        "displayName": "Notecity",
+        "grampsId": "P9002",
+        "handle": "55404a8e9b32f2759bf1fad4004e",
+        "latitude": null,
+        "longitude": null
+      },
+      "year": 1999
+    },
+    "summary": "1949\u20131999"
+  },
+  "mediaGallery": [
+    {
+      "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+      "grampsId": "O9001",
+      "handle": "d1cda1995d9d9c1567b848f58a96",
+      "mime": "image/jpeg",
+      "missing": false,
+      "region": [
+        5,
+        5,
+        45,
+        95
+      ],
+      "s3Key": "media/d1cda1995d9d9c1567b848f58a96.jpg",
+      "size": 632,
+      "tags": [
+        {
+          "attributes": [
+            {
+              "type": "Description",
+              "value": "Standing at left"
+            },
+            {
+              "type": "Mood",
+              "value": "Cheerful"
+            }
+          ],
+          "citations": [
+            "Fixture Photo Archive"
+          ],
+          "grampsId": "I9001",
+          "isPrimary": true,
+          "name": "Quill Notevector",
+          "notes": [
+            {
+              "grampsId": "N9101",
+              "handle": "be7e073a8e2b19787d18b37c3a42",
+              "html": "<p>Standing at the left of the porch.</p>",
+              "raw": "Standing at the left of the porch."
+            }
+          ],
+          "rect": [
+            5,
+            5,
+            45,
+            95
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [
+            "Fixture Photo Archive"
+          ],
+          "grampsId": "I9002",
+          "isPrimary": true,
+          "name": "Rowan Tagvector",
+          "notes": [
+            {
+              "grampsId": "N9101",
+              "handle": "be7e073a8e2b19787d18b37c3a42",
+              "html": "<p>Standing at the left of the porch.</p>",
+              "raw": "Standing at the left of the porch."
+            }
+          ],
+          "rect": [
+            50,
+            5,
+            95,
+            95
+          ],
+          "source": "gramps"
+        }
+      ],
+      "title": "Porch group photo (fictional)"
+    },
+    {
+      "checksum": null,
+      "handle": "ghost-media-handle-0001",
+      "missing": true,
+      "region": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "size": null,
+      "tags": [],
+      "title": null
+    }
+  ],
+  "notes": [
+    {
+      "grampsId": "N9001",
+      "handle": "6b24832e5b89c7f75c43d72ded84",
+      "html": "<p>Hello &lt;script&gt;alert(1)&lt;/script&gt; world</p>",
+      "raw": "Hello <script>alert(1)</script> world"
+    },
+    {
+      "grampsId": "N9002",
+      "handle": "a4f40cb91c6075d16b671e130b50",
+      "html": "<p>Look &lt;img src=x onerror=alert(2)&gt; here &amp; &quot;there&quot;</p>",
+      "raw": "Look <img src=x onerror=alert(2)> here & \"there\""
+    },
+    {
+      "grampsId": "N9003",
+      "handle": "23d3f23f1f62895a0636901cf1dc",
+      "html": "<p><strong>Alpha </strong><strong><em>be</em></strong><strong><em><u>ta</u></em></strong><em><u> g</u></em><em>amma</em> del<u>ta epsilo</u>n</p>",
+      "raw": "Alpha beta gamma delta epsilon"
+    },
+    {
+      "grampsId": "N9004",
+      "handle": "24f51c1bee4a6d8773ca7572358b",
+      "html": "<p>Click here or <a href=\"https://notes.example.org/ok\" rel=\"noopener noreferrer nofollow\" target=\"_blank\">here</a></p>",
+      "raw": "Click here or here"
+    },
+    {
+      "grampsId": "N9005",
+      "handle": "978be16f1052572c68f479fc4764",
+      "html": "<p>Red words <span class=\"note-color\" style=\"color: #a1b2c3;\">and </span>b<span class=\"note-highlight\" style=\"background-color: #ff0;\">lue words</span></p>",
+      "raw": "Red words and blue words"
+    },
+    {
+      "grampsId": "N9006",
+      "handle": "cb4e12695c07187af52d1b0fcb95",
+      "html": "<p><span class=\"note-size-sm\">small</span> <span class=\"note-size-md\">medium</span> <span class=\"note-size-lg\">large</span> huge</p>",
+      "raw": "small medium large huge"
+    },
+    {
+      "grampsId": "N9007",
+      "handle": "9a3721805290fd63587ebdc5f011",
+      "html": "<p><strong>Legacy</strong> shape text with bold</p>",
+      "raw": "Legacy shape text with bold"
+    },
+    {
+      "grampsId": "N9008",
+      "handle": "10793d5731866a4a09009ef382eb",
+      "html": "<p>First paragraph.</p><p>Second paragraph<br />with a break.<br />Third.</p>",
+      "raw": "First paragraph.\n\nSecond paragraph\nwith a break.\nThird."
+    },
+    {
+      "grampsId": "N9009",
+      "handle": "09365429cf31bbb3becddee0afad",
+      "html": "<p>Caf\u00e9 \u00fcber &amp; &lt;b&gt;bold&lt;/b&gt; \u2013 done</p>",
+      "raw": "Caf\u00e9 \u00fcber & <b>bold</b> \u2013 done"
+    }
+  ],
+  "primaryPhoto": {
+    "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+    "grampsId": "O9001",
+    "handle": "d1cda1995d9d9c1567b848f58a96",
+    "mime": "image/jpeg",
+    "missing": false,
+    "region": [
+      5,
+      5,
+      45,
+      95
+    ],
+    "s3Key": "media/d1cda1995d9d9c1567b848f58a96.jpg",
+    "size": 632,
+    "tags": [
+      {
+        "attributes": [
+          {
+            "type": "Description",
+            "value": "Standing at left"
+          },
+          {
+            "type": "Mood",
+            "value": "Cheerful"
+          }
+        ],
+        "citations": [
+          "Fixture Photo Archive"
+        ],
+        "grampsId": "I9001",
+        "isPrimary": true,
+        "name": "Quill Notevector",
+        "notes": [
+          {
+            "grampsId": "N9101",
+            "handle": "be7e073a8e2b19787d18b37c3a42",
+            "html": "<p>Standing at the left of the porch.</p>",
+            "raw": "Standing at the left of the porch."
+          }
+        ],
+        "rect": [
+          5,
+          5,
+          45,
+          95
+        ],
+        "source": "gramps"
+      },
+      {
+        "attributes": [],
+        "citations": [
+          "Fixture Photo Archive"
+        ],
+        "grampsId": "I9002",
+        "isPrimary": true,
+        "name": "Rowan Tagvector",
+        "notes": [
+          {
+            "grampsId": "N9101",
+            "handle": "be7e073a8e2b19787d18b37c3a42",
+            "html": "<p>Standing at the left of the porch.</p>",
+            "raw": "Standing at the left of the porch."
+          }
+        ],
+        "rect": [
+          50,
+          5,
+          95,
+          95
+        ],
+        "source": "gramps"
+      }
+    ],
+    "title": "Porch group photo (fictional)"
+  },
+  "surname": "Notevector"
+}

@@ -8,7 +8,9 @@
 //   - the kit's file input is hidden (posts.css) and taken out of the tab order and the accessibility tree; the HFY button opens it;
 //   - the textarea and every alt-text input get a placeholder after render (the kit has no placeholder prop);
 //   - each attachment row gets a 44px thumbnail of the uploaded photo, tracked here by index (remove clicks are followed);
-//   - a successful upload pings "got it. it's in the gallery." (DS Posts done state).
+//   - a successful upload pings "got it. it's in the gallery." (DS Posts done state);
+//   - the R-18 pre-check (lib/contact-guard.js; privacy-guard-existing-paths AC2) marks a phone number, address or email in the
+//     text or an alt, shows the DS copy under the field and disables post until it is removed; the text is kept.
 // Upstream: a PostComposer `renderPicker` / placeholder / attachment-preview API; then drop the DOM decoration below.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PostComposer } from "@io-kit/content/react";
@@ -17,6 +19,7 @@ import { uploadPhoto } from "../lib/upload.js";
 import { mountAt } from "../lib/mount.jsx";
 import { COPY, Ping, PostList, isSignedOut, source, usePing, usePosts } from "../lib/posts-ui.jsx";
 import { CAPABILITIES } from "../lib/content-source.js";
+import { GUARD_CODES, GUARD_COPY, learnFromRefusal, precheckAll, watchContactGuard } from "../lib/contact-guard.js";
 
 const ACCEPT = "image/jpeg,image/png,image/webp,image/heic";
 const MAX = 4;
@@ -33,6 +36,29 @@ const LABELS = {
   saving: "posting…",
 };
 const PLACEHOLDER = "post a photo or a line";
+// The composer fields the R-18 pre-check reads: the body, the title (articles) and each photo's description.
+const GUARDED = '.iok-content-composer textarea, .iok-content-composer input[name="title"], .iok-content-attachment > input';
+/**
+ * The line a failed post write shows in the composer (the kit keeps the text). An R-18 refusal (contact_info, dob_not_allowed)
+ * gets its DS copy, never "try again", and a dob_not_allowed turns the composer's birthday check on (contact-precheck.js).
+ * Here, not in posts-ui: the timeline and /posts/ never write, so they do not load the detector.
+ */
+export function postWriteError(e) {
+  if (isSignedOut(e)) return COPY.signedOut;
+  const code = e?.apiCode;
+  if (GUARD_CODES.includes(code)) {
+    learnFromRefusal(code);
+    return GUARD_COPY[code];
+  }
+  if (code === "photo_has_location") return COPY.photoLocation;
+  if (code === "upload_missing" || code === "upload_not_owned") return COPY.photoMissing;
+  return COPY.notPosted;
+}
+const guardOptions = {
+  fields: GUARDED,
+  submitOf: (form) => form.querySelector('button[type="submit"]'),
+  enabledOf: (form) => (form.querySelector("textarea")?.value ?? "").trim() !== "", // the kit's own rule: a body is required
+};
 const ALT_PLACEHOLDER = "describe the photo";
 const DONE = "got it. it's in the gallery.";
 
@@ -87,7 +113,8 @@ export function MyPosts({ id }) {
       if (i >= 0) { photos.current.splice(i, 1); setCount(photos.current.length); }
     };
     root.addEventListener("click", onRemove, true);
-    return () => { mo.disconnect(); root.removeEventListener("click", onRemove, true); };
+    const unguard = watchContactGuard(root, guardOptions);
+    return () => { mo.disconnect(); root.removeEventListener("click", onRemove, true); unguard(); };
   }, [me, sync]);
   // HFY-TSK-136: /person/?id=<me>#share (the /about/ call to action's "add a photo") scrolls the composer in and focuses it. The browser's
   // own anchor jump ran before this section existed, so it is done here, once the section is drawn and on a later hash change.
@@ -130,6 +157,9 @@ export function MyPosts({ id }) {
             }
           }}
           onSubmit={async (input) => {
+            // The pre-check disables post while a field holds a hit; a submit that got here anyway is held, with the same copy.
+            const held = precheckAll([input.body, input.title, ...(input.attachments || []).map((a) => a.alt)]);
+            if (held) throw new Error(held.message);
             try {
               posts.prepend(await source.createDraft({ ...input, subject: id }));
               photos.current = []; // the kit clears its attachments after a successful submit
@@ -137,7 +167,7 @@ export function MyPosts({ id }) {
               setPing("posted");
             } catch (e) {
               // PostComposer keeps the text and shows this message inline (role=alert).
-              throw new Error(isSignedOut(e) ? COPY.signedOut : COPY.notPosted);
+              throw new Error(postWriteError(e));
             }
           }}
         />

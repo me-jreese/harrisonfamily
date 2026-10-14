@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { makeApi, signToken } from "./world.js";
 import { buildCaps } from "../src/routes.js";
 import { errorResponse, HttpError } from "../src/http.js";
+import { GuardError } from "../src/guard.js";
 
 const OWNER = "I0001";
 const OTHER = "I0002";
@@ -208,5 +209,15 @@ describe("errorResponse carries details", () => {
   it("an HttpError with details sends them; without, the body is unchanged", () => {
     expect(JSON.parse(errorResponse(new HttpError(422, "validation", "m", { fields: [{ field: "a", code: "x" }] })).body).details).toEqual({ fields: [{ field: "a", code: "x" }] });
     expect(JSON.parse(errorResponse(new HttpError(403, "forbidden", "m")).body)).toEqual({ error: "forbidden", message: "m" });
+  });
+
+  it("keeps the R-18 guard's errors beside details: a GuardError body is unchanged, and an error with both sends both", () => {
+    const errors = [{ pointer: "/body", kind: "phone", span: [0, 12] }];
+    const guardBody = JSON.parse(errorResponse(new GuardError("contact_info", errors)).body);
+    expect(guardBody.errors).toEqual(errors);
+    expect(guardBody).not.toHaveProperty("details");
+    const both = new HttpError(422, "validation", "m", { fields: [{ field: "a", code: "x" }] });
+    both.errors = errors;
+    expect(JSON.parse(errorResponse(both).body)).toEqual({ error: "validation", message: "m", errors, details: { fields: [{ field: "a", code: "x" }] } });
   });
 });

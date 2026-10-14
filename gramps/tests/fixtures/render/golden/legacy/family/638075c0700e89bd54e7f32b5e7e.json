@@ -1,0 +1,42 @@
+{
+  "children": [],
+  "events": [],
+  "father": {
+    "displayName": "Laurel Fixturely",
+    "gender": "female",
+    "grampsId": "I0012",
+    "handle": "0bc8e2a3459c41cfab040610b448",
+    "isLiving": true,
+    "lifespan": {
+      "birth": {
+        "year": 1960
+      },
+      "death": {
+        "year": null
+      },
+      "summary": "1960\u2013"
+    }
+  },
+  "grampsId": "F0003",
+  "handle": "638075c0700e89bd54e7f32b5e7e",
+  "mother": {
+    "displayName": "Maple Fixturely",
+    "gender": "male",
+    "grampsId": "I0013",
+    "handle": "f1f7cb7d5d3a1bb2a38b887534a6",
+    "isLiving": true,
+    "lifespan": {
+      "birth": {
+        "year": 1962
+      },
+      "death": {
+        "year": null
+      },
+      "summary": "1962\u2013"
+    }
+  },
+  "type": {
+    "code": 2,
+    "string": "Civil Union"
+  }
+}

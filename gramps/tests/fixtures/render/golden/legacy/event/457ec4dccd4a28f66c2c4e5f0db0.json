@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1960
+  },
+  "description": null,
+  "grampsId": "E0020",
+  "handle": "457ec4dccd4a28f66c2c4e5f0db0",
+  "label": "Birth",
+  "place": null,
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

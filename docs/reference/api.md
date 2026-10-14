@@ -1,6 +1,6 @@
 # Family API (hfy-api)
 
-Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
+Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, the contact-information guard, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
 
 The same Lambda function also serves the MCP server at `/mcp` and the protected-resource metadata at `/.well-known/oauth-protected-resource*`. Those paths authenticate with a bearer access token, not the session cookie, and are described in [MCP server](mcp-server.md). This page covers them only where they share code or configuration with `/api/*`.
 
@@ -34,16 +34,20 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`mcp.js`](../../api/src/mcp.js) | The MCP mount: `isMcpPath`, `loadMcpConfig`, the bearer edge, the tool registry built from `ROUTES`, and the actor a tool runs as. See [MCP server](mcp-server.md). |
 | [`mcp-caps.js`](../../api/src/mcp-caps.js) | Build-time views of the MCP surface for `gen-caps`: the `tools/list` result and the `@io-kit/parity` caps document. |
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
-| [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource. |
+| [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
+| [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
+| [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
-| [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation and the object key. |
+| [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation, the server-chosen object key and the `UPLOAD#` binding. |
 | [`presign.js`](../../api/src/presign.js) | The S3 presigner for uploads, kept apart so tests can sign offline. |
 | [`records/ops.js`](../../api/src/records/ops.js) | The EditOp engine for the editing work: `applyOps`, `invertOps`, `rebaseOps` (clean, no-op or conflict per op), keyed list segments (`@ref=`, `@=`, `@k=`) and `mintHandle`. It imports nothing, so it runs in Node and in a browser, and no route calls it yet. See [The EditOp engine](#the-editop-engine). |
 | [`records/semantics.js`](../../api/src/records/semantics.js) | The Gramps rules for edited records: dates and `sortval`, handle references, two-sided family links, family sanity, ancestry cycles and the derived `birth_ref_index` and `death_ref_index`. `checkSemantics` runs on the objects an EditOp batch produced. It imports only the EditOp engine and the calendar port, and no route calls it yet. See [Gramps semantics](#gramps-semantics). |
 | [`records/gcalendar.js`](../../api/src/records/gcalendar.js) | A port of Gramps' calendar arithmetic (`*_sdn` in `gen/lib/gcalendar.py`): Gregorian, Julian, Hebrew, French Republican, Persian, Islamic and Swedish. It imports nothing. |
+| [`records/relationships.js`](../../api/src/records/relationships.js) | The relationship intent compiler: `parents`, `children`, `spouse` and `unlink` intents to the Gramps Family and ChildRef EditOps, checked with `checkSemantics`. It imports only the EditOp engine, the Gramps semantics and the duplicate matcher, and no route calls it yet. See [Relationship compiler](#relationship-compiler). |
+| [`records/duplicates.js`](../../api/src/records/duplicates.js) | The duplicate matcher for new people (case-folded, accent-stripped). It imports nothing. See [Relationship compiler](#relationship-compiler). |
 
 ### Dependencies
 
@@ -107,10 +111,10 @@ A `204` response has an empty body.
 ### Error shape
 
 ```json
-{ "error": "<code>", "message": "<text>", "details": { } }
+{ "error": "<code>", "message": "<text>", "details": { }, "errors": [ ] }
 ```
 
-`details` appears only on kit errors that carry it. Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
+`details` appears only on kit errors that carry it. `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
 
 Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input) return `400 validation`. Checks on post and comment content return `422 validation`.
 
@@ -118,18 +122,23 @@ Two statuses exist for validation. Checks on the request itself (body parsing, a
 | --- | --- | --- |
 | 400 | `validation` | Unparseable or non-object body; missing `subject` on a comment route; upload input |
 | 400 | `cursor_invalid` | A posts or comments cursor that is malformed, or a posts cursor from another filter |
+| 400 | `photo_has_location` | A new post attachment whose stored bytes carry location metadata ([Location check](#location-check)) |
+| 400 | `upload_missing` | A new post attachment whose object is missing or empty, or whose type differs from the one it was presigned for |
 | 401 | `unauthenticated` | No session cookie, or a token that fails verification |
 | 403 | `forbidden` | Failed origin check; caller lacks the permission for a post or comment action |
 | 403 | `self_react` | Reacting to your own comment |
+| 403 | `upload_not_owned` | A new post attachment that is not the caller's own, unexpired, not yet attached upload ([Upload binding](#upload-binding)) |
 | 404 | `not_found` | Unknown route; a route behind a feature gate that is closed to the caller; post missing or not visible to the caller; comment missing; malformed subject or comment id |
 | 405 | `method_not_allowed` | Known path, other method |
 | 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)) |
 | 415 | `unsupported_media_type` | A write without a JSON content type |
 | 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji |
+| 422 | `contact_info` | A phone number, email address, street address, PO box or contact-channel link in a post's body, title or attachment description, or a comment's body ([Contact-information guard](#contact-information-guard)) |
+| 422 | `dob_not_allowed` | Only while `HFY_GUARD_DOB` is `on`: a birth day or month, and nothing else the guard refuses, in the same fields |
 | 500 | `server` | A comment create, edit or delete failed for a reason other than a cancelled transaction |
 | 500 | `internal` | Anything else |
 | 503 | `busy` | A post or comment write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
-| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; uploads with no presigner |
+| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new attachment on a handler built without an S3 client |
 
 ## Routes
 
@@ -149,7 +158,7 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.update` | PATCH | `/posts/:id` | body, all optional: `title`, `subject`, `body`, `attachments` | `200` post | Author only. `null` clears `title` or `subject`. |
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
-| `uploads.presign` | POST | `/uploads` | body `filename`, `contentType`, `size` | `201` | Presigned S3 PUT under `uploads/posts/` |
+| `uploads.presign` | POST | `/uploads` | body `contentType`, `size` (a `filename` is ignored) | `201` | Presigned S3 PUT under `uploads/posts/` |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
 | `notifications.subscribe` | POST | `/notifications/subscribe` | body: a push subscription | `200` `{ok: true}` | Kit route |
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
@@ -256,7 +265,39 @@ On create, a `title` or `subject` of `null` means "not set". On `PATCH`, `null` 
 | `width`, `height` | Optional positive integers up to 100,000 |
 | Other keys | Dropped |
 
-`caps.json` still declares attachments "metadata-only": the API checks the URL's shape, not that the object exists.
+An attachment the post did not already hold, on create or on a `PATCH` that replaces `attachments`, must also pass the [upload binding](#upload-binding) and the [location check](#location-check). Attachments the post already holds are not checked again, so a post made before these checks keeps its photos. `caps.json` still declares attachments "metadata-only": the post stores the attachment's metadata, never its bytes.
+
+### Upload binding
+
+Each presign writes an `UPLOAD#<ulid>` / `META` item ([Uploads](#uploads)). For each new attachment, `bindUploads` in [`content.js`](../../api/src/content.js) reads that item and refuses with `403 upload_not_owned` unless all of these hold:
+
+- the item exists, its `owner` is the caller and its `purpose` is `post`;
+- its `key` is exactly the attachment's path, without the leading `/`;
+- it is not attached to another post, and, while unattached, its `ttl` is still in the future (24 hours from the presign).
+
+The attachment's `mime` must equal the item's `contentType`, and the stored object's `Content-Type` must too, otherwise `400 upload_missing`. The same upload twice in one post is `422 validation`.
+
+The post write then attaches each upload in the same transaction: `SET attached = <post id> REMOVE ttl`, on the condition that the owner and purpose are unchanged and the upload is still unattached (or already attached to this post). If another write took the upload between the read and the transaction, the whole write is cancelled and the answer is `403 upload_not_owned`; nothing is stored. An attached upload has no `ttl`, so it is never expired. A post that is deleted does not release its uploads.
+
+### Location check
+
+`checkLocation(bucket, key)` in [`upload-guard.js`](../../api/src/upload-guard.js) runs on every new attachment, after the binding checks and before the write. It reads the object with `GetObject` and `Range: bytes=0-262143`, so the first 256 KiB is inspected. A WebP whose data runs past that read is read a second time with `Range: bytes=-262144`, because its `EXIF` and `XMP ` chunks follow the image data. The object's size comes from the first read's `Content-Range`, or from the RIFF size when S3 gives none. The check refuses `400 photo_has_location` when the bytes carry any of:
+
+| Metadata | Where it is looked for | Counts as a location when |
+| --- | --- | --- |
+| EXIF GPS (IFD0 tag `0x8825`) | A JPEG APP1 `Exif` segment, a PNG `eXIf` chunk, a WebP `EXIF` chunk, and any other `Exif\0\0` TIFF header in the bytes (where HEIC keeps it) | `GPSLatitude`, `GPSLongitude`, `GPSDestLatitude` or `GPSDestLongitude` has a non-zero value. A GPS IFD that is present but cannot be read counts too. |
+| XMP | Anywhere in the bytes, plus zlib-compressed PNG `iTXt` | A non-empty `exif:GPS*` property other than `GPSVersionID`, `photoshop:City`, `photoshop:State` or `Iptc4xmpCore:Location`, in attribute or element form, under any prefix bound to those namespaces |
+| IPTC IIM | A JPEG APP13 Photoshop block, resource `0x0404` | A non-empty City (2:90), Sub-location (2:92) or Province/State (2:95) |
+
+- A missing object (S3 answers `403 AccessDenied` for a missing key, because the role has no `s3:ListBucket`), `404`, `416` or an empty object is `400 upload_missing`. Any other S3 error is `500 internal`.
+- The refusal names nothing that was found, and nothing is logged.
+- In a WebP read twice, the end of the file is scanned without its chunk boundaries: every `EXIF` and `XMP ` chunk header whose length fits is tried, then the scans that work in any container. If the VP8X flags say the file has an `EXIF` or `XMP ` chunk and neither read holds one whole, the photo is refused. A WebP whose metadata sits in the middle of a large file and whose flags do not announce it is not caught.
+- Metadata after the first 256 KiB of a JPEG, PNG or HEIC file is not seen. JPEG and PNG keep their metadata at the front. A HEIC file may store its EXIF item later in the file, and that is a known gap.
+- The work is bounded, because any member can upload. Every scan is linear in the bytes read. Compressed XMP inflates to at most 1 MiB in all (`XMP_MAX_INFLATED`), and a truncated stream is scanned as far as it goes. A file that would need more is refused as if it carried a location (fail closed): more compressed XMP than that, more than 256 location properties in one XMP text (`XMP_MAX_PROPERTIES`), a location property whose value or closing tag is not within 64 KiB of its name (`XMP_VALUE_WINDOW`), or more than 16 `Exif\0\0` headers or trailing WebP `EXIF` chunks (`MAX_EXIF_HEADERS`). No camera writes any of these.
+- The handler wires the check only when it has an S3 client (`deps.s3`, the API's own client in `index.js`). Without one, a new attachment is `503 unavailable`.
+- The role's `UploadReads` statement grants the `s3:GetObject` it needs ([Environment](#environment)).
+
+The browser is meant to remove location data before the upload, so this check is the server's backstop. The post composer does not yet re-encode photos (the `hfy-comment-photos-ui` normalization, behind `commentPhotosV1`), so a phone photo that carries GPS data is refused until it does.
 
 ### Visibility
 
@@ -274,6 +315,7 @@ On create, a `title` or `subject` of `null` means "not set". On `PATCH`, `null` 
 ### Writes
 
 - Every single-post read and write first loads the post and checks that the caller may see it. A post the caller may not see is `404 not_found`, for writes too.
+- Create and `PATCH` run the [contact-information guard](#contact-information-guard) before any write.
 - `PATCH` replaces `body` and `attachments` when given, sets `title` and `subject` when given, and removes them when they are `null`. It always refreshes `updated_at` and writes an audit item, even when nothing else changed. Removing `subject` also deletes the post's `IDX#SUBJECT` item.
 - A transaction cancelled by a failed condition is `409 conflict` ("record changed concurrently"); one that stays cancelled by `TransactionConflict` after its retries is `503 busy`. See [Concurrent writes](#concurrent-writes). Any other store failure is `503 unavailable`.
 - **Delete takes the thread with it.** After the post's items and audit item are committed, the handler removes the `post:<ulid>` thread: every comment and reaction in it, with one `delete` audit item per comment (`reason` `post deleted`, `principal` the member who deleted the post), at most 100 items per transaction. This runs after the response's write has committed and never fails the request. A failure is logged as `post thread purge failed (write already committed)` and leaves the remaining thread items in place.
@@ -329,6 +371,7 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 
 - **Create.** A `parentId`, if given, must name a comment in the same thread, otherwise `404`. Any comment can be a parent, so replies can nest. Returns `201`.
 - **Edit.** Author only. If the trimmed text equals the stored body, the comment is returned unchanged with no write. Otherwise the body is replaced and `edited_at` is set.
+- Create and edit run the [contact-information guard](#contact-information-guard) on `body` as sent, before the unchanged-body shortcut and before any write.
 - **Delete.** Author or admin. Returns `204`. The comment and every reaction on it are deleted in one transaction with the audit item. Replies are not deleted and keep their `parentId`. A DynamoDB transaction holds at most 100 actions, so a comment with more than 98 reactions cannot be deleted. See [Permissions](#permissions) for `reason`.
 - A create, edit or delete transaction cancelled by a failed condition, such as an edit that races another edit or a delete, is `409 conflict` ("comment changed concurrently"). One that stays cancelled by `TransactionConflict` after its retries is `503 busy`. Any other store failure is `500 server`.
 - On a `post:<ulid>` thread, list, create, edit and react first check that the caller can see the post ([Subjects](#subjects)).
@@ -340,6 +383,41 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - Each member has at most one reaction per comment, stored at `R#comment:<id>#<member id>`. Sending the emoji you already have removes it and returns `{removed: true}`. Sending a different emoji, or the first one, stores it, replacing any earlier one, and returns `{removed: false, reaction}`. Both return `200`.
 - The route always targets `comment:<id>`. `react` in `comments.js` also accepts the target `root`, returns `404 not_found` for an `attachment:` target and `422 validation` for any other target, but no route reaches any of these.
 - Reactions are single `PutItem` and `DeleteItem` calls, not transactions, and are not audited.
+
+## Contact-information guard
+
+R-18 (HFY-PLN-002 BRD2 section 5.2): personal contact information is never stored. [`guard.js`](../../api/src/guard.js) runs the shared detector, [`shared/privacy-guard.mjs`](../../shared/privacy-guard.mjs) (`rejectContactInfo`), on every free-text field of today's member write paths:
+
+| Write | Fields | Pointers |
+| --- | --- | --- |
+| Post create | `body`, `title`, every attachment `alt` | `/body`, `/title`, `/attachments/<i>/alt` |
+| Post `PATCH` | The fields the request sends: `body`; `title` when it is a string; every `alt` when `attachments` is sent | The same |
+| Comment create and edit | `body`, as sent (before trimming) | `/body` |
+
+The MCP tools `hfy_posts_create` and `hfy_comments_create` run these same route handlers through `handler.invoke`, so they are guarded too.
+
+A refusal is `422` and stores nothing:
+
+```json
+{ "error": "contact_info", "message": "this looks like a phone number or street address. we don't keep those on the site, so please remove it to continue.", "errors": [ { "pointer": "/body", "kind": "phone", "span": [11, 19] } ] }
+```
+
+- `errors` lists every hit across the fields: its JSON pointer, its `kind` (`phone`, `email`, `street_address`, `po_box`, `contact_url` or `dob_heuristic`) and its `span`, `[start, end)` in UTF-16 code units of the field as sent. The matched text is never in the response.
+- `error` is `dob_not_allowed`, with the message "we only keep the birth year on the site.", only when every hit is `dob_heuristic`. Any contact hit makes it `contact_info`.
+- An MCP tool call gets the message as its tool error text.
+- There is no override. The same text is refused until the member removes the hit.
+
+**The DOB switch.** `dob_heuristic` hits are refused only when `HFY_GUARD_DOB` is `on` (stack parameter `GuardDob`, default `off`; [Environment](#environment)). Off, the guard scans the contact kinds only, so a birthday mention is stored. The switch waits for io's answer to Q2-17 line 5 of HFY-PLN-002. Contact kinds are refused whatever its value.
+
+**Logging.** Each refusal logs one line, `privacy_guard` with `{surface, op, counts}`, where `surface` is `posts` or `comments`, `op` is `create` or `update`, and `counts` is the number of hits per code (`{"contact_info": 2}`). The line never holds text, offsets, pointers or ids.
+
+**The composers.** The post composer and the comment composer run the same detector in the browser before sending ([Front end](front-end.md)). That pre-check is for the member's benefit; the API's `422` is the rule.
+
+**Existing posts and comments.** [`api/scripts/scan-contact-info.mjs`](../../api/scripts/scan-contact-info.mjs) is a one-off, read-only scan of what the table already holds. It reads the `GSI1` partitions `POSTS` and `COMMENTS` with `Query` only, runs every kind of the detector (the DOB heuristic included) over the guarded fields, and prints one JSON object of counts: items scanned, items with a hit, and hits per kind. It prints no text, ids, keys or offsets, and it writes nothing. Run it from `api/` after `npm ci`, with a read-only AWS profile:
+
+```sh
+AWS_PROFILE=<read-only-profile> node scripts/scan-contact-info.mjs --table hfy-app --region us-west-2
+```
 
 ## Permissions
 
@@ -398,6 +476,7 @@ What the items hold:
 - Comment items carry `entity: "comment"` and `comment`.
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
 - Audit items are listed under [Audit records](#audit-records).
+- Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post attaches the upload, then `attached` (the post id) instead of `ttl`. See [Upload binding](#upload-binding).
 
 Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<id>` / `META`) and `gsiThread`. Neither is used, because comments live under `THREAD#<subject>` ([item layout](architecture.md#item-layout)).
 
@@ -511,27 +590,24 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 
 ### Request
 
-`{filename, contentType, size}`. Each failure is `400 validation`.
+`{contentType, size}`. Each failure is `400 validation`.
 
 | Field | Rule |
 | --- | --- |
-| `filename` | Non-empty string |
 | `contentType` | `image/jpeg`, `image/png`, `image/webp` or `image/heic` |
 | `size` | Positive integer, in bytes, at most 10 MB (10,485,760) |
 
+A `filename` field is accepted and ignored. The islands send a fixed `filename: "photo"`, never the file's own name, because the `hfy-api` deployed before the RG-2 change set refuses a presign without one (`400 validation`, "filename is required") and the site goes live on merge, ahead of that API. That API builds the key from the name too, so its keys are `photo.<ext>` as well.
+
 ### Object key
 
-The key is `uploads/posts/<ulid>/<safe-name>` in `MEDIA_BUCKET` (`UPLOAD_PREFIX`, HFY-R58). It is never under `media/`, which the Gramps data sync mirrors with `--delete`. The safe name is built like this:
+The key is `uploads/posts/<ulid>/photo.<ext>` in `MEDIA_BUCKET` (`UPLOAD_PREFIX`, HFY-R58), where `<ext>` is `jpg`, `png`, `webp` or `heic` for the content type. The server chooses the whole key, so the uploader's file name, which can name a person, never reaches the bucket or a URL. The key is never under `media/`, which the Gramps data sync mirrors with `--delete`.
 
-1. Keep the part after the last `/` or `\`.
-2. Drop the final extension.
-3. Apply Unicode NFKD normalization and lowercase.
-4. Replace each run of characters outside `a-z 0-9 . _ -` with `-`.
-5. Trim leading and trailing `.`, `_` and `-`.
-6. Keep the first 60 characters. If nothing is left, use `photo`.
-7. Append the extension for the content type: `jpg`, `png`, `webp` or `heic`.
+Uploads made before this rule keep keys built from the uploader's cleaned file name. Posts that already hold them keep them.
 
-For example, `../Beach Day.JPEG` sent as `image/jpeg` becomes `beach-day.jpg`.
+### Binding
+
+Before presigning, the API writes the `UPLOAD#<ulid>` / `META` item that binds the upload to its uploader: `owner`, `purpose` `post`, `key`, `contentType`, `size`, `created_at` and a `ttl` 24 hours later, on the condition that the item does not exist yet. If that write fails, the answer is `503 unavailable` and no URL is issued. A post may attach the upload only on the terms in [Upload binding](#upload-binding).
 
 ### Response
 
@@ -545,7 +621,7 @@ For example, `../Beach Day.JPEG` sent as `image/jpeg` becomes `beach-day.jpg`.
 | `headers` | `{"Content-Type": <contentType>}` |
 | `expiresIn` | `300` |
 
-The presigner signs `content-type` and `content-length` into the URL (`signableHeaders`), so S3 rejects a PUT whose `Content-Type` differs from the validated image type or whose body is not exactly `size` bytes. Send the returned `headers` exactly. The URL carries no checksum parameters: the S3 client is built with `requestChecksumCalculation: "WHEN_REQUIRED"`, because the SDK default would sign a checksum of an empty body and every real upload would fail with `400 BadDigest`. The API records nothing about the upload. The client puts `publicUrl` into the post's `attachments`. Nothing removes objects that no post references.
+The presigner signs `content-type` and `content-length` into the URL (`signableHeaders`), so S3 rejects a PUT whose `Content-Type` differs from the validated image type or whose body is not exactly `size` bytes. Send the returned `headers` exactly. The URL carries no checksum parameters: the S3 client is built with `requestChecksumCalculation: "WHEN_REQUIRED"`, because the SDK default would sign a checksum of an empty body and every real upload would fail with `400 BadDigest`. The API records the binding item and nothing else. The client puts `publicUrl` into the post's `attachments`. Nothing removes objects that no post references; their binding items expire after 24 hours.
 
 `uploadUrl` points at the bucket's own S3 endpoint (`https://<site-bucket>.s3.<region>.amazonaws.com/...`, in the function's region), never at `<site>`, so the PUT goes straight to S3 and never passes through CloudFront or the private data gate. [`presign.test.js`](../../api/test/presign.test.js) checks the host. `publicUrl` is on `<site>`, and reading it back goes through CloudFront ([Reading photos back](#reading-photos-back)).
 
@@ -649,13 +725,52 @@ The check judges the data as it will be after the ops apply, and it reports only
 | **Call name.** A new or changed Name's `call` (primary or alternate) is one of the words of its `first_name`; an empty call is fine. | `call_name_not_in_first_name` |
 | **Derived indexes.** `birth_ref_index` and `death_ref_index` are recomputed with Gramps' `set_birth_death_index` (`gen/db/base.py:2025-2047`: the first primary-role Birth event, EventType 12, and the first primary-role Death event, EventType 13) for every Person whose `event_ref_list` changed, every Person in the batch that uses an Event whose type changed, and every stored Person that `eventReferrers(eventHandle)` returns for such an Event. A type change without `eventReferrers` is an error. | `referrers_required` |
 
-**Not built here.** The non-blocking warnings of editing design section 6.2 (a person who already has birth parents, a parent under 13 years older than the child, a possible duplicate person) are deferred to `edit-api-changes` and the relationship compiler; `warnings` is always `[]`. Erratum to the design text: Death is EventType 13 (Birth is 12), as in Gramps 6.0.6 and the goldens, not 5.
+**Not built here.** The non-blocking warnings of editing design section 6.2 (a person who already has birth parents, a parent under 13 years older than the child, a possible duplicate person) are deferred to `edit-api-changes`; `warnings` is always `[]`. The [relationship compiler](#relationship-compiler) raises them for the relationship proposals it builds. Erratum to the design text: Death is EventType 13 (Birth is 12), as in Gramps 6.0.6 and the goldens, not 5.
 
 The birth-date precision rule (day and month never stored for a birth) is the guard's, not this module's (`edit-guard-wiring`).
 
 **Goldens.** The expectations in the tests are what Gramps 6.0.6 itself computes, committed in [`api/test/records/fixtures/gramps-semantics.golden.json`](../../api/test/records/fixtures/gramps-semantics.golden.json): 454 synthetic Dates (383 valid Gregorian and Julian, plus the other calendars, slash, new-year, text-only and invalid ones) with Gramps' accept or reject, `sortval` and settled calendar, and 170 birth/death scenarios with the indexes Gramps sets before and after an event-list change and an Event type change. Other workers test against that file. It needs no Gramps to use: `python3 scripts/records/check_gramps_goldens.py` re-derives every Gregorian and Julian `sortval`, validity and index with the standard library alone and checks the file's SHA-256, and `python3 -m unittest discover gramps/tests/unit` runs it in CI. Regenerating the file needs Gramps.app: see [Regenerate the Gramps goldens](../how-to/regenerate-the-gramps-goldens.md).
 
 The tests are [`api/test/records/semantics.node-test.js`](../../api/test/records/semantics.node-test.js), run by `npm test` after vitest, or alone with `node --test test/records/semantics.node-test.js`.
+
+## Relationship compiler
+
+[`api/src/records/relationships.js`](../../api/src/records/relationships.js) turns what a member says about their family into the EditOps that make Gramps' Family and ChildRef objects say it (editing design, section 8; R-24). It is a library: no route, tool or Lambda path calls it yet (HFY-TSK-251), and it ships in the `hfy-api` zip unreachable until `relationship-api` calls it. It imports only the EditOp engine, [`semantics.js`](../../api/src/records/semantics.js) and [`duplicates.js`](../../api/src/records/duplicates.js), so it runs in Node and in a browser.
+
+```
+compileRelationship({ intent, get, version?, people?, confirmDistinct?, mode?, mint?, admin?, today?, maxActions? })
+  -> { ok: true, alreadyRecorded, destructive, subject, ops, base_versions, read_versions, summary, warnings, duplicates,
+       followUps, stats: { ops, created, touched, actions }, preview: { objects, minted, created, touched } }
+  -> { ok: false, errors: [{ code, message, ... }] }
+```
+
+`intent` is one of the four of editing design section 8.2: `parents`, `children`, `spouse`, `unlink`. A person is `{ ref: "Person:<handle>" }` or `{ new: <stub> }`. `get(key)` reads the stored Persons, Families, Events and Places. `people` is the list of people the viewer may see, as `summarizePerson` makes them, for the duplicate search. `confirmDistinct` is the list of `new:n` stubs the member said are different people. `mode` is `"preview"` (the default) or `"commit"`: a commit always enforces the duplicate gate (an absent `confirmDistinct` counts as `[]`), a preview enforces it only when `confirmDistinct` is given and otherwise only reports the duplicates. `version(key)` gives the stored version of an object: with it, `base_versions` guards every object the ops change (a changed object with no version is a `compile_conflict`) and `read_versions` guards the objects a decision was based on but the ops leave alone (a family with children, an existing Marriage or Divorce event, the people whose birth years were read); the proposal store must check both. `mint` is for the validation pass and tests: the returned `ops` keep their `new:n` temporaries, and the commit mints the real handles. `alreadyRecorded: true` means the tree already says it, with `ops: []` (the API answers 409 `already_recorded`, which is informational). `destructive: true` (unlink) needs the admin's fresh sign-in at approval.
+
+| Rule | How it shows |
+| --- | --- |
+| **Reuse before create.** A family whose parents are exactly the people chosen is reused, with the ChildRef and the `parent_family_list` entry added on both sides. A parent's single-parent family is reused when one parent is chosen. A person already in the family is skipped; a half-made link (one side only) is completed. | `ops` of kind `add` on the existing Family and Person |
+| **Single-parent families.** With two parents chosen and one of them alone in a family, the second takes the empty slot only when that family has no children. When it has children, a new family is made and the result carries a warning: filling the slot would give those children a new parent without anyone saying so. | `set` of the slot with `base: null`; or warning `single_parent_family_has_children` |
+| **Slots.** Male goes to `father_handle`, female to `mother_handle`; otherwise the first person chosen goes to `father_handle` (partner1) and the second to `mother_handle` (partner2). A lone parent: a woman is the mother, anyone else the father. A ChildRef's `frel` belongs to the father slot and `mrel` to the mother slot, whoever was chosen first. | `assignSlots`; the new Family's `father_handle` and `mother_handle` |
+| **Append.** A new family is appended to each parent's `family_list` and to the child's `parent_family_list`, after the families already there, so the first (main) parents do not change. | `add` ops; the golden scenarios compare the lists |
+| **Stubs** (a new person). A Birth Name primary name with one primary surname, the chosen gender, a year-only Birth event when a year was given, a Death event when `living` is `no` and a death year was given, and an **empty `gramps_id`**. Every created object (Person, Family, Event, Place) has an empty `gramps_id`: it is minted at approval from the reserved block (Q2-03, `store-id-policy`) or assigned later by the desktop, and the compiler does not decide it. | `create` ops; `new:1`, `new:2`, ... in the order the stubs appear in the intent |
+| **Numbering.** The stubs are `new:1` to `new:k`, which is what `duplicates[].for` and `confirmDistinct` name. Then come each stub's Birth and Death events, a new Place, the Marriage and Divorce events, and last the Family. The `create` ops come first in that order, then the changes to existing objects. | `ops[].obj` |
+| **Spouse.** A family of the same pair is reused. Its type changes only when `relType` is given and differs; an omitted `relType` leaves it alone (a divorce year on a married pair keeps it married). Otherwise a childless single-parent family of either person is filled with the other (as `parents` and `children` do; with children in it a new family is made and `single_parent_family_has_children` warns), and failing that a family is created with the type chosen (Unknown when none was). An existing marriage or divorce is never replaced, even when the year differs: it is left with a warning. A year-only Marriage event (role Family, `about` makes the date "about") and a Divorce event when `ended.how` is `divorced`. A marriage or divorce the family already has is left alone with a warning. Widowed adds an `offer_death_year` follow-up when no death is recorded. A new place is limited to the kinds a member may name (not Street, Building or Number). | `create` Events; `followUps`; warnings `marriage_already_recorded`, `divorce_already_recorded` |
+| **Unlink.** A child: the ChildRef and the `parent_family_list` entry are removed. A partner: the slot is cleared and the family leaves the person's `family_list`. The family itself is never deleted; when it is left with no parents the result warns. Someone who is not linked is already unlinked. | `remove` and `set` ops with `base`; `destructive`; warning `family_has_no_parents` |
+| **Limits.** More than 10 children: `too_many_children`. An approval transaction of more than 100 actions: `proposal_too_large` (decision D2-30). | errors `too_many_children`, `proposal_too_large` |
+| **Checks.** The compiled ops are applied to the stored objects and `checkSemantics` runs on the result: two-sided links, family sense, dates (a member cannot enter a stub year before 1000 or in the future), and the ancestry rule. An intent that would make someone their own ancestor fails with `cycle` and returns no ops. Errors on a created object name its `new:n`. | error `cycle` and the `checkSemantics` codes |
+| **Warnings** (never block). A child who already has birth parents; a parent under 13 years older than the child (Gramps' `min-generation-years`). | `child_has_birth_parents`, `parent_too_young` |
+
+Other errors: `bad_intent` (the request is malformed, a person is chosen twice, a parent is their own child, an unknown relation word), `unknown_object` (a reference that does not exist), `bad_stub` (a stub with no name, a bad gender, a fractional year, or a death year before the birth year) and `unconfirmed_duplicate`. No error message repeats what the member typed.
+
+**The approval transaction.** `approvalActionCount({ touched, created, extra? })` counts what approving the proposal writes: 3 for the batch (head, receipt, audit), 2 for each object (head and log), 1 more for each created object (the guard that mints its id), 3 for the proposal (META, the by-proposer copy, the audit) and 1 for each object's per-record copy (sync design 4.1, editing design 5.2). `extra` is for items the caller adds. `stats.actions` is the count for this compile and `maxActions` (default 100) the budget. The caps of a proposal document itself (64 KB, 50 ops, 10 new objects) belong to the proposal store, which reads `stats`.
+
+**Duplicates.** [`duplicates.js`](../../api/src/records/duplicates.js) looks for people who may already be the stub: names compared case-folded and accent-stripped, the primary name and the alternate (married) names, one slip in a longer name, an initial or a short form that starts the given name, and a gender or a birth year (more than 3 years apart) that rules a person out. A short form of a given name that only starts the other ("Ann" for "Anna", "Anneliese") counts only with an exact surname, and a part that is empty on both sides adds no weight. It returns `[{ for: "new:1", candidates: [{ handle, displayName, lifespan }] }]` and nothing else about a person. It knows only the people it is handed, so the caller passes the viewer's redacted view: a candidate's years are never more than the viewer can already read.
+
+**Not built here.** The R-18/R-19 guard over the stub fields and the note runs in the record API on the whole resulting state (`edit-guard-wiring`), the proposal document caps are the proposal store's, and the routes are `relationship-api`'s. `relationship-api` must: call `checkObjects()` on the compiled state before any proposal write; pass `mode: "commit"` on every write; build `people` from the viewer-redacted record view; and either use the shared `assertTxnSize` cost model or pin it to `approvalActionCount` with a test.
+
+**Goldens.** The expectations in the tests are what Gramps 6.0.6 itself leaves in a database: [`api/test/records/fixtures/gramps-relationships.golden.json`](../../api/test/records/fixtures/gramps-relationships.golden.json) holds a synthetic tree and a set of scenarios, each the steps Gramps' editors perform through its DB API (`Family()`, `ChildRef()`, `Person.add_family_handle`, `commit_family`, `set_birth_death_index`), read back. They cover reusing a two-parent family, a single-parent family with and without children, never filling a slot of a family that has children, children with an unknown other parent, a spouse married then divorced, unlinking a child and a partner, stubs, places and relations. Other workers test against that file. It needs no Gramps to use: `python3 scripts/records/check_relationship_goldens.py` verifies it with the standard library alone and `python3 -m unittest discover gramps/tests/unit` runs that check in CI. Regenerating the file needs Gramps.app: see [Regenerate the Gramps goldens](../how-to/regenerate-the-gramps-goldens.md).
+
+The tests are [`api/test/records/relationships.node-test.js`](../../api/test/records/relationships.node-test.js), run by `npm test` after vitest, or alone with `node --test test/records/relationships.node-test.js`.
 
 ## Environment
 
@@ -673,6 +788,7 @@ Read in [`index.js`](../../api/src/index.js) and, for the `MCP_*` variables, in 
 | `ADMIN_LIST_KEY` | `config/admins.json` | `AdminListKey` | Admin list key |
 | `MEDIA_BUCKET` | `<site-bucket>` | `MediaBucket` | Bucket that uploads are presigned into, and that person records (`person/<gramps-id>.json`) are read from for [author labels](#author-label) |
 | `MEDIA_PUBLIC_BASE` | `https://<site>` | `MediaPublicBase` | Origin that serves `uploads/`. Upload `publicUrl`s start with it, and attachment URLs must. |
+| `HFY_GUARD_DOB` | unset: off | `GuardDob` (`off` or `on`, default `off`) | `on` makes the contact-information guard refuse `dob_not_allowed`. Any other value is off. See [Contact-information guard](#contact-information-guard). |
 | `VAPID_SECRET` | unset: push is not sent | `VapidSecretName` (left out when empty) | Secret holding the VAPID keys |
 
 The stack does not set these. Their defaults in code apply on the deployed function:

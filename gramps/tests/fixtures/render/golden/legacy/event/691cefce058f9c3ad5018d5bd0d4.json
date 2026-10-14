@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1778
+  },
+  "description": null,
+  "grampsId": "E0031",
+  "handle": "691cefce058f9c3ad5018d5bd0d4",
+  "label": "Birth",
+  "place": null,
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

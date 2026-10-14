@@ -8,45 +8,49 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "426f6c70",
+        "js": "4cc3b020",
         "css": "24d74883"
       },
       "my-posts": {
-        "js": "64f97c35",
-        "css": "6b1f4442"
+        "js": "fbb81caa",
+        "css": "cad6c878"
       },
       "notifications": {
-        "js": "5052822c",
+        "js": "32ace9c4",
         "css": "56799f74"
       },
       "person": {
-        "js": "25c8fb06",
-        "css": "d416dda8"
+        "js": "ff38642f",
+        "css": "3909ca3c"
+      },
+      "photo-tags": {
+        "js": "145b0d58",
+        "css": "bf6043c1"
       },
       "posts": {
-        "js": "f2ae05cb",
-        "css": "04cffdda"
+        "js": "ff06bb89",
+        "css": "13d80644"
       },
       "search": {
-        "js": "4a67bd09",
+        "js": "76bd1ee9",
         "css": "9e007813"
       },
       "settings": {
-        "js": "831b61e7",
+        "js": "a84cd46c",
         "css": "b1550e24"
       },
       "shell": {
-        "js": "1493681f",
+        "js": "a309d8a6",
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "e2a3267d",
+        "js": "0ff54ad1",
         "css": "6b1f4442"
       }
     },
     "theme": "1e33d0e0",
     "manifest": "c0f9b5fc",
-    "sw": "7d5118a5"
+    "sw": "9558bc1e"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -846,6 +850,13 @@
   resolveFlags().then((flags) => {
     if (flags.aboutCta !== true || !/^\/about\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("about-cta", { onError() { /* the story stands on its own */ } });
+  });
+
+  // HFY-TSK-169: photoTags mounts the photo tag overlays, the names lists and the hover cards on the person page. The island listens to the
+  // person page's hfy:person-rendered and hfy:lightbox-media events; with the flag off nothing is requested and the gallery is as before.
+  resolveFlags().then((flags) => {
+    if (flags.photoTags !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("photo-tags", { onError() { /* the gallery stands without tag overlays */ } });
   });
 
   onReady(applyFeatureVisibility);

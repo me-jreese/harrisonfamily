@@ -1,0 +1,27 @@
+{
+  "children": [],
+  "events": [],
+  "father": {
+    "displayName": "Cedar Testwood",
+    "gender": "male",
+    "grampsId": "I0003",
+    "handle": "c674d671cf21b92d98477690162a",
+    "isLiving": true,
+    "lifespan": {
+      "birth": {
+        "year": 1868
+      },
+      "death": {
+        "year": null
+      },
+      "summary": "1868\u2013"
+    }
+  },
+  "grampsId": "F0008",
+  "handle": "868977894a87ffaf7143ff092c63",
+  "mother": null,
+  "type": {
+    "code": 0,
+    "string": "Married"
+  }
+}
