@@ -3,6 +3,7 @@
 //
 //   preview(intent, confirm)   POST /api/relationships/preview  ->  { view, error }   the server's sentences, warnings, duplicates, follow-ups
 //   send(intent, confirm, key) POST /api/relationships          ->  the 201 body ({ proposal }, or { applied } for an admin)
+//   resolveHandle(handle)      GET  /api/records/Person/:handle    -> { handle, gid, name } | null   a duplicate candidate has no Gramps id, this finds it
 //   resolvePerson(gid)         GET  /api/records/Person/by-id/:gid -> { handle, gid, name } | null   (the intent names handles, the search gives ids)
 //   loadFamily(handle)         GET  /api/records/Person|Family/...  -> { families, partners }      for "something's wrong" and the other parent
 //   loadPlaces(gid)            GET  /api/edit/Person/:gid          -> [{ ref, name }]              the places the member's own page already holds
@@ -54,7 +55,8 @@ export function createWizardApi({ api = defaultApi } = {}) {
   }
 
   async function send(intent, confirm, key) {
-    return api.post("/relationships", { intent, confirmDistinct: confirm }, { headers: { "Idempotency-Key": key } });
+    // route "review": the wizard always makes a proposal (the screen says an admin will check it), even for an admin session, whose default is "auto".
+    return api.post("/relationships", { intent, confirmDistinct: confirm, route: "review" }, { headers: { "Idempotency-Key": key } });
   }
 
   async function resolvePerson(gid) {
@@ -75,6 +77,12 @@ export function createWizardApi({ api = defaultApi } = {}) {
       if (e && e.status === 404) return null;
       throw e;
     }
+  }
+
+  /** A person on the site by handle: `{ handle, gid, name }`, or null when it is not there. For the person a member said "yes, that's them" about. */
+  async function resolveHandle(handle) {
+    const p = await record("Person", handle);
+    return p ? { handle: p.handle, gid: p.gid || null, name: nameOfObj(p.obj) } : null;
   }
 
   /** The member's own families: `families: [{ handle, meAs: "child"|"partner", parents: [p], children: [p] }]`, p = `{ handle, gid, name }`. */
@@ -127,5 +135,5 @@ export function createWizardApi({ api = defaultApi } = {}) {
     return makeLookups(bundle || {}).places.map((p) => ({ ref: `Place:${p.ref}`, name: p.name }));
   }
 
-  return { preview, send, resolvePerson, loadFamily, loadPlaces };
+  return { preview, send, resolvePerson, resolveHandle, loadFamily, loadPlaces };
 }

@@ -174,10 +174,30 @@ for (const [name, viewport] of VIEWPORTS) {
       await page.locator("[data-hfy-send]").click();
       await expect(page.locator("[data-hfy-sent]")).toContainText("sent. you can change or withdraw it until an admin looks.");
       expect(s.posts).toHaveLength(1);
-      expect(s.posts[0].body).toEqual({ intent: s.previews[0].intent, confirmDistinct: [] });
+      expect(s.posts[0].body).toEqual({ intent: s.previews[0].intent, confirmDistinct: [], route: "review" });
       expect(s.posts[0].headers["idempotency-key"]).toMatch(/^[0-9a-f-]{16,}$/);
       await expect(page.locator("[data-hfy-see-sent]")).toHaveAttribute("href", "/me/review/?tab=mine");
       expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith("hfy:wizard")))).toEqual([]);
+    });
+
+    test("two identical sends use two Idempotency-Keys (add more connections clears the key)", async ({ page }) => {
+      const s = await open(page);
+      for (let round = 0; round < 2; round += 1) {
+        if (round) await page.locator("[data-hfy-add-more]").click();
+        await pick(page, "my parents");
+        await pick(page, "my mother");
+        await search(page, "Tessa", "I9002");
+        await pick(page, "birth mother");
+        await screen(page, "p.more");
+        await pick(page, "that's all");
+        await screen(page, "summary");
+        await page.locator("[data-hfy-send]").click();
+        await expect(page.locator("[data-hfy-sent]")).toBeVisible();
+      }
+      expect(s.posts).toHaveLength(2);
+      expect(s.posts[0].body).toEqual(s.posts[1].body);
+      expect(s.posts[0].body.route).toBe("review");
+      expect(s.posts[0].headers["idempotency-key"]).not.toBe(s.posts[1].headers["idempotency-key"]);
     });
 
     test("my children: the partner is pre-listed; a picked and a new child; a changed relation (AC1)", async ({ page }) => {
@@ -259,7 +279,7 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.locator("[data-hfy-destructive]")).toBeVisible();
       await page.locator("[data-hfy-send]").click();
       await expect(page.locator("[data-hfy-sent]")).toBeVisible();
-      expect(s.posts[0].body).toEqual({ intent: s.previews[0].intent, confirmDistinct: [] });
+      expect(s.posts[0].body).toEqual({ intent: s.previews[0].intent, confirmDistinct: [], route: "review" });
     });
 
     test("choice targets are 56 px or more, inputs are 16 px, one question and a step count on each screen (AC2)", async ({ page }) => {
@@ -377,6 +397,8 @@ for (const [name, viewport] of VIEWPORTS) {
       await page.locator('[data-hfy-same="hsyn0006"]').click();
       await screen(page, "summary");
       expect(s.previews.at(-1).intent.spouse).toEqual({ ref: "Person:hsyn0006" });
+      // P2-R46: the candidate had only a handle, so the wizard looked up the Gramps id and the name is a link
+      await expect(sentences(page).first().locator("a.hfy-person-name")).toHaveAttribute("href", "/person/?id=I9006");
       await page.locator("[data-hfy-send]").click();
       await expect(page.locator("[data-hfy-sent]")).toBeVisible();
       expect(s.posts[0].body.intent.spouse).toEqual({ ref: "Person:hsyn0006" });

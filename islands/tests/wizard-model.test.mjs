@@ -293,6 +293,20 @@ describe("'is this the same person?' (AC4)", () => {
     assert.deepEqual(stubUids(t), ["u2"]);
     assert.deepEqual(confirmDistinct(t), ["new:1"]);
   });
+  it("'yes, that's them' keeps the Gramps id when the caller found it, so the summary name can link", () => {
+    const s = answerSame(twoNew(), "u2", { ...dups[0].candidates[0], gid: "I9009" });
+    assert.equal(s.draft.kids[0].who.gid, "I9009");
+    assert.deepEqual(intentOf(s, ME).children[0].who, { ref: "Person:hsyn0009" }, "the intent still names only the handle");
+    assert.equal(answerSame(twoNew(), "u2", dups[0].candidates[0]).draft.kids[0].who.gid, null);
+  });
+  it("Back from the summary after a duplicate answer skips the answered question", () => {
+    for (const answer of [(s) => answerDifferent(s, "u2"), (s) => answerSame(s, "u2", dups[0].candidates[0])]) {
+      const asked = settle(kidsLookRight(twoNew()), "dup", { dups: [{ uid: "u2" }] });
+      const summary = settle(answer(asked), "summary", { dups: [] });
+      const b = back(summary);
+      assert.equal(b.screen, "c.add", "the screen before the check, not the answered question");
+    }
+  });
   it("works for parents and a spouse too", () => {
     let p = chooseParentRel(chooseParent(chooseRole(startFlow(freshState(), "parents"), "mother"), stubOf(freshState(), { given: "Tess" })), "birth");
     p = settle(p, "dup");

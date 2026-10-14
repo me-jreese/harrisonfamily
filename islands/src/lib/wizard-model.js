@@ -270,10 +270,10 @@ export function undo(state) {
   return { ...state, screen: last.screen, draft: last.draft, past };
 }
 
-/** The previous screen: take snapshots back until the screen is a different one (and never the check screen). */
+/** The previous screen: take snapshots back until the screen is a different one (and never the check screen or an answered duplicate question). */
 export function back(state) {
   let i = state.past.length - 1;
-  while (i >= 0 && (state.past[i].screen === state.screen || state.past[i].screen === "check")) i -= 1;
+  while (i >= 0 && (state.past[i].screen === state.screen || state.past[i].screen === "check" || state.past[i].screen === "dup")) i -= 1;
   if (i < 0) return state.flow ? { ...freshState() } : state;
   const to = state.past[i];
   return { ...state, screen: to.screen, draft: to.draft, past: state.past.slice(0, i) };
@@ -544,9 +544,12 @@ function mapWho(state, fn) {
   }
 }
 
-/** The member said "yes, that's them": the new person is swapped for the one already on the site. `candidate` is `{ handle, displayName, lifespan }`. */
+/**
+ * The member said "yes, that's them": the new person is swapped for the one already on the site. `candidate` is `{ handle, displayName, lifespan }`
+ * (the server's duplicate candidate), plus `gid` when the caller looked the person up, so the summary can link the name (P2-R46).
+ */
 export function answerSame(state, uid, candidate) {
-  const swap = (w) => (isStub(w) && w.stub.uid === uid ? refWho({ handle: candidate.handle, name: candidate.displayName || "", lifespan: candidate.lifespan || "" }) : w);
+  const swap = (w) => (isStub(w) && w.stub.uid === uid ? refWho({ handle: candidate.handle, gid: typeof candidate.gid === "string" && candidate.gid ? candidate.gid : null, name: candidate.displayName || "", lifespan: candidate.lifespan || "" }) : w);
   return go(state, "check", { ...mapWho(state, swap), dups: [] });
 }
 /** The member said "no, someone else": the new person is kept, and named in `confirmDistinct`. */

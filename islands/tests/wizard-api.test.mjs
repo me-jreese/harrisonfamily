@@ -61,11 +61,16 @@ describe("wizard api (AC1)", () => {
     assert.equal(r.view, null);
     assert.equal(r.error.code, "cycle");
   });
-  it("send posts the intent, confirmDistinct and the Idempotency-Key header", async () => {
+  it("resolveHandle finds the Gramps id of a duplicate candidate, or null when it is not there", async () => {
+    const w = createWizardApi({ api: fake() });
+    assert.deepEqual(await w.resolveHandle("hsyn0002"), { handle: "hsyn0002", gid: "I9002", name: "Tessa Example" });
+    assert.equal(await w.resolveHandle("hsyn9999"), null);
+  });
+  it("send posts the intent, confirmDistinct, route review (never the admin default auto) and the Idempotency-Key header", async () => {
     const api = fake();
     api.reply = () => ({ proposal: { id: "P1" } });
     const out = await createWizardApi({ api }).send({ type: "unlink" }, ["new:1"], "key-1");
-    assert.deepEqual(api.calls[0], ["POST", "/relationships", { intent: { type: "unlink" }, confirmDistinct: ["new:1"] }, { headers: { "Idempotency-Key": "key-1" } }]);
+    assert.deepEqual(api.calls[0], ["POST", "/relationships", { intent: { type: "unlink" }, confirmDistinct: ["new:1"], route: "review" }, { headers: { "Idempotency-Key": "key-1" } }]);
     assert.deepEqual(out, { proposal: { id: "P1" } });
     assert.match(newKey(), /^[0-9a-f-]{16,}$/);
     assert.notEqual(newKey(), newKey());

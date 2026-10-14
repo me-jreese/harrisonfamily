@@ -146,6 +146,12 @@ function Wizard({ me, uid }) {
   }, [state.screen, wapi, me.gid]);
 
   const act = useCallback((fn) => setState((s) => fn(s)), []);
+  // "Yes, that's them": find the person's Gramps id first (the duplicate candidate has only a handle), so the name links. A failed lookup still swaps.
+  const sameAs = async (dup, c) => {
+    let gid = null;
+    try { const p = await wapi.resolveHandle(c.handle); gid = p ? p.gid : null; } catch { gid = null; }
+    act((s) => answerSame(s, dup.uid, gid ? { ...c, gid } : c));
+  };
   const draft = state.draft;
   const step = stepOf(state);
 
@@ -160,6 +166,7 @@ function Wizard({ me, uid }) {
     setSendProblem(null);
     try {
       await wapi.send(intent, confirm, keyRef.current.key);
+      keyRef.current = { sig: "", key: "" }; // a later, identical intent is a new send, not a replay of this one
       clearDraft(storage(), uid);
       setDone({ followUps: preview ? preview.followUps : [], spouse: state.flow === "spouse" ? state.draft.spouse : null });
       setState(restart());
@@ -177,7 +184,7 @@ function Wizard({ me, uid }) {
 
   let body;
   if (done) {
-    body = <DoneScreen done={done} onMore={() => { setDone(null); setPreview(null); setState(restart()); }} />;
+    body = <DoneScreen done={done} onMore={() => { keyRef.current = { sig: "", key: "" }; setDone(null); setPreview(null); setState(restart()); }} />;
   } else {
     body = (
       <>
@@ -472,7 +479,7 @@ function Wizard({ me, uid }) {
             <p className="hfy-wiz__hint" role="status" data-hfy-blocked>{COPY.dupBlocked}</p>
             <div className="hfy-wiz__choices">
               {dup.candidates.map((c) => (
-                <Choice key={c.handle} onClick={() => act((s) => answerSame(s, dup.uid, c))} hint={c.lifespan || undefined} data-hfy-same={c.handle}>{COPY.dupSame(c.displayName || COPY.uSomeone)}</Choice>
+                <Choice key={c.handle} onClick={() => sameAs(dup, c)} hint={c.lifespan || undefined} data-hfy-same={c.handle}>{COPY.dupSame(c.displayName || COPY.uSomeone)}</Choice>
               ))}
               <Choice onClick={() => act((s) => answerDifferent(s, dup.uid))} data-hfy-different>{COPY.dupDifferent}</Choice>
             </div>
