@@ -422,6 +422,46 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(await axeViolations(page)).toEqual([]);
     });
 
+    test("a retry after a lost answer sends the same Idempotency-Key and gets the first result back", async ({ page }) => {
+      let applied = null;
+      const s = await open(page, {
+        proposals: [view(1)],
+        decision: async (rec, st, p) => {
+          const key = rec.headers["idempotency-key"];
+          if (!applied) {
+            applied = { key, next: { ...p, state: "approved", rev: p.rev + 1, etag: `${p.etag}x`, can: { ...p.can, decide: false } } };
+            st.store.set(p.id, applied.next);
+            return { status: 503, json: { error: "unavailable", message: "busy" } }; // the decision committed, the answer was lost
+          }
+          if (key === applied.key) return { status: 200, json: { proposal: applied.next } }; // a replay of the same request
+          return { status: 412, json: { error: "precondition_failed", message: "changed", details: { proposal: applied.next } } };
+        },
+      });
+      await rows(page).first().getByRole("button").click();
+      await act(page, "approve").click();
+      await expect(card(page).locator("[data-hfy-problem]")).toBeVisible();
+      await act(page, "approve").click();
+      await expect(card(page).locator("[data-hfy-notice]")).toHaveText("added to the family tree.");
+      expect(s.decisions).toHaveLength(2);
+      expect(s.decisions[1].headers["idempotency-key"]).toBe(s.decisions[0].headers["idempotency-key"]);
+    });
+
+    test("a card whose detail did not load says so and can try again", async ({ page }) => {
+      let fail = true;
+      const s = await open(page, { proposals: [view(1)] });
+      await page.route(new RegExp(`/api/proposals/${ID(1)}$`), (r) => {
+        if (r.request().method() === "GET" && fail) { fail = false; return r.fulfill({ status: 503, json: { error: "unavailable" } }); }
+        return r.fallback();
+      });
+      await rows(page).first().getByRole("button").click();
+      await expect(card(page).locator("[data-hfy-detail-failed]")).toContainText("didn't load");
+      await expect(act(page, "approve")).toBeDisabled();
+      await card(page).locator('[data-hfy-act="retry-detail"]').click();
+      await expect(card(page).locator("[data-hfy-detail-failed]")).toHaveCount(0);
+      await expect(act(page, "approve")).toBeEnabled();
+      expect(s.requests.filter((r) => r.method === "GET" && r.path.endsWith(`/${ID(1)}`)).length).toBeGreaterThanOrEqual(1);
+    });
+
     test("a link to one suggestion (?p=) opens it even when it is not on the list", async ({ page }) => {
       await open(page, { proposals: [view(1, { state: "approved" })] }, `?tab=review&p=${ID(1)}`);
       await expect(card(page)).toBeVisible();
@@ -452,6 +492,22 @@ test.describe("the layout", () => {
     await rows(page).first().getByRole("button").click();
     await page.goBack();
     await expect(page.locator("[data-hfy-list]")).toBeVisible();
+  });
+
+  test("375: opening and closing a card does not grow the history", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await open(page, { proposals: three() });
+    await expect(rows(page)).toHaveCount(3);
+    const before = await page.evaluate(() => history.length);
+    for (let i = 0; i < 3; i += 1) {
+      await rows(page).first().getByRole("button").click();
+      await expect(card(page)).toBeVisible();
+      await page.locator("[data-hfy-back]").click();
+      await expect(page.locator("[data-hfy-list]")).toBeVisible();
+    }
+    expect(await page.evaluate(() => history.length)).toBeLessThanOrEqual(before + 1);
+    await page.goBack(); // leaves the page entirely: the list is not reopened as a card
+    await expect(page.locator("[data-hfy-detail]")).toHaveCount(0);
   });
 
   for (const [width, split] of [[1023, false], [1024, true], [1280, true]]) {

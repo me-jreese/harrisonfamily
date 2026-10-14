@@ -22,6 +22,8 @@ export const COPY = Object.freeze({
   signIn: "sign in",
   loadFailed: "the suggestions didn't load. try again in a moment.",
   retry: "try again",
+  detailFailed: "this suggestion didn't load, so it can't be acted on yet.",
+  moreThanShown: "there are more suggestions than this list can show.",
   tabs: "suggestions",
   filters: "show",
   list: "suggestions",

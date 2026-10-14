@@ -68,7 +68,7 @@
         "css": "890fde1c"
       },
       "review": {
-        "js": "ec50a049",
+        "js": "d705cc84",
         "css": "d4074f34"
       },
       "search": {

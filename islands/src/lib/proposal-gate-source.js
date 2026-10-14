@@ -128,26 +128,33 @@ function asGateError(e) {
   return card ? new GateHttpError(412, e.message || "this suggestion changed since you opened it", { card }, "card_changed") : e;
 }
 
-const MAX_PAGES = 4;
-const PAGE = 50;
+// The pages are followed until the API says there are no more. The cap is only a runaway guard (a cursor that never ends); if it is ever reached the
+// source says so through `onTruncated`, and the island shows a "there are more" line, so a long queue is never cut short without a word.
+export const MAX_PAGES = 200;
+export const PAGE = 50;
 
 /**
  * `createProposalGateSource(api, { view, states, keep })`.
  *   view    "queue" (admins, oldest first) | "mine" | "about-me": GET /api/proposals?view=
  *   states  the proposal states to list; without it the hook's gates `state` filter picks them (PROPOSAL_STATES_OF)
  *   keep    an optional filter over the ProposalViews (the queue's "waiting" and "out of date" chips split the pending list)
+ *   onTruncated(boolean)  called after each list: true when the page cap cut the list short, else false
  * `list` returns the cards of every asked state; `decide` and `askForChanges` post the decision with the card's etag as If-Match and a fresh
  * Idempotency-Key. Approve may carry an admin's amend in `inputs.amend` ({ops, base_versions}).
  */
-export function createProposalGateSource(api, { view = "queue", states, keep, id = `hfy-proposals-${view}` } = {}) {
-  async function fetchState(state) {
+export function createProposalGateSource(api, { view = "queue", states, keep, onTruncated, id = `hfy-proposals-${view}` } = {}) {
+  async function fetchState(state, flag) {
     const items = [];
+    const used = new Set();
     let cursor;
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    for (let page = 0; ; page += 1) {
+      if (page >= MAX_PAGES) { flag.truncated = true; break; }
       const res = await api.get("/proposals", { query: { view, ...(state ? { state } : {}), limit: PAGE, cursor } });
       items.push(...arr(res && res.items));
-      cursor = res && typeof res.cursor === "string" ? res.cursor : undefined;
+      cursor = res && typeof res.cursor === "string" && res.cursor ? res.cursor : undefined;
       if (!cursor) break;
+      if (used.has(cursor)) { flag.truncated = true; break; } // the API handed back a cursor it already gave: stop rather than loop
+      used.add(cursor);
     }
     return items;
   }
@@ -156,9 +163,11 @@ export function createProposalGateSource(api, { view = "queue", states, keep, id
     const wanted = states || arr(q.state).flatMap((s) => PROPOSAL_STATES_OF[s] || []);
     const asked = wanted.length ? [...new Set(wanted)] : [undefined];
     const seen = new Map();
+    const flag = { truncated: false };
     for (const state of asked) {
-      for (const v of await fetchState(state)) if (isObj(v) && str(v.id) && (!keep || keep(v))) seen.set(v.id, v);
+      for (const v of await fetchState(state, flag)) if (isObj(v) && str(v.id) && (!keep || keep(v))) seen.set(v.id, v);
     }
+    if (typeof onTruncated === "function") { try { onTruncated(flag.truncated); } catch { /* the list is still good */ } }
     const sorted = [...seen.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)); // ULIDs: oldest first
     if (view !== "queue") sorted.reverse();
     return sorted.map(proposalToCard);

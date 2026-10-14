@@ -54,6 +54,7 @@ function Review({ tabs }) {
   const [selectedId, setSelectedId] = useState(initial.id);
   const [overrides, setOverrides] = useState(() => new Map());
   const [missing, setMissing] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const isWide = useWide();
   const names = usePersonNames();
   const detailRef = useRef(null);
@@ -62,7 +63,7 @@ function Review({ tabs }) {
 
   const chips = CHIPS[tab] || [];
   const chip = chips.find((c) => c.id === chipId) || chips[0];
-  const source = useMemo(() => createProposalGateSource(api, { view: VIEW_OF[tab], states: chip.states, keep: chip.keep }), [tab, chip]);
+  const source = useMemo(() => createProposalGateSource(api, { view: VIEW_OF[tab], states: chip.states, keep: chip.keep, onTruncated: setTruncated }), [tab, chip]);
   const sources = useMemo(() => [source], [source]);
   const inbox = useGateInbox(sources, FILTER);
 
@@ -119,7 +120,12 @@ function Review({ tabs }) {
   const pickTabId = (t) => { setTab(t); setChipId((CHIPS[t] || [])[0]?.id); setSelectedId(null); go({ tab: t }, false); };
   const pickChip = (id) => { setChipId(id); setSelectedId(null); go({ tab }, false); };
   const open = (id) => { setSelectedId(id); go({ tab, id }, true); };
-  const close = () => { setSelectedId(null); go({ tab }, true); };
+  // Closing a card the island pushed goes back one entry (so the history does not grow on every open and close); a card reached by a link replaces it.
+  const close = () => {
+    if (history.state && history.state.hfyReview) { history.back(); return; }
+    setSelectedId(null);
+    go({ tab }, false);
+  };
   // A card from a conflict, an edit or a decision is held and shown until the list has a newer read of it (the list's index can lag).
   const onCardChanged = useCallback((card) => setOverrides((prev) => new Map(prev).set(card.id, card)), []);
   const onChanged = useCallback(() => { inbox.refresh(); }, [inbox.refresh]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -142,6 +148,7 @@ function Review({ tabs }) {
             {first && <div className="hfy-review__skeleton" role="status" aria-label={COPY.loading} />}
             {inbox.error && <p className="hfy-review__problem" role="alert">{COPY.loadFailed} <button type="button" className="hfy-review__btn" onClick={() => inbox.refresh()}>{COPY.retry}</button></p>}
             {!first && !inbox.error && !listed.length && <p className="hfy-review__note" role="status" data-hfy-empty>{chip.empty}</p>}
+            {truncated && !inbox.error && <p className="hfy-review__note" role="status" data-hfy-truncated>{COPY.moreThanShown}</p>}
             {listed.length > 0 && (
               <ul className="hfy-review__items" data-hfy-items>
                 {listed.map((c) => <ProposalRow key={c.id} card={c} selected={c.id === selectedId} onOpen={open} names={names} mode={tab} />)}
@@ -151,7 +158,7 @@ function Review({ tabs }) {
         )}
         {showDetail && (
           <section className="hfy-review__detail" aria-label="suggestion" tabIndex={-1} ref={detailRef} data-hfy-detail>
-            {selectedId && !isWide && <button type="button" className="hfy-review__back" onClick={() => (history.state && history.state.hfyReview ? history.back() : close())} data-hfy-back>{COPY.back}</button>}
+            {selectedId && !isWide && <button type="button" className="hfy-review__back" onClick={close} data-hfy-back>{COPY.back}</button>}
             {selected && <ProposalCard key={selected.id} card={selected} source={source} api={api} mode={tab} names={names} onCardChanged={onCardChanged} onChanged={onChanged} />}
             {selectedId && !selected && !missing && <div className="hfy-review__skeleton" role="status" aria-label={COPY.loading} />}
             {selectedId && !selected && missing && <p className="hfy-review__note" role="status">{COPY.gone}</p>}

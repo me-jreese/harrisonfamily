@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { GateHttpError, GateVerdictError, cardFromConflict, parseGateCard } from "@io-kit/gates";
 import { sortByExpiry } from "@io-kit/gates/react";
 import { ApiError, createApi } from "../src/lib/api.js";
-import { GATE_STATE, PROJECT, createProposalGateSource, isDestructive, proposalToCard, utc } from "../src/lib/proposal-gate-source.js";
+import { GATE_STATE, MAX_PAGES, PAGE, PROJECT, createProposalGateSource, isDestructive, proposalToCard, utc } from "../src/lib/proposal-gate-source.js";
 import { ID, STATES, view } from "./fixtures/proposals.mjs";
 
 /** A fake fetch that records requests and answers from `handler(url, init)`. */
@@ -126,6 +126,64 @@ describe("the queue lists oldest first (AC1)", () => {
     const { api } = fakeApi(async () => ({ status: 200, body: { items: [view(1), view(2)] } }));
     const cards = await createProposalGateSource(api, { view: "mine", states: ["pending"] }).list({});
     assert.deepEqual(cards.map((c) => c.id), [ID(2), ID(1)]);
+  });
+});
+
+describe("a long queue is never cut short without a word", () => {
+  /** An API of `total` suggestions served `PAGE` at a time with a cursor, newest first like the real lists. */
+  const paged = (total, { loop = false } = {}) => {
+    const all = Array.from({ length: total }, (_, i) => view(total - i));
+    return fakeApi(async (url) => {
+      const u = new URL(url, "http://x");
+      const raw = u.searchParams.get("cursor");
+      const at = raw === "same" ? 50 : Number(raw || 0);
+      const lim = Number(u.searchParams.get("limit"));
+      const items = all.slice(at, at + lim);
+      const more = loop || at + lim < all.length;
+      return { status: 200, body: { items, ...(more ? { cursor: loop ? "same" : String(at + lim) } : {}) } };
+    });
+  };
+
+  it("pages past 200 items and still lists the oldest first", async () => {
+    const { api, calls } = paged(260);
+    const flags = [];
+    const cards = await createProposalGateSource(api, { view: "queue", states: ["pending"], onTruncated: (t) => flags.push(t) }).list({});
+    assert.equal(cards.length, 260);
+    assert.equal(cards[0].id, ID(1)); // the oldest is first, though the API answered newest first
+    assert.equal(cards[259].id, ID(260));
+    assert.equal(calls.length, 6);
+    assert.deepEqual(flags, [false]);
+  });
+
+  it("says so when the page cap is reached", async () => {
+    const { api } = paged((MAX_PAGES + 2) * PAGE);
+    const flags = [];
+    const cards = await createProposalGateSource(api, { view: "queue", states: ["pending"], onTruncated: (t) => flags.push(t) }).list({});
+    assert.equal(cards.length, MAX_PAGES * PAGE);
+    assert.deepEqual(flags, [true]);
+  });
+
+  it("stops, and says so, when the API repeats a cursor", async () => {
+    const { api, calls } = paged(300, { loop: true });
+    const flags = [];
+    await createProposalGateSource(api, { view: "queue", states: ["pending"], onTruncated: (t) => flags.push(t) }).list({});
+    assert.deepEqual(flags, [true]);
+    assert.ok(calls.length <= 3);
+  });
+});
+
+describe("the expiresAt workaround never expires a card (kit 0.1.2 drift, editing.md 7.4)", () => {
+  it("a suggestion older than 30 days keeps its state through parseGateCard, and the queue still orders by creation", () => {
+    const old = [view(1, { created_at: "2025-01-01T10:00:00.000Z", updated_at: "2025-01-01T10:00:00.000Z" }), view(2, { created_at: "2025-01-02T10:00:00.000Z", updated_at: "2025-01-02T10:00:00.000Z", state: "needs_changes" })];
+    const cards = old.map(proposalToCard);
+    for (const c of cards) {
+      const parsed = parseGateCard(c); // the kit does not refuse a card whose expiresAt is far in the past
+      assert.equal(parsed.state, c.state);
+      assert.ok(Date.parse(parsed.expiresAt) < Date.now());
+      assert.equal(parsed.onExpire, "regenerate");
+      assert.notEqual(parsed.state, "expired");
+    }
+    assert.deepEqual(sortByExpiry([...cards].reverse()).map((c) => c.id), [ID(1), ID(2)]);
   });
 });
 

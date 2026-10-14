@@ -344,22 +344,31 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
     setBusy(name); setProblem(null); setNotice("");
     try { await fn(); } catch (e) { fail(e); } finally { setBusy(""); }
   };
-  const inputFor = (verdict) => ({ id: view.id, project: PROJECT, etag: view.etag, idempotencyKey: makeIdempotencyKey(view.id, verdict) });
+  // One Idempotency-Key per (suggestion, etag, verdict, what is sent), held until the etag moves: a retry after a lost answer sends the same key,
+  // so the server replays the first result instead of answering 412 for a decision that did go through. A different reason or amend is a
+  // different request (the server hashes it), so it gets its own key.
+  const keys = useRef(new Map());
+  const inputFor = (verdict, payload) => {
+    const sig = `${view.id}|${view.etag}|${verdict}|${JSON.stringify(payload ?? null)}`;
+    if (!keys.current.has(sig)) keys.current.set(sig, makeIdempotencyKey(view.id, verdict));
+    return { id: view.id, project: PROJECT, etag: view.etag, idempotencyKey: keys.current.get(sig) };
+  };
 
   const approve = () => run("approve", async () => {
     const r = await source.decide({ ...inputFor("approve"), verdict: { type: "approve" } });
     finish(r && r.proposal, "added to the family tree.");
   });
   const approveAmended = (amend) => run("approve", async () => {
-    const r = await source.decide({ ...inputFor("approve"), verdict: { type: "approve" }, inputs: { amend: { ops: amend.ops, base_versions: amend.base_versions } } });
+    const sent = { ops: amend.ops, base_versions: amend.base_versions };
+    const r = await source.decide({ ...inputFor("approve", sent), verdict: { type: "approve" }, inputs: { amend: sent } });
     finish(r && r.proposal, "added to the family tree.");
   });
   const decline = (reason) => run("decline", async () => {
-    const r = await source.decide({ ...inputFor("deny"), verdict: { type: "deny", reason } });
+    const r = await source.decide({ ...inputFor("deny", reason), verdict: { type: "deny", reason } });
     finish(r && r.proposal, "declined.");
   });
   const askChanges = (reason) => run("ask", async () => {
-    const r = await source.askForChanges({ ...inputFor("needs_changes"), reason });
+    const r = await source.askForChanges({ ...inputFor("needs_changes", reason), reason });
     finish(r && r.proposal, "sent. they'll see your question.");
   });
   const saveEdit = (amend) => run("edit", async () => {
@@ -400,7 +409,10 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
 
       {open && admin && rebase.status === "clean" && <p className="hfy-review__note" role="status" data-hfy-clean>{COPY.stillApplies}</p>}
       {open && rebase.status === "conflict" && rows.length > 0 && (admin || proposer) && <ConflictList rows={rows} />}
-      {open && admin && detail.phase === "loading" && <p className="hfy-review__note" role="status">{COPY.checking}</p>}
+      {open && wantsDetail && detail.phase === "loading" && <p className="hfy-review__note" role="status">{COPY.checking}</p>}
+      {open && wantsDetail && detail.phase === "failed" && (
+        <p className="hfy-review__problem" role="alert" data-hfy-detail-failed>{COPY.detailFailed} <button type="button" className="hfy-review__btn" onClick={() => setReload((n) => n + 1)} data-hfy-act="retry-detail">{COPY.retry}</button></p>
+      )}
       {showDecision && (
         <p className="hfy-review__note" role="status" data-hfy-decision>
           {view.state === "approved" ? COPY.approvedLine : stateChip(view)}
