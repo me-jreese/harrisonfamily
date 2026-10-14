@@ -61,4 +61,5 @@ test("viewUrl sets view and keeps focus and the path", () => {
   assert.equal(viewUrl({ pathname: "/tree/", search: "?focus=I9001" }, "outline"), "/tree/?focus=I9001&view=outline");
   assert.equal(viewUrl({ pathname: "/tree/", search: "?view=outline&focus=I9001" }, "cards"), "/tree/?view=cards&focus=I9001");
   assert.equal(viewUrl({ pathname: "/tree/", search: "" }, "outline"), "/tree/?view=outline");
+  assert.equal(viewUrl({ pathname: "/tree/", search: "?focus=I9001", hash: "#hfy-tree-outline" }, "outline"), "/tree/?focus=I9001&view=outline#hfy-tree-outline");
 });

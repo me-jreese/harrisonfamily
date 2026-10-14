@@ -48,9 +48,12 @@
   border-radius: var(--io-radius-md);
   background: var(--io-color-semantic-surface-sunken);
 }
-/* The chart's own placeholder (shown only when the chunk is slower than CHART_WAIT_MS) reserves most of a screen, so the cards arriving moves
-   less of what is on screen. The page itself reserves a screen (the inline rule in 11ty/tree/index.html), so the footer never moves (CLS). */
-.hfy-tree__skeleton--chart { min-height: 60vh; }
+/* The cards' place while the chunk loads. The placeholder and the loaded chart share one min-height, so a chunk that arrives after the
+   focus navigator has painted does not move the navigator or the outline (CLS); the navigator itself never waits for the chunk. */
+.hfy-tree__skeleton--chart,
+.hfy-tree__chart { min-height: 60vh; }
+.hfy-tree__skeleton--chart { margin-bottom: var(--io-space-5); }
+@media (min-width: 64rem) { .hfy-tree__skeleton--chart { grid-column: 1 / -1; } }
 
 /* The cards | outline switch (HFY-TSK-301): a group of two 44 px buttons, the pressed one marked by the accent border and the raised surface. */
 .hfy-tree__views { display: flex; flex-wrap: wrap; gap: var(--io-space-2); margin-bottom: var(--io-space-3); }

@@ -30,13 +30,14 @@ export const COPY = {
 // defines it as it evaluates, so the import rejects), the page drops to outline-only mode: TreeApp says so in COPY.chartFailed and keeps the
 // focus navigator and the outline, which hold the same information (CHART_CHUNK_FAILED, viz.md section 17).
 //
-// The import is started as soon as the page wants the cards (not when the chart first renders), in parallel with the graph fetch, and the
-// first ready paint waits for it, CHART_WAIT_MS at most: a chart that arrives after the focus navigator pushes the focus navigator and the
-// outline down the page, which is layout shift. The outline never waits longer than that for the cards. (No React.lazy: a lazy component
-// whose promise has already resolved still renders its fallback once, and that is the shift again.)
+// The import is started as soon as the page wants the cards (not when the chart first renders), in parallel with the graph fetch. The focus
+// navigator and the outline never wait for it: they are the always-available accessible path and paint as soon as the graph resolves. Until
+// the chunk is in, a placeholder holds the chart's place at the height the cards will take (.hfy-tree__skeleton--chart and .hfy-tree__chart
+// share a min-height), so a late chunk does not push the navigator down. (No React.lazy: a lazy component whose promise has already resolved
+// still renders its fallback once.) A rejected import is cached on purpose: the page stays in outline-only mode for the rest of the page view
+// and a reload tries again; nothing on the page offers a retry that could not give a different answer (a refused custom element re-rejects).
 let chartImport = null;
 const loadChart = () => (chartImport ||= import("../lib/tree-chart.jsx"));
-export const CHART_WAIT_MS = 2500;
 
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
@@ -200,10 +201,8 @@ export function TreeApp() {
   viewRef.current = view;
   // The cards chunk could not load (or the browser refused the element): outline-only for the rest of this page view.
   const [chartFailed, setChartFailed] = useState(false);
-  // The chart component once its chunk has loaded; `waited` is set when the first paint has waited long enough for it.
+  // The chart component once its chunk has loaded.
   const [Chart, setChart] = useState(null);
-  const [waited, setWaited] = useState(false);
-  const painted = useRef(false);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -261,14 +260,6 @@ export function TreeApp() {
   useEffect(() => {
     if (resolved && resolved.id && resolved.id !== focusParam(location.search)) history.replaceState(null, "", focusUrl(location, resolved.id));
   }, [resolved]);
-  // The first ready paint waits for the chart chunk, but never longer than CHART_WAIT_MS after the graph arrived.
-  const holding = Boolean(resolved?.id) && !painted.current && view === "cards" && !Chart && !chartFailed && !waited;
-  useEffect(() => {
-    if (!holding) return undefined;
-    const t = setTimeout(() => setWaited(true), CHART_WAIT_MS);
-    return () => clearTimeout(t);
-  }, [holding]);
-  useEffect(() => { if (resolved?.id && !holding) painted.current = true; });
   const onView = useCallback((v) => {
     setView(v);
     writeStoredView(v);
@@ -295,7 +286,6 @@ export function TreeApp() {
   }
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
-  if (holding) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   return (
     <div className="hfy-tree hfy-tree--ready">
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}

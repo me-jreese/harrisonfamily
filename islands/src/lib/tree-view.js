@@ -42,9 +42,9 @@ export function writeStoredView(view, getStorage = () => localStorage) {
 /** The view to open with: the address, else the stored choice, else the cards. */
 export const initialView = (search, getStorage) => viewParam(search) || readStoredView(getStorage) || DEFAULT_VIEW;
 
-/** The address with `?view=` set, every other parameter (`focus`) kept. */
+/** The address with `?view=` set, every other parameter (`focus`) and the #fragment kept. */
 export function viewUrl(loc, view) {
   const q = new URLSearchParams(loc.search);
   q.set("view", view);
-  return `${loc.pathname}?${q.toString()}`;
+  return `${loc.pathname}?${q.toString()}${loc.hash || ""}`;
 }
