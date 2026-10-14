@@ -4,6 +4,51 @@
 .hfy-tree__chart { box-sizing: border-box; min-width: 0; max-width: 100%; margin-bottom: var(--io-space-5); }
 @media (min-width: 64rem) { .hfy-tree__chart { grid-column: 1 / -1; } }
 
+/* From 43rem the cards view is two columns: the grid (the element) and the detail panel (viz.md 9.1 and 9.2; HFY-TSK-299). The tools line (the
+   "generations" button, which exists only between 43rem and 64rem) and the skip link take the whole row. */
+@media (min-width: 43rem) {
+  .hfy-tree__chart { display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--io-space-9) * 3.5); gap: var(--io-space-5); align-items: start; }
+  .hfy-tree__chart > :is(.hfy-tree__tools, .hfy-tree__skip:focus) { grid-column: 1 / -1; }
+}
+@media (min-width: 64rem) {
+  .hfy-tree__chart { grid-template-columns: minmax(0, 1fr) calc(var(--io-space-9) * 4); }
+}
+.hfy-tree__tools { display: flex; }
+.hfy-tree .hfy-tree__generations {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-tree .hfy-tree__generations:hover { border-color: var(--io-color-semantic-accent); }
+/* Between 43rem and 64rem the outline lives behind that button, so the page's own copy steps aside (and with it the skip link that points at it). */
+@media (min-width: 43rem) and (max-width: 63.99rem) {
+  .hfy-tree[data-tree-mode="cards"] .hfy-tree__outline, .hfy-tree[data-tree-mode="cards"] .hfy-tree__skip { display: none; }
+}
+/* The generations Sheet portals to the body, outside .hfy-tree: it wears the class itself so the outline's rules apply. */
+.hfy-tree.hfy-tree__sheet-outline { max-width: none; }
+
+/* The detail panel: the focus person (face or initials, name, years, places, counts, how the viewer is related) and the Sheet's lists. */
+.hfy-tree__panel {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface-raised);
+}
+.hfy-tree__panel-head { display: flex; align-items: center; gap: var(--io-space-3); margin-bottom: var(--io-space-3); }
+.hfy-tree .hfy-tree__panel-avatar { width: calc(var(--io-space-8) * 1.5); height: calc(var(--io-space-8) * 1.5); font-size: var(--io-typography-size-lg); }
+.hfy-tree .hfy-tree__panel-name { margin: 0; font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-lg); font-weight: var(--io-typography-weight-regular); line-height: var(--io-typography-leading-tight); overflow-wrap: anywhere; }
+.hfy-tree .hfy-tree__panel-counts { margin: 0 0 var(--io-space-3); }
+.hfy-tree__panel .hfy-tree-details h3 { margin-top: var(--io-space-4); }
+
 /* The skip link is out of sight until it has the keyboard. */
 .hfy-tree__skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .hfy-tree__skip:focus { position: static; display: inline-flex; align-items: center; width: auto; height: auto; min-height: var(--io-control-tap-min); clip-path: none; margin-bottom: var(--io-space-2); }
@@ -56,6 +101,7 @@ family-navigator { display: block; min-width: 0; max-width: 100%; }
 .hfy-nav__avatar[data-pair="parent"] { background: var(--io-color-semantic-tree-parent); color: var(--io-color-semantic-tree-parent-ink); }
 .hfy-nav__avatar[data-pair="sibling"] { background: var(--io-color-semantic-tree-sibling); color: var(--io-color-semantic-tree-sibling-ink); }
 .hfy-nav__avatar[data-pair="spouse"] { background: var(--io-color-semantic-tree-spouse); color: var(--io-color-semantic-tree-spouse-ink); }
+.hfy-nav__avatar[data-pair="grandparent"] { background: var(--io-color-semantic-tree-grandparent); color: var(--io-color-semantic-tree-grandparent-ink); }
 .hfy-nav__avatar[data-pair="child"] { background: var(--io-color-semantic-tree-child); color: var(--io-color-semantic-tree-child-ink); }
 .hfy-nav__face { display: block; width: 100%; height: 100%; object-fit: cover; }
 .hfy-nav__text { display: flex; flex-direction: column; gap: var(--io-space-1); min-width: 0; }
@@ -104,6 +150,58 @@ family-navigator { display: block; min-width: 0; max-width: 100%; }
 .hfy-tree .hfy-nav__tab[aria-selected="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-surface-raised); font-weight: var(--io-typography-weight-semibold); }
 .hfy-nav__partner { margin-bottom: var(--io-space-2); }
 
+/* ---- From 43rem (HFY-TSK-299; viz ADR 4.5): the four-row grid. Four bands (grandparents, parents, the focus family, children); a card keeps its
+   width and a line wider than its column waits behind "+N more" (family-navigator.js _fit), so nothing scales and no name drops below 16 px.
+   There is no pan or zoom. Card width is 2.25 x space-9 (144 px). ---- */
+.hfy-nav--wide { display: grid; gap: var(--io-space-5); }
+.hfy-nav--wide > .hfy-nav__block { margin-top: 0; }
+.hfy-nav--wide .hfy-nav__notice { margin: 0; }
+.hfy-nav__line { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--io-space-2); min-width: 0; }
+.hfy-nav__line--center { justify-content: center; }
+.hfy-nav__line > .hfy-nav__item { flex: 0 0 calc(var(--io-space-9) * 2.25); box-sizing: border-box; min-width: 0; width: calc(var(--io-space-9) * 2.25); }
+.hfy-nav__line > .hfy-nav__item[hidden] { display: none; }
+.hfy-nav__line > .hfy-nav__item--more { flex: 0 0 auto; display: flex; align-items: center; width: auto; }
+.hfy-tree .hfy-nav__more {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hfy-tree .hfy-nav__more:hover { border-color: var(--io-color-semantic-accent); }
+.hfy-nav--wide .hfy-nav__item > .hfy-nav__missing { min-height: calc(var(--io-space-9) * 1.5); }
+
+/* The focus family: the brothers and sisters, the focus card and the selected partner. Between 43rem and 64rem the brothers and sisters take a
+   line above, the focus card and the partner sit side by side; from 64rem all three share a line. */
+.hfy-nav__famrow {
+  display: grid;
+  align-items: start;
+  gap: var(--io-space-4);
+  grid-template-columns: minmax(0, 1fr) calc(var(--io-space-9) * 2.25);
+  grid-template-areas: "sibs sibs" "focus partner";
+}
+.hfy-nav__cell { min-width: 0; }
+.hfy-nav__cell--sibs { grid-area: sibs; }
+.hfy-nav__cell--focus { grid-area: focus; }
+.hfy-nav__cell--partner { grid-area: partner; }
+.hfy-nav__cell--sibs:empty { display: none; }
+@media (min-width: 64rem) {
+  .hfy-nav__famrow {
+    align-items: center;
+    grid-template-columns: minmax(0, 1fr) calc(var(--io-space-9) * 4) calc(var(--io-space-9) * 2.25);
+    grid-template-areas: "sibs focus partner";
+  }
+  .hfy-nav__cell--sibs:empty { display: block; }
+}
+.hfy-nav--wide .hfy-nav__cell--partner > .hfy-nav__missing { min-height: var(--io-control-tap-min); }
+.hfy-nav--wide .hfy-nav__tabs { margin: var(--io-space-3) 0 0; }
+
 /* The details sheet (the kit Sheet portals to the body, outside .hfy-tree). */
 .hfy-tree-details { color: var(--io-color-semantic-text); font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-normal); }
 .hfy-tree-details h3 { margin: var(--io-space-4) 0 var(--io-space-2); font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
@@ -113,3 +211,5 @@ family-navigator { display: block; min-width: 0; max-width: 100%; }
 .hfy-tree-details dd { margin: 0 0 var(--io-space-2); }
 .hfy-tree-details .hfy-tree__dim { color: var(--io-color-semantic-text-dim); }
 .hfy-tree-details .hfy-tree__link { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }
+/* A name in the Sheet, the panel and its lists is a link, so it is a 44 px target (the panel is inside .hfy-tree, the Sheet is not). */
+.hfy-tree-details .hfy-person-name, .hfy-tree__panel-name .hfy-person-name { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); }

@@ -18,7 +18,9 @@ export const COPY = {
   childrenNone: "no children recorded yet",
   notConnected: "not yet connected to the tree",
   noUnions: "no partner or children recorded yet",
-  viewPage: "view page"
+  viewPage: "view page",
+  grandparentMissing: "grandparent not recorded",
+  grandparentsNone: "grandparents not recorded yet"
 };
 
 /** Text badges for a parent link (the per-parent `rel` of graph.json v1): adopted, step and foster. Birth, sponsored, unknown, none and custom show none. */
@@ -80,7 +82,7 @@ export function initials(p) {
 }
 
 /**
- * One person card. kind: "focus" | "parent" | "child" | "sibling" | "partner". `rel` is the per-parent link for a parent or a child of the
+ * One person card. kind: "focus" | "parent" | "grandparent" | "child" | "sibling" | "partner". `rel` is the per-parent link for a parent or a child of the
  * focus; `half` marks a half-sibling; `unionType` names a partner's word (wife, husband, spouse, partner).
  * `label` is the accessible name ("Ben Example, father, 1878 to unknown"); `role` is the plain role word shown on the card. The focus card is an
  * action (it opens the details sheet), so its name reads "Ada Example, focus, 1878 to unknown, show details" and it shows no role word.
@@ -115,6 +117,21 @@ export function personCard(graph, id, kind, { rel = null, half = false, unionTyp
   return card;
 }
 
+/**
+ * The grandparents row of the wide layout (HFY-TSK-299): up to four slots, two for each recorded parent, in the parent's order. A slot with no
+ * recorded grandparent is a placeholder, never a guessed person; a parent who is not recorded contributes no slots (nobody can say whose
+ * parents they would be). {cards: [card | null], message}: a null is a "grandparent not recorded" slot; `message` replaces the row when the focus
+ * has no recorded parent.
+ */
+function grandparentSlots(graph, parents) {
+  const slots = [];
+  for (const x of parents.slice(0, 2)) {
+    const up = graph.parents(x.id).slice(0, 2);
+    for (let i = 0; i < 2; i += 1) slots.push(up[i] ? personCard(graph, up[i].id, "grandparent", { rel: up[i].rel }) : null);
+  }
+  return { cards: slots, message: slots.length ? null : COPY.grandparentsNone };
+}
+
 function unionEntry(graph, u) {
   const partner = u.partner ? graph.person(u.partner) : null;
   const unionType = u.union.type || null;
@@ -140,7 +157,8 @@ function siblingsOf(graph, id) {
 
 /**
  * What <family-navigator> draws for `focus`:
- *   {id, name, connected, notice, focus: card, parents: {cards, placeholder, message}, unions: [{id, tab, type, partner, children}], siblings: [card]}
+ *   {id, name, connected, notice, focus: card, parents: {cards, placeholder, message}, grandparents: {cards: [card | null], message},
+ *    unions: [{id, tab, type, partner, children}], siblings: [card]}
  * `connected` is false for a person with no generation, and for a singleton (no parent, partner, child or sibling recorded), which the builder
  * emits as its own component at generation 0: it gets the "not yet connected to the tree" notice and no relative-generation label.
  */
@@ -164,9 +182,20 @@ export function navigatorModel(graph, focus) {
       placeholder: parents.length === 1 ? COPY.parentMissing : null,
       message: parents.length === 0 ? COPY.parentsNone : null
     },
+    grandparents: grandparentSlots(graph, parents),
     unions,
     siblings: siblings.map((s) => personCard(graph, s.id, "sibling", { half: s.half }))
   };
+}
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function countLines(graph, id) {
+  const parents = graph.parents(id).length;
+  const partners = graph.partners(id).length;
+  const children = graph.children(id).length;
+  const related = [partners ? plural(partners, "partner") : null, children ? plural(children, "child", "children") : null].filter(Boolean);
+  return [parents ? plural(parents, "parent") : COPY.parentsNone, related.length ? related.join(", ") : COPY.noUnions];
 }
 
 /**
@@ -197,6 +226,8 @@ export function detailsModel(graph, id) {
     parents: graph.parents(id).map((x) => entry(x.id, "parent", { rel: x.rel })),
     unions,
     childCount: graph.children(id).length,
+    // The panel's one-line counts: "2 parents" and "1 partner, 3 children" (a count of zero is left out; nothing recorded says so).
+    counts: countLines(graph, id),
     href: `/person/?id=${encodeURIComponent(id)}`
   };
 }

@@ -74,6 +74,10 @@
 /* The page: the focus navigator, then the generation outline (side by side from the wide breakpoint). */
 .hfy-tree__outline { margin-top: var(--io-space-5); }
 .hfy-tree__outline h2 { margin: 0 0 var(--io-space-3); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+/* The cards view needs room for the grid and the detail panel: from 43rem the page opens up to 20 x space-9 (HFY-TSK-299). */
+@media (min-width: 43rem) {
+  .hfy-tree--ready[data-tree-mode="cards"] { max-width: calc(20 * var(--io-space-9)); }
+}
 @media (min-width: 64rem) {
   .hfy-tree--ready { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--io-space-5); align-items: start; }
   .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live, .hfy-tree__views) { grid-column: 1 / -1; }
