@@ -99,11 +99,11 @@ export function createFakeS3(objects = new Map()) {
  * closed default (everything off, nobody uat). `routes` replaces the registry (tests mount gated routes with defineRoutes); `inbox`
  * is a persist-first inbox store.
  */
-export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel, log = { warn() {}, error() {} }, guardDob, autoPut = true, flags, uat, features, routes, inbox } = {}) {
+export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept, resolveLabel, log = { warn() {}, error() {} }, guardDob, autoPut = true, flags, uat, features, routes, inbox, clock, extraDeps } = {}) {
   const raw = createFakeDdb();
   const s3 = createFakeS3();
   const ddb = intercept ? { send: async (cmd) => { await intercept(cmd); return raw.send(cmd); } } : raw;
-  const now = ticker();
+  const now = clock ?? ticker(); // `clock`: a fixed () => ms, for tests that sign time-sensitive tokens (sync step-up)
   const sent = [];
   const presigned = [];
   const jwks = createLocalJWKSet({ keys: [{ ...createPublicKey(pem).export({ format: "jwk" }), kid: "hfy-session-1", alg: "RS256", use: "sig" }] });
@@ -127,7 +127,7 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept,
       return `https://presign.test/${a.bucket}/${a.key}?sig=x`;
     },
     s3, ...(guardDob !== undefined ? { guardDob } : {}),
-    vapidPublicKey: "vapid-public", log,
+    vapidPublicKey: "vapid-public", log, ...(extraDeps ?? {}),
     ...(withPush ? { vapid: { subject: "mailto:test@example.test", publicKey: "vapid-public", privateKey: "x" }, webpush: { async sendNotification(sub, payload) { sent.push({ sub, payload: JSON.parse(payload) }); } } } : {}),
   });
   const ev = (method, path, { token, body, query, ct = "application/json", headers = {} } = {}) => ({
@@ -139,7 +139,7 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept,
     const r = await handler(ev(method, path, opts));
     return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : undefined, headers: r.headers };
   };
-  return { ddb: raw, handler, call, sent, presigned, subscriptions, preferences, now, s3 };
+  return { ddb: raw, handler, call, sent, presigned, subscriptions, preferences, now, s3, jwks };
 }
 
 /**
