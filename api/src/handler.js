@@ -6,6 +6,8 @@ import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
+import { createGuard } from "./guard.js";
+import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 
@@ -18,6 +20,12 @@ export function createHandler(deps) {
   const routes = deps.routes ?? ROUTES; // tests mount extra (gated) routes through routes.js defineRoutes
   // Persist first (BRD2 D2-15): with an inbox store wired (hfy-inbox-delivery-api) the producers run even without push.
   const notifyActive = pushEnabled || Boolean(deps.inbox);
+  const mediaBucket = deps.mediaBucket ?? "harrisonfamily-frontend";
+  // R-18 on posts, comments and the MCP tools (privacy-guard-existing-paths). guardDob is the HFY_GUARD_DOB switch (index.js):
+  // off until io answers Q2-17 line 5, so only contact kinds are refused; refusals log counts per code only.
+  const guard = createGuard({ dob: deps.guardDob === true, log });
+  // The location-metadata check on a post's new attachments, with the API's own S3 client. No client => no new attachments.
+  const checkUpload = deps.s3 ? (key) => checkLocation(mediaBucket, key, { s3: deps.s3 }) : undefined;
   /** Post-commit side effects (push fan-out, thread cleanup): the write already succeeded, so failures are logged, never returned. */
   const afterCommit = async (label, fn) => {
     try {
@@ -49,9 +57,9 @@ export function createHandler(deps) {
       }
       return [...ids];
     };
-    const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase });
+    const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload });
     const comments = createCommentSource({
-      ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000,
+      ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
       getPost: (id) => content.get(id),
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
@@ -65,7 +73,7 @@ export function createHandler(deps) {
     const afterPostDeleted = (id) => afterCommit("post thread purge", () => purgeThread(base, `post:${id}`, actor.id));
     const notifyHandler = () =>
       createNotifyHandler({ vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id })(event);
-    const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, bucket: deps.mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
+    const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, ddb, cmds, table, now, bucket: mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
     const accessRequestCount = () => countPendingAccessRequests({ ddb, cmds, table });
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });

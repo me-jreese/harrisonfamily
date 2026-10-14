@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harrisonfamily.us/schema/redaction-v1.schema.json",
+  "title": "Redaction policy v1",
+  "description": "The shape of gramps/redaction/redaction-v1.json. Uses only the keywords the unit tests' validator and Ajv both implement: type, enum, const, required, properties, additionalProperties, items, minItems, uniqueItems, pattern, minimum, maximum, minLength, definitions and $ref.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policy", "version", "title", "basis", "phases", "birthLike", "dates", "attributes", "urls", "places", "media", "scan", "rules"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "policy": { "const": "redaction-v1" },
+    "version": { "type": "integer", "minimum": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "basis": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "order", "summary"],
+        "properties": {
+          "id": { "$ref": "#/definitions/phaseId" },
+          "order": { "type": "integer", "minimum": 1 },
+          "summary": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "birthLike": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "eventTypes", "customType", "birthRefIndex", "appliesTo"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "eventTypes": { "$ref": "#/definitions/namedValues" },
+        "customType": { "$ref": "#/definitions/customType" },
+        "birthRefIndex": { "const": true },
+        "appliesTo": { "type": "string", "minLength": 1 }
+      }
+    },
+    "dates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dayMonthIndexes", "yearIndexes", "bareYearTextPattern", "textOnlyModifier", "textOnlyYearPattern", "sortvalCalendars", "nameTypeBirth"],
+      "properties": {
+        "dayMonthIndexes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 7 } },
+        "yearIndexes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 7 } },
+        "bareYearTextPattern": { "type": "string", "minLength": 1 },
+        "textOnlyModifier": { "type": "integer", "minimum": 0 },
+        "textOnlyYearPattern": { "type": "string", "minLength": 1 },
+        "sortvalCalendars": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+        "nameTypeBirth": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ageAndTime", "governmentId"],
+      "properties": {
+        "ageAndTime": { "$ref": "#/definitions/namedValues" },
+        "governmentId": { "$ref": "#/definitions/namedValues" }
+      }
+    },
+    "urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["emailType", "schemes", "hosts", "paths"],
+      "properties": {
+        "emailType": { "type": "integer", "minimum": 0 },
+        "schemes": { "$ref": "#/definitions/words" },
+        "hosts": { "$ref": "#/definitions/words" },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "prefix"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 },
+              "prefix": { "type": "string", "pattern": "^/" }
+            }
+          }
+        }
+      }
+    },
+    "places": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["excludedTypes", "customHomeLike", "administrativeTypes", "locationFields", "coordinateDecimals", "coordinatePattern"],
+      "properties": {
+        "excludedTypes": { "$ref": "#/definitions/namedValues" },
+        "customHomeLike": { "$ref": "#/definitions/customType" },
+        "administrativeTypes": { "$ref": "#/definitions/namedValues" },
+        "locationFields": { "$ref": "#/definitions/words" },
+        "coordinateDecimals": { "type": "integer", "minimum": 0, "maximum": 6 },
+        "coordinatePattern": { "type": "string", "minLength": 1 }
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["heldMime", "exifGpsMime", "rectRange", "fullFrameRect"],
+      "properties": {
+        "heldMime": { "$ref": "#/definitions/words" },
+        "exifGpsMime": { "$ref": "#/definitions/words" },
+        "rectRange": { "type": "array", "minItems": 2, "items": { "type": "integer" } },
+        "fullFrameRect": { "type": "array", "minItems": 4, "items": { "type": "integer" } }
+      }
+    },
+    "scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds", "desktopOnlyKinds", "dobWindow", "fields"],
+      "properties": {
+        "kinds": { "$ref": "#/definitions/words" },
+        "desktopOnlyKinds": { "$ref": "#/definitions/words" },
+        "dobWindow": { "type": "integer", "minimum": 1 },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class", "path"],
+            "properties": {
+              "class": { "type": "string", "minLength": 1 },
+              "path": { "type": "string", "pattern": "^/" }
+            }
+          }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/rule" }
+    }
+  },
+  "definitions": {
+    "phaseId": { "enum": ["classify", "elements", "fields", "scan", "orphans", "references"] },
+    "words": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "namedValues": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "name"],
+        "properties": {
+          "value": { "type": "integer", "minimum": 0 },
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "customType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "pattern", "flags"],
+      "properties": {
+        "value": { "const": 0 },
+        "pattern": { "type": "string", "minLength": 1 },
+        "flags": { "enum": ["", "i"] }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "class", "objectClass", "path", "action", "phase", "summary", "source", "server"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+        "class": { "enum": ["private", "birth", "contact", "place", "scan", "media"] },
+        "objectClass": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "path": { "type": "string", "pattern": "^/" },
+        "action": { "enum": ["exclude_object", "filter_element", "local_only", "reduce_date", "repoint_place", "round_coordinates", "hold_media", "scan"] },
+        "phase": { "$ref": "#/definitions/phaseId" },
+        "summary": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "server": { "enum": ["detect", "none"] },
+        "desktopOnly": { "type": "boolean" },
+        "params": { "type": "object" }
+      }
+    }
+  }
+}

@@ -12,6 +12,8 @@ const wrap = async (p) => {
       // The contract has no "unauthenticated" code (it maps to forbidden); the islands still need to tell signed out from
       // not allowed, to say "this page is family-only. sign in to see it." instead of the generic line.
       if (e.status === 401 || e.code === "unauthenticated") err.signedOut = true;
+      // The API's own code (contact_info, dob_not_allowed, photo_has_location, upload_missing, ...), for the DS copy (posts-ui).
+      err.apiCode = e.code;
       throw err;
     }
     throw e instanceof ContentError ? e : new ContentError("unavailable", e?.message || "request failed");
