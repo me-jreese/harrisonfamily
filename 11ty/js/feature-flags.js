@@ -12,19 +12,19 @@
         "css": "24d74883"
       },
       "my-posts": {
-        "js": "7ba72d98",
+        "js": "64f97c35",
         "css": "6b1f4442"
       },
       "notifications": {
-        "js": "16d76326",
+        "js": "5052822c",
         "css": "56799f74"
       },
       "person": {
-        "js": "5aada4dc",
+        "js": "25c8fb06",
         "css": "d416dda8"
       },
       "posts": {
-        "js": "c8e2412c",
+        "js": "f2ae05cb",
         "css": "04cffdda"
       },
       "search": {
@@ -40,7 +40,7 @@
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "1e228186",
+        "js": "e2a3267d",
         "css": "6b1f4442"
       }
     },

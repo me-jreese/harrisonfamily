@@ -8,6 +8,7 @@ import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
+import { createLinks } from "./links.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -69,7 +70,8 @@ export function createHandler(deps) {
     const accessRequestCount = () => countPendingAccessRequests({ ddb, cmds, table });
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
-    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    const links = createLinks(base);
+    return { content, comments, links, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**
