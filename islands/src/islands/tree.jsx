@@ -1,8 +1,9 @@
 // /tree/: the family tree page island (HFY-TSK-201, flag familyViz; design viz.md sections 7, 8, 9.4 and 17).
 // This task owns the shell of the page: fetching the gated graph with the session-continuity rules (HFY-R66), the page states, the focus
 // (?focus, else the viewer, else the default person) kept in sync with the history, and a plain focus card with the person's close
-// relatives as re-centring buttons. The generation outline and focus navigator (viz-outline-navigator) replace <FocusStage> and the
-// chart (viz-mvp-visual) is a lazy chunk beside it; both read the same graph and call the same `onFocus`.
+// relatives as re-centring buttons. HFY-TSK-202 (viz-outline-navigator) made that card the FocusNavigator and added the GenerationOutline
+// beside it; both always render, are plain semantic HTML and call the same `onFocus`. The chart (viz-mvp-visual)
+// is a lazy chunk beside them and reads the same graph.
 //
 //   GET /person/graph.json  200 render | 401 (after the refresh retry) sign in, back here | 403/404 "being prepared" | bad body: retry
 import "./tree.css";
@@ -11,6 +12,7 @@ import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { relationLabel } from "../lib/family-graph.js";
+import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
 
 export const COPY = {
   prepared: "the family tree is being prepared. you can find anyone through search.",
@@ -32,22 +34,29 @@ function State({ children, action }) {
   );
 }
 
-function Group({ title, people, onFocus }) {
-  if (!people.length) return null;
+function RelButton({ person, onFocus, current = false }) {
+  return (
+    <button type="button" className="hfy-tree__person" data-person={person.id} aria-current={current ? "true" : undefined} aria-label={person.label ? `${person.name}, ${person.label}` : undefined} onClick={() => onFocus(person.id)}>
+      <span className="hfy-tree__name">{person.name}</span>
+      {person.label ? <span className="hfy-tree__rel">{person.label}</span> : null}
+    </button>
+  );
+}
+
+function Group({ title, people, onFocus, empty = null }) {
+  if (!people.length && !empty) return null;
   return (
     <section className="hfy-tree__group" aria-label={title}>
       <h3>{title}</h3>
-      <ul>
-        {people.map(({ id, name }) => (
-          <li key={id}><button type="button" className="hfy-tree__person" data-person={id} onClick={() => onFocus(id)}>{name}</button></li>
-        ))}
-      </ul>
+      {people.length ? (
+        <ul>{people.map((p) => <li key={p.id}><RelButton person={p} onFocus={onFocus} /></li>)}</ul>
+      ) : <p className="hfy-tree__dim">{empty}</p>}
     </section>
   );
 }
 
-/** The focus card and the close relatives. The seam the outline and navigator task replaces. */
-export function FocusStage({ graph, focus, viewer, onFocus }) {
+/** The focus card and the relatives as re-centring buttons: plain semantic HTML, always rendered (viz.md 12.3). */
+export function FocusNavigator({ graph, focus, viewer, onFocus }) {
   const p = graph.person(focus);
   const heading = useRef(null);
   const first = useRef(true);
@@ -56,25 +65,80 @@ export function FocusStage({ graph, focus, viewer, onFocus }) {
     if (first.current) { first.current = false; return; }
     heading.current?.focus();
   }, [focus]);
-  const name = (id) => ({ id, name: graph.person(id).name });
   const rel = viewer ? relationLabel(graph, viewer, focus) : null;
-  const groups = useMemo(() => ({
-    parents: graph.parents(focus).map((x) => name(x.id)),
-    partners: graph.partners(focus).map((x) => name(x.id)),
-    children: graph.children(focus).map((x) => name(x.id)),
-    siblings: graph.siblings(focus).map((x) => name(x.id))
-  }), [graph, focus]);
+  const groups = useMemo(() => focusGroups(graph, focus), [graph, focus]);
   if (!p) return null;
+  const place = placeName(graph, p.birthPlace);
   return (
     <section className="hfy-tree__focus" aria-labelledby="hfy-tree-focus-name" data-tree-focus={focus}>
       <h2 id="hfy-tree-focus-name" tabIndex={-1} ref={heading}>{p.name}</h2>
-      <p className="hfy-tree__dim">{yearsLabel(p)}{rel && rel !== "you" ? ` · your ${rel}` : ""}{rel === "you" ? " · you" : ""}</p>
+      <p className="hfy-tree__dim">
+        {yearsLabel(p)}{place ? ` · born in ${place}` : ""}{rel && rel !== "you" ? ` · your ${rel}` : ""}{rel === "you" ? " · you" : ""}
+      </p>
       <p><a className="hfy-tree__link" href={`/person/?id=${encodeURIComponent(focus)}`}>view page</a></p>
-      <Group title="parents" people={groups.parents} onFocus={onFocus} />
-      <Group title="partners" people={groups.partners} onFocus={onFocus} />
-      <Group title="children" people={groups.children} onFocus={onFocus} />
+      <Group title="parents" people={groups.parents} onFocus={onFocus} empty="parents not recorded yet" />
+      {groups.unions.map((u) => (
+        <Group key={u.key} title={u.title} people={[...(u.partner ? [u.partner] : []), ...u.children]} onFocus={onFocus} />
+      ))}
       <Group title="brothers and sisters" people={groups.siblings} onFocus={onFocus} />
+      {groups.grandparents.length ? (
+        <details className="hfy-tree__group hfy-tree__fold">
+          <summary>grandparents ({groups.grandparents.length})</summary>
+          <ul>{groups.grandparents.map((x) => <li key={x.id}><RelButton person={x} onFocus={onFocus} /></li>)}</ul>
+        </details>
+      ) : null}
     </section>
+  );
+}
+
+function PeopleList({ graph, ids, focus, onFocus, label }) {
+  const [all, setAll] = useState(false);
+  const at = ids.indexOf(focus);
+  const showAll = all || at >= LEVEL_PAGE;
+  const shown = showAll ? ids : ids.slice(0, LEVEL_PAGE);
+  const rest = ids.length - shown.length;
+  return (
+    <>
+      <ul>
+        {shown.map((id) => {
+          const p = graph.person(id);
+          return <li key={id}><RelButton person={{ id, name: p.name, label: yearsLabel(p) }} onFocus={onFocus} current={id === focus} /></li>;
+        })}
+      </ul>
+      {rest > 0 ? <button type="button" className="hfy-tree__more" onClick={() => setAll(true)}>show {rest} more<span className="hfy-tree__sr"> in {label}</span></button> : null}
+    </>
+  );
+}
+
+/** The whole tree as native details, one per generation, with relative labels and a last "not yet connected" group (viz.md 12.3). */
+export function GenerationOutline({ graph, focus, onFocus }) {
+  const model = useMemo(() => outlineModel(graph, focus), [graph, focus]);
+  const focusLevel = model.levels.find((l) => l.hasFocus)?.index ?? null;
+  const inUnconnected = model.unconnected.includes(focus);
+  // The level with the focus is open; opening or closing another is the reader's own, kept across re-centres.
+  const [open, setOpen] = useState(() => new Set());
+  const key = (k) => String(k);
+  const isOpen = (k, dflt) => (open.has(`+${k}`) ? true : open.has(`-${k}`) ? false : dflt);
+  const toggle = (k) => (e) => {
+    const on = e.currentTarget.open;
+    setOpen((prev) => { const n = new Set(prev); n.delete(`+${k}`); n.delete(`-${k}`); n.add(`${on ? "+" : "-"}${k}`); return n; });
+  };
+  return (
+    <nav className="hfy-tree__outline" aria-label="generations" data-tree-outline>
+      <h2>generations</h2>
+      {model.levels.map((l) => (
+        <details key={l.index} className="hfy-tree__level" open={isOpen(key(l.index), l.index === focusLevel)} onToggle={toggle(key(l.index))} data-tree-level={l.index}>
+          <summary>{l.label} ({l.ids.length})</summary>
+          <PeopleList graph={graph} ids={l.ids} focus={focus} onFocus={onFocus} label={l.label} />
+        </details>
+      ))}
+      {model.unconnected.length ? (
+        <details className="hfy-tree__level" open={isOpen("x", inUnconnected)} onToggle={toggle("x")} data-tree-level="unconnected">
+          <summary>not yet connected to the tree ({model.unconnected.length})</summary>
+          <PeopleList graph={graph} ids={model.unconnected} focus={focus} onFocus={onFocus} label="not yet connected" />
+        </details>
+      ) : null}
+    </nav>
   );
 }
 
@@ -143,9 +207,10 @@ export function TreeApp() {
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
   return (
-    <div className="hfy-tree">
+    <div className="hfy-tree hfy-tree--ready">
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
-      <FocusStage graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} />
+      <FocusNavigator graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} />
+      <GenerationOutline graph={graph} focus={resolved.id} onFocus={onFocus} />
       <p className="hfy-tree__live" aria-live="polite" data-tree-live>{spoken}</p>
     </div>
   );
