@@ -42,6 +42,8 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation and the object key. |
 | [`presign.js`](../../api/src/presign.js) | The S3 presigner for uploads, kept apart so tests can sign offline. |
 | [`records/ops.js`](../../api/src/records/ops.js) | The EditOp engine for the editing work: `applyOps`, `invertOps`, `rebaseOps` (clean, no-op or conflict per op), keyed list segments (`@ref=`, `@=`, `@k=`) and `mintHandle`. It imports nothing, so it runs in Node and in a browser, and no route calls it yet. See [The EditOp engine](#the-editop-engine). |
+| [`records/semantics.js`](../../api/src/records/semantics.js) | The Gramps rules for edited records: dates and `sortval`, handle references, two-sided family links, family sanity, ancestry cycles and the derived `birth_ref_index` and `death_ref_index`. `checkSemantics` runs on the objects an EditOp batch produced. It imports only the EditOp engine and the calendar port, and no route calls it yet. See [Gramps semantics](#gramps-semantics). |
+| [`records/gcalendar.js`](../../api/src/records/gcalendar.js) | A port of Gramps' calendar arithmetic (`*_sdn` in `gen/lib/gcalendar.py`): Gregorian, Julian, Hebrew, French Republican, Persian, Islamic and Swedish. It imports nothing. |
 
 ### Dependencies
 
@@ -622,6 +624,38 @@ Every other outcome is a conflict row: `{ opId, obj, op, path, reason, base, cur
 **Handles.** A `create` of `new:<n>` mints a handle and replaces every `new:<n>` in the batch: in `obj`, paths and `before`, and in string values that sit in a reference field (`ref`, `place`, `*_handle` and the handle lists `family_list`, `parent_family_list`, `note_list`, `citation_list`, `tag_list`). Free text that reads `new:1` is left as typed. A `create` with a real `Class:<handle>` object key restores that object, which is how the inverse of a `delete` works.
 
 The tests are [`api/test/records/ops.node-test.js`](../../api/test/records/ops.node-test.js), run by `npm test` after vitest, or alone with `node --test`. The GitHub workflows (`io-kit-ci`) build and package only; they do not run `api` tests, so the gate is the `api/` row of AGENTS.md (`npm test`) before a PR.
+
+## Gramps semantics
+
+[`api/src/records/semantics.js`](../../api/src/records/semantics.js) applies the rules Gramps itself applies when someone edits a record (editing design, section 6.2). It is a library: no route, tool or Lambda path calls it yet (HFY-TSK-249), and it ships in the `hfy-api` zip unreachable until `edit-api-changes` calls it. It imports only [`ops.js`](../../api/src/records/ops.js) (for canonical JSON) and [`gcalendar.js`](../../api/src/records/gcalendar.js), so it runs in Node and in a browser.
+
+```
+checkSemantics({ before, after, get, eventReferrers?, referrers?, admin?, today? })
+  -> { ok, errors: [{ code, obj, path?, message, ... }], warnings, objects, derivedKeys, derived }
+```
+
+`before` and `after` are the touched objects as maps `{ "Person:<handle>": <Gramps JSON> }`: `after` is `applyOps(...).objects`, and a key in `before` and not in `after` is a delete. `get(key)` reads the stored object for everything else. `objects` is `after` with the derived fields filled in; a Person the change forced to recompute, though it was not in the batch, is added and listed in `derivedKeys`, so the caller writes it too. Errors carry RFC 6901 pointers into the resulting object.
+
+The check judges the data as it will be after the ops apply, and it reports only what the change introduces. A tree that already breaks a rule, such as a dangling handle from an old import, does not block an unrelated edit to the same object, but the edit cannot add a new violation. A Date that is unchanged is not judged again, but its `sortval` is put back to the stored value, so a client cannot change it by sending a different one. `today` must be `{ y, m, d }`, a `Date` or `YYYY-MM-DD`; anything else throws a `TypeError`, and a caller that knows the member's time zone should pass the member's local day.
+
+| Rule | Codes |
+| --- | --- |
+| **Dates.** Each new or changed Date is validated, then its `sortval` is recomputed. Members: Gregorian and Julian only, years 1000 to today, no date after today (a year alone means January 1, and a Julian date is compared as the day it is), a day that fits its month and leap year, a month 1 to 12, a day needs a month and a month a year, a range or span must start strictly before it ends (an equal start and end is refused; Gramps itself accepts it, so this is a deliberate stricter reading of the design wording, pending io's confirmation), and `text` only on a text-only date. Admins may use the other five calendars and any year from 1 to 9999, and may enter a future date; in those calendars only month and day ceilings are checked. | `date_shape`, `calendar_not_allowed`, `year_out_of_range`, `date_in_future`, `day_out_of_range`, `month_out_of_range`, `month_required`, `year_required`, `range_order`, `range_incomplete`, `date_empty_modifier`, `text_required`, `text_not_allowed`, `text_date_has_value`, `newyear_not_allowed` |
+| **`sortval`.** What Gramps' `Date.set()` computes: the first part of the date decides (a range's end does not), a slash (dual-dated) date moves to the Julian calendar, a new-year offset (Mar 1, Mar 25, Sep 1) moves a date at or past the split into the previous year, and a text-only or empty date is 0. A `sortval` from a client is overwritten, never trusted. | |
+| **References.** Every handle in a ref field exists, as an object of the class that field holds; a `new:n` temporary handle left over is an error; deleting an object that something still points to is refused. A change that deletes anything must pass `referrers`; without it the result is `referrers_required` rather than a silent pass. | `missing_reference`, `unminted_handle`, `still_referenced`, `bad_object` |
+| **Two-sided links** (`editfamily.py:1274-1297`). `Family.father_handle` or `mother_handle` is `p` exactly when `p.family_list` holds the Family, and a ChildRef for `c` exists exactly when `c.parent_family_list` holds it. The error is on the Person whose list needs the fix. | `link_missing_family_list`, `link_orphan_family_list`, `link_missing_parent_family`, `link_orphan_parent_family`, `dangling_family_link`, `duplicate_family_link` |
+| **Family sense** (`editfamily.py:1223-1240`). The father or mother is not also a child of the family, father is not mother, no ChildRef twice. | `parent_is_child`, `same_parent`, `duplicate_child_ref` |
+| **Ancestry.** No person is their own ancestor. Every child-to-parent edge the change adds (over `parent_family_list` and the Family's father and mother) is checked for whether the parent already reaches the child, so a second cycle that shares people with one already in the tree is caught. | `ancestry_cycle`, `ancestry_limit` |
+| **Call name.** A new or changed Name's `call` (primary or alternate) is one of the words of its `first_name`; an empty call is fine. | `call_name_not_in_first_name` |
+| **Derived indexes.** `birth_ref_index` and `death_ref_index` are recomputed with Gramps' `set_birth_death_index` (`gen/db/base.py:2025-2047`: the first primary-role Birth event, EventType 12, and the first primary-role Death event, EventType 13) for every Person whose `event_ref_list` changed, every Person in the batch that uses an Event whose type changed, and every stored Person that `eventReferrers(eventHandle)` returns for such an Event. A type change without `eventReferrers` is an error. | `referrers_required` |
+
+**Not built here.** The non-blocking warnings of editing design section 6.2 (a person who already has birth parents, a parent under 13 years older than the child, a possible duplicate person) are deferred to `edit-api-changes` and the relationship compiler; `warnings` is always `[]`. Erratum to the design text: Death is EventType 13 (Birth is 12), as in Gramps 6.0.6 and the goldens, not 5.
+
+The birth-date precision rule (day and month never stored for a birth) is the guard's, not this module's (`edit-guard-wiring`).
+
+**Goldens.** The expectations in the tests are what Gramps 6.0.6 itself computes, committed in [`api/test/records/fixtures/gramps-semantics.golden.json`](../../api/test/records/fixtures/gramps-semantics.golden.json): 454 synthetic Dates (383 valid Gregorian and Julian, plus the other calendars, slash, new-year, text-only and invalid ones) with Gramps' accept or reject, `sortval` and settled calendar, and 170 birth/death scenarios with the indexes Gramps sets before and after an event-list change and an Event type change. Other workers test against that file. It needs no Gramps to use: `python3 scripts/records/check_gramps_goldens.py` re-derives every Gregorian and Julian `sortval`, validity and index with the standard library alone and checks the file's SHA-256, and `python3 -m unittest discover gramps/tests/unit` runs it in CI. Regenerating the file needs Gramps.app: see [Regenerate the Gramps goldens](../how-to/regenerate-the-gramps-goldens.md).
+
+The tests are [`api/test/records/semantics.node-test.js`](../../api/test/records/semantics.node-test.js), run by `npm test` after vitest, or alone with `node --test test/records/semantics.node-test.js`.
 
 ## Environment
 
