@@ -30,7 +30,7 @@ Priced:
 Not priced:
 
 - **The legacy Google Cloud pieces.** The `getAllowlist` Cloud Function and its Google Secret Manager secret were outside AWS and outside this estimate. Both were deleted on 2026-10-14 with io's approval (HFY-TSK-325), so they no longer cost anything.
-- **The legacy `hfy-check-allowed` Lambda and the API Gateway in front of it.** Both were deleted on 2026-10-14 (HFY-TSK-326, ruling P2-R48), with the Lambda's role and log group, so they cost nothing. They were never in `app-stack.yaml` or in this estimate's totals. Their Secrets Manager secret, `HFY_ALLOWLIST_HMAC_SECRET`, still exists and is counted, because a secret is billed monthly whether or not it is read.
+- **The legacy `hfy-check-allowed` Lambda and the API Gateway in front of it.** Both were deleted on 2026-10-14 (HFY-TSK-326, ruling P2-R48), with the Lambda's role and log group, so they cost nothing. They were never in `app-stack.yaml` or in this estimate's totals. Their Secrets Manager secret, `HFY_ALLOWLIST_HMAC_SECRET`, is not counted either: nothing reads it, and it was scheduled on 2026-10-14 for deletion on 2026-11-13 (ruling P2-R51). [Secrets](#secrets) shows what it adds until then.
 - **The static site.** S3 storage for the site, the default CloudFront behavior and its CloudFront Function, the self-hosted fonts, invalidations, and the CloudFront requests, data transfer and S3 GETs of the gated data and photo paths are shown separately in [Static-site baseline](#static-site-baseline) and are not in the app-backend total. The gate's own Lambda@Edge charges are in the app-backend total.
 - **Cloudflare.** Cloudflare proxies `<site>` in front of CloudFront. It is outside AWS and outside this estimate.
 - **Everything else around the stacks.** DNS and the domain, the public ACM certificate, the app stack's Lambda packages in `<code-bucket>` (a commit-named zip for each function per code deploy), the push requests `hfy-api` sends to browsers' push services, and CI.
@@ -132,7 +132,7 @@ Base traffic, monthly. Unit prices are `us-west-2` list prices unless the line n
 | Lambda@Edge `hfy-edge-gate` | 110,000 (100,000 data and media, 10,000 photo) × 50 ms × 0.125 GB = 687.5 GB-s; 110,000 requests | $0.00005001 per GB-s; $0.60 per million requests | 0.10 |
 | Lambda@Edge `hfy-mcp-edge401` | 5,000 × 50 ms × 0.125 GB = 31.25 GB-s; 5,000 requests | Same as above | 0.00 |
 | Cognito user pool | About 40 MAU | $0.015 per MAU (Essentials, the plan a user pool gets when `UserPoolTier` is not set, as in `app-stack.yaml`). The 10,000-MAU allowance is Free Tier. | 0.60 |
-| Secrets Manager | 4 secrets; a few hundred reads | $0.40 per secret per month; $0.05 per 10,000 API calls | 1.60 |
+| Secrets Manager | 3 secrets; a few hundred reads | $0.40 per secret per month; $0.05 per 10,000 API calls | 1.20 |
 | CloudWatch Logs, `hfy-api` and `hfy-auth-edge` | 0.15 GB ingested; at most 0.15 GB stored | $0.50 per GB ingested; $0.03 per GB-month stored | 0.08 |
 | CloudWatch Logs, Lambda@Edge | 0.04 GB ingested and kept, spread over the Regions that ran the functions | The same rates in `us-east-1`, `us-east-2` and `us-west-2`. `us-west-1` charges $0.67 per GB ingested and $0.033 per GB-month. The line uses the lower rates; if every log line were ingested in `us-west-1`, it would be 0.03 (0.14 at 5x). | 0.02 |
 | CloudFront requests | 135,000 HTTPS (100,000 `/api/*`, 30,000 `/auth/*`, 5,000 MCP) | $0.0100 per 10,000 | 0.14 |
@@ -141,22 +141,30 @@ Base traffic, monthly. Unit prices are `us-west-2` list prices unless the line n
 | Photo upload PUTs | 100 PUTs | $0.005 per 1,000 | 0.00 |
 | Photo storage | 0.3 GB added each month and kept | $0.023 per GB-month | 0.01 in the first month, about 0.08 after 12 months |
 | Gate code in `<edge-code-bucket>` | Under 20 MB | $0.023 per GB-month (`us-east-1`) | 0.00 |
-| **Total** | | | **2.96 a month; about 36 a year** |
+| **Total** | | | **2.56 a month; about 31 a year** |
 
 Without the secrets, the other lines come to about 1.36 a month, of which 0.60 is Cognito.
 
 ### Secrets
 
-The secrets line is the largest. It counts every Secrets Manager secret the backend holds, not only the ones in `app-stack.yaml`. The original estimate counted two: the session key and VAPID.
+The secrets line is the largest. It counts every Secrets Manager secret the backend keeps, not only the ones in `app-stack.yaml`. The original estimate counted two: the session key and VAPID.
 
 | Secret | Status | Read by | Monthly USD |
 | --- | --- | --- | --- |
 | Session signing key | Always present | `hfy-auth-edge`, once per container | 0.40 |
 | Origin-verify | Always present (HFY-R43, added after the original estimate) | CloudFormation at deploy time, and the behavior scripts; never at runtime | 0.40 |
-| Legacy allowlist HMAC (`HFY_ALLOWLIST_HMAC_SECRET`) | Still present. Its only runtime reader, the `hfy-check-allowed` Lambda, was deleted on 2026-10-14 (HFY-TSK-326). | Nothing at runtime. The allowlist publisher, `publish_allowlists.sh`, still reads it to write digests that nothing reads. | 0.40 |
 | VAPID key pair (`harrisonfamily/api/vapid` in production) | Present once push has been turned on. `hfy-api` reads it only while the app stack's `VapidSecretName` parameter names it, which turns on push sending; [How to turn on push notifications](../how-to/turn-on-push-notifications.md) shows how to check the parameter. | `hfy-api`, once per container | 0.40 |
 
-So the line is 1.60 a month. Deleting the Lambda did not lower it: the HMAC secret is billed for as long as the secret itself exists. Neither Lambda@Edge function reads a secret: Lambda@Edge has no environment variables, and the gate verifies sessions against the auth edge's public JWKS. For the secrets' names and handling rules, see [Private data and secrets](private-data-and-secrets.md).
+So the line is 3 × 0.40 = 1.20 a month. Neither Lambda@Edge function reads a secret: Lambda@Edge has no environment variables, and the gate verifies sessions against the auth edge's public JWKS. For the secrets' names and handling rules, see [Private data and secrets](private-data-and-secrets.md).
+
+The legacy allowlist HMAC secret, `HFY_ALLOWLIST_HMAC_SECRET`, is not in the table. Its only runtime reader, the `hfy-check-allowed` Lambda, was deleted on 2026-10-14 (HFY-TSK-326), and the allowlist publisher stopped reading it the same day (ruling P2-R51). It was then scheduled for deletion on 2026-11-13. Until that date it can be recovered and adds at most 0.40 a month: counting it, the line is 4 × 0.40 = 1.60, and each total on this page is 0.40 a month higher, 4.80 a year. The totals without it:
+
+| Total | With the HMAC secret | Without it | Per year without it |
+| --- | --- | --- | --- |
+| Base | 2.96 | 2.96 − 0.40 = 2.56 | 2.56 × 12 = 30.72, about 31 |
+| 5x | 5.66 | 5.66 − 0.40 = 5.26 | 5.26 × 12 = 63.12, about 63 |
+| Base, with the Free Tier | 1.93 | 1.93 − 0.40 = 1.53 | about 18 (18.32 before rounding) |
+| 5x, with the Free Tier | 2.90 | 2.90 − 0.40 = 2.50 | about 30 (29.96 before rounding) |
 
 ## Stress check at 5x
 
@@ -174,7 +182,7 @@ Five times the base traffic: 500,000 `/api/*`, 150,000 `/auth/*` and 25,000 MCP 
 | Lambda@Edge `hfy-edge-gate` | 0.10 | 0.50 | 3,437.5 GB-s; 550,000 requests |
 | Lambda@Edge `hfy-mcp-edge401` | 0.00 | 0.02 | 156.25 GB-s; 25,000 requests |
 | Cognito user pool | 0.60 | 0.60 | Traffic, not MAU, grows |
-| Secrets Manager | 1.60 | 1.60 | Fixed |
+| Secrets Manager | 1.20 | 1.20 | Fixed |
 | CloudWatch Logs, `hfy-api` and `hfy-auth-edge` | 0.08 | 0.40 | 0.75 GB ingested |
 | CloudWatch Logs, Lambda@Edge | 0.02 | 0.11 | 0.2 GB ingested |
 | CloudFront requests | 0.14 | 0.68 | 675,000 requests |
@@ -183,10 +191,10 @@ Five times the base traffic: 500,000 `/api/*`, 150,000 `/auth/*` and 25,000 MCP 
 | Photo upload PUTs | 0.00 | 0.00 | 500 PUTs |
 | Photo storage, first month | 0.01 | 0.03 | 1.5 GB added each month; about 0.41 a month after 12 months |
 | Gate code in `<edge-code-bucket>` | 0.00 | 0.00 | Grows with builds, not traffic |
-| **Total** | **2.96** | **5.66** | |
-| **Per year** | **about 36** | **about 68** | |
+| **Total** | **2.56** | **5.26** | |
+| **Per year** | **about 31** | **about 63** | |
 
-The original estimate checked against a target of 30 USD a year. The base estimate is now over it, at about 36 a year, and 5x is about 68. The original stress check came to about 29 a year, but it priced two secrets, had no Cognito, config-read, notification-scan or Lambda@Edge lines, and left out the auth edge, `/auth/*` and MCP requests, and response transfer. Against it, the two extra secrets add 9.60 a year, the Cognito line 7.20 and the gate about 1.20. With the Free Tier allowances, the base estimate is under the target, at about 23 a year, and 5x is over it, at about 35; see the next section.
+The original estimate checked against a target of 30 USD a year. The base estimate is now just over it, at about 31 a year, and 5x is about 63. The original stress check came to about 29 a year, but it priced two secrets, had no Cognito, config-read, notification-scan or Lambda@Edge lines, and left out the auth edge, `/auth/*` and MCP requests, and response transfer. Against it, the extra secret, origin-verify, adds 4.80 a year, the Cognito line 7.20 and the gate about 1.20. With the Free Tier allowances, the base estimate is under the target, at about 18 a year, and 5x is level with it, at about 30 (29.96 before rounding); see the next section.
 
 ## With the AWS Free Tier
 
@@ -205,8 +213,8 @@ The Lambda@Edge lines stay, because no allowance covers Lambda@Edge. The CloudFr
 
 | | Monthly USD | Per year |
 | --- | --- | --- |
-| Base | 1.93 | About 23 |
-| 5x | 2.90 | About 35 |
+| Base | 1.53 | About 18 |
+| 5x | 2.50 | About 30 |
 
 What remains is mostly the secrets line. At 5x, DynamoDB and the gate make up most of the rest.
 
