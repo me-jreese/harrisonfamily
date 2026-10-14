@@ -108,7 +108,7 @@ export function createHandler(deps) {
     // HFY-TSK-141: the access-request admin domain. It also supplies the approval's completeAccessRequest hook (a person.create proposal that came from
     // a request links it in the approval's own transaction) unless a test or index.js wired its own.
     const accessRequests = deps.accessRequests ?? createAccessRequests({
-      ddb, cmds, table, now, uid, log, txnOpts: deps.txnOpts, mailer: deps.mailer, notify: notifier.notify, getAdmins: deps.getAdmins, isOwner: deps.isOwner,
+      ddb, cmds, table, now, uid, log, txnOpts: deps.txnOpts, mailer: deps.mailer, requesterMailer: deps.requesterMailer, notify: notifier.notify, getAdmins: deps.getAdmins, isOwner: deps.isOwner,
       personFacts: deps.personFacts, readEntries: deps.readEntries, guardDob: deps.guardDob === true,
     });
     if (deps.completeAccessRequest === undefined) {
