@@ -135,6 +135,30 @@ function ConfirmDelete({ onDelete, onKeep }) {
   );
 }
 
+/**
+ * The post as its card renders it: every image keeps the description its author typed, and one with none gets "a photo from
+ * <name>" ("photo 2 of 3 from <name>" in a post with several) so a screen reader still hears that a photo is there, and from whom.
+ * A photo-only post (HFY-TSK-315) is otherwise only a name and a time to assistive tech. Kit gap (@io-kit/content 0.3.1 PostCard
+ * and ArticleView Media render `alt={a.alt ?? ""}`, which marks an undescribed photo decorative; record for the kit backlog):
+ * upstream, an alt-fallback label on the card; then drop this. Render only: nothing is written back to the post.
+ */
+export function withPhotoAlt(post) {
+  const all = Array.isArray(post?.attachments) ? post.attachments : [];
+  const described = (a) => typeof a.alt === "string" && a.alt.trim() !== "";
+  const images = all.filter((a) => a?.kind === "image");
+  if (images.every(described)) return post;
+  const who = String(post.author?.label || "").trim();
+  let n = 0;
+  const attachments = all.map((a) => {
+    if (a?.kind !== "image") return a;
+    n += 1;
+    if (described(a)) return a;
+    const what = images.length > 1 ? `photo ${n} of ${images.length}` : "a photo";
+    return { ...a, alt: who ? `${what} from ${who}` : what };
+  });
+  return { ...post, attachments };
+}
+
 /** The author's initial for the 32px avatar (DS Posts anatomy). */
 const initialOf = (label) => (String(label || "").trim().match(/\p{L}|\p{N}/u)?.[0] || "").toUpperCase();
 
@@ -156,7 +180,7 @@ export function PostRow({ post, link, remove }) {
   return (
     <li className="hfy-posts__item hfy-posts__post">
       <span className="hfy-posts__avatar" aria-hidden="true">{initialOf(author)}</span>
-      <PostCard post={post} labels={CARD_LABELS} formatTime={formatTime} />
+      <PostCard post={withPhotoAlt(post)} labels={CARD_LABELS} formatTime={formatTime} />
       {(link || canDelete) && (
         <div className="hfy-posts__footer" data-hfy-post-footer>
           {link && <a className="hfy-btn hfy-btn--quiet hfy-posts__open" href={postHref(post)} aria-label={author ? `comments on ${author}'s post` : undefined}>comments</a>}

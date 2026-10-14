@@ -12,7 +12,7 @@
         "css": "24d74883"
       },
       "my-posts": {
-        "js": "9c7b42aa",
+        "js": "c6a16bfe",
         "css": "24a8cc2d"
       },
       "notifications": {
@@ -28,7 +28,7 @@
         "css": "bf6043c1"
       },
       "posts": {
-        "js": "26d5e17e",
+        "js": "afc8cee5",
         "css": "c678e2b1"
       },
       "search": {
@@ -44,7 +44,7 @@
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "8aaabb67",
+        "js": "301f8ae2",
         "css": "e839f302"
       }
     },

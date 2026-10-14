@@ -229,3 +229,68 @@ test("HFY-TSK-315: post is enabled with a photo and an empty text box; the photo
   await expect(row(one)).toHaveCount(1);
   expect(await photoOnlyRow(row(one))).toEqual(want);
 });
+
+// HFY-TSK-315 review: a photo posted with no description and an empty box. The upload carries no alt and the member typed none, so
+// the request has none either; every list renders the photo as "a photo from <name>" (posts-ui withPhotoAlt), never alt="", so the
+// row is more than a name and a time to a screen reader. In a post with several photos the fallback counts them, and a typed
+// description is kept as written.
+test("HFY-TSK-315: a photo posted with no description reads as \"a photo from <name>\" in my posts, the timeline and /posts/?id=", async ({ page }) => {
+  const s = await stub(page);
+  s.posts.push({
+    id: ULID(2), type: "post", author: { id: "I9003", label: "Ann Other" }, subject: "I9003", body: "",
+    attachments: [
+      { kind: "image", url: `http://127.0.0.1:8089/media/posts/${ULID(901)}/photo.png`, mime: "image/png", alt: "the lake" },
+      { kind: "image", url: `http://127.0.0.1:8089/media/posts/${ULID(902)}/photo.png`, mime: "image/png" },
+      { kind: "image", url: `http://127.0.0.1:8089/media/posts/${ULID(903)}/photo.png`, mime: "image/png", alt: "  " },
+    ],
+    visibility: "published", created_at: T0, updated_at: T0, can: { edit: false, delete: false, publish: false },
+  });
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto("/person/?id=I9001&hfy_flags=postsV2", { waitUntil: "domcontentloaded" });
+  const mine = page.locator("[data-hfy-my-posts]");
+  const box = mine.getByRole("textbox").first();
+  const submit = mine.getByRole("button", { name: /^post$/i });
+  await mine.locator("input[type=file]").first().setInputFiles({ name: "garden.png", mimeType: "image/png", buffer: PNG });
+  await expect.poll(() => s.puts).toBe(1);
+  await expect(mine.getByRole("textbox", { name: "describe photo 1" })).toHaveValue("");
+  await expect(box).toHaveValue("");
+  await submit.scrollIntoViewIfNeeded();
+  await expect(submit, "post is on screen and enabled at 320px with only an undescribed photo").toBeInViewport({ ratio: 1 });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(mine.getByRole("status").filter({ hasText: /^posted$/ })).toBeVisible();
+  expect(s.postBodies).toHaveLength(1);
+  expect(s.postBodies[0]).toMatchObject({ body: "" });
+  expect(s.postBodies[0].attachments).toHaveLength(1);
+  expect(s.postBodies[0].attachments[0].alt ?? "", "nothing is written into the post: the fallback is render only").toBe("");
+
+  const want = { card: ["iok-content-meta", "iok-content-media"], markdown: 0, alts: ["a photo from Test Person"], empty: [] };
+  const row = (scope) => scope.locator(".hfy-posts__item").filter({ has: page.getByRole("img", { name: "a photo from Test Person" }) });
+  await expect(row(mine)).toHaveCount(1);
+  expect(await photoOnlyRow(row(mine))).toEqual(want);
+  await expect(row(mine)).toMatchAriaSnapshot(`
+    - listitem:
+      - article:
+        - time
+        - list:
+          - listitem:
+            - img "a photo from Test Person"
+      - link "comments on Test Person's post"
+      - button "delete"
+  `);
+  expect(await noHScroll(page)).toBe(true);
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const tl = page.locator("[data-hfy-timeline]");
+  await expect(row(tl)).toHaveCount(1);
+  expect(await photoOnlyRow(row(tl))).toEqual(want);
+  const several = tl.locator(".hfy-posts__item").filter({ has: page.getByRole("img", { name: "the lake" }) });
+  expect(await several.locator("img").evaluateAll((imgs) => imgs.map((i) => i.alt))).toEqual(["the lake", "photo 2 of 3 from Ann Other", "photo 3 of 3 from Ann Other"]);
+  expect(await noHScroll(page)).toBe(true);
+
+  await row(tl).getByRole("link", { name: /^comments/ }).click();
+  await expect(page).toHaveURL(/\/posts\/\?id=01JZ/);
+  const one = page.locator("[data-hfy-post]");
+  await expect(row(one)).toHaveCount(1);
+  expect(await photoOnlyRow(row(one))).toEqual(want);
+});

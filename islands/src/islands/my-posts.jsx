@@ -57,7 +57,9 @@ export function postWriteError(e) {
 const guardOptions = {
   fields: GUARDED,
   submitOf: (form) => form.querySelector('button[type="submit"]'),
-  enabledOf: (form) => (form.querySelector("textarea")?.value ?? "").trim() !== "", // the kit's own rule: a body is required
+  // The kit's own rule once a hit is gone (@io-kit/content 0.3.1 PostComposer, HFY-TSK-315): a line or a photo is enough to post,
+  // so a photo-only post whose description held the hit gets "post" back with its box still empty.
+  enabledOf: (form) => (form.querySelector("textarea")?.value ?? "").trim() !== "" || form.querySelector(".iok-content-attachment") !== null,
 };
 const ALT_PLACEHOLDER = "describe the photo";
 const DONE = "got it. it's in the gallery.";

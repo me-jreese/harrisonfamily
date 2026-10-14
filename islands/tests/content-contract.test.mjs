@@ -3,7 +3,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { FIXTURE_POSTS, runContentContract } from "@io-kit/content/testing";
-import { makeApi, signToken, TABLE, UPLOAD_PHOTO, cmds } from "../../api/test/world.js";
+import { bindUploadPhoto, makeApi, signToken, TABLE, UPLOAD_PHOTO, cmds } from "../../api/test/world.js";
 import { seedPosts } from "../../api/src/content.js";
 import { createApi } from "../src/lib/api.js";
 import { createHfyContentSource, CAPABILITIES } from "../src/lib/content-source.js";
@@ -13,6 +13,7 @@ const harness = {
     const audit = [];
     const w = makeApi({ audit: (e) => void audit.push(e) });
     await seedPosts({ ddb: w.ddb, cmds, table: TABLE }, FIXTURE_POSTS);
+    await bindUploadPhoto(w.ddb, "I0001", w.now(), w.s3); // CS-19's photo is the author's own unattached, clean upload
     const as = (actor) => {
       const fetchImpl = async (url, init) => {
         const u = new URL(url, "http://x");
@@ -27,7 +28,7 @@ const harness = {
   other: { id: "I0002", label: "Olive Other" },
   admin: { id: "I0099", label: "Admin", admin: true },
   capabilities: CAPABILITIES,
-  // CS-19 (photo-only posts, @io-kit/content 0.3.1) posts an image: the api only takes member uploads, not the kit's default url.
+  // CS-19 (photo-only posts, @io-kit/content 0.3.1) posts an image: the api only takes the author's own member upload, not the kit's url.
   photo: UPLOAD_PHOTO,
 };
 
