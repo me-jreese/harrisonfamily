@@ -294,6 +294,10 @@ export function projectRecords(objects, opts) {
   // (the rule faces.mjs uses for face: null; the sub-pixel truncation case needs the image size, which this pure projection
   // does not have). Handles, rects, paths, descriptions and notes never leave this function.
   const tagged = new Map(); // Media gramps_id -> Set of person ids
+  // Edges are keyed by the Media gramps_id, so two Media sharing one id would merge into one photo node. Such an id is
+  // ambiguous: every tag to it is skipped and reported (MEDIA_ID_DUPLICATE), whatever the input order.
+  const mediaIdCount = new Map();
+  for (const m of idx.Media.values()) if (typeof m.gramps_id === 'string') mediaIdCount.set(m.gramps_id, (mediaIdCount.get(m.gramps_id) ?? 0) + 1);
   for (const p of sortedPeople) {
     const kept = personByHandle.get(p.handle);
     if (!kept) continue;
@@ -315,6 +319,10 @@ export function projectRecords(objects, opts) {
       }
       if (typeof media.gramps_id !== 'string' || !MEDIA_ID.test(media.gramps_id)) {
         warnings.add('MEDIA_ID_INVALID', id);
+        continue;
+      }
+      if (mediaIdCount.get(media.gramps_id) > 1) {
+        warnings.add('MEDIA_ID_DUPLICATE', id);
         continue;
       }
       if (!tagged.has(media.gramps_id)) tagged.set(media.gramps_id, new Set());

@@ -128,6 +128,29 @@ describe('photoEdges: what is skipped', () => {
   });
 });
 
+describe('photoEdges: kept people and ambiguous ids', () => {
+  it('a living (kept) person is an edge; only a private person is dropped', () => {
+    const objects = tree({ privatePeople: ['I4'], medias: [media('O1')], tags: { I1: [mref('O1', null)], I4: [mref('O1', null)] } });
+    const { graph } = build(objects);
+    const living = graph.people.filter((p) => p.living).map((p) => p.id);
+    const ids = new Set(graph.people.map((p) => p.id));
+    assert.ok(living.includes('I1'));
+    assert.deepEqual(graph.photoEdges, [{ media: 'O1', people: ['I1'] }]);
+    for (const e of graph.photoEdges) for (const id of e.people) assert.ok(ids.has(id), `${id} is not a graph person`);
+  });
+
+  it('two Media sharing a gramps id are not merged: their tags are skipped and reported, in any input order', () => {
+    const dup = [media('O1'), { ...media('O1'), handle: 'h_O1_other' }, media('O2')];
+    const tags = { I1: [mref('O1', null), { ...mref('O1', null), ref: 'h_O1_other' }, mref('O2', null)], I2: [mref('O1', null)] };
+    for (const seed of [0, 1, 2]) {
+      const objects = seed === 0 ? tree({ medias: dup, tags }) : shuffled(tree({ medias: dup, tags }), seed);
+      const { graph, report } = build(objects);
+      assert.deepEqual(graph.photoEdges, [{ media: 'O2', people: ['I1'] }]);
+      assert.deepEqual(report.warnings.find((w) => w.code === 'MEDIA_ID_DUPLICATE').ids, ['I1', 'I2']);
+    }
+  });
+});
+
 describe('photoEdges: determinism and verify()', () => {
   const rich = () => tree({
     medias: [media('O3'), media('O1'), media('O2', { private: true })],
