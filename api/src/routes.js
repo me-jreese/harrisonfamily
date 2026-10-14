@@ -27,6 +27,10 @@ export const CONTENT_CAPABILITIES = {
 };
 
 const ok = (body, status = 200) => ({ status, body });
+/** commentPhotosV1 (hfy-comments-photos-desc-api): comment photos are dark until the flag is on (or the caller is uat): 404 like a dark route. */
+const commentPhotos = async (c) => {
+  if (!(await c.featureOn("commentPhotosV1"))) throw new HttpError(404, "not_found", "no such route");
+};
 
 // MCP tools are derived from this registry: a route with an `mcp` member becomes the tool `mcp.tool`, keyed in the policy table by the route name.
 // `args` maps the tool arguments onto the same {params, query, body} the HTTP handler receives, so the tool runs the route's own handler (and Q-4,
@@ -37,8 +41,8 @@ const schema = (properties, required = []) => ({ type: "object", properties, req
 const pageArgs = { cursor: str("Opaque cursor from a previous page"), limit: { type: "integer", minimum: 1, maximum: 100 } };
 const pick = (a, keys) => Object.fromEntries(keys.filter((k) => a[k] !== undefined && a[k] !== "").map((k) => [k, a[k]]));
 const MCP = {
-  "comments.list": { tool: "hfy_comments_list", description: "List comments on a subject (person:<gramps_id> or post:<ulid>), oldest first, with reactions.",
-    input: schema({ subject: str("person:<gramps_id> or post:<ulid>"), ...pageArgs }, ["subject"]), args: (a) => ({ query: pick(a, ["subject", "cursor", "limit"]) }) },
+  "comments.list": { tool: "hfy_comments_list", description: "List comments on a subject (person:<gramps_id> or post:<ulid>), oldest first by default; order=desc for newest first (a cursor works only with the order that issued it), with reactions.",
+    input: schema({ subject: str("person:<gramps_id> or post:<ulid>"), order: { enum: ["asc", "desc"], description: "asc (oldest first, the default) or desc (newest first)" }, ...pageArgs }, ["subject"]), args: (a) => ({ query: pick(a, ["subject", "order", "cursor", "limit"]) }) },
   "comments.create": { tool: "hfy_comments_create", description: "Create a comment (or a reply with parentId) on a subject.",
     input: schema({ subject: str("person:<gramps_id> or post:<ulid>"), body: { type: "string", maxLength: 1000 }, parentId: str("Comment id to reply to") }, ["subject", "body"]),
     args: (a) => ({ body: pick(a, ["subject", "body", "parentId"]) }) },
@@ -82,19 +86,25 @@ export const ROUTES = defineRoutes([
     handler: async (c) => ok(await c.links.put(c.params.id, c.body)),
   },
   {
-    name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first (cursor), with reactions",
+    name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first by default or order=desc for newest first (cursor, bound to its order), with reactions",
     handler: async (c) => {
       const subject = need(c.query.subject, "subject");
-      return ok(await c.comments.list(subject, { cursor: c.query.cursor || undefined, limit: c.query.limit ? Number(c.query.limit) : undefined })); // empty thread => empty list
+      return ok(await c.comments.list(subject, { cursor: c.query.cursor || undefined, limit: c.query.limit ? Number(c.query.limit) : undefined, ...(c.query.order ? { order: c.query.order } : {}) })); // empty thread => empty list
     },
   },
   {
-    name: "comments.create", method: "POST", path: "/comments", summary: "Create a comment or reply (parentId) on a subject",
-    handler: async (c) => ok(await c.comments.create(need(c.body.subject, "subject"), { body: c.body.body, ...(c.body.parentId ? { parentId: c.body.parentId } : {}) }), 201),
+    name: "comments.create", method: "POST", path: "/comments", summary: "Create a comment or reply (parentId) on a subject; with commentPhotosV1 on, up to 4 attachments from POST /uploads purpose comment (a photo-only comment may have an empty body)",
+    handler: async (c) => {
+      if (c.body.attachments !== undefined) await commentPhotos(c);
+      return ok(await c.comments.create(need(c.body.subject, "subject"), { body: c.body.body, ...(c.body.parentId ? { parentId: c.body.parentId } : {}), ...(c.body.attachments !== undefined ? { attachments: c.body.attachments } : {}) }), 201);
+    },
   },
   {
     name: "comments.update", method: "PATCH", path: "/comments/:id", summary: "Edit your own comment (subject in body or query)",
-    handler: async (c) => ok(await c.comments.edit(need(c.body.subject ?? c.query.subject, "subject"), c.params.id, { body: c.body.body })),
+    handler: async (c) => {
+      if (c.body.attachments !== undefined) await commentPhotos(c);
+      return ok(await c.comments.edit(need(c.body.subject ?? c.query.subject, "subject"), c.params.id, { body: c.body.body, ...(c.body.attachments !== undefined ? { attachments: c.body.attachments } : {}) })); // photos can be removed, never added
+    },
   },
   {
     name: "comments.delete", method: "DELETE", path: "/comments/:id", summary: "Delete your own comment; admins any (?subject=, optional ?reason=)",
@@ -139,8 +149,11 @@ export const ROUTES = defineRoutes([
     handler: async (c) => { await c.content.delete(c.params.id); await c.afterPostDeleted(c.params.id); return ok(undefined, 204); },
   },
   {
-    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a post photo (jpeg/png/webp/heic, <= 10 MB) at uploads/posts/<ulid>/photo.<ext>, bound to you for 24 h; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
-    handler: async (c) => ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size }), 201),
+    name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a photo (purpose post, the default: jpeg/png/webp/heic at uploads/posts/<ulid>/photo.<ext>; purpose comment: jpeg/png/webp at uploads/comments/<ulid>/photo.<ext>, needs commentPhotosV1), <= 10 MB, name chosen by the server, bound to you for 24 h; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
+    handler: async (c) => {
+      if (c.body.purpose === "comment") await commentPhotos(c); // purpose comment: uploads/comments/<ulid>/photo.<ext>, jpeg/png/webp only
+      return ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size, purpose: c.body.purpose }), 201);
+    },
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.
   { name: "notifications.vapid-public-key", method: "GET", path: "/notifications/vapid-public-key", summary: "VAPID application server key", handler: (c) => c.notifyHandler() },

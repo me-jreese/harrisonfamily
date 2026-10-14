@@ -118,15 +118,15 @@ for (const [name, viewport] of [["375", { width: 375, height: 812 }], ["1280", {
   });
 
   // The shell's rule, not "not explicitly signed out": with /auth/session unreachable the bar shows "sign in" and no gear, so the hub
-  // offers no rows and no "sign out" either. Its sign-in link is the shell's legacy entry, as the account control's.
-  test(`${name} /auth/session unreachable: the sign-in line (legacy entry back to /me/), no rows, no sign out, no gear, axe clean`, async ({ page }) => {
+  // offers no rows and no "sign out" either. Its sign-in link is the edge sign-in, as the account control's.
+  test(`${name} /auth/session unreachable: the sign-in line (edge sign-in back to /me/), no rows, no sign out, no gear, axe clean`, async ({ page }) => {
     await hermetic(page, { session: "unreachable" });
     await page.setViewportSize(viewport);
     await page.goto(HUB, { waitUntil: "domcontentloaded" });
     const gate = page.locator(".hfy-settings [data-hfy-gate]");
     await expect(gate).toBeVisible();
     await expect(gate.locator("p")).toHaveText("sign in to change your settings.");
-    await expect(gate.getByRole("link", { name: "sign in", exact: true })).toHaveAttribute("href", "/family-login/?next=%2Fme%2F");
+    await expect(gate.getByRole("link", { name: "sign in", exact: true })).toHaveAttribute("href", "/auth/login?returnTo=%2Fme%2F");
     await expect(page.locator(".hfy-settings [data-hfy-setting]")).toHaveCount(0);
     await expect(hub(page).getByRole("button", { name: "sign out" })).toHaveCount(0);
     await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-out"]')).toBeVisible();

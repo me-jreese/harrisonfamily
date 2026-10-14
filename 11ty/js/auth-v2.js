@@ -1,21 +1,17 @@
-// HFY-TSK-062: flag-gated two-path sign-in (GIS + Cognito password at https://harrisonfamily.us/auth).
-// Reads /_data/flags.json. With authV2 off (the default) this script does nothing and the legacy GIS flow runs unchanged.
-// With authV2 on: /family-login/ redirects to /auth/login, and a signed-in visitor (GET /auth/session) gets "My Record" -> /person/?id=<gramps_id>.
-// Signed out, the sign-in links (data-feature="familyLoginLink") point straight at /auth/login?returnTo=<this page>.
-// HFY-R58 fallbacks:
-// - /auth/session must answer (200 JSON with a boolean "authenticated") before anything changes. If it is unreachable
-//   (edge not attached, network error, HTML error page) the preview override is cleared and the legacy flow runs untouched.
-// - An already edge-authenticated visitor who lands on /family-login/ is NOT bounced to /auth/login again: the edge session
-//   does not mint the legacy X-HFY-Session token that person/search pages need, so they get the legacy GIS sign-in instead
-//   of a redirect loop.
-// - "Log out" ends the edge session AND runs the legacy signOut (Google ID token, gramps id, gateway session, auto-select).
+// HFY-TSK-062: the sign-in script. The edge sign-in at https://harrisonfamily.us/auth (Google through Cognito federation, or a
+// passkey) is the only sign-in (HFY-TSK-317 removed the Google Identity Services client, its sign-in script and the legacy allowlist endpoint).
+// Reads /_data/flags.json. With authV2 off this script does nothing.
+// With authV2 on, a signed-in visitor (GET /auth/session) gets "My Record" -> /person/?id=<gramps_id> and "Log out"; signed out, the
+// sign-in links (data-feature="familyLoginLink") point straight at /auth/login?returnTo=<this page>.
+// HFY-R58 fallback: /auth/session must answer (200 JSON with a boolean "authenticated") before anything changes. If it is
+// unreachable (edge not attached, network error, HTML error page) the preview override is cleared and the page is left as it is.
 // HFY-R66: the session probe is HFYFeatureFlags.edgeSession() (one GET /auth/session per page, shared with the data fetches),
 // which refreshes a lapsed io_id from the refresh cookie once before reporting. An authenticated edge session is laid over the
-// legacy feature state there, so the navbar search, My Record and Log out follow the edge session (navbarSearch was hidden
-// for edge-only sign-ins before).
+// feature state there, so My Record and Log out follow the edge session.
+// /family-login/ is a static redirect page to /auth/login (11ty/family-login/index.html), so old bookmarks still work.
 (function () {
-  var SIGNOUT_LOCAL_KEYS = ["HFY_AUTH_ID_TOKEN", "HFY_AUTH_USER_GRAMPS_ID", "hfy:edge-session"];
-  var SIGNOUT_SESSION_KEYS = ["HFY_GATEWAY_SESSION_V1"];
+  var SIGNOUT_LOCAL_KEYS = ["hfy:edge-session"];
+  // The keys the retired Google sign-in left behind are purged by feature-flags.js (HFYFeatureFlags.purgeRetiredKeys), which every page loads.
   var LOGOUT_TIMEOUT_MS = 4000;
 
   function getJSON(url, init) {
@@ -37,12 +33,10 @@
     });
   }
 
-  // HFY-TSK-069 (D-11 item 6): login continuity. The pages' legacy fallbacks (person-page.js, search-results.js, search-navbar.js,
-  // islands/src/lib/people-corpus.js) send a signed-out visitor to /family-login/?next=<path+search+hash>. Under authV2 that page
-  // hands over to /auth/login, so `next` must ride along as returnTo or the deep link is lost after sign-in. Same rules as the
-  // edge's returnTo guard (@io-kit/auth safeReturnTo), applied to a same-origin PATH only: exactly one leading "/" (so no "//",
-  // no scheme, no host), no backslash, no tab/CR/LF or other control character. Anything else (and the sign-in pages themselves,
-  // which would loop) falls back to "/".
+  // Login continuity (HFY-TSK-069 D-11 item 6): the return target of a sign-in link is a same-origin PATH only, by the same rules as
+  // the edge's returnTo guard (@io-kit/auth safeReturnTo): exactly one leading "/" (so no "//", no scheme, no host), no
+  // backslash, no tab/CR/LF or other control character. Anything else (and the sign-in pages themselves, which would loop) falls
+  // back to "/".
   var FALLBACK_RETURN = "/";
   function safeReturnPath(raw) {
     if (typeof raw !== "string" || raw === "" || raw.length > 2048) return FALLBACK_RETURN;
@@ -51,21 +45,12 @@
     if (/^\/(auth|family-login)(\/|\?|#|$)/i.test(raw)) return FALLBACK_RETURN;
     return raw;
   }
-  function requestedReturnPath() {
-    try {
-      return safeReturnPath(new URLSearchParams(location.search).get("next"));
-    } catch (e) {
-      return FALLBACK_RETURN;
-    }
-  }
-
-  // Signed out under authV2: "sign in" (the home hero button, the legacy navbar link) goes straight to the edge sign-in and comes back
-  // to this page. /family-login/ only hands over to /auth/login, and showed its legacy page for a moment first. The static href stays
-  // /family-login/ for authV2 off, and until /auth/session has answered.
+  // Signed out under authV2: "sign in" (the home hero button, the navbar link) goes straight to the edge sign-in and comes back to
+  // this page. The static href is /auth/login (no return) for authV2 off, and until /auth/session has answered.
   function pointSignInLinks() {
     var href = "/auth/login?returnTo=" + encodeURIComponent(safeReturnPath(location.pathname + location.search + location.hash));
     Array.prototype.forEach.call(document.querySelectorAll('[data-feature="familyLoginLink"]'), function (el) {
-      var link = el.tagName === "A" ? el : el.querySelector('a[href="/family-login/"]');
+      var link = el.tagName === "A" ? el : el.querySelector('a[href^="/auth/login"]');
       if (link) link.setAttribute("href", href);
     });
   }
@@ -81,24 +66,13 @@
     show(document.querySelector('[data-feature="logoutLink"]'));
   }
 
-  // Clears the legacy credentials synchronously so they are gone even if the page is closed mid-logout.
-  function clearLegacyCredentials() {
+  // Clears the local sign-in marker synchronously so it is gone even if the page is closed mid-logout.
+  function clearLocalMarkers() {
     SIGNOUT_LOCAL_KEYS.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
-    SIGNOUT_SESSION_KEYS.forEach(function (k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage blocked */ } });
-    try {
-      if (window.google && window.google.accounts && window.google.accounts.id) window.google.accounts.id.disableAutoSelect();
-    } catch (e) { /* GIS not loaded */ }
-  }
-
-  // Runs the legacy auth.js signOut (state, feature-flag session, subscribers, redirect). Returns false if it is not on the page.
-  function legacySignOut() {
-    var legacy = window.HFY_AUTH;
-    if (!legacy || typeof legacy.signOut !== "function") return false;
-    try { legacy.signOut(); return true; } catch (e) { return false; }
   }
 
   function signOut() {
-    clearLegacyCredentials();
+    clearLocalMarkers();
     var f = flags();
     if (f && typeof f.forgetEdgeSession === "function") {
       try { f.forgetEdgeSession(); } catch (e) { /* keep signing out */ }
@@ -112,7 +86,7 @@
     }).catch(function () {});
     var timeout = new Promise(function (resolve) { setTimeout(resolve, LOGOUT_TIMEOUT_MS); });
     return Promise.race([done, timeout]).then(function () {
-      if (!legacySignOut()) location.assign("/logged-out/");
+      location.assign("/logged-out/");
     });
   }
 
@@ -121,8 +95,7 @@
     Array.prototype.forEach.call(links, function (out) {
       if (out.getAttribute("data-auth-v2-wired") === "1") return;
       out.setAttribute("data-auth-v2-wired", "1");
-      // Capture phase so the edge logout is sent before the legacy handler navigates away; the legacy signOut is then
-      // invoked explicitly (signOut above), so stopping propagation never skips the legacy cleanup.
+      // Capture phase so the edge logout is sent before any other click handler navigates away.
       out.addEventListener("click", function (ev) {
         ev.preventDefault();
         ev.stopImmediatePropagation();
@@ -142,16 +115,9 @@
         dependencyUnavailable("/auth/session");
         return;
       }
-      if (/^\/family-login\/?$/.test(location.pathname)) {
-        if (s.authenticated !== true) {
-          location.replace("/auth/login?returnTo=" + encodeURIComponent(requestedReturnPath()));
-          return;
-        }
-        // Already signed in at the edge: keep the legacy sign-in on this page (see header) rather than looping.
-      }
-      if (s.authenticated !== true && !/^\/family-login\/?$/.test(location.pathname)) pointSignInLinks();
+      if (s.authenticated !== true) pointSignInLinks();
       if (s.authenticated !== true || !s.sub) return;
-      // legacy feature-flags.js/auth.js also toggle these nav items; re-apply once they have settled
+      // feature-flags.js also toggles these nav items; re-apply once it has settled
       apply(s);
       wireSignOut();
       window.addEventListener("load", function () { apply(s); setTimeout(function () { apply(s); }, 600); });

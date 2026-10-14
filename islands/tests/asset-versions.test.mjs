@@ -34,7 +34,7 @@ const PAGE = `<!doctype html>
   <script>window.inline = "<b>";</script>
   <script src="/js/a.js" defer></script>
   <script src="/js/b.js?foo=1#top"></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://third-party.example/lib.js" async defer></script>
   <script type="module" src="https://harrisonfamily.us/js/a.js"></script>
   <script src="//cdn.example.com/x.js"></script>
 </body></html>
@@ -50,7 +50,7 @@ test("versionHtml: every same-origin script / stylesheet / manifest / moduleprel
   assert.match(out, /src="\/js\/b\.js\?foo=1&v=[0-9a-f]{8}#top"/, "other query params and the fragment survive");
   assert.match(out, /src="https:\/\/harrisonfamily\.us\/js\/a\.js\?v=[0-9a-f]{8}"/, "an absolute URL on the site origin is same-origin");
   // untouched: external scripts, protocol-relative, fonts (content-hashed names), icons, canonical, inline scripts
-  assert.match(out, /src="https:\/\/accounts\.google\.com\/gsi\/client" async defer/);
+  assert.match(out, /src="https:\/\/third-party\.example\/lib\.js" async defer/);
   assert.match(out, /src="\/\/cdn\.example\.com\/x\.js"/);
   assert.match(out, /href="\/fonts\/source-sans-3-latin-wght-normal\.7a19a702\.woff2" \/>/);
   assert.match(out, /rel="icon" href="\/images\/favicon\.png">/);
@@ -184,10 +184,10 @@ test("every page of the site: every same-origin script / stylesheet / manifest r
       assert.equal(r.version, hashOnDisk(r.file), `${page}: ${r.ref} ?v does not match the sha256 of ${r.file} (run \`cd islands && npm run build\`)`);
     }
   }
-  assert.ok(total >= 60, `${total} references checked`);
+  assert.ok(total >= 40, `${total} references checked`);
   // the references that exist today are all covered (a new kind of reference would show up here first)
   const all = new Set(pages.flatMap((p) => assetRefs(read(p), p).map((r) => r.file)));
-  for (const f of ["css/main.css", "css/hfy-theme.css", "js/feature-flags.js", "js/auth.js", "js/auth-v2.js", "js/search-navbar.js", "js/bootstrap.bundle.min.js", "js/search-results.js", "js/person-page.js"]) {
+  for (const f of ["css/main.css", "css/hfy-theme.css", "js/feature-flags.js", "js/auth-v2.js", "js/bootstrap.bundle.min.js", "js/person-page.js"]) {
     assert.ok(all.has(f), `${f} is referenced and versioned somewhere`);
   }
   const raw = pages.flatMap((p) => [...read(p).matchAll(/<(?:script|link)\b[^>]*(?:src|href)=["'](\/[^"'/][^"']*\.(?:js|css|webmanifest)[^"']*)["']/gi)].map((m) => `${p} ${m[1]}`));

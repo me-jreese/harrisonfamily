@@ -7,6 +7,7 @@
 //   GID#<Class>#<gramps_id>       META   gramps_id uniqueness guard (see "GID lifecycle" below)
 //   IDALIAS#<Class>#<old_id>      META   merge / renumber alias, never deleted
 //   AUDIT#records:<batch_id>      one audit item per batch (built with auditItem())
+//   SYNC#BUDGET#<yyyymmddhh>      META  count of delete and withdraw ops committed in that UTC hour (validator-js's destructive budget)
 //
 // `expunged`: BRD2 section 4 lists an `expunged` flag on heads and log entries. applyBatch never writes it (the attribute is absent,
 // not false); privacy-expunge sets it when it nulls obj_json, and readers must treat an absent flag as not expunged.
@@ -31,7 +32,8 @@ export const MAX_OBJ_BYTES = 204800;
 export const MAX_BATCH_OBJ_BYTES = 3_500_000; // 2 x sum(obj_json bytes) + sum(blob bytes): the head and the log entry each hold a copy
 /** A Media op's `blob` descriptor rides on the head item, next to a 200 KB obj_json, under DynamoDB's 400 KB item limit. */
 export const MAX_BLOB_BYTES = 4096;
-/** Transaction items a batch needs besides its ops: the SYNC#HEAD update, the SYNC#BATCH receipt and the audit item. */
+/** Transaction items a batch needs besides its ops: the SYNC#HEAD update, the SYNC#BATCH receipt and the audit item. A batch with a delete or
+ *  withdraw needs one more, the SYNC#BUDGET# counter (apply.js adds it). */
 export const FIXED_TXN_ITEMS = 3;
 
 /** The identity class whose ids are permanent. */
@@ -50,6 +52,13 @@ export const batchKey = (batchId) => ({ PK: `SYNC#BATCH#${batchId}`, SK: "META" 
 export const gidKey = (cls, grampsId) => ({ PK: `GID#${cls}#${grampsId}`, SK: "META" });
 export const aliasKey = (cls, oldId) => ({ PK: `IDALIAS#${cls}#${oldId}`, SK: "META" });
 export const auditId = (batchId) => `records:${batchId}`;
+/** The UTC hour bucket of a time, `yyyymmddhh`, that SYNC#BUDGET# counters are keyed by. */
+export const budgetBucket = (ms) => new Date(ms).toISOString().slice(0, 13).replace(/[-T]/g, "");
+export const budgetKey = (bucket) => ({ PK: `SYNC#BUDGET#${bucket}`, SK: "META" });
+/** How long a budget counter lives (seconds): well past the 25 hour buckets the rolling window reads. */
+export const BUDGET_TTL_SECONDS = 3 * 86400;
+/** Hour buckets the rolling 24 hour window reads: the current hour and the 24 before it, so no destructive op in the last 24 hours is missed. */
+export const BUDGET_BUCKETS = 25;
 /** A stable string for a key, for duplicate detection. */
 export const keyId = (k) => `${k.PK}\u0000${k.SK}`;
 

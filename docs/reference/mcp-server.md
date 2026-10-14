@@ -150,7 +150,7 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 
 | Tool | Route action | HTTP route | `write` | Annotations | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `hfy_comments_list` | `comments.list` | `GET /api/comments` | false | readOnly, idempotent | Oldest first, with reactions |
+| `hfy_comments_list` | `comments.list` | `GET /api/comments` | false | readOnly, idempotent | Oldest first by default; `order` `desc` for newest first, with reactions |
 | `hfy_comments_create` | `comments.create` | `POST /api/comments` | true | none | A reply when `parentId` is given. Sends notifications. |
 | `hfy_comments_delete` | `comments.delete` | `DELETE /api/comments/:id` | true | destructive, idempotent | Admin with a fresh step-up only |
 | `hfy_posts_list` | `posts.list` | `GET /api/posts` | false | readOnly, idempotent | Newest first |
@@ -160,13 +160,15 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 
 No other route is a tool: comment edits and reactions, post edits and visibility changes, uploads, notification settings and profile links are reachable only from the site. [`api/parity/map.yaml`](../../api/parity/map.yaml) pairs each tool with the route handler a person uses for the same action, and [`api/parity/routes.yaml`](../../api/parity/routes.yaml) lists the site pages that call those handlers.
 
+Comment photos ([API: Comment photos](api.md#comment-photos), behind `commentPhotosV1`) are site-only too. `hfy_comments_create` has no `attachments` argument, and `comments.update` and `uploads.presign` are not tools. A photo-only comment, whose `body` is the empty string, cannot be made through MCP: `args` drops an empty `body`, and the route then answers `body is required`.
+
 ### Arguments
 
 Every input schema is an object with `additionalProperties: false`. The `required` lists below are copied from `routes.js`. Each tool's `args` function maps its arguments onto the `params`, `query` and `body` the route handler receives.
 
 | Tool | `required` | Other properties | Passed to the route as |
 | --- | --- | --- | --- |
-| `hfy_comments_list` | `["subject"]` | `cursor`, `limit` (integer, 1 to 100) | query `subject`, `cursor`, `limit` |
+| `hfy_comments_list` | `["subject"]` | `order` (`asc` or `desc`), `cursor`, `limit` (integer, 1 to 100) | query `subject`, `order`, `cursor`, `limit` |
 | `hfy_comments_create` | `["subject", "body"]` | `parentId`; `body` has `maxLength` 1000 | body `subject`, `body`, `parentId` |
 | `hfy_comments_delete` | `["subject", "id"]` | `reason` | param `id`; query `subject`, `reason` |
 | `hfy_posts_list` | `[]` | `subject`, `type` (`post`, `article`, `document`), `author`, `visibility` (`draft`, `published`, `withdrawn`), `cursor`, `limit` (integer, 1 to 100) | query, the same names |

@@ -134,34 +134,28 @@ test.describe("desktop navbar", () => {
     expect(await page.evaluate(() => localStorage.getItem("hfy:edge-session"))).toBeNull();
   });
 
-  test("edge-only sign-in (no legacy token): navbar search, My Record and Log out show, and search suggests over the cookie", async ({ page }) => {
+  test("edge-only sign-in: My Record and Log out show and stay shown (there is no legacy script to hide them)", async ({ page }) => {
     const log = await edge(page);
     await page.goto("/about/?hfy_flags=authV2");
-    const input = page.locator("[data-search-form] [data-search-input]");
-    await expect(input).toBeVisible();
     await expect(page.locator('[data-feature="myRecordLink"]')).toBeVisible();
     await expect(page.locator('[data-feature="logoutLink"]')).toBeVisible();
     await expect(page.locator('[data-feature="familyLoginLink"]')).toBeHidden();
-    // legacy auth.js settles later (no stored token) and must not hide them again
     await page.waitForTimeout(900);
-    await expect(input).toBeVisible();
-    await input.fill("Quill");
-    await expect(page.locator("[data-search-list] [data-search-option]", { hasText: "Mary Quillfeather" })).toBeVisible({ timeout: 10_000 });
-    expect(log.data.length).toBeGreaterThan(0);
-    expect(log.data.every((d) => d.session === null)).toBe(true);
+    await expect(page.locator('[data-feature="myRecordLink"]')).toBeVisible();
+    // HFY-TSK-317: the navbar search is gone from the page, and so is the script that drove it
+    await expect(page.locator("[data-search-form]")).toHaveCount(0);
     expect(log.session).toBe(1);
   });
 
   test("lapsed member on a public page: refreshed once, navigation shows the signed-in state", async ({ page }) => {
     const log = await edge(page, { session: (n) => (n === 1 ? { authenticated: false } : { authenticated: true, sub: "I9001", grampsId: "I9001", label: "Test" }), gate: "lapsed", seen: true });
     await page.goto("/about/?hfy_flags=authV2");
-    await expect(page.locator("[data-search-form] [data-search-input]")).toBeVisible();
     await expect(page.locator("[data-my-record-link]")).toHaveAttribute("href", "/person/?id=I9001");
     expect(log.refresh.length).toBe(1);
     expect(log.login).toBe(0);
   });
 
-  test("flag off (parity): no /auth/session or /auth/refresh, legacy X-HFY-Session data requests", async ({ page }) => {
+  test("flag off (parity): no /auth/session or /auth/refresh, a plain data request with no X-HFY-Session, and the retired token is purged", async ({ page }) => {
     const log = await edge(page);
     await page.addInitScript(() => {
       try { sessionStorage.setItem("HFY_GATEWAY_SESSION_V1", JSON.stringify({ token: "legacy-token", grampsId: "I9001", expiresAt: Date.now() + 3600e3, verifiedAt: Date.now() })); } catch {}
@@ -171,6 +165,7 @@ test.describe("desktop navbar", () => {
     await page.waitForTimeout(500);
     expect(log.session).toBe(0);
     expect(log.refresh).toEqual([]);
-    expect(log.data.find((d) => d.url === "/person/I9001.json").session).toBe("legacy-token");
+    expect(log.data.find((d) => d.url === "/person/I9001.json").session).toBeNull();
+    expect(await page.evaluate(() => sessionStorage.getItem("HFY_GATEWAY_SESSION_V1"))).toBeNull();
   });
 });

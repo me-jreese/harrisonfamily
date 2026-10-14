@@ -235,7 +235,7 @@ test("edgeSession: anonymous visitors are not refreshed; a lapsed member (marker
   assert.equal(unreachable.counts.refresh, 0);
 });
 
-test("navbar-search: an authenticated edge session shows navbarSearch/My Record and the legacy state cannot re-hide them", async () => {
+test("an authenticated edge session shows My Record (and any feature keyed on loggedIn), and the default state cannot re-hide them", async () => {
   const nodes = [node("navbarSearch"), node("myRecordLink"), node("familyLoginLink")];
   const { w } = load({ nodes });
   w.HFYFeatureFlags.refresh();
@@ -243,7 +243,7 @@ test("navbar-search: an authenticated edge session shows navbarSearch/My Record 
   await w.HFYFeatureFlags.edgeSession();
   assert.deepEqual(nodes.map((n) => n.visible), [true, true, false]);
   assert.equal(w.localStorage.getItem("hfy:edge-session"), "1");
-  // legacy auth.js reflecting "not signed in" (no release-1 token) must not hide the edge-session navigation again
+  // a state update that says "not signed in" (the page default) must not hide the edge-session navigation again
   w.HFYFeatureFlags.updateState({ loggedIn: false, userGrampsID: null, hasRecord: false });
   assert.deepEqual(nodes.map((n) => n.visible), [true, true, false]);
   assert.equal(w.HFYFeatureFlags.shouldShow("navbarSearch"), true);
@@ -252,7 +252,7 @@ test("navbar-search: an authenticated edge session shows navbarSearch/My Record 
   assert.equal(w.localStorage.getItem("hfy:edge-session"), null);
 });
 
-test("authV2 off: the edge overlay never applies, so visibility is the legacy state alone", async () => {
+test("authV2 off: the edge overlay never applies, so visibility is the page default state alone", async () => {
   const nodes = [node("navbarSearch")];
   const { w, urls } = load({ flags: { authV2: false }, nodes });
   await w.HFYFeatureFlags.edgeSession();
@@ -272,43 +272,43 @@ test("auth-v2.js probes the session through the shared HFYFeatureFlags.edgeSessi
   assert.match(AUTH_V2_SRC, /forgetEdgeSession\(\)/);
 });
 
-// HFY-TSK-069 (D-11 item 6): /family-login/?next=<path> must reach /auth/login as returnTo (it used to be a hard-coded "/").
-async function familyLogin(search, { authenticated = false } = {}) {
-  const { w } = load({
-    pathname: "/family-login/", search,
-    routes: { session: () => res(200, authenticated ? { authenticated: true, sub: "I0001", exp: NOW_S() + 3000 } : { authenticated: false }) },
-  });
-  w.addEventListener = () => {};
-  vm.runInNewContext(AUTH_V2_SRC, w);
-  await new Promise((r) => setTimeout(r, 20));
+// HFY-TSK-069 (D-11 item 6) + HFY-TSK-317: /family-login/ is a static redirect page. Its inline script sends /family-login/?next=<path>
+// to /auth/login as returnTo (it used to be a hard-coded "/"), and a bare or unsafe next to returnTo=/.
+const FAMILY_LOGIN_HTML = read("family-login/index.html");
+const FAMILY_LOGIN_SCRIPT = FAMILY_LOGIN_HTML.match(/<script>([\s\S]*?)<\/script>/)[1];
+function familyLogin(search) {
+  const w = { URLSearchParams, encodeURIComponent, location: { search, replaced: [], replace(u) { this.replaced.push(u); } } };
+  vm.runInNewContext(FAMILY_LOGIN_SCRIPT, w);
   return w.location.replaced;
 }
 const q = (next) => "?next=" + encodeURIComponent(next);
 
-test("D-11 item 6: /family-login/?next= carries a same-origin path (with query and hash) into returnTo", async () => {
+test("HFY-TSK-317: /family-login/ is a static page with a no-script refresh to /auth/login and no Google sign-in", () => {
+  assert.match(FAMILY_LOGIN_HTML, /<noscript><meta http-equiv="refresh" content="0; url=\/auth\/login"><\/noscript>/);
+  assert.match(FAMILY_LOGIN_HTML, /<a href="\/auth\/login">sign in<\/a>/);
+  assert.doesNotMatch(FAMILY_LOGIN_HTML, /gsi\/client|auth\.js|check-allowed|feature-flags/);
+});
+
+test("D-11 item 6: /family-login/?next= carries a same-origin path (with query and hash) into returnTo", () => {
   for (const next of ["/person/?id=I0113", "/search/?query=Harrison&focus=1", "/person/?id=I0113#timeline", "/posts/?id=01JABC", "/me/notifications/"]) {
-    assert.deepEqual(await familyLogin(q(next)), [LOGIN(next)], next);
+    assert.deepEqual(familyLogin(q(next)), [LOGIN(next)], next);
   }
 });
 
-test("D-11 item 6: the redirect is exactly what the legacy fallbacks send (URLSearchParams-encoded path+search+hash)", async () => {
+test("D-11 item 6: the redirect carries URLSearchParams-encoded path+search+hash", () => {
   const path = "/person/?id=I0113&tab=a b#x";
   const target = new URL("/family-login/", "https://harrisonfamily.us");
-  target.searchParams.set("next", path); // person-page.js / search-*.js redirectToLogin()
-  assert.deepEqual(await familyLogin(target.search), [LOGIN(path)]);
+  target.searchParams.set("next", path);
+  assert.deepEqual(familyLogin(target.search), [LOGIN(path)]);
 });
 
-test("D-11 item 6: a missing, empty or unsafe next falls back to /", async () => {
+test("D-11 item 6: a missing, empty or unsafe next falls back to /", () => {
   const bad = [
     "", "person/", "//evil.example/x", "///evil.example", "https://evil.example/", "http://harrisonfamily.us/person/", "javascript:alert(1)",
     "/\\evil.example", "/ok\\path", "/a\tb", "/a\nb", "/a\rb", "/a\u0000b", "/a\u007fb", "\t/x", " /x", "/" + "a".repeat(2100),
     "/auth/login?returnTo=%2F", "/auth/link", "/family-login/", "/family-login/?next=%2Fperson%2F",
   ];
-  for (const next of bad) assert.deepEqual(await familyLogin(q(next)), [LOGIN("/")], JSON.stringify(next));
-  assert.deepEqual(await familyLogin(""), [LOGIN("/")], "no next at all");
-  assert.deepEqual(await familyLogin("?next=%E0%A4%A"), [LOGIN("/")], "malformed percent-encoding");
-});
-
-test("D-11 item 6: an already edge-authenticated visitor is not redirected (no loop), whatever next says", async () => {
-  assert.deepEqual(await familyLogin(q("/person/?id=I0113"), { authenticated: true }), []);
+  for (const next of bad) assert.deepEqual(familyLogin(q(next)), [LOGIN("/")], JSON.stringify(next));
+  assert.deepEqual(familyLogin(""), [LOGIN("/")], "no next at all");
+  assert.deepEqual(familyLogin("?next=%E0%A4%A"), [LOGIN("/")], "malformed percent-encoding");
 });

@@ -139,7 +139,7 @@ The early-hint script is `try{localStorage.getItem("hfy:shell-hint")==="1"&&docu
 
 | Pages | Where the blocks go |
 |---|---|
-| The ten Eleventy pages: `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `person/`, `privacy/`, `private/`, `search/` and `terms/` | Block A immediately before the first `<link>` to `/css/main.css` (with or without a query), block B immediately after it |
+| The ten Eleventy pages (nine, plus the repo-owned redirect page `family-login/index.html`, which gets the blocks without the early hint): `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `person/`, `privacy/`, `private/`, `search/` and `terms/` | Block A immediately before the first `<link>` to `/css/main.css` (with or without a query), block B immediately after it |
 | The four repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
 
 Each block takes the indentation of the line it is anchored to. A build first removes any existing blocks and then writes them again, so a second build changes nothing, and removing the blocks restores the page byte for byte. A page with neither a `main.css` link nor `</title>` fails the build with `<page>: no main.css link and no </title> to anchor the theme head block`, and a page in `PAGES` that does not exist fails it as well.
@@ -159,10 +159,8 @@ Each block takes the indentation of the line it is anchored to. A build first re
 | `index.html`, hero lede | `<h3>Learn about our heritage and help us preserve our family history.</h3>`, in either capitalization | `<p class="home-hero__lede">learn about our heritage and help us preserve our family history.</p>` |
 | `index.html`, calls to action | `About Us` (the `/about/` link) and `Family Login` (the `data-feature="familyLoginLink"` link) | `our story` and `sign in` |
 | `about/index.html`, heading | `Honoring the Harrison Family Legacy` | `honoring the Harrison family legacy` |
-| `family-login/index.html`, heading | `Family Login` | `sign in` |
 | Every page with the footer line, and `posts/`, `me/` and `me/notifications/` (`COPY_EXTRA`) | No links after the footer line | `FOOTER_NAV`: a `<nav class="site-footer__links" aria-label="about this site">` with `about`, `contact`, `privacy` and `terms`, once. The shell hides the navbar that linked them. `40-site.css` styles them (44 px targets, `text.dim`, underlined). |
 | All ten pages, meta description, `og:description`, `twitter:description` | The Eleventy default, `Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data.` | `DESCRIPTION`: `the Harrison family archive. family members sign in to see the private pages.` |
-| `family-login/index.html`, the text shown before it hands over to `/auth/login` | `Sign in with your approved Google account to access private family records, search, and media.`, `If you need access, reach out to the site administrator.`, `Loading authentication status…` | `sign in with your Google account to see the family pages.`, `not on the list yet? text J.`, `loading…` |
 | `logged-out/index.html`, heading, lede and buttons | `You are signed out`, `Your session has ended successfully. …`, `Return to Family Login` (`/family-login/`), `Back to Home` | `SIGNED_OUT`: `you're signed out.`, `come back whenever you like.`, `sign in again` (`/auth/login`), `home`. `src/logged-out.njk` in the source carries the same text. |
 | `person/index.html`, static strings | `Loading person record…`, `Loading high-resolution media…`, `Download original` | `loading…`, `loading the full-size photo…`, `download original` |
 | `contact/`, `privacy/` and `terms/`, the obfuscated address | `info [@] harrisonfamily [D0T] us` (a zero) | `info [@] harrisonfamily [DOT] us`. Nothing else on `privacy/` or `terms/` is rewritten. |
@@ -174,7 +172,6 @@ Each block takes the indentation of the line it is anchored to. A build first re
 | `index.html` | `Harrison Family` | `Harrison Family` |
 | `about/index.html` | `our story · Harrison Family` | `our story` |
 | `contact/index.html` | `contact and access · Harrison Family` | `contact and access` |
-| `family-login/index.html` | `sign in · Harrison Family` | `sign in` |
 | `logged-out/index.html` | `signed out · Harrison Family` | `signed out` |
 | `person/index.html` | `family member · Harrison Family` | `family member` |
 | `privacy/index.html` | `privacy · Harrison Family` | `privacy` |
@@ -194,7 +191,7 @@ Cloudflare caches static files for 4 hours under the URL first fetched, and a Cl
 
 ### Version value
 
-The version is `<sha8>` of the file's bytes as the build produced them, or as they are on disk for a file the build does not produce. The hashes are those of the committed files. [`scripts/ci/patch-client-id.sh`](../../scripts/ci/patch-client-id.sh) later replaces the client-ID placeholder in `js/auth.js` and the pages on the CI runner, before the release is packaged, so the deployed `js/auth.js` has bytes that its `?v` does not hash ([Private data and secrets](private-data-and-secrets.md#placeholders)).
+The version is `<sha8>` of the file's bytes as the build produced them, or as they are on disk for a file the build does not produce. The hashes are those of the committed files, and the deploy changes no file, so every `?v` hashes the bytes that are served (HFY-TSK-317 removed the client-ID patch that used to edit `js/auth.js` and the pages on the runner).
 
 ### References in the pages
 
@@ -331,7 +328,7 @@ The `node:test` suites read `11ty/`, or the scratch site that `HFY_SITE` names. 
 These are differences between the code and its comments, as of this page.
 
 - **`copy.mjs` and CI.** Its header says that `build.mjs --check` "(CI)" fails while a page still carries the old copy. No workflow runs the check.
-- **What `build.mjs` says the copy covers.** Its header lists the home hero, the about and family-login headings, the page titles and the footer. `copy.mjs` also rewrites the fallback navbar brand and sets the hero photographs' `width` and `height`.
+- **What `build.mjs` says the copy covers.** Its header lists the home hero, the about heading, the page titles and the footer. `copy.mjs` also rewrites the fallback navbar brand and sets the hero photographs' `width` and `height`.
 - **`60-shell-static.css` and the tokens version.** Its comment says `@io-kit/tokens` 0.4.0 emits no breakpoint tokens, which is why the partial declares `--io-bp-*` itself. The pinned version is 0.4.1.
 - **Pointers to `11ty/README.md`.** The headers of `heads.mjs` and `copy.mjs`, and `copy.test.mjs`, cite `11ty/README.md` for the port to `<eleventy-source>`. That README now points here and to [Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md) for it.
 - **`build-islands.sh`.** It prints `built islands -> 11ty/js/islands` and checks only `shell.js` and `shell.css`. The build it runs also writes every output on this page, and the script checks none of them.

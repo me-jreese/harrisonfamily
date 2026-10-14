@@ -13,23 +13,26 @@ fi
 failures=()
 warnings=()
 
-check_enforce_assets() {
-  if ! grep -q '"enforceAssets":true' "${SITE_DIR}/index.html"; then
-    failures+=("Missing enforceAssets=true in index.html. Did you build with production flags?")
+# HFY-TSK-317: the retired Google sign-in must not come back through a refresh from an unported Eleventy source. These are the
+# strings the old layout wrote into every page; none may appear in the build that is about to be promoted into 11ty/.
+check_retired_signin() {
+  local page
+  for page in "${SITE_DIR}"/index.html "${SITE_DIR}"/*/index.html; do
+    [[ -f "${page}" ]] || continue
+    case "${page}" in "${SITE_DIR}"/family-login/index.html) continue ;; esac
+    if grep -qE 'accounts\.google\.com/gsi/client|/api/check-allowed|/js/auth\.js|/js/search-navbar\.js|/js/search-results\.js' "${page}"; then
+      failures+=("${page#"${SITE_DIR}"/} still loads the retired Google sign-in or the Lunr search. Port the layout first (docs/how-to/refresh-the-eleventy-output.md).")
+    fi
+  done
+  if [[ -f "${SITE_DIR}/js/auth.js" || -f "${SITE_DIR}/js/search-navbar.js" || -f "${SITE_DIR}/js/search-results.js" ]]; then
+    failures+=("the build still emits js/auth.js, js/search-navbar.js or js/search-results.js, which 11ty/ no longer has.")
+  fi
+  if [[ -f "${SITE_DIR}/family-login/index.html" ]] && ! grep -q '/auth/login' "${SITE_DIR}/family-login/index.html"; then
+    failures+=("family-login/index.html is the Google sign-in page, not the redirect to /auth/login.")
   fi
 }
 
-check_client_id() {
-  if grep -q 'REPLACE_WITH_GOOGLE_CLIENT_ID' "${SITE_DIR}"/index.html; then
-    warnings+=("Placeholder Google client ID detected. Remember to run the manual GIS patch after deployment.")
-  fi
-  if grep -q '"clientId":""' "${SITE_DIR}/index.html"; then
-    failures+=("Empty clientId detected in auth config.")
-  fi
-}
-
-check_enforce_assets
-check_client_id
+check_retired_signin
 
 if [[ ${#failures[@]} -gt 0 ]]; then
   echo "[FAIL] Build validation failed:" >&2
@@ -42,4 +45,4 @@ if [[ ${#warnings[@]} -gt 0 ]]; then
   printf '  - %s\n' "${warnings[@]}"
 fi
 
-echo "[OK] Build validation passed: enforceAssets check succeeded."
+echo "[OK] Build validation passed: no retired sign-in or Lunr search in the build."

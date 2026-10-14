@@ -108,7 +108,7 @@ describe("applyBatch(): items written (BRD2 section 4)", () => {
     const n = note(1);
     const e = person(2);
     await w.apply([create(p), create(n), create(e)]);
-    const r = await w.apply([update({ ...p, gender: 0 }, 1), del("Note", n.handle, 1, { reason: "cleanup" }), { op: "withdraw", class: "Person", handle: e.handle, base_version: 1 }]);
+    const r = await w.apply([update({ ...p, gender: 0 }, 1), del("Note", n.handle, 1, { reason: "cleanup" }), { op: "withdraw", class: "Person", handle: e.handle, base_version: 1, reason: "private" }]);
     expect(r.results.map((x) => [x.version, x.seq])).toEqual([[2, 4], [2, 5], [2, 6]]);
     expect(JSON.parse(w.row(`REC#Person#${p.handle}`, "HEAD").obj_json).gender).toBe(0);
     const noteHead = w.row(`REC#Note#${n.handle}`, "HEAD");
@@ -142,6 +142,7 @@ describe("applyBatch(): items written (BRD2 section 4)", () => {
     await rejects(w.apply([{ ...del("Person", p.handle, 1), obj: p }]), 400, "validation");
     await rejects(w.apply([create({ ...p, gramps_id: undefined })]), 400, "validation");
     await rejects(w.apply([{ op: "withdraw", class: "Person", handle: p.handle, base_version: 1, reason: "boredom" }]), 400, "validation");
+    await rejects(w.apply([{ op: "withdraw", class: "Person", handle: p.handle, base_version: 1 }]), 400, "validation"); // the reason is required, not defaulted
     await rejects(w.apply([create(p)], { origin: "nobody" }), 400, "validation");
     await rejects(w.apply([create(p)], { idempotencyKey: "" }), 428, "idempotency_key_required");
     await rejects(w.apply(Array.from({ length: 25 }, (_, i) => create(note(i + 1)))), 413, "batch_too_large");
@@ -466,7 +467,7 @@ describe("Person ids are permanent", () => {
 
   it.each([
     ["delete", (p) => del("Person", p.handle, 1), "deleted"],
-    ["withdraw", (p) => ({ op: "withdraw", class: "Person", handle: p.handle, base_version: 1 }), "withdrawn"],
+    ["withdraw", (p) => ({ op: "withdraw", class: "Person", handle: p.handle, base_version: 1, reason: "private" }), "withdrawn"],
     ["merge", (p) => del("Person", p.handle, 1, { reason: "merge", merged_into: "I0002" }), "merged"],
   ])("a %s retires GID#Person#<id> as {handle, retired, reason} and reuse by another person is 409 gramps_id_retired", async (_n, mk, reason) => {
     const { w, p } = await seeded();
@@ -482,7 +483,7 @@ describe("Person ids are permanent", () => {
 
   it.each([
     ["delete", (p) => del("Person", p.handle, 1)],
-    ["withdraw", (p) => ({ op: "withdraw", class: "Person", handle: p.handle, base_version: 1 })],
+    ["withdraw", (p) => ({ op: "withdraw", class: "Person", handle: p.handle, base_version: 1, reason: "private" })],
     ["merge", (p) => del("Person", p.handle, 1, { reason: "merge", merged_into: "I0002" })],
   ])("a create over a %s tombstone is 409 gramps_id_retired: the retired GID and the alias stay as they were (resurrection is operator tooling)", async (_n, mk) => {
     const { w, p } = await seeded();
@@ -559,7 +560,7 @@ describe("Person ids are permanent", () => {
       if (!s) op = create(person(n, gid));
       else if (s.deleted) op = { ...create(person(n, s.gid)), base_version: s.version }; // refused: a Person tombstone is never recreated
       else if (kind === 0) op = del("Person", h(n), s.version);
-      else if (kind === 1) op = { op: "withdraw", class: "Person", handle: h(n), base_version: s.version };
+      else if (kind === 1) op = { op: "withdraw", class: "Person", handle: h(n), base_version: s.version, reason: "private" };
       else op = update(person(n, gid), s.version, { renumber: true });
       try {
         const r = await w.apply([op]);
@@ -964,15 +965,17 @@ describe("size limits: blobs, items and the 100-action budget", () => {
 });
 
 describe("the validator seam is required", () => {
-  it("a call with neither ctx.validate nor unsafeNoValidate throws a TypeError before anything is read or written", async () => {
+  it("a call with neither ctx.validate nor unsafeNoValidate runs the repository validator, and a ctx.validate that is not a function throws a TypeError", async () => {
     const w = world();
     const sent = [];
     const ctx = { ...w.ctx, ddb: wrap(w.ddb, { spy: (c) => sent.push(c) }), unsafeNoValidate: undefined, validate: undefined };
-    await expect(applyBatch(ctx, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(person(1))] })).rejects.toThrow(TypeError);
+    const dirty = person(1, "I0001", { urls: [{ _class: "Url", path: "mailto:someone@example.org", desc: "", private: false, type: { _class: "UrlType", string: "", value: 1 } }] });
+    const e = await applyBatch(ctx, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(dirty)] }).then(() => null, (x) => x);
+    expect([e?.status, e?.code]).toEqual([422, "privacy_violation"]);
+    expect(sent.some((c) => ["TransactWriteCommand", "PutCommand", "UpdateCommand"].includes(c.constructor.name))).toBe(false); // nothing was written
     await expect(applyBatch({ ...ctx, validate: "yes" }, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(person(1))] })).rejects.toThrow(/validate/);
-    expect(sent).toHaveLength(0);
     // the seed and tests opt out on purpose
-    expect((await applyBatch({ ...ctx, unsafeNoValidate: true }, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(person(1))] })).seq_from).toBe(1);
+    expect((await applyBatch({ ...ctx, unsafeNoValidate: true }, { principal: "svc-test", origin: "desktop", idempotencyKey: "k", ops: [create(dirty)] })).seq_from).toBe(1);
   });
 
   it("a validator refusal fires before any conflict detail: a stale, unauthorised caller learns nothing about the stored object", async () => {

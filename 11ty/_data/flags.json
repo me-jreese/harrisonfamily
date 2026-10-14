@@ -1,6 +1,7 @@
 {
   "aboutCta": false,
   "authV2": true,
+  "commentPhotosV1": false,
   "navMe": true,
   "notifyV2": true,
   "personV2": true,
