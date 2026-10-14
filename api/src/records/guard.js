@@ -9,7 +9,7 @@
 //
 // No route calls it yet; its first caller is `edit-api-core` (then `relationship-api`, `proposal-store-api`), so it ships in the
 // hfy-api zip unreachable.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { COPY as TEXT_COPY } from "../shared/privacy-guard.mjs";
 import { CODES, countsPerCode, createEditGuard } from "../shared/edit-guard.mjs";
 import { guardDobFromEnv } from "../guard.js";
@@ -20,9 +20,16 @@ export const COPY = Object.freeze({ ...TEXT_COPY, never_in_cloud: "we don't keep
 const ORDER = [CODES.contact, CODES.dob, CODES.never]; // the code a mixed refusal reports
 
 let cached = null;
-/** The parsed gramps/redaction/redaction-v1.json. The zip stages it beside src/ (scripts/ci/package-api.sh). */
+const POLICY = "gramps/redaction/redaction-v1.json";
+/** Where the policy sits for a guard.js at `base`: the zip stages gramps/ beside src/ (../../gramps from src/records), the checkout keeps it at the repo root (../../../gramps from api/src/records). */
+export function policyUrl(base = import.meta.url, exists = existsSync) {
+  const staged = new URL(`../../${POLICY}`, base);
+  const checkout = new URL(`../../../${POLICY}`, base);
+  return exists(staged) ? staged : checkout;
+}
+/** The parsed gramps/redaction/redaction-v1.json, found in either layout. */
 export function loadPolicy() {
-  cached ??= JSON.parse(readFileSync(new URL("../../../gramps/redaction/redaction-v1.json", import.meta.url), "utf8"));
+  cached ??= JSON.parse(readFileSync(policyUrl(), "utf8"));
   return cached;
 }
 

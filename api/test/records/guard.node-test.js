@@ -3,10 +3,11 @@
 // the browser mirror also runs; this file adds the adapter's own contract: policy import, 422 body, captured log.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { RecordGuardError, createRecordGuard, loadPolicy } from "../../src/records/guard.js";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { RecordGuardError, createRecordGuard, loadPolicy, policyUrl } from "../../src/records/guard.js";
 import { createEditGuard } from "../../src/shared/edit-guard.mjs";
 import { expected, leaksText, runCase } from "../../src/shared/edit-guard-corpus.mjs";
 
@@ -90,5 +91,30 @@ describe("the 422 body and the log carry pointers and counts, never the matched 
   it("a throwing logger never changes the answer", () => {
     const guard = createRecordGuard({ policy, log: { info() { throw new Error("log down"); } } });
     assert.throws(() => guard.assertValue(corpus.phone, "n"), RecordGuardError);
+  });
+});
+
+describe("the policy path in both layouts", () => {
+  const stage = () => {
+    const root = mkdtempSync(join(tmpdir(), "hfy-policy-"));
+    mkdirSync(join(root, "gramps", "redaction"), { recursive: true });
+    return root;
+  };
+  it("the zip layout (gramps/ beside src/) and the checkout layout (gramps/ above api/) both resolve to the policy file", () => {
+    const zip = stage();
+    const repo = stage();
+    try {
+      writeFileSync(join(zip, "gramps", "redaction", "redaction-v1.json"), "{}");
+      assert.equal(policyUrl(pathToFileURL(join(zip, "src", "records", "guard.js"))).pathname, pathToFileURL(join(zip, "gramps", "redaction", "redaction-v1.json")).pathname);
+      mkdirSync(join(repo, "api", "src", "records"), { recursive: true });
+      writeFileSync(join(repo, "gramps", "redaction", "redaction-v1.json"), "{}");
+      assert.equal(policyUrl(pathToFileURL(join(repo, "api", "src", "records", "guard.js"))).pathname, pathToFileURL(join(repo, "gramps", "redaction", "redaction-v1.json")).pathname);
+    } finally {
+      rmSync(zip, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+  it("loadPolicy reads the real policy from the checkout", () => {
+    assert.ok(loadPolicy().dates.dayMonthIndexes);
   });
 });

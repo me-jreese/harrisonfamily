@@ -2741,12 +2741,6 @@
    "expect": [
     {
      "obj": "Person:p1",
-     "path": "/address_list/0",
-     "code": "never_in_cloud",
-     "kind": "address"
-    },
-    {
-     "obj": "Person:p1",
      "path": "/address_list",
      "code": "never_in_cloud",
      "kind": "address"
@@ -2784,12 +2778,6 @@
     }
    },
    "expect": [
-    {
-     "obj": "Place:pl1",
-     "path": "/alt_loc/0",
-     "code": "never_in_cloud",
-     "kind": "address"
-    },
     {
      "obj": "Place:pl1",
      "path": "/alt_loc",
@@ -2908,6 +2896,784 @@
     }
    ],
    "dob": true
+  },
+  {
+   "id": "no-class-birth-day-month",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       3,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    },
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "no-class-url-email",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [
+      {
+       "type": {
+        "_class": "UrlType",
+        "value": 1,
+        "string": ""
+       },
+       "path": "mailto:a@example.org",
+       "desc": ""
+      }
+     ],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/path",
+     "code": "contact_info",
+     "kind": "contact_url"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/path",
+     "code": "contact_info",
+     "kind": "email"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/type",
+     "code": "never_in_cloud",
+     "kind": "url_email"
+    }
+   ]
+  },
+  {
+   "id": "no-class-attribute-3-and-6",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [
+      {
+       "type": {
+        "_class": "AttributeType",
+        "value": 3,
+        "string": ""
+       },
+       "value": "x"
+      },
+      {
+       "type": {
+        "_class": "AttributeType",
+        "value": 6,
+        "string": ""
+       },
+       "value": "y"
+      },
+      {
+       "type": {
+        "_class": "AttributeType",
+        "value": 5,
+        "string": ""
+       },
+       "value": "z"
+      }
+     ],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/attribute_list/0/type",
+     "code": "never_in_cloud",
+     "kind": "attribute"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/attribute_list/1/type",
+     "code": "never_in_cloud",
+     "kind": "attribute"
+    }
+   ]
+  },
+  {
+   "id": "no-class-place-type-7",
+   "kind": "objects",
+   "objects": {
+    "Place:pl1": {
+     "handle": "pl1",
+     "place_type": {
+      "_class": "PlaceType",
+      "value": 7,
+      "string": ""
+     },
+     "name": {
+      "_class": "PlaceName",
+      "value": "Testville"
+     },
+     "title": "",
+     "code": "",
+     "lat": "",
+     "long": "",
+     "urls": [],
+     "alt_names": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Place:pl1",
+     "path": "/place_type",
+     "code": "never_in_cloud",
+     "kind": "place_type"
+    }
+   ]
+  },
+  {
+   "id": "no-class-address-list",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [
+      {
+       "street": ""
+      }
+     ],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/address_list",
+     "code": "never_in_cloud",
+     "kind": "address"
+    }
+   ]
+  },
+  {
+   "id": "no-class-text-note",
+   "kind": "objects",
+   "objects": {
+    "Note:n1": {
+     "handle": "n1",
+     "text": {
+      "_class": "StyledText",
+      "string": "call (555) 010-0199",
+      "tags": []
+     },
+     "type": {
+      "_class": "NoteType",
+      "value": 1,
+      "string": ""
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Note:n1",
+     "path": "/text/string",
+     "code": "contact_info",
+     "kind": "phone"
+    }
+   ]
+  },
+  {
+   "id": "no-class-citation-of-birth-event",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       0,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": [
+      "c1"
+     ]
+    },
+    "Citation:c1": {
+     "handle": "c1",
+     "page": "",
+     "date": {
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       2,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     }
+    },
+    "Citation:c2": {
+     "handle": "c2",
+     "page": "",
+     "date": {
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       2,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Citation:c1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "unknown-class",
+   "kind": "objects",
+   "objects": {
+    "Widget:w1": {
+     "_class": "Widget",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Widget:w1",
+     "path": "/_class",
+     "code": "never_in_cloud",
+     "kind": "class_unknown"
+    }
+   ]
+  },
+  {
+   "id": "class-mismatch-key-wins",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Note",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       5,
+       3,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/_class",
+     "code": "never_in_cloud",
+     "kind": "class_mismatch"
+    },
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/0",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    },
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval/1",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "spoofed-nested-class-url-email",
+   "kind": "objects",
+   "objects": {
+    "Person:p1": {
+     "_class": "Person",
+     "handle": "p1",
+     "gramps_id": "",
+     "event_ref_list": [],
+     "family_list": [],
+     "parent_family_list": [],
+     "birth_ref_index": -1,
+     "death_ref_index": -1,
+     "alternate_names": [],
+     "attribute_list": [],
+     "urls": [
+      {
+       "_class": "Spoof",
+       "type": {
+        "_class": "UrlType",
+        "value": 1,
+        "string": ""
+       },
+       "path": "mailto:a@example.org",
+       "desc": ""
+      }
+     ],
+     "address_list": [],
+     "media_list": [],
+     "citation_list": [],
+     "note_list": [],
+     "primary_name": {
+      "_class": "Name",
+      "type": {
+       "_class": "NameType",
+       "value": 2,
+       "string": ""
+      },
+      "first_name": "Ada",
+      "surname_list": [
+       {
+        "_class": "Surname",
+        "surname": "Test",
+        "primary": true
+       }
+      ],
+      "date": {
+       "_class": "Date",
+       "calendar": 0,
+       "modifier": 0,
+       "quality": 0,
+       "dateval": [
+        0,
+        0,
+        0,
+        false
+       ],
+       "text": "",
+       "newyear": 0,
+       "sortval": 0
+      }
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/path",
+     "code": "contact_info",
+     "kind": "contact_url"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/path",
+     "code": "contact_info",
+     "kind": "email"
+    },
+    {
+     "obj": "Person:p1",
+     "path": "/urls/0/type",
+     "code": "never_in_cloud",
+     "kind": "url_email"
+    }
+   ]
+  },
+  {
+   "id": "srcattribute-key-phone",
+   "kind": "objects",
+   "objects": {
+    "Citation:c1": {
+     "_class": "Citation",
+     "handle": "c1",
+     "page": "",
+     "citation_list": [],
+     "srcattribute_list": [
+      {
+       "_class": "SrcAttribute",
+       "key": "call (555) 010-0199 now",
+       "value": ""
+      }
+     ]
+    }
+   },
+   "expect": [
+    {
+     "obj": "Citation:c1",
+     "path": "/srcattribute_list/0/key",
+     "code": "contact_info",
+     "kind": "phone"
+    }
+   ]
+  },
+  {
+   "id": "birth-dateval-not-array",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": "5-3-1900",
+      "text": "",
+      "newyear": 0,
+      "sortval": 0
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/dateval",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-sortval-keeps-day",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 2415100
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": [
+    {
+     "obj": "Event:e1",
+     "path": "/date/sortval",
+     "code": "dob_not_allowed",
+     "kind": "birth_date"
+    }
+   ]
+  },
+  {
+   "id": "birth-sortval-year-only-ok",
+   "kind": "objects",
+   "objects": {
+    "Event:e1": {
+     "_class": "Event",
+     "handle": "e1",
+     "type": {
+      "_class": "EventType",
+      "value": 12,
+      "string": ""
+     },
+     "date": {
+      "_class": "Date",
+      "calendar": 0,
+      "modifier": 0,
+      "quality": 0,
+      "dateval": [
+       0,
+       0,
+       1900,
+       false
+      ],
+      "text": "",
+      "newyear": 0,
+      "sortval": 2415021
+     },
+     "description": "",
+     "place": "",
+     "citation_list": []
+    }
+   },
+   "expect": []
+  },
+  {
+   "id": "numeric-note-text",
+   "kind": "objects",
+   "objects": {
+    "Note:n1": {
+     "_class": "Note",
+     "handle": "n1",
+     "text": {
+      "_class": "StyledText",
+      "string": 5550100199,
+      "tags": []
+     },
+     "type": {
+      "_class": "NoteType",
+      "value": 1,
+      "string": ""
+     }
+    }
+   },
+   "expect": [
+    {
+     "obj": "Note:n1",
+     "path": "/text/string",
+     "code": "contact_info",
+     "kind": "phone"
+    }
+   ]
   }
  ]
 }
