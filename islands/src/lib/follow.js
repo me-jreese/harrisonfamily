@@ -6,6 +6,7 @@ import { api as defaultApi } from "./api.js";
 export const FOLLOW_COPY = {
   follow: "follow",
   following: "following",
+  followLabel: "follow this page",
   helper: "we'll let you know when this page changes.",
   failed: "that didn't save. try again, or text J.",
   listTitle: "pages you follow",

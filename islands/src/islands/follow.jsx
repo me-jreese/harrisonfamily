@@ -4,7 +4,7 @@
 // Absent on your own page, when signed out, and when the routes answer anything but a clean "following or not" (404 = flag off at the API).
 // A failed follow or unfollow rolls the toggle back and shows a banner.
 import "./follow.css";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getMe } from "../lib/me.js";
 import { FOLLOW_COPY, follow, getFollowing, helperSeen, markHelperSeen, unfollow } from "../lib/follow.js";
@@ -16,6 +16,7 @@ export function FollowToggle({ personId, onShown }) {
   const [state, setState] = useState({ phase: "loading", on: false });
   const [banner, setBanner] = useState(false);
   const [helper, setHelper] = useState(false);
+  const pending = useRef(false); // one request in flight at a time, so a PUT and a DELETE can never land out of order
   useEffect(() => {
     let live = true;
     (async () => {
@@ -37,7 +38,10 @@ export function FollowToggle({ personId, onShown }) {
   if (!shown) return null;
 
   const toggle = async () => {
-    const next = !state.on;
+    if (pending.current) return;
+    pending.current = true;
+    const before = state.on; // the last state the server confirmed
+    const next = !before;
     setBanner(false);
     setState({ phase: "ready", on: next });
     known.set(personId, next);
@@ -46,18 +50,20 @@ export function FollowToggle({ personId, onShown }) {
       setHelper(next && !helperSeen());
       if (next) markHelperSeen();
     } catch {
-      known.set(personId, !next);
-      setState({ phase: "ready", on: !next });
+      known.set(personId, before);
+      setState({ phase: "ready", on: before });
       setHelper(false);
       setBanner(true);
+    } finally {
+      pending.current = false;
     }
   };
   return (
     <div className="hfy-follow">
-      <button type="button" className="hfy-follow__btn" aria-pressed={state.on} data-hfy-follow onClick={toggle}>
+      <button type="button" className="hfy-follow__btn" aria-label={FOLLOW_COPY.followLabel} aria-pressed={state.on} data-hfy-follow onClick={toggle}>
         {state.on ? FOLLOW_COPY.following : FOLLOW_COPY.follow}
       </button>
-      {helper && <p className="hfy-follow__helper" data-hfy-follow-helper>{FOLLOW_COPY.helper}</p>}
+      {helper && <p className="hfy-follow__helper" role="status" data-hfy-follow-helper>{FOLLOW_COPY.helper}</p>}
       {banner && <p className="hfy-follow__banner" role="alert" data-hfy-banner>{FOLLOW_COPY.failed}</p>}
     </div>
   );

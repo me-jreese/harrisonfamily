@@ -14,6 +14,7 @@ export function FollowedPages({ list = listFollows, remove = unfollow, names = p
   const [error, setError] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(() => new Set()); // ids with an unfollow in flight
 
   const load = useCallback(async (after) => {
     setBusy(true);
@@ -37,12 +38,18 @@ export function FollowedPages({ list = listFollows, remove = unfollow, names = p
   }, [names]);
 
   const onUnfollow = async (id) => {
+    if (removing.has(id)) return;
     setError(false);
+    setRemoving((cur) => new Set(cur).add(id));
     try {
       await remove(id);
       setRows((cur) => (cur || []).filter((r) => r.id !== id));
-    } catch {
-      setError(true);
+    } catch (e) {
+      // A 404 on DELETE means it is already gone: drop the row and say nothing.
+      if (e && e.status === 404) setRows((cur) => (cur || []).filter((r) => r.id !== id));
+      else setError(true);
+    } finally {
+      setRemoving((cur) => { const n = new Set(cur); n.delete(id); return n; });
     }
   };
 
@@ -59,7 +66,7 @@ export function FollowedPages({ list = listFollows, remove = unfollow, names = p
             return (
               <li className="hfy-followed__row" key={r.id}>
                 <PersonName id={r.id} name={name} className="hfy-followed__name" />
-                <button type="button" className="hfy-followed__unfollow" aria-label={`${FOLLOW_COPY.unfollow} ${name}`} onClick={() => onUnfollow(r.id)}>{FOLLOW_COPY.unfollow}</button>
+                <button type="button" className="hfy-followed__unfollow" aria-label={`${FOLLOW_COPY.unfollow} ${name}${labels.get(r.id) ? "" : ` ${r.id}`}`} disabled={removing.has(r.id)} onClick={() => onUnfollow(r.id)}>{FOLLOW_COPY.unfollow}</button>
               </li>
             );
           })}

@@ -11,7 +11,7 @@ const NAMES = Array.from({ length: 13 }, (_, i) => ({ grampsId: `I90${String(20 
 
 /** /api/subscriptions in memory. `failWrites` makes PUT and DELETE answer 500; `routes: false` answers 404 (flag off at the API). */
 async function stub(page, { flag = true, session = "I9002", following = [], failWrites = false, routes = true } = {}) {
-  const state = { following: [...following], puts: [], dels: [], gets: [], bundleRequests: [], failWrites };
+  const state = { following: [...following], puts: [], dels: [], gets: [], bundleRequests: [], meCalls: 0, delStatus: 0, failWrites };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: true, navMe: false, aboutCta: false, photoTags: false, profileLinks: false, recordSubsV1: flag } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: session ? { authenticated: true, sub: session, grampsId: session, label: "Sam Example" } : { authenticated: false } }));
@@ -22,7 +22,7 @@ async function stub(page, { flag = true, session = "I9002", following = [], fail
   await page.route("**/media/tree_I9001.svg", (r) => r.fulfill({ contentType: "image/svg+xml", body: readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8") }));
   await page.route(/\/media\/MPHOTO\d\.jpg/, (r) => r.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect width="80" height="60" fill="gray"/></svg>' }));
   await page.route(/\/js\/islands\/follow\./, (r) => { state.bundleRequests.push(r.request().url()); return r.continue(); });
-  await page.route("**/api/me", (r) => r.fulfill({ json: session ? { id: session, label: "Sam Example", admin: false, can: {} } : { error: "unauthenticated" }, status: session ? 200 : 401 }));
+  await page.route("**/api/me", (r) => { state.meCalls++; return r.fulfill({ json: session ? { id: session, label: "Sam Example", admin: false, can: {} } : { error: "unauthenticated" }, status: session ? 200 : 401 }); });
   await page.route("**/api/comments**", (r) => r.fulfill({ json: { thread: { id: "person:I9001", topic: "comments", comments: [], reactions: {} } } }));
   await page.route("**/api/notifications/**", (r) => {
     const u = new URL(r.request().url());
@@ -38,6 +38,7 @@ async function stub(page, { flag = true, session = "I9002", following = [], fail
       if (state.failWrites) return r.fulfill({ status: 500, json: { error: "server", message: "x" } });
       if (req.method() === "PUT") { state.puts.push({ id: m[1], body: req.postDataJSON() }); if (!state.following.includes(m[1])) state.following.unshift(m[1]); return r.fulfill({ json: { subject: `person:${m[1]}`, subscribed: true } }); }
       state.dels.push(m[1]);
+      if (state.delStatus) return r.fulfill({ status: state.delStatus, json: { error: "not_found" } });
       state.following = state.following.filter((x) => x !== m[1]);
       return r.fulfill({ status: 204, body: "" });
     }
@@ -133,16 +134,46 @@ for (const [name, viewport] of VIEWPORTS) {
     test("person hero: hidden on your own page", async ({ page }) => {
       // own page: the viewer is the person
       const own = await openPerson(page, { session: "I9001" });
-      await expect.poll(() => own.bundleRequests.length).toBeGreaterThan(0);
+      await expect.poll(() => own.meCalls).toBeGreaterThan(0);
+      await page.waitForLoadState("networkidle");
+      expect(own.gets).toEqual([]);
       await expect(page.locator('#person-hero [data-slot="follow"]')).toBeEmpty();
       await expect(page.locator(".person-heading[data-hfy-follow-row]")).toHaveCount(0);
     });
 
     test("person hero: hidden when signed out", async ({ page }) => {
       const s = await openPerson(page, { session: null });
-      await expect.poll(() => s.bundleRequests.length).toBeGreaterThan(0);
+      await expect.poll(() => s.meCalls).toBeGreaterThan(0);
+      await page.waitForLoadState("networkidle");
       await expect(page.locator('#person-hero [data-slot="follow"]')).toBeEmpty();
       expect(s.gets).toEqual([]);
+    });
+
+    test("person hero: a rebuild for a different person asks again; a merged id that is your own page hides it", async ({ page }) => {
+      const state = await openPerson(page);
+      await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
+      const gets = state.gets.length;
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent("hfy:person-rendered", { detail: { personId: "I9003" } })));
+      await expect.poll(() => state.gets.length).toBeGreaterThan(gets);
+      expect(state.gets.at(-1)).toContain("person%3AI9003");
+      await toggle(page).click();
+      await expect.poll(() => state.puts.map((p) => p.id)).toEqual(["I9003"]);
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent("hfy:person-rendered", { detail: { personId: "I9002" } })));
+      await expect(page.locator('#person-hero [data-slot="follow"]')).toBeEmpty();
+    });
+
+    test("person hero: quick double click sends one request", async ({ page }) => {
+      const state = await openPerson(page);
+      await toggle(page).dblclick();
+      await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
+      expect(state.puts.length + state.dels.length).toBe(1);
+    });
+
+    test("person hero: the button keeps one accessible name and the helper is a status", async ({ page }) => {
+      await openPerson(page);
+      await expect(toggle(page)).toHaveAttribute("aria-label", "follow this page");
+      await toggle(page).click();
+      await expect(page.locator("[data-hfy-follow-helper]")).toHaveAttribute("role", "status");
     });
 
     test("person hero: flag off requests no bundle", async ({ page }) => {
@@ -180,6 +211,17 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(rows).toHaveCount(12);
       expect(state.dels).toEqual(["I9020"]);
       expect(await axeViolations(page)).toEqual([]);
+    });
+
+    test("settings: unfollow of a page already gone drops the row without a banner", async ({ page }) => {
+      const state = await stub(page, { following: ["I9020", "I9021"] });
+      state.delStatus = 404;
+      await page.goto("/me/notifications/", { waitUntil: "domcontentloaded" });
+      const rows = page.locator("[data-hfy-followed] li");
+      await expect(rows).toHaveCount(2);
+      await rows.first().getByRole("button", { name: /^unfollow/ }).click();
+      await expect(rows).toHaveCount(1);
+      await expect(page.locator("[data-hfy-followed] [data-hfy-banner]")).toHaveCount(0);
     });
 
     test("settings: an empty list says so; flag off or routes dark shows no section", async ({ page }) => {
