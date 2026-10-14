@@ -17,7 +17,7 @@
 // THREAD# subjects are `person:<id>` or `post:<ulid>`, RSUB# and PLINKS# are keyed by a Person id, and ALLOW# by an email.
 // Reuse of a freed non-Person id is therefore harmless. gidDelete() refuses a Person on purpose.
 import { createHash } from "node:crypto";
-import { canonicalJson } from "../records/ops.js";
+import { canonicalJson } from "../shared/canonical.mjs";
 import { HttpError } from "../http.js";
 
 export const CLASSES = Object.freeze(["Person", "Family", "Event", "Place", "Source", "Citation", "Repository", "Media", "Note", "Tag"]);
@@ -84,7 +84,12 @@ export const batchIdFor = (principal, idempotencyKey) => base32(createHash("sha2
  */
 export const requestTokenFor = (batchId, seqFrom) => sha256(`${batchId}:${seqFrom}`).slice(0, 32);
 
-/** The canonical, redacted object text the store keeps: the Gramps object without its `change` key. */
+/**
+ * The canonical, redacted object text the store keeps: the Gramps object without its `change` key. It uses the shared
+ * canonical JSON (shared/canonical.mjs, the same vectors as gramps/hfygramps/canonical.py), so the store refuses what the
+ * desktop add-on and the renderer could not rebuild: a fraction, an integer beyond +/-(2**53 - 1), a lone surrogate, nesting
+ * deeper than 200. The spread (not storedForm's key-by-key copy) keeps an own `__proto__` key as data.
+ */
 export function objectJson(obj) {
   const { change, ...rest } = obj; // eslint-disable-line no-unused-vars
   return canonicalJson(rest);

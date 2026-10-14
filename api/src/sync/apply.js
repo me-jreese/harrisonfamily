@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { HttpError, logSafeError } from "../http.js";
 import { TxnCancelled, TxnTokenMismatch, assertTxnSize, auditItem, mergeUpdates, transact } from "../txn.js";
 import { canonicalJson, HANDLE_SHAPE } from "../records/ops.js";
+import { canonicalJson as storedJson } from "../shared/canonical.mjs";
 import { defaultHooks } from "./hooks.js";
 import {
   CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, getBatchReceipt, getGid, getRecordItem, getSyncHead,
@@ -100,7 +101,7 @@ function normaliseOps(rawOps) {
         if (raw.class !== "Media" || !isObj(raw.blob)) throw bad("validation", `${at}.blob is only for a Media object and must be an object`);
         let blobJson;
         try {
-          blobJson = canonicalJson(raw.blob);
+          blobJson = storedJson(raw.blob); // stored next to obj_json, so the same shared rule (no fraction, no lone surrogate)
         } catch {
           throw bad("validation", `${at}.blob is not canonical JSON`);
         }

@@ -8,6 +8,7 @@ import { createFakeDdb, cmds } from "./world.js";
 import { errorResponse, HttpError } from "../src/http.js";
 import { TxnCancelled, counterUpdate } from "../src/txn.js";
 import { hashObject } from "../src/records/ops.js";
+import { CanonicalError, objectHash as sharedObjectHash, objectJson as sharedObjectJson } from "../src/shared/canonical.mjs";
 import { SyncError, applyBatch, checkStoreGate } from "../src/sync/apply.js";
 import { createHookRegistry, defaultHooks, registerAfterCommit, registerContributor } from "../src/sync/hooks.js";
 import { batchIdFor, getRecord, gidDelete, gidKey, headKey, objectJson, requestTokenFor, seqKey, sha256 } from "../src/sync/store.js";
@@ -146,6 +147,37 @@ describe("applyBatch(): items written (BRD2 section 4)", () => {
     await rejects(w.apply(Array.from({ length: 25 }, (_, i) => create(note(i + 1)))), 413, "batch_too_large");
     await rejects(w.apply([create(note(1, "N0001"), {})].map((o) => ({ ...o, obj: { ...o.obj, text: "x".repeat(210000) } }))), 413, "batch_too_large");
     expect(w.ddb.rows.size).toBe(1); // only SYNC#HEAD
+  });
+
+  it("an object with a lone surrogate is refused 400 by the shared canonical rule, even with no validator (the seed path)", async () => {
+    const w = world(); // unsafeNoValidate: nothing but the canonical check stands between the op and the store
+    const n = note(1);
+    const lone = { ...n, text: { ...n.text, string: "Synthetic \ud83d" } };
+    expect(() => sharedObjectJson(lone)).toThrow(CanonicalError); // what the renderer and the desktop add-on would hit
+    await rejects(w.apply([create(lone)]), 400, "validation");
+    await rejects(w.apply([create({ ...n, ["k\udc00"]: 1 })]), 400, "validation"); // a lone surrogate in a key, too
+    expect(w.ddb.rows.size).toBe(1); // only SYNC#HEAD
+    const paired = { ...n, text: { ...n.text, string: "Synthetic 😀" } }; // a well-formed pair is fine
+    await w.apply([create(paired)]);
+    const head = w.row(`REC#Note#${n.handle}`, "HEAD");
+    expect(head.obj_json).toBe(sharedObjectJson(paired));
+    expect(head.hash).toBe(await sharedObjectHash(paired));
+  });
+
+  it("a fractional or unsafe-integer number is refused 400 by the shared canonical rule (sync.md 4.1: integers only), in obj and in blob", async () => {
+    const w = world();
+    const p = person(1);
+    for (const bad of [{ lat: 1.5 }, { n: 2 ** 53 }, { n: -(2 ** 53) }, { n: Number.NaN }]) {
+      expect(() => sharedObjectJson({ ...p, ...bad })).toThrow(CanonicalError);
+      await rejects(w.apply([create({ ...p, ...bad })]), 400, "validation");
+    }
+    const m = { _class: "Media", handle: h(4001), gramps_id: "O0001", change: 1700000000, private: false, path: "m1.jpg", mime: "image/jpeg" };
+    await rejects(w.apply([{ ...create(m), blob: { s3_key: "k", size: 1.5 } }]), 400, "validation");
+    await rejects(w.apply([{ ...create(m), blob: { s3_key: "k\ud83d" } }]), 400, "validation");
+    expect(w.ddb.rows.size).toBe(1); // only SYNC#HEAD
+    const edge = { ...p, n: 2 ** 53 - 1, m: -(2 ** 53 - 1) }; // the safe-integer bounds commit, byte-identical to the shared objectJson
+    await w.apply([create(edge)]);
+    expect(w.row(`REC#Person#${p.handle}`, "HEAD").obj_json).toBe(sharedObjectJson(edge));
   });
 });
 
