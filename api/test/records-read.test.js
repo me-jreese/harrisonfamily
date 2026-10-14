@@ -247,3 +247,46 @@ describe("the HFY_EDITING switch (AC6)", () => {
     expect((await w.get(`/api/records/Person/${w.me.handle}`, "I4444")).status).toBe(404);
   });
 });
+
+describe("review fixes (HFY-TSK-175 round 2)", () => {
+  it("while off, a shared Event is not the member's own record (404), an own-only Event is", async () => {
+    const w = await world();
+    process.env.HFY_EDITING = "off";
+    expect((await w.get(`/api/records/Event/${w.shared.handle}`, ME)).status).toBe(404);
+    expect((await w.get(`/api/records/Event/${w.ownDeath.handle}`, ME)).status).toBe(200);
+  });
+
+  it("an event_ref with no role is not Primary: full dates need an explicit Primary role", async () => {
+    const w = await world();
+    const roleless = event(7, date(2, 3, 1960));
+    const noRole = { _class: "EventRef", ref: roleless.handle };
+    await w.apply([create(roleless), { op: "update", class: "Person", handle: w.me.handle, base_version: 1, obj: { ...w.me, event_ref_list: [...w.me.event_ref_list, noRole] } }]);
+    const r = await w.get(`/api/records/Event/${roleless.handle}`, ME);
+    expect(r.status).toBe(200);
+    expect(r.body.obj.date.dateval).toEqual([0, 0, 1960, false]);
+    process.env.HFY_EDITING = "off";
+    expect((await w.get(`/api/records/Event/${roleless.handle}`, ME)).status).toBe(404);
+  });
+
+  it("the owner (the member whose own Person holds the item) sees a note another member's MOD# item hides", async () => {
+    const w = await world();
+    w.mod(`note:${w.n2.handle}`, OTHER); // raised by someone else; ME's Person holds n2
+    expect((await w.get(`/api/records/Person/${w.me.handle}`, ME)).body.obj.note_list).toContain(w.n2.handle);
+    expect((await w.get(`/api/records/Note/${w.n2.handle}`, ME)).status).toBe(200);
+    expect((await w.get(`/api/records/Note/${w.n2.handle}`, "I0003")).status).toBe(404);
+    // OTHER holds n1 only, so OTHER is not the owner of n2 (and did raise it, so sees it as author)
+    w.mod(`note:${w.n1.handle}`, "I0003");
+    expect((await w.get(`/api/records/Note/${w.n1.handle}`, OTHER)).status).toBe(200);
+  });
+
+  it("a duplicate gramps_id answers 409 to admins and 404 to members", async () => {
+    const w = await world();
+    const [key, row] = [...w.ddb.rows].find(([k, v]) => k.startsWith("REC#Person#") && v.gramps_id === ME && v.SK === "HEAD");
+    const h2 = h(50);
+    const copy = { ...row, PK: row.PK.replace(w.me.handle, h2), handle: h2 };
+    for (const k of Object.keys(copy)) if (typeof copy[k] === "string" && copy[k].includes(w.me.handle) && k !== "obj_json") copy[k] = copy[k].replace(w.me.handle, h2);
+    w.ddb.rows.set(`${copy.PK}\u0000${copy.SK}`, copy);
+    expect((await w.get(`/api/records/Person/by-id/${ME}`, ADMIN)).status).toBe(409);
+    expect((await w.get(`/api/records/Person/by-id/${ME}`, OTHER)).status).toBe(404);
+  });
+});
