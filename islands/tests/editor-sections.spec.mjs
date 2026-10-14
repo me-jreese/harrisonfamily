@@ -303,6 +303,46 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.locator("[data-hfy-bar-text]")).toHaveCount(0);
     });
 
+    test("people connected: the page's own person and a person already connected are never added", async ({ page }) => {
+      const state = await stub(page);
+      await page.route("**/person/index.json", (r) => r.fulfill({ json: { people: [{ grampsId: "I9001", displayName: "Sam Example", lifespanSummary: "1970-", isLiving: true }, { grampsId: "I9002", displayName: "Pat Example", lifespanSummary: "1940-2010", isLiving: false }] } }));
+      await page.route("**/person/search-index.json", (r) => r.fulfill({ json: { documents: [{ grampsId: "I9001", searchText: "sam example" }, { grampsId: "I9002", searchText: "pat example" }] } }));
+      // I9002 resolves to the handle the page already lists as a connection
+      await page.route("**/api/records/Person/by-id/I9002", (r) => r.fulfill({ json: { class: "Person", handle: "hsynp2", gramps_id: "I9002", version: 1, obj: {} } }));
+      await page.goto("/edit/?cls=person&id=I9001", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("[data-hfy-editor-ready]")).toBeVisible();
+      await section(page, "connected");
+      await list(page, "connected").locator("[data-hfy-add]").click();
+      const p = panel(page, "new:n1");
+      const who = p.getByRole("combobox");
+      await who.fill("Example");
+      await expect(p.getByRole("option", { name: /Pat Example/ })).toBeVisible();
+      await expect(p.getByRole("option", { name: /Sam Example/ })).toHaveCount(0);
+      await p.getByRole("option", { name: /Pat Example/ }).click();
+      await expect(p.getByText("they're already connected. pick someone else.", { exact: true })).toBeAttached();
+      await expect(p.locator("[data-hfy-person-picked]")).toHaveCount(0);
+      await expect(page.locator("[data-hfy-bar-text]")).toHaveCount(0);
+      expect(state.calls).toEqual([]);
+    });
+
+    test("events: a date kept as words is shown as it is, with no controls, and changing something else leaves it alone", async ({ page }) => {
+      const state = await stub(page);
+      const words = { ...RELATED, "Event:hsyne2": { version: 5, obj: { _class: "Event", handle: "hsyne2", type: typed("EventType", 19), date: date(0, 0, 0, { modifier: 6, text: "sometime in the spring" }) } } };
+      await page.route("**/api/edit/Person/*", (r) => r.fulfill({ json: { ...bundle(), related: words } }));
+      await page.goto("/edit/?cls=person&id=I9001", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("[data-hfy-editor-ready]")).toBeVisible();
+      const p = await openRow(page, "events", "hsyne2");
+      const d = p.locator("[data-hfy-date]");
+      await expect(d).toHaveAttribute("data-hfy-date", "words");
+      await expect(d.locator("[data-hfy-date-words]")).toHaveText("sometime in the spring");
+      await expect(d.getByLabel("year", { exact: true })).toHaveCount(0);
+      await expect(d.getByLabel("kind", { exact: true })).toHaveCount(0);
+      await p.getByLabel("description", { exact: true }).fill("Noted");
+      const body = await review(page, state);
+      expect(body.ops.map((o) => o.path)).toEqual(["/description"]);
+      expect(await axeViolations(page)).toEqual([]);
+    });
+
     test("people connected and sources: the relation and the page are edited by key, a source is listed or not listed", async ({ page }) => {
       const state = await open(page);
       const cp = await openRow(page, "connected", "hsynp2");

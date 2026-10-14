@@ -139,6 +139,21 @@ describe("the bundle shape", () => {
     const q1 = await w.get(`/api/edit/Person/${OTHER}`, ME);
     expect(Object.keys(q1.body.related).some((k) => k.startsWith("Place:") || k.startsWith("Source:"))).toBe(false);
   });
+  it("puts the second-level places and sources through the same read-side view: a member sees a fine date on them at year precision, an admin as stored (HFY-TSK-156)", async () => {
+    const w = await world();
+    const fine = date(9, 11, 1971);
+    const place = { _class: "Place", handle: h(6002), gramps_id: "P0002", change: 1, private: false, name: { _class: "PlaceName", value: "Otherton", lang: "", date: fine }, place_type: typ("PlaceType", 3) };
+    const source = { _class: "Source", handle: h(7002), gramps_id: "S0002", change: 1, private: false, title: "Another ledger", abbrev: "" };
+    const cit = { _class: "Citation", handle: h(8002), gramps_id: "C0002", change: 1, private: false, source_handle: source.handle, page: "p. 2", confidence: 2, date: fine };
+    const ev = event(8, date(0, 0, 1950), { place: place.handle });
+    const p = person(8, { event_ref_list: [primary(ev)], citation_list: [cit.handle] });
+    await w.apply([place, source, cit, ev, p].map(create));
+    const member = (await w.get(`/api/edit/Person/${p.gramps_id}`, ME)).body;
+    const admin = (await w.get(`/api/edit/Person/${p.gramps_id}`, ADMIN)).body;
+    expect(member.related[`Place:${place.handle}`].obj.name.date.dateval.slice(0, 3)).toEqual([0, 0, 1971]);
+    expect(admin.related[`Place:${place.handle}`].obj.name.date.dateval.slice(0, 3)).toEqual([9, 11, 1971]);
+    expect(member.related[`Citation:${cit.handle}`].obj.date.dateval.slice(0, 3)).toEqual([0, 0, 1971]);
+  });
   it("shows a related Person as a stub with a year-only lifespan and no other fields", async () => {
     const w = await world();
     const r = await w.get(`/api/edit/Family/${w.fam.gramps_id}`, ME);

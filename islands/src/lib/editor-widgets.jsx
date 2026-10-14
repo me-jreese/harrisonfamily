@@ -8,7 +8,7 @@
 // A widget owns the whole value at its pointer. It reads its sibling values and the lookups through FormCtx, which the form's host provides.
 // Markup follows the kit's own (`.io-field`, `.io-label-row`, `.io-adornment`), so the editor's form CSS styles them; the words are lowercase.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { SECTION_COPY, MONTHS, MODIFIER, dateFromParts, dateParts, givenParts, givenTokens, isBirthCode } from "./editor-sections.js";
+import { SECTION_COPY, MONTHS, MODIFIER, dateFromParts, dateParts, dateText, givenParts, givenTokens, isBirthCode, isWordsDate } from "./editor-sections.js";
 
 /** What a widget reads besides its own value: { live (the form's values now), initial, viewer, lookups, searchPeople, resolvePerson }. */
 export const FormCtx = createContext({ live: {}, initial: {}, viewer: {}, lookups: { places: [], sources: [], placeNames: new Map() }, searchPeople: async () => [], resolvePerson: async () => null });
@@ -116,6 +116,15 @@ export function GrampsDate(p) {
   const { live } = useFormCtx();
   const birth = isBirthCode(live.type);
   const parts = dateParts(p.value);
+  // A date kept as text, or as a from-to span, has no parts to edit: it is shown as it is, so changing nothing can never drop its words.
+  if (isWordsDate(p.value)) {
+    return (
+      <Group p={p} extra={{ "data-hfy-date": "words" }}>
+        {!birth && <p className="hfy-date__words" data-hfy-date-words>{dateText(p.value)}</p>}
+        <p className="io-description">{SECTION_COPY.dateWords}</p>
+      </Group>
+    );
+  }
   const between = parts.modifier === MODIFIER.RANGE;
   const set = (patch) => p.onChange(dateFromParts({ ...parts, ...patch }, p.value ?? null, { birth }));
   const id = (s) => `${p.id}-${s}`;
@@ -175,13 +184,14 @@ export function GrampsDate(p) {
  * and picking asks the records API for the person's handle, which the ops need. The value is `{ id, name, handle }`.
  */
 export function PersonRef(p) {
-  const { searchPeople, resolvePerson } = useFormCtx();
+  const { searchPeople, resolvePerson, lookups } = useFormCtx();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [status, setStatus] = useState("idle");
   const seq = useRef(0);
+  const pick = useRef(0); // the latest pick wins: an earlier resolve that lands late is dropped
   const picked = p.value && typeof p.value === "object" && p.value.handle ? p.value : null;
   const listId = `${p.id}-list`;
   const run = async (q) => {
@@ -190,25 +200,31 @@ export function PersonRef(p) {
     try {
       const r = await searchPeople(q);
       if (n !== seq.current) return;
-      setResults(r);
-      setActive(r.length ? 0 : -1);
+      // This page's own person is never offered (a person is not connected to themselves).
+      const shown = r.filter((o) => !lookups.selfId || o.id !== lookups.selfId);
+      setResults(shown);
+      setActive(shown.length ? 0 : -1);
       setStatus("idle");
     } catch {
       if (n === seq.current) setStatus("error");
     }
   };
   const choose = async (opt) => {
+    const n = (pick.current += 1);
     setOpen(false);
     setStatus("resolving");
     try {
       const found = await resolvePerson(opt.id);
+      if (n !== pick.current) return;
       if (!found || !found.handle) throw new Error("no handle");
+      if (found.handle === lookups.selfHandle || opt.id === lookups.selfId) { setStatus("self"); return; }
+      if (lookups.connected && lookups.connected.has(found.handle)) { setStatus("already"); return; }
       p.onChange({ id: opt.id, name: opt.label, handle: found.handle });
       setQuery("");
       setResults([]);
       setStatus("idle");
     } catch {
-      setStatus("failed");
+      if (n === pick.current) setStatus("failed");
     }
   };
   const onKey = (e) => {
@@ -217,7 +233,7 @@ export function PersonRef(p) {
     else if (e.key === "Escape") setOpen(false);
     else if (e.key === "Enter") { e.preventDefault(); if (open && results[active]) choose(results[active]); }
   };
-  const note = status === "failed" ? SECTION_COPY.personResolveFailed : status === "error" ? SECTION_COPY.personNoMatch : "";
+  const note = status === "failed" ? SECTION_COPY.personResolveFailed : status === "self" ? SECTION_COPY.personSelf : status === "already" ? SECTION_COPY.personAlready : status === "error" ? SECTION_COPY.personNoMatch : "";
   if (picked) {
     return (
       <Field p={p}>

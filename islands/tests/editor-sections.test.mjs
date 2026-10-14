@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { applyOps, keySegment, hash12 } from "../../api/src/records/ops.js";
 import {
-  BIRTH, LIST_ADAPTERS, SECTION_COPY, birthDate, dateFromParts, dateParts, dateText, emptyDate, emptyListDraft, givenParts, isEmptyDate, listDraftIsEmpty,
+  BIRTH, LIST_ADAPTERS, SECTION_COPY, birthDate, dateFromParts, dateParts, dateText, emptyDate, emptyListDraft, givenParts, isEmptyDate, isWordsDate, listDraftIsEmpty,
   makeLookups, nameValues, namesOps, pendingChip, photoOrder, replayListDraft, restyleText, sectionOps, typeCode, typeObject, typeOptions
 } from "../src/lib/editor-sections.js";
 import { PERSON_SECTIONS } from "../src/lib/editor-model.js";
@@ -425,4 +425,115 @@ test("the copy is lowercase plain words", () => {
     assert.ok(!/\b(record|users?|members?|gramps)\b/i.test(t), t);
     assert.equal(t, t.toLowerCase(), t);
   }
+});
+
+// ---- review fixes (HFY-TSK-156) ----------------------------------------------------------------------------------------------------------
+
+test("two identical alternate names or facts are two rows with two ids, and an edit or a removal acts on its own row", () => {
+  const twin = { _class: "Name", first_name: "Tessa", surname_list: [{ _class: "Surname", surname: "Other", primary: true }], type: typed("NameType", 3) };
+  const fact = { _class: "Attribute", type: typed("AttributeType", 15), value: "Same" };
+  const fx = fixture({ extra: { alternate_names: [twin, JSON.parse(JSON.stringify(twin))], attribute_list: [fact, JSON.parse(JSON.stringify(fact))] } });
+  const alt = LIST_ADAPTERS.alt.rows(fx.bundle, fx.lookups);
+  assert.equal(alt.length, 2);
+  assert.equal(alt[0].id, hash12(twin));
+  assert.equal(alt[1].id, `${hash12(twin)}_1`);
+  assert.deepEqual(alt.map((r) => r.idx), [0, 1]);
+  const facts = LIST_ADAPTERS.facts.rows(fx.bundle, fx.lookups);
+  assert.deepEqual(facts.map((r) => r.id), [hash12(fact), `${hash12(fact)}_1`]);
+  // each row is its own change (the unit carries the row's own id), and the ops engine refuses to guess which of two identical elements a key
+  // means: the save stops on ambiguous_key instead of writing to the wrong one
+  const rm = run(fx, { "names:alt": { edits: {}, removed: [alt[1].id], added: [], order: null }, facts: { edits: {}, removed: [facts[1].id], added: [], order: null } });
+  assert.deepEqual(Object.values(rm.units).sort(), [`facts/r:${facts[1].id}`, `names:alt/r:${alt[1].id}`].sort());
+  assert.equal(rm.applied.ok, false);
+  assert.deepEqual(rm.applied.conflicts.map((c) => c.reason), ["ambiguous_key", "ambiguous_key"]);
+  // an edit of the second row builds its own change from its own values
+  const ed = run(fx, { facts: { edits: { [facts[1].id]: { type: "15", value: "Different" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(ed.ops.map((o) => o.value), ["Different"]);
+  assert.deepEqual(Object.values(ed.units), [`facts/e:${facts[1].id}:value`]);
+});
+
+test("sources: editing only the page of a citation with no stored confidence sends the page alone; picking another confidence still sends it", () => {
+  const fx = fixture();
+  delete fx.bundle.related["Citation:hc1"].obj.confidence;
+  const row = LIST_ADAPTERS.sources.rows(fx.bundle, fx.lookups)[0];
+  assert.equal(row.values.confidence, "2");
+  const pageOnly = run(fx, { sources: { edits: { hc1: { source: { ref: "hs1", name: "" }, page: "p. 8", confidence: "2" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(pageOnly.ops.map((o) => o.path), ["/page"]);
+  const picked = run(fx, { sources: { edits: { hc1: { source: { ref: "hs1", name: "" }, page: "p. 3", confidence: "4" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(picked.ops.map((o) => [o.path, o.base, o.value]), [["/confidence", null, 4]]);
+  // the replay drops an edit that is only the default
+  const kept = replayListDraft({ adapter: LIST_ADAPTERS.sources, draft: { edits: { hc1: { source: { ref: "hs1", name: "" }, page: "p. 3", confidence: "2" } } }, fresh: fx.bundle, lookups: fx.lookups, section: "sources" });
+  assert.deepEqual(kept.edits, {});
+});
+
+test("photos: a replay drops the order only when it is the fresh order or every move it still needs was saved", () => {
+  const fx = fixture();
+  const adapter = LIST_ADAPTERS.photos;
+  const replay = (order, settled) => replayListDraft({ adapter, draft: { order }, fresh: fx.bundle, lookups: fx.lookups, section: "photos", settled: new Set(settled) }).order;
+  const want = ["hm2", "hm1", "hm1_1"];
+  assert.deepEqual(replay(want, []), want);
+  // the move went to review: the bundle still has the old order, and the draft would build it again without the settled unit
+  assert.equal(replay(want, ["photos/o:hm2"]), null);
+  // another move, not saved: the draft stays
+  assert.deepEqual(replay(want, ["photos/o:hm1_1"]), want);
+  // a draft that needs two moves keeps going until both are saved
+  const two = ["hm1_1", "hm2", "hm1"];
+  const units = Object.values(sectionOps({ key: KEY, bundle: fx.bundle, sections: SECTIONS, drafts: { photos: { order: two } }, viewer: { admin: false, relation: "own" } }).units);
+  assert.equal(units.length, 2);
+  assert.deepEqual(replay(two, [units[0]]), two);
+  assert.equal(replay(two, units), null);
+});
+
+test("dates: a text-only or from-to date is a words date, shown as it is and never rebuilt", () => {
+  const words = date(0, 0, 0, { modifier: 6, text: "sometime in the spring" });
+  const span = date(0, 0, 1950, { modifier: 5, dateval: [0, 0, 1950, false, 0, 0, 1955, false] });
+  assert.equal(isWordsDate(words), true);
+  assert.equal(isWordsDate(span), true);
+  assert.equal(isWordsDate(date(0, 0, 1950)), false);
+  assert.equal(isWordsDate(date(0, 0, 1950, { modifier: 4, dateval: [0, 0, 1950, false, 0, 0, 1955, false] })), false);
+  assert.equal(isWordsDate(emptyDate()), false);
+  assert.equal(isWordsDate(null), false);
+  assert.equal(dateText(words), "sometime in the spring");
+  assert.equal(dateText(span), "from 1950 to 1955");
+  // the event keeps its words when the member changes something else
+  const fx = fixture();
+  fx.bundle.related["Event:he2"].obj.date = words;
+  fx.objects["Event:he2"] = fx.bundle.related["Event:he2"].obj;
+  const r = run(fx, { events: { edits: { he2: { type: "19", date: words, place: { ref: "", name: "" }, description: "Now with words" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(r.ops.map((o) => o.path), ["/description"]);
+});
+
+test("events: a member who changes only the year of a date whose day and month they cannot see keeps the stored day and month", () => {
+  const fx = fixture();
+  const stored = date(14, 3, 2001);
+  const seen = date(0, 0, 2001); // the member's view: year precision
+  fx.bundle.related["Event:he2"].obj.date = seen;
+  fx.objects["Event:he2"] = { ...fx.bundle.related["Event:he2"].obj, date: stored };
+  const next = dateFromParts({ ...dateParts(seen), year: 2002 }, seen);
+  const r = run(fx, { events: { edits: { he2: { type: "19", date: next, place: { ref: "", name: "" }, description: "" } }, removed: [], added: [], order: null } });
+  assert.deepEqual(r.ops.map((o) => [o.path, o.base_version, o.sets]), [["/date", 5, undefined]]);
+  assert.ok(r.applied.ok, JSON.stringify(r.applied.conflicts));
+  assert.deepEqual(r.applied.objects["Event:he2"].date.dateval, [14, 3, 2002, false]);
+  // a modifier-only change keeps them too
+  const about = dateFromParts({ ...dateParts(seen), modifier: 3 }, seen);
+  const m = run(fx, { events: { edits: { he2: { type: "19", date: about, place: { ref: "", name: "" }, description: "" } }, removed: [], added: [], order: null } });
+  assert.ok(m.applied.ok, JSON.stringify(m.applied.conflicts));
+  assert.deepEqual(m.applied.objects["Event:he2"].date.dateval, [14, 3, 2001, false]);
+  assert.equal(m.applied.objects["Event:he2"].date.modifier, 3);
+});
+
+test("lookups: this page's own person and the people already connected are known, for the person picker to leave out", () => {
+  const fx = fixture();
+  assert.equal(fx.lookups.selfHandle, "hp1");
+  assert.equal(fx.lookups.selfId, "I9001");
+  assert.deepEqual([...fx.lookups.connected], ["hp2"]);
+  const bare = makeLookups({});
+  assert.equal(bare.selfHandle, "");
+  assert.equal(bare.connected.size, 0);
+});
+
+test("the waiting-for-review chip model is its own small module the hero entry shares", async () => {
+  const mod = await import("../src/lib/editor-pending.js");
+  assert.equal(mod.pendingChip, pendingChip);
+  assert.deepEqual(mod.pendingChip([{ proposalId: "P1", state: "pending" }]), { n: 1, text: SECTION_COPY.pendingOne });
 });

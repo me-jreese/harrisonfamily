@@ -2,6 +2,12 @@
    --io-radius-* and --io-typography-* (theme-lint no-literal-token-values). A secondary button as tall as the follow toggle; a link,
    so it opens the editor page. Under 64rem it is full width below the name, from 64rem it sits inline in the action row. */
 .person-actions > [data-slot="edit"]:not(:empty) { flex: 1 1 100%; min-width: 0; }
+.hfy-edit-entry__wrap { display: flex; flex-direction: column; align-items: stretch; gap: var(--io-space-2); min-width: 0; }
+.hfy-edit-entry__chip {
+  align-self: flex-start; min-width: 0; margin: 0; padding: var(--io-space-1) var(--io-space-3); border: 1px dotted var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md);
+  color: var(--io-color-semantic-text); font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold);
+  overflow-wrap: anywhere;
+}
 .hfy-edit-entry {
   box-sizing: border-box;
   display: inline-flex;
@@ -23,5 +29,6 @@
 .hfy-edit-entry:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
 @media (min-width: 64rem) {
   .person-actions > [data-slot="edit"]:not(:empty) { flex: none; }
+  .hfy-edit-entry__wrap { flex-direction: row; align-items: center; flex-wrap: wrap; }
   .hfy-edit-entry { width: auto; min-width: calc(var(--io-control-tap-min) * 2); }
 }

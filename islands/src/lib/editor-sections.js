@@ -10,6 +10,7 @@
 // an element that has no identity of its own. `tid` is a counter of the draft. Op ids are `<section>.<unit>.<n>`; a unit is one change as the
 // member thinks of it (edit one field, remove one row, add one row, reorder the photos), so the bar counts units, not ops.
 import { canonicalJson, hash12, keySegment } from "../../../api/src/records/ops.js";
+import { PENDING_COPY } from "./editor-pending.js";
 import { NAME_FIELDS, givenParts, givenTokens, nameValues, primarySurnameIndex } from "./editor-names.js";
 
 export { NAME_FIELDS, givenParts, givenTokens, nameValues, primarySurnameIndex };
@@ -63,12 +64,15 @@ export const SECTION_COPY = Object.freeze({
   personSearching: "searching",
   personNoMatch: "nobody matches.",
   personResolveFailed: "we couldn't add that person. try another.",
+  personSelf: "that's this page's own person. pick someone else.",
+  personAlready: "they're already connected. pick someone else.",
   dateEstimated: "estimated",
   dateYear: "year",
   dateMonth: "month",
   dateDay: "day",
   dateEndYear: "to year",
   dateKind: "kind",
+  dateWords: "this date is written out in words, so it can't be changed here.",
   monthNone: "(month)",
   modExact: "exactly",
   modAbout: "about",
@@ -80,8 +84,8 @@ export const SECTION_COPY = Object.freeze({
   never: Object.freeze({ events: "we only keep the birth year on the site.", facts: "we don't keep phone numbers, street addresses, e-mail addresses or id numbers on the site.", notes: "we don't keep phone numbers, street addresses, e-mail addresses or id numbers on the site.", sources: "" }),
   photoHint: "the first photo is the main one on the page.",
   fallbackTitle: Object.freeze({ events: "event", facts: "fact", notes: "note", photos: "photo", connected: "person", sources: "source", alt: "name" }),
-  pendingOne: "1 suggested change waiting for review",
-  pendingMany: (n) => `${n} suggested changes waiting for review`
+  pendingOne: PENDING_COPY.pendingOne,
+  pendingMany: PENDING_COPY.pendingMany
 });
 
 // ---- types and options -------------------------------------------------------------------------------------------------------------
@@ -149,6 +153,10 @@ export function makeLookups(bundle, schemas = {}) {
       people.set(handle, str(rel.stub.displayName));
     }
   }
+  // Who the person picker must not offer: this page's own person, and the people already connected to it.
+  const selfHandle = typeof (bundle && bundle.key) === "string" && bundle.key.startsWith("Person:") ? bundle.key.slice(7) : "";
+  const selfId = bundle && isObj(bundle.obj) ? str(bundle.obj.gramps_id) : "";
+  const connected = new Set(list(bundle && isObj(bundle.obj) ? bundle.obj.person_ref_list : []).filter(isObj).map((r) => str(r.ref)).filter(Boolean));
   const byName = (a, b) => a.name.localeCompare(b.name);
   places.sort(byName);
   sources.sort(byName);
@@ -160,7 +168,7 @@ export function makeLookups(bundle, schemas = {}) {
       return o.length ? o : NAME_TYPE_STANDARD.concat(current && !NAME_TYPE_STANDARD.some((x) => x.value === current) ? [{ value: current, label: current }] : []);
     },
     confidence: () => constOptions(schemas.Citation && schemas.Citation.properties && schemas.Citation.properties.confidence, CONFIDENCE_FALLBACK),
-    places, sources, people, placeNames, sourceTitles
+    places, sources, people, placeNames, sourceTitles, selfHandle, selfId, connected
   };
 }
 
@@ -188,6 +196,9 @@ export function dateParts(date) {
     day2: range ? int(v[4]) : 0, month2: range ? int(v[5]) : 0, year2: range ? int(v[6]) : 0
   };
 }
+
+/** A date the form cannot rebuild from its parts: text only (6) or a from-to span (5). It is shown as it is and left alone. */
+export const isWordsDate = (date) => isObj(date) && (date.modifier === 5 || date.modifier === 6) && !isEmptyDate(date);
 
 /** True when a date holds no year, month or day (and no text): the event has no date. */
 export const isEmptyDate = (date) => {
@@ -246,6 +257,7 @@ export function dateText(date, { birth = false } = {}) {
   const first = one(p.year, p.month, p.day);
   const words = { 1: "before ", 2: "after ", 3: "about " };
   if (p.modifier === 4) return `between ${first} and ${one(p.year2, p.month2, p.day2)}`.trim();
+  if (p.modifier === 5) return `from ${first} to ${one(p.year2, p.month2, p.day2)}`.trim();
   return `${words[p.modifier] || ""}${first}${p.quality === 1 && !birth ? " (estimated)" : ""}`.trim();
 }
 export const MONTHS = Object.freeze(["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]);
@@ -284,6 +296,17 @@ export function restyleText(styled, next) {
 // ---- row ids and the emitter ---------------------------------------------------------------------------------------------------------
 
 /** Row ids for a ref list: the ref, with `_<n>` for the n-th repeat of it. */
+/** Row ids for lists without a ref: a content hash, and `_n` on a repeat so two identical rows stay two rows (as keyFor() does for the path). */
+function hashRowIds(arr) {
+  const seen = new Map();
+  return arr.map((el) => {
+    const h = hash12(el);
+    const n = seen.get(h) || 0;
+    seen.set(h, n + 1);
+    return n ? `${h}_${n}` : h;
+  });
+}
+
 function refRowIds(arr) {
   const seen = new Map();
   return arr.map((el) => {
@@ -409,14 +432,15 @@ const altName = {
   id: "alt",
   rows(bundle, lookups) {
     const l = list(bundle.obj && bundle.obj.alternate_names);
-    return l.filter(isObj).map((n, idx) => {
+    const ids = hashRowIds(l);
+    return l.map((n, idx) => ({ n, idx })).filter((x) => isObj(x.n)).map(({ n, idx }) => {
       const sn = list(n.surname_list).map((s) => (isObj(s) ? str(s.surname) : "")).filter(Boolean).join(" ");
       const full = [str(n.first_name), sn].filter(Boolean).join(" ");
       const code = typeCode(n.type);
       const type = lookups.nameTypes(code).find((o) => o.value === code);
       const i = primarySurnameIndex(n);
       return {
-        id: hash12(n), idx, title: full || fallback("alt", idx), detail: type ? type.label : "",
+        id: ids[idx], idx, title: full || fallback("alt", idx), detail: type ? type.label : "",
         values: { first_name: str(n.first_name), surname: i >= 0 ? str(list(n.surname_list)[i].surname) : "", type: code }
       };
     });
@@ -601,12 +625,13 @@ const eventsAdapter = {
 function factRows(bundle, lookups) {
   const l = list(bundle.obj && bundle.obj.attribute_list);
   const out = [];
+  const ids = hashRowIds(l);
   l.forEach((a, idx) => {
     if (!isObj(a)) return;
     const code = typeCode(a.type);
     if (code.startsWith("c:") && MERGED_ID.test(code.slice(2))) return; // the sync identity key: a desk-only item, never shown (editing.md 3.2)
     const type = lookups.attributeTypes(code).find((o) => o.value === code);
-    out.push({ id: hash12(a), idx, title: type ? type.label : fallback("facts", out.length), detail: str(a.value), values: { type: code, value: str(a.value) } });
+    out.push({ id: ids[idx], idx, title: type ? type.label : fallback("facts", out.length), detail: str(a.value), values: { type: code, value: str(a.value) } });
   });
   return out;
 }
@@ -849,7 +874,9 @@ const sourcesAdapter = {
       const page = trimmed(v.page);
       if (page !== str(r.cit.page).trim()) e.add(`e:${id}:page`, "page or place in the source", { op: "set", obj: r.citKey, path: "/page", base: typeof r.cit.page === "string" ? r.cit.page : null, value: page });
       const conf = str(v.confidence);
-      if (conf !== "" && Number(conf) !== r.cit.confidence) e.add(`e:${id}:confidence`, "how sure", { op: "set", obj: r.citKey, path: "/confidence", base: Number.isInteger(r.cit.confidence) ? r.cit.confidence : null, value: Number(conf) });
+      // A citation with no stored confidence shows the default; leaving it at the default is not a change.
+      const unchanged = Number.isInteger(r.cit.confidence) ? Number(conf) === r.cit.confidence : conf === "2";
+      if (conf !== "" && !unchanged) e.add(`e:${id}:confidence`, "how sure", { op: "set", obj: r.citKey, path: "/confidence", base: Number.isInteger(r.cit.confidence) ? r.cit.confidence : null, value: Number(conf) });
     }
     for (const a of d.added) {
       const v = a.values || {};
@@ -930,22 +957,18 @@ export function replayListDraft({ adapter, draft, fresh, lookups, settled = new 
   out.added = d.added.filter((a) => !settled.has(`${section}/a:${a.tid}`));
   if (d.order) {
     const order = photoOrder(rows, d);
-    out.order = sameValue(order, rows.map((r) => r.id)) || settled.has(`${section}/o`) ? null : order;
+    // Kept unless it is already the fresh order, or every move it still needs went in with the save (a move to review leaves the order
+    // as it was, so without this the same moves would be built again). The moves are the `o:<rowId>` units of the photo adapter.
+    let done = sameValue(order, rows.map((r) => r.id));
+    if (!done && settled.size) {
+      const need = Object.values(adapter.ops({ key: "", bundle: fresh, draft: { order }, section }).units).filter((u) => u.startsWith(`${section}/o:`));
+      done = need.length > 0 && need.every((u) => settled.has(u));
+    }
+    out.order = done ? null : order;
   }
   return out;
 }
 
 // ---- what the bar and the chip say ---------------------------------------------------------------------------------------------------------
 
-const OPEN_STATES = new Set(["pending", "needs_changes", "stale"]);
-
-/**
- * The chip "2 suggested changes waiting for review", or null when there are none. `pending` is the bundle's list, which the server already
- * limits to the proposals the viewer may see (their own, any for an admin, or one about their own page, PS-09); the chip trusts that list and
- * counts only what it holds: open proposals with an id. Nothing else (no value, no note) is ever drawn from it.
- */
-export function pendingChip(pending) {
-  const n = new Set(list(pending).filter((p) => isObj(p) && typeof p.proposalId === "string" && p.proposalId && OPEN_STATES.has(p.state)).map((p) => p.proposalId)).size;
-  if (!n) return null;
-  return { n, text: n === 1 ? SECTION_COPY.pendingOne : SECTION_COPY.pendingMany(n) };
-}
+export { pendingChip } from "./editor-pending.js";
