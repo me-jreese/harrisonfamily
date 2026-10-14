@@ -24,11 +24,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "98c25e23",
+        "js": "d47e2720",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "45765c99",
+        "js": "b5e3a22a",
         "css": "38a33f05"
       },
       "join": {
@@ -44,7 +44,7 @@
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "3176f388",
+        "js": "2101fb66",
         "css": "307f6c65"
       },
       "notifications": {
@@ -52,7 +52,7 @@
         "css": "be703fb4"
       },
       "person": {
-        "js": "acdf1c12",
+        "js": "fe63915d",
         "css": "92f22fd0"
       },
       "person-links": {
@@ -64,15 +64,19 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "69497148",
+        "js": "97230b9e",
         "css": "890fde1c"
+      },
+      "review": {
+        "js": "d705cc84",
+        "css": "d4074f34"
       },
       "search": {
         "js": "6021386e",
         "css": "9e007813"
       },
       "settings": {
-        "js": "30aea294",
+        "js": "85849c1f",
         "css": "2ebf2e40"
       },
       "shell": {
@@ -80,7 +84,7 @@
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "b6ed2501",
+        "js": "c21dda70",
         "css": "8f618380"
       },
       "tree": {
@@ -838,6 +842,16 @@
       loadIsland("edit-entry", { onError() { /* the person page stands without the edit entry */ } });
     } else if (/^\/edit\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("editor", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-259: the review island fills the static /me/review/ page. proposalReview opens the admins' "to review" tab; recordEdit opens "my
+  // suggestions" and "about my page" (the island reads both flags and /api/me itself and shows only the tabs the viewer has). With neither flag on
+  // the bundle is not requested and the page keeps its "not available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.proposalReview !== true && flags.recordEdit !== true) return;
+    if (/^\/me\/review\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("review", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 

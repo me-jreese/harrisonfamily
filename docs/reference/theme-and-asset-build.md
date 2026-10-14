@@ -140,7 +140,7 @@ The early-hint script is `try{localStorage.getItem("hfy:shell-hint")==="1"&&docu
 | Pages | Where the blocks go |
 |---|---|
 | The ten Eleventy pages (nine, plus the repo-owned redirect page `family-login/index.html`, which gets the blocks without the early hint): `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `person/`, `privacy/`, `private/`, `search/` and `terms/` | Block A immediately before the first `<link>` to `/css/main.css` (with or without a query), block B immediately after it |
-| The nine repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `tree/index.html`, `edit/index.html`, `join/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
+| The ten repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `me/review/index.html`, `tree/index.html`, `edit/index.html`, `join/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
 
 Each block takes the indentation of the line it is anchored to. A build first removes any existing blocks and then writes them again, so a second build changes nothing, and removing the blocks restores the page byte for byte. A page with neither a `main.css` link nor `</title>` fails the build with `<page>: no main.css link and no </title> to anchor the theme head block`, and a page in `PAGES` that does not exist fails it as well.
 
