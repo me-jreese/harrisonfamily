@@ -5,10 +5,11 @@ Run: python3 -m unittest discover gramps/tests/unit
 """
 
 import json
+import os
 import unittest
 
 import render_support as rs
-from hfygramps.render import places, render, render_site
+from hfygramps.render import places, policy, render, render_site
 from hfygramps.render.policy import default_text_gate, open_text_gate
 
 P = rs.parity
@@ -106,16 +107,170 @@ class TextGate(unittest.TestCase):
         self.assertEqual(len(doc(render_site(objs, text_gate=open_text_gate), "person/I1.json")["notes"]), 1)
         self.assertEqual(doc(render_site(objs, text_gate=lambda text: False), "person/I1.json")["notes"], [])
 
-    def test_the_gate_reads_text_only(self):
+    def test_the_gate_passes_clean_text_and_blocks_each_kind_of_contact_or_date_data(self):
         self.assertTrue(default_text_gate(""))
         self.assertTrue(default_text_gate("Born in the spring of 1950 on the farm."))
-        self.assertFalse(default_text_gate("Born March 3, 1950."))
+        blocked = {
+            "a birth date with a month and day": "Born March 3, 1950.",
+            "a phone number": "Call 555-0142 tonight.",
+            "an e-mail address": "Write to someone@example.org soon.",
+            "a street address": "Lived at 100 Example Street once.",
+            "a day-precise date": "The ledger lists 12/25/1960 here.",
+            "a contact URL": "Message me at https://wa.me/15550142",
+        }
+        for what, text in blocked.items():
+            self.assertFalse(default_text_gate(text), what)
 
     def test_a_private_note_is_never_published_even_with_an_open_gate(self):
         objs = self.objects(P._note("N1", "Fine.", private=True))
         files = render_site(objs, text_gate=open_text_gate)
         self.assertEqual(doc(files, "person/I1.json")["notes"], [])
         self.assertFalse([k for k in files if k.startswith("note/")])
+
+
+def media_object(gid, desc):
+    return {"_class": "Media", "attribute_list": [], "change": 0, "checksum": "", "citation_list": [], "date": P._date(),
+            "desc": desc, "gramps_id": gid, "handle": h(gid), "mime": "image/png", "note_list": [], "path": "",
+            "private": False, "tag_list": [], "thumb": None}
+
+
+def url(path, desc="", code=0, private=False):
+    return {"_class": "Url", "desc": desc, "path": path, "private": private,
+            "type": {"_class": "UrlType", "value": code, "string": ""}}
+
+
+class OtherFreeTextIsGated(unittest.TestCase):
+    """Event.description, Media.desc, place URLs and note LINK values pass the same gate as notes (review of HFY-TSK-229)."""
+
+    CONTACT_TEXT = "Lived at 12 Example Street, call 555-0142"
+
+    def test_an_event_description_with_contact_data_is_dropped_everywhere_it_is_written(self):
+        objs = [
+            P._event("E1", 42, 1950, 0, 0, description=self.CONTACT_TEXT),
+            P._event("E2", 42, 1951, 0, 0, description="Harvest festival"),
+            P._person("I1", "Ada", "Example", 0, [P._event_ref("E1"), P._event_ref("E2")]),
+        ]
+        files = render_site(objs)
+        self.assertIsNone(doc(files, "event/%s.json" % h("E1"))["description"])
+        self.assertEqual(doc(files, "event/%s.json" % h("E2"))["description"], "Harvest festival")
+        person = {e["grampsId"]: e for e in doc(files, "person/I1.json")["events"]}
+        self.assertIsNone(person["E1"]["description"])
+        self.assertEqual(person["E2"]["description"], "Harvest festival")
+        self.assertNotIn(b"555-0142", b"".join(files.values()))
+        self.assertEqual(doc(render_site(objs, text_gate=open_text_gate), "event/%s.json" % h("E1"))["description"],
+                         self.CONTACT_TEXT)
+
+    def test_a_family_event_description_is_gated(self):
+        fam = {"_class": "Family", "attribute_list": [], "change": 0, "child_ref_list": [], "citation_list": [],
+               "event_ref_list": [P._event_ref("E1")], "father_handle": h("I1"), "gramps_id": "F1", "handle": h("F1"),
+               "lds_seal_list": [], "media_list": [], "mother_handle": "", "note_list": [], "private": False,
+               "tag_list": [], "type": P._typed("FamilyRelType", 0)}
+        objs = [fam, P._event("E1", 2, 1970, 0, 0, description="see 555-0142"),
+                P._person("I1", "Ada", "Example", 0, families=["F1"])]
+        files = render_site(objs)
+        self.assertIsNone(doc(files, "family/%s.json" % h("F1"))["events"][0]["description"])
+
+    def test_a_media_description_with_contact_data_falls_back_to_the_gramps_id(self):
+        objs = [media_object("O1", "Call 555-0142 for prints"), media_object("O2", "Porch at dusk"),
+                P._person("I1", "Ada", "Example", 0, media=[P._media_ref("O1", None), P._media_ref("O2", None)])]
+        files = render_site(objs)
+        self.assertEqual(doc(files, "media/%s.json" % h("O1"))["title"], "O1")
+        self.assertEqual(doc(files, "media/%s.json" % h("O2"))["title"], "Porch at dusk")
+        self.assertEqual([m["title"] for m in doc(files, "person/I1.json")["mediaGallery"]], ["O1", "Porch at dusk"])
+        self.assertNotIn(b"555-0142", b"".join(files.values()))
+
+    def test_place_urls_keep_a_plain_link_and_drop_contact_links(self):
+        place = P._place("P1", "Exampleville", 4)
+        place["urls"] = [
+            url("https://example.org/history", "Local history"),
+            url("mailto:someone@example.org"),
+            url("https://example.org/page", "ask on 555-0142"),
+            url("https://example.org/a?email=someone@example.org"),
+            url("https://wa.me/15550142"),
+            url("someone@example.org", code=1),
+            url("https://example.org/private", private=True),
+        ]
+        objs = [place, P._event("E1", 42, 1950, 0, 0, "P1"),
+                P._person("I1", "Ada", "Example", 0, [P._event_ref("E1")])]
+        urls = doc(render_site(objs), "place/%s.json" % h("P1"))["urls"]
+        self.assertEqual([u["path"] for u in urls], ["https://example.org/history"])
+
+    def test_a_note_link_with_contact_data_or_credentials_becomes_plain_text(self):
+        from hfygramps.render.note_tags import normalise_note_text
+        gate = default_text_gate
+        for href in ("https://user:secret@example.org/a", "https://example.org/a?email=someone@example.org",
+                     "https://example.org/a?tel=555-0142", "https://example.org/a?phone=(555) 555-0142"):
+            note = P._note("N1", "Click here", [P._tag(8, [[0, 5]], href)])
+            html = normalise_note_text(note, gate)["html"]
+            self.assertNotIn("<a ", html, href)
+            self.assertEqual(html, "<p>Click here</p>", href)
+        ok = P._note("N1", "Click here", [P._tag(8, [[0, 5]], "https://example.org/ok")])
+        self.assertIn('<a href="https://example.org/ok"', normalise_note_text(ok, gate)["html"])
+
+    def test_the_link_gate_reaches_the_published_note_files(self):
+        note = P._note("N1", "Click here", [P._tag(8, [[0, 5]], "https://example.org/a?email=someone@example.org")])
+        objs = [note, P._person("I1", "Ada", "Example", 0, notes=["N1"])]
+        files = render_site(objs)
+        self.assertNotIn(b"someone@example.org", b"".join(files.values()))
+        self.assertEqual(doc(files, "note/%s.json" % h("N1"))["html"], "<p>Click here</p>")
+
+
+class RuleSourceAgreement(unittest.TestCase):
+    """The place-type and attribute lists in the renderer are an interim copy of redaction-v1.json (BRD2 D2-32)."""
+
+    RULES = os.path.join(rs.GRAMPS, "redaction", "redaction-v1.json")
+
+    def test_the_interim_copy_is_what_the_design_says(self):
+        self.assertEqual(places.EXCLUDED_PLACE_TYPE_CODES, {7, 18, 19, 20})
+        self.assertEqual(places.HOME_LIKE_RE.pattern, "house|home|residence|address|apartment|apt|lot|farm")
+        self.assertEqual(policy.SENSITIVE_ATTRIBUTE_CODES, {3, 6, 10, 11, 12, 14})
+
+    def test_the_match_is_the_specs_unanchored_one_so_it_over_excludes_and_never_under_excludes(self):
+        def place(text):
+            return {"place_type": {"_class": "PlaceType", "value": 0, "string": text}}
+        for text in ("Homestead", "Farmhouse", "Charlotte", "Adaptation", "Allotment"):
+            self.assertTrue(places.is_home_like_place(place(text)), text)
+        for text in ("Cemetery", "Church", "Lake", "Parish"):
+            self.assertFalse(places.is_home_like_place(place(text)), text)
+
+    def test_redaction_v1_json_agrees_with_the_renderer_once_it_exists(self):
+        if not os.path.exists(self.RULES):
+            self.skipTest("gramps/redaction/redaction-v1.json is not in the tree yet (redaction-policy-v1); interim copy in use")
+        with open(self.RULES, encoding="utf-8") as fh:
+            document = json.load(fh)
+        strings, numbers = set(), set()
+
+        def walk(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    strings.add(str(key))
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+            elif isinstance(value, str):
+                strings.add(value)
+            elif isinstance(value, int) and not isinstance(value, bool):
+                numbers.add(value)
+
+        walk(document)
+        # Exact comparison when the file has the shape of redaction-policy-v1's first draft; the looser checks below
+        # still run if the shape changes.
+        section = document.get("places") if isinstance(document, dict) else None
+        if isinstance(section, dict) and "excludedTypes" in section:
+            self.assertEqual({t["value"] for t in section["excludedTypes"]}, set(places.EXCLUDED_PLACE_TYPE_CODES))
+            self.assertEqual(section["customHomeLike"]["pattern"], places.HOME_LIKE_RE.pattern)
+        section = document.get("attributes") if isinstance(document, dict) else None
+        if isinstance(section, dict) and "ageAndTime" in section:
+            listed = {t["value"] for group in section.values() for t in group}
+            self.assertEqual(listed, set(policy.SENSITIVE_ATTRIBUTE_CODES))
+        pattern = places.HOME_LIKE_RE.pattern
+        self.assertTrue(any(pattern in text for text in strings),
+                        "redaction-v1.json holds no home-like place pattern equal to %r" % pattern)
+        missing_places = places.EXCLUDED_PLACE_TYPE_CODES - numbers
+        self.assertFalse(missing_places, "redaction-v1.json does not list place type codes %s" % sorted(missing_places))
+        missing_attrs = policy.SENSITIVE_ATTRIBUTE_CODES - numbers
+        self.assertFalse(missing_attrs, "redaction-v1.json does not list attribute codes %s" % sorted(missing_attrs))
 
 
 class PeopleAndManifests(unittest.TestCase):

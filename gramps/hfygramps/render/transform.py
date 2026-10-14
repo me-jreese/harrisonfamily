@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from . import labels
 from .note_tags import normalise_note_text
-from .policy import TextGate, is_private, public_items, scrub_attributes
+from .policy import TextGate, default_text_gate, gated_text, is_private, public_items, public_urls, scrub_attributes
 from .store import Store
 
 
@@ -97,7 +97,11 @@ def build_place_summary(place: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
     }
 
 
-def build_place_payload(place: Dict[str, Any], place_lookup: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def build_place_payload(
+    place: Dict[str, Any],
+    place_lookup: Dict[str, Dict[str, Any]],
+    gate: Optional[TextGate] = None,
+) -> Dict[str, Any]:
     summary = build_place_summary(place) or {}
     place_type = place.get("place_type") or {}
     parents: List[Dict[str, Any]] = []
@@ -127,7 +131,8 @@ def build_place_payload(place: Dict[str, Any], place_lookup: Dict[str, Dict[str,
         "type": labels.place_type(place_type),
         "code": place.get("code") or None,
         "parents": parents,
-        "urls": place.get("urls") or [],
+        # R-18 / Q2-02 item 2: a contact URL, or a URL whose path or description carries contact data, is dropped.
+        "urls": public_urls(place.get("urls"), gate or default_text_gate),
     }
 
 
@@ -153,6 +158,7 @@ def build_event_payload(
     fallback_label: str,
     place_lookup: Dict[str, Dict[str, Any]],
     role: Optional[Any] = None,
+    gate: Optional[TextGate] = None,
 ) -> Dict[str, Any]:
     date = event.get("date", {}) or {}
     place_handle = event.get("place")
@@ -174,7 +180,8 @@ def build_event_payload(
             "year": date.get("dateval", [0, 0, 0, False])[2],
         },
         "place": place,
-        "description": event.get("description") or None,
+        # The description is free text: it passes the text gate like a note, and is `None` when it is blocked.
+        "description": gated_text(event.get("description"), gate or default_text_gate),
     }
     if role is not None:
         payload["role"] = labels.event_role(role)
@@ -185,6 +192,7 @@ def build_family_events(
     family: Dict[str, Any],
     event_lookup: Optional[Dict[str, Dict[str, Any]]],
     place_lookup: Optional[Dict[str, Dict[str, Any]]],
+    gate: Optional[TextGate] = None,
 ) -> List[Dict[str, Any]]:
     """Family events with their role. Private EventRefs and private events are skipped (D-02, PS-06)."""
 
@@ -198,7 +206,7 @@ def build_family_events(
         event = event_lookup.get(ref.get("ref"))
         if not event or is_private(event):
             continue
-        payload = build_event_payload(event, "Event", places, role=ref.get("role"))
+        payload = build_event_payload(event, "Event", places, role=ref.get("role"), gate=gate)
         ordered.append((_event_sort_key(event), payload["label"], payload))
     ordered.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in ordered]
@@ -209,6 +217,7 @@ def build_family_payload(
     person_lookup: Dict[str, Dict[str, Any]],
     event_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     place_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
+    gate: Optional[TextGate] = None,
 ) -> Dict[str, Any]:
     def ref_payload(handle: Optional[str]) -> Optional[Dict[str, Any]]:
         if not handle:
@@ -249,7 +258,7 @@ def build_family_payload(
         "father": ref_payload(family.get("father_handle")),
         "mother": ref_payload(family.get("mother_handle")),
         "children": children,
-        "events": build_family_events(family, event_lookup, place_lookup),
+        "events": build_family_events(family, event_lookup, place_lookup, gate),
     }
 
 
@@ -399,11 +408,11 @@ def _note_string(note: Dict[str, Any]) -> str:
     return string if isinstance(string, str) else ""
 
 
-def note_payload(note: Dict[str, Any]) -> Dict[str, Any]:
+def note_payload(note: Dict[str, Any], gate: Optional[TextGate] = None) -> Dict[str, Any]:
     return {
         "handle": note["handle"],
         "grampsId": note.get("gramps_id"),
-        **normalise_note_text(note),
+        **normalise_note_text(note, gate or default_text_gate),
     }
 
 
@@ -461,9 +470,10 @@ class MediaTags:
     region_notes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     withheld_region_notes: Dict[str, str] = field(default_factory=dict)
     counts: Counter = field(default_factory=Counter)
+    gate: Optional[TextGate] = None
 
     def _notes(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return [note_payload(self.region_notes[h]) for h in record["noteHandles"] if h in self.region_notes]
+        return [note_payload(self.region_notes[h], self.gate) for h in record["noteHandles"] if h in self.region_notes]
 
     def tags_for(self, media_handle: str) -> List[Dict[str, Any]]:
         """`mediaGallery[].tags[]`: `{grampsId, name, rect, isPrimary, attributes, notes, citations, source}`."""
@@ -592,7 +602,7 @@ def _citation_titles(
 def collect_media_tags(repo: Store, gate: TextGate) -> MediaTags:
     """Scan every person once and index their public MediaRefs by media handle (see `MediaTags`)."""
 
-    tags = MediaTags()
+    tags = MediaTags(gate=gate)
 
     def fetch(table: str, handle: Any) -> Optional[Dict[str, Any]]:
         return repo.fetch(table, handle)
@@ -694,7 +704,7 @@ def transform_person(
         # D-02: the label is the event's own type label (Birth, Death, Marriage, Residence, a custom type's string); the
         # index-based Birth/Death/Event label is only the fallback for a typeless event.
         label = event_label(idx)
-        payload = build_event_payload(event, label, places)
+        payload = build_event_payload(event, label, places, gate=gate)
         sort_keys[id(payload)] = _event_sort_key(event)
         payload_by_index[idx] = payload
         event_payloads.append(payload)
@@ -733,7 +743,7 @@ def transform_person(
         payload = {
             "handle": media_obj["handle"],
             "grampsId": media_obj.get("gramps_id"),
-            "title": media_obj.get("desc") or media_obj.get("gramps_id"),
+            "title": media_title(media_obj, gate),
             "mime": media_obj.get("mime"),
             # D-02 / R-19: neither the local path (`sourcePath`) nor a third-party placeholder URL is published.
             "s3Key": media_s3_key(media_obj, (media_ext or {}).get(media_obj["handle"])),
@@ -749,7 +759,7 @@ def transform_person(
         note_obj = notes.get(ref)
         if not note_obj:
             continue
-        note_payloads.append(note_payload(note_obj))
+        note_payloads.append(note_payload(note_obj, gate))
 
     parent_family_handles = person.get("parent_family_list", [])
     family_handles = person.get("family_list", [])
@@ -807,6 +817,12 @@ def transform_person(
     }
 
     return payload, resources
+
+
+def media_title(media_obj: Dict[str, Any], gate: Optional[TextGate] = None) -> Optional[str]:
+    """``Media.desc`` when it passes the text gate, else the Gramps ID (the title never carries blocked free text)."""
+
+    return gated_text(media_obj.get("desc"), gate or default_text_gate) or media_obj.get("gramps_id")
 
 
 def media_s3_key(media_obj: Dict[str, Any], ext: Optional[str] = None) -> str:

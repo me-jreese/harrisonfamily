@@ -55,6 +55,9 @@ class Parity(unittest.TestCase):
         self.assertEqual(self.doc["only_in_render"], [])
         self.assertEqual(self.doc["rules"], deltas.RULES)
         self.assertEqual(self.doc["normalised"], deltas.NORMALISED)
+        self.assertEqual(self.doc["manifest_order"], deltas.MANIFEST_ORDER)
+        self.assertEqual(self.doc["fixture_basis"], deltas.FIXTURE_BASIS)
+        self.assertEqual(self.doc["renderer_only"], deltas.RENDERER_ONLY)
 
     def test_every_listed_rule_exists_and_covers_something(self):
         used = {e["rule"] for e in self.doc["only_in_legacy"] + self.doc["changed"]}

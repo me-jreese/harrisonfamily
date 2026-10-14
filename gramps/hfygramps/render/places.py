@@ -6,6 +6,16 @@ it is given, so a view that still holds one cannot put it on the site: the place
 
 Excluded: Street 7, Building 19, Number 20 and Farm 18, and a custom (or unknown) place type whose own string matches
 ``/house|home|residence|address|apartment|apt|lot|farm/i``.
+
+INTERIM RULE COPY (BRD2 D2-32): ``EXCLUDED_PLACE_TYPE_CODES`` and ``HOME_LIKE_RE`` are a local copy of the rule that
+``gramps/redaction/redaction-v1.json`` (``redaction-policy-v1``) will own; the test ``RuleSourceAgreement`` fails if that file
+exists and disagrees. TODO(render-lambda / projection-py): import the rule instead of keeping it here.
+
+The pattern is the spec's literal text (sync.md 5.3 as amended by BRD2 section 11.1) and is DELIBERATELY unanchored: it
+matches inside a word, so ``Charlotte``, ``Adaptation`` or ``Allotment`` are excluded as well as ``Homestead`` and
+``Farmhouse``. Over-exclusion fails safe (a place and its references fall back to the nearest kept ancestor), and a renderer
+that matched less than the projection would publish a place the projection meant to hold back. Word boundaries would also
+stop ``Homestead`` and ``Farmhouse`` matching. ``test_render_rules`` pins the behaviour either way.
 """
 
 from __future__ import annotations

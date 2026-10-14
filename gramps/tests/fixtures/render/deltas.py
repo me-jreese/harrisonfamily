@@ -31,6 +31,28 @@ NORMALISED = [
     "Media blobs: the live ETL copies the binaries and the renderer never writes them; only the JSON files are compared.",
 ]
 
+MANIFEST_ORDER = (
+    "place/index.json and media/index.json: the live ETL lists entries in set-iteration order, which depends on "
+    "PYTHONHASHSEED. make_legacy_golden.py pins the legacy run's order to (grampsId, handle), the order the renderer sorts "
+    "by, so these two manifests match BY CONSTRUCTION, not by independent parity. The renderer's order is the deliberate "
+    "one; the live ETL has none. person/index.json and the search-index files are ordered the same way on both sides.")
+
+FIXTURE_BASIS = (
+    "P(fixture) is the synthetic tree plus the fictional objects in parity.supplement(), run through parity.project(), a "
+    "STAND-IN for the redaction projection (private flag and holds only). The parity claim is only as strong as that "
+    "stand-in. Regenerate the golden with make_legacy_golden.py once projection-py exists and replaces it.")
+
+RENDERER_ONLY = [
+    "Text gate: the live ETL publishes a note, region note or MediaRef attribute value only from an io-approved per-object "
+    "allowlist. The renderer publishes what the store view holds and withholds any text that default_text_gate flags "
+    "(the R-18 detector or the live ETL's scanner). An io-visible decision. In P(fixture) only N0010 trips it "
+    "(no_delta_cases.withheld_by_text_gate).",
+    "The same gate also covers Event.description, Media.desc (the media title falls back to the Gramps ID), the path and "
+    "desc of a place URL (a contact URL or an e-mail type is dropped), citation titles and the value of a note LINK tag "
+    "(userinfo in an href is refused). The live ETL publishes all of these as written. No case in P(fixture) trips them; "
+    "test_render_rules.OtherFreeTextIsGated covers each.",
+]
+
 EVENT_ORDER = ("Events are ordered by the legacy key (date.sortval, label), ties in input order, for persons and for "
                "families. sortval orders them and is never published. No difference from the live ETL.")
 

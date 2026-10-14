@@ -29,6 +29,7 @@ from .transform import (
     gather_person_bundle,
     map_gender,
     media_s3_key,
+    media_title,
     note_payload,
     summarize_years,
     transform_person,
@@ -181,10 +182,10 @@ def render(
 
     # Supporting entities.
     for handle, event in resource_cache["events"].items():
-        files[f"event/{handle}.json"] = dumps(build_event_payload(event, "Event", resource_cache["places"]))
+        files[f"event/{handle}.json"] = dumps(build_event_payload(event, "Event", resource_cache["places"], gate=gate))
 
     for handle, note in resource_cache["notes"].items():
-        files[f"note/{handle}.json"] = dumps(note_payload(note))
+        files[f"note/{handle}.json"] = dumps(note_payload(note, gate))
     report.notes_published = len(resource_cache["notes"])
     report.notes_withheld = len(resource_cache["withheld_notes"])
 
@@ -192,18 +193,20 @@ def render(
     # tags[] and regions[], and written to note/ like person notes.
     region_notes = media_tags.notes_for_media(resource_cache["media"])
     for handle, note in region_notes.items():
-        files[f"note/{handle}.json"] = dumps(note_payload(note))
+        files[f"note/{handle}.json"] = dumps(note_payload(note, gate))
     report.region_notes_published = len(region_notes)
     report.region_notes_withheld = len(media_tags.withheld_region_notes)
     report.tag_counts = dict(media_tags.counts)
 
     for handle, family in resource_cache["families"].items():
-        payload = build_family_payload(family, person_lookup, resource_cache["events"], resource_cache["places"])
+        payload = build_family_payload(
+            family, person_lookup, resource_cache["events"], resource_cache["places"], gate=gate
+        )
         files[f"family/{handle}.json"] = dumps(payload)
 
     place_manifest: List[Dict[str, Any]] = []
     for handle, place in resource_cache["places"].items():
-        payload = build_place_payload(place, resource_cache["places"])
+        payload = build_place_payload(place, resource_cache["places"], gate)
         files[f"place/{handle}.json"] = dumps(payload)
         place_manifest.append(
             {"handle": payload.get("handle"), "grampsId": payload.get("grampsId"), "displayName": payload.get("displayName")}
@@ -217,7 +220,7 @@ def render(
         payload = {
             "handle": media["handle"],
             "grampsId": media.get("gramps_id"),
-            "title": media.get("desc") or media.get("gramps_id"),
+            "title": media_title(media, gate),
             "mime": media.get("mime"),
             # D-02 / R-19: no `sourcePath` (local path) and no third-party `placeholderImage`.
             "s3Key": s3_key,

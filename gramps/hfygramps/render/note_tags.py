@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 import re
 
@@ -52,8 +52,10 @@ def _sanitize_color(value: Any) -> Optional[str]:
     return None
 
 
-def _safe_href(value: Any) -> Optional[str]:
-    """A plain http(s) URL with a host and no whitespace or control characters, else None."""
+def _safe_href(value: Any, gate: Optional[Callable[[str], bool]] = None) -> Optional[str]:
+    """A plain http(s) URL with a host, no userinfo, no whitespace or control characters, and (when a text ``gate`` is
+    given) nothing the gate blocks, else None. A link is free text too: ``?email=a@b.example`` or a phone number in the
+    query would otherwise bypass the gate that reads the note string."""
 
     if not isinstance(value, str):
         return None
@@ -67,6 +69,10 @@ def _safe_href(value: Any) -> Optional[str]:
     except ValueError:
         return None
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    if "@" in parsed.netloc:  # userinfo (``user:pass@host``)
+        return None
+    if gate is not None and not gate(candidate):
         return None
     return candidate
 
@@ -110,7 +116,7 @@ def _tag_code(tag: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _classify_tag(tag: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+def _classify_tag(tag: Dict[str, Any], gate: Optional[Callable[[str], bool]] = None) -> Optional[Tuple[str, str]]:
     code = _tag_code(tag)
     value = tag.get("value")
     if code == TAG_BOLD:
@@ -144,7 +150,7 @@ def _classify_tag(tag: Dict[str, Any]) -> Optional[Tuple[str, str]]:
             )
         return None
     if code == TAG_LINK:
-        href = _safe_href(value)
+        href = _safe_href(value, gate)
         if href:
             return (
                 f'<a href="{escape(href, quote=True)}" rel="noopener noreferrer nofollow" target="_blank">',
@@ -175,7 +181,9 @@ def _clean_ranges(raw_ranges: Any, text_length: int) -> List[Tuple[int, int]]:
     return cleaned
 
 
-def _apply_tag_markup(raw_text: str, tags: Iterable[Dict[str, Any]]) -> str:
+def _apply_tag_markup(
+    raw_text: str, tags: Iterable[Dict[str, Any]], gate: Optional[Callable[[str], bool]] = None
+) -> str:
     """Escape `raw_text` and wrap tagged spans. Overlapping ranges are split at every boundary,
     so each segment opens and closes exactly the tags that cover it (always well formed)."""
 
@@ -187,7 +195,7 @@ def _apply_tag_markup(raw_text: str, tags: Iterable[Dict[str, Any]]) -> str:
     for idx, tag in enumerate(tags or []):
         if not isinstance(tag, dict):
             continue
-        markup = _classify_tag(tag)
+        markup = _classify_tag(tag, gate)
         if not markup:
             continue
         for start, end in _clean_ranges(tag.get("ranges"), text_length):
@@ -270,9 +278,9 @@ def note_text_parts(raw: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
     return string, tags
 
 
-def normalise_note_text(raw: Dict[str, Any]) -> Dict[str, str]:
+def normalise_note_text(raw: Dict[str, Any], gate: Optional[Callable[[str], bool]] = None) -> Dict[str, str]:
     string, tags = note_text_parts(raw)
-    markup = _apply_tag_markup(string, tags)
+    markup = _apply_tag_markup(string, tags, gate)
     html = _wrap_paragraphs(markup)
     raw_text = string.replace("\r\n", "\n").replace("\r", "\n").strip()
     return {"raw": raw_text, "html": html}
