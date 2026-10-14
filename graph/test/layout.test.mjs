@@ -480,6 +480,15 @@ describe('verify() on the layout block', () => {
       ['duplicate person', (g) => g.layout.components[0].people.push({ ...g.layout.components[0].people[0] }), 'layout-duplicate'],
       ['unknown component', (g) => (g.layout.components[0].component = 99), 'layout-component'],
       ['cycle member', (g) => (g.layout.components[0].people[0].id = 'I8031'), 'layout-person-not-placed'],
+      ['a generation split across two layers', (g) => (g.layout.components[0].people[0].y += 1), 'layout-rank-order'],
+      [
+        'a deeper generation drawn above a shallower one',
+        (g) => {
+          const gen = new Map(g.people.map((p) => [p.id, p.generation]));
+          for (const n of g.layout.components[0].people) n.y = -n.y * (gen.get(n.id) + 1);
+        },
+        'layout-rank-order',
+      ],
     ];
     for (const [label, edit, rule] of cases) {
       const bad = structuredClone(graph);

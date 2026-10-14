@@ -191,6 +191,16 @@ function layoutChecks(graph, add) {
       if (seenUnions.has(n.id)) add(`${at}/unions/${j}/id`, 'layout-duplicate');
       seenUnions.add(n.id);
     });
+    // one layer per generation, deeper generations below: y is a strictly increasing function of the generation within a component
+    const yOf = new Map();
+    for (const n of c.people) {
+      const g = person.get(n.id)?.generation;
+      if (g === null || g === undefined) continue;
+      if (yOf.has(g) && yOf.get(g) !== n.y) add(`${at}/people`, 'layout-rank-order');
+      yOf.set(g, n.y);
+    }
+    const byGeneration = [...yOf.entries()].sort((a, b) => a[0] - b[0]);
+    for (let k = 1; k < byGeneration.length; k++) if (byGeneration[k][1] <= byGeneration[k - 1][1]) add(`${at}/people`, 'layout-rank-order');
     const here = new Set([...c.people, ...c.unions].map((n) => n.id));
     c.bends.forEach((b, j) => {
       for (const k of ['s', 't']) if (!here.has(b[k])) add(`${at}/bends/${j}/${k}`, 'dangling-reference');

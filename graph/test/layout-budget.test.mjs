@@ -7,16 +7,22 @@
 // A miss fails the test. The remedy is an amendment to the visualization ADR (for example a separate gated layout file), never
 // a silent change to a number here.
 //
-// "Layout time" is the CPU time the layout call used (user plus system, all threads of this process). It is the same work as the
-// wall clock on an idle machine (the CPU figure also counts the garbage collector and JIT threads, so it is never the smaller
-// one there), but it does not count the time the process spent waiting for a core. The wall-clock time is printed next to it.
-// A busy worker (the measurements below ran at a load average near 90) can stretch a 13 s layout to over a minute of wall time. The measured times and the Node version are printed as test diagnostics: they are the
-// acceptance evidence (ADR 3.3 measured Node 24.10.0, and the graph/ engines floor is Node 22).
+// "Layout time" is the elapsed (wall-clock) time of the computeLayout call, the metric the ADR (3.3) and the AC use, and it is the
+// asserted figure. The CPU time of the call (user plus system, all threads of this process, so it includes the garbage collector
+// and JIT threads) is printed beside it as a diagnostic only. On a worker that is heavily loaded the elapsed time can stretch far
+// past the idle figure (a 13 s layout took 109 s at a load average near 90): if that makes the 60 s case fail, the remedy is an
+// ADR amendment or a quieter machine, never a switch of metric. The measured times and the Node version are printed as test
+// diagnostics: they are the acceptance evidence (ADR 3.3 measured Node 24.10.0, and the graph/ engines floor is Node 22).
 //
 // photoEdges (viz-graph-v2-data) is not in the builder yet, so the size test adds a synthetic array of the ADR 4.7 shape to the
-// measured file: one tagged photo per person, each tagging 1 to 4 people (the ADR's "one photo per person" density).
+// measured file at the density where the ADR says the budget is at risk: each person is tagged in about 3 photos (photos tag 1 to
+// 4 people, 2.5 on average). Re-run against the builder's real photoEdges once viz-graph-v2-data merges.
+//
+// The 2,000-person size test needs the full 2,000-person layout (about 10 s), so it is gated on HFY_GRAPH_PERF=1 with the 60 s
+// layout-time case; the 231-person size and time cases run everywhere.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { loadavg } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { buildFamilyGraph } from '../src/build.mjs';
 import { stringify } from '../src/canonical.mjs';
@@ -32,6 +38,7 @@ const LAYOUT_MS_231 = 5_000;
 const LAYOUT_MS_2000 = 60_000;
 const GZIP_231 = 25 * KB;
 const GZIP_2000 = 150 * KB;
+const TAGGED_PHOTOS_PER_PERSON = 3;
 
 /** The projected people and unions with generation and component filled in, ready for computeLayout. */
 function prepared(n, seed) {
@@ -44,7 +51,7 @@ function prepared(n, seed) {
   return { people, unions };
 }
 
-/** Wall-clock and CPU milliseconds of one computeLayout call (see the header: the budgets use the CPU figure). */
+/** Elapsed (the asserted figure) and CPU (diagnostic) milliseconds of one computeLayout call. */
 function timed(people, unions) {
   const cpu0 = process.cpuUsage();
   const t0 = performance.now();
@@ -61,7 +68,8 @@ function photoEdges(graph, seed) {
     return s / 2 ** 32;
   };
   const ids = graph.people.map((p) => p.id);
-  return ids.map((_, i) => {
+  const photos = Math.ceil((ids.length * TAGGED_PHOTOS_PER_PERSON) / 2.5); // 2.5 = mean people per photo
+  return Array.from({ length: photos }, (_, i) => {
     const tagged = new Set();
     const k = 1 + Math.floor(rnd() * 4);
     while (tagged.size < k) tagged.add(ids[Math.floor(rnd() * ids.length)]);
@@ -86,9 +94,9 @@ describe('layout time', () => {
     it(`231 people (seed ${seed}) lay out in at most 5 s`, (t) => {
       const { people, unions } = prepared(231, seed);
       const { layout, wallMs, cpuMs } = timed(people, unions);
-      t.diagnostic(`layout time ${wallMs} ms wall, ${cpuMs} ms cpu at 231 people, seed ${seed}, Node ${process.version}; budget ${LAYOUT_MS_231} ms`);
+      t.diagnostic(`layout time ${wallMs} ms elapsed, ${cpuMs} ms cpu at 231 people, seed ${seed}, Node ${process.version}, load ${loadavg()[0].toFixed(1)}; budget ${LAYOUT_MS_231} ms`);
       assert.ok(layout.components.length >= 1);
-      assert.ok(cpuMs <= LAYOUT_MS_231, `layout used ${cpuMs} ms of CPU (${wallMs} ms wall) at 231 people, over the ${LAYOUT_MS_231} ms budget: amend the ADR, do not change this number`);
+      assert.ok(wallMs <= LAYOUT_MS_231, `layout took ${wallMs} ms elapsed (${cpuMs} ms cpu) at 231 people, over the ${LAYOUT_MS_231} ms budget: amend the ADR, do not change this number`);
     });
   }
 
@@ -96,9 +104,9 @@ describe('layout time', () => {
     it(`2,000 people (seed ${seed}) lay out in at most 60 s (HFY_GRAPH_PERF=1 only)`, { skip: !PERF && 'set HFY_GRAPH_PERF=1 (the worker and io\'s machine, never shared CI runners)' }, (t) => {
       const { people, unions } = prepared(2000, seed);
       const { layout, wallMs, cpuMs } = timed(people, unions);
-      t.diagnostic(`layout time ${wallMs} ms wall, ${cpuMs} ms cpu at 2000 people, seed ${seed}, Node ${process.version}; budget ${LAYOUT_MS_2000} ms`);
+      t.diagnostic(`layout time ${wallMs} ms elapsed, ${cpuMs} ms cpu at 2000 people, seed ${seed}, Node ${process.version}, load ${loadavg()[0].toFixed(1)}; budget ${LAYOUT_MS_2000} ms`);
       assert.equal(layout.components[0].people.length > 1900, true, 'one main component holds nearly everyone');
-      assert.ok(cpuMs <= LAYOUT_MS_2000, `layout used ${cpuMs} ms of CPU (${wallMs} ms wall) at 2,000 people, over the ${LAYOUT_MS_2000} ms budget: amend the ADR, do not change this number`);
+      assert.ok(wallMs <= LAYOUT_MS_2000, `layout took ${wallMs} ms elapsed (${cpuMs} ms cpu) at 2,000 people, over the ${LAYOUT_MS_2000} ms budget: amend the ADR, do not change this number`);
     });
   }
 });
@@ -112,7 +120,7 @@ describe('graph.json size with the layout block and photoEdges', () => {
     });
   }
 
-  it('2,000 people (seed 42) stay within 150 KB gzipped', (t) => {
+  it('2,000 people (seed 42) stay within 150 KB gzipped (HFY_GRAPH_PERF=1 only)', { skip: !PERF && 'set HFY_GRAPH_PERF=1 (it runs the 2,000-person layout)' }, (t) => {
     const r = gzipBytes(2000, 42);
     t.diagnostic(`2000 people, seed 42: ${r.withoutLayout} B without layout, ${r.withLayout} B with layout, ${r.withLayoutAndPhotos} B with layout and photoEdges; budget ${GZIP_2000} B`);
     assert.ok(r.withLayoutAndPhotos <= GZIP_2000, `${r.withLayoutAndPhotos} B gzipped at 2,000 people, over ${GZIP_2000} B: amend the ADR`);
