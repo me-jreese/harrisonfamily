@@ -10,12 +10,17 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 /** S3 client options for presigning (exported for tests). */
 export const PRESIGN_CLIENT_OPTIONS = Object.freeze({ requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED" });
 
-/** Returns `presignPut({ bucket, key, contentType, size, expiresIn }) => url`. `clientOptions` (region, credentials) is for tests. */
+/**
+ * Returns `presignPut({ bucket, key, contentType, size, expiresIn, checksumSha256? }) => url`. `clientOptions` (region, credentials) is for tests.
+ * `checksumSha256` (the base64 SHA-256 of the body, HFY-TSK-173) is signed too and sent as the `x-amz-checksum-sha256` header, never hoisted
+ * into the query string, so S3 refuses a PUT whose bytes do not hash to it (the desktop sync's blob upload, sync.md 9).
+ */
 export function createPresignPut(clientOptions = {}) {
   const s3 = new S3Client({ ...clientOptions, ...PRESIGN_CLIENT_OPTIONS });
-  return ({ bucket, key, contentType, size, expiresIn }) =>
-    getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: size }), {
+  return ({ bucket, key, contentType, size, expiresIn, checksumSha256 }) =>
+    getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: size, ...(checksumSha256 ? { ChecksumSHA256: checksumSha256 } : {}) }), {
       expiresIn,
-      signableHeaders: new Set(["content-type", "content-length"]),
+      signableHeaders: new Set(["content-type", "content-length", ...(checksumSha256 ? ["x-amz-checksum-sha256"] : [])]),
+      ...(checksumSha256 ? { unhoistableHeaders: new Set(["x-amz-checksum-sha256"]) } : {}),
     });
 }

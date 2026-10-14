@@ -226,7 +226,13 @@ async function checkIds(view, liveOps) {
 
 // ---- integrity -------------------------------------------------------------------------------------------------------
 
-async function checkIntegrity(view, ops, liveOps, isHard) {
+/**
+ * The integrity rules on a set of ops against a store view: references resolve (in the store view, in the ops, or in `view.expected`) and,
+ * for a hard origin, the person-family links are symmetric. Throws 422 integrity_violation | withdrawn_reference with the violations.
+ * Exported for the session completion of sync-push-routes, which runs it for the whole session with `isHard` true: a desktop push is not
+ * checked for symmetry batch by batch (the links cross batch boundaries), only here.
+ */
+export async function checkIntegrity(view, ops, liveOps, isHard) {
   const { store, expected } = view;
   const { written, removed, withdrawn, after } = createOverlay(ops, store);
   const expectedHas = (cls, handle) => typeof expected === "function" && expected(cls, handle) === true;

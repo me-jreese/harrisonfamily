@@ -176,9 +176,12 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*
               # HFY-TSK-247: desktop media presign (PutObject) and comment-photo graduation (GetObject source, PutObject destination)
               # under media/*, which also covers hfy-graduate-api. The bucket-policy deny on media/*.json (cutover) leaves binaries to this role only.
+              # HFY-TSK-173: DeleteObject removes a finalized blob's media/.staging/<handle>/<sha256> object and the binary an extension change
+              # orphaned (media/<handle><old ext>). The sync code deletes only those two shapes of key (api/src/sync/media.js); BRD2 11.4 lists this
+              # role as the one principal besides the renderers that may delete under media/* after the cutover deny.
               - Sid: MediaBinaries
                 Effect: Allow
-                Action: [s3:PutObject, s3:GetObject]
+                Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
               # HFY-TSK-247: change snapshots (snapshots/<seq>.jsonl.gz, latest.json) in the sync bucket; nothing else there.
               - Sid: SyncSnapshots
