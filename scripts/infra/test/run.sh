@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Offline tests for scripts/infra (HFY-R58). Never touches AWS: test/stub/aws is first on PATH for every script run.
+# Offline tests for scripts/infra (HFY-R58). Never touches AWS: test/stub/aws is first on PATH for every script run, and
+# test/stub-curl/curl for check-site-bucket-cors.sh, so its preflights never leave the machine either.
 # Usage: scripts/infra/test/run.sh        (needs bash, jq, python3 with PyYAML; uses cfn-lint and shellcheck when installed, and
 # node + zip + openssl for the scripts/ci/package-edge-gate.sh checks, rsync + git for the scripts/check-deployment-sync.sh run)
 # shellcheck disable=SC2016,SC2002 # the jq programs are single-quoted on purpose
@@ -773,9 +774,147 @@ OLDJS
   eq "...its DEVELOPMENT code was saved (there is no LIVE code to save)" "$(find "$STUB_DIR/backups" -name 'HFYAppendIndex-DEVELOPMENT-*-before.js' | wc -l | tr -d ' ')" 1
 else echo "  (node not installed: publish-append-index.sh tests skipped)"; fi
 
+# ---------------------------------------------------------------------------------------------------------------------
+CURRENT="site bucket CORS: the committed rule allows only PUT with Content-Type from the two site origins (HFY-TSK-314)"
+CORS_RULE="$ROOT/infrastructure/cloudformation/site-bucket-cors.json"
+SITE_ORIGINS='["https://harrisonfamily.us","https://www.harrisonfamily.us"]'
+# One line per way a CORS configuration differs from "PUT with Content-Type from the two site origins": any other method, origin
+# (wildcards included) or request header in any rule, a site origin that cannot PUT with Content-Type, or a key that
+# put-bucket-cors rejects. Empty output means the configuration is exactly as wide as photo uploads need.
+cors_violations() { # CORS_JSON_FILE
+  jq -r --argjson site "$SITE_ORIGINS" '
+    if type != "object" or (.CORSRules | type) != "array" or (.CORSRules | length) == 0 then "no CORSRules"
+    else
+      .CORSRules as $rules
+      | (keys - ["CORSRules"] | .[] | "top-level key \(.) (put-bucket-cors rejects it)"),
+        ($rules[] | (.ID // "(no ID)") as $id
+          | ((.AllowedMethods // [])[] | select(. != "PUT") | "\($id): method \(.)"),
+            ((.AllowedOrigins // [])[] | . as $o | select(any($site[]; . == $o) | not) | "\($id): origin \(.)"),
+            ((.AllowedHeaders // [])[] | select(ascii_downcase != "content-type") | "\($id): header \(.)")),
+        ($site[] | . as $o
+          | select(any($rules[]; any((.AllowedOrigins // [])[]; . == $o) and any((.AllowedMethods // [])[]; . == "PUT")
+              and any((.AllowedHeaders // [])[]; ascii_downcase == "content-type")) | not)
+          | "origin \($o) cannot PUT with Content-Type")
+    end' "$1"
+}
+cors_mutant() { jq "$1" "$CORS_RULE" > "$T/cors-mutant.json"; cors_violations "$T/cors-mutant.json"; } # JQ_EDIT -> violations
+eq "site-bucket-cors.json allows PUT with Content-Type from https://harrisonfamily.us and https://www.harrisonfamily.us, nothing else" "$(cors_violations "$CORS_RULE")" ""
+eq "...and is the rule applied to the bucket (ID, ExposeHeaders ETag, MaxAgeSeconds 3000), with no key put-bucket-cors rejects" "$(jq -cS . "$CORS_RULE")" '{"CORSRules":[{"AllowedHeaders":["Content-Type"],"AllowedMethods":["PUT"],"AllowedOrigins":["https://harrisonfamily.us","https://www.harrisonfamily.us"],"ExposeHeaders":["ETag"],"ID":"hfy-member-photo-uploads","MaxAgeSeconds":3000}]}'
+for m in GET HEAD POST DELETE; do
+  contains "the check fails when the rule also allows $m" "$(cors_mutant ".CORSRules[0].AllowedMethods += [\"$m\"]")" "hfy-member-photo-uploads: method $m"
+done
+contains "...or allows POST instead of PUT" "$(cors_mutant '.CORSRules[0].AllowedMethods = ["POST"]')" "origin https://harrisonfamily.us cannot PUT with Content-Type"
+for o in '*' 'https://*.harrisonfamily.us' 'http://harrisonfamily.us' 'https://cors-check.invalid' 'null'; do
+  contains "the check fails when the rule also allows origin $o" "$(cors_mutant ".CORSRules[0].AllowedOrigins += [\"$o\"]")" "hfy-member-photo-uploads: origin $o"
+done
+contains "...or drops https://www.harrisonfamily.us" "$(cors_mutant '.CORSRules[0].AllowedOrigins = ["https://harrisonfamily.us"]')" "origin https://www.harrisonfamily.us cannot PUT with Content-Type"
+for h in '*' 'Content-*' 'Content-Length' 'x-amz-acl' 'Authorization'; do
+  contains "the check fails when the rule also allows header $h" "$(cors_mutant ".CORSRules[0].AllowedHeaders += [\"$h\"]")" "hfy-member-photo-uploads: header $h"
+done
+contains "...or allows no header (the browser's Content-Type preflight would fail)" "$(cors_mutant 'del(.CORSRules[0].AllowedHeaders)')" "origin https://harrisonfamily.us cannot PUT with Content-Type"
+eq "...but not when Content-Type is spelled in lower case (S3 compares header names case-insensitively)" "$(cors_mutant '.CORSRules[0].AllowedHeaders = ["content-type"]')" ""
+V=$(cors_mutant '.CORSRules += [{ID: "extra", AllowedOrigins: ["*"], AllowedMethods: ["GET"]}]')
+contains "a second, wider rule fails it (its origin)" "$V" "extra: origin *"
+contains "...(its method)" "$V" "extra: method GET"
+contains "a _comment key fails it (put-bucket-cors rejects unknown keys, so the file is applied as committed)" "$(cors_mutant '._comment = "x"')" "top-level key _comment"
+eq "an empty rule list fails it" "$(cors_mutant '.CORSRules = []')" "no CORSRules"
+STAND_UP="$ROOT/docs/how-to/stand-up-the-static-site.md"
+contains "stand-up-the-static-site.md applies the committed file with put-bucket-cors" "$(tr -d '\\\n' < "$STAND_UP" | tr -s ' ')" "aws s3api put-bucket-cors --bucket <site-bucket> --cors-configuration file://infrastructure/cloudformation/site-bucket-cors.json"
+OLD_CORS_FILE="media-bucket""-cors.json"
+eq "no doc, code or template still names the old CORS file" "$(grep -rIl --exclude-dir=node_modules "$OLD_CORS_FILE" "$ROOT/docs" "$ROOT/api/src" "$ROOT/infrastructure" "$ROOT/scripts" "$ROOT/AGENTS.md" "$ROOT/README.md" 2>/dev/null)" ""
+
+# ---------------------------------------------------------------------------------------------------------------------
+CURRENT="check-site-bucket-cors.sh: post-deploy CORS preflights (offline here: test/stub-curl answers as S3 would)"
+CURL_STUB_BIN="$HERE/stub-curl"
+CORS_URL="https://harrisonfamily-frontend.s3.us-west-2.amazonaws.com/uploads/posts/smoke/x.jpg"
+cors_stub() { # [BUCKET_CORS_JSON] -> a fresh $STUB_DIR whose bucket has that CORS configuration (none without an argument)
+  STUB_DIR=$(mktemp -d "$T/curl.XXXXXX"); export STUB_DIR
+  if [ -n "${1:-}" ]; then printf '%s\n' "$1" > "$STUB_DIR/cors.json"; fi
+}
+cors_check() { # ARGS... -> OUT, RC
+  set +e
+  OUT=$(PATH="$CURL_STUB_BIN:$PATH" "$INFRA/check-site-bucket-cors.sh" "$@" 2>&1); RC=$?
+  set -e
+}
+cors_stub "$(cat "$CORS_RULE")"; cors_check
+eq "a bucket with the committed rule passes" "$RC" 0
+contains "...200 for PUT with Content-Type from https://harrisonfamily.us" "$OUT" "ok   200 PUT with Content-Type from https://harrisonfamily.us"
+contains "...and from https://www.harrisonfamily.us" "$OUT" "ok   200 PUT with Content-Type from https://www.harrisonfamily.us"
+contains "...403 for a foreign origin" "$OUT" "ok   403 PUT with Content-Type from the foreign origin https://cors-check.invalid"
+contains "...403 for DELETE" "$OUT" "ok   403 DELETE from https://harrisonfamily.us"
+contains "...403 for an extra request header" "$OUT" "ok   403 PUT with an x-amz-acl header from https://harrisonfamily.us"
+eq "...its first request is an OPTIONS preflight for PUT to uploads/posts/smoke/x.jpg from https://harrisonfamily.us" "$(head -n 1 "$STUB_DIR/curl.log")" "OPTIONS $CORS_URL|https://harrisonfamily.us|PUT|content-type"
+eq "...and it sends only OPTIONS preflights, five of them" "$(grep -c "^OPTIONS $CORS_URL|" "$STUB_DIR/curl.log")|$(wc -l < "$STUB_DIR/curl.log" | tr -d ' ')" "5|5"
+cors_stub; cors_check
+eq "a bucket with no CORS configuration (the HFY-TSK-314 incident) fails" "$RC" 1
+contains "...naming the origin whose uploads fail" "$OUT" "::error::site bucket CORS: PUT with Content-Type from https://harrisonfamily.us: expected 200"
+cors_stub "$(jq '.CORSRules[0].AllowedOrigins = ["https://harrisonfamily.us"]' "$CORS_RULE")"; cors_check
+eq "a bucket that drops https://www.harrisonfamily.us fails" "$RC" 1
+contains "...naming it" "$OUT" "PUT with Content-Type from https://www.harrisonfamily.us: expected 200"
+cors_stub "$(jq '.CORSRules[0].AllowedOrigins = ["*"]' "$CORS_RULE")"; cors_check
+eq "a bucket that allows any origin fails" "$RC" 1
+contains "...because the foreign origin gets 200" "$OUT" "foreign origin https://cors-check.invalid: expected 403, got 200"
+contains "...and Access-Control-Allow-Origin is * rather than the site origin" "$OUT" "got 200 (Access-Control-Allow-Origin: *;"
+cors_stub "$(jq '.CORSRules[0].AllowedMethods += ["DELETE"]' "$CORS_RULE")"; cors_check
+eq "a bucket that also allows DELETE fails" "$RC" 1
+contains "...naming it" "$OUT" "DELETE from https://harrisonfamily.us: expected 403, got 200"
+cors_stub "$(jq '.CORSRules[0].AllowedHeaders = ["*"]' "$CORS_RULE")"; cors_check
+eq "a bucket that allows any request header fails" "$RC" 1
+contains "...naming the probe" "$OUT" "PUT with an x-amz-acl header from https://harrisonfamily.us: expected 403, got 200"
+cors_stub "$(jq '.CORSRules[0].AllowedMethods = ["GET"]' "$CORS_RULE")"; cors_check
+eq "a bucket whose rule does not allow PUT fails" "$RC" 1
+cors_stub "$(cat "$CORS_RULE")"; echo no-acao > "$STUB_DIR/curl-mode"; cors_check
+eq "a 200 without Access-Control-Allow-Origin fails" "$RC" 1
+contains "...saying so" "$OUT" "(Access-Control-Allow-Origin: none;"
+cors_stub "$(cat "$CORS_RULE")"; echo down > "$STUB_DIR/curl-mode"; cors_check
+eq "no response at all fails (a 403 is required, not merely the absence of a 200)" "$RC" 1
+contains "...saying so" "$OUT" "the foreign origin https://cors-check.invalid: no response from $CORS_URL"
+cors_stub "$(cat "$CORS_RULE")"
+cors_check --url http://harrisonfamily-frontend.s3.us-west-2.amazonaws.com/x.jpg
+eq "an http:// --url is refused" "$RC" 2
+jq '.CORSRules[0].AllowedOrigins += ["*"]' "$CORS_RULE" > "$T/cors-wild.json"; cors_check --rule "$T/cors-wild.json"
+eq "a --rule with a wildcard origin is refused" "$RC" 2
+cors_check --bogus
+eq "an unknown argument is refused" "$RC" 2
+eq "...and none of the refusals sent a request" "$(cat "$STUB_DIR/curl.log" 2>/dev/null | wc -l | tr -d ' ')" 0
+# Where it runs: after every successful deploy run, as its own workflow. The kit's deploy.smoke takes URLs only, GETs them and
+# passes 2xx/3xx, and its failure redeploys the previous release, which cannot repair a bucket CORS rule.
+if python3 -c 'import yaml' 2>/dev/null; then
+  WIRING=$(ROOT="$ROOT" python3 - <<'PY'
+import os, pathlib, re, yaml
+root = pathlib.Path(os.environ["ROOT"])
+manifest = yaml.safe_load((root / "ci.manifest.yaml").read_text())
+deploy = manifest["deploy"]
+bucket = next(t["bucket"] for t in deploy["targets"] if t["kind"] == "s3_static")
+deploy_name = (manifest.get("workflows") or {}).get("deploy", "io-kit deploy")
+rendered = yaml.safe_load((root / ".github/workflows/io-kit-deploy.yml").read_text())
+wf = yaml.safe_load((root / ".github/workflows/post-deploy-checks.yml").read_text())
+on = wf.get("on", wf.get(True))  # PyYAML reads the bare key `on` as True
+job = wf["jobs"]["site-bucket-cors"]
+script = (root / "scripts/infra/check-site-bucket-cors.sh").read_text()
+default_url = re.search(r'^URL="([^"]+)"$', script, re.M).group(1)
+print("deploy-name", rendered["name"] == deploy_name)
+print("trigger", on["workflow_run"]["workflows"] == [deploy_name] and on["workflow_run"]["types"] == ["completed"]
+      and on["workflow_run"]["branches"] == [manifest.get("branch", "main")])
+print("success-only", "workflow_run.conclusion == 'success'" in job["if"])
+print("runs-script", any(s.get("run") == "bash scripts/infra/check-site-bucket-cors.sh" for s in job["steps"]))
+print("read-only", wf["permissions"] == {"contents": "read"} and "permissions" not in job)
+print("default-url", default_url == f"https://{bucket}.s3.{deploy['region']}.amazonaws.com/uploads/posts/smoke/x.jpg")
+print("smoke-not-s3", not any(".amazonaws.com" in u for u in deploy.get("smoke", [])))
+PY
+  )
+  contains "the rendered deploy workflow is named as ci.manifest.yaml says" "$WIRING" "deploy-name True"
+  contains "post-deploy-checks.yml runs on workflow_run of that workflow, when it completes on the deploy branch" "$WIRING" "trigger True"
+  contains "...only after a successful deploy run (or by hand)" "$WIRING" "success-only True"
+  contains "...runs check-site-bucket-cors.sh" "$WIRING" "runs-script True"
+  contains "...with contents: read and nothing else (no AWS credentials)" "$WIRING" "read-only True"
+  contains "the script's default URL is the ci.manifest.yaml site bucket, in deploy.region, at uploads/posts/smoke/x.jpg" "$WIRING" "default-url True"
+  contains "deploy.smoke never names an S3 endpoint (a GET there answers 403, which would roll back every deploy)" "$WIRING" "smoke-not-s3 True"
+else fail "python3 with PyYAML is required for the post-deploy-checks.yml wiring checks"; fi
+
 CURRENT="shellcheck"
 if command -v shellcheck >/dev/null; then
-  if shellcheck -x "$INFRA"/*.sh "$INFRA"/lib/*.sh "$HERE"/run.sh "$STUB_BIN"/aws > "$T/sc.out" 2>&1; then ok; else fail "shellcheck"; cat "$T/sc.out" >&2; fi
+  if shellcheck -x "$INFRA"/*.sh "$INFRA"/lib/*.sh "$HERE"/run.sh "$STUB_BIN"/aws "$HERE"/stub-curl/curl > "$T/sc.out" 2>&1; then ok; else fail "shellcheck"; cat "$T/sc.out" >&2; fi
 else echo "  (shellcheck not installed: skipped)"; fi
 
 echo "scripts/infra tests: $PASS passed, $FAILED failed"

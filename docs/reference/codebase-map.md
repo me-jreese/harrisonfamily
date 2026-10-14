@@ -402,11 +402,12 @@ Paths:
 - [`infrastructure/cloudformation/edge-gate-stack.yaml`](../../infrastructure/cloudformation/edge-gate-stack.yaml): the us-east-1 gate stack. See [Private data gate](#private-data-gate).
 - [`infrastructure/mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml): the us-east-1 stack for the MCP 401-restore function. It sits in `infrastructure/`, not `infrastructure/cloudformation/`. See [MCP server](#mcp-server).
 - [`infrastructure/cloudformation/github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml): the OIDC role that GitHub Actions assumes.
-- [`infrastructure/cloudformation/media-bucket-cors.json`](../../infrastructure/cloudformation/media-bucket-cors.json): the site bucket's CORS for browser uploads.
+- [`infrastructure/cloudformation/site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json): the site bucket's whole CORS configuration, for browser photo uploads. It is not a CloudFormation template: [How to stand up the static site](../how-to/stand-up-the-static-site.md#1-create-the-site-bucket) applies it with `put-bucket-cors`.
 - [`scripts/infra/`](../../scripts/infra/):
   - `create-session-key.sh`: the session signing key.
   - `create-origin-verify.sh`: the origin-verify secret.
   - `add-api-behavior.sh`, `add-auth-behavior.sh`, `add-uploads-behavior.sh`, `add-mcp-behavior.sh`, `add-data-gate-behaviors.sh`: CloudFront origins and behaviors.
+  - `check-site-bucket-cors.sh`: the live check of the bucket's CORS rule, by preflight requests without credentials. `post-deploy-checks.yml` runs it.
   - `publish-append-index.sh`: the CloudFront Function. See [CloudFront Function](#cloudfront-function).
 - [`scripts/infra/lib/`](../../scripts/infra/lib/): the behavior scripts share both files, and `publish-append-index.sh` uses `cf-common.sh`.
   - `cf-common.sh`: the fetch, compare and apply plumbing; `UPLOADS_CSP`, the uploads Content-Security-Policy string; and `cf_response_headers_policy`, which finds a custom response headers policy by name and creates it, or puts it back, when it does not force the wanted headers.
@@ -443,7 +444,7 @@ Facts:
 - The `scripts/infra/` scripts are idempotent, accept `--dry-run`, and never print secret values.
 - The behavior scripts skip `update-distribution` when nothing would change. Before a real update, they save the pre-change config outside the repository.
 - `distribution.json` shows the pre-app layout: an S3 origin, plus an API Gateway origin that serves `/api/*`. It shows none of the behaviors that the behavior scripts add, so a gate dry run against it creates all seven gated behaviors, `/uploads/*` included.
-- The comments in `app-stack.yaml` (`UploadsResponseHeadersPolicy`) and `media-bucket-cors.json` describe both `/uploads/*` states and the direct PUT to S3.
+- The comments in `app-stack.yaml` (`UploadsResponseHeadersPolicy`) describe both `/uploads/*` states and the direct PUT to S3. `site-bucket-cors.json` is plain JSON with no comment, because `put-bucket-cors` rejects any key it does not know; [Architecture](architecture.md#site-bucket) documents the rule.
 
 ## CI and repo operations
 
@@ -453,6 +454,7 @@ Paths:
 - [`.github/workflows/io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml), [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml): rendered from `ci.manifest.yaml` by `@io-kit/ci` 0.1.3. Each carries a "do not edit" header.
 - [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/): the composite actions those workflows call. They are `build`, `package`, `deploy-static`, `deploy-lambda`, `invalidate`, `smoke`, `rollback`, `parity-report` and `secret-scan`.
 - [`.github/workflows/deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml): the `getAllowlist` deploy.
+- [`.github/workflows/post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml): checks the kit's smoke job cannot express, run after each successful deploy run. Hand-maintained.
 - [`scripts/ci/`](../../scripts/ci/):
   - `patch-client-id.sh` and `package-lambda.sh` are the manifest build command.
   - `build-islands.sh`, `package-api.sh`, `package-auth.sh` and `package-edge-gate.sh` are local build scripts.
@@ -469,6 +471,7 @@ Facts:
 - The sync excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`, and never deletes the excluded paths.
 - The invalidation covers `/*`, and the job waits for it to complete. Until it does, CloudFront can serve the old object for a new `?v`, because the default behavior's cache policy (CachingOptimized in the sample) leaves the query string out of the cache key.
 - The smoke job requests the home page and `/family-login/`. Any status outside 2xx and 3xx fails it.
+- `post-deploy-checks.yml` runs on `workflow_run` when an `io-kit deploy` run on `main` completes successfully, and by hand. It runs `scripts/infra/check-site-bucket-cors.sh`, the bucket CORS preflights, which the smoke job cannot express: its entries are URLs it requests with `GET`. A failure there rolls nothing back.
 - The rollback strategy is `previous_artifact`. It redeploys the artifact of the last successful `io-kit-deploy.yml` run on the branch. That artifact's `flags.json` comes with it; see [Private data gate](#private-data-gate) for why that matters while the gate is attached.
 - The pipeline builds no islands, and deploys none of `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
 - `build-islands.sh`, `package-api.sh`, `package-auth.sh`, `package-edge-gate.sh`, `mcp-conformance.sh` and `publish-append-index.sh` are not run by any workflow.

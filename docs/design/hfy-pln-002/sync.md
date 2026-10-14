@@ -458,7 +458,7 @@ Person, family, event, note, place and media JSON keep every field the site read
 |---|---|---|
 | Notes empty | reads `text._string/_tags` (`note_tags.py:152-158`) | read `text.string`/`text.tags` (Gramps 6), fall back to `_string/_tags`; `raw` + `html` via the existing tag markup |
 | Event types lost | `coerce_event_type` ignores `{value:int}` (`transform.py:94-109`) | `type: {string, code}` with the English label from the committed EventType table (custom: `string`); person event `label` = type label (Birth, Death, Marriage, Residence, …) instead of index-based Birth/Death/Event (`transform.py` `event_label`) |
-| Regions dropped | `media_refs = [ref …]` (`transform.py:324`) | `mediaGallery[].region {x1,y1,x2,y2} \| null` and `primaryPhoto.region`; `media/<handle>.json.regions[] = {person:{handle, grampsId, displayName}, rect, attributes, notes}` |
+| Regions dropped | `media_refs = [ref …]` (`transform.py:324`) | `mediaGallery[].region [x1,y1,x2,y2] \| null` (four integer percents, as Gramps stores the rect) and `primaryPhoto.region` in the same shape; `media/<handle>.json.regions[] = {person:{handle, grampsId, displayName}, rect, attributes, notes}`, with `rect` the same `[x1,y1,x2,y2]` array |
 | Family type, frel/mrel, family events missing | `build_family_payload` (`transform.py:150-185`) | `family.type {code, string}`, `children[].frel/mrel {code, string}`, `family.events[]` (with role), and the same on `familyTree.*Families` |
 | Place type is a raw int | `transform.py:87` | `{code, string}` with the English PlaceType label |
 | Local paths leak | `sourcePath` (`transform.py:342`) | dropped (no reader in the site) |
