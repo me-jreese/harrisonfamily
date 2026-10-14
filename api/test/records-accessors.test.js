@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { createFakeDdb, cmds } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { headItem, headKey, objectJson } from "../src/sync/store.js";
-import { GRAPH_TTL_MS, backrefs, byGrampsId, customTypes, get, graph, rebuildStoreView, resetStoreView, storeView } from "../src/records/index.js";
+import { StoreView, GRAPH_TTL_MS, backrefs, byGrampsId, customTypes, get, graph, invalidateGraph, rebuildStoreView, resetStoreView, storeView } from "../src/records/index.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -58,6 +58,77 @@ describe("get / byGrampsId", () => {
     const w = world();
     for (let i = 1; i <= 36; i++) seedHead(w, person(i, { gramps_id: "I7" }));
     expect(await byGrampsId(w.ctx, "Person", "I7")).toHaveLength(36);
+  });
+});
+
+describe("hardening", () => {
+  it("an older log item folded after a newer one does not win", () => {
+    const v = new StoreView();
+    const item = (seq, ver, g) => ({ op: "update", class: "Person", handle: h(1), version: ver, seq, gramps_id: "I1", obj_json: JSON.stringify(person(1, { gramps_id: g })) });
+    v.foldLog(item(150, 3, "NEW"));
+    v.foldLog(item(6, 1, "OLD"));
+    expect(v.heads.get(`Person:${h(1)}`)).toMatchObject({ version: 3, seq: 150 });
+    expect(v.heads.get(`Person:${h(1)}`).obj.gramps_id).toBe("NEW");
+    expect(v.seq).toBe(150);
+  });
+
+  it("byGrampsId requires the exact stored id", async () => {
+    const w = world();
+    seedHead(w, person(1, { gramps_id: "I1#x" }));
+    seedHead(w, person(2, { gramps_id: "I1" }));
+    expect(await byGrampsId(w.ctx, "Person", "I1")).toEqual([{ handle: h(2), version: 1 }]);
+  });
+
+  it("the graph is frozen, expires when the clock goes backwards and can be invalidated", async () => {
+    const w = world();
+    let t = 1_000_000;
+    const ctx = { ...w.ctx, now: () => t };
+    await w.apply([create(family(1))]);
+    const g = await graph(ctx);
+    expect(Object.isFrozen(g.families)).toBe(true);
+    expect(await graph(ctx)).toBe(g);
+    t -= 10;
+    expect(await graph(ctx)).not.toBe(g);
+    const g3 = await graph(ctx);
+    invalidateGraph(ctx);
+    expect(await graph(ctx)).not.toBe(g3);
+  });
+
+  it("a snapshot at or below the head is loaded then folded; one per view is attempted", async () => {
+    const w = world();
+    await w.apply([create(person(1)), create(person(2))]);
+    const snapView = await storeView(w.ctx);
+    const snapshot = { seq: snapView.seq, heads: [...snapView.heads.values()].map((e) => structuredClone(e)) };
+    await w.apply([create(person(3))]);
+    resetStoreView(w.ctx);
+    let calls = 0;
+    const ctx = { ...w.ctx, snapshot: async () => { calls++; return structuredClone(snapshot); } };
+    const v = await storeView(ctx);
+    expect(v.heads.size).toBe(3);
+    await storeView(ctx);
+    expect(calls).toBe(1);
+    resetStoreView(w.ctx);
+    const empty = { ...w.ctx, snapshot: async () => { calls++; return null; } };
+    calls = 0;
+    await storeView(empty);
+    await storeView(empty);
+    expect(calls).toBe(1);
+  });
+
+  it("a warm view folds more than one log page incrementally", async () => {
+    const w = world();
+    await w.apply([create(person(1))]);
+    await storeView(w.ctx);
+    for (let i = 0; i < 12; i++) await w.apply(Array.from({ length: 10 }, (_, j) => create(person(100 + i * 10 + j))));
+    const warm = await storeView(w.ctx);
+    expect(warm.heads.size).toBe(121);
+    expect(flat(warm)).toEqual(flat(await rebuildStoreView(w.ctx)));
+  });
+
+  it("customTypes excludes non-custom values", async () => {
+    const w = world();
+    await w.apply([create(event(1, { type: typ("EventType", 5, "named")}))]);
+    expect(await customTypes(w.ctx)).toEqual({});
   });
 });
 

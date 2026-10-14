@@ -45,6 +45,9 @@ export async function byGrampsId(ctx, cls, gid) {
     }));
     for (const item of res.Items ?? []) {
       if (!item.GSI1SK.startsWith(prefix)) return finish(out); // sorted: past the prefix, so done
+      // GSI1 must project ALL (deleted, handle, version, gramps_id). Match the exact id: "I1" must not take "I1#x".
+      const stored = item.gramps_id ?? item.GSI1SK.slice(0, item.GSI1SK.lastIndexOf("#"));
+      if (stored !== gid) continue;
       if (item.deleted !== true) out.push({ handle: item.handle, version: item.version });
     }
     if (!res.LastEvaluatedKey) return finish(out);
@@ -62,12 +65,15 @@ export class StoreView {
     this.refs = new Map(); // target key -> Set of live source keys
     this.graphCache = null; // { at, value }
     this.typesCache = null; // { seq, value }
+    this.snapTried = false; // the snapshot is offered once per view
   }
 
   /** Sets (or tombstones) one head, keeping the reverse reference index in step. */
   put(entry) {
     const key = keyOf(entry.class, entry.handle);
     const old = this.heads.get(key);
+    // A stale entry (a slower, overlapping fold of an earlier log page) never overwrites a newer head.
+    if (old && Number.isFinite(entry.seq) && Number.isFinite(old.seq) && entry.seq <= old.seq) return;
     if (old && !old.deleted && old.obj) for (const r of collectRefs(old.obj)) this.refs.get(keyOf(r.cls, r.handle))?.delete(key);
     const live = entry.deleted !== true && entry.obj != null;
     this.heads.set(key, { class: entry.class, handle: entry.handle, gramps_id: entry.gramps_id ?? old?.gramps_id ?? "", version: entry.version, seq: entry.seq, deleted: !live, obj: live ? entry.obj : null });
@@ -149,7 +155,8 @@ export async function rebuildStoreView(ctx) {
 export async function storeView(ctx) {
   const view = viewFor(ctx);
   const headSeq = (await getSyncHead(ctx))?.seq ?? 0;
-  if (view.seq === 0 && view.heads.size === 0 && typeof ctx.snapshot === "function") {
+  if (!view.snapTried && view.seq === 0 && view.heads.size === 0 && typeof ctx.snapshot === "function") {
+    view.snapTried = true;
     const snap = await ctx.snapshot();
     if (snap && snap.seq <= headSeq) view.load(snap);
   }
@@ -176,17 +183,29 @@ function buildGraph(view) {
   return { families, parents };
 }
 
-/** { families: {h: {father, mother, children[]}}, parents: {personH: [familyH]} }, cached up to 60 s. */
+const deepFreeze = (v) => {
+  if (v && typeof v === "object" && !Object.isFrozen(v)) { Object.freeze(v); Object.values(v).forEach(deepFreeze); }
+  return v;
+};
+
+/** Drops the cached graph (a same-process writer calls this after its applyBatch commit). */
+export function invalidateGraph(ctx) {
+  const v = views.get(ctx.ddb)?.get(ctx.table);
+  if (v) v.graphCache = null;
+}
+
+/** { families: {h: {father, mother, children[]}}, parents: {personH: [familyH]} }, cached up to 60 s. The result is deep-frozen (read-only). */
 export async function graph(ctx) {
   const view = viewFor(ctx);
   const now = clock(ctx);
-  if (view.graphCache && now - view.graphCache.at < GRAPH_TTL_MS) return view.graphCache.value;
+  // A clock that went backwards (now < at) counts as expired.
+  if (view.graphCache && now >= view.graphCache.at && now - view.graphCache.at < GRAPH_TTL_MS) return view.graphCache.value;
   const fresh = await storeView(ctx);
-  fresh.graphCache = { at: now, value: buildGraph(fresh) };
+  fresh.graphCache = { at: now, value: deepFreeze(buildGraph(fresh)) };
   return fresh.graphCache.value;
 }
 
-/** The custom type strings in use: a Gramps type object { _class: "<X>Type", value: 0, string } is Custom when value is 0. */
+/** The custom type strings in use: a Gramps type object { _class: "<X>Type", value: 0, string } is Custom when value is 0 (every Gramps type class puts Custom at 0; non-custom values are skipped). */
 export async function customTypes(ctx) {
   const view = await storeView(ctx);
   if (view.typesCache && view.typesCache.seq === view.seq) return view.typesCache.value;
