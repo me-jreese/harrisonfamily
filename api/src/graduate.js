@@ -15,7 +15,9 @@
 //   2. copy      CopyObject uploads/comments/<ulid>/<name> -> media/<H>.jpg with ChecksumAlgorithm SHA256. S3 computes the checksum and
 //                returns it, so the Lambda never reads the bytes. Before it, the source is read once: it must be image/jpeg (422
 //                unsupported_photo) and checkLocation() (the privacy guard on the stored bytes) must pass (400 photo_has_location). The
-//                target key is a function of H, so a retry overwrites the same bytes. Skipped when the Media object already exists.
+//                HeadObject ETag goes to the copy as CopySourceIfMatch, so the bytes that passed those checks are the bytes copied: a source
+//                that changed in between is 412 from S3, answered 503 graduate_source_changed with the reservation pending (the retry reads
+//                it again). The target key is a function of H, so a retry overwrites the same bytes. Skipped when the Media object exists.
 //   3. apply     applyBatch(origin "graduation", principal = the admin who reserved, key `graduate:...`): create Media H with a `blob`
 //                descriptor {s3_key, sha256, size, content_type, state} and append MediaRef(H) to the Person. A version conflict re-reads
 //                the person and retries once. Skipped when the Media head already exists (an earlier attempt committed).
@@ -24,6 +26,10 @@
 //   After the commit: `onGraduated` notifies the author (unless the admin is the author), then the marker's `notified` flag is set. A
 //   retry of a `done` marker without the flag sends it, so a failure between the commit and the notice loses nothing. A crash between
 //   the notice and the flag can send it twice; that is the price of never losing one.
+//
+// A comment with a pending photo cannot be deleted (comments.js: 409 graduation_pending), so a retry always finds the comment and finalizes.
+// The route needs the cloud ID policy "mint" (HFY_ID_POLICY): the Media is created with an empty gramps_id that applyBatch fills. Without it the
+// create would fail validation and release the reservation, so the route answers 503 id_policy_not_mint before it reserves anything.
 //
 // Failures (apply): a validation-class SyncError (400, 413, 422 and any other 4xx but a version conflict) marks the reservation `failed`
 // {code, pointer} and answers 400 with the pointer, so the admin can correct the title and try again. A version conflict that survives the
@@ -43,6 +49,7 @@ import { checkLocation, headUpload } from "./upload-guard.js";
 import { mintHandle } from "./records/ops.js";
 import { byGrampsId } from "./records/index.js";
 import { applyBatch, checkStoreGate } from "./sync/apply.js";
+import { policyOf } from "./sync/id-policy.js";
 import { R_MEDIA_PREFIX, finalKey, hexOfB64 } from "./sync/media.js";
 import { getRecord, getRecordItem, getSyncHead } from "./sync/store.js";
 
@@ -138,10 +145,12 @@ const personLabel = (obj) => {
 
 /**
  * Deps: `ddb`, `cmds`, `table`; `store` the applyBatch/record-store context (handler.build's `store`); `s3` + `bucket` (the media bucket: the
- * photo and media/ live in it); `apply` replaces applyBatch (tests); `notifier.onGraduated`; `guard` the R-18 check; `mint` replaces mintHandle;
+ * photo and media/ live in it); `apply` replaces applyBatch (tests); `notifier.onGraduated`; `guard` the R-18 check (required: a graduation
+ * without it would publish an unchecked title, so a missing one is a TypeError at wiring time); `mint` replaces mintHandle;
  * `afterPhase(name)` is awaited after each of PHASES (the fault-injection seam of the tests: production passes none).
  */
 export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harrisonfamily-frontend", apply = applyBatch, notifier, guard, now = () => Date.now(), uid, mint = mintHandle, log = console, via = "ui", afterPhase }) {
+  if (typeof guard !== "function") throw new TypeError("createGraduation: guard (the R-18 contact-information check) is required");
   const ckey = (subject, id) => ({ PK: `THREAD#${subject}`, SK: `C#${id}` });
   const phase = async (name) => { if (afterPhase) await afterPhase(name); };
 
@@ -168,6 +177,17 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
   }
   const withMarker = (c, i, graduated) => ({ ...c, grad_v: (c.grad_v ?? 0) + 1, attachments: c.attachments.map((a, j) => (j === i ? { ...a, graduated } : a)) });
   const markerOf = (c, i) => c.attachments[i].graduated;
+
+  /** The Media is created with an empty gramps_id, which only the "mint" cloud ID policy fills. Anything else fails validation, so refuse before any write. */
+  function idPolicyMustMint() {
+    let mode;
+    try {
+      mode = policyOf(store).mode;
+    } catch (e) {
+      log.error?.("graduate: id policy unreadable", logSafeError(e));
+    }
+    if (mode !== "mint") throw unavailable("id_policy_not_mint", "adding photos to family pages is not set up yet");
+  }
 
   async function resolvePerson(gid) {
     const hits = await byGrampsId(store, "Person", gid);
@@ -233,20 +253,25 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
       throw new HttpError(422, "unsupported_photo", "that photo can't be added to a family page.");
     }
     let size;
+    let etag;
     try {
       const head = await headUpload(bucket, key, { s3 });
       if (head.contentType !== SOURCE_TYPE) throw new HttpError(422, "unsupported_photo", "only a jpeg photo can be added to a family page.");
       size = head.size;
+      etag = head.etag;
       await checkLocation(bucket, key, { s3 }); // 400 photo_has_location | upload_missing, 503 unavailable
     } catch (e) {
       if (e instanceof HttpError && e.status >= 400 && e.status < 500) await release(req, handle, { code: e.code });
       throw e;
     }
+    if (typeof etag !== "string") throw unavailable("graduate_copy_failed", "couldn't add it to the page right now. try again in a minute."); // no ETag, no way to pin the bytes: fail closed
     let out;
     try {
-      out = await s3.send(new CopyObjectCommand({ Bucket: bucket, Key: finalKey(handle, SOURCE_TYPE), CopySource: `${bucket}/${key}`, ChecksumAlgorithm: "SHA256" }));
+      // CopySourceIfMatch pins the copy to the object that was read and checked above.
+      out = await s3.send(new CopyObjectCommand({ Bucket: bucket, Key: finalKey(handle, SOURCE_TYPE), CopySource: `${bucket}/${key}`, CopySourceIfMatch: etag, ChecksumAlgorithm: "SHA256" }));
     } catch (e) {
       log.error?.("graduate: copy failed", logSafeError(e));
+      if (e?.$metadata?.httpStatusCode === 412 || e?.name === "PreconditionFailed") throw unavailable("graduate_source_changed", "that photo changed while it was being added. try again.");
       throw unavailable("graduate_copy_failed", "couldn't add it to the page right now. try again in a minute.");
     }
     const b64 = out?.CopyObjectResult?.ChecksumSHA256;
@@ -337,8 +362,9 @@ export function createGraduation({ ddb, cmds, table, store, s3, bucket = "harris
     async graduate(actor, input) {
       if (actor?.admin !== true) throw new HttpError(403, "not_admin", "only an admin can add a photo to a family page");
       const req = parseRequest(input);
-      guard?.("graduate", "create", [[pointer("title"), req.title], [pointer("description"), req.description]]); // R-18: 422 contact_info, nothing written
+      guard("graduate", "create", [[pointer("title"), req.title], [pointer("description"), req.description]]); // R-18: 422 contact_info, nothing written
       if (!s3) throw unavailable("unavailable", "photos are not configured");
+      idPolicyMustMint();
       checkStoreGate(await getSyncHead(store), "graduation"); // 503 store_not_seeded | sync_paused: no write, no copy
 
       const found = await loadComment(req);

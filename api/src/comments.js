@@ -257,6 +257,9 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
       const who = need();
       const c = await getComment(t, id);
       if (!computeCan(c, who, canOpts).delete) throw new CommentError("forbidden", "cannot delete this comment");
+      // A photo whose graduation is under way (reserved, not finished) keeps its comment: the admin's retry needs it to finalize (audit, credit, notice).
+      // A write between this read and the delete moves grad_v, so commentGuard cancels the delete (409) instead.
+      if (c.attachments?.some((a) => a.graduated?.state === "pending")) throw new HttpError(409, "graduation_pending", "a photo on this comment is being added to a family page. try again in a minute.");
       const cascade = (await reactionRows(t, `R#${commentTarget(id)}#`)).map((i) => ({ PK: i.PK, SK: i.SK }));
       const reason = opts.reason !== undefined && who.roles?.includes("admin") && c.author.id !== who.id ? opts.reason : undefined;
       // Deletes revoke the credit, whoever deletes: the event sits under the comment's author.

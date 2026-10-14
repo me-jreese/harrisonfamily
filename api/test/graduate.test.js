@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { InMemoryNotificationStore } from "@io-kit/notify/server";
-import { cmds, makeApi, signToken, TABLE } from "./world.js";
+import { cmds, etagOf, makeApi, signToken, TABLE } from "./world.js";
 import { SOME_LAT, SOME_LON, jpeg, tiff } from "./photo-fixtures.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { SyncError } from "../src/sync/errors.js";
@@ -13,7 +13,8 @@ import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
-import { PHASES, R_MEDIA_PREFIX, classifySyncError, graduationKey, parseRequest } from "../src/graduate.js";
+import { PHASES, R_MEDIA_PREFIX, classifySyncError, createGraduation, graduationKey, parseRequest } from "../src/graduate.js";
+import { syncMediaDownload } from "../src/sync/pull.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -34,14 +35,14 @@ const JPEG_BYTES = Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
 
 let w, ctl, inbox, author, admin, member;
 
-async function world({ seed = true, seeded = true, admins = [ADMIN] } = {}) {
+async function world({ seed = true, seeded = true, admins = [ADMIN], idPolicy = { mode: "mint" } } = {}) {
   ctl = { fault: null, errors: [], applied: [] };
   inbox = new InMemoryNotificationStore();
   const hooks = createHookRegistry();
   const api = makeApi({
     admins, log: q, inbox, flags: { graduateV1: true, commentPhotosV1: true, inboxV1: true },
     extraDeps: {
-      syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} },
+      syncHooks: hooks, ...(idPolicy ? { idPolicy } : {}), getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} },
       applyBatch: async (ctx, req) => {
         ctl.applied.push(req);
         const e = ctl.errors.shift();
@@ -139,7 +140,35 @@ describe("the route", () => {
     expect(JSON.stringify(r.body)).not.toMatch(/555/);
     expect(r.body.errors[0].pointer).toBe("/title");
     expect(marker(c)).toBeUndefined();
+    const d = await grad(c, { description: "reach me at someone@example.com" });
+    expect(d.status).toBe(422);
+    expect(d.body.errors[0].pointer).toBe("/description");
+    expect(marker(c)).toBeUndefined();
+    expect(w.s3.copies).toEqual([]);
+    expect(mediaHeads()).toHaveLength(0);
+    expect(ctl.applied).toEqual([]);
   });
+
+  it("cannot be wired without the R-18 guard (a missing guard is an error, not a skipped check)", () => {
+    expect(() => createGraduation({ ddb: {}, cmds, table: TABLE, store: {}, s3: {} })).toThrow(TypeError);
+  });
+});
+
+describe("the cloud ID policy", () => {
+  for (const [label, idPolicy] of [["unset", null], ["assign", { mode: "assign" }]]) {
+    it(`${label}: 503 id_policy_not_mint before anything is reserved, copied or applied`, async () => {
+      w = await world({ idPolicy });
+      [author, admin] = await Promise.all([AUTHOR, ADMIN].map((s) => signToken(s)));
+      const c = await photoComment();
+      const r = await grad(c);
+      expect(r.status).toBe(503);
+      expect(r.body.error).toBe("id_policy_not_mint");
+      expect(marker(c)).toBeUndefined();
+      expect(w.s3.copies).toEqual([]);
+      expect(ctl.applied).toEqual([]);
+      expect(mediaHeads()).toHaveLength(0);
+    });
+  }
 });
 
 describe("a graduation", () => {
@@ -251,6 +280,74 @@ describe("a graduation", () => {
     expect(ctl.applied.map((a) => a.principal)).toEqual([ADMIN, ADMIN]);
     expect(mediaHeads()).toHaveLength(1);
     expect(audits(c)[0].principal).toBe(ADMIN);
+  });
+});
+
+describe("a graduation: the copy and the record", () => {
+  it("pins the copy to the object that was checked (CopySourceIfMatch from the HeadObject ETag)", async () => {
+    const c = await photoComment();
+    expect((await grad(c)).status).toBe(201);
+    expect(w.s3.copies[0].CopySourceIfMatch).toBe(etagOf(w.s3.objects.get(c.key)));
+  });
+
+  it("a source that changes between the check and the copy is 503 graduate_source_changed, nothing is applied, and the retry reads it again", async () => {
+    const c = await photoComment();
+    const send = w.s3.send;
+    let swapped = false;
+    w.s3.send = async (cmd) => {
+      const out = await send.call(w.s3, cmd);
+      if (!swapped && cmd.constructor.name === "GetObjectCommand") { // checkLocation has read the bytes: the object is replaced before the copy
+        swapped = true;
+        w.s3.objects.set(c.key, { bytes: Uint8Array.from([0xff, 0xd8, 0xff, 0xfe, 0x00, 0x02, 0xff, 0xd9]), contentType: "image/jpeg" });
+      }
+      return out;
+    };
+    const first = await grad(c);
+    expect(first.status).toBe(503);
+    expect(first.body.error).toBe("graduate_source_changed");
+    expect(marker(c).state).toBe("pending");
+    expect(mediaHeads()).toHaveLength(0);
+    expect(ctl.applied).toEqual([]);
+    const retry = await grad(c);
+    expect(retry.status).toBe(201);
+    expect(mediaHeads()).toHaveLength(1);
+    expect(w.s3.copies[1].CopySourceIfMatch).toBe(etagOf(w.s3.objects.get(c.key)));
+    expect(head("Media", retry.body.media.handle).blob.sha256).toBe(hex(w.s3.objects.get(c.key).bytes));
+  });
+
+  it("a head answer without an ETag cannot pin the copy: 503, nothing copied", async () => {
+    const c = await photoComment();
+    const send = w.s3.send;
+    w.s3.send = async (cmd) => {
+      const out = await send.call(w.s3, cmd);
+      if (cmd.constructor.name === "HeadObjectCommand") delete out.ETag;
+      return out;
+    };
+    const r = await grad(c);
+    expect(r.status).toBe(503);
+    expect(r.body.error).toBe("graduate_copy_failed");
+    expect(w.s3.copies).toEqual([]);
+  });
+
+  it("a failed reservation drops its title; a retry without one falls back to the alt text", async () => {
+    const c = await photoComment({ alt: "a picnic" });
+    ctl.errors.push(new SyncError(400, "validation", "bad", { violations: [{ pointer: "/desc" }] }));
+    expect((await grad(c, { title: "Wrong title" })).status).toBe(400);
+    const r = await grad(c);
+    expect(r.status).toBe(201);
+    expect(JSON.parse(head("Media", r.body.media.handle).obj_json).desc).toBe("a picnic");
+  });
+
+  it("the blob has no md5, and the sync download route still serves it (the desktop computes its own)", async () => {
+    const c = await photoComment();
+    const r = await grad(c);
+    expect(head("Media", r.body.media.handle).blob.md5).toBeUndefined();
+    const store = { ddb: w.ddb, cmds, table: TABLE, mediaBucket: "harrisonfamily-frontend", presignGet: async ({ key }) => `https://example.invalid/${key}` };
+    const d = await syncMediaDownload({ sync: { checkTree() {}, store }, params: { handle: r.body.media.handle } });
+    expect(d.status ?? 200).toBe(200);
+    const body = d.body ?? d;
+    expect(body).toMatchObject({ sha256: hex(JPEG_BYTES), size: JPEG_BYTES.length, content_type: "image/jpeg" });
+    expect(body.md5).toBeUndefined();
   });
 });
 
@@ -383,6 +480,20 @@ describe("SyncError handling", () => {
     const r = await grad(c);
     expect(r.status).toBe(404); // caught before the copy: the person lookup precedes the reservation
     expect(r.body.error).toBe("person_not_found");
+  });
+});
+
+describe("the target person", () => {
+  it("a withdrawn person is 404 person_not_found: nothing reserved, copied or applied (BRD2: a withdrawn record is private)", async () => {
+    const c = await photoComment();
+    const t = Date.parse("2026-10-14T01:00:00Z");
+    await applyBatch({ ddb: w.ddb, cmds, table: TABLE, now: () => t, uid: () => "sw", unsafeNoValidate: true, log: q, txnOpts: { sleep: async () => {} } }, { principal: "svc", origin: "desktop", idempotencyKey: "withdrawn", ops: [{ op: "withdraw", class: "Person", handle: TARGET.handle, base_version: 1, reason: "private" }] });
+    const r = await grad(c);
+    expect(r.status).toBe(404);
+    expect(r.body.error).toBe("person_not_found");
+    expect(marker(c)).toBeUndefined();
+    expect(w.s3.copies).toEqual([]);
+    expect(ctl.applied).toEqual([]);
   });
 });
 
@@ -530,6 +641,44 @@ describe("the comment after a graduation", () => {
     const e = await w.call("PATCH", `/api/comments/${c.cid}`, { token: author, body: { subject: SUBJECT, body: "late edit" } });
     expect(e.status).toBe(409);
     expect(commentRow(c).comment.body).not.toBe("late edit");
+  });
+
+  for (const phase of ["reserve", "copy", "apply"]) {
+    it(`a delete by the author or an admin while the graduation is pending (fault after ${phase}) is 409 graduation_pending; the retry then finalizes once`, async () => {
+      const c = await photoComment();
+      ctl.fault = phase;
+      expect((await grad(c)).status).toBe(500);
+      expect(marker(c).state).toBe("pending");
+      for (const token of [author, admin]) {
+        const del = await w.call("DELETE", `/api/comments/${c.cid}`, { token, query: { subject: SUBJECT } });
+        expect(del.status, JSON.stringify(del.body)).toBe(409);
+        expect(del.body.error).toBe("graduation_pending");
+      }
+      expect(commentRow(c)).toBeTruthy();
+      const retry = await grad(c);
+      expect(retry.status).toBe(201);
+      expect(mediaHeads()).toHaveLength(1);
+      expect(audits(c)).toHaveLength(1);
+      expect(credits()).toHaveLength(1);
+      expect(await notices()).toHaveLength(1);
+      expect((await w.call("DELETE", `/api/comments/${c.cid}`, { token: author, query: { subject: SUBJECT } })).status).toBe(204); // done: deletable
+    });
+  }
+
+  it("a delete that read the comment before the reservation is cancelled by the write guard (409), not applied over it", async () => {
+    const c = await photoComment();
+    const send = w.ddb.send;
+    let reserved = false;
+    w.ddb.send = async (cmd) => {
+      if (!reserved && cmd.constructor.name === "TransactWriteCommand" && cmd.input.TransactItems.some((i) => i.Delete)) {
+        reserved = true;
+        commentRow(c).comment.grad_v = (commentRow(c).comment.grad_v ?? 0) + 1; // a reserve lands between the delete's read and its write
+      }
+      return send.call(w.ddb, cmd);
+    };
+    const del = await w.call("DELETE", `/api/comments/${c.cid}`, { token: author, query: { subject: SUBJECT } });
+    expect(del.status).toBe(409);
+    expect(commentRow(c)).toBeTruthy();
   });
 
   it("deleting a graduated comment leaves the record photo in place", async () => {
