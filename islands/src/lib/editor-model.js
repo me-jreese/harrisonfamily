@@ -9,6 +9,8 @@ export const EDIT_CLASSES = Object.freeze({
   person: "Person", family: "Family", event: "Event", place: "Place", source: "Source", citation: "Citation", repository: "Repository", media: "Media", note: "Note"
 });
 
+import { NAME_FIELDS, nameValues } from "./editor-names.js";
+
 const REF = /^(?:h:[A-Za-z0-9_-]{1,64}|[A-Za-z0-9._-]{1,64})$/;
 
 /** `?cls=person&id=I0001` -> `{ cls: "Person", ref: "I0001" }`; a missing or unknown class defaults to Person only when an id is there; null if nothing editable is named. */
@@ -97,11 +99,15 @@ export function createModeResolver(policy) {
     return { ...r, segs, order, prio: r.own === "never" ? 2 : FIXED.has(r.own) ? 1 : 0, score: segs.reduce((n, s) => n + SCORE[s.t], 0) };
   });
   return {
-    resolve(cls, pointer, viewer = {}) {
+    // `lenient`: a conditional row that refuses (never, desk, derived) is left out. The client cannot judge its condition (it has no record
+    // context), so by default it counts, as the server does with no context; a list row, whose condition is about the value it holds, is
+    // hinted without it and the server refuses the value itself if it must.
+    resolve(cls, pointer, viewer = {}, { lenient = false } = {}) {
       const ptr = pointer === "" ? [] : String(pointer).slice(1).split("/");
       let best = null;
       for (const r of rows) {
         if (r.cls !== cls || !match(r.segs, 0, ptr, 0)) continue;
+        if (lenient && r.when && FIXED.has(r.own)) continue;
         if (!best || r.prio > best.prio || (r.prio === best.prio && (r.score > best.score || (r.score === best.score && r.order > best.order)))) best = r;
       }
       if (!best) return viewer.admin ? "direct" : "proposal";
@@ -123,25 +129,22 @@ export const allBadgeText = () => ["direct", "proposal", "admin", "never"].map((
 
 // ---- the sections -----------------------------------------------------------------------------------------------------
 // The section registry per class. A section with `form` is rendered by one SchemaForm over the listed fields of a schema definition
-// (`from` names the $def; `prefix` is the record pointer the form sits under, so a field's policy pointer is prefix + the form pointer).
-// The rest are frames the later tasks fill (editor-person-sections, editor-other-records). `adminOnly` sections are hidden from members.
-const NAME_FIELDS = [
-  ["first_name", "given names"],
-  ["call", "name you go by"],
-  ["nick", "nickname"],
-  ["title", "title"],
-  ["suffix", "suffix"]
-];
-
+// (`from` names the $def; `prefix` is the record pointer the form sits under, so a field's policy pointer is prefix + the form pointer, or
+// `pointers[field]` where the field does not sit there). A section with `lists` holds list editors (editor-sections.js LIST_ADAPTERS): rows
+// that are added, changed and removed, each row its own small SchemaForm. The rest are frames the later tasks fill (editor-other-records,
+// the links and family sections). `adminOnly` sections are hidden from members.
 export const PERSON_SECTIONS = Object.freeze([
-  { id: "names", title: "names", form: { from: "Name", prefix: "/primary_name", fields: NAME_FIELDS } },
-  { id: "events", title: "life events" },
-  { id: "facts", title: "facts" },
-  { id: "notes", title: "notes" },
-  { id: "photos", title: "photos" },
+  {
+    id: "names", title: "names", lists: ["alt"],
+    form: { from: "Name", prefix: "/primary_name", fields: NAME_FIELDS, names: true, widgets: { first_name: "givenNames", call: "callName" }, pointers: { surname: "/primary_name/surname_list/0/surname" } }
+  },
+  { id: "events", title: "life events", lists: ["events"] },
+  { id: "facts", title: "facts", lists: ["facts"] },
+  { id: "notes", title: "notes", lists: ["notes"] },
+  { id: "photos", title: "photos", lists: ["photos"] },
   { id: "links", title: "links" },
-  { id: "connected", title: "people connected to you" },
-  { id: "sources", title: "sources" },
+  { id: "connected", title: "people connected to you", lists: ["connected"] },
+  { id: "sources", title: "sources", lists: ["sources"] },
   { id: "family", title: "family" },
   { id: "more", title: "more", adminOnly: true }
 ]);
@@ -158,22 +161,33 @@ export function sectionsFor(cls, viewer = {}) {
 export const introFor = (viewer = {}) => (viewer.admin ? COPY.adminIntro : viewer.relation === "own" ? COPY.ownIntro : COPY.otherIntro);
 
 /**
- * The inputSchema of a section's form: the named fields of the schema definition `from`, retitled in the family's words. Returns null when
- * the schema lacks the definition (the section then shows the frame only).
+ * The inputSchema of a section's form: the named fields of the schema definition `from`, retitled in the family's words. The virtual
+ * `surname` field is the Surname definition's own `surname`; `form.widgets` names the host widget of a field. Returns null when the schema
+ * lacks the definition (the section then shows the frame only).
  */
 export function sectionSchema(schema, form) {
   const def = schema && schema.$defs && schema.$defs[form.from];
   if (!def || !def.properties) return null;
   const properties = {};
   for (const [key, title] of form.fields) {
-    if (def.properties[key]) properties[key] = { ...def.properties[key], title };
+    const sn = schema.$defs.Surname && schema.$defs.Surname.properties;
+    const prop = form.names && key === "surname" ? (sn && sn.surname) || { type: "string", maxLength: 100 } : def.properties[key];
+    if (!prop) continue;
+    properties[key] = { ...prop, title, ...(form.widgets && form.widgets[key] ? { "x-io-widget": form.widgets[key] } : {}) };
   }
   if (!Object.keys(properties).length) return null;
   return { type: "object", additionalProperties: false, properties };
 }
 
+/** The record pointer a form field's policy is read at (`pointer` is the form's own, "/first_name"). */
+export function fieldPointer(form, pointer) {
+  const field = String(pointer).split("/")[1];
+  return (form.pointers && form.pointers[field]) || `${form.prefix}${pointer}`;
+}
+
 /** The values for a section form, read from the record at the form's prefix (a string field missing from the record starts empty). */
 export function sectionValues(obj, form) {
+  if (form.names) return nameValues(obj);
   const base = form.prefix.split("/").filter(Boolean).reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), obj);
   const out = {};
   for (const [key] of form.fields) {

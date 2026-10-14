@@ -12,12 +12,12 @@
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "52d2ea83",
-        "css": "718ffc08"
+        "js": "b37a3c48",
+        "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "0a70447e",
-        "css": "ad64e40d"
+        "js": "b5491b18",
+        "css": "6a93fa82"
       },
       "follow": {
         "js": "00d35b3c",

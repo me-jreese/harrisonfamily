@@ -97,6 +97,23 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(entry(page)).toHaveText("edit");
     });
 
+    test("hero: the waiting-for-review chip shows the proposals the bundle lists, beside the entry, and nothing when there are none", async ({ page }) => {
+      await openPerson(page, { session: "I9001", pending: [{ proposalId: "P1", state: "pending", paths: [] }, { proposalId: "P2", state: "needs_changes", paths: [] }, { proposalId: "P3", state: "rejected", paths: [] }] });
+      await expect(entry(page)).toHaveText("edit my info");
+      const chip = page.locator('#person-hero [data-slot="edit"] [data-hfy-pending-chip]');
+      await expect(chip).toHaveText("2 suggested changes waiting for review");
+      expect(await axeViolations(page, { include: "#person-hero" })).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    });
+
+    test("hero: no chip when nothing is waiting, and no bundle is read when editing is off", async ({ page }) => {
+      const state = await openPerson(page, { session: "I9001" });
+      await expect(entry(page)).toBeVisible();
+      await page.waitForTimeout(300);
+      await expect(page.locator("[data-hfy-pending-chip]")).toHaveCount(0);
+      expect(state.bundleGets).toBe(1);
+    });
+
     test("no entry when /api/me says editing is off", async ({ page }) => {
       await openPerson(page, { me: { editing: false } });
       await page.waitForTimeout(400);
@@ -116,7 +133,9 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(badgeOf(page, "nickname")).toHaveText("saves now");
       await expect(badgeOf(page, "title")).toHaveText("saves now");
       const badges = page.locator("[data-hfy-mode]");
-      expect(await badges.count()).toBe(5);
+      // six fields in the names form: given names, last name, call name, nickname, title, suffix (the list sections add theirs when a row opens)
+      expect(await badges.count()).toBe(6);
+      await expect(badgeOf(page, "last name at birth")).toHaveText("goes to review");
       for (const b of await badges.all()) {
         await expect(b.locator("svg[aria-hidden='true']")).toHaveCount(1);
         expect((await b.innerText()).trim().length).toBeGreaterThan(3);
