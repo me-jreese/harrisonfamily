@@ -1,9 +1,11 @@
 // POST /api/changes (HFY-TSK-183, edit-api-changes; editing design 3.3, 6.3, 7.3, 7.4; BRD2 D2-02, D2-30, DL-15, DL-18, review 11.2).
 //
 // One submission, many EditOps. The pipeline, in this order, each step refusing before anything is written:
-//   1. the request: shape, size caps (413 too_large), the Idempotency-Key (a stored receipt replays; the same key with another body is 422)
+//   1. the request: shape (an op carries only the fields its kind reads, typed), size caps (413 too_large), the R-18 guard over each op's
+//      id, temp obj and path (422, before any store read), the Idempotency-Key (a stored receipt replays; the same key with another body is 422)
 //   2. the stored objects the ops address, as the viewer may see them (404), and the engine applied to ALL ops (409 version_conflict on a conflict)
-//   3. the R-18/R-19 guard over the full resulting state, BEFORE the partition (422 contact_info | dob_not_allowed | never_in_cloud)
+//   3. the R-18/R-19 guard over the full resulting state and over the ops as they will be stored (screenOps), BEFORE the partition
+//      (422 contact_info | dob_not_allowed | never_in_cloud)
 //   4. the field-policy classes and the partition into direct and review groups; a group no web path may apply is 403 not_allowed
 //      (a desktop-only reason, url_not_link and url_email included, rides in details.reasons; 422 is for validation only)
 //   5. per part, applied on its own: the stale-base check of the direct groups (409), the Gramps semantics and the Gramps schema (400 validation),
@@ -21,7 +23,8 @@ import { TxnCancelled, TxnTokenMismatch, transact } from "../txn.js";
 import { applyBatch } from "../sync/apply.js";
 import { schemaViolations } from "../sync/schema.js";
 import { batchIdFor, requestTokenFor } from "../sync/store.js";
-import { applyOps, canonicalJson, contentHash, INVALID_REASONS, validateOps } from "./ops.js";
+import { applyOps, canonicalJson, contentHash, HANDLE_SHAPE, INVALID_REASONS, parsePath, parseSegment, validateOps } from "./ops.js";
+import { leaves } from "../shared/edit-guard.mjs";
 import { classifyOps, isRefusal } from "./field-policy.js";
 import { partitionOps, summarizeGroup } from "./edit-plan.js";
 import { checkSemantics, collectRefs } from "./semantics.js";
@@ -43,14 +46,32 @@ const TEMP_RE = /^new:\d+$/;
 const OP_ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const IDEM_KEY_RE = /^[\x21-\x7e]{1,128}$/;
 const OP_FIELDS = new Set(["id", "op", "obj", "cls", "path", "base", "base_hash", "base_version", "sets", "value", "before", "seq"]);
+// The fields each op kind reads (ops.js). A field the engine would ignore is refused, never stored: a proposal and a receipt keep the ops as
+// sent, so an ignored field would be a place to keep text that no guard reads. `cls` names a new object's class; on an op that addresses a
+// new:<n> object it must repeat the class of that object's create (field-policy and the summaries read it there).
+const COMMON_OP_FIELDS = ["id", "op", "obj", "seq"];
+const KIND_FIELDS = Object.freeze({
+  set: new Set([...COMMON_OP_FIELDS, "cls", "path", "base", "base_version", "sets", "value"]),
+  add: new Set([...COMMON_OP_FIELDS, "cls", "path", "value", "before"]),
+  remove: new Set([...COMMON_OP_FIELDS, "cls", "path", "base", "base_hash"]),
+  move: new Set([...COMMON_OP_FIELDS, "cls", "path", "before"]),
+  create: new Set([...COMMON_OP_FIELDS, "cls", "value"]),
+  delete: new Set([...COMMON_OP_FIELDS, "cls", "base", "base_hash"]),
+});
+const CLASSES = new Set(["Person", "Family", "Event", "Place", "Source", "Citation", "Repository", "Media", "Note"]);
+const REDUCED_SETS = new Set(["day", "month", "day2", "month2", "text"]); // ops.js mergeReducedDate
+const HASH64 = /^[0-9a-f]{64}$/;
+const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/; // a Gramps JSON property; the detector can never read one as contact text
 const TOP_FIELDS = new Set(["target", "base_versions", "ops", "note", "route", "dry_run", "idempotency_key"]);
 const MAX_CONTEXT_EVENTS = 100;
 const MAX_LOADED = 3000;
 const SEMANTIC_ROUNDS = 12;
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const arr = (v) => (Array.isArray(v) ? v : []);
 const esc = (s) => String(s).replace(/~/g, "~0").replace(/\//g, "~1");
+const unescSeg = (s) => s.replace(/~1/g, "/").replace(/~0/g, "~");
 const sortedUnique = (xs) => [...new Set(xs)].sort();
 
 /** An HttpError that also carries errors[] (positions and codes, never values), which errorResponse sends beside `details`. */
@@ -66,8 +87,136 @@ function headerOf(headers, name) {
   return hit === undefined ? undefined : headers[hit];
 }
 
+// ---- R-18 over the ops themselves -------------------------------------------------------------------------------------------
+// The guard of step 3 reads what the ops leave. A proposal keeps the ops as sent, the receipt keeps the undo ops built from them and a
+// batch keeps their ids, so what an op carries is screened too: a value that a later op overwrites, or the base of an op that is already
+// applied, reaches no resulting object but would be stored all the same.
+
+const MASK = "|"; // not a word character, a digit, a space or a separator: it neither starts, joins nor hides a number
+/** The property and index segments of a pointer as text, its list keys masked (they hold handles and hashes). Same length as the pointer. */
+const pathText = (pointer) => pointer.split("/").map((raw) => (raw.startsWith("@") ? MASK.repeat(raw.length) : raw)).join("/");
+
+/** The last property a path names: the field its value lands in (a list's name for an element of it). */
+function fieldOf(path) {
+  if (typeof path !== "string") return null;
+  try {
+    const props = parsePath(path).filter((s) => s.t === "prop");
+    return props.length ? props[props.length - 1].name : null;
+  } catch { return null; }
+}
+
+// Fields whose strings are identifiers. One with an identifier's shape is not text (a hex handle can begin with seven digits); anything
+// else there is text, because in an op nothing binds it to a record yet.
+const HANDLE_LIST_KEYS = new Set(["family_list", "parent_family_list", "note_list", "citation_list", "tag_list"]);
+const isRefKey = (k) => k === "ref" || k === "handle" || k === "place" || HANDLE_LIST_KEYS.has(k) || (typeof k === "string" && k.endsWith("_handle"));
+const COORDINATE = /^[+-]?\d{1,3}(?:\.\d+)?$/;
+const ID_SHAPES = { checksum: /^[0-9a-f]{32,64}$/i, lat: COORDINATE, long: COORDINATE };
+const idShaped = (k, s) => (ID_SHAPES[k] ? ID_SHAPES[k].test(s) : isRefKey(k) && HANDLE_SHAPE.test(s));
+
+/** [pointer, text] for every string of an op's value or base: the object guard's text leaves, and the identifier fields unless shaped as one. */
+function valueTexts(value, base = "", key = null, out = []) {
+  if (typeof value === "string" && idShaped(key, value)) return out;
+  if (Array.isArray(value)) value.forEach((v, i) => valueTexts(v, `${base}/${i}`, key, out));
+  else if (isObj(value)) for (const [k, v] of Object.entries(value)) valueTexts(v, `${base}/${esc(k)}`, k, out);
+  else leaves(value, base, out, undefined, key); // a string, or a number under a text key (a phone number sent as a JSON number)
+  return out;
+}
+
+/** The strings a key segment names that no state may bind: an `@=` item or an `@ref=` ref unless handle-shaped, an occurrence, an index. */
+function keyStrings(raw) {
+  const s = unescSeg(raw);
+  if (s.startsWith("@=")) return HANDLE_SHAPE.test(s.slice(2)) ? [] : [s.slice(2)];
+  if (s.startsWith("@ref=")) {
+    const m = /^@ref=(.+?)(?:#(\d+))?(?::[0-9a-f]{12})?$/.exec(s);
+    return m ? [...(HANDLE_SHAPE.test(m[1]) ? [] : [m[1]]), ...(m[2] ? [m[2]] : [])] : [];
+  }
+  return /^\d+$/.test(s) ? [s] : [];
+}
+
+/**
+ * Step 1, before any store read: each op's id, a new:<n> obj, and the property and index segments of its path and before (a set with
+ * `base: null` creates the property its path names). A finding names the op by its position only, never by the id it refuses.
+ */
+function screenOpText(guard, ops) {
+  const errors = [];
+  ops.forEach((o, i) => {
+    const scan = (sub, text) => {
+      for (const e of guard.checkTexts([{ obj: "ops", path: "", text }])) errors.push({ ...e, opId: null, obj: null, path: sub, pointer: `/ops/${i}${sub}` });
+    };
+    scan("/id", o.id);
+    if (TEMP_RE.test(o.obj)) scan("/obj", o.obj);
+    if (typeof o.path === "string") scan("/path", pathText(o.path));
+    if (typeof o.before === "string") scan("/before", pathText(o.before));
+  });
+  guard.assertClean(errors, { surface: "changes", op: "ops" });
+}
+
+/**
+ * Step 3, over the all-ops run (`results`, a status per op id):
+ *   - a clean op: its value. Its base, its keys and its before matched the state it applied to, which holds only the stored objects and
+ *     the values of the clean ops ahead of it (read here), so they are not read again: a member may still clear an old phone number.
+ *   - a no-op matched nothing it carries: its base, its before and the strings its path keys name are read instead.
+ * The undo ops are built from the stored objects and the clean ops' values, so they need no read of their own, and neither do a part's
+ * own runs: an op that is clean in a part but a no-op here equals what an earlier op here left.
+ */
+function screenOps(guard, ops, results) {
+  const noop = new Set(results.filter((r) => r.status === "noop").map((r) => r.id));
+  const errors = [];
+  ops.forEach((o, i) => {
+    const scan = (sub, text, exact = true) => {
+      for (const e of guard.checkTexts([{ obj: o.obj, path: "", text }], { opId: o.id })) errors.push({ ...e, path: sub, pointer: `/ops/${i}${sub}`, ...(exact ? {} : { span: null }) });
+    };
+    const field = fieldOf(o.path);
+    if (!noop.has(o.id)) {
+      if (hasOwn(o, "value")) for (const [p, t] of valueTexts(o.value, "", field)) scan(`/value${p}`, t);
+      return;
+    }
+    if (hasOwn(o, "base")) for (const [p, t] of valueTexts(o.base, "", field)) scan(`/base${p}`, t);
+    if (typeof o.path === "string") for (const t of o.path.split("/").flatMap(keyStrings)) scan("/path", t, false);
+    if (typeof o.before === "string") for (const t of keyStrings(o.before.replace(/^\//, ""))) scan("/before", t, false);
+  });
+  guard.assertClean(errors, { surface: "changes", op: "ops" });
+}
+
+/** Every object key in `v` is a Gramps property name (a value's keys are stored with it, and no guard reads a key). */
+const fieldNamesOnly = (v) => (Array.isArray(v) ? v.every(fieldNamesOnly) : isObj(v) ? Object.entries(v).every(([k, x]) => FIELD_NAME.test(k) && fieldNamesOnly(x)) : true);
+
+/** The typed fields of one op (its kind's field list is checked by the caller). `createdCls` maps each new:<n> to the cls of its create. */
+function shapeOp(raw, at, bad, createdCls) {
+  const has = (k) => hasOwn(raw, k);
+  if (has("seq") && typeof raw.seq !== "boolean") bad(`${at}/seq`, "seq is true or false");
+  if (has("cls")) {
+    if (!CLASSES.has(raw.cls)) bad(`${at}/cls`, "cls is a record class");
+    else if (!(typeof raw.obj === "string" && TEMP_RE.test(raw.obj))) bad(`${at}/cls`, "cls names the class of a new:<n> object");
+    else if (raw.op !== "create" && createdCls.get(raw.obj) !== raw.cls) bad(`${at}/cls`, "cls is the class the object is created with");
+  }
+  if (has("base_version")) {
+    if (!(Number.isInteger(raw.base_version) && raw.base_version >= 1)) bad(`${at}/base_version`, "base_version is a version number");
+    if (has("base")) bad(`${at}/base`, "a set carries base, or base_version for a reduced date, not both");
+  }
+  if (has("sets") && !(has("base_version") && Array.isArray(raw.sets) && raw.sets.every((s) => REDUCED_SETS.has(s)) && new Set(raw.sets).size === raw.sets.length)) {
+    bad(`${at}/sets`, "sets lists day, month, day2, month2 or text, beside base_version");
+  }
+  if (has("base_hash")) {
+    if (!(typeof raw.base_hash === "string" && HASH64.test(raw.base_hash))) bad(`${at}/base_hash`, "base_hash is 64 lowercase hex digits");
+    if (has("base")) bad(`${at}/base`, `a ${raw.op} carries base or base_hash, not both`);
+  }
+  if (raw.op === "delete" && has("base") && !(typeof raw.base === "string" && HASH64.test(raw.base))) bad(`${at}/base`, "a delete's base is the object's content hash");
+  if (typeof raw.path === "string") {
+    let segs = null;
+    try { segs = parsePath(raw.path); } catch { /* validateOps names a malformed path */ }
+    if (segs?.some((s) => s.t === "prop" && !FIELD_NAME.test(s.name))) bad(`${at}/path`, "a path names Gramps fields and list keys");
+  }
+  if (has("before") && raw.before !== null) {
+    let seg = null;
+    try { if (typeof raw.before === "string") seg = parseSegment(unescSeg(raw.before[0] === "/" ? raw.before.slice(1) : raw.before)); } catch { /* refused below */ }
+    if (!seg || seg.t === "prop") bad(`${at}/before`, "before is the key of a list element");
+  }
+  for (const k of ["value", "base"]) if (has(k) && !fieldNamesOnly(raw[k])) bad(`${at}/${k}`, "a value holds Gramps fields only");
+}
+
 // ---- step 1: the request ----------------------------------------------------------------------------------------------------
-function parseRequest(c) {
+function parseRequest(c, guard) {
   const b = c.body;
   const errors = [];
   const bad = (pointer, detail) => errors.push({ pointer, detail });
@@ -84,10 +233,13 @@ function parseRequest(c) {
   if (Buffer.byteLength(JSON.stringify([b.ops, b.note ?? ""])) > MAX_PROPOSAL_BYTES) throw problem(413, "too_large", "the submission is too large");
 
   const seen = new Set();
+  const createdCls = new Map();
+  for (const raw of b.ops) if (isObj(raw) && raw.op === "create" && typeof raw.obj === "string" && !createdCls.has(raw.obj)) createdCls.set(raw.obj, raw.cls);
   const ops = b.ops.map((raw, i) => {
     const at = `/ops/${i}`;
     if (!isObj(raw)) { bad(at, "an op is an object"); return raw; }
-    for (const k of Object.keys(raw)) if (!OP_FIELDS.has(k)) bad(`${at}/${esc(k)}`, "not a field of an op");
+    const fields = KIND_FIELDS[raw.op];
+    for (const k of Object.keys(raw)) if (!(fields ?? OP_FIELDS).has(k)) bad(`${at}/${esc(k)}`, fields ? `not a field of a ${raw.op} op` : "not a field of an op");
     const id = raw.id === undefined ? `o${i + 1}` : raw.id;
     if (typeof id !== "string" || !OP_ID_RE.test(id)) bad(`${at}/id`, "an op id is 1 to 64 letters, digits or . _ : -");
     else if (seen.has(id)) bad(`${at}/id`, "an op id repeats an earlier op");
@@ -95,9 +247,11 @@ function parseRequest(c) {
     if (typeof raw.obj === "string" && !TEMP_RE.test(raw.obj) && !KEY_RE.test(raw.obj)) bad(`${at}/obj`, "obj is Class:handle or new:<n>");
     if (raw.op === "create" && !(typeof raw.obj === "string" && TEMP_RE.test(raw.obj))) bad(`${at}/obj`, "an object is created as new:<n>");
     if (typeof raw.obj === "string" && TEMP_RE.test(raw.obj) && raw.op !== "create" && !ops_creates(b.ops, raw.obj)) bad(`${at}/obj`, `${raw.obj} is never created`);
+    shapeOp(raw, at, bad, createdCls);
     return { ...raw, id };
   });
   if (errors.length) throw invalid(errors);
+  screenOpText(guard, ops);
   const problems = validateOps(ops);
   if (problems.length) throw invalid(problems.map((p) => ({ opId: p.id, pointer: `/ops/${ops.findIndex((o, i) => (o.id ?? `#${i}`) === p.id)}`, code: p.reason, detail: p.message })));
   const news = ops.filter((o) => o.op === "create");
@@ -303,7 +457,7 @@ async function resultOf(ctx, actor, plan, ops, label, nowMs) {
 }
 
 // ---- the plan (steps 2 to 5) -----------------------------------------------------------------------------------------------------
-async function planChanges(c, req, nowMs) {
+async function planChanges(c, req, nowMs, guard) {
   const { actor } = c;
   const ctx = c.store;
   const stored = await loadTouched(ctx, actor, req);
@@ -316,7 +470,7 @@ async function planChanges(c, req, nowMs) {
   const seen = new Map();
   const plan = {
     objects, versions, cache, refCache: new Map(),
-    guard: createRecordGuard({ dob: ctx.guardDob === true, log: ctx.log }),
+    guard,
     contextList: () => [...context.values()].map((h) => h.obj).concat(Object.values(pick(objects, [...stored.keys()]))),
     currentVersions: () => ({ ...versions }),
     /** The stored version of a key: a touched object, or a derived person loaded for the semantics. */
@@ -353,6 +507,7 @@ async function planChanges(c, req, nowMs) {
   }
   if (req.note) plan.guard.assertValue(req.note, "proposal.note", { surface: "changes", op: "note" });
   plan.guard.assertObjects(pick(all.objects, [...allChanges.created, ...allChanges.updated]), { surface: "changes", op: "submit", context: plan.contextList(), opIdFor: (k) => allOpId.get(k) ?? null });
+  screenOps(plan.guard, req.ops, all.results);
 
   // 4. Classes and the partition.
   const classes = await classifyOps(req.ops, { actor, view: relationView(ctx), objects, customTypes: await customTypes(ctx), log: ctx.log });
@@ -542,7 +697,8 @@ async function notifySubmitted(c, proposal, stored) {
 // ---- the route -------------------------------------------------------------------------------------------------------------------
 /** POST /api/changes */
 export async function changesPost(c) {
-  const req = parseRequest(c);
+  const guard = createRecordGuard({ dob: c.store.guardDob === true, log: c.store.log });
+  const req = parseRequest(c, guard);
   const ctx = c.store;
   const nowMs = ctx.now();
   const requestHash = requestHashOf(req);
@@ -550,7 +706,7 @@ export async function changesPost(c) {
     const item = await readIdem(ctx, c.actor.id, req.key);
     if (item) return replayOf(item, requestHash);
   }
-  const planned = await planChanges(c, req, nowMs);
+  const planned = await planChanges(c, req, nowMs, guard);
   if (req.dry_run) return { status: 200, body: { plan: planned.plan, warnings: planned.warnings, errors: [] } };
   return commit(c, req, planned, nowMs);
 }

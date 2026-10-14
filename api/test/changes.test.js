@@ -507,6 +507,21 @@ describe("the guard runs on the resulting state before any PROP# write (AC4)", (
     expect(JSON.stringify([a.body, b.body])).not.toContain(phone);
     expect(w.rows("PROP#")).toEqual([]);
   });
+  it("a hyphenated phone number as an op id is 422 contact_info on both paths, and the id is not echoed", async () => {
+    const w = await world();
+    const phone = "212-555-0143";
+    const review = await w.post(ME, { target: key(w.other), base_versions: versions(w, [w.other]), ops: [set(w.other, "/primary_name/first_name", "Alder", "Aldwin", phone)] }, { idem: "pid-1" });
+    const direct = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [set(w.me, "/primary_name/nick", "", "Ally", phone)] }, { idem: "pid-2" });
+    for (const r of [review, direct]) {
+      expect(err(r)).toEqual({ status: 422, error: "contact_info" });
+      expect(r.body.errors).toEqual([{ opId: null, obj: null, path: "/id", pointer: "/ops/0/id", code: "contact_info", kind: "phone", span: [0, 12] }]);
+      expect(JSON.stringify(r.body)).not.toContain(phone);
+    }
+    expect(w.txns).toEqual([]);
+    expect(w.rows("PROP#")).toEqual([]);
+    expect(w.rows("IDEM#")).toEqual([]);
+    expect(JSON.stringify(w.ddb.all())).not.toContain(phone); // no SYNC#BATCH# item either
+  });
   it("an impossible date is 400 validation (the Gramps semantics), before any write", async () => {
     const ev = event(7, 21, [0, 0, 1950, false]);
     const w = await world({ seedExtra: [ev] });
@@ -514,6 +529,130 @@ describe("the guard runs on the resulting state before any PROP# write (AC4)", (
     expect(err(r)).toEqual({ status: 400, error: "validation" });
     expect(r.body.errors[0].code).toBe("day_out_of_range");
     expect(w.txns).toEqual([]);
+  });
+});
+
+describe("R-18 over the ops as they are stored: a proposal keeps the ops, a receipt the undo ops, a batch the op ids", () => {
+  const PHONE = "212-555-0143";
+  const nothingStored = (w, ...rs) => {
+    for (const r of rs) {
+      expect(JSON.stringify(r.body)).not.toContain(PHONE);
+      expect(JSON.stringify(r.body)).not.toContain("2125550143");
+    }
+    expect(JSON.stringify(w.ddb.all())).not.toContain(PHONE);
+    expect(JSON.stringify(w.ddb.all())).not.toContain("2125550143");
+    expect(w.txns).toEqual([]);
+  };
+  const refused = (r, pointer, code = "contact_info") => {
+    expect(err(r)).toEqual({ status: 422, error: code });
+    expect(r.body.errors.map((e) => e.pointer)).toContain(pointer);
+  };
+
+  it("a value that a later op overwrites is 422: on the review path (it would sit in the proposal's ops) and the direct path (in the undo)", async () => {
+    const w = await world();
+    const review = await w.post(ME, { target: key(w.other), base_versions: versions(w, [w.other]), ops: [
+      set(w.other, "/primary_name/first_name", "Alder", PHONE, "a"),
+      { ...set(w.other, "/primary_name/first_name", PHONE, "Aldwin", "b"), seq: true },
+    ] }, { idem: "iv-1" });
+    refused(review, "/ops/0/value");
+    expect(review.body.errors[0]).toMatchObject({ opId: "a", obj: key(w.other), path: "/value", kind: "phone", span: [0, 12] });
+    const direct = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [
+      set(w.me, "/primary_name/nick", "", PHONE, "a"),
+      { ...set(w.me, "/primary_name/nick", PHONE, "Ally", "b"), seq: true },
+    ] }, { idem: "iv-2" });
+    refused(direct, "/ops/0/value");
+    // the same number as a JSON number under a text field, and as the ref of an EventRef that a later op removes again
+    const number = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [
+      set(w.me, "/primary_name/nick", "", 2125550143, "a"),
+      { ...set(w.me, "/primary_name/nick", 2125550143, "Ally", "b"), seq: true },
+    ] }, { idem: "iv-3" });
+    refused(number, "/ops/0/value");
+    const ref = { _class: "EventRef", ref: PHONE, role: typ("EventRoleType", 1), private: false };
+    const viaRef = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [
+      { id: "a", op: "add", obj: key(w.me), path: "/event_ref_list", value: ref },
+      { id: "b", op: "remove", obj: key(w.me), path: `/event_ref_list/@ref=${PHONE}`, base: ref, seq: true },
+    ] }, { idem: "iv-4" });
+    refused(viaRef, "/ops/0/value/ref");
+    nothingStored(w, review, direct, number, viaRef);
+  });
+
+  it("what a no-op carries is read: a set's base, a remove's key and base, an add's before", async () => {
+    const w = await world();
+    const setBase = await w.post(ME, { target: key(w.other), base_versions: versions(w, [w.other]), ops: [set(w.other, "/primary_name/first_name", `call ${PHONE}`, "Alder")] }, { idem: "nb-1" });
+    refused(setBase, "/ops/0/base");
+    const removeKey = await w.post(ME, { target: key(w.other), base_versions: versions(w, [w.other]), ops: [{ id: "r", op: "remove", obj: key(w.other), path: `/note_list/@=call ${PHONE}`, base: `call ${PHONE}` }] }, { idem: "nb-2" });
+    refused(removeKey, "/ops/0/path");
+    refused(removeKey, "/ops/0/base");
+    expect(removeKey.body.errors.find((e) => e.pointer === "/ops/0/path").span).toBeNull();
+    const addBefore = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [{ id: "n", op: "add", obj: key(w.me), path: "/note_list", value: w.n1.handle, before: `@=${PHONE}` }] }, { idem: "nb-3" });
+    refused(addBefore, "/ops/0/before");
+    nothingStored(w, setBase, removeKey, addBefore);
+  });
+
+  it("a temp id, a property a set would create, or a before index that reads as a phone number is 422 before the store is read", async () => {
+    const w = await world();
+    const value = { _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: "x", tags: [] }, format: 0, type: typ("NoteType", 1) };
+    const temp = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [
+      { id: "mk", op: "create", obj: "new:2125550143", cls: "Note", value },
+      { id: "ln", op: "add", obj: key(w.me), path: "/note_list", value: "new:2125550143" },
+    ] }, { idem: "st-1" });
+    refused(temp, "/ops/0/obj");
+    const prop = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [
+      { id: "a", op: "set", obj: key(w.me), path: "/primary_name/2125550143", base: null, value: "x" },
+      { id: "b", op: "remove", obj: key(w.me), path: "/primary_name/2125550143", base: "x", seq: true },
+    ] }, { idem: "st-2" });
+    refused(prop, "/ops/0/path");
+    const before = await w.post(ME, { base_versions: versions(w, [w.me]), ops: [{ id: "f", op: "add", obj: key(w.me), path: "/note_list", value: w.n2.handle, before: "2125550143" }] }, { idem: "st-3" });
+    refused(before, "/ops/0/before");
+    for (const r of [temp, prop, before]) expect(r.body.errors.every((e) => e.opId === null && e.obj === null)).toBe(true);
+    nothingStored(w, temp, prop, before);
+  });
+
+  it("a field the op kind ignores, or a field of the wrong type, is 400 validation and never stored", async () => {
+    const w = await world();
+    const nick = set(w.me, "/primary_name/nick", "", "Ally", "a");
+    const cases = {
+      "sets without base_version": [{ ...nick, sets: [`call ${PHONE}`] }, "/ops/0/sets"],
+      "sets with a word outside the five": [{ ...nick, base: undefined, base_version: 1, sets: [`call ${PHONE}`] }, "/ops/0/sets"],
+      "cls on a stored record": [{ ...nick, cls: `call ${PHONE}` }, "/ops/0/cls"],
+      "cls that is not the class of the create": [null, "/ops/1/cls"],
+      "base_hash on a set": [{ ...nick, base_hash: `call ${PHONE}` }, "/ops/0/base_hash"],
+      "before on a set": [{ ...nick, before: `@=${PHONE}` }, "/ops/0/before"],
+      "value on a remove": [{ id: "r", op: "remove", obj: key(w.me), path: `/note_list/@=${w.n1.handle}`, base: w.n1.handle, value: PHONE }, "/ops/0/value"],
+      "base and base_hash on a remove": [{ id: "r", op: "remove", obj: key(w.me), path: `/note_list/@=${w.n1.handle}`, base: PHONE, base_hash: "0".repeat(64) }, "/ops/0/base"],
+      "base and base_version on a set": [{ ...nick, base_version: 1 }, "/ops/0/base"],
+      "a base_version that is not a version": [{ ...nick, base: undefined, base_version: PHONE }, "/ops/0/base_version"],
+      "a seq that is not a boolean": [{ ...nick, seq: PHONE }, "/ops/0/seq"],
+      "a path property that is not a Gramps field": [set(w.me, `/primary_name/call ${PHONE}`, null, "x", "a"), "/ops/0/path"],
+      "a value key that is not a Gramps field": [set(w.me, "/primary_name", w.me.primary_name, { ...w.me.primary_name, [`call ${PHONE}`]: "x" }, "a"), "/ops/0/value"],
+      "a before that is not a key": [{ id: "f", op: "add", obj: key(w.me), path: "/note_list", value: w.n2.handle, before: `call ${PHONE}` }, "/ops/0/before"],
+    };
+    const note = { _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: "x", tags: [] }, format: 0, type: typ("NoteType", 1) };
+    let n = 0;
+    for (const [name, [op, pointer]] of Object.entries(cases)) {
+      const ops = op ? [JSON.parse(JSON.stringify(op))] : [{ id: "mk", op: "create", obj: "new:1", cls: "Note", value: note }, { id: "ed", op: "set", obj: "new:1", cls: "Event", path: "/format", base: 0, value: 1 }];
+      const r = await w.post(ME, { base_versions: versions(w, [w.me]), ops }, { idem: `if-${++n}` });
+      expect(err(r), name).toEqual({ status: 400, error: "validation" });
+      expect(r.body.errors.map((e) => e.pointer), name).toContain(pointer);
+      nothingStored(w, r);
+    }
+  });
+
+  it("clearing a stored phone number is allowed: a clean op's base is the stored value, not new text", async () => {
+    const w = await world();
+    await w.bump({ ...w.me, primary_name: { ...w.me.primary_name, nick: PHONE } }, 1);
+    w.txns.length = 0;
+    const r = await w.post(ME, { base_versions: { [key(w.me)]: 2 }, ops: [set(w.me, "/primary_name/nick", PHONE, "")] }, { idem: "cl-1" });
+    expect(r.status).toBe(201);
+    expect(r.body.applied.versions).toEqual({ [key(w.me)]: 3 });
+  });
+
+  it("a reduced Date set (base_version with sets) passes the shape checks", async () => {
+    const ev = event(8, 13, [0, 0, 1950, false]);
+    const w = await world({ seedExtra: [ev] });
+    const r = await w.post(ADMIN, { base_versions: { [key(ev)]: 1 }, dry_run: true, ops: [{ id: "d", op: "set", obj: key(ev), path: "/date", base_version: 1, sets: ["day", "month"], value: date([14, 3, 1950, false]) }] });
+    expect(r.status).toBe(200);
+    expect(r.body.plan.direct).toHaveLength(1);
   });
 });
 
