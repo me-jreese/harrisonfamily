@@ -140,9 +140,9 @@ const initialOf = (label) => (String(label || "").trim().match(/\p{L}|\p{N}/u)?.
 
 /**
  * One feed row, DS Posts anatomy: avatar 32 · name · time, the body, an optional photo, then ONE 44px footer row (comments, delete).
- * Kit gap (@io-kit/content PostCard, 0.1.1 through 0.3.1; record for the kit backlog): its Meta renders only the name and the time (no avatar slot)
- * and it has no footer slot, so its actions row cannot hold the comments link. HFY: the avatar is drawn beside the kit's meta row
- * (posts.css), and the row renders its own footer (the kit's delete is not wired, so its actions row stays empty and hidden).
+ * Kit gap (@io-kit/content PostCard, 0.1.1 through 0.3.1; record for the kit backlog): its Meta renders only the name and the time
+ * (no avatar slot) and it has no footer slot, so its actions row cannot hold the comments link. HFY: the avatar is drawn beside the kit's
+ * meta row (posts.css), and the row renders its own footer (the kit's delete is not wired, so its actions row stays empty and hidden).
  */
 export function PostRow({ post, link, remove }) {
   const [asking, setAsking] = useState(false);
