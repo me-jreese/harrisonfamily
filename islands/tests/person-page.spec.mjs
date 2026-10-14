@@ -15,9 +15,9 @@ const photo = (name) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="gray"/></svg>`;
 };
 
-async function stub(page, { shell = true, personV2 = false, hold = null, status = 200, body = PERSON } = {}) {
+async function stub(page, { shell = true, personV2 = false, familyViz = false, hold = null, status = 200, body = PERSON } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
-  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false } }));
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, familyViz } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9002", grampsId: "I9002", label: "Sam Example" } }));
   await page.route("**/api/comments**", (r) => r.fulfill({ json: { thread: { id: "person:I9001", topic: "comments", comments: [], reactions: {} } } }));
   await page.route("**/api/**", (r) => r.fallback());
@@ -385,4 +385,22 @@ test("error: one banner line in the voice, no technical detail", async ({ page }
   await expect(err).toHaveClass(/alert-danger/);
   expect(await err.evaluate((el) => ({ color: getComputedStyle(el).color, bg: getComputedStyle(el).backgroundColor }))).toEqual({ color: "rgb(255, 138, 128)", bg: "rgb(33, 30, 27)" });
   await expect(page.locator("#person-loading")).toBeHidden();
+});
+
+// HFY-TSK-201: the tree-link slot (person-page-mount-points). The link is the island's, so personV2 is on; familyViz decides.
+test("tree-link slot: 'see in the family tree' links to /tree/?focus=<id> with familyViz on", async ({ page }) => {
+  await openPerson(page, { personV2: true, familyViz: true });
+  const link = page.locator('[data-slot="tree-link"] a[data-tree-link]');
+  await expect(link).toHaveText("see in the family tree");
+  await expect(link).toHaveAttribute("href", "/tree/?focus=I9001");
+  await expect(page.locator('[data-slot="tree-link"] a')).toHaveCount(1);
+  const box = await link.boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(44);
+});
+
+test("tree-link slot: empty with familyViz off", async ({ page }) => {
+  await openPerson(page, { personV2: true, familyViz: false });
+  await expect(page.locator('[data-slot="tree-link"]')).toHaveCount(1);
+  await expect(page.locator('[data-slot="tree-link"] a')).toHaveCount(0);
+  await expect(page.locator('[data-slot="tree-link"]')).toBeEmpty();
 });

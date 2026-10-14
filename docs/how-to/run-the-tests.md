@@ -130,7 +130,7 @@ To run only the theme lint:
 (cd islands && HFY_LINT_ONLY='src/theme/40-*.css' npm run lint:css)
 ```
 
-It covers `islands/src/**/*.css` and the inline styles of the four repo-owned pages, `posts/index.html`, `me/index.html`, `me/notifications/index.html` and `offline.html`. It fails on a literal colour, length or font family, and on a `var()` read of a property that is not `--io-*` or `--bs-*`. Every linted file must also parse without esbuild warnings. `HFY_LINT_ONLY` takes globs relative to `islands/`, several separated by spaces. [Theme and asset build](../reference/theme-and-asset-build.md) describes the lint, and [Change the theme or brand fonts](change-the-theme-or-brand-fonts.md) shows how to use a token instead of a literal.
+It covers `islands/src/**/*.css` and the inline styles of the five repo-owned pages, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `tree/index.html` and `offline.html`. It fails on a literal colour, length or font family, and on a `var()` read of a property that is not `--io-*` or `--bs-*`. Every linted file must also parse without esbuild warnings. `HFY_LINT_ONLY` takes globs relative to `islands/`, several separated by spaces. [Theme and asset build](../reference/theme-and-asset-build.md) describes the lint, and [Change the theme or brand fonts](change-the-theme-or-brand-fonts.md) shows how to use a token instead of a literal.
 
 ### 4. Run the island browser tests (local)
 

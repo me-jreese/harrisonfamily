@@ -1,0 +1,311 @@
+{
+ "schemaVersion": 1,
+ "minor": 0,
+ "generatedAt": "2026-01-01T00:00:00Z",
+ "counts": {
+  "people": 11
+ },
+ "people": [
+  {
+   "id": "I9001",
+   "name": "Gus Example",
+   "given": "Gus",
+   "surname": "Example",
+   "sex": "m",
+   "living": false,
+   "birthYear": 1900,
+   "deathYear": 1970,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9002",
+   "name": "Hana Sample",
+   "given": "Hana",
+   "surname": "Sample",
+   "sex": "f",
+   "living": false,
+   "birthYear": 1902,
+   "deathYear": 1980,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9003",
+   "name": "Ada Example",
+   "given": "Ada",
+   "surname": "Example",
+   "sex": "f",
+   "living": false,
+   "birthYear": 1925,
+   "deathYear": 1999,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9004",
+   "name": "Bram Example",
+   "given": "Bram",
+   "surname": "Example",
+   "sex": "m",
+   "living": false,
+   "birthYear": 1928,
+   "deathYear": null,
+   "yearApprox": true,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9005",
+   "name": "Cal Other",
+   "given": "Cal",
+   "surname": "Other",
+   "sex": "m",
+   "living": false,
+   "birthYear": 1924,
+   "deathYear": 1990,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9006",
+   "name": "Fay Third",
+   "given": "Fay",
+   "surname": "Third",
+   "sex": "f",
+   "living": false,
+   "birthYear": 1930,
+   "deathYear": 2001,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9007",
+   "name": "Dina Other",
+   "given": "Dina",
+   "surname": "Other",
+   "sex": "f",
+   "living": true,
+   "birthYear": 1950,
+   "deathYear": null,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 2,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9008",
+   "name": "Eli Other",
+   "given": "Eli",
+   "surname": "Other",
+   "sex": "m",
+   "living": true,
+   "birthYear": 1953,
+   "deathYear": null,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 2,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9009",
+   "name": "Gil Example",
+   "given": "Gil",
+   "surname": "Example",
+   "sex": "m",
+   "living": true,
+   "birthYear": 1955,
+   "deathYear": null,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 2,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9010",
+   "name": "Hal Example",
+   "given": "Hal",
+   "surname": "Example",
+   "sex": "m",
+   "living": true,
+   "birthYear": 1948,
+   "deathYear": null,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 2,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9011",
+   "name": "Zed Lone",
+   "given": "Zed",
+   "surname": "Lone",
+   "sex": "u",
+   "living": true,
+   "birthYear": null,
+   "deathYear": null,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": null,
+   "component": 1,
+   "face": null
+  }
+ ],
+ "unions": [
+  {
+   "id": "F9001",
+   "type": "married",
+   "partners": [
+    "I9001",
+    "I9002"
+   ],
+   "children": [
+    {
+     "id": "I9003",
+     "rel": {
+      "I9001": "birth",
+      "I9002": "birth"
+     }
+    },
+    {
+     "id": "I9004",
+     "rel": {
+      "I9001": "birth",
+      "I9002": "birth"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9002",
+   "type": "married",
+   "partners": [
+    "I9003",
+    "I9005"
+   ],
+   "children": [
+    {
+     "id": "I9007",
+     "rel": {
+      "I9003": "birth",
+      "I9005": "birth"
+     }
+    },
+    {
+     "id": "I9008",
+     "rel": {
+      "I9003": "birth",
+      "I9005": "adopted"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9003",
+   "type": "married",
+   "partners": [
+    "I9004",
+    "I9006"
+   ],
+   "children": [
+    {
+     "id": "I9009",
+     "rel": {
+      "I9004": "birth",
+      "I9006": "birth"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9004",
+   "type": "unknown",
+   "partners": [
+    "I9003"
+   ],
+   "children": [
+    {
+     "id": "I9010",
+     "rel": {
+      "I9003": "birth"
+     }
+    }
+   ]
+  }
+ ],
+ "edges": [],
+ "places": [],
+ "events": [],
+ "components": [
+  {
+   "id": 0,
+   "size": 10,
+   "roots": [
+    "I9001",
+    "I9002"
+   ]
+  },
+  {
+   "id": 1,
+   "size": 1,
+   "roots": [
+    "I9011"
+   ]
+  }
+ ],
+ "generations": [
+  {
+   "component": 0,
+   "levels": [
+    [
+     "I9001",
+     "I9002"
+    ],
+    [
+     "I9003",
+     "I9004",
+     "I9005",
+     "I9006"
+    ],
+    [
+     "I9010",
+     "I9007",
+     "I9008",
+     "I9009"
+    ]
+   ]
+  }
+ ]
+}

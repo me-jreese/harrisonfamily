@@ -33,6 +33,8 @@ export const PAGES = [
   // the settings hub (navMe, HFY-TSK-091)
   "me/index.html",
   "me/notifications/index.html",
+  // the family tree page (familyViz, HFY-TSK-201)
+  "tree/index.html",
   "offline.html"
 ];
 
