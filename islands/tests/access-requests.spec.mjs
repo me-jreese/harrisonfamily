@@ -30,7 +30,7 @@ const request = (id, state, over = {}) => ({
 const summary = (r) => ({ id: r.id, state: r.state, createdAt: r.createdAt, givenNames: r.form.givenNames, maidenSurname: r.form.maidenSurname, birthYear: Number(r.form.birthYear), birthPlace: r.form.birthPlace });
 
 /** The stubbed world. `requests`: the store; `decide(req, s, r)` / `revoke(...)` may answer a POST itself. */
-async function stub(page, { flags = {}, admin = true, session = ADMIN, requests = [request("req1", "pending"), request("req2", "pending", { form: { givenNames: "sam", maidenSurname: "SAMPLE", birthYear: "1990" } }), request("req3", "awaiting_record"), request("req4", "active")], decide = null, revoke = null, badge = 2 } = {}) {
+async function stub(page, { flags = {}, admin = true, session = ADMIN, requests = [request("req1", "pending"), request("req2", "pending", { form: { givenNames: "sam", maidenSurname: "SAMPLE", birthYear: "1990" } }), request("req3", "awaiting_record"), request("req4", "active", { rest: { decision: { grampsId: "I9001" } } })], decide = null, revoke = null, badge = 2 } = {}) {
   const s = { calls: [], posts: [], bundles: [], store: new Map(requests.map((r) => [r.id, r])), meCalls: 0 };
   await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { ...FLAGS, ...flags } }));
@@ -41,6 +41,15 @@ async function stub(page, { flags = {}, admin = true, session = ADMIN, requests 
   await page.route("**/place/index.json", (r) => r.fulfill({ json: PLACES }));
   await page.route(/\/js\/islands\/access-requests\./, (r) => { s.bundles.push(r.request().url()); return r.continue(); });
   await page.route("**/api/me", (r) => { s.meCalls += 1; return r.fulfill(session ? { json: { id: session, label: "Example", admin, can: {}, ...(admin ? { badges: { accessRequests: s.badge ?? badge } } : {}) } } : { status: 401, json: { error: "unauthenticated" } }); });
+  await page.route(/\/api\/allow-grants\/revoke/, async (r) => {
+    const req = r.request();
+    const rec = { method: req.method(), path: new URL(req.url()).pathname, body: JSON.parse(req.postData() || "{}") };
+    s.calls.push(rec);
+    s.posts.push(rec);
+    if (revoke) { const a = await revoke(rec, s); if (a) return r.fulfill(a); }
+    for (const [id, x] of s.store) if (x.decision?.grampsId === rec.body.grampsId && x.state === "active") s.store.set(id, { ...x, state: "revoked" });
+    return r.fulfill({ json: { revoked: [{ email: "t***@example.test" }] } });
+  });
   await page.route(/\/api\/access-requests/, async (r) => {
     const req = r.request();
     const u = new URL(req.url());
@@ -55,11 +64,10 @@ async function stub(page, { flags = {}, admin = true, session = ADMIN, requests 
     const item = s.store.get(parts[2]);
     if (!item) return r.fulfill({ status: 404, json: { error: "not_found" } });
     if (parts.length === 3) return r.fulfill({ json: item });
-    if (parts[3] === "decision" || parts[3] === "revoke") {
+    if (parts[3] === "decision") {
       s.posts.push(rec);
-      const custom = parts[3] === "decision" ? decide : revoke;
-      if (custom) { const a = await custom(rec, s, item); if (a) return r.fulfill(a); }
-      const state = parts[3] === "revoke" ? "revoked" : rec.body.decision === "link" ? "active" : rec.body.decision === "new" ? "awaiting_record" : "declined";
+      if (decide) { const a = await decide(rec, s, item); if (a) return r.fulfill(a); }
+      const state = rec.body.decision === "link" ? "active" : rec.body.decision === "new" ? "awaiting_record" : "declined";
       s.store.set(item.id, { ...item, state, version: item.version + 1 });
       s.badge = Math.max(0, (s.badge ?? badge) - 1);
       return r.fulfill({ json: { state, emailSent: true } });
@@ -235,15 +243,75 @@ for (const [name, viewport] of VIEWPORTS) {
       const s = await open(page, {}, "?tab=done&id=req4");
       await act(page, "remove-open").click();
       await expect(page.locator('[data-hfy-confirm="revoke"]')).toContainText("remove Tessa Example's access?");
+      await expect(page.locator('[data-hfy-confirm="revoke"]')).toContainText("if the owner of the site let them in by hand too, that email may still work.");
       await page.getByRole("button", { name: "keep" }).click();
       await expect(page.locator('[data-hfy-confirm="revoke"]')).toHaveCount(0);
       await act(page, "remove-open").click();
       await expect(act(page, "remove")).toBeDisabled();
       await page.getByLabel("confirmed with this person outside the site").check();
       await act(page, "remove").click();
-      await expect(page.locator("[data-hfy-result]")).toHaveText("done. their access is removed.");
-      expect(s.posts[0].path).toBe("/api/access-requests/req4/revoke");
-      expect(s.posts[0].body).toEqual({ version: 3, confirmedOutside: true });
+      await expect(page.locator("[data-hfy-result]")).toHaveText("done. 1 way in was removed. if the owner of the site let them in by hand too, that email may still work. ask the owner to check.");
+      expect(s.posts[0].path).toBe("/api/allow-grants/revoke");
+      expect(s.posts[0].body).toEqual({ grampsId: "I9001", confirmedOutside: true });
+      expect(s.calls.some((c) => /\/access-requests\/req4\/revoke/.test(c.path))).toBe(false);
+      expect(await axeViolations(page)).toEqual([]);
+    });
+
+    test("done tab: an active request with no linked person offers no remove button and sends nothing", async ({ page }) => {
+      const s = await open(page, { requests: [request("req5", "active", { rest: { decision: {} } })] }, "?tab=done&id=req5");
+      await expect(page.locator("[data-hfy-no-member]")).toBeVisible();
+      await expect(act(page, "remove-open")).toHaveCount(0);
+      expect(s.posts.length).toBe(0);
+    });
+
+    test("done tab: a held second email removes its linked person, and the words say an earlier email may still work", async ({ page }) => {
+      // the detail route's shape: hold is {until, noticed} only; the link put the member on decision.grampsId
+      const s = await open(page, { requests: [request("req6", "active", { rest: { decision: { grampsId: "I9002" }, hold: { until: "2030-01-01T00:00:00Z", noticed: true } } })] }, "?tab=done&id=req6");
+      await act(page, "remove-open").click();
+      await expect(page.locator('[data-hfy-confirm="revoke"]')).toContainText("that email may still work.");
+      await page.getByLabel("confirmed with this person outside the site").check();
+      await act(page, "remove").click();
+      await expect(page.locator("[data-hfy-result]")).toContainText("ask the owner to check.");
+      expect(s.posts[0].body).toEqual({ grampsId: "I9002", confirmedOutside: true });
+    });
+
+    for (const [status, code, text, kind] of [
+      [404, "not_found", "they have no access to remove. it may already be gone.", "plain"],
+      [422, "too_many", "this person has more ways in than can be removed here. ask the owner of the site.", "plain"],
+      [401, "step_up_required", "to do this, sign in again first.", "signin"],
+      [403, "not_admin", "this page is for the people who look after the site.", "plain"],
+    ]) {
+      test(`remove access: a ${status} ${code} answer reads in plain words`, async ({ page }) => {
+        await open(page, { revoke: async () => ({ status, json: { error: code, message: "x" } }) }, "?tab=done&id=req4");
+        await act(page, "remove-open").click();
+        await page.getByLabel("confirmed with this person outside the site").check();
+        await act(page, "remove").click();
+        const problem = page.locator(`[data-hfy-problem="${kind}"]`);
+        await expect(problem).toContainText(text);
+        if (kind === "signin") await expect(problem.locator("a")).toHaveAttribute("href", /^\/auth\/login\?prompt=login&returnTo=/);
+        expect(await axeViolations(page)).toEqual([]);
+      });
+    }
+
+    test("a step-up sign-in keeps the preview edits (sessionStorage), and a finished add clears them", async ({ page }) => {
+      let refuse = true;
+      const s = await open(page, { decide: async () => (refuse ? { status: 401, json: { error: "step_up_required", message: "sign in again" } } : null) }, "?id=req1");
+      await act(page, "new").click();
+      const editor = page.locator("[data-hfy-preview-editor]");
+      await editor.locator('[data-hfy-preview="nick"]').fill("Tessie");
+      await page.getByLabel("confirmed with this person outside the site").check();
+      await act(page, "add-new").click();
+      await expect(page.locator('[data-hfy-problem="signin"]')).toBeVisible();
+      // the sign-in leaves the page and returns to it: a fresh load of the same address
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(editor).toBeVisible();
+      await expect(editor.locator('[data-hfy-preview="nick"]')).toHaveValue("Tessie");
+      refuse = false;
+      await page.getByLabel("confirmed with this person outside the site").check();
+      await act(page, "add-new").click();
+      await expect(page.locator("[data-hfy-result]")).toBeVisible();
+      expect(s.posts.at(-1).body.preview.person.primary_name.nick).toBe("Tessie");
+      expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith("hfy-requests-draft:")))).toEqual([]);
     });
 
     test("the tabs list their own states", async ({ page }) => {
