@@ -4,6 +4,7 @@ import { KitMarkdown } from "@io-kit/md/react";
 import { userContentPolicy } from "@io-kit/comments";
 import { Comments } from "../lib/comments-ui.jsx";
 import { mountAt } from "../lib/mount.jsx";
+import { mountTreeLink } from "../lib/tree-link.js";
 
 // The Notes card stays the legacy person-page.js note markup (.card > .card-body inside .notes-panel), so the legacy theme
 // partials style the island's notes and the no-JS / flag-off notes identically.
@@ -42,3 +43,5 @@ async function init() {
   mountAt((h) => { const social = document.getElementById("hfy-person-social"); if (social && social.parentElement === content) content.insertBefore(h, social); else content.appendChild(h); }, <Comments subject={`person:${id}`} />, "hfy-person-comments");
 }
 init();
+// HFY-TSK-201: the "see in the family tree" link, shown only with familyViz (lib/tree-link.js).
+mountTreeLink();

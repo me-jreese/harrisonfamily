@@ -469,7 +469,7 @@ Registered only when `HFY_SYNC_DESKTOP_CLIENT=1` (default off; HFY-TSK-120). It 
 - **Redirect spelling:** the raw redirect must be the canonical `http://127.0.0.1[:port]/callback`; backslashes, whitespace, IPv4 shorthand (`127.1`, `0x7f.1`) and dot segments are refused.
 - **Scopes:** the desktop client may request only `sync` (anything else is `invalid_scope`), and `sync` is reserved to it: the MCP client cannot request it. The sync routes should authorize on `aud` and `client_id`, not on the scope claim.
 - **`/auth/userinfo`:** accepts MCP-resource tokens only. A sync-audience desktop token is refused there, so the sync audience stays resource-specific.
-- **Who may sign in:** the OAuth server issues desktop tokens to any family-list member. The gramps-owner restriction is enforced by the sync routes (sync-routes task), not here.
+- **Who may sign in:** the OAuth server issues desktop tokens to any family-list member. The gramps-owner restriction is enforced by the sync routes, not here ([API: The sync API](api.md#the-sync-api)).
 - **Replay:** presenting an already-used refresh token revokes its family whichever `client_id` accompanies it.
 - **Stack switch:** the `SyncDesktopClient` parameter of `app-stack.yaml` (default `0`) sets `HFY_SYNC_DESKTOP_CLIENT` on the auth function. Set it to `1` in the same change set as the sync routes (AC6 RG-4).
 

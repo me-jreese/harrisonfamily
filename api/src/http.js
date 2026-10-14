@@ -17,11 +17,12 @@ export class HttpError extends Error {
    * `details` (optional) is sent as the body's `details`: `{fields: [{field, code, suggest?}]}` on a 422, `{current}` on a 409, or
    * a SyncError's structured conflict description (src/sync/apply.js).
    */
-  constructor(status, code, message, details) {
+  constructor(status, code, message, details, headers) {
     super(message ?? code);
     this.status = status;
     this.code = code;
     if (details !== undefined) this.details = details;
+    if (headers !== undefined) this.headers = headers; // extra response headers, for example WWW-Authenticate on a 401 (HFY-TSK-172)
   }
 }
 
@@ -53,7 +54,7 @@ export function errorResponse(e, log = console, ctx = {}) {
       message: e.message,
       ...(Array.isArray(e.errors) ? { errors: e.errors } : {}),
       ...(e.details && typeof e.details === "object" ? { details: e.details } : {}),
-    });
+    }, e.headers && typeof e.headers === "object" ? e.headers : {});
   }
   if (e instanceof ContentError) {
     return json(e.status, { error: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) });
