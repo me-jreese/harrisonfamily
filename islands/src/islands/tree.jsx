@@ -141,8 +141,12 @@ function PeopleList({ graph, ids, focus, onFocus, label }) {
   );
 }
 
-/** The whole tree as native details, one per generation, with relative labels and a last "not yet connected" group (viz.md 12.3). */
-export function GenerationOutline({ graph, focus, onFocus }) {
+/**
+ * The whole tree as native details, one per generation, with relative labels and a last "not yet connected" group (viz.md 12.3).
+ * `sheet` is the copy that opens in the kit Sheet behind the "generations" button between 43rem and 64rem (HFY-TSK-299): it carries no
+ * id, no data-tree-outline and no heading (the Sheet's title is the heading), so the page keeps exactly one outline.
+ */
+export function GenerationOutline({ graph, focus, onFocus, sheet = false }) {
   const model = useMemo(() => outlineModel(graph, focus), [graph, focus]);
   const focusLevel = model.levels.find((l) => l.hasFocus)?.index ?? null;
   const inUnconnected = model.unconnected.includes(focus);
@@ -157,8 +161,8 @@ export function GenerationOutline({ graph, focus, onFocus }) {
     setOpen((prev) => { const n = new Set(prev); n.delete(`+${k}`); n.delete(`-${k}`); n.add(`${on ? "+" : "-"}${k}`); return n; });
   };
   return (
-    <nav className="hfy-tree__outline" id="hfy-tree-outline" tabIndex={-1} aria-label="generations" data-tree-outline>
-      <h2>generations</h2>
+    <nav className="hfy-tree__outline" {...(sheet ? { "aria-label": "generations in the family", "data-tree-outline-sheet": "" } : { id: "hfy-tree-outline", tabIndex: -1, "aria-label": "generations", "data-tree-outline": "" })}>
+      {sheet ? null : <h2>generations</h2>}
       {model.levels.map((l) => (
         <details key={l.index} className="hfy-tree__level" open={isOpen(key(l.index), l.index === focusLevel)} onToggle={toggle(key(l.index), l.index === focusLevel)} data-tree-level={l.index}>
           <summary>{l.label} ({l.ids.length})</summary>
@@ -287,7 +291,7 @@ export function TreeApp() {
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
   return (
-    <div className="hfy-tree hfy-tree--ready">
+    <div className="hfy-tree hfy-tree--ready" data-tree-mode={chartFailed ? "outline" : view}>
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
       {chartFailed ? (
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
@@ -296,7 +300,7 @@ export function TreeApp() {
           <ViewToggle view={view} onChoose={onView} />
           {view === "cards" ? (
             <ChartBoundary onFailed={() => setChartFailed(true)}>
-              {Chart ? <Chart graph={graph} focus={resolved.id} onFocus={onFocus} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-chart-loading />}
+              {Chart ? <Chart graph={graph} focus={resolved.id} onFocus={onFocus} viewer={sub} renderOutline={(onPick) => <GenerationOutline graph={graph} focus={resolved.id} onFocus={onPick} sheet />} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-chart-loading />}
             </ChartBoundary>
           ) : null}
         </>

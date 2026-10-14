@@ -226,7 +226,8 @@ for (const [width, height] of [[375, 812], [768, 1024], [1280, 900]]) {
     await page.setViewportSize({ width, height });
     await page.goto("/tree/", { waitUntil: "domcontentloaded" });
     await expect(focusName(page)).toBeVisible();
-    for (const d of await outline(page).locator("details").all()) if (!(await d.getAttribute("open"))) await d.locator("summary").first().click();
+    // Between 43rem and 64rem the cards view keeps the outline behind its "generations" button (HFY-TSK-299, tests/tree-desktop.spec.mjs).
+    if (await outline(page).isVisible()) for (const d of await outline(page).locator("details").all()) if (!(await d.getAttribute("open"))) await d.locator("summary").first().click();
     expect(await axeViolations(page, { include: ".hfy-tree" })).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const small = await page.locator(".hfy-tree :is(a, button, summary)").evaluateAll((els) => els

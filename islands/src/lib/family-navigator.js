@@ -14,7 +14,14 @@
 //   hfy-focus     a card other than the focus card was activated: re-centre on that person
 //   hfy-details   the focus card was activated: show the details sheet (rendered by the island, never by this element)
 //
-// What it draws (375 px layout; the ADR's other widths are separate tasks): the focus card, a parents strip, one tab per union
+// Two layouts, one element. Below 43rem (the phone) it draws the 375 px layout described next. From 43rem (HFY-TSK-299, viz-mvp-visual-desktop; ADR 4.5)
+// it draws the four-row card grid: grandparents (up to four, a dashed "not recorded" card for a missing one), parents, the focus family (the
+// brothers and sisters beside the focus card, the selected partner beside it, the other unions as tabs) and the children. There is no pan or
+// zoom: a row wider than its column shows its first cards and a "+N more" button that expands it in place (the cards never shrink, and no name
+// is below 16 px). The element picks the layout from matchMedia and redraws when the window crosses 43rem; the detail panel and the
+// "generations" Sheet are the island's (lib/tree-chart.jsx).
+//
+// The 375 px layout draws: the focus card, a parents strip, one tab per union
 // ("with <partner>" or "partner not recorded"), that union's partner and children as a scroll-snap row, and the siblings as a row.
 // Every person is one <button> with an accessible name like "Ben Example, father, 1878 to unknown". The focus card's name is "Ada Example,
 // focus, 1878 to unknown, show details".
@@ -39,7 +46,10 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
-const ROLE_PAIR = { focus: "focus", parent: "parent", child: "child", sibling: "sibling", partner: "spouse" };
+const ROLE_PAIR = { focus: "focus", parent: "parent", grandparent: "grandparent", child: "child", sibling: "sibling", partner: "spouse" };
+
+/** The width from which the four-row grid replaces the phone layout (viz ADR 4.5: 43rem). */
+export const WIDE_QUERY = "(min-width: 43rem)";
 
 class Base extends (typeof HTMLElement === "undefined" ? class {} : HTMLElement) {}
 
@@ -50,9 +60,15 @@ export class FamilyNavigator extends Base {
     this._focus = null;
     this._union = 0;
     this._queued = false;
+    this._wide = false;
+    this._mq = null;
+    this._ro = null;
+    this._frame = 0;
+    this._expanded = new Set();
     this._uid = `hfy-nav-${(serial += 1)}`;
     this._onClick = (e) => this._click(e);
     this._onKey = (e) => this._key(e);
+    this._onMedia = () => this._media();
   }
 
   get graph() { return this._graph; }
@@ -60,7 +76,7 @@ export class FamilyNavigator extends Base {
   get focus() { return this._focus; }
   set focus(id) {
     const next = id || null;
-    if (next !== this._focus) this._union = 0;
+    if (next !== this._focus) { this._union = 0; this._expanded.clear(); }
     this._focus = next;
     this._queue();
   }
@@ -68,12 +84,36 @@ export class FamilyNavigator extends Base {
   connectedCallback() {
     this.addEventListener("click", this._onClick);
     this.addEventListener("keydown", this._onKey);
+    if (typeof matchMedia === "function") {
+      this._mq = matchMedia(WIDE_QUERY);
+      this._wide = this._mq.matches;
+      this._mq.addEventListener?.("change", this._onMedia);
+    }
+    // The rows' "+N more" depends on the column's width: refit when it changes (a window resize, the panel opening, a font arriving).
+    if (typeof ResizeObserver === "function") {
+      this._ro = new ResizeObserver(() => this._refit());
+      this._ro.observe(this);
+    }
     this._render();
   }
 
   disconnectedCallback() {
     this.removeEventListener("click", this._onClick);
     this.removeEventListener("keydown", this._onKey);
+    this._mq?.removeEventListener?.("change", this._onMedia);
+    this._mq = null;
+    this._ro?.disconnect();
+    this._ro = null;
+    if (this._frame) cancelAnimationFrame(this._frame);
+    this._frame = 0;
+  }
+
+  // The window crossed 43rem: redraw in the other layout, keeping the keyboard where it was.
+  _media() {
+    const wide = Boolean(this._mq?.matches);
+    if (wide === this._wide) return;
+    this._wide = wide;
+    this._render();
   }
 
   // Setting graph and focus one after the other renders once.
@@ -88,6 +128,13 @@ export class FamilyNavigator extends Base {
   }
 
   _click(e) {
+    const more = e.target.closest?.("[data-more]");
+    if (more && this.contains(more)) {
+      const key = more.getAttribute("data-more");
+      if (this._expanded.has(key)) this._expanded.delete(key); else this._expanded.add(key);
+      this._render(`more:${key}`);
+      return;
+    }
     const card = e.target.closest?.("[data-person]");
     if (card && this.contains(card)) {
       this._emit(card.getAttribute("data-role") === "focus" ? EVENT_DETAILS : EVENT_FOCUS, card.getAttribute("data-person"));
@@ -169,29 +216,143 @@ export class FamilyNavigator extends Base {
     return this._section("unions", title, tabs, panel);
   }
 
+  // ---- the four-row grid (from 43rem) ----
+
+  _missing(text) { return h("p", { class: "hfy-nav__missing" }, text); }
+
+  /**
+   * One line of cards that may be longer than its column. `key` names it for "+N more" (this._expanded holds the open ones); _fit hides the
+   * cards that do not fit and writes the button. The cards are never scaled: they keep their width and the rest waits behind the button.
+   */
+  _line(key, label, nodes, cls = "") {
+    const open = this._expanded.has(key);
+    const items = nodes.map((n) => h("li", { class: "hfy-nav__item" }, n));
+    if (items.length > 1) {
+      items.push(h("li", { class: "hfy-nav__item hfy-nav__item--more", "data-more-item": "", hidden: true }, h("button", { type: "button", class: "hfy-nav__more", "data-more": key, "data-key": `more:${key}`, "data-label": label, "aria-expanded": open ? "true" : "false" })));
+    }
+    return h("ul", { class: `hfy-nav__line ${cls}`.trim(), "aria-label": label, "data-fit": key, "data-expanded": open ? "" : null }, items);
+  }
+
+  _band(id, title, ...body) {
+    return h("section", { class: `hfy-nav__block hfy-nav__band hfy-nav__band--${id}`, "aria-labelledby": `${this._uid}-${id}` }, h("h3", { id: `${this._uid}-${id}`, class: "hfy-nav__heading" }, title), ...body);
+  }
+
+  _renderWide(m) {
+    const gp = m.grandparents;
+    const grandparents = this._band(
+      "grandparents", "grandparents",
+      gp.message ? h("p", { class: "hfy-nav__none" }, gp.message) : this._line("gp", "grandparents", gp.cards.map((c) => (c ? this._card(c) : this._missing(COPY.grandparentMissing))), "hfy-nav__line--center")
+    );
+    const parentNodes = [...m.parents.cards.map((c) => this._card(c)), ...(m.parents.placeholder ? [this._missing(m.parents.placeholder)] : [])];
+    const parents = this._band("parents", "parents", parentNodes.length ? this._line("parents", "parents", parentNodes, "hfy-nav__line--center") : h("p", { class: "hfy-nav__none" }, m.parents.message));
+
+    const at = Math.min(this._union, Math.max(m.unions.length - 1, 0));
+    const u = m.unions[at] || null;
+    const tabbed = m.unions.length > 1;
+    const family = this._band(
+      "family", "family",
+      h(
+        "div", { class: "hfy-nav__famrow" },
+        h("div", { class: "hfy-nav__cell hfy-nav__cell--sibs" }, m.siblings.length ? this._line("sibs", "brothers and sisters", m.siblings.map((c) => this._card(c))) : null),
+        h("div", { class: "hfy-nav__cell hfy-nav__cell--focus hfy-nav__focus" }, this._card(m.focus)),
+        h("div", { class: "hfy-nav__cell hfy-nav__cell--partner" }, u ? (u.partner ? this._card(u.partner) : this._missing(COPY.partnerMissing)) : null)
+      ),
+      tabbed
+        ? h(
+          "div", { class: "hfy-nav__tabs", role: "tablist", "aria-label": "partner families" },
+          m.unions.map((x, i) => h("button", {
+            type: "button", role: "tab", class: "hfy-nav__tab", id: `${this._uid}-tab-${i}`, "data-union": i, "data-key": `tab:${i}`,
+            "aria-selected": i === at ? "true" : "false", "aria-controls": `${this._uid}-panel`, tabindex: i === at ? "0" : "-1"
+          }, x.tab))
+        )
+        : null
+    );
+    const kids = u ? (u.children.length ? this._line(`kids:${u.id}`, `children${u.partner ? `, ${u.tab}` : ""}`, u.children.map((c) => this._card(c)), "hfy-nav__line--center") : h("p", { class: "hfy-nav__none" }, COPY.childrenNone)) : h("p", { class: "hfy-nav__none" }, COPY.noUnions);
+    const children = h(
+      "section",
+      tabbed
+        ? { class: "hfy-nav__block hfy-nav__band hfy-nav__band--children", role: "tabpanel", id: `${this._uid}-panel`, "aria-labelledby": `${this._uid}-tab-${at}` }
+        : { class: "hfy-nav__block hfy-nav__band hfy-nav__band--children", "aria-labelledby": `${this._uid}-children` },
+      h("h3", { id: `${this._uid}-children`, class: "hfy-nav__heading" }, "children"),
+      kids
+    );
+    return [grandparents, parents, family, children];
+  }
+
+  // Hide the cards of each line that do not fit its column and write its "+N more" button. Layout is read, so this runs after the DOM is in place.
+  _fit() {
+    if (!this._wide) return;
+    for (const ul of this.querySelectorAll("ul[data-fit]")) {
+      const key = ul.getAttribute("data-fit");
+      const cards = [...ul.children].filter((li) => !li.hasAttribute("data-more-item"));
+      const moreLi = ul.querySelector("[data-more-item]");
+      for (const li of cards) li.hidden = false;
+      if (!moreLi) continue;
+      moreLi.hidden = true;
+      const avail = ul.clientWidth;
+      const w = cards[0].offsetWidth;
+      const gap = parseFloat(getComputedStyle(ul).columnGap) || 0;
+      if (cards.length * w + (cards.length - 1) * gap <= avail + 0.5) continue; // the whole line fits: nothing to hide
+      const btn = moreLi.firstElementChild;
+      const label = btn.getAttribute("data-label");
+      moreLi.hidden = false;
+      if (this._expanded.has(key)) {
+        btn.textContent = "show fewer";
+        btn.setAttribute("aria-label", `show fewer ${label}`);
+        continue;
+      }
+      btn.textContent = `+${cards.length - 1} more`;
+      const room = avail - moreLi.offsetWidth;
+      const keep = Math.min(cards.length - 1, Math.max(1, Math.floor(room / (w + gap))));
+      cards.slice(keep).forEach((li) => { li.hidden = true; });
+      btn.textContent = `+${cards.length - keep} more`;
+      btn.setAttribute("aria-label", `+${cards.length - keep} more ${label}`);
+    }
+  }
+
+  // A resize observer callback: refit once per frame, and only when the width changed (hiding cards changes the height, which must not loop).
+  _refit() {
+    if (!this._wide || this._frame || this.clientWidth === this._lastWidth) return;
+    this._frame = requestAnimationFrame(() => {
+      this._frame = 0;
+      this._lastWidth = this.clientWidth;
+      this._fit();
+    });
+  }
+
   _render(focusKey = null) {
     if (!this.isConnected) return;
     const had = focusKey || (this.contains(document.activeElement) ? document.activeElement.getAttribute("data-key") : null);
     const m = this._graph && this._focus ? navigatorModel(this._graph, this._focus) : null;
     if (!m) { this.replaceChildren(); return; }
     const title = `family chart centred on ${m.name}. the outline has the same information.`;
-    const parents = m.parents.cards.length
-      ? h(
-        "ul", { class: "hfy-nav__strip", "aria-label": "parents" },
-        m.parents.cards.map((c) => h("li", { class: "hfy-nav__item" }, this._card(c))),
-        m.parents.placeholder ? h("li", { class: "hfy-nav__item" }, h("p", { class: "hfy-nav__missing" }, m.parents.placeholder)) : null
-      )
-      : h("p", { class: "hfy-nav__none" }, m.parents.message);
+    let body;
+    if (this._wide) {
+      body = this._renderWide(m);
+    } else {
+      const parents = m.parents.cards.length
+        ? h(
+          "ul", { class: "hfy-nav__strip", "aria-label": "parents" },
+          m.parents.cards.map((c) => h("li", { class: "hfy-nav__item" }, this._card(c))),
+          m.parents.placeholder ? h("li", { class: "hfy-nav__item" }, h("p", { class: "hfy-nav__missing" }, m.parents.placeholder)) : null
+        )
+        : h("p", { class: "hfy-nav__none" }, m.parents.message);
+      body = [
+        h("div", { class: "hfy-nav__focus" }, this._card(m.focus)),
+        this._section("parents", "parents", parents),
+        this._unions(m),
+        m.siblings.length ? this._section("siblings", "brothers and sisters", this._row(m.siblings, "brothers and sisters")) : null
+      ];
+    }
     const root = h(
-      "section", { class: "hfy-nav", "aria-labelledby": `${this._uid}-title`, "data-nav-focus": m.id },
+      "section", { class: `hfy-nav${this._wide ? " hfy-nav--wide" : ""}`, "aria-labelledby": `${this._uid}-title`, "data-nav-focus": m.id, "data-nav-layout": this._wide ? "grid" : "stack" },
       h("h2", { id: `${this._uid}-title`, class: "hfy-nav__title" }, title),
       m.notice ? h("p", { class: "hfy-nav__notice", "data-nav-notice": "" }, m.notice) : null,
-      h("div", { class: "hfy-nav__focus" }, this._card(m.focus)),
-      this._section("parents", "parents", parents),
-      this._unions(m),
-      m.siblings.length ? this._section("siblings", "brothers and sisters", this._row(m.siblings, "brothers and sisters")) : null
+      ...body
     );
     this.replaceChildren(root);
+    this._lastWidth = this.clientWidth;
+    this._fit();
     // A re-render must not drop the keyboard: put focus back on the same control (a card that became the focus card has the same key).
     // (Matched by comparing the attribute, never by building a selector from a graph id: an odd character in an id cannot throw here.)
     if (had) ([...this.querySelectorAll("[data-key]")].find((e) => e.getAttribute("data-key") === had) || this.querySelector(".hfy-nav__card--focus"))?.focus({ preventScroll: true });
