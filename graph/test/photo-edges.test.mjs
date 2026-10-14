@@ -34,9 +34,9 @@ function tree({ tags = {}, medias = [], privatePeople = [] } = {}) {
 const edges = (objects) => build(objects).graph.photoEdges;
 
 describe('photoEdges: the block', () => {
-  it('the minor is 2 (1 on main before this task) and the golden carries it', () => {
-    assert.equal(MINOR, 2);
-    assert.equal(JSON.parse(readFileSync(GOLDEN, 'utf8')).minor, 2);
+  it('the minor is 3 (photoEdges was 2, layout bumped it) and the golden carries it', () => {
+    assert.equal(MINOR, 3);
+    assert.equal(JSON.parse(readFileSync(GOLDEN, 'utf8')).minor, 3);
   });
 
   it('one entry per photo with the sorted gramps ids of the people tagged in it, nothing else', () => {

@@ -1,6 +1,6 @@
 # Family API (hfy-api)
 
-Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, the contact-information guard, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
+Reference for hfy-api, the members-only JSON API served at `/api/*`. This page covers the runtime, the request pipeline, every route, the data each route reads and writes, the contact-information guard, profile links, permissions, audit records, notifications, uploads, configuration, session verification, the capability document and packaging.
 
 The same Lambda function also serves the MCP server at `/mcp` and the protected-resource metadata at `/.well-known/oauth-protected-resource*`. Those paths authenticate with a bearer access token, not the session cookie, and are described in [MCP server](mcp-server.md). This page covers them only where they share code or configuration with `/api/*`.
 
@@ -24,10 +24,10 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | File | Role |
 | --- | --- |
 | [`index.js`](../../api/src/index.js) | Lambda entry. Creates the AWS clients and the admin-list, label and groups resolvers, runs the origin check, builds the handler on the first verified request, and sends MCP paths to the MCP mount. |
-| [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, notification and upload services for each request. Also exposes `handler.invoke(actor, routeName, {params, query, body})`, which runs a route's own handler without the HTTP steps, for the MCP tools. |
+| [`handler.js`](../../api/src/handler.js) | The pipeline: path, route, session, body. Wires the posts, comments, profile links, notification and upload services for each request. Also exposes `handler.invoke(actor, routeName, {params, query, body})`, which runs a route's own handler without the HTTP steps, for the MCP tools. |
 | [`routes.js`](../../api/src/routes.js) | The route registry `ROUTES` (including each MCP tool's definition and each route's `gate`), `defineRoutes`, `matchRoute`, `MCP_RESOURCE`, and `buildCaps` for `caps.json`. |
 | [`features.js`](../../api/src/features.js) | The [feature gate](#feature-gate): `requireFeature`, `serverSwitch` and `gateExempt` for `ROUTES` entries, the flags-file reader `createFlagSource`, `createFeatureGate`, the `x-hfy-preview` parser, and `featureOn` for producers. |
-| [`http.js`](../../api/src/http.js) | JSON responses, `HttpError`, error mapping, cookie parsing. |
+| [`http.js`](../../api/src/http.js) | JSON responses, `HttpError` (with its optional `details`), error mapping, cookie parsing. |
 | [`origin.js`](../../api/src/origin.js) | The `X-Origin-Verify` check. |
 | [`auth.js`](../../api/src/auth.js) | Remote JWKS, session authenticator (which resolves the actor's label), admin list. |
 | [`labels.js`](../../api/src/labels.js) | Author labels: `cleanLabel`, `fallbackLabel` and the cached person-record resolver `createLabelResolver` (see [Author label](#author-label)). Used by the cookie path and the MCP path. |
@@ -36,9 +36,13 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
+| [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
+| [`sync/store.js`](../../api/src/sync/store.js) | The cloud record store's keys and items (`REC#`, `SYNC#LOG`, `SYNC#HEAD`, `SYNC#BATCH#`, `GID#`, `IDALIAS#`), the batch id and request token, and the reads `applyBatch` needs. See [The cloud record store](#the-cloud-record-store). |
+| [`sync/apply.js`](../../api/src/sync/apply.js) | `applyBatch()`, the one write path into the record store, and `SyncError`. No route calls it yet. See [The cloud record store](#the-cloud-record-store). |
+| [`sync/hooks.js`](../../api/src/sync/hooks.js) | The commit-hook registry: `registerContributor` and `registerAfterCommit`. |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation, the server-chosen object key and the `UPLOAD#` binding. |
@@ -53,9 +57,9 @@ For the reasoning behind these rules, see [How member content stays accountable]
 
 | Package | Version (lockfile) | Used for |
 | --- | --- | --- |
-| `@io-kit/content` | 0.1.0 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
+| `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
 | `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
-| `@io-kit/notify` (`/server`) | 0.4.0 | The five notification routes, subscription and preference stores, push payloads and sending |
+| `@io-kit/notify` (`/server`) | 0.5.0 | The notification routes (five push routes and three inbox routes), the inbox store, persist-first delivery (`createDelivery`), subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
 | `@io-kit/feed` | 1.1.1 | `createUlidFactory`: monotonic ULIDs for record ids and audit sort keys |
@@ -63,7 +67,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | `web-push` | 3.6.7 | Push delivery. Imported only when the VAPID keys load. |
 | `@aws-sdk/*` | 3.1000.0 | DynamoDB document client, S3 and the S3 request presigner, Secrets Manager |
 
-[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version except `@io-kit/content` (`^0.1.0`) and `@io-kit/notify` (`^0.4.0`), which the lockfile holds at the versions above.
+[`api/package.json`](../../api/package.json) pins every runtime dependency to an exact version, and the lockfile holds the same versions. [`api/test/kit-pins.test.js`](../../api/test/kit-pins.test.js) checks that every `@io-kit` pin in `api/` and `islands/` is exact and matches its lockfile.
 
 `@io-kit/auth` is pinned to the same version here and in [`auth/package.json`](../../auth/package.json). The moves from 2.1.1 to 2.1.2 and then 2.2.0 changed only the kit's edge code, which renders the auth edge's pages: the referrer policy, the theme's font origins and the page styling ([Identity services](identity-services.md)). The `/server` code that the API imports is unchanged, so [Session verification](#session-verification) behaves as it did under 2.1.1.
 
@@ -114,31 +118,31 @@ A `204` response has an empty body.
 { "error": "<code>", "message": "<text>", "details": { }, "errors": [ ] }
 ```
 
-`details` appears only on kit errors that carry it. `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
+`details` appears only on an error that carries it: a kit error with details, an `HttpError` constructed with them, or a record-store conflict ([The cloud record store](#the-cloud-record-store)). `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). An error that carries both sends both. Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Profile links errors carry `{"fields": [...]}` on a `422` and `{"current": ...}` on a `409` ([Profile links](#profile-links)). Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
 
-Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input) return `400 validation`. Checks on post and comment content return `422 validation`.
+Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input, the shape of a profile links body and its person id) return `400 validation`. Checks on post, comment and profile link content return `422 validation`.
 
 | Status | `error` | Raised by |
 | --- | --- | --- |
-| 400 | `validation` | Unparseable or non-object body; missing `subject` on a comment route; upload input |
+| 400 | `validation` | Unparseable or non-object body; missing `subject` on a comment route; upload input; a profile links person id, `links` or `version` of the wrong shape |
 | 400 | `cursor_invalid` | A posts or comments cursor that is malformed, or a posts cursor from another filter |
 | 400 | `photo_has_location` | A new post attachment whose stored bytes carry location metadata ([Location check](#location-check)) |
 | 400 | `upload_missing` | A new post attachment whose object is missing or empty, or whose type differs from the one it was presigned for |
 | 401 | `unauthenticated` | No session cookie, or a token that fails verification |
-| 403 | `forbidden` | Failed origin check; caller lacks the permission for a post or comment action |
+| 403 | `forbidden` | Failed origin check; caller lacks the permission for a post, comment or profile links action |
 | 403 | `self_react` | Reacting to your own comment |
 | 403 | `upload_not_owned` | A new post attachment that is not the caller's own, unexpired, not yet attached upload ([Upload binding](#upload-binding)) |
 | 404 | `not_found` | Unknown route; a route behind a feature gate that is closed to the caller; post missing or not visible to the caller; comment missing; malformed subject or comment id |
 | 405 | `method_not_allowed` | Known path, other method |
-| 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)) |
+| 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)); a profile links write whose `version` is not the stored one, with the stored links in `details.current` |
 | 415 | `unsupported_media_type` | A write without a JSON content type |
-| 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji |
+| 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji; profile link fields, listed in `details.fields` |
 | 422 | `contact_info` | A phone number, email address, street address, PO box or contact-channel link in a post's body, title or attachment description, or a comment's body ([Contact-information guard](#contact-information-guard)) |
 | 422 | `dob_not_allowed` | Only while `HFY_GUARD_DOB` is `on`: a birth day or month, and nothing else the guard refuses, in the same fields |
 | 500 | `server` | A comment create, edit or delete failed for a reason other than a cancelled transaction |
 | 500 | `internal` | Anything else |
-| 503 | `busy` | A post or comment write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
-| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new attachment on a handler built without an S3 client |
+| 503 | `busy` | A post, comment or profile links write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
+| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; a profile links transaction cancelled for any other reason, such as throttling; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new attachment on a handler built without an S3 client |
 
 ## Routes
 
@@ -159,17 +163,22 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
 | `uploads.presign` | POST | `/uploads` | body `contentType`, `size` (a `filename` is ignored) | `201` | Presigned S3 PUT under `uploads/posts/` |
+| `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
+| `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
 | `notifications.subscribe` | POST | `/notifications/subscribe` | body: a push subscription | `200` `{ok: true}` | Kit route |
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
 | `notifications.preferences.get` | GET | `/notifications/preferences` | none | `200` preferences | Kit route |
 | `notifications.preferences.put` | PUT | `/notifications/preferences` | body: preferences | `200` preferences | Kit route |
+| `notifications.inbox.list` | GET | `/notifications/inbox` | query `filter` (`unread` or `all`), `cursor`, `limit` | `200` `{items, next_cursor, has_more}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.count` | GET | `/notifications/inbox/unread-count` | none | `200` `{unread}` | Kit route; dark behind `inboxV1` |
+| `notifications.inbox.read` | POST | `/notifications/inbox/read` | body `{ids}` or `{all: true}` | `200` `{updated, unread, ...}` | Kit route; dark behind `inboxV1`; no MCP tool and no policy row |
 
-The five notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
+The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-None of these routes is behind the [feature gate](#feature-gate). The comments, posts, uploads and notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Five routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, and the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools).
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get` and `links.put` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -212,7 +221,7 @@ A `ROUTES` entry may carry `gate`:
 
 `featureOn(name, principal)` applies the same rule outside a route. `principal` is a gramps id or an actor: a `uat` principal gets `true`, anyone else the deployed value. `index.js` configures it with the deployed gate; until then it returns `false`. A route handler gets `c.featureOn(name)` for its caller, which counts the caller's preview header when they are `uat`.
 
-**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires no inbox store yet (`hfy-inbox-delivery-api` adds it), so today the notifier behaves as described in [Notifications](#notifications).
+**Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires a `DynamoNotificationStore` on the app table (`INBOX#<principal>` rows, `@io-kit/notify` 0.5.0). Delivery is the kit's `createDelivery`: it stores first, then pushes. Storing needs no `VAPID_SECRET`; only the push does. Unread items have no TTL, and a 90-day TTL starts when an item is read. The three inbox routes are dark behind `inboxV1` too (404 outside `uat`).
 
 ## Subjects
 
@@ -243,11 +252,11 @@ Posts are implemented in [`content.js`](../../api/src/content.js) against the `@
 | `author` | `{id, label}` | The caller's member id (gramps id) and display label. The label is never an email address ([Session verification](#session-verification)). |
 | `subject` | string, optional | A record id the post is about: a bare Gramps ID, `person:<gramps-id>`, `post:<ulid>` or another plain identifier. It must match `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`, otherwise `422` with `details.field` `subject`. Indexes the post under `SUBJECT#<subject>`. |
 | `title` | string, optional | At most 200 characters, otherwise `422` with `details.field` `title`. |
-| `body` | string | Required and not blank. At most 20,000 characters (JavaScript string length). Stored as sent, not trimmed. Otherwise `422`. |
+| `body` | string | Required. At most 20,000 characters (JavaScript string length), otherwise `422` "body too long". Stored as sent, not trimmed. It may be empty or blank only while the post has at least one attachment, a photo-only post (HFY-TSK-315); a post with neither is `422` "body is required" with `details.field` `body`. A body that is not a string is the same error. |
 | `attachments` | array | At most 10, each a member upload. See [Attachments](#attachments). Otherwise `422` with `details.field` `attachments`. |
 | `visibility` | `draft`, `published` or `withdrawn` | See below |
 | `created_at`, `updated_at` | ISO 8601 | |
-| `can` | `{edit, publish, delete}` | Computed for the caller on every response |
+| `can` | `{edit, publish, delete, moderate}` | Computed for the caller on every response. `moderate` is always `false`: the posts store does not declare the kit's `moderation` capability. |
 
 On create, a `title` or `subject` of `null` means "not set". On `PATCH`, `null` removes it. The serialized post, after these checks, may be at most 100 KB (UTF-8 bytes of its JSON); a larger post is `422` with `details.field` `body` ("post is too large"). The cap keeps every post item, and the audit item that holds both `before` and `after`, well inside DynamoDB's 400 KB item limit.
 
@@ -316,7 +325,7 @@ The browser is meant to remove location data before the upload, so this check is
 
 - Every single-post read and write first loads the post and checks that the caller may see it. A post the caller may not see is `404 not_found`, for writes too.
 - Create and `PATCH` run the [contact-information guard](#contact-information-guard) before any write.
-- `PATCH` replaces `body` and `attachments` when given, sets `title` and `subject` when given, and removes them when they are `null`. It always refreshes `updated_at` and writes an audit item, even when nothing else changed. Removing `subject` also deletes the post's `IDX#SUBJECT` item.
+- `PATCH` replaces `body` and `attachments` when given, sets `title` and `subject` when given, and removes them when they are `null`. The body rule applies to the post the patch leaves: emptying a photo post's body is accepted, and removing the last attachment of a post whose body is blank is `422` "body is required". It always refreshes `updated_at` and writes an audit item, even when nothing else changed. Removing `subject` also deletes the post's `IDX#SUBJECT` item.
 - A transaction cancelled by a failed condition is `409 conflict` ("record changed concurrently"); one that stays cancelled by `TransactionConflict` after its retries is `503 busy`. See [Concurrent writes](#concurrent-writes). Any other store failure is `503 unavailable`.
 - **Delete takes the thread with it.** After the post's items and audit item are committed, the handler removes the `post:<ulid>` thread: every comment and reaction in it, with one `delete` audit item per comment (`reason` `post deleted`, `principal` the member who deleted the post), at most 100 items per transaction. This runs after the response's write has committed and never fails the request. A failure is logged as `post thread purge failed (write already committed)` and leaves the remaining thread items in place.
 
@@ -330,6 +339,8 @@ Every write that changes an existing record is conditioned on the version that w
 | Post update, visibility change, delete | The item exists and its stored `post.updated_at` equals the value read |
 | Comment create | The id does not exist yet |
 | Comment edit, delete | The item exists and its stored `comment.edited_at` equals the value read, or is still absent for a never-edited comment |
+| Profile links, first write | The `PLINKS#` item does not exist yet |
+| Profile links, later write | The stored `version` equals the body's `version` |
 
 A failed condition cancels the whole transaction, audit item included, and the API returns `409 conflict`. A client recovers by reading the record again before it retries.
 
@@ -383,6 +394,49 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - Each member has at most one reaction per comment, stored at `R#comment:<id>#<member id>`. Sending the emoji you already have removes it and returns `{removed: true}`. Sending a different emoji, or the first one, stores it, replacing any earlier one, and returns `{removed: false, reaction}`. Both return `200`.
 - The route always targets `comment:<id>`. `react` in `comments.js` also accepts the target `root`, returns `404 not_found` for an `attachment:` target and `422 validation` for any other target, but no route reaches any of these.
 - Reactions are single `PutItem` and `DeleteItem` calls, not transactions, and are not audited.
+
+## Profile links
+
+[`links.js`](../../api/src/links.js) stores each member's links to their own profiles elsewhere (HFY-TSK-193; HFY-PLN-002 surfaces.md 6.3, R-16 and R-17). Both routes are behind `requireFeature("profileLinks")`, so they answer `404 not_found` while the flag is not `true`, except to a `uat` member ([Feature gate](#feature-gate)). Neither route is an MCP tool.
+
+### Links object
+
+`GET /people/:id/links` returns `{links, version, can: {edit}}`. `PUT /people/:id/links` returns `{links, version}`.
+
+| Field | Value |
+| --- | --- |
+| `links` | An object keyed by platform. `facebook`, `instagram`, `snapchat`, `tiktok`, `linktree` and `linkedin` each hold `{url, handle}`, and `website` holds `{url, host}`. `url` is the canonical URL the validator produced. A platform with no link is absent, so a person with none has `{}`. |
+| `version` | An integer: `0` before the first write, then one more after each write that changes something. |
+| `can.edit` | `true` only when the caller's member id is `:id`. It is `false` for an admin on someone else's page, although the admin may clear links there. |
+
+- `:id` is a gramps id matching `^[A-Za-z0-9_-]{1,64}$` (`LINKS_ID_RE`). Any other value is `400 validation` ("invalid person id").
+- A well-formed id with no stored item reads as `{links: {}, version: 0}`. The API does not check that the person exists.
+- The read is strongly consistent, so a member sees their own write at once.
+
+### Writing links
+
+`PUT /people/:id/links` takes `{links: {<platform>: <string or null>}, version}`, where `version` is the one the client last read. The checks run in this order, and the first that fails decides the response:
+
+1. The caller is neither the owner (their member id is `:id`) nor an admin: `403 forbidden`, before the body is looked at.
+2. `links` is not an object, or `version` is not a non-negative integer: `400 validation`.
+3. An admin who is not the owner gives any platform a value other than `null` or a blank string: `403 forbidden` ("an admin can only clear links"). An admin who owns the page has the owner's rights.
+4. Every field goes through `validateLinks` in [`shared/profile-links.mjs`](../../shared/profile-links.mjs), the one validator for the API and the browser (surfaces.md 6.2). A failure is `422 validation`, and `details.fields` lists each failed field as `{field, code, suggest?, message?}`. A value of a known platform that is not a string fails as `invalid_url` before the validator runs. Nothing is written.
+5. The body's `version` differs from the stored one (`0` when there is no item): `409 conflict`, with the stored `{links, version, updatedAt?}` in `details.current`.
+
+```json
+{ "error": "validation", "message": "some links are not valid", "details": { "fields": [ { "field": "website", "code": "wrong_platform", "suggest": "instagram" } ] } }
+```
+
+The field codes are the validator's `ERROR_CODES`: `invalid_url`, `scheme_not_allowed`, `wrong_platform` (with `suggest`, the field the link belongs in), `not_a_profile`, `short_link`, `contact_channel`, `contact_info`, `too_long` and `invalid_handle`, plus `unknown_platform` for a key that is not one of the seven platforms. A legacy `linkedin.com/pub/` address is `not_a_profile` with a `message` telling the member to copy their `/in/` address.
+
+After the checks:
+
+- A platform the body does not name keeps its link. `null` or a blank string removes one.
+- A body that changes nothing, such as an empty `links` or clears of platforms that are not set, returns `200` with the stored links and writes nothing: no version bump and no audit item.
+- Any other body writes the `PLINKS#` item, with `version` one higher, and its audit item in one `TransactWriteItems` call, conditioned as described in [Concurrent writes](#concurrent-writes). The response is the new `{links, version}`.
+- A transaction cancelled by its condition, because a concurrent write won, is `409 conflict` with the winner's links in `details.current`. One that stays cancelled by `TransactionConflict` after its retries is `503 busy`, and any other cancellation is `503 unavailable`. A store failure that is not a cancellation is `500 internal`.
+
+**R-18.** Profile links do not go through `guard.js`. The validator applies R-18 itself: every field refuses contact channels (`contact_channel`), and handles, URL paths, queries and fragments are scanned with the shared detector's `scanText` (`contact_info`). The hit is reported only as a field code, never as the matched text. The website field also refuses every host of the six platforms (R-17).
 
 ## Contact-information guard
 
@@ -450,6 +504,17 @@ From `computeCan` in `@io-kit/comments`. An admin is passed to the kit as a prin
 
 On a `post:<ulid>` thread, every comment action except delete also requires that the post is visible to the caller. Otherwise it is `404 not_found`.
 
+### Profile links
+
+From `createLinks` in [`links.js`](../../api/src/links.js). The owner is the member whose id is the route's `:id`.
+
+| Action | Owner | Admin (not the owner) | Other member |
+| --- | --- | --- | --- |
+| Read | yes | yes | yes |
+| Set a link | yes | no (`403`) | no (`403`) |
+| Clear a link | yes | yes | no (`403`) |
+| `can.edit` | `true` | `false` | `false` |
+
 ### Admins
 
 - The admin list is a JSON object in S3 at `ADMIN_LIST_BUCKET` / `ADMIN_LIST_KEY` (defaults `<config-bucket>` and `config/admins.json`). It holds member ids (gramps ids), either as an array or as `{"admins": [...]}`. Entries that are not strings are ignored. Any other shape means nobody is an admin.
@@ -468,13 +533,14 @@ On a `post:<ulid>` thread, every comment action except delete also requires that
 
 The API's items in the `hfy-app` table. The table definition and the auth edge's items are in [System architecture](architecture.md#dynamodb-table-hfy-app).
 
-The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), audit items ([`txn.js`](../../api/src/txn.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
+The keys of every item (`PK`, `SK`, the `GSI1` keys and `ttl`) are listed once, in [System architecture: Item layout](architecture.md#item-layout). The API writes post items, with their author and subject index items ([`content.js`](../../api/src/content.js)), comment and reaction items ([`comments.js`](../../api/src/comments.js)), profile links items ([`links.js`](../../api/src/links.js)), audit items ([`txn.js`](../../api/src/txn.js)), and, through `@io-kit/notify`, push subscription and notification preference items.
 
 What the items hold:
 
 - All three post items carry `entity: "post"` and the full post under `post`, so a listing needs no second read.
 - Comment items carry `entity: "comment"` and `comment`.
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
+- Profile links items (`PLINKS#<gramps-id>` / `META`), one per person, carry `entity: "plinks"`, `links` (as in [Links object](#links-object)), `version`, `updatedAt` and `updatedBy` (the member id of the last writer). A person whose links were never written has no item.
 - Audit items are listed under [Audit records](#audit-records).
 - Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post attaches the upload, then `attached` (the post id) instead of `ttl`. See [Upload binding](#upload-binding).
 
@@ -482,11 +548,11 @@ Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<i
 
 ## Audit records
 
-Every post create, update, visibility change and delete, and every comment create, edit and delete, writes one audit item ([`txn.js`](../../api/src/txn.js), `auditItem`).
+Every post create, update, visibility change and delete, every comment create, edit and delete, and every profile links write that changes something writes one audit item ([`txn.js`](../../api/src/txn.js), `auditItem`).
 
 | Attribute | Value |
 | --- | --- |
-| `PK` | `AUDIT#<record id>`, the post id or comment id |
+| `PK` | `AUDIT#<record id>`: the post id, the comment id, or `plinks:<gramps-id>` for a person's profile links |
 | `SK` | `<at>#<ulid>` |
 | `GSI1PK`, `GSI1SK` | `AUDIT`, and the same value as `SK` |
 | `entity` | `audit` |
@@ -494,18 +560,19 @@ Every post create, update, visibility change and delete, and every comment creat
 | `id` | The record id |
 | `principal` | The caller's member id |
 | `at` | ISO 8601 time of the change |
-| `before` | The full record before the change, or `null` on create |
-| `after` | The full record after the change, or `null` on delete |
+| `before` | The full record before the change, or `null` on create. For profile links, `{links, version}`, which is `{links: {}, version: 0}` on the first write. |
+| `after` | The full record after the change, or `null` on delete. For profile links, the new `{links, version}`. |
 | `reason` | On an admin's delete of another member's comment, when given; `post deleted` on each comment removed with its post |
 
 | Record | `op` values |
 | --- | --- |
 | Post | `create`, `update`, `visibility`, `delete` |
 | Comment | `create`, `edit`, `delete` |
+| Profile links | `links.clear` when the body names platforms only to clear them, `links.update` for any other change |
 
 The data change and its audit item are written in a single `TransactWriteItems` call (`transact` in `txn.js`). Both land or neither does, so a failed write leaves no audit item.
 
-Comments removed with their post are audited too, each in the same transaction as its delete ([Writes](#writes)). Not audited: reactions, notification subscriptions and preferences, uploads, and writes that change nothing (a visibility set to its current value, a comment edit with identical text). No route reads audit items. The `GSI1` partition `AUDIT` lists them all in time order.
+Comments removed with their post are audited too, each in the same transaction as its delete ([Writes](#writes)). Not audited: reactions, notification subscriptions and preferences, uploads, and writes that change nothing (a visibility set to its current value, a comment edit with identical text, a profile links body that changes no link). No route reads audit items. The `GSI1` partition `AUDIT` lists them all in time order.
 
 ## Notifications
 
@@ -579,7 +646,12 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 | `DELETE /notifications/subscribe` | `{endpoint}` | `{ok: true}` | `400 {"error":"endpoint required"}` |
 | `GET /notifications/preferences` | none | `{enabled: true, types: {<type>: {enabled, level}}, extra: {}}` | |
 | `PUT /notifications/preferences` | `{types: {<type>: {enabled, level}}}`, `enabled` a boolean and `level` 0 or 1 | Same shape as `GET` | `400 {"error":"invalid preferences"}` |
+| `GET /notifications/inbox` | none; query `filter` (`unread` or `all`), `cursor`, `limit` | `{items, next_cursor, has_more}` | `400` on a bad `filter`, `cursor` or `limit` |
+| `GET /notifications/inbox/unread-count` | none | `{unread}` | |
+| `POST /notifications/inbox/read` | `{ids}` (1 to 100 ids) or `{all: true}` | `{updated, unread, ...}` | `400` on an empty or invalid body |
 
+- The three inbox routes exist only when an inbox store is wired, and are 404 outside `uat` while `inboxV1` is off.
+- The kit stores an inbox item whether or not the recipient disabled that type in preferences: preferences gate only the push, and the inbox keeps the item for the recipient (ruling P2-R35).
 - A subscription is stored with a 90-day `ttl`. Subscribing again refreshes it.
 - `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
@@ -772,6 +844,56 @@ Other errors: `bad_intent` (the request is malformed, a person is chosen twice, 
 
 The tests are [`api/test/records/relationships.node-test.js`](../../api/test/records/relationships.node-test.js), run by `npm test` after vitest, or alone with `node --test test/records/relationships.node-test.js`.
 
+## The cloud record store
+
+[`api/src/sync/`](../../api/src/sync/) holds the cloud record store and its one write path, `applyBatch()` (HFY-TSK-243). It is a library: no route, tool or Lambda path calls it yet, and it ships in the `hfy-api` zip unreachable until the sync and edit routes call it. The design is in the HFY-PLN-002 BRD (section 4, the key registry).
+
+### Items
+
+| Item | PK | SK | GSI1PK / GSI1SK | Holds |
+| --- | --- | --- | --- | --- |
+| Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps_id>#<handle>` (a Tag: `#<handle>`) | `version`, `seq`, `deleted`, `obj_json` (the canonical redacted Gramps object without `change`, written by `shared/canonical.mjs`, null for a tombstone), `hash` (its sha256), `origin`, `updated_by`, `updated_at` |
+| Change log entry | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | One entry per op: `op`, `version`, `base_version`, `obj_json`, `batch_id`, `principal`, `origin`, `on_behalf_of` |
+| Sequence head | `SYNC#HEAD` | `META` | - | `seq`, `writes_enabled`, `seeded`, `merges_enabled`, `tree_id` |
+| Batch receipt | `SYNC#BATCH#<batch_id>` | `META` | `SYNCBATCH` / `<at>#<batch_id>` | `request_hash`, `seq_from`, `seq_to`, `results`. Kept for ever |
+| gramps_id guard | `GID#<Class>#<gramps_id>` | `META` | - | `handle`, and for a retired id `retired: true` and `reason` |
+| ID alias | `IDALIAS#<Class>#<old_gramps_id>` | `META` | - | `handle`, `current_gramps_id`, `reason` (`merge` or `renumber`). Written for Person ids only |
+| Batch audit | `AUDIT#records:<batch_id>` | `<at>#<uid>` | `AUDIT` / same as SK | `op: "records.batch"`, `before` and `after` lists of `{class, handle, version}` |
+
+`applyBatch` creates none of `SYNC#HEAD`'s settings: the bind and seed routes own `writes_enabled`, `seeded`, `merges_enabled` and `tree_id`. It owns `seq`. Only `SYNC#HEAD`, `REC#`, `SYNC#LOG`, `SYNC#BATCH#`, `GID#`, `IDALIAS#` and the audit item are its own; counters, proposal state and notifications belong to its callers.
+
+### One call, one transaction
+
+`applyBatch(ctx, {principal, origin, onBehalfOf?, idempotencyKey, ops, extra?})` writes a batch of at most 24 ops in one `TransactWriteItems` of at most 100 actions (`assertTxnSize`). `origin` is one of `desktop`, `seed`, `self`, `admin`, `proposal`, `graduation`, `moderation` or `tag`. An op is `create`, `update`, `delete`, `withdraw` or `marker`. The caller sends whole redacted objects with a `base_version`; the server never merges. `ctx.validate` is required: a call with neither it nor `ctx.unsafeNoValidate: true` (the seed and tests only) throws a `TypeError`, because the version-conflict body returns stored objects and is safe only after the validator has run.
+
+Three op fields are **provisional**: `renumber: true` (a Person update that changes its `gramps_id`), `merged_into` (the survivor's `gramps_id`, at most 64 characters, required on a Person delete with `reason: "merge"`) and `blob` (a Media descriptor object). They serve the retire-plus-alias contract and appear nowhere in the BRD wire format, so `validator-js`, the sync push routes and `identity-merge-rekey` must match or replace them. The `renumber_blocked` and `merges_disabled` checks here duplicate rules that the validator also owns.
+
+- **Seq.** Every op takes the next seq, so seqs stay dense. The `SYNC#HEAD` update is conditioned on the seq that was read. A batch that loses the race re-reads `SYNC#HEAD`, runs `ctx.validate` again on the refreshed view and rebuilds, up to 3 times, then answers `503 retryable`. The `ClientRequestToken` is a hash of `batch_id:seq_from`, so a rebuilt item set never reuses a token; the `SYNC#BATCH` condition `attribute_not_exists` is the guard across attempts.
+- **Idempotency.** `batch_id` is derived from the principal and the `Idempotency-Key`; a principal may not contain `:`, so two pairs never share a `batch_id`. A key seen before with the same request (origin, `on_behalf_of`, ops and `extra`) returns the stored body with `replayed: true`; with a different request it is `422 idempotency_key_reused`. A missing key is `428 idempotency_key_required`. A replay is answered before the store gate, because it writes nothing: a client that lost the response still gets the stored body while writes are paused (open question for io: swap the two steps in `applyBatch` if a pause should refuse replays too).
+- **Versions.** A stale `base_version` is `409 version_conflict` with `details.conflicts`, one entry per op: `{op_id, class, handle, reason, current_version, current}`, where `current` is the stored redacted object. A create over a live object is `409 exists`. A tombstone is kept; it can be created over again only with `base_version` equal to its version.
+- **The store gate.** `SYNC#HEAD` is read inside every call. While it is absent or `seeded` is not true, every origin except `seed` gets `503 store_not_seeded`. While `writes_enabled` is false, every origin, `seed` included, gets `503 sync_paused`. A store that is both unseeded and paused answers `store_not_seeded` to every origin but `seed`, and an absent `writes_enabled` counts as not paused. The `SYNC#HEAD` update in the transaction pins `writes_enabled` (and `seeded`, for a non-seed origin) as read, so a pause or an un-seed between the check and the commit fails the transaction and the retry is refused.
+- **Extra items.** `extra` (`{puts, deletes, updates, checks}`, the `transact()` shapes) commits in the same transaction, as do the items of registered contributors. A failed condition on one of the caller's own items surfaces as the `TxnCancelled`, with the caller's `tag`.
+- **Validator.** `ctx.validate(view)` is the seam for the server validator (`validator-js`). It throws an `HttpError` to refuse a batch.
+
+### Gramps ids
+
+One `GID#` write per distinct id decides the batch as a whole, so a swap or a rotation of non-person ids commits in one batch. Two claims on one id in a batch are `409 gid_conflict`; a claim on an id in use is `409 gramps_id_taken`.
+
+- **Person ids are permanent.** A delete, withdraw, merge or renumber rewrites `GID#Person#<id>` as `{handle, retired: true, reason}` and writes an `IDALIAS#` item for a merge or renumber. Nothing deletes either item (`gidDelete` refuses a Person), and another person claiming a retired id is `409 gramps_id_retired`. A create over a Person tombstone is refused with `409 gramps_id_retired` (any id, so a merged person cannot return while its alias points elsewhere, and a deleted one cannot slip past the renumber guard); so is a renumber back onto an id the person retired. Bringing a Person back is the operator `resurrect` tooling, not a batch op. A non-person tombstone can still be created over with its version.
+- **A person's id does not change** (`409 renumber_blocked`) unless the op carries `renumber: true`. A Person merge (a delete with `reason: "merge"` and `merged_into`) is `409 merges_disabled` until `SYNC#HEAD.merges_enabled` is true.
+- **Canonical JSON.** `obj_json` and `blob` are written by `canonicalJson` in `shared/canonical.mjs`, the module `gramps/hfygramps/canonical.py` matches byte for byte (sync.md 4.1). An object or blob that it refuses, such as one with a fraction, an integer beyond +/-(2^53 - 1), a lone surrogate or nesting deeper than 200, is `400 validation` before any read, even on the seed path, which runs no validator. Otherwise the desktop add-on and the renderer could not rebuild the stored hash.
+- **Size.** A batch holds at most 24 ops, `2 x sum(obj_json bytes) + sum(blob bytes)` at most 3.5 MB, one `obj_json` at most 200 KB and one `blob` at most 4 KB, so a head stays under DynamoDB's 400 KB item limit. A batch whose ops could need more than 100 transaction items (a Person renumber takes up to 5, a merge 4) is refused with `413 batch_too_large` before any read: clients split those batches. A store rejection for item size is also `413`, never a retryable `503`.
+- **Left to other tasks.** The `expunged` flag of BRD2 section 4 is not written here: `privacy-expunge` sets it when it nulls `obj_json`, and a head or log entry without it is not expunged.
+- **Other ids are released** on delete or renumber. No identity is keyed by a non-person id: comment threads are `person:<id>` or `post:<ulid>`, record follows and profile links are keyed by a Person id, and allowlist grants by email.
+
+### Commit hooks
+
+[`sync/hooks.js`](../../api/src/sync/hooks.js) exports `registerContributor(fn)` and `registerAfterCommit(fn)`; both lists start empty.
+
+- A contributor, `fn(batch, origin)`, returns extra transaction items for the batch's own transaction. It runs on every attempt, so it must be pure. The self-edit and tag contribution ops come only from the contributor that `hfy-record-change-fanout` registers; no caller adds them.
+- An after-commit hook, `fn({batch_id, origin, seq_from, seq_to})`, runs once per committed batch, after the commit, and never for a replay or a refused batch. A hook that throws is logged by name and code and never fails the write. If the process dies between the commit and the hook, the hook does not run for that batch.
+- Record-change notifications do not come from here. They come from the render outbox.
+
 ## Environment
 
 Read in [`index.js`](../../api/src/index.js) and, for the `MCP_*` variables, in `loadMcpConfig` in [`mcp.js`](../../api/src/mcp.js). A default in code applies only when the variable is absent. [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) sets the variables in the first table, each from a stack parameter.
@@ -875,7 +997,7 @@ The person-record lookups are cached in memory, per container:
 | `comments` | `{reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param}` |
 | `mcp` | `{resource, tools}`. `resource` is `MCP_RESOURCE` (`https://<site>/mcp`). `tools` has one entry per route with an `mcp` member: `{name, action, write}`, where `name` is the tool name (for example `hfy_posts_get`), `action` the route name and `write` the route's `write`. |
 | `notifications` | `{types: <the four types>, default_level: 0}` |
-| `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility"]}` |
+| `audit` | `{item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"]}` |
 
 `actions` and `mcp.tools` are derived from `ROUTES`. The other fields are written by hand in `buildCaps` and differ from the code in two places:
 

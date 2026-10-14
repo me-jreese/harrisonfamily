@@ -8,11 +8,12 @@ import { canonicalize } from './canonical.mjs';
 import { GraphError } from './errors.mjs';
 import { geocodePlaces } from './geocode.mjs';
 import { computeGenerations } from './generations.mjs';
+import { computeLayout } from './layout.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const BUILDER = `hfy-graph@${pkg.version}`;
 export const SCHEMA_VERSION = 1;
-export const MINOR = 2; // 1: places[].geo may be "naturalearth" (state, province and country centroids); 2: photoEdges
+export const MINOR = 3; // 1: places[].geo may be "naturalearth" (state, province and country centroids); 2: photoEdges; 3: the optional layout block
 export const PROJECTION = 1;
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -82,6 +83,8 @@ export function buildFamilyGraph(objects, opts = {}) {
     photoEdges, // photo co-occurrence (minor 2); ids only, no handles, rects or paths
     attribution: { geonames: geo.geonames }, // any GeoNames coordinate needs the credit (GEONAMES_CREDIT)
   };
+  // Derived from the body (people, unions, generations), so it is left out of the snapshot digest, which names the content.
+  const layout = computeLayout(people, unions);
   const digest = snapshotDigest(body);
   const graph = {
     schemaVersion: SCHEMA_VERSION,
@@ -98,6 +101,7 @@ export function buildFamilyGraph(objects, opts = {}) {
       faces: 0,
     },
     ...body,
+    layout,
   };
   // geocode: per place, the source, the coordinates, and for a GeoNames match its geonameId, population and runner-up (local only)
   const report = { builder: BUILDER, generatedAt, counts: graph.counts, warnings: warnings.toList(), geocode: geo.entries };

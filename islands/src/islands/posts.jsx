@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { ArticleView } from "@io-kit/content/react";
 import { mountIsland } from "../lib/mount.jsx";
-import { Banner, CARD_LABELS, COPY, PostList, PostRow, Skeletons, formatTime, friendlyError, source, usePosts, useTimeTitles } from "../lib/posts-ui.jsx";
+import { Banner, CARD_LABELS, COPY, PostList, PostRow, Skeletons, formatTime, friendlyError, source, usePosts, useTimeTitles, withPhotoAlt } from "../lib/posts-ui.jsx";
 import { Comments } from "../lib/comments-ui.jsx";
 
 function One({ id }) {
@@ -35,7 +35,7 @@ function One({ id }) {
           {deleteError && <Banner>{deleteError}</Banner>}
           {s.post.type === "post"
             ? <ul className="hfy-posts__list"><PostRow post={s.post} link={false} remove={remove} /></ul>
-            : <div className="hfy-posts__item"><ArticleView post={s.post} labels={CARD_LABELS} formatTime={formatTime} /></div>}
+            : <div className="hfy-posts__item"><ArticleView post={withPhotoAlt(s.post)} labels={CARD_LABELS} formatTime={formatTime} /></div>}
           <Comments subject={`post:${s.post.id}`} />
         </article>
       )}

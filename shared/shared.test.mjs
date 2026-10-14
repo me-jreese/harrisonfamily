@@ -12,6 +12,7 @@ import "./privacy-guard.test.mjs"; // `node --test shared/` runs only this file 
 import "./profile-links.test.mjs";
 import "./legacy-form.test.mjs";
 import "./edit-guard.test.mjs";
+import "./canonical.test.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const modules = readdirSync(dir).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));

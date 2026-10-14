@@ -45,3 +45,30 @@ test("an island imports repo-root shared/ and the build bundles it (shared/valid
   const hit = bundles.some((f) => /typeof \w+ ?== ?"string" ?\? ?\w+\.trim\(\) ?: ?""/.test(readFileSync(join(out, String(f)), "utf8")));
   assert.ok(hit, "no bundle carries shared/validate.mjs cleanText");
 });
+
+// Every chunk an entry loads, itself included: static imports, re-exports and dynamic imports of relative .js files, transitively.
+function reachable(entry) {
+  const seen = new Set();
+  const visit = (abs) => {
+    if (seen.has(abs)) return;
+    seen.add(abs);
+    for (const m of readFileSync(abs, "utf8").matchAll(/(?:from|import)\s*\(?\s*"(\.{1,2}\/[^"]+\.js)"/g)) visit(resolve(dirname(abs), m[1]));
+  };
+  visit(join(out, entry));
+  return [...seen];
+}
+
+test("HFY-TSK-315: the person and posts islands carry no Cloudscape code or styles (kit-content.mjs hfyNoDocumentEditor)", () => {
+  // @io-kit/content 0.2.0+ re-exports DocumentEditor, whose Cloudscape barrel import put every Cloudscape component's stylesheet
+  // (about 1.4 MB) into each posts island's CSS, although no island renders it. Only the search island uses Cloudscape.
+  for (const name of ["person", "my-posts", "posts", "timeline"]) {
+    for (const abs of reachable(`${name}.js`)) assert.doesNotMatch(readFileSync(abs, "utf8"), /awsui/, `${name}.js loads Cloudscape code (${abs.slice(out.length + 1)})`);
+  }
+  for (const f of ["my-posts.css", "posts.css", "timeline.css"]) {
+    const css = readFileSync(join(out, f), "utf8");
+    assert.doesNotMatch(css, /awsui/, `js/islands/${f} carries Cloudscape styles`);
+    assert.ok(css.length < 64 * 1024, `js/islands/${f} is ${css.length} bytes: did a kit stylesheet get bundled in?`);
+  }
+  // The check can see Cloudscape: the search island does load it.
+  assert.ok(reachable("search.js").some((abs) => /awsui/.test(readFileSync(abs, "utf8"))), "search.js no longer loads Cloudscape: is the marker still awsui?");
+});

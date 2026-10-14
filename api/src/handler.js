@@ -2,7 +2,7 @@
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
 import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments.js";
-import { createNotifier, scanSubscribedPrincipals } from "./notify.js";
+import { createNotifier, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
@@ -10,6 +10,7 @@ import { createGuard } from "./guard.js";
 import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
+import { createLinks } from "./links.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -20,6 +21,7 @@ export function createHandler(deps) {
   const routes = deps.routes ?? ROUTES; // tests mount extra (gated) routes through routes.js defineRoutes
   // Persist first (BRD2 D2-15): with an inbox store wired (hfy-inbox-delivery-api) the producers run even without push.
   const notifyActive = pushEnabled || Boolean(deps.inbox);
+  const inboxStore = deps.inbox; // the kit NotificationStore (index.js wires DynamoNotificationStore)
   const mediaBucket = deps.mediaBucket ?? "harrisonfamily-frontend";
   // R-18 on posts, comments and the MCP tools (privacy-guard-existing-paths). guardDob is the HFY_GUARD_DOB switch (index.js):
   // off until io answers Q2-17 line 5, so only contact kinds are refused; refusals log counts per code only.
@@ -72,12 +74,16 @@ export function createHandler(deps) {
     // A deleted post takes its discussion with it (each removed comment is audited); best effort after the post delete.
     const afterPostDeleted = (id) => afterCommit("post thread purge", () => purgeThread(base, `post:${id}`, actor.id));
     const notifyHandler = () =>
-      createNotifyHandler({ vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id })(event);
+      createNotifyHandler({
+        vapidPublicKey: deps.vapidPublicKey ?? "", subscriptions: deps.subscriptions, preferences: deps.preferences, getPrincipal: () => actor.id,
+        ...(inboxStore ? { inbox: inboxStore, registry: TEMPLATE_REGISTRY } : {}),
+      })(event);
     const uploads = deps.presignPut ? createUploads({ presignPut: deps.presignPut, uid, ddb, cmds, table, now, bucket: mediaBucket, publicBase: deps.mediaPublicBase }) : { presign: async () => { throw new HttpError(503, "unavailable", "uploads are not configured"); } };
     const accessRequestCount = () => countPendingAccessRequests({ ddb, cmds, table });
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
-    return { content, comments, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    const links = createLinks(base);
+    return { content, comments, links, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**

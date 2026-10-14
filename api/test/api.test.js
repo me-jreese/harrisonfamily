@@ -38,11 +38,12 @@ describe("posts: Q-4 permissions and D-15 audit", () => {
     const made = await w.call("POST", "/api/posts", { token: ann, body: { body: "hello", subject: "person:I0001", title: "T" } });
     expect(made.status).toBe(201);
     const id = made.body.id;
-    expect(made.body.can).toEqual({ edit: true, delete: true, publish: true });
+    // @io-kit/content 0.3.0 adds can.moderate; hfy declares no moderation capability, so it is false for everyone.
+    expect(made.body.can).toEqual({ edit: true, delete: true, publish: true, moderate: false });
     expect((await w.call("GET", `/api/posts/${id}`, { token: olive })).status).toBe(404); // draft is private
     expect((await w.call("POST", `/api/posts/${id}/visibility`, { token: ann, body: { visibility: "published" } })).body.visibility).toBe("published");
     const seen = await w.call("GET", `/api/posts/${id}`, { token: olive });
-    expect(seen.body.can).toEqual({ edit: false, delete: false, publish: false });
+    expect(seen.body.can).toEqual({ edit: false, delete: false, publish: false, moderate: false });
     expect((await w.call("PATCH", `/api/posts/${id}`, { token: olive, body: { body: "hax" } })).status).toBe(403);
     expect((await w.call("DELETE", `/api/posts/${id}`, { token: olive })).status).toBe(403);
     expect((await w.call("PATCH", `/api/posts/${id}`, { token: ann, body: { body: "hello 2", title: null } })).body.body).toBe("hello 2");

@@ -8,7 +8,12 @@ const kk = (k) => `${k.PK}\u0000${k.SK}`;
 const err = (name, message) => Object.assign(new Error(message), { name });
 const fail = (m) => { throw new Error(`fake: ${m}`); };
 // Cancellation codes failNext() can inject into a transaction (anything else is thrown as an error with that name).
-const CANCEL_CODES = new Set(["TransactionConflict", "ConditionalCheckFailed", "ThrottlingError", "ProvisionedThroughputExceeded", "ItemCollectionSizeLimitExceeded"]);
+const CANCEL_CODES = new Set(["TransactionConflict", "ConditionalCheckFailed", "ThrottlingError", "ProvisionedThroughputExceeded", "ItemCollectionSizeLimitExceeded", "ValidationError"]);
+// DynamoDB limits the fake enforces: an item is at most 400 KB and a transaction at most 4 MB (JSON text size stands in for DynamoDB's
+// attribute-name-plus-value size, which is within a few percent of it for the plain items this API stores).
+export const MAX_ITEM_BYTES = 400 * 1024;
+export const MAX_TXN_BYTES = 4 * 1024 * 1024;
+const itemBytes = (item) => Buffer.byteLength(JSON.stringify(item));
 const cancelled = (codes) =>
   Object.assign(err("TransactionCanceledException", `Transaction cancelled, please refer cancellation reasons for specific reasons [${codes.join(", ")}]`), {
     CancellationReasons: codes.map((c) => ({ Code: c, ...(c === "None" ? {} : { Message: "fake" }) })),
@@ -157,6 +162,8 @@ export function createFakeDdb() {
     tokens.push(i.ClientRequestToken);
     if (items.length === 0 || items.length > 100) throw err("ValidationException", "Member must have length less than or equal to 100");
     const payload = JSON.stringify(items);
+    if (items.some((t) => t.Put && itemBytes(t.Put.Item) > MAX_ITEM_BYTES)) throw err("ValidationException", "Item size has exceeded the maximum allowed size");
+    if (Buffer.byteLength(payload) > MAX_TXN_BYTES) throw err("ValidationException", "Member must have length less than or equal to 4 MB: transaction size has exceeded the maximum allowed size");
     if (i.ClientRequestToken !== undefined && applied.has(i.ClientRequestToken)) {
       if (applied.get(i.ClientRequestToken) !== payload) throw err("IdempotentParameterMismatchException", "token reused with different parameters");
       return {}; // replay of a committed transaction: nothing is applied twice
@@ -208,6 +215,7 @@ export function createFakeDdb() {
         case "GetCommand":
           return { Item: rows.has(kk(i.Key)) ? structuredClone(rows.get(kk(i.Key))) : undefined };
         case "PutCommand":
+          if (itemBytes(i.Item) > MAX_ITEM_BYTES) throw err("ValidationException", "Item size has exceeded the maximum allowed size");
           if (!condOf(i, rows.get(kk(i.Item)))) throw err("ConditionalCheckFailedException", "condition failed");
           rows.set(kk(i.Item), structuredClone(i.Item));
           return {};
