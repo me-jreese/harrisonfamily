@@ -15,3 +15,16 @@ routes:
     handlers: ["api:posts.list", "api:posts.get", "api:posts.create", "api:posts.delete"]
     auth: { groups: [members] }
     surface: web
+  # HFY-TSK-211: the editing pages call the routes the MCP tools hfy_records_get, hfy_changes_submit, hfy_proposals_list and hfy_proposals_get mirror:
+  # the record editor at /edit/ (HFY-TSK-212 and HFY-TSK-213; ?cls=&id=, flag recordEdit) and the suggestions page at /me/review/ (HFY-TSK-259). The routes sit behind HFY_EDITING.
+  # Only the mirrored handlers are listed, as for the pages above. There is no api:proposals.decide here: the MCP surface has no decide tool (DEC-E5).
+  - path: /edit/
+    component: islands/editor
+    handlers: ["api:edit.get", "api:changes.post"]
+    auth: { groups: [members] }
+    surface: web
+  - path: /me/review/
+    component: islands/review
+    handlers: ["api:proposals.list", "api:proposals.get"]
+    auth: { groups: [members] }
+    surface: web

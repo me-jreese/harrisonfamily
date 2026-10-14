@@ -284,11 +284,11 @@ describe("GET /api/edit/schema/:cls", () => {
 });
 
 describe("registry and caps (AC3)", () => {
-  it("lists the routes behind HFY_EDITING, read-only, with no MCP tool", () => {
+  it("lists the routes behind HFY_EDITING, read-only; edit.get is the MCP tool hfy_records_get, edit.schema has none", () => {
     const caps = buildCaps();
     for (const [name, path] of [["edit.schema", "/api/edit/schema/:cls"], ["edit.get", "/api/edit/:cls/:ref"]]) {
       expect(caps.actions.find((a) => a.name === name)).toMatchObject({ method: "GET", path, write: false, auth: "session", gate: { switch: "HFY_EDITING" } });
-      expect(ROUTES.find((r) => r.name === name).mcp).toBeUndefined();
+      expect(ROUTES.find((r) => r.name === name).mcp?.tool).toBe(name === "edit.get" ? "hfy_records_get" : undefined);
     }
     expect(ROUTES.findIndex((r) => r.name === "edit.schema")).toBeLessThan(ROUTES.findIndex((r) => r.name === "edit.get"));
   });

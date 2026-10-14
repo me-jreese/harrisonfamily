@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mapToGramps } from "../../shared/legacy-form.mjs";
 import {
   COPY, TABS, answersOf, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, fold, givenOverlap, linkBody, locationFor, matchPlaces,
-  newBody, parseLocation, placeChoices, previewFields, rankCandidates, requesterName, tidyPreviewNames, resultLine, revokeBody, scoreCandidate, setEventPlace, stateWords,
+  newBody, parseLocation, placeChoices, previewFields, rankCandidates, requesterName, tidyPreviewNames, resultLine, revokeBody, REVOKE_PATH, saveDraft, loadDraft, clearDraft, markStepUp, takeStepUp, revokeTarget, NO_MEMBER_ID, removePrompt, scoreCandidate, setEventPlace, stateWords,
 } from "../src/lib/access-requests-model.js";
 
 const PEOPLE = [
@@ -161,13 +161,15 @@ test("the decision bodies carry the confirmed-outside flag only as true, and a n
   assert.deepEqual(declineBody({ note: "  ", sendNote: true, version: 1 }), { decision: "decline", version: 1 });
   assert.deepEqual(declineBody({ note: " hello ", sendNote: true, version: 1 }), { decision: "decline", version: 1, note: "hello", sendNote: true });
   assert.deepEqual(declineBody({ note: "hello", version: 1 }), { decision: "decline", version: 1, note: "hello", sendNote: false });
-  assert.deepEqual(revokeBody({ version: 4, confirmedOutside: true, reason: " " }), { version: 4, confirmedOutside: true });
+  assert.deepEqual(revokeBody({ grampsId: "I9001", confirmedOutside: true, reason: " " }), { grampsId: "I9001", confirmedOutside: true });
+  assert.deepEqual(revokeBody({ grampsId: "I9001", confirmedOutside: "yes", reason: " why " }), { grampsId: "I9001", confirmedOutside: false, reason: "why" });
+  assert.equal(REVOKE_PATH, "/allow-grants/revoke");
 });
 
 test("result and error words (surfaces.md 7.10, DS voice: lowercase, no exclamation marks)", () => {
   assert.equal(resultLine({ state: "active", emailSent: true }), "done. we emailed them.");
   assert.equal(resultLine({ state: "active", emailSent: false }), "done, but the email didn't send. let them know yourself.");
-  assert.equal(resultLine({ state: "revoked" }, { revoke: true }), COPY.doneRemoved);
+  assert.equal(resultLine({ state: "revoked" }, { revoke: true }), `${COPY.doneRemoved} ${COPY.byHand}`);
   const e = (status, code, extra = {}) => describeError({ status, code, ...extra });
   assert.equal(e(401, "step_up_required").kind, "signin");
   assert.equal(e(409, "conflict").kind, "reload");
@@ -193,4 +195,56 @@ test("free-text birth place: the city must equal the first segment, not just sta
   assert.ok(!scoreCandidate({ ...req, birthPlace: "Ann" }, { ...row, birthPlace: "Annapolis, Exampleland" }).reasons.includes("birthplace"));
   assert.ok(scoreCandidate(req, { ...row, birthPlace: "York, Exampleland" }).reasons.includes("birthplace"));
   assert.ok(!scoreCandidate(req, { ...row, birthPlace: "York, Otherland" }).reasons.includes("birthplace"));
+});
+
+test("revoke errors have their own words, and other routes keep theirs", () => {
+  const e = (status, code, o) => describeError({ status, code }, o);
+  assert.match(e(404, "not_found", { revoke: true }).text, /no access to remove/);
+  assert.match(e(422, "too_many", { revoke: true }).text, /more ways in/);
+  assert.equal(e(404, "not_found").text, "that request isn't there anymore.");
+  assert.equal(e(401, "step_up_required", { revoke: true }).kind, "signin");
+});
+
+test("a preview draft round-trips through storage, and a missing or broken storage is no draft", () => {
+  const mem = new Map();
+  const st = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  saveDraft("req1", { person: { nick: "Tessie" } }, st);
+  assert.deepEqual(loadDraft("req1", st), { person: { nick: "Tessie" } });
+  assert.equal(loadDraft("req2", st), null);
+  clearDraft("req1", st);
+  assert.equal(loadDraft("req1", st), null);
+  mem.set("hfy-requests-draft:bad", "{not json");
+  assert.equal(loadDraft("bad", st), null);
+  const boom = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
+  saveDraft("v", { a: 1 }, st, { version: 3, now: 1000 });
+  assert.deepEqual(loadDraft("v", st, { version: 3, now: 2000 }), { a: 1 });
+  assert.equal(loadDraft("v", st, { version: 4, now: 2000 }), null, "another version of the request");
+  assert.equal(loadDraft("v", st, { version: 3, now: 1000 + 61 * 60 * 1000 }), null, "older than an hour");
+  assert.equal(takeStepUp("v", st), false);
+  markStepUp("v", st);
+  assert.equal(takeStepUp("v", st), true);
+  assert.equal(takeStepUp("v", st), false, "read once");
+  markStepUp("v", st);
+  clearDraft("v", st);
+  assert.equal(takeStepUp("v", st), false, "clearing a draft clears the flag");
+  assert.doesNotThrow(() => { saveDraft("x", { a: 1 }, boom); clearDraft("x", boom); });
+  assert.equal(loadDraft("x", boom), null);
+  assert.equal(loadDraft("x", null), null);
+});
+
+test("revokeTarget uses the linked person, else null; resultLine counts what was removed and never claims every email went", () => {
+  assert.equal(revokeTarget({ decision: { grampsId: " I9001 " }, hold: { until: "2030-01-01T00:00:00Z", noticed: true } }), "I9001");
+  assert.equal(revokeTarget({ hold: { until: "2030-01-01T00:00:00Z", noticed: true } }), null);
+  assert.equal(revokeTarget({ decision: {} }), null);
+  assert.equal(revokeTarget(null), null);
+  assert.match(NO_MEMBER_ID, /no access to remove/);
+  assert.equal(resultLine({ revoked: [{ email: "a***@example.test" }, { email: "b***@example.test" }] }, { revoke: true }), `done. 2 ways in were removed. ${COPY.byHand}`);
+  assert.equal(resultLine({ revoked: [{ email: "a***@example.test" }] }, { revoke: true }), `done. 1 way in was removed. ${COPY.byHand}`);
+  assert.equal(resultLine({}, { revoke: true }), `${COPY.doneRemoved} ${COPY.byHand}`);
+  // the grant revoke leaves io's S3 allowlist file alone (allowlist-store: a file address with no ALLOW# item still signs in)
+  for (const words of [removePrompt("Tessa Example"), resultLine({ revoked: [{ email: "a***@example.test" }] }, { revoke: true }), resultLine({}, { revoke: true })]) {
+    assert.match(words, /may still work/);
+    assert.doesNotMatch(words, /every email they use|all of their ways in|their access is removed/);
+  }
+  assert.doesNotMatch(describeError({ status: 400, code: "validation" }, { revoke: true }).text, /outside the site/);
 });
