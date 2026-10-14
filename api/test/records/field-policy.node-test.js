@@ -521,14 +521,14 @@ describe("review fixes (HFY-TSK-233)", () => {
       return w;
     };
     const run1 = async (op, opts) => (await run([{ id: "o1", ...op }], opts))[0];
+    const EXPECT_OTHER = "desk"; // the relation rule does not outrank the desktop-only row for a non-owner
     it("adding a non-link Url is desktop-only for the owner, another member and an admin; link kinds stay direct", async () => {
       const as = [{ actor: actorOf("I9001") }, { actor: actorOf("I9999") }, { actor: { id: "I9000", admin: true } }];
       for (const bad of [search, ftp, unknown, oddCustom]) {
         for (const o of as) {
           const r = await run1({ op: "add", obj: ME, path: "/urls", value: bad }, o);
-          if (o.actor.id === "I9999") assert.notEqual(r.code, "direct");
-          else assert.equal(r.code, "desk", `${bad.type.value}/${bad.type.string}`);
-          if (r.code === "desk") assert.ok(r.kinds.includes("url_not_link"));
+          assert.equal(r.code, o.actor.id === "I9999" ? EXPECT_OTHER : "desk", `${bad.type.value}/${bad.type.string}`);
+          assert.ok(r.kinds.includes("url_not_link"), `${bad.type.value}/${bad.type.string}`);
         }
       }
       const customTypes = { UrlType: new Set(["instagram"]) };
