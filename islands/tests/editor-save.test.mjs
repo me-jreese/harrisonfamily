@@ -4,8 +4,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PERSON_SECTIONS, createModeResolver } from "../src/lib/editor-model.js";
 import { ApiError, createApi } from "../src/lib/api.js";
+import { applyOps, validateOps } from "../../api/src/records/ops.js";
 import {
-  SAVE_COPY, UNDO_WINDOW_MS, allSaveText, barText, changesBody, confirmLabel, countOps, newIdempotencyKey, opsFromDrafts, planGroups, replaySeed, problemFor, reviewerLine, savedToast, undoBody, undoLeftMs
+  SAVE_COPY, NOTE_MAX, UNDO_WINDOW_MS, allSaveText, barText, changesBody, confirmLabel, countOps, newIdempotencyKey, noteCountText, opsFromDrafts, planGroups, replaySeed, problemFor, reviewerLine, savedToast, undoBody, undoLeftMs
 } from "../src/lib/editor-save.js";
 
 const POLICY = JSON.parse(readFileSync(new URL("./fixtures/edit-policy-person.json", import.meta.url), "utf8"));
@@ -31,6 +32,20 @@ describe("opsFromDrafts", () => {
   it("a cleared field is a set to the empty string over the old value", () => {
     const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Test" } } });
     assert.deepEqual(ops, [{ id: "names.nick", op: "set", obj: KEY, path: "/primary_name/nick", base: "Tess", value: "" }]);
+  });
+
+  it("a cleared field is accepted by the API's op engine, and its inverse puts the old text back (contract)", () => {
+    // The server has no "unset" op: a set to "" over the stored text is how a field is cleared (api/test/changes.test.js "clearing a stored phone number").
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: OBJ, drafts: { names: { first_name: "Test", title: "Dr" } } });
+    assert.deepEqual(ops.map((o) => [o.id, o.base, o.value]), [["names.nick", "Tess", ""], ["names.title", null, "Dr"]]);
+    assert.deepEqual(validateOps(ops), []);
+    const r = applyOps({ [KEY]: OBJ }, ops);
+    assert.equal(r.ok, true, JSON.stringify(r.conflicts));
+    assert.equal(r.objects[KEY].primary_name.nick, "");
+    assert.equal(r.objects[KEY].primary_name.title, "Dr");
+    const back = applyOps(r.objects, r.inverse);
+    assert.equal(back.ok, true);
+    assert.equal(back.objects[KEY].primary_name.nick, "Tess");
   });
 
   it("op ids fit the API's id rule and a section without a draft makes none", () => {
@@ -60,6 +75,25 @@ describe("replaySeed", () => {
   it("a field the member cleared stays cleared", () => {
     const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: OBJ, drafts: { names: { first_name: "Test" } } });
     assert.deepEqual(seed, { names: { first_name: "Test" } });
+  });
+});
+
+describe("replaySeed with settled ops (the refetch after a save)", () => {
+  const fresh = { ...OBJ, primary_name: { ...OBJ.primary_name, nick: "Tessa" } }; // the save stored the nickname
+  it("an edit the server just took is not laid over the fresh record again, one typed since is", () => {
+    const drafts = { names: { first_name: "Test", nick: "Tessa", title: "Dr" } }; // title typed after the save
+    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: fresh, drafts, settled: { "names.nick": "Tessa" } });
+    assert.deepEqual(seed, { names: { first_name: "Test", nick: "Tessa", title: "Dr" } });
+    const { ops } = opsFromDrafts({ key: KEY, sections: SECTIONS, obj: fresh, drafts: seed });
+    assert.deepEqual(ops.map((o) => [o.id, o.base, o.value]), [["names.title", null, "Dr"]]);
+  });
+  it("a suggestion that went to review is settled too: the form goes back to the record, not to the suggested text", () => {
+    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: OBJ, drafts: { names: { first_name: "Tester", nick: "Tess", title: "Dr" } }, settled: { "names.first_name": "Tester" } });
+    assert.deepEqual(seed, { names: { first_name: "Test", nick: "Tess", title: "Dr" } });
+  });
+  it("a settled field edited again to something else is kept", () => {
+    const seed = replaySeed({ sections: SECTIONS, key: KEY, oldObj: OBJ, freshObj: fresh, drafts: { names: { first_name: "Test", nick: "Tessie" } }, settled: { "names.nick": "Tessa" } });
+    assert.equal(seed.names.nick, "Tessie");
   });
 });
 
@@ -173,12 +207,30 @@ describe("problems", () => {
     assert.equal(problemFor(err(401, "step_up_required")).signIn, true);
     assert.equal(problemFor(err(422, "idempotency_mismatch")).retryKey, true);
   });
+  it("step_up_required and unauthenticated lead to the sign-in whatever the status, and only the step-up asks for a fresh one", () => {
+    const up = problemFor(err(403, "step_up_required"));
+    assert.equal(up.signIn, true);
+    assert.equal(up.stepUp, true);
+    assert.equal(up.text, "sign in again to confirm this change, then come back to save.");
+    assert.equal(problemFor(err(401, "step_up_required")).stepUp, true);
+    assert.equal(problemFor(err(403, "unauthenticated")).signIn, true);
+    assert.equal(problemFor(err(401, "unauthenticated")).stepUp, false);
+    assert.equal(problemFor(err(403, "not_allowed")).signIn, false);
+  });
+  it("a hiccup is transient (the undo stays on offer), a refusal or a conflict is not", () => {
+    for (const [s, c] of [[0, "network"], [429, "rate_limited"], [500, "server"], [503, "unavailable"]]) assert.equal(problemFor(err(s, c)).transient, true, `${s}`);
+    for (const [s, c] of [[400, "validation"], [403, "not_allowed"], [409, "version_conflict"], [422, "contact_info"]]) assert.equal(problemFor(err(s, c)).transient, false, `${s}`);
+  });
+  it("the note counter shows the limit", () => {
+    assert.equal(NOTE_MAX, 1000);
+    assert.equal(noteCountText(12), "12 of 1000 characters");
+  });
   it("names the fields an errors[] points at, never a value", () => {
     const p = problemFor(err(422, "contact_info", [{ pointer: "/ops/1/value", kind: "phone", span: [0, 4] }, { opId: "names.nick" }]), { labels, ops });
     assert.deepEqual(p.fields, ["title", "nickname"]);
   });
   it("copy is lowercase plain words with no jargon", () => {
-    for (const t of allSaveText()) {
+    for (const t of [...allSaveText(), noteCountText(0)]) {
       assert.ok(t.length > 0);
       assert.ok(!/\b(record|records|users?|members?|proposal|handle|gramps|dry.?run|payload|409|422)\b/i.test(t), t);
     }

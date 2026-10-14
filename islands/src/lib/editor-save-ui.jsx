@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import {
-  NOTE_MAX, SAVE_COPY, barText, changesBody, confirmLabel, countOps, newIdempotencyKey, opsFromDrafts, planGroups, problemFor, reviewerLine, savedToast, undoBody, undoLeftMs
+  NOTE_MAX, SAVE_COPY, barText, changesBody, confirmLabel, countOps, newIdempotencyKey, noteCountText, opsFromDrafts, planGroups, problemFor, reviewerLine, savedToast, undoBody, undoLeftMs
 } from "./editor-save.js";
 
 export const REVIEW_HREF = "/me/review/?tab=mine";
@@ -21,7 +21,8 @@ export const formSections = (sections) => sections.filter((s) => s.form);
 
 /**
  * The save flow's state and actions. `getBundle()` is the bundle the forms were made from, `getDrafts()` the form values now, `refetch()` fetches
- * the bundle again, and `adopt(bundle, keepDrafts)` makes it the page's bundle (remounting the forms with the member's values when kept).
+ * the bundle again, and `adopt(bundle, keepDrafts, settled)` makes it the page's bundle (remounting the forms; when `keepDrafts`, with the member's
+ * edits laid over it, minus the ops in `settled`, an op id -> value map of what a save just stored).
  */
 export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, adopt }) {
   const [sheet, setSheet] = useState(null);
@@ -38,6 +39,24 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
     const sig = JSON.stringify([bundle.key, bundle.version, ops, note]);
     if (keyRef.current.sig !== sig) keyRef.current = { sig, key: newIdempotencyKey() };
     return keyRef.current.key;
+  };
+
+  // The page takes the bundle fetched after a save or an undo. The forms stay editable meanwhile, so the member may already be typing the next
+  // edit: whatever they typed that the server has not just taken (`settledOps`) is laid over the fresh record instead of being reset away.
+  const refreshSeq = useRef(0);
+  const adoptFresh = (fresh, settledOps = []) => {
+    const bundle = getBundle();
+    const settled = Object.fromEntries(settledOps.map((o) => [o.id, o.value]));
+    const pending = bundle ? build(bundle).ops.filter((o) => !(Object.hasOwn(settled, o.id) && settled[o.id] === o.value)) : [];
+    adopt(fresh, pending.length > 0, settled);
+  };
+
+  // Fetch the bundle after a save or an undo and adopt it, unless a later save or undo has started its own fetch meanwhile (its answer is newer).
+  const refresh = async (settledOps = []) => {
+    refreshSeq.current += 1;
+    const ticket = refreshSeq.current;
+    const fresh = await refetch();
+    if (ticket === refreshSeq.current) adoptFresh(fresh, settledOps);
   };
 
   // A conflict: refetch the bundle and replay the member's edits over it (the forms remount holding the member's values, so the ops are
@@ -58,7 +77,8 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
     set({ phase: "planning", notice, ops, labels, bundle, replayed, groups: null, problem: null, note });
     try {
       const body = await api.post("/changes", changesBody({ target: bundle.key, version: bundle.version, ops, dryRun: true }));
-      set({ phase: "ready", notice, ops, labels, bundle, replayed, groups: planGroups(body), problem: null, note });
+      // The dry run went through, so a conflict on the save that follows is a new one and gets its own replay.
+      set({ phase: "ready", notice, ops, labels, bundle, replayed: false, groups: planGroups(body), problem: null, note });
     } catch (e) {
       await fail(e, { ops, labels, bundle, replayed, notice, groups: null });
     }
@@ -94,7 +114,7 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
       const t = savedToast(body);
       set(null);
       setToast({ ...t, id: Date.now() });
-      try { adopt(await refetch(), false); } catch { setToast({ ...t, text: `${t.text} reload the page to see it.`, id: Date.now() }); }
+      try { await refresh(s.ops); } catch { setToast({ ...t, text: `${t.text} reload the page to see it.`, id: Date.now() }); }
       setFocusTick((n) => n + 1);
     } catch (e) {
       const problem = problemFor(e, { labels: s.labels, ops: s.ops });
@@ -111,17 +131,22 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
     const t = toast;
     const bundle = getBundle();
     if (!t || !t.undo || t.working || !bundle || undoLeftMs(t) === 0) return;
-    setToast({ ...t, working: true });
+    // One key per undo, kept across a retry: if the first answer was lost the server replays it instead of applying the inverse twice.
+    const undoKey = t.undoKey || newIdempotencyKey();
+    setToast({ ...t, working: true, undoKey });
     try {
-      await api.post("/changes", undoBody({ target: bundle.key, undo: t.undo }), { headers: { "Idempotency-Key": newIdempotencyKey() } });
+      await api.post("/changes", undoBody({ target: bundle.key, undo: t.undo }), { headers: { "Idempotency-Key": undoKey } });
       setToast({ text: SAVE_COPY.undone, saved: false, sent: 0, undo: null, undoUntil: 0, id: Date.now() });
-      try { adopt(await refetch(), false); } catch { /* the next save replays over whatever changed */ }
+      try { await refresh(); } catch { /* the next save replays over whatever changed */ }
       setFocusTick((n) => n + 1);
     } catch (e) {
       const p = problemFor(e, {});
+      // A hiccup (no answer, a busy site) leaves the undo on offer for the rest of its window, with the reason beside it; a conflict or a
+      // refusal ends it.
+      if (p.transient) { const baseText = t.baseText || t.text; setToast({ ...t, baseText, text: `${baseText} ${p.text}`, working: false, undoKey }); return; }
       const text = p.conflict ? SAVE_COPY.undoConflict : e && (e.status === 400 || e.status === 403 || e.status === 422) ? SAVE_COPY.undoFailed : p.text;
       setToast({ text, saved: false, sent: 0, undo: null, undoUntil: 0, id: Date.now() });
-      if (p.conflict) { try { adopt(await refetch(), true); } catch { /* shown on the next save */ } }
+      if (p.conflict) { try { await refresh(); } catch { /* shown on the next save */ } }
     }
   };
 
@@ -138,7 +163,7 @@ export function useSaveFlow({ sections, viewer, getBundle, getDrafts, refetch, a
     review, save: () => save(false), undo,
     closeSheet: () => set(null),
     setNote: (note) => setSheet((cur) => (cur ? { ...cur, note } : cur)),
-    retry: () => { const b = getBundle(); if (b) plan(b, { notice: sheet ? sheet.notice : "", replayed: sheet ? sheet.replayed : false, note: sheet ? sheet.note || "" : "" }); },
+    retry: () => { const b = getBundle(); if (b) plan(b, { notice: sheet ? sheet.notice : "", replayed: sheet && !(sheet.problem && sheet.problem.conflict) ? sheet.replayed : false, note: sheet ? sheet.note || "" : "" }); },
     dismissToast: () => setToast(null)
   };
 }
@@ -221,7 +246,7 @@ export function ConfirmSheet({ flow, signInHref }) {
             <div className="hfy-sheet__problem" role="alert" data-hfy-problem>
               <p>{sheet.problem.text}</p>
               {sheet.problem.fields.length > 0 && <p>{SAVE_COPY.checkFields} {sheet.problem.fields.join(", ")}</p>}
-              {sheet.problem.signIn && <a className="hfy-sheet__signin" href={signInHref()}>sign in</a>}
+              {sheet.problem.signIn && <a className="hfy-sheet__signin" href={signInHref(sheet.problem.stepUp)}>sign in</a>}
             </div>
           )}
           {groups && (
@@ -232,7 +257,8 @@ export function ConfirmSheet({ flow, signInHref }) {
               {groups.review.length > 0 && (
                 <div className="hfy-sheet__field">
                   <label htmlFor="hfy-sheet-note">{SAVE_COPY.noteLabel}</label>
-                  <textarea id="hfy-sheet-note" rows={3} maxLength={NOTE_MAX} value={sheet.note || ""} onChange={(e) => flow.setNote(e.target.value)} disabled={sheet.phase === "saving"} data-hfy-note />
+                  <textarea id="hfy-sheet-note" rows={3} maxLength={NOTE_MAX} value={sheet.note || ""} onChange={(e) => flow.setNote(e.target.value)} disabled={sheet.phase === "saving"} aria-describedby="hfy-sheet-note-count" data-hfy-note />
+                  <p className="hfy-sheet__note" id="hfy-sheet-note-count" data-hfy-note-count>{noteCountText((sheet.note || "").length)}</p>
                 </div>
               )}
               {groups.warnings.length > 0 && (
@@ -245,7 +271,7 @@ export function ConfirmSheet({ flow, signInHref }) {
           )}
           <div className="hfy-sheet__actions">
             <button type="button" className="hfy-sheet__secondary" onClick={flow.closeSheet} disabled={sheet.phase === "saving"} data-hfy-back>{SAVE_COPY.back}</button>
-            {sheet.phase === "error" && !sheet.problem?.signIn && !sheet.problem?.conflict && <button type="button" className="hfy-editor__primary" onClick={flow.retry} data-hfy-retry>try again</button>}
+            {sheet.phase === "error" && !sheet.problem?.signIn && <button type="button" className="hfy-editor__primary" onClick={flow.retry} data-hfy-retry>{sheet.problem?.conflict ? SAVE_COPY.reviewAgain : "try again"}</button>}
             {(sheet.phase === "ready" || sheet.phase === "saving") && !none && (
               <button type="button" className="hfy-editor__primary" onClick={flow.save} disabled={sheet.phase === "saving"} data-hfy-save>
                 {sheet.phase === "saving" ? SAVE_COPY.saving : confirmLabel(groups)}

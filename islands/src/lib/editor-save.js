@@ -37,9 +37,13 @@ export const SAVE_COPY = Object.freeze({
   reviewerMember: "an admin of the family site looks these over before they show. you'll get a notification when they do, and you can change or withdraw them until then.",
   reviewerAdmin: "another admin looks these over before they show. you can change or withdraw them until then.",
   noteLabel: "a note for whoever looks at it (optional)",
+  reviewAgain: "review again",
   warnings: "worth a look",
   checkFields: "check:"
 });
+
+/** The note field's counter, so the 1000-character limit is visible: "12 of 1000 characters". */
+export const noteCountText = (n) => `${n} of ${NOTE_MAX} characters`;
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -79,10 +83,11 @@ export function opsFromDrafts({ key, sections, obj, drafts }) {
 /**
  * The form values to start from when the member's edits are replayed over a refetched record (a 409): the fresh record's values with only the
  * fields the member changed (against the record they edited) laid over them, so a field somebody else changed meanwhile is neither lost nor
- * silently reverted. -> { [sectionId]: args }.
+ * silently reverted. `settled` maps an op id to the value the server just took (a save that went through): an edit still equal to it is
+ * done and is not laid over the fresh record again, so only what the member typed after the save survives. -> { [sectionId]: args }.
  */
-export function replaySeed({ sections, key, oldObj, freshObj, drafts }) {
-  const { ops } = opsFromDrafts({ key, sections, obj: oldObj, drafts });
+export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = {} }) {
+  const ops = opsFromDrafts({ key, sections, obj: oldObj, drafts }).ops.filter((o) => !(Object.hasOwn(settled, o.id) && settled[o.id] === o.value));
   const out = {};
   for (const section of sections) {
     if (!section.form) continue;
@@ -222,16 +227,21 @@ function errorOpIds(errors, ops) {
   return out;
 }
 
-/** An ApiError (or any thrown value) as { text, fields, conflict, retryKey, signIn }. `labels` and `ops` name the fields an error points at. */
+/** An ApiError (or any thrown value) as { text, fields, conflict, retryKey, signIn, stepUp, transient }. `labels` and `ops` name the fields an error points at. */
 export function problemFor(err, { labels = {}, ops = [] } = {}) {
   const status = isObj(err) || err instanceof Error ? err.status : 0;
   const code = isObj(err) || err instanceof Error ? err.code : "";
-  const base = { fields: [], conflict: false, retryKey: false, signIn: false };
+  const base = { fields: [], conflict: false, retryKey: false, signIn: false, stepUp: false, transient: false };
   if (status === 409 && code === "version_conflict") return { ...base, text: SAVE_COPY.conflict, conflict: true };
   if (status === 422 && code === "idempotency_mismatch") return { ...base, text: TEXT.server, retryKey: true };
   const key = status === 0 ? "network" : TEXT[code] ? code : status === 401 ? "unauthenticated" : status === 403 ? "not_allowed" : status === 429 ? "rate_limited" : status === 413 ? "too_large" : status === 503 ? "unavailable" : status === 404 ? "not_found" : status === 400 ? "validation" : "server";
   const fields = errorOpIds(err && err.errors, ops).map((id) => labels[id]).filter(Boolean);
-  return { ...base, text: TEXT[key], fields, signIn: status === 401 };
+  // A sign-in is the way out of a 401 or of either sign-in code, whatever status carries it (the sync routes answer step_up_required as a 403).
+  const stepUp = code === "step_up_required";
+  const signIn = status === 401 || stepUp || code === "unauthenticated";
+  // A failure the same request may well survive later: no answer, rate limit, a busy or broken server.
+  const transient = !status || status === 429 || status >= 500;
+  return { ...base, text: TEXT[key], fields, signIn, stepUp, transient };
 }
 
 /** Every plain-words string above, for the copy test (no jargon, lowercase). */

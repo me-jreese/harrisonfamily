@@ -19,7 +19,8 @@ import {
 import { replaySeed } from "../lib/editor-save.js";
 import { ConfirmSheet, SaveDock, useCounts, useSaveFlow } from "../lib/editor-save-ui.jsx";
 
-export const signInHref = () => `/auth/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
+// `fresh`: a step-up (a destructive change needs a sign-in no older than 15 minutes), so the sign-in page asks again instead of reusing the session.
+export const signInHref = (fresh = false) => `/auth/login?${fresh ? "prompt=login&" : ""}returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
 
 const ICONS = {
   direct: "M4 12.5l5 5L20 6.5",
@@ -157,9 +158,9 @@ function Editor({ route }) {
   // A refetched bundle replaces the page's: the forms remount (a new epoch). When the member's edits are to be replayed (a 409), the forms start
   // from the fresh record with only the member's changed fields laid over it, and those are the drafts the ops are rebuilt from.
   const sectionsRef = useRef([]);
-  const adopt = useCallback((bundle, keepDrafts) => {
+  const adopt = useCallback((bundle, keepDrafts, settled) => {
     const old = bundleRef.current;
-    const next = keepDrafts && old ? replaySeed({ sections: sectionsRef.current, key: bundle.key, oldObj: old.obj, freshObj: bundle.obj, drafts: draftsRef.current }) : null;
+    const next = keepDrafts && old ? replaySeed({ sections: sectionsRef.current, key: bundle.key, oldObj: old.obj, freshObj: bundle.obj, drafts: draftsRef.current, settled }) : null;
     bundleRef.current = bundle;
     draftsRef.current = next || {};
     setState((cur) => ({ ...cur, bundle }));

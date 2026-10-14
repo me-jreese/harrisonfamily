@@ -27,7 +27,8 @@ async function stub(page, { admin = false, relation = "own", script = null } = {
   await page.route("**/auth/refresh", (r) => r.fulfill({ status: 401, json: { error: "no refresh" } }));
   await page.route("**/api/me", (r) => r.fulfill({ json: { id: "I9001", label: "Sam Example", admin, can: {}, ownRecord: { cls: "Person", handle: "hsyn0001", gramps_id: "I9001" }, editing: true } }));
   await page.route("**/api/edit/schema/Person", (r) => r.fulfill({ json: { class: "Person", schema: EDIT_SCHEMAS.Person, sha256: "0".repeat(64), schemaHash: "0".repeat(64) } }));
-  await page.route("**/api/edit/Person/*", (r) => { server.bundleGets += 1; return r.fulfill({ json: bundle() }); });
+  // `server.hold` (a promise) delays the bundle answers while set, to let a test type while the refetch after a save is still out.
+  await page.route("**/api/edit/Person/*", async (r) => { server.bundleGets += 1; const snapshot = bundle(); if (server.hold) await server.hold; return r.fulfill({ json: snapshot }); });
   await page.route("**/api/changes", async (route) => {
     const req = route.request();
     const body = req.postDataJSON();
@@ -178,7 +179,8 @@ for (const [name, viewport] of VIEWPORTS) {
       await field(page, "nickname").fill("Tessa");
       await field(page, "given names").fill("Tester");
       await page.locator("[data-hfy-review]").click();
-      await sheet(page).locator("[data-hfy-note]").fill("she goes by Tester now");
+      await sheet(page).locator("[data-hfy-note]").fill("a synthetic note for the reviewer");
+      await expect(sheet(page).locator("[data-hfy-note-count]")).toHaveText("33 of 1000 characters");
       await sheet(page).locator("[data-hfy-save]").click();
       await expect(sheet(page)).toBeHidden();
       await expect(page.locator("[data-hfy-toast-text]")).toHaveText("saved. 1 suggestion sent");
@@ -187,7 +189,7 @@ for (const [name, viewport] of VIEWPORTS) {
       const save = server.calls[1];
       expect(save.key).toMatch(/^[\x21-\x7e]{8,128}$/);
       expect(save.body.dry_run).toBeUndefined();
-      expect(save.body.note).toBe("she goes by Tester now");
+      expect(save.body.note).toBe("a synthetic note for the reviewer");
       expect(save.body.ops.map((o) => o.id)).toEqual(["names.first_name", "names.nick"]);
       // the page took the new record: the bar is gone and the nickname is the saved one
       await expect(page.locator("[data-hfy-bar]")).toHaveCount(0);
@@ -204,6 +206,110 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(server.calls[2].key).not.toBe(save.key);
       await expect(field(page, "nickname")).toHaveValue("Tess");
       expect(await axeViolations(page)).toEqual([]);
+    });
+
+    test("edits made after a save survive the undo: the page is refetched with them laid over it", async ({ page }) => {
+      const server = await open(page);
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("saved.");
+      await expect(field(page, "nickname")).toHaveValue("Tessa");
+      // a new, unsaved edit, then undo of the earlier save
+      await field(page, "title").fill("Dr");
+      await expect(page.locator("[data-hfy-bar-text]")).toHaveText("1 change — 1 saves now");
+      await page.locator("[data-hfy-undo]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("undone.");
+      await expect(field(page, "nickname")).toHaveValue("Tess");
+      await expect(field(page, "title")).toHaveValue("Dr");
+      await expect(page.locator("[data-hfy-bar-text]")).toHaveText("1 change — 1 saves now");
+      // and what is left to save is only the new edit, against the record as the undo left it
+      await page.locator("[data-hfy-review]").click();
+      await expect(sheet(page).locator("[data-hfy-save]")).toBeVisible();
+      const dry = server.calls[server.calls.length - 1];
+      expect(dry.body.ops.map((o) => [o.id, o.base, o.value])).toEqual([["names.title", null, "Dr"]]);
+    });
+
+    test("typing while the refetch after a save is still out keeps what was typed", async ({ page }) => {
+      const server = await open(page);
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      let release;
+      server.hold = new Promise((resolve) => { release = resolve; });
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("saved.");
+      await field(page, "title").fill("Dr");
+      release();
+      await expect(field(page, "nickname")).toHaveValue("Tessa");
+      await expect(field(page, "title")).toHaveValue("Dr");
+      await expect(page.locator("[data-hfy-bar-text]")).toHaveText("1 change — 1 saves now");
+    });
+
+    test("an undo that fails for a moment can be tried again, under the same key", async ({ page }) => {
+      let failures = 1;
+      const server = await open(page, { script: (call) => (call.body.ops.some((o) => o.seq) && failures-- > 0 ? { status: 503, json: { error: "unavailable", message: "busy" } } : null) });
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("saved.");
+      await page.locator("[data-hfy-undo]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("saved. the site is busy. try again in a moment.");
+      await expect(page.locator("[data-hfy-undo]")).toBeEnabled();
+      await page.locator("[data-hfy-undo]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("undone.");
+      const undos = server.calls.filter((c) => c.body.ops.some((o) => o.seq));
+      expect(undos).toHaveLength(2);
+      expect(undos[1].key).toBe(undos[0].key);
+      await expect(field(page, "nickname")).toHaveValue("Tess");
+    });
+
+    test("an undo the server refuses ends the offer", async ({ page }) => {
+      await open(page, { script: (call) => (call.body.ops.some((o) => o.seq) ? { status: 403, json: { error: "not_allowed", message: "no" } } : null) });
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      await sheet(page).locator("[data-hfy-save]").click();
+      await page.locator("[data-hfy-undo]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("we couldn't undo that. please look at the page and change it by hand.");
+      await expect(page.locator("[data-hfy-undo]")).toHaveCount(0);
+    });
+
+    test("a second, later 409 on the save gets its own replay", async ({ page }) => {
+      let conflicts = 0;
+      const server = await open(page, {
+        script: (call, n, srv) => {
+          if (call.body.dry_run) return conflicts === 0 && n === 1 ? (conflicts = 1, srv.version = 5, { status: 409, json: { error: "version_conflict", message: "changed" } }) : null;
+          if (conflicts === 1) { conflicts = 2; srv.version = 6; return { status: 409, json: { error: "version_conflict", message: "changed" } }; }
+          return null;
+        }
+      });
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      // the dry run hit the first 409 and replayed; now the save hits another
+      await expect(sheet(page).locator("[data-hfy-notice]")).toBeVisible();
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(sheet(page).locator("[data-hfy-notice]")).toHaveText("this page just changed — please check your edits.");
+      await expect(sheet(page).locator("[data-hfy-problem]")).toHaveCount(0);
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toHaveText("saved.");
+      expect(server.calls[server.calls.length - 1].body.base_versions).toEqual({ [KEY]: 6 });
+    });
+
+    test("two conflicts in a row on the dry run end in an error with a review again button", async ({ page }) => {
+      await open(page, { script: (call) => (call.body.dry_run ? { status: 409, json: { error: "version_conflict", message: "changed" } } : null) });
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      await expect(sheet(page).locator("[data-hfy-problem]")).toContainText("this page just changed");
+      await expect(sheet(page).locator("[data-hfy-retry]")).toHaveText("review again");
+      await expect(sheet(page).locator("[data-hfy-save]")).toHaveCount(0);
+    });
+
+    test("a step-up sign-in asks the sign-in page for a fresh one", async ({ page }) => {
+      await open(page, { script: (call) => (call.body.dry_run ? null : { status: 403, json: { error: "step_up_required", message: "again" } }) });
+      await field(page, "nickname").fill("Tessa");
+      await page.locator("[data-hfy-review]").click();
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(sheet(page).locator("[data-hfy-problem]")).toContainText("sign in again to confirm this change");
+      await expect(sheet(page).locator(".hfy-sheet__signin")).toHaveAttribute("href", /^\/auth\/login\?prompt=login&returnTo=/);
     });
 
     test("a save of suggestions only says it was sent", async ({ page }) => {
