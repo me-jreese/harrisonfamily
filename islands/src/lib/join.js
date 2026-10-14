@@ -8,11 +8,11 @@
 import { FIELDS, validateForm } from "../../../shared/legacy-form.mjs";
 
 /**
- * Q2-11(a) has no recorded io answer, and the edge is built with STORE_CURRENT_CITY = false (auth/src/access-request.js): it neither
- * requires nor keeps the current city. The form therefore does not ask for it (or the year the person moved there). When the answer is
- * yes, flip this and the edge constant together.
+ * Q2-11(a) is answered (io approved the default (a), gate q2-11-living-city): the form asks for the current city and state (never a street
+ * or a postal code) and the year the person moved there, and the edge keeps them as a Residence event (STORE_CURRENT_CITY = true in
+ * auth/src/access-request.js). Flip this and the edge constant together.
  */
-export const STORE_CURRENT_CITY = false;
+export const STORE_CURRENT_CITY = true;
 
 export const DRAFT_KEY = "hfy:join-draft";
 export const RESEND_AFTER_SECONDS = 60;

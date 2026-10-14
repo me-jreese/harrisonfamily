@@ -214,14 +214,14 @@ export const SYSTEM_ORIGIN = "access_request";
 export const accessRequestOf = (p) => (p?.origin === SYSTEM_ORIGIN && typeof p.request_id === "string" && p.request_id ? p.request_id : null);
 
 /**
- * The completeAccessRequest step of an approval (surfaces 7.4). `ctx.completeAccessRequest({ requestId, proposal, grampsId })` is the access-request
+ * The completeAccessRequest step of an approval (surfaces 7.4). `ctx.completeAccessRequest({ requestId, proposal, grampsId, by, at })` (`by`: the deciding admin, `at`: the batch time) is the access-request
  * domain's link transaction as a transact() fragment { puts, updates, checks, deletes }, which the approval merges into its `extra`, so the link
  * commits or fails with the approval. Null for a proposal that is not from an access request.
  */
-export async function approvalHookFragment(ctx, proposal, { grampsId } = {}) {
+export async function approvalHookFragment(ctx, proposal, { grampsId, by, at } = {}) {
   const requestId = accessRequestOf(proposal);
   if (!requestId) return null;
   if (typeof ctx.completeAccessRequest !== "function") return null; // the flow is not wired: io links by hand (surfaces 7.4)
-  const fragment = await ctx.completeAccessRequest({ requestId, proposal, grampsId });
+  const fragment = await ctx.completeAccessRequest({ requestId, proposal, grampsId, by, at });
   return fragment ?? null;
 }

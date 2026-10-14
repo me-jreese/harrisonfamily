@@ -12,12 +12,12 @@
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "b37a3c48",
+        "js": "6918b446",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "281a6dbf",
-        "css": "6a93fa82"
+        "js": "a619a333",
+        "css": "d8c9710c"
       },
       "follow": {
         "js": "00d35b3c",
@@ -32,7 +32,7 @@
         "css": "38a33f05"
       },
       "join": {
-        "js": "8dfbf1b4",
+        "js": "cbbf3cfb",
         "css": "88b160fb"
       },
       "join-entry": {
@@ -48,7 +48,7 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "cf32228f",
+        "js": "f14f204e",
         "css": "be703fb4"
       },
       "person": {

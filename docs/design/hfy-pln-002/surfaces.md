@@ -568,7 +568,7 @@ Every route requires:
 | `GET /auth/access-request/config` | — | `200 {open, turnstileSiteKey}` | — |
 | `POST /auth/access-request/start` | `{email, turnstileToken, company}` | `202 {ok:true}` | `400 {detail:"invalid_email"}`; `403 {detail:"bot_check_failed"}`; `429 {detail:"rate_limited"}` + `retry-after`; `503 {detail:"unavailable"}` (limiter, SES or Turnstile down: fail closed) |
 | `POST /auth/access-request/verify` | `{email, code}` | `200 {ticket, expiresAt}` | `400 {detail:"invalid_code"}`; `410 {detail:"code_expired"}`; `429 {detail:"too_many_attempts"}` |
-| `POST /auth/access-request` | `{ticket, form, turnstileToken, company}` | `201 {ok:true, state:"pending"}` | `400 {detail:"validation", fields:[{field, code}]}`; `401 {detail:"ticket_expired"}`; `409 {detail:"already_requested"}` or `{detail:"already_member"}` (safe: the ticket proves the mailbox); `429`; `503` |
+| `POST /auth/access-request` | `{ticket, form, turnstileToken, company}` | `201 {ok:true, state:"pending"}` | `400 {detail:"validation", fields:[{field, code}]}`; `403 {detail:"ticket_expired"}`; `409 {detail:"already_requested"}` or `{detail:"already_member"}` (safe: the ticket proves the mailbox); `429`; `503` |
 
 **Start step.**
 - Normalize the email (lowercase, trim; RFC-lite, at most 254 characters).
@@ -1115,7 +1115,7 @@ Each `person.mediaGallery[]` item gains:
 | E20 | join | limiter write fails | 503 (fail closed, no email) | as E16 | error |
 | E21 | join | SES send fails on the code | 503 | as E16 | error `ses` |
 | E22 | join | wrong code / expired / too many | 400 / 410 / 429 | `that code didn't work. check your email for the newest one.` / `that code ran out. send another.` | — |
-| E23 | join | ticket expired | 401 | `that took a while, so we need to check your email again. your answers are saved.` | — |
+| E23 | join | ticket expired | 403 | `that took a while, so we need to check your email again. your answers are saved.` | — |
 | E24 | join | validation or contact info | 400 `fields[]` | per-field copy (§7.10) | — |
 | E25 | join | open request or already a member (after ticket) | 409 | `we already have your request. we'll email you.` / `you're already on the list. sign in.` | — |
 | E26 | join | received-email or admin fan-out fails after commit | 201 still | normal | error (request stands) |

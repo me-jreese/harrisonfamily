@@ -13,7 +13,7 @@ import { allowKeys, allowSubKey, normalizeAllowEmail } from "./shared/allowlist-
 // The reading side (the composite member reader, the single-email and per-sub reads) is the same code the auth edge runs; it lives in
 // shared/ because both zips ship it. The chat directory route and any later consumer import it from here.
 export {
-  ALLOW_PREFIX, ALLOWSUB_PREFIX, allowKeys, allowSubKey, allowPrincipal, createCompositeMemberReader, emailOfAllowItem, isActiveAllowItem,
+  ALLOW_PREFIX, ALLOWSUB_PREFIX, allowKeys, allowSubKey, allowPrincipal, createCompositeMemberReader, emailOfAllowItem, isActiveAllowItem, isAllowedNow,
   listAllowBySub, normalizeAllowEmail, readAllowEntry,
 } from "./shared/allowlist-store.mjs";
 
@@ -36,7 +36,7 @@ function emailOf(raw) {
 export const emailHash = (email) => createHash("sha256").update(emailOf(email)).digest("hex");
 
 /** The ALLOW# item for an active grant. */
-export function allowItem({ email: rawEmail, sub, source, requestId, at, by }) {
+export function allowItem({ email: rawEmail, sub, source, requestId, at, by, effectiveAt }) {
   const email = emailOf(rawEmail);
   if (!ALLOW_SOURCES.includes(source)) throw bad(`source must be one of ${ALLOW_SOURCES.join(", ")}`);
   return {
@@ -48,6 +48,7 @@ export function allowItem({ email: rawEmail, sub, source, requestId, at, by }) {
     state: "active",
     source,
     ...(requestId !== undefined ? { requestId } : {}),
+    ...(effectiveAt !== undefined ? { effectiveAt: need(effectiveAt, "effectiveAt") } : {}),
     at: need(at, "at"),
     by: need(by, "by"),
   };
@@ -59,11 +60,11 @@ const auditEntry = (op, email, by, at, before, after) => ({ op, id: `allow:${ema
  * Transaction fragments (`{ puts }`, the shape transact() takes) that grant an email: a conditional Put of the active item, which holds
  * only when no item exists or the existing one is revoked (an active grant fails with ConditionalCheckFailed, the tag `allow.grant`
  * names it in TxnCancelled.failures), and the AUDIT#allow:<emailHash> item, op allow.grant. The audit holds the sub, the state and
- * the source, never the address. Callers add their own items (the ACCESSREQ# update) to the same call; `uid` is the audit item's
+ * the source, never the address. `effectiveAt` (an ISO time) holds a second email back until then (shared/allowlist-store.mjs isAllowedNow). Callers add their own items (the ACCESSREQ# update) to the same call; `uid` is the audit item's
  * unique suffix (a ULID in production).
  */
-export function grantItems({ email, sub, source, requestId, at, by, uid = randomUUID(), table }) {
-  const item = allowItem({ email, sub, source, requestId, at, by });
+export function grantItems({ email, sub, source, requestId, at, by, effectiveAt, uid = randomUUID(), table }) {
+  const item = allowItem({ email, sub, source, requestId, at, by, effectiveAt });
   return {
     puts: [
       { item, condition: "attribute_not_exists(PK) OR #state = :revoked", names: { "#state": "state" }, values: { ":revoked": "revoked" }, tag: "allow.grant" },

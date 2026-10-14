@@ -196,7 +196,7 @@ The `uat` group of `config/groups.json` names the members who test new features 
 
 ## Allowlist grants in DynamoDB
 
-Since HFY-TSK-134, the auth edge reads approved access from two places: io's S3 file, `userGrampsID.json`, and `ALLOW#<email>` items in the app stack's table. The items are written only by `hfy-api`, through the audited grant and revoke transactions in [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), which the access-request admin routes use. Nothing in this repository writes one yet, so a table with no `ALLOW#` item behaves exactly like the file alone.
+Since HFY-TSK-134, the auth edge reads approved access from two places: io's S3 file, `userGrampsID.json`, and `ALLOW#<email>` items in the app stack's table. The items are written only by `hfy-api`, through the audited grant and revoke transactions in [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), which the access-request admin routes use. The access-request admin routes write them ([Approve a request](#approve-a-request)); a table with no `ALLOW#` item behaves exactly like the file alone.
 
 **The file publisher never touches them.** `publish_allowlists.sh` overwrites one S3 object, `config/userGrampsID.json`, and nothing else. Republishing the file therefore cannot create, change or delete a grant, and a grant survives every republish. The reverse also holds: editing the file does not change an email that has an `ALLOW#` item.
 
@@ -216,7 +216,8 @@ The same rule decides the MCP groups, per Gramps ID: a member is one with an act
 
 What follows from it:
 
-- **Removing an email from the file does not remove a grant.** If the member has an active `ALLOW#` item, they still sign in after you publish the file without them. Revoke the grant too, through the API's revoke transaction. Until the admin routes ship, nothing creates a grant, so there is none to revoke.
+- **Removing an email from the file does not remove a grant.** If the member has an active `ALLOW#` item, they still sign in after you publish the file without them. Revoke the grant too: for a grant that came from an access request, use [Remove access granted through a request](#remove-access-granted-through-a-request).
+- **A second email is held, not refused.** An item with an `effectiveAt` in the future is not active yet: the edge denies the address, as it denies a revoked one, and admits it from `effectiveAt` on ([Approve a request](#approve-a-request)). The member's confirmation removes `effectiveAt`. A held item also needs `noticedAt`, stamped when the member's notice was delivered; without it the address stays denied however late it is.
 - **A revoked item outlives the file.** Adding the email back to the file does not restore access while a `revoked` item exists. Grant the email again through the API (a grant over a revoked item is allowed), or have io delete the revoked item.
 - **Revocation by DynamoDB works on an email that is still in the file.** That is how an approved request is withdrawn without touching io's files.
 - **Timing.** The edge reads the item on every lookup with a strongly consistent `GetItem` and does not cache it, so the next sign-in, passkey sign-in, password set or refresh sees a grant or a revoke at once. The S3 file keeps its 300 s cache. The MCP groups find items through the `GSI1` index, which cannot be read consistently, and cache each Gramps ID's items for 60 s. A grant or revoke therefore reaches the groups up to about a minute (plus index lag) after it reaches sign-in. That gap is accepted. A session already issued keeps working until its `io_id` expires, up to 1 h, and its next refresh is refused.
@@ -241,6 +242,30 @@ aws dynamodb get-item --table-name "$TABLE" --region us-west-2 --consistent-read
 1. An existing member still signs in with no `ALLOW#` item in the table (the zero-item case above).
 2. Querying `GSI1` with `GSI1PK = ALLOWSUB#<id>` returns an item written through the grant transaction. This needs a test grant, which only io writes, and is removed afterwards with a revoke.
 3. A second grant of an active email is refused, and a grant over a revoked one is accepted.
+
+## Approve a request
+
+Access requests arrive from the public `/join/` page, and an admin decides them in the admin API (`/api/access-requests`, behind the `accessRequests` flag, which is off until io turns it on). The list and the detail show the requester's answers and the Gramps preview of the person, but the requester's email only as its first character plus the domain, and there is no way to copy it. Every message to the requester is a fixed template; the one thing you write is the optional decline note.
+
+Before you approve, **confirm with the person outside the site** (a phone call, in person) that this request is theirs. The API asks you to say so: `confirmedOutside: true` is required for `link`, `new` and `revoke`, and it is written to the audit. `link`, `new` and `revoke` also need a sign-in at most 15 minutes old (`401 step_up_required` otherwise), so sign in again first.
+
+Choose one decision for a pending request:
+
+| Decision | Use it when | What happens |
+| --- | --- | --- |
+| `link` | The person already has a page, and is living. | One transaction writes their `ALLOW#` grant, moves the request to `active` and adds two audit items. The requester is emailed "you're in". `422 not_living` if the page says the person is not living or the record store holds a death event; `422 unknown_person` if the site has no such person. |
+| `new` | The person is not in the tree yet. | The request becomes `awaiting_record` and a `person.create` proposal is filed as the site. When an admin approves that proposal, the approval mints the Gramps ID (Q2-03) and links the request in the same transaction. Under the other ID policy, the desktop assigns the ID later and the link follows it; until either happens you can `link` the awaiting request by hand. |
+| `decline` | You will not add them. | The request becomes `declined`, kept 30 days. The requester is emailed; the note goes in the mail only if you set `sendNote`. The note is scanned for contact details first. |
+
+If the mail cannot be sent, the decision still stands and the answer says `emailSent: false`: tell the person yourself.
+
+A `link` for a person who **already signs in with another address** is refused with `409 second_email`. Only the owner of the family tree (the `gramps-owner` group) may retry it with `allowSecondEmail: true` (`403 owner_only` for any other admin). The new address is then held for 72 hours: the member gets an inbox item and an email at every address they already use, and the requester is told the date they can sign in. The address counts after the 72 hours, at once if the member confirms, and never if the member objects. The member answers through the API, which works even if the `accessRequests` flag is turned off: `GET /api/second-email` lists their open holds with the request id (the inbox item carries the same id), and `POST /api/second-email/<id>` confirms or objects. No site screen calls these routes yet, so call the member as well, and if they did not ask for the address, revoke the request yourself ([Remove access granted through a request](#remove-access-granted-through-a-request)). The 72 hours start when the notice is delivered. If neither the inbox item nor any mail got through, the answer says `memberNotified: false`, the address stays closed, and the owner re-sends the notice with `POST /api/access-requests/<id>/resend-notice`; tell the member yourself as well. No timer runs: the sign-in and the MCP groups compare the clock with the grant's `effectiveAt`.
+
+**Verify.** Open the request again: its `state` is the one you chose and `decision` holds who decided and when. A `link` shows in [Verify an addition](#verify-an-addition) like any grant.
+
+## Remove access granted through a request
+
+Revoke the request, not the file: `POST /api/access-requests/<id>/revoke` with the request's current `version`, `confirmedOutside: true` and an optional `reason`. It needs a sign-in at most 15 minutes old. One transaction sets the `ALLOW#` item and the request to `revoked`, adds the audits and lets the address ask again. Nobody is emailed. The request must still exist: it is deleted 30 days after the decision, and then this route answers `404` (an open issue for io; for older access ask io to revoke the `ALLOW#` item). Access ends at the next sign-in or refresh: an `io_id` already issued lives out its hour. If io's file also lists the address, the revoked item still wins.
 
 ## Remove a member
 

@@ -248,6 +248,46 @@ describe("sign-in through the edge", () => {
   });
 });
 
+describe("a held second email and the admin API's items (surf-access-admin-api)", () => {
+  const HOLD = "2026-03-07T05:06:07.000Z";
+  const held = (email, sub) => allow(email, sub, "active", { effectiveAt: HOLD, noticedAt: "2026-03-01T00:00:00.000Z" });
+
+  it("a held address is denied until effectiveAt, then admitted, with the clock injected and no sweep", async () => {
+    let t = Date.parse(HOLD) - 1;
+    const r = createCompositeResolver({ s3: s3Resolver(), ddb: fakeDoc([held("second@example.com", "I0111")]), cmds, table: TABLE, log: quiet, now: () => t });
+    expect(await r("second@example.com", { kind: "google" })).toBeNull();
+    t = Date.parse(HOLD);
+    expect(await r("second@example.com", { kind: "google" })).toEqual({ sub: "I0111", label: "second@example.com", roles: ["member"], claims: {} });
+    // the member's first address, listed in io's file, is not touched by the second one
+    expect((await r("ana@example.com", { kind: "google" }))?.sub).toBe("I0111");
+  });
+
+  it("a held address whose member notice was never delivered (no noticedAt) is denied even after effectiveAt: fail closed", async () => {
+    const lost = allow("second@example.com", "I0111", "active", { effectiveAt: HOLD });
+    const r = createCompositeResolver({ s3: s3Resolver(), ddb: fakeDoc([lost]), cmds, table: TABLE, log: quiet, now: () => Date.parse(HOLD) + 10 * 86400_000 });
+    expect(await r("second@example.com", { kind: "google" })).toBeNull();
+  });
+
+  it("a held address is denied even when io's file lists it (an item overrides the file); the member's confirmation (no effectiveAt) admits it", async () => {
+    const file = { ...FILE, "second@example.com": "I0111" };
+    const doc = fakeDoc([held("second@example.com", "I0111")]);
+    const r = createCompositeResolver({ s3: s3Resolver(file), ddb: doc, cmds, table: TABLE, log: quiet, now: () => Date.parse(HOLD) - 1000 });
+    expect(await r("second@example.com", { kind: "google" })).toBeNull();
+    const { effectiveAt: _gone, ...confirmed } = doc.rows.get("ALLOW#second@example.com|META");
+    doc.rows.set("ALLOW#second@example.com|META", confirmed);
+    expect((await r("second@example.com", { kind: "google" }))?.sub).toBe("I0111");
+  });
+
+  it("items written by the admin API's own builders resolve as the design says: granted admits, revoked denies even with the file", async () => {
+    const { grantItems } = await import("../../api/src/allowlist-store.js");
+    const g = grantItems({ email: "fresh@example.com", sub: "I0444", source: "access-request", requestId: "req-1", at: "2026-01-01T00:00:00.000Z", by: "I9000", uid: "u1", table: TABLE }).puts[0].item;
+    expect((await resolverFor(fakeDoc([g]))("fresh@example.com", { kind: "google" }))?.sub).toBe("I0444");
+    const revoked = { ...g, state: "revoked", revokedAt: "2026-02-01T00:00:00.000Z", revokedBy: "I9000" };
+    const file = { ...FILE, "fresh@example.com": "I0444" };
+    expect(await resolverFor(fakeDoc([revoked]), s3Resolver(file))("fresh@example.com", { kind: "google" })).toBeNull();
+  });
+});
+
 describe("wiring and manifest", () => {
   it("index.js passes the composite resolver to the identity service and the provisioner; the manifest resolver is unchanged", () => {
     const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");

@@ -10,12 +10,15 @@ import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
 import { createPresignGet, createPresignPut } from "./presign.js";
-import { createGroupResolver, UAT_GROUP } from "./policy.js";
+import { createGroupResolver, OWNER_GROUP, UAT_GROUP } from "./policy.js";
 import { configureFeatures, createFeatureGate, createFlagSource, DEFAULT_FLAGS_URL } from "./features.js";
-import { createLabelResolver, createPersonExists, PERSON_KEY } from "./labels.js";
+import { createLabelResolver, createPersonExists, createPersonFacts, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
 import { guardDobFromEnv } from "./guard.js";
 import { createSyncAuthenticator } from "./sync/auth.js";
+import { createIdPolicy, idPolicyFromEnv } from "./sync/id-policy.js";
+import { createAccessRequests } from "./access-requests.js";
+import { createSesMailer } from "./mailer.js";
 import { logSafeError } from "./http.js";
 import { registerRecordContributor } from "./record-contributor.js";
 import { createFanoutNotifier, createRecordFanout, isReplayEvent, isStreamEvent } from "./record-change-fanout.js";
@@ -26,6 +29,8 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOption
 const s3 = new S3Client({});
 const secrets = new SecretsManagerClient({});
 const table = env.TABLE_NAME ?? "hfy-app";
+
+const ulid = createUlidFactory(); // one monotonic factory: the handler's ids and the id-policy hooks' audit ids
 
 const secretString = async (id) => (await secrets.send(new GetSecretValueCommand({ SecretId: id }))).SecretString ?? "";
 const jwks = createJwks(env.SESSION_JWKS_URL ?? "https://harrisonfamily.us/auth/.well-known/jwks.json");
@@ -79,6 +84,43 @@ const personExists = createPersonExists({
   },
 });
 
+// HFY-TSK-141 (surf-access-admin-api): the `link` decision reads the person's own record for the living check (person/<id>.json, the PersonRecords grant).
+const personFacts = createPersonFacts({
+  load: async (grampsId) => {
+    const o = await s3.send(new GetObjectCommand({ Bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", Key: PERSON_KEY(grampsId) }));
+    return JSON.parse(await o.Body.transformToString());
+  },
+});
+
+// io's S3 allowlist as a Map email -> { sub } (read-only, the AdminList grant): which addresses a member already signs in with. Cached 60 s; a failure is not cached.
+let entriesCache = { at: -Infinity, map: new Map() };
+const readEntries = async () => {
+  if (Date.now() - entriesCache.at < 60_000) return entriesCache.map;
+  const o = await s3.send(new GetObjectCommand({ Bucket: env.ADMIN_LIST_BUCKET ?? "harrisonfamily", Key: env.USER_GRAMPS_KEY ?? "config/userGrampsID.json" }));
+  const raw = JSON.parse(await o.Body.transformToString());
+  const map = new Map();
+  for (const [email, v] of Object.entries(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {})) {
+    const sub = typeof v === "string" ? v : v?.gramps_id ?? v?.sub;
+    if (typeof sub === "string" && sub) map.set(String(email).trim().toLowerCase(), { sub });
+  }
+  entriesCache = { at: Date.now(), map };
+  return map;
+};
+
+// The mailer: SES from the api role's own grant (app-stack-sync-infra: SesIdentityArn, SesFromAddress, SesConfigurationSet). Without them the admin routes
+// still decide, and answer emailSent:false. The SDK client loads on first use and is never logged.
+let sesClient;
+const mailer = env.SES_FROM_ADDRESS && env.SES_CONFIGURATION_SET
+  ? createSesMailer({
+    from: env.SES_FROM_ADDRESS, configurationSet: env.SES_CONFIGURATION_SET,
+    send: async (input) => {
+      const mod = await import("@aws-sdk/client-sesv2");
+      sesClient ??= new mod.SESv2Client({});
+      return sesClient.send(new mod.SendEmailCommand(input));
+    },
+  })
+  : undefined;
+
 const authenticate = createAuthenticator({
   issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth",
   audience: env.SESSION_AUDIENCE ?? "harrisonfamily-web",
@@ -102,6 +144,19 @@ const features = configureFeatures(createFeatureGate({
   flags: createFlagSource({ url: env.FLAGS_URL ?? DEFAULT_FLAGS_URL }),
   isUat: async (sub) => (await getGroups({ sub })).includes(UAT_GROUP),
 }));
+
+const isOwner = async (sub) => (await getGroups({ sub })).includes(OWNER_GROUP);
+
+// HFY-TSK-141: the access-request domain the desktop's first id assignment (assign mode, Q2-03) completes through: the policy asks which request a created
+// Person came from, then links it. The approval path (mint mode) uses the handler's own instance. HFY_ID_POLICY is read as everywhere (unset = off).
+const accessRequests = createAccessRequests({ ddb, cmds, table, now: () => Date.now(), uid: () => ulid(Date.now()), mailer, getAdmins, isOwner, personFacts, readEntries, guardDob: guardDobFromEnv(env), log: console });
+// A bad HFY_ID_POLICY value must not stop the whole API at start-up: leave the policy unset here and let policyOf() report it as 500 id_policy_misconfigured per request.
+let idPolicy;
+try {
+  idPolicy = createIdPolicy({ mode: idPolicyFromEnv(env).mode, accessRequestOf: accessRequests.accessRequestOf, completeAccessRequest: accessRequests.completeById });
+} catch (e) {
+  console.error("id policy misconfigured", logSafeError(e));
+}
 
 // HFY-TSK-172: /api/sync/* takes the desktop client's bearer token (aud https://harrisonfamily.us/api/sync, client_id hfy-sync-desktop), authorized by the
 // gramps-owner group of the same cached, fail-closed groups.json read. The routes answer 404 not_enabled unless SYNC_API_ENABLED=1 (stack parameter SyncApiEnabled).
@@ -140,7 +195,7 @@ export const handler = async (event, context) => {
   if (!inner) {
     const p = await loadPush();
     inner = createHandler({
-      ddb, cmds, table, authenticate, authenticateSync, ulid: createUlidFactory(),
+      ddb, cmds, table, authenticate, authenticateSync, ulid,
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
@@ -152,7 +207,7 @@ export const handler = async (event, context) => {
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
-      features,
+      features, isOwner, mailer, personFacts, readEntries, idPolicy,
       ...p,
     });
   }
