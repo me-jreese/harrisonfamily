@@ -3,7 +3,8 @@
 // member's fields all say "goes to review" while an admin's say "saves now"; tags are picked from the ones that exist; the place type select has no
 // street, building or number; a place's code is locked and explained below the administrative level, and a longer coordinate is sent rounded; the
 // repository editor has no addresses; a styled note keeps the styles outside the edit and warns about one it drops; a change sent for review is not
-// sent again by the next save when the member typed on while it was out.
+// sent again by the next save when the member typed on while it was out; for a member and an admin, desk and never fields are absent or explained
+// (LDS, private flag, place title, alternate locations and addresses have no field; a city's code is locked with its reason; a birth has no day or month).
 // Synthetic records only; /auth, /api and the flags file are stubbed.  HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/editor-records.spec.mjs
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -178,6 +179,54 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.getByText(/addresses/i).first()).toBeVisible();
       await expect(page.getByRole("heading", { name: /addresses/i })).toHaveCount(0);
     });
+
+    for (const admin of [false, true]) {
+      test(`desk and never fields are absent or explained (${admin ? "an admin" : "a member"})`, async ({ page }) => {
+        // The records hold desk and never data the bundle may carry: an LDS ordinance, a private flag, a place title, an alternate location, an address.
+        const objects = {
+          ...OBJECTS,
+          Family: { ...OBJECTS.Family, private: true, lds_ord_list: [{ _class: "LdsOrd", type: 1, place: "", famc: null, temple: "SYN", status: 0, date: date(0, 0, 0), private: false }] },
+          Place: { ...OBJECTS.Place, title: "Synthville, Exampleton", alt_loc: [{ _class: "Location", street: "1 Synthetic Way", postal: "00000", city: "Synthville" }] },
+          Repository: { ...OBJECTS.Repository, address_list: [{ _class: "Address", street: "2 Example Road", postal: "00000", city: "Exampleton" }] },
+          Event: { ...OBJECTS.Event, type: typed("EventType", 12), date: date(14, 3, 1990) }
+        };
+        const pointers = (body) => body.locator("[data-pointer]").evaluateAll((els) => els.map((e) => e.getAttribute("data-pointer")));
+        // A field that can't be changed on the site is read-only, says so in its badge, and carries the line that says why.
+        const lockedExplained = (body) => body.locator("[data-hfy-mode='locked']").evaluateAll((els) => els.map((e) => {
+          const field = e.closest("[data-pointer]");
+          const control = field.querySelector("input, select, textarea");
+          return [field.getAttribute("data-pointer"), e.textContent.trim(), !!control && control.disabled, (field.querySelector(".io-description")?.textContent || "").trim().length > 0];
+        }));
+        // Family: the LDS ordinances, the id and the private flag (desk) have no field.
+        await open(page, "Family", { admin, objects });
+        let body = await section(page, "details");
+        expect(await pointers(body)).toEqual(["/type", "/tags"]);
+        await expect(body).not.toContainText(/ordinance|sealed|temple|private/i);
+        // Place: the title (desk) and the alternate locations' street and postal code (never) have no field; the code on a city (never) is locked and explained.
+        await open(page, "Place", { admin, objects });
+        body = await section(page, "details");
+        expect(await pointers(body)).toEqual(["/name", "/place_type", "/code", "/lat", "/long", "/enclosed", "/tags"]);
+        await expect(body).not.toContainText(/Synthetic Way|00000|Synthville, Exampleton/);
+        expect(await lockedExplained(body)).toEqual([["/code", "can't be changed on the site", true, true]]);
+        // Repository: the addresses (never) have no field, and the form says why.
+        await open(page, "Repository", { admin, objects });
+        body = await section(page, "details");
+        expect(await pointers(body)).toEqual(["/name", "/type", "/tags"]);
+        await expect(body).not.toContainText(/Example Road|00000/);
+        await expect(body).toContainText("we don't keep addresses on the site");
+        // Event: a birth's day and month (never) have no control, and the date says why; the year goes to review (member) or saves now (admin).
+        await open(page, "Event", { admin, objects });
+        body = await section(page, "details");
+        const when = body.locator("[data-hfy-date='birth']");
+        await expect(when).toBeVisible();
+        await expect(when.getByLabel("month", { exact: true })).toHaveCount(0);
+        await expect(when.getByLabel("day", { exact: true })).toHaveCount(0);
+        await expect(when.getByLabel("year", { exact: true })).toBeEditable();
+        await expect(when.locator("[data-hfy-never='birth-date']")).toHaveText("we only keep the birth year on the site.");
+        await expect(when.locator("[data-hfy-mode]").first()).toHaveAttribute("data-hfy-mode", admin ? "direct" : "proposal");
+        expect(await lockedExplained(body)).toEqual([]);
+      });
+    }
 
     test("tags are picked from the ones that exist and go out as list ops", async ({ page }) => {
       const state = await open(page, "Event");
