@@ -2,16 +2,13 @@
 # Idempotently adds the hfy-api Function URL to a CloudFront distribution as a plain HTTPS custom origin (no OAC) that injects the secret
 # X-Origin-Verify header (HFY-R43), plus the /api/* cache behavior.
 #
-# HFY-R58 (1): the legacy login still POSTs /api/check-allowed to the origin that serves it today (the hfy-check-allowed API Gateway,
-# reached through the existing /api/* behavior), so the new /api/* must not shadow it. Before /api/* is pointed at hfy-api, the script
-# pins a more-specific /api/check-allowed* behavior, cloned from whichever behavior serves /api/check-allowed now (same origin,
-# policies and associations), immediately BEFORE the first behavior that matches that path. The pin is kept as is on every rerun and
-# is never removed or retargeted here: HFY-TSK-069 retires it. If nothing but hfy-api (or only the default behavior) serves
-# /api/check-allowed and no pin exists, the script refuses (exit 3) unless --legacy-origin names the origin to pin it to.
+# An existing /api/* behavior is retargeted in place; every other behavior and origin is left as it is (the script never deletes).
+# The legacy /api/check-allowed* pin and its --legacy-origin flag are gone: the hfy-check-allowed Lambda, its API Gateway and that
+# CloudFront behavior and origin were retired on 2026-10-14 (HFY-TSK-326, ruling P2-R48), so /api/check-allowed now reaches hfy-api.
 #
 # Re-running against an already-matching distribution is a true no-op: no update-distribution call (see lib/cf-common.sh).
 # Usage: add-api-behavior.sh [--dry-run] [--distribution E2JCDK3QLQNNYB] [--stack hfy-app] [--function-url URL] [--secret-name NAME]
-#                            [--legacy-origin ORIGIN_ID] [--config-file FILE]
+#                            [--config-file FILE]
 # The header value comes from $ORIGIN_VERIFY or Secrets Manager (harrisonfamily/cloudfront/origin-verify) and is never printed (diffs are redacted).
 # --dry-run prints the redacted config diff and changes nothing. --config-file/--function-url allow a fully offline dry run
 # (--config-file is refused without --dry-run). Before a real update the pre-change config is saved under
@@ -22,12 +19,11 @@ set -euo pipefail
 umask 077
 # shellcheck source=lib/cf-common.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/cf-common.sh"
-DIST=E2JCDK3QLQNNYB; STACK=hfy-app; DRY=0; FURL=""; CFG_FILE=""; SECRET=harrisonfamily/cloudfront/origin-verify; LEGACY_ORIGIN=""
+DIST=E2JCDK3QLQNNYB; STACK=hfy-app; DRY=0; FURL=""; CFG_FILE=""; SECRET=harrisonfamily/cloudfront/origin-verify
 ORIGIN_ID=hfy-api-origin; OUTPUT_KEY=FunctionUrl; PATTERN='/api/*'
-PIN_PATTERN='/api/check-allowed*'; PIN_PATH='/api/check-allowed'
 while [ $# -gt 0 ]; do case "$1" in
   --dry-run) DRY=1;; --distribution) DIST=$2; shift;; --stack) STACK=$2; shift;; --function-url) FURL=$2; shift;;
-  --secret-name) SECRET=$2; shift;; --config-file) CFG_FILE=$2; shift;; --legacy-origin) LEGACY_ORIGIN=$2; shift;;
+  --secret-name) SECRET=$2; shift;; --config-file) CFG_FILE=$2; shift;;
   *) echo "unknown arg $1" >&2; exit 2;; esac; shift; done
 cf_check_args "$CFG_FILE" "$DRY"
 
@@ -50,21 +46,8 @@ api_behavior() { # PATTERN TARGET
     ForwardedValues:null, MinTTL:null, DefaultTTL:null, MaxTTL:null}'
 }
 BEH=$(api_behavior "$PATTERN" "$ORIGIN_ID")
-PIN=$(jq -nc --arg pattern "$PIN_PATTERN" --arg path "$PIN_PATH" --arg avoid "$ORIGIN_ID" --arg fb "$LEGACY_ORIGIN" \
-  --argjson tpl "$(api_behavior "$PIN_PATTERN" "")" '{pattern:$pattern, path:$path, avoidOrigin:$avoid,
-  fallbackOrigin:(if $fb == "" then null else $fb end), template:($tpl | with_entries(select(.value != null)))}')
-
-if ! cf_jq -S --argjson origin "$ORIGIN" --argjson beh "$BEH" --argjson pin "$PIN" 'include "cf";
-    resolve_pin($pin) as $pinBeh
-    | upsert_origin($origin + {CustomHeaders:{Quantity:1,Items:[{HeaderName:"X-Origin-Verify",HeaderValue:env.OV}]}})
-    | upsert_behavior($beh) | place_pin($pinBeh; $pin.path)
-  ' "$CF_WORK/before.json" > "$CF_WORK/after.json" 2> "$CF_WORK/jq.err"; then
-  sed -E 's/^jq: error \(at [^)]*\): //' "$CF_WORK/jq.err" >&2
-  exit 3
-fi
-LEGACY=$(jq -r --arg p "$PIN_PATTERN" '[.CacheBehaviors.Items[] | select(.PathPattern == $p) | .TargetOriginId] | first' "$CF_WORK/after.json")
-echo "legacy $PIN_PATH stays on origin $LEGACY via $PIN_PATTERN (ordered before $PATTERN; retired by HFY-TSK-069)"
-if [ -n "$LEGACY_ORIGIN" ] && [ "$LEGACY_ORIGIN" != "$LEGACY" ]; then
-  echo "note: --legacy-origin $LEGACY_ORIGIN not used: $PIN_PATH is already served by $LEGACY (an existing pin or behavior wins)"
-fi
-cf_apply "$DIST" "$DRY" "origin $ORIGIN_ID, $PATTERN and the $PIN_PATTERN legacy pin"
+cf_jq -S --argjson origin "$ORIGIN" --argjson beh "$BEH" 'include "cf";
+    upsert_origin($origin + {CustomHeaders:{Quantity:1,Items:[{HeaderName:"X-Origin-Verify",HeaderValue:env.OV}]}})
+    | upsert_behavior($beh)
+  ' "$CF_WORK/before.json" > "$CF_WORK/after.json"
+cf_apply "$DIST" "$DRY" "origin $ORIGIN_ID and $PATTERN"

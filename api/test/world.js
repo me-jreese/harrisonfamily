@@ -93,7 +93,7 @@ export function createFakeS3(objects = new Map()) {
  * `intercept(cmd)` runs before every DynamoDB command reaches the fake (throw to simulate a store failure, or await another
  * request to simulate a race). The returned `ddb` is the raw fake, for assertions. Every presign also "uploads" CLEAN_JPEG under
  * its key with its content type (set `autoPut: false` to leave the bucket empty); tests swap `s3.objects` entries for fixtures.
- * `guardDob` is the HFY_GUARD_DOB switch.
+ * `guardDob` is the HFY_GUARD_DOB switch. `clock` replaces the ticking clock with a caller-driven `() => ms`.
  * Feature gate (HFY-TSK-238): `flags` is the deployed flags map (an object read on every call, so a test can flip it, or an async
  * function such as a createFlagSource), `uat` the uat subjects, or `features` a whole gate. With none of them the handler uses the
  * closed default (everything off, nobody uat). `routes` replaces the registry (tests mount gated routes with defineRoutes); `inbox`
@@ -103,7 +103,7 @@ export function makeApi({ admins = ["I0099"], withPush = true, audit, intercept,
   const raw = createFakeDdb();
   const s3 = createFakeS3();
   const ddb = intercept ? { send: async (cmd) => { await intercept(cmd); return raw.send(cmd); } } : raw;
-  const now = clock ?? ticker(); // `clock`: a fixed () => ms, for tests that sign time-sensitive tokens (sync step-up)
+  const now = clock ?? ticker(); // `clock`: a fixed `() => ms` for a test that reads the time (the contributions feed line cache, sync step-up tokens)
   const sent = [];
   const presigned = [];
   const jwks = createLocalJWKSet({ keys: [{ ...createPublicKey(pem).export({ format: "jwk" }), kid: "hfy-session-1", alg: "RS256", use: "sig" }] });

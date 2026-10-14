@@ -13,7 +13,7 @@ All values on this page come from the code in this repository and from the `@io-
 | Auth edge (`hfy-auth-edge`) | [`auth/`](../../auth/) | AWS Lambda, `nodejs22.x`, arm64 | `https://<site>/auth/*` and `/.well-known/oauth-authorization-server*` through CloudFront | Production sign-in for every visitor: `authV2` on in [`11ty/_data/flags.json`](../../11ty/_data/flags.json) since 2026-10-12 (HFY-TSK-069). The `authV2` sign-in: Google, email and password, and passkeys. `auth-v2.js` and the session helpers in `feature-flags.js` use it when `authV2` resolves on for a page. The comments thread and the `my-posts` island call `/auth/session`, and several islands link to `/auth/login`, whatever `authV2` is. See [Client consumers](#client-consumers). |
 | MCP authorization server | [`auth/src/oauth.js`](../../auth/src/oauth.js), inside `hfy-auth-edge` | Same Lambda | `/auth/authorize`, `/auth/token`, `/auth/register`, `/auth/revoke`, `/auth/userinfo` and the discovery documents | On in the stack, which sets `MCP_REDIRECT_URIS` from `McpRedirectUris`, whose default is non-empty. An empty value turns it off (see [MCP authorization server](#mcp-authorization-server)). |
 | Private data gate (`hfy-edge-gate`) | [`edge-gate/`](../../edge-gate/) | Lambda@Edge, viewer-request, `nodejs22.x`, x86_64. Stack `hfy-edge-gate` in us-east-1. | The CloudFront behaviors that [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh) attaches it to: `/person/*.json`, `/family/*`, `/event/*`, `/note/*`, `/place/*`, `/media/*` and `/uploads/*` | Attached to the six data behaviors on 2026-10-12 at 12:40Z (HFY-R67). For `/uploads/*`, see [Where the gate is attached](#where-the-gate-is-attached). A second verifier of `io_id`, alongside the API and `/auth/session`. It protects only the behaviors that carry its association; a variant spelling that misses them gets a `404` from `HFYAppendIndex` instead (see [Gated behaviors](#gated-behaviors)). See [Private data gate: hfy-edge-gate](#private-data-gate-hfy-edge-gate). |
-| `hfy-check-allowed` | [`lambda/hfy-check-allowed/`](../../lambda/hfy-check-allowed/) | AWS Lambda, defined outside this repository | `/api/check-allowed`, through the `/api/check-allowed*` CloudFront pin | Retired from the code and the pipeline (HFY-TSK-317): no page calls it and no workflow deploys it. The function, its API Gateway origin and the pin are still in AWS until io retires them. See [Retired legacy sign-in](#retired-legacy-sign-in). |
+| `hfy-check-allowed` | None: deleted (HFY-TSK-326) | Was an AWS Lambda behind an API Gateway HTTP API, defined outside this repository | Nothing: deleted. `/api/check-allowed` now reaches `hfy-api`, which answers `404`. | Deleted on 2026-10-14 (ruling P2-R48), with its API Gateway, IAM role and log group. HFY-TSK-317 had already removed every caller and its deploy target. See [hfy-check-allowed (deleted)](#hfy-check-allowed-deleted). |
 | `getAllowlist` | None: deleted (HFY-TSK-325) | Was a Google Cloud Function (2nd gen), Python 3.11 | Nothing: deleted | Deleted on 2026-10-14 with io's approval, with its Secret Manager secret. It was never used in any sign-in path. See [getAllowlist (deleted)](#getallowlist-deleted). |
 
 ## Auth edge
@@ -292,7 +292,7 @@ For one email, the composite resolver decides in this order:
 
 The item is read with a strongly consistent `GetItem` on every lookup and is not cached, so a revoke applies to the next sign-in, passkey sign-in, password set and refresh. The S3 file keeps its 300 s cache. With no `ALLOW#` item in the table, the resolver answers exactly as the S3 resolver alone does. A DynamoDB error is logged by error name only, never with an address.
 
-The items, their keys and who writes them are in [Allowlist grants in DynamoDB](../how-to/manage-family-access.md#allowlist-grants-in-dynamodb). The legacy `hfy-check-allowed` Lambda does not read them.
+The items, their keys and who writes them are in [Allowlist grants in DynamoDB](../how-to/manage-family-access.md#allowlist-grants-in-dynamodb). The legacy `hfy-check-allowed` Lambda never read them, and it was deleted on 2026-10-14.
 
 The object is a JSON object that maps an email address to an entry:
 
@@ -852,81 +852,25 @@ The `loadIsland` calls in [`11ty/js/feature-flags.js`](../../11ty/js/feature-fla
 
 ## Retired legacy sign-in
 
-HFY-TSK-317 retired the legacy Google sign-in from the code and the pipeline. It deleted nothing in AWS or Google Cloud (ruling P2-R42). The Google Cloud pieces were deleted later, on 2026-10-14, with io's approval (HFY-TSK-325); the AWS pieces remain. What is gone, and what remains:
+HFY-TSK-317 retired the legacy Google sign-in from the code and the pipeline. It deleted nothing in AWS or Google Cloud (ruling P2-R42). The cloud pieces were deleted later, on 2026-10-14: the Google Cloud pieces with io's approval (HFY-TSK-325), and the `hfy-check-allowed` Lambda with its API Gateway under ruling P2-R48 (HFY-TSK-326). What is gone, and what remains:
 
 | Piece | State |
 | --- | --- |
 | Google Identity Services in the pages | Gone. No page loads `accounts.google.com/gsi/client`, `11ty/js/auth.js` is deleted, and so are the `HFY_AUTH_CONFIG` block and the `REPLACE_WITH_GOOGLE_CLIENT_ID` placeholder with its CI patch step. Google sign-in goes through the auth edge (`/auth/login`, Cognito federation). |
 | Gateway session | Gone. `verifySession`, `acceptSession`, `requireSessionToken` and the `HFY_GATEWAY_SESSION_V1` cache are removed from `feature-flags.js`, with the `gateway` block of the page configuration (no page names `/api/check-allowed`). |
 | `X-HFY-Session` | No code sends it. `person-page.js`, the islands and the people corpus send the `io_id` cookie only (`credentials: "same-origin"`, through `HFYFeatureFlags.dataFetch`). The repository never contained a check of the header, and the gate ignored it. |
-| Magic link | Gone with `auth.js`. It never worked: `hfy-check-allowed` has no magic-link branch. |
+| Magic link | Gone with `auth.js`. It never worked: `hfy-check-allowed` had no magic-link branch. |
 | Lunr search | Gone. `js/search-navbar.js` and `js/search-results.js` are deleted, the navbar search markup is out of the pages, and `/search/` has only the Search 1.0 island. |
 | `/family-login/` | A static redirect page to `/auth/login` (see [Client consumers](#client-consumers)). |
-| `hfy-check-allowed` | The kit manifest has no `lambda` target, so no push deploys it, and a rollback no longer touches it. The function and the `/api/check-allowed*` pin that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) keeps stay in AWS, with the deploy role's grant on the function, until io retires them through an app-stack change set. Its source stays in [`lambda/hfy-check-allowed/`](../../lambda/hfy-check-allowed/) as the record of what is deployed. |
+| `hfy-check-allowed` | Deleted on 2026-10-14 (HFY-TSK-326, ruling P2-R48): the function, its API Gateway, its IAM role and its log group. The repository no longer has its source, the `/api/check-allowed*` pin in [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), the pre-commit sync check's comparison, or the grant in the deploy role's template. The deployed deploy-role stack keeps that grant until the GitHub-roles stack is next updated; a grant on a deleted function allows nothing. See [hfy-check-allowed (deleted)](#hfy-check-allowed-deleted). |
+| `config/allowed_hashes.json` and `HFY_ALLOWLIST_HMAC_SECRET` | Retired on 2026-10-14 (ruling P2-R51). The allowlist publisher no longer reads the secret or writes the digest list. The object was deleted, and the secret was scheduled for deletion on 2026-11-13. See [`publish_allowlists.sh`](private-data-and-secrets.md#publish_allowlistssh). |
 | `getAllowlist` | Deleted on 2026-10-14 with io's approval: the function with its Cloud Run service, the `harrisonfamily-allowlist` secret it read, and the only user-managed key of the service account that deployed it. HFY-TSK-325 removed `deploy-gcf-legacy.yml`, the source in `functions/get-allowlist/` and `gcloud/allowlist-fn/`, and the pre-commit sync check's comparison of them. |
 
-The pin still routes a request to `/api/check-allowed` to the function (see [Repository operations](repository-operations.md#the-legacy-apicheck-allowed-pin)). What the deployed function does, for whoever still calls it by hand:
+### hfy-check-allowed (deleted)
 
-**Request.** `POST` with a JSON body `{ "id_token": "<Google ID token>", "context": "site" }`. `token` is accepted in place of `id_token`, and `context` is ignored. The site sends this request to `/api/check-allowed`, the `gateway.endpoint` in the page configuration.
+`hfy-check-allowed` was an AWS Lambda behind an API Gateway HTTP API, reached through CloudFront at `POST /api/check-allowed`, the `gateway.endpoint` the retired pages posted to. It took a Google ID token (`id_token`, or `token`), verified it with `GOOGLE_CLIENT_ID` as the audience, and required `email_verified`. It admitted the trimmed, lower-cased email only if the email's HMAC-SHA256 digest, keyed with the `HFY_ALLOWLIST_HMAC_SECRET` secret, was in `config/allowed_hashes.json` and `config/userGrampsID.json` had a non-empty value for it. It answered `200` with `allowed`, the Gramps ID and a session token of 32 random bytes that nothing on the server stored or could validate, and `403` otherwise. It loaded the digest list, the map and the key once per container. Unlike the edge, it did not lower-case the map's keys, and it returned an object-form entry unchanged as the Gramps ID.
 
-**Checks**, in order:
-
-1. The method is `OPTIONS` (answered with `204` and the CORS headers) or `POST`.
-2. `id_token` or `token` is present.
-3. The Google ID token verifies (`OAuth2Client.verifyIdToken` with audience `GOOGLE_CLIENT_ID`). A failure throws and produces a 500.
-4. The payload has an email and `email_verified === true`. The email is trimmed and lower-cased.
-5. The HMAC-SHA256 of the email (hex, keyed with the HMAC secret) is in the hash list, **and** the mapping has a truthy value for the email. Both are required.
-
-**Response** (`200`):
-
-| Field | Value |
-| --- | --- |
-| `allowed` | `true` |
-| `grampsId` | The mapping value for the email |
-| `sessionToken` | 32 random bytes in base64url |
-| `issuedAt`, `expiresAt` | ISO 8601 timestamps |
-| `expiresIn` | `SESSION_TTL_SECONDS` (default 900) |
-
-The session token is not stored or recorded anywhere on the server, and no code in this repository can validate it.
-
-**Errors:**
-
-| Status | Body | Cause |
-| --- | --- | --- |
-| 400 | `{"allowed":false,"error":"missing id_token"}` | No `id_token` or `token` |
-| 403 | `{"allowed":false,"error":"unverified email"}` | Missing email, or `email_verified` is not `true` |
-| 403 | `{"allowed":false}` | Hash not listed, or no mapping value |
-| 405 | `{"error":"Method Not Allowed"}` | A method other than `POST` or `OPTIONS` |
-| 500 | `{"allowed":false,"error":"server error"}` | Invalid Google token, malformed JSON, or an S3 or Secrets Manager failure |
-
-**Environment variables:**
-
-| Variable | Default | Use |
-| --- | --- | --- |
-| `GOOGLE_CLIENT_ID` | None | Token audience |
-| `HASH_BUCKET`, `HASH_KEY` | `<config-bucket>`, `config/allowed_hashes.json` | JSON array of hex HMAC digests |
-| `MAPPING_BUCKET`, `MAPPING_KEY` | `<config-bucket>`, `config/userGrampsID.json` | Email-to-Gramps-ID map. By default this is the same object the auth edge resolves against. |
-| `SECRET_NAME` | `HFY_ALLOWLIST_HMAC_SECRET` | Secrets Manager secret that holds the HMAC key |
-| `ALLOWED_ORIGINS` | Empty | Comma-separated CORS origins |
-| `SESSION_TTL_SECONDS` | `900` | Session token lifetime |
-
-**CORS.** `Access-Control-Allow-Origin` is set as follows:
-
-- the request's `origin` header, when it is in `ALLOWED_ORIGINS`
-- otherwise the first configured origin
-- otherwise `*`
-
-Responses also send `Access-Control-Allow-Methods: POST,OPTIONS`, `Access-Control-Allow-Headers: Content-Type` and `Vary: Origin`. No `Access-Control-Allow-Credentials` header is sent.
-
-**Caching.** The hash list, the mapping and the HMAC secret are each loaded once and kept for the life of the container. They are never refreshed, so allowlist changes reach only new containers.
-
-**Logs.** Log lines are prefixed `[HFY_CHECK_ALLOWED]`. Each request logs its request id, method, origin and path. Emails are logged only in redacted form: the first three characters of the local part, then `***@` and the domain. A match logs `grampsId` and `expiresAt`. An error logs the message and the stack.
-
-**Differences from the edge on the shared mapping object:**
-
-- The legacy lookup does not lower-case the stored keys, so a key with upper-case letters never matches.
-- The legacy Lambda treats each mapping value as opaque, so an object-form entry written for the edge is returned to legacy clients as an object in `grampsId`.
-- Both services deny an email whose Gramps ID is empty.
+Production CloudFront had no `/api/check-allowed*` behavior and no API Gateway origin when read on 2026-10-13. On 2026-10-14 (HFY-TSK-326, ruling P2-R48), the function, its API Gateway, its IAM role and its log group were deleted, after the last code package and the role's policy were saved with the task record. A request to `/api/check-allowed` now goes through `/api/*` to `hfy-api`, which has no such route and answers `404` with code `not_found`. The last source is in the Git history: `git log --diff-filter=D --oneline -- lambda/hfy-check-allowed` names the commit that removed it.
 
 ### getAllowlist (deleted)
 

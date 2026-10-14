@@ -16,7 +16,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 
 | Path | What it is |
 | --- | --- |
-| `_data/flags.json` | The build-time feature flags `authV2`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `searchV2` and `shellV2`. |
+| `_data/flags.json` | The build-time feature flags `authV2`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `searchV2` and `shellV2`. |
 | `js/islands/**` | Committed build output of `islands/` (HFY-R58). Rebuild with `scripts/ci/build-islands.sh` or `cd islands && npm run build`, and commit; `npm run check:islands` fails when it is stale. |
 | `css/hfy-theme.css` | Build output: the design-system theme layer, built from `islands/src/theme/` and `@io-kit/tokens`. Every page links it render-blocking, right after `css/main.css` where the page has one; `main.css` itself is never edited. |
 | `css/auth-edge.css` | Build output: the sign-in stylesheet, built from `islands/src/auth-edge/auth-edge.css` (HFY-TSK-069). `auth/edge.manifest.json` `theme.cssUrl` names it with `?v=<sha8 of this file>`, which the build stamps; the sign-in page links the new URL once `hfy-auth-edge` is redeployed. It must be served from `https://<site>`, the stylesheet origin the sign-in page's CSP allows. |
@@ -26,7 +26,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `js/person-page.js` | Edited in the repository: its data requests go through the `authV2` data path, `HFYFeatureFlags.dataFetch` (HFY-R66), and it renders the design system's person layout and the extension points below. The source's copy lacks both and still waits for the legacy `X-HFY-Session` token, which breaks person pages while the private data gate is attached. |
 | `family-login/index.html` | A redirect page to `/auth/login` (HFY-TSK-317), carrying `?next=<path>` over as `returnTo`, so old bookmarks of the retired Google sign-in page still work. The source's page is the Google sign-in, which the refresh must not bring back. |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | The PWA shell (HFY-TSK-064). Every islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. The worker is registered at `/sw.js?v=<sha8 of sw.js>` and names its cache after that hash. |
-| `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068), and `me/index.html`, the settings hub of the `navMe` island `settings` (HFY-TSK-091). |
+| `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068), and `me/index.html`, the settings hub of the `navMe` island `settings` (HFY-TSK-091), and `me/links/index.html`, the profile links editor of the `profileLinks` island `links-editor` (HFY-TSK-217). |
 | `private/index.html` | The route of the shell's own-page tab: "me" since the `navMe` flip (HFY-TSK-223), "family" with `navMe` off (HFY-TSK-091). Its title is "your page" (`islands/copy.mjs`). It is a redirect page with no person data. Signed in, it sends the visitor to their own page, `/person/?id=<gramps id>`; signed out, to the edge sign-in, which returns to `/private/`. It replaced the 2025 "Person Directory" dev scaffold. It is not `/family/`, which is a gated data prefix. The refresh excludes `private/`; the source's matching page is `src/private/index.njk`. |
 | `README.md` | This file. |
 

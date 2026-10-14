@@ -32,7 +32,7 @@
           "OriginAccessControlId": "EOACEXAMPLE"
         },
         {
-          "Id": "api-gateway-hfy-check-allowed",
+          "Id": "legacy-api-origin",
           "DomainName": "abc123example.execute-api.us-west-2.amazonaws.com",
           "OriginPath": "/prod",
           "CustomHeaders": {
@@ -154,7 +154,7 @@
         },
         {
           "PathPattern": "/api/*",
-          "TargetOriginId": "api-gateway-hfy-check-allowed",
+          "TargetOriginId": "legacy-api-origin",
           "TrustedSigners": {
             "Enabled": false,
             "Quantity": 0

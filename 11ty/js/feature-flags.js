@@ -8,49 +8,57 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "b2994f56",
+        "js": "2b569e77",
         "css": "24d74883"
       },
+      "links-editor": {
+        "js": "05a03f0a",
+        "css": "a475a3dd"
+      },
       "my-posts": {
-        "js": "37722a8c",
+        "js": "0708af25",
         "css": "24a8cc2d"
       },
       "notifications": {
-        "js": "32ace9c4",
+        "js": "9ec1c0d9",
         "css": "56799f74"
       },
       "person": {
-        "js": "1c713f11",
+        "js": "19520c34",
         "css": "3909ca3c"
+      },
+      "person-links": {
+        "js": "70972ead",
+        "css": "930bb673"
       },
       "photo-tags": {
         "js": "72b2d893",
         "css": "bf6043c1"
       },
       "posts": {
-        "js": "e10a2da9",
+        "js": "0e7f3e3f",
         "css": "c678e2b1"
       },
       "search": {
-        "js": "ed6d2210",
+        "js": "3fa6315b",
         "css": "9e007813"
       },
       "settings": {
-        "js": "79ac63fd",
-        "css": "b1550e24"
+        "js": "9accb7d2",
+        "css": "2ebf2e40"
       },
       "shell": {
-        "js": "36ba7a7b",
+        "js": "354abba7",
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "9bf57891",
+        "js": "e6378382",
         "css": "e839f302"
       }
     },
     "theme": "1e33d0e0",
     "manifest": "c0f9b5fc",
-    "sw": "a74a20a3"
+    "sw": "73cddc5a"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -723,6 +731,18 @@
   resolveFlags().then((flags) => {
     if (flags.photoTags !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
     loadIsland("photo-tags", { onError() { /* the gallery stands without tag overlays */ } });
+  });
+
+  // HFY-TSK-217: profileLinks mounts the links section on the person page (island person-links, under the lifespan line; it fills the person
+  // page's [data-slot="links"] host and listens to hfy:person-rendered) and the editor on the static /me/links/ page (island links-editor).
+  // With the flag off neither bundle is requested: the person page is as before and /me/links/ keeps its "not available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.profileLinks !== true) return;
+    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("person-links", { onError() { /* the person page stands without the links section */ } });
+    } else if (/^\/me\/links\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("links-editor", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
   });
 
   onReady(applyFeatureVisibility);

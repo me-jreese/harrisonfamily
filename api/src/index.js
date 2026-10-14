@@ -1,10 +1,11 @@
 // Lambda entry point: wires real AWS clients. Handler is `src/index.handler`.
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoNotificationStore, DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
+import { createMemberSet } from "./notify.js";
 import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
@@ -18,7 +19,7 @@ import { createSyncAuthenticator } from "./sync/auth.js";
 import { logSafeError } from "./http.js";
 
 const env = process.env;
-const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand };
+const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand };
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
 const secrets = new SecretsManagerClient({});
@@ -31,6 +32,14 @@ const getJwks = async () => jwks;
 const getAdmins = createAdminList({
   load: async () => {
     const o = await s3.send(new GetObjectCommand({ Bucket: env.ADMIN_LIST_BUCKET ?? "harrisonfamily", Key: env.ADMIN_LIST_KEY ?? "config/admins.json" }));
+    return JSON.parse(await o.Body.transformToString());
+  },
+});
+
+// Member principals for record_updated_mine: the VALUES of the allowlist's config/userGrampsID.json (read through the role's config/* grant). Never logged.
+const listMembers = createMemberSet({
+  load: async () => {
+    const o = await s3.send(new GetObjectCommand({ Bucket: env.ADMIN_LIST_BUCKET ?? "harrisonfamily", Key: env.USER_GRAMPS_KEY ?? "config/userGrampsID.json" }));
     return JSON.parse(await o.Body.transformToString());
   },
 });
@@ -103,6 +112,7 @@ export const handler = async (event) => {
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
+      getAdmins, listMembers,
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
       s3, // checkLocation reads the first 256 KiB of a new post attachment (upload-guard.js; UploadReads in app-stack.yaml)
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off

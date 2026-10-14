@@ -88,6 +88,23 @@ export const ROUTES = defineRoutes([
     gate: requireFeature("profileLinks"),
     handler: async (c) => ok(await c.links.put(c.params.id, c.body)),
   },
+  // The contributions read side (hfy-contrib-read-api; social.md 7.5), dark until contribV1 is on (or the caller is uat). No `mcp` member and
+  // no policy row. contributions.stats and contributions.site share a path: `?author=` picks the first, its absence the second.
+  {
+    name: "contributions.list", method: "GET", path: "/contributions", summary: "A member's contributions, newest first (author required; cursor, limit 1-50, default 10): hidden events only to the author and admins, events on a post or proposal thread only to viewers who can see it (no MCP tool)",
+    gate: requireFeature("contribV1"),
+    handler: async (c) => ok(await c.contrib.list(c.query.author, { cursor: c.query.cursor || undefined, limit: c.query.limit })),
+  },
+  {
+    name: "contributions.stats", method: "GET", path: "/contributions/stats", summary: "A member's contribution counters (?author=; zeros for an unknown member; no MCP tool)",
+    gate: requireFeature("contribV1"), when: (q) => Boolean(q.author),
+    handler: async (c) => ok(await c.contrib.stats(c.query.author)),
+  },
+  {
+    name: "contributions.site", method: "GET", path: "/contributions/stats", summary: "The site's contribution total and the feed line (without ?author=): line is null when no window reaches 3 (no MCP tool)",
+    gate: requireFeature("contribV1"), when: (q) => !q.author,
+    handler: async (c) => ok(await c.contrib.site()),
+  },
   {
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first by default or order=desc for newest first (cursor, bound to its order), with reactions",
     handler: async (c) => {
@@ -177,14 +194,18 @@ export function defineRoutes(list) {
   return list.map((r) => ({ ...r, ...(MCP[r.name] ? { mcp: MCP[r.name] } : {}), auth: r.auth ?? "session", write: r.method !== "GET", re: new RegExp(`^${r.path.replace(/:[a-z_]+/g, "([^/]+)")}$`), keys: [...r.path.matchAll(/:([a-z_]+)/g)].map((m) => m[1]) }));
 }
 
-/** `candidates`: every route whose path matched (any method), so the handler can tell 405 from a dark path that must stay 404. */
-export function matchRoute(method, path, routes = ROUTES) {
+/**
+ * `candidates`: every route whose path matched (any method), so the handler can tell 405 from a dark path that must stay 404.
+ * A route may carry `when(query)`: two routes can share a method and path when the query tells them apart (contributions.stats takes
+ * `?author`, contributions.site does not). The route list must make the predicates exclusive.
+ */
+export function matchRoute(method, path, routes = ROUTES, query = {}) {
   const candidates = [];
   for (const r of routes) {
     const m = r.re.exec(path);
     if (!m) continue;
     candidates.push(r);
-    if (r.method === method) return { route: r, params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])])), pathMatched: true, candidates };
+    if (r.method === method && (!r.when || r.when(query ?? {}))) return { route: r, params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])])), pathMatched: true, candidates };
   }
   return { route: null, pathMatched: candidates.length > 0, candidates };
 }

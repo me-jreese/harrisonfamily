@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(islandsDir, "..");
-const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/offline.html"];
+const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/me/links/index.html", "11ty/offline.html"];
 const ALIAS_FILE = "src/theme/10-kit-aliases.css";
 const ALLOW_BP = /lint-allow:\s*bp tokens pending/;
 

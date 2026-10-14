@@ -2,7 +2,7 @@
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
 import { createCommentSource, purgeThread, toCommentPrincipal } from "./comments.js";
-import { createNotifier, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
+import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
@@ -12,6 +12,7 @@ import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
+import { createContribReader } from "./contrib-read.js";
 import { unauthenticated } from "./sync/auth.js";
 import { syncContext } from "./sync/guard.js";
 
@@ -47,6 +48,8 @@ export function createHandler(deps) {
       listPrincipals: scanSubscribedPrincipals(ddb, cmds, table),
       // A recipient's inbox write follows featureOn for the RECIPIENT, never the actor's preview header.
       inbox: deps.inbox, featureOn: (name, principal) => features.featureOn(name, principal),
+      // Sources for the PLN-002 producers (admins, member principals, record followers); absent => that producer notifies nobody.
+      getAdmins: deps.getAdmins, listMembers: deps.listMembers, followersOf: queryFollowers(ddb, cmds, table),
     });
     const base = { ddb, cmds, table, actor, now, ulid, uid, via };
     const commenterIds = async (threadId) => {
@@ -88,7 +91,8 @@ export function createHandler(deps) {
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
     const links = createLinks(base);
-    return { content, comments, links, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
+    return { content, comments, links, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**
@@ -111,7 +115,7 @@ export function createHandler(deps) {
       path = path.slice(BASE_PATH.length);
 
       const preview = previewOf(event);
-      const { route, params, candidates } = matchRoute(method, path, routes);
+      const { route, params, candidates } = matchRoute(method, path, routes, event.queryStringParameters ?? {});
       if (!route) {
         if (candidates.length === 0) throw new HttpError(404, "not_found", "no such route");
         // Another method on a known path is 405, unless every route on that path is dark for this caller: then the path does not exist (404).
