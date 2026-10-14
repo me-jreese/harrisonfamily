@@ -123,17 +123,25 @@ export function synthGraph(people, { seed = 302 } = {}) {
   };
 }
 
-/** The id of a person in the middle generations who has parents, a partner and at least two children (the busiest first view). */
+/** The id of a person in the middle generations who has parents, at least one sibling, a partner and at least two children (the busiest first view,
+ *  and one where every re-centre role -- parent, sibling, partner, child -- has a card). Falls back to fewer conditions only if no one qualifies. */
 export function synthFocus(graph) {
   const kids = new Map();
   const hasParents = new Set();
+  const hasSibling = new Set();
   for (const u of graph.unions) {
-    for (const c of u.children) hasParents.add(c.id);
+    for (const c of u.children) {
+      hasParents.add(c.id);
+      if (u.children.length > 1) hasSibling.add(c.id);
+    }
     for (const p of u.partners) kids.set(p, (kids.get(p) || 0) + u.children.length);
   }
   const mid = Math.floor(graph.generations[0].levels.length / 2);
   const level = graph.generations[0].levels[mid] || [];
-  const best = level.find((id) => hasParents.has(id) && (kids.get(id) || 0) >= 2) || level.find((id) => hasParents.has(id));
+  const best =
+    level.find((id) => hasParents.has(id) && hasSibling.has(id) && (kids.get(id) || 0) >= 2) ||
+    level.find((id) => hasParents.has(id) && (kids.get(id) || 0) >= 2) ||
+    level.find((id) => hasParents.has(id));
   return best || graph.people[0].id;
 }
 

@@ -86,6 +86,7 @@ test("the island entry and its own chunks are at most 60 KB gzip, excluding the 
   for (const f of m.entryOwn) assert.ok(!shellSet.has(f), `${f} is loaded by the shell but counted in the entry`);
 });
 
+// A guard, not a proof of removal: at the time of writing no 120 KB line existed in this repo (a grep over islands/tests found none), so there was nothing to delete.
 test("the old 120 KB chart-chunk budget line is gone from the tests", () => {
   const old = new RegExp(["120 ?KB", "120 ?\\* ?1024", "120_?000", "122880"].join("|"), "i");
   for (const f of readdirSync(testsDir).filter((n) => n !== "tree-budget.test.mjs" && /^tree.*\.(test|spec)\.mjs$|^navigator.*\.test\.mjs$/.test(n))) {
