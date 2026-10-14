@@ -371,32 +371,79 @@ describe('the clock', () => {
   });
 });
 
-describe('size at 2,000 people', () => {
-  it('a synthetic 2,000-person tree builds, verifies and fits the 150 KiB gzip budget', () => {
-    const t = new Tree();
-    t.place('P1', { name: 'Examplestate', type: 2 }).place('P2', { name: 'Riverton', type: 4, parent: 'P1', lat: '40.01', long: '-100.02' }).place('P3', { name: 'Lakeside', type: 16, parent: 'P1', lat: '41.5', long: '-99.5' });
+/**
+ * A synthetic tree of n people (invented names and ids, seeded by index only) with 40% of them in two-partner families of two
+ * children, and ONE tagged photo per person: photo k tags person k and up to three neighbours (1 to 4 people, rect or whole
+ * photo), as in the viz ADR's photoEdges measurement.
+ */
+function synthTree(n) {
+  const t = new Tree();
+  t.place('P1', { name: 'Examplestate', type: 2 }).place('P2', { name: 'Riverton', type: 4, parent: 'P1', lat: '40.01', long: '-100.02' }).place('P3', { name: 'Lakeside', type: 16, parent: 'P1', lat: '41.5', long: '-99.5' });
+  const idOf = (i) => `I${String(i).padStart(5, '0')}`;
+  for (let i = 0; i < n; i++) {
+    const year = 1800 + (i % 200);
+    t.person(idOf(i), {
+      given: `Given${i % 97}`, surname: `Family${i % 41}`, gender: i % 3,
+      birth: { when: { year }, place: i % 2 ? 'P2' : 'P3' },
+      death: i % 5 === 0 ? undefined : { when: { year: Math.min(year + 60, 2020) }, place: 'P2' },
+      extra: [{ type: 37, when: { year: year + 25 } }, { type: 26, when: { year: year + 18 }, place: 'P3' }],
+    });
+  }
+  // families of two partners and two children each (40% of the people are partners)
+  const families = Math.floor(n * 0.4);
+  let child = Math.floor(n * 0.8);
+  for (let f = 0; f < families; f++) {
+    const kids = child + 2 <= n ? [{ id: idOf(child++) }, { id: idOf(child++) }] : [];
+    t.family(`F${String(f).padStart(5, '0')}`, { father: idOf(f * 2), mother: idOf(f * 2 + 1), children: kids, events: [{ type: 1, when: { year: 1820 + (f % 150) }, place: 'P2' }] });
+  }
+  const tags = new Map(); // person id -> MediaRefs
+  const medias = [];
+  for (let k = 0; k < n; k++) {
+    const oid = `O${String(k).padStart(5, '0')}`;
+    medias.push({ _class: 'Media', handle: `h_${oid}`, gramps_id: oid, path: `${SENTINEL}/${oid}.jpg`, desc: `${SENTINEL}_DESC`, private: false });
+    for (let j = 0; j <= k % 4; j++) {
+      const who = idOf((k + j * 7) % n);
+      if (!tags.has(who)) tags.set(who, []);
+      tags.get(who).push({ _class: 'MediaRef', ref: `h_${oid}`, rect: j % 2 ? [10 + j, 10, 60, 60] : null, private: false });
+    }
+  }
+  const objects = t.list().map((o) => (o._class === 'Person' ? { ...o, media_list: tags.get(o.gramps_id) ?? [] } : o));
+  return [...objects, ...medias];
+}
+
+describe('size with photoEdges (one tagged photo per person)', () => {
+  it('231 synthetic people: builds, verifies and fits 25 KB gzipped, photoEdges included', (t) => {
+    const { graph } = build(synthTree(231));
+    assert.equal(graph.people.length, 231);
+    assert.equal(graph.photoEdges.length, 231); // every photo has at least one tagged person
+    assert.deepEqual(verifyGraph(graph, { now: NOW }), { ok: true, violations: [] });
+    const gz = assertSizeBudget(stringify(graph), 25 * 1024); // throws SIZE_BUDGET over 25 KiB
+    t.diagnostic(`231 people: ${gz} bytes gzipped`);
+    assert.ok(gz > 0 && gz <= 25 * 1024, `${gz} bytes gzipped`);
+  });
+
+  it('2,000 synthetic people: builds, verifies and fits the 150 KiB gzip budget, photoEdges included', (t) => {
     const N = 2000;
-    const idOf = (i) => `I${String(i).padStart(5, '0')}`;
-    for (let i = 0; i < N; i++) {
-      const year = 1800 + (i % 200);
-      t.person(idOf(i), {
-        given: `Given${i % 97}`, surname: `Family${i % 41}`, gender: i % 3,
-        birth: { when: { year }, place: i % 2 ? 'P2' : 'P3' },
-        death: i % 5 === 0 ? undefined : { when: { year: Math.min(year + 60, 2020) }, place: 'P2' },
-        extra: [{ type: 37, when: { year: year + 25 } }, { type: 26, when: { year: year + 18 }, place: 'P3' }],
-      });
-    }
-    // 800 families of two partners and two children each, plus some single-parent ones
-    let child = 1600;
-    for (let f = 0; f < 800; f++) {
-      const kids = child + 2 <= N ? [{ id: idOf(child++) }, { id: idOf(child++) }] : [];
-      t.family(`F${String(f).padStart(5, '0')}`, { father: idOf(f * 2), mother: idOf(f * 2 + 1), children: kids, events: [{ type: 1, when: { year: 1820 + (f % 150) }, place: 'P2' }] });
-    }
-    const { graph } = build(t.list());
+    const { graph } = build(synthTree(N));
     assert.equal(graph.people.length, N);
+    assert.equal(graph.photoEdges.length, N);
     assert.deepEqual(verifyGraph(graph, { now: NOW }), { ok: true, violations: [] });
     const gz = assertSizeBudget(stringify(graph)); // throws SIZE_BUDGET over 150 KiB
-    assert.ok(gz > 0 && gz < 150 * 1024, `${gz} bytes gzipped`);
+    t.diagnostic(`2,000 people: ${gz} bytes gzipped`);
+    assert.ok(gz > 0 && gz <= 150 * 1024, `${gz} bytes gzipped`);
+  });
+
+  it('the block really is in the measured file, and the builder budget still throws SIZE_BUDGET (exit 3) over 150 KiB', () => {
+    const { graph } = build(synthTree(231));
+    const text = stringify(graph);
+    assert.ok(text.includes('"photoEdges":[{"media":"O00000"'));
+    assert.throws(() => assertSizeBudget(text, 1024), (e) => e instanceof GraphError && e.code === 'SIZE_BUDGET' && e.exitCode === 3);
+    // a graph bloated past 150 KiB gzipped (random-looking ids do not compress) is refused by the default budget
+    const bloated = structuredClone(graph);
+    let x = 12345;
+    const rnd = () => (x = (Math.imul(x, 1664525) + 1013904223) >>> 0).toString(36);
+    bloated.photoEdges = Array.from({ length: 40000 }, () => ({ media: `O${rnd()}${rnd()}`.slice(0, 20), people: [graph.people[0].id] }));
+    assert.throws(() => assertSizeBudget(stringify(bloated)), (e) => e instanceof GraphError && e.code === 'SIZE_BUDGET' && e.exitCode === 3);
   });
 });
 

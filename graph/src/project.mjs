@@ -5,6 +5,7 @@
 // a date's day, month, sortval or text. It is safe on unredacted input and again on a redacted snapshot.
 
 import { GraphError } from './errors.mjs';
+import { normalizeRect } from './faces.mjs';
 import {
   enumValue, enumString, GENDER, DATE_MODIFIER, DATE_QUALITY, ROLE_ALLOWLIST, EVENT_ROLE, EVENT_TYPE_NAMES,
   FAMILY_REL_NAMES, CHILD_REL_NAMES, PLACE_TYPE_NAMES, ADDRESS_GRADE_PLACE_TYPES, HOME_LIKE_CUSTOM, ADDRESS_LIKE_NAME, LIVING_EVENT_KEEP,
@@ -14,6 +15,7 @@ import {
 const IGNORED_CLASSES = new Set(['Note', 'Citation', 'Source', 'Repository', 'Tag']);
 const READ_CLASSES = new Set(['Person', 'Family', 'Event', 'Place', 'Media']);
 const SCHEMA_VERSION = 21;
+const MEDIA_ID = /^[A-Za-z0-9_-]{1,32}$/; // the schema's id pattern
 const CORE_FIELDS = {
   Person: ['handle', 'gramps_id'],
   Family: ['handle', 'gramps_id'],
@@ -140,7 +142,7 @@ function cleanText(s) {
 /**
  * @param {object[]} objects  _class-tagged Gramps JSON objects
  * @param {{ maxYear: number, warnings?: Warnings, keepLivingResidence?: boolean }} opts
- * @returns {{ people: object[], unions: object[], places: object[], events: object[], warnings: Warnings }}
+ * @returns {{ people: object[], unions: object[], places: object[], events: object[], photoEdges: object[], warnings: Warnings }}
  */
 export function projectRecords(objects, opts) {
   const warnings = opts.warnings ?? new Warnings();
@@ -284,6 +286,42 @@ export function projectRecords(objects, opts) {
       else faceJobs.push({ id, media: mref.ref, rect: mref.rect ?? null });
     }
   }
+
+  // ---- photo co-occurrence (photoEdges, graph minor 2) ---------------------------------------------------
+  // One entry per photo with at least one tagged, kept person: { media: <Media gramps_id>, people: [sorted ids] }. Every
+  // MediaRef in a kept person's media_list is a tag; a MediaRef with no rect (or Gramps' [0,0,0,0]) is a whole-photo tag and
+  // counts. Skipped: a private MediaRef, a private Media, a private person (never in personByHandle) and a RECT_INVALID rect
+  // (the rule faces.mjs uses for face: null; the sub-pixel truncation case needs the image size, which this pure projection
+  // does not have). Handles, rects, paths, descriptions and notes never leave this function.
+  const tagged = new Map(); // Media gramps_id -> Set of person ids
+  for (const p of sortedPeople) {
+    const kept = personByHandle.get(p.handle);
+    if (!kept) continue;
+    const id = kept.out.id;
+    for (const mref of Array.isArray(p.media_list) ? p.media_list : []) {
+      if (!mref || typeof mref.ref !== 'string' || mref.private === true) continue;
+      const media = idx.Media.get(mref.ref);
+      if (!media) {
+        warnings.add('DANGLING_REF', id);
+        continue;
+      }
+      if (media.private === true) {
+        noteExcluded(media);
+        continue;
+      }
+      if (normalizeRect(mref.rect ?? null).invalid) {
+        warnings.add('PHOTO_TAG_RECT_INVALID', id);
+        continue;
+      }
+      if (typeof media.gramps_id !== 'string' || !MEDIA_ID.test(media.gramps_id)) {
+        warnings.add('MEDIA_ID_INVALID', id);
+        continue;
+      }
+      if (!tagged.has(media.gramps_id)) tagged.set(media.gramps_id, new Set());
+      tagged.get(media.gramps_id).add(id);
+    }
+  }
+  const photoEdges = [...tagged.keys()].sort(cmp).map((media) => ({ media, people: [...tagged.get(media)].sort(cmp) }));
 
   // ---- unions ------------------------------------------------------------------------------------------
   const unions = [];
@@ -453,5 +491,5 @@ export function projectRecords(objects, opts) {
   const places = [...outPlaces.values()].sort((a, b) => cmp(a.id, b.id));
 
   unions.sort((a, b) => cmp(a.id, b.id));
-  return { people, unions, places, events, warnings, faceJobs };
+  return { people, unions, places, events, photoEdges, warnings, faceJobs };
 }

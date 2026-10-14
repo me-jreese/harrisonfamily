@@ -101,6 +101,22 @@ Singletons are their own components at generation 0, with one level each, as the
 - **Naming.** `faces/<gramps_id>-<sha8>.webp`, where `sha8` is the first 8 hex digits of `sha256(source bytes || JSON(rect))`. An unchanged input writes nothing. Faces are written before `graph.json`, and faces it no longer references are removed after it is written.
 - **No failure stops the build.** `MEDIA_MISSING`, `PLACEHOLDER_MEDIA` (a 0-byte file), `UNSUPPORTED_FORMAT` (any decode error, including HEIC with HEVC, which the prebuilt sharp cannot decode) and `ORIENTATION_NOT_BAKED` (an EXIF Orientation other than 1) give `face: null`. `RECT_INVALID` (a rect that is not four integers, or that truncates to zero pixels) also gives `face: null`; an invalid region is never guessed at, because a centre crop of a group photo could show someone else. The local report counts faces referenced, written and removed.
 
+## Photo co-occurrence (`photoEdges`)
+
+`projectRecords()` in `src/project.mjs` (`viz-graph-v2-data`, the viz ADR's section 4.7) emits `photoEdges`, an optional top-level block added in schema minor 2. The `layout` block is a separate task and a separate bump.
+
+```json
+"photoEdges": [ { "media": "O9001", "people": ["I9001", "I9003"] } ]
+```
+
+- **One entry per photo** with at least one tagged, kept person: `media` is the Media gramps id and `people` the sorted gramps ids tagged in it. Entries are sorted by `media`, so shuffled input gives a byte-identical file. The block is `[]` when nobody is tagged.
+- **A tag is a `MediaRef` in a kept person's `media_list`**, any position (the face crop still uses only the first). A `MediaRef` with no rect, or Gramps' `[0,0,0,0]` "no region", is a whole-photo tag and counts.
+- **Skipped:** a private Media (reported as `PRIVATE_EXCLUDED`), a private `MediaRef`, a private person, and a tag whose rect `faces.mjs` `normalizeRect()` calls invalid (not four integers, or a degenerate box), reported as `PHOTO_TAG_RECT_INVALID`. A `MediaRef` to a Media that is not in the input (`DANGLING_REF`) or whose gramps id does not fit the schema's id pattern (`MEDIA_ID_INVALID`) is skipped too. The pure builder has no image size, so the one case `buildFaces()` sees only with pixels (a rect that truncates to zero pixels) is not caught here.
+- **Nothing else leaves:** no handles, rects, paths, descriptions or notes. The schema's `photoEdge` object has `additionalProperties: false`, and `verify()` also checks that every person exists and that `media` and `people` are unique and sorted (`photo-edge-order`), and scans the block's strings with the same detectors as the rest of the file.
+- **The snapshot id covers it.** `photoEdges` is part of the digest, so a change in who is pictured with whom gives a new `source.snapshot`.
+- **Budget.** The block counts toward the existing gzip budgets (25 KB at 231 people, 150 KB at 2,000; the builder exits 3, `SIZE_BUDGET`, over 150 KB). `test/build.test.mjs` measures both with one tagged photo per person (1 to 4 people each). About 3 tagged photos per person at 2,000 people passes 150 KB; the remedy then is an amendment to the ADR (for example a separate gated file), never a silent budget change.
+- **Publishing.** The block rides in the graph.json the interim publisher already copies; nothing in the refresh how-to changes, and it appears at io's next refresh. The cloud graph builder (`viz-graph-cloud-source`) reuses this code and additionally skips MOD#-hidden `MediaRef`s and Media.
+
 ## Test
 
 ```sh
