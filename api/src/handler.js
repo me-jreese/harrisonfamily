@@ -94,7 +94,9 @@ export function createHandler(deps) {
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { store: { ddb, cmds, table, now }, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    // `store` is the record-store context of the editing routes: reads (records/index.js) and, with the extra members, applyBatch() (sync/apply.js).
+    const store = { ddb, cmds, table, now, uid, log, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts, guardDob: deps.guardDob === true, via };
+    return { store, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**

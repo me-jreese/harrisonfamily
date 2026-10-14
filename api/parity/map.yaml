@@ -5,6 +5,7 @@
 # api:subscriptions.get, api:subscriptions.list, api:subscriptions.put and api:subscriptions.remove (/api/subscriptions, HFY-TSK-254) are session-only member-owned routes with no MCP tool, so they have no row here.
 # api:contributions.list, api:contributions.stats and api:contributions.site (GET /api/contributions and /api/contributions/stats, HFY-TSK-256) are session-only reads with no MCP tool, so they have no row here.
 # api:edit.get and api:edit.schema (GET /api/edit/:cls/:ref and /api/edit/schema/:cls, HFY-TSK-182) are session-only reads behind HFY_EDITING with no MCP tool here (hfy_records_get is edit-mcp-tools'), so they have no row here.
+# api:changes.post (POST /api/changes, HFY-TSK-183) is a session route behind HFY_EDITING with no MCP tool here (hfy_changes_submit, agentMode dry_run, is edit-mcp-tools'), so it has no row here.
 surfaces:
   mcp-tools:
     hfy_comments_list: { handler: "api:comments.list" }

@@ -6,8 +6,8 @@
 //
 // A group is dependency-closed: ops that share a new:n object, or both sides of one family link, are one group. A group commits now
 // only if every op in it is direct; a group with any proposal op is one review group; a group with an op that no web path may
-// apply (admin-only, desktop-only, derived or never) is refused as a whole. Nothing calls this yet: its first caller is
-// `edit-api-core`, so it ships, unreachable, in the hfy-api zip.
+// apply (admin-only, desktop-only, derived or never) is refused as a whole. POST /api/changes (records/changes.js,
+// HFY-TSK-183) is its caller.
 import { readFileSync as readFile } from "node:fs";
 import { parsePath } from "./ops.js";
 import { isRefusal, stricter } from "./field-policy.js";

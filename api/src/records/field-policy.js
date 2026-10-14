@@ -10,8 +10,8 @@
 // referrers(cls, handle) }. All three are async-tolerant. `objects` is the base map { "Person:<handle>": <Gramps JSON>, ... } the ops
 // apply to (the own Person, the Events it references, and every other object the ops name).
 //
-// The ops are partitioned and summarised in edit-plan.js. Nothing calls this module yet: its first caller is `edit-api-core`, so it
-// ships, unreachable, in the hfy-api zip.
+// The ops are partitioned and summarised in edit-plan.js. POST /api/changes (records/changes.js, HFY-TSK-183) classifies a submission
+// here; GET /api/me and the edit bundle use the own-record resolver and the table.
 import { applyOps, canonicalJson, hash12, OpsError, parsePath } from "./ops.js";
 import { birthDeathIndex, EVENT_TYPE, ROLE_PRIMARY } from "./semantics.js";
 import { buildTree, isBirthLike, placeCodeIsLocal } from "../shared/redaction-rules.mjs";
