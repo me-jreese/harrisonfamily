@@ -179,6 +179,10 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `contributions.site` | GET | `/contributions/stats` | none (no `author`) | `200` `{total, line, computed_at}` | The site total and the feed line, through the cached `CSTAT#site/LINE` row. Shares its path with `contributions.stats`: `?author=` picks that route. Behind `contribV1`. Not an MCP tool. |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
+| `subscriptions.get` | GET | `/subscriptions` | query `subject` (`person:<gramps_id>`) | `200` `{subject, subscribed}` | `400` for a bad subject. Shares its path with `subscriptions.list`: `?subject=` picks this route. Behind `requireFeature("recordSubsV1")`. Not an MCP tool. See [Record follows](#record-follows). |
+| `subscriptions.list` | GET | `/subscriptions` | query `cursor`, `limit` (1 to 100, default 25) | `200` `{items: [{subject, created_at}], cursor}` | My follows, newest first; `400 cursor_invalid`. Behind `recordSubsV1`. Not an MCP tool. |
+| `subscriptions.put` | PUT | `/subscriptions/person/:id` | body `{}` | `200` `{subject, subscribed: true}` | Idempotent. `404` for an unknown person, `400 self_subscribe` for your own page, `503` if the person lookup fails. Behind `recordSubsV1`. |
+| `subscriptions.remove` | DELETE | `/subscriptions/person/:id` | none | `204` | Idempotent. Named `remove`, never `*.delete`, so the policy glob does not read it as an admin step-up action. Behind `recordSubsV1`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
 | `notifications.subscribe` | POST | `/notifications/subscribe` | body: a push subscription | `200` `{ok: true}` | Kit route |
 | `notifications.unsubscribe` | DELETE | `/notifications/subscribe` | body `{endpoint}` | `200` `{ok: true}` | Kit route |
@@ -190,9 +194,9 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Eight routes are behind the [feature gate](#feature-gate): `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Twelve routes are behind the [feature gate](#feature-gate): the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put` and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
+Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the four `subscriptions.*` routes and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## Feature gate
 
@@ -411,6 +415,12 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - Each member has at most one reaction per comment, stored at `R#comment:<id>#<member id>`. Sending the emoji you already have removes it and returns `{removed: true}`. Sending a different emoji, or the first one, stores it, replacing any earlier one, and returns `{removed: false, reaction}`. Both return `200`.
 - The route always targets `comment:<id>`. `react` in `comments.js` also accepts the target `root`, returns `404 not_found` for an `attachment:` target and `422 validation` for any other target, but no route reaches any of these.
 - Reactions are single `PutItem` and `DeleteItem` calls, not transactions, and are not audited.
+
+## Record follows
+
+`api/src/subscriptions.js` (HFY-TSK-254, BRD2 D2-16, R-12) stores one `RSUB#<principal>` / `REC#person:<gramps_id>` item per follow, with `GSI1PK` `RECSUB#person:<gramps_id>` and `GSI1SK` the principal. The same item answers "my follows" (a Query on the partition) and fan-out (one GSI1 Query per changed subject, `queryFollowers`). Follows are explicit, are not audited and never tell the followed person. The routes are dark behind `recordSubsV1` (404 for everyone outside the `uat` group). `subscriptions.put` checks that `person/<id>.json` exists with the same S3 read the label resolver uses (`createPersonExists`); an absent record is `404`, a failed read is `503`.
+
+`notifier.onRecordChanged(changes, { silent, import, seed })` is called only by the render-outbox consumer (`hfy-record-change-fanout`). It sends nothing when `silent`, `import` or `seed` is `true`; the consumer passes `seed` from `SYNC#SESSION.seed`. The owner gets `record_updated_mine` only when a member and not the actor. Followers (not the actor, not the owner) get `record_updated_followed`, grouped by `rec:<subject>` so a repeat update coalesces; a follower with more than 3 pages in one call gets one `records_updated_followed_digest`. A non-silent call with more than 50 distinct subjects is never refused: every follower gets one digest and every member owner one `record_updated_mine`.
 
 ## Profile links
 

@@ -12,7 +12,7 @@ import { forbidden, originVerified } from "./origin.js";
 import { createPresignPut } from "./presign.js";
 import { createGroupResolver, UAT_GROUP } from "./policy.js";
 import { configureFeatures, createFeatureGate, createFlagSource, DEFAULT_FLAGS_URL } from "./features.js";
-import { createLabelResolver, PERSON_KEY } from "./labels.js";
+import { createLabelResolver, createPersonExists, PERSON_KEY } from "./labels.js";
 import { createMcpMount, isMcpPath } from "./mcp.js";
 import { guardDobFromEnv } from "./guard.js";
 import { createSyncAuthenticator } from "./sync/auth.js";
@@ -69,6 +69,14 @@ const resolveLabel = createLabelResolver({
   },
 });
 
+// HFY-TSK-254: subscriptions.put checks that the person exists with the same read (person/<id>.json); a read failure is a 503, not a 404.
+const personExists = createPersonExists({
+  load: async (grampsId) => {
+    const o = await s3.send(new GetObjectCommand({ Bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", Key: PERSON_KEY(grampsId) }));
+    return o.Body ? true : null;
+  },
+});
+
 const authenticate = createAuthenticator({
   issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth",
   audience: env.SESSION_AUDIENCE ?? "harrisonfamily-web",
@@ -112,7 +120,7 @@ export const handler = async (event) => {
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
-      getAdmins, listMembers,
+      getAdmins, listMembers, personExists,
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
       s3, // checkLocation reads the first 256 KiB of a new post attachment (upload-guard.js; UploadReads in app-stack.yaml)
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
