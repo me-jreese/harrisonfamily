@@ -4,6 +4,7 @@
   "navMe": true,
   "notifyV2": true,
   "personV2": true,
+  "photoTags": false,
   "postsV2": true,
   "searchV2": true,
   "shellV2": true
