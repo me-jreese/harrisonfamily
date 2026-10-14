@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { HttpError, json } from "../http.js";
 import { serverSwitch } from "../features.js";
 import { CLASSES } from "../sync/store.js";
-import { backrefs, byGrampsId, customTypes, get } from "./index.js";
+import { backrefs, byGrampsId, customTypes, get, storeView } from "./index.js";
 import { collectRefs } from "./semantics.js";
 import { DEFAULT_FIELD_POLICY, ownRecord, relationOf } from "./field-policy.js";
 import { ownPerson, viewRecord } from "./read.js";
@@ -32,6 +32,7 @@ export const SCHEMA_CLASSES = Object.freeze(["Person", "Family", "Event", "Place
 const MAX_RELATED = 200;
 const CHUNK = 25;
 const MAX_PENDING = 100;
+const MAX_TAGS = 200;
 const MAX_PENDING_PAGES = 10;
 
 /**
@@ -175,6 +176,18 @@ export async function pendingFor(ctx, actor, key, own, view) {
   return out; // page budget spent: a bounded list beats an unbounded read
 }
 
+/** The tags that exist, [{ handle, name }] by name: the choices a tag assignment offers (a member never invents a tag, editor-other-records). Bounded, names cut to 50. */
+export async function tagChoices(ctx) {
+  const view = await storeView(ctx);
+  const out = [];
+  for (const h of view.live()) {
+    if (h.class !== "Tag" || !isObj(h.obj) || !HANDLE_RE.test(h.handle)) continue;
+    const name = typeof h.obj.name === "string" ? h.obj.name.trim().slice(0, 50) : "";
+    if (name) out.push({ handle: h.handle, name });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || (a.handle < b.handle ? -1 : 1)).slice(0, MAX_TAGS);
+}
+
 /** `ref` is a gramps_id or h:<handle>. Returns the handle; 404 for none, 409 ambiguous_id for two or more (candidates for admins only; members get no candidates, by design). */
 async function resolveRef(ctx, actor, cls, ref) {
   if (ref.startsWith("h:")) {
@@ -253,6 +266,7 @@ export async function buildBundle(ctx, actor, cls, handle, { fieldPolicy = DEFAU
     policy: fieldPolicy.document(),
     pending: await pendingFor(ctx, actor, key, own, rview),
     customTypes: await customTypes(ctx),
+    tags: await tagChoices(ctx),
     schemaHash: schemaHash(),
   };
 }
