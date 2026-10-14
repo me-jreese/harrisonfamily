@@ -270,4 +270,30 @@ describe("sources", () => {
     expect(await items(inbox, "P2")).toEqual([]);
     expect(sent[0].n.body).toBe("you have a new chat message.");
   });
+  it("contract exposes many, inboxText and group templates", () => {
+    const c = notifyContract();
+    expect(c.types.reply_to_me.many).toBe("{count} new replies to you.");
+    expect(c.types.records_updated_followed_digest.inboxText).toBe("pages you follow were updated.");
+    expect(c.groups.comment_on_my_record).toBe("thread:{t}");
+    for (const k of Object.keys(c.groups)) expect(NOTIFY_TYPES).toContain(k);
+  });
+  it("member set parses the email -> gramps_id map shape and warns (no ids) when empty", async () => {
+    const m = createMemberSet({ load: async () => ({ "a@example.test": "P1", "b@example.test": "P2", bad: 7 }) });
+    expect([...(await m())].sort()).toEqual(["P1", "P2"]);
+    const logs = [];
+    const e = createMemberSet({ load: async () => ({}), log: { error: (...a) => logs.push(a.join(" ")) } });
+    expect((await e()).size).toBe(0);
+    expect(logs[0]).toMatch(/member list empty/);
+  });
+  it("a large batch bounds follower lookup concurrency", async () => {
+    let live = 0;
+    let peak = 0;
+    const n = createNotifier({
+      inbox: new InMemoryNotificationStore(), featureOn: async () => true, listMembers: async () => new Set(), log: { error() {} },
+      followersOf: async () => { live += 1; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 1)); live -= 1; return []; },
+    });
+    await n.onRecordChanged(Array.from({ length: 100 }, (_, i) => ({ subject: `person:P${i + 1}`, actor: null })));
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(8);
+  });
 });

@@ -676,6 +676,16 @@ Notification fan-out runs after the write has committed and never fails the requ
 - **Push on.** Finding the recipients and sending to them are both guarded. A failure is logged (for example `comment notification failed (write already committed)`, `publish notification failed` or `notify failed`) and the response is the write's normal success.
 - A failed send to one recipient does not stop the others.
 
+### Producer notes (HFY-TSK-253)
+
+- The acting admin is excluded from `onProposalDecided` and `onModeration` recipients, so deciding or moderating your own item notifies nobody.
+- Callers must validate an admin `note` with the shared contact-information validator (R-18) before calling a producer. The producer only caps `detail` at 1000 characters, and the inbox UI must render `detail` as text, never HTML.
+- The decline type is `proposal_declined` (editing.md still says `proposal_rejected`; other domains must use `proposal_declined`).
+- Beyond the design table, `many` strings exist for `proposal_submitted`, `record_updated_mine`, `record_updated_followed` and `moderation_resolved`, and `records_updated_followed_digest` has an `inboxText`. `notifyContract()` exposes `many`, `inboxText` and the `groups` templates so the inbox CATALOG comparison test covers them. The CATALOG extension itself belongs to hfy-inbox-ui and hfy-chat-api-service-routes.
+- `comment_on_my_record` and `reply_to_me` share the group `thread:<t>` (social.md); the kit coalesces by recipient and group, so a recipient who gets both types on one thread sees one item that keeps the first type.
+- `onRecordChanged` runs follower lookups 8 at a time and handles at most 500 subjects per call. It has no caller until hfy-record-change-fanout, which must dedupe on `rec:<seq>:<subject>` and pass `silent: true` for seed and import sessions.
+- Member principals come from `config/userGrampsID.json`; the API role's `config/*` `s3:GetObject` grant (app-stack.yaml, AdminList statement) covers it. An empty set logs a warning and fails closed.
+
 ### Notification routes
 
 These responses come from the kit. Kit errors have the shape `{"error": "<text>"}`, with no `message`.

@@ -46,7 +46,9 @@ export const NOTIFY_TYPES = Object.keys(TEMPLATE_REGISTRY.features);
  */
 export const notifyContract = () => ({
   whitelist: [...TEMPLATE_REGISTRY.whitelist],
-  types: Object.fromEntries(Object.entries(TEMPLATE_REGISTRY.features).map(([k, t]) => [k, { inbox: t.inbox !== false, title: t.title, level0: t.level0, level1: t.level1 }])),
+  types: Object.fromEntries(Object.entries(TEMPLATE_REGISTRY.features).map(([k, t]) => [k, { inbox: t.inbox !== false, title: t.title, level0: t.level0, level1: t.level1, many: t.many ?? null, inboxText: t.inboxText ?? null }])),
+  /** Coalescing group templates by type ("{t}" = thread id / subject / target); null = ungrouped. Producers below must match. */
+  groups: { comment_on_my_record: "thread:{t}", reply_to_me: "thread:{t}", proposal_submitted: "proposals", record_updated_mine: "rec:{t}", record_updated_followed: "rec:{t}", records_updated_followed_digest: "recdigest", moderation_resolved: "mod:{t}" },
 });
 
 /** The flag that gates persist-first inbox writes and the push app_badge (HFY-TSK-238 AC4; BRD2 D2-15, 10.1). */
@@ -58,6 +60,15 @@ export const PUSH_ONLY_TYPES = new Set(Object.entries(TEMPLATE_REGISTRY.features
 export const DIGEST_OVER = 3;
 /** Fan-out bound for one onRecordChanged call: a batch larger than this is truncated (the digest rule makes the rest redundant). */
 export const MAX_CHANGES = 500;
+/** Concurrent follower lookups per onRecordChanged call (the kit's fan-out bound). */
+export const LOOKUP_CONCURRENCY = 8;
+/** Run `fn` over `items` with at most `n` in flight; results keep input order. */
+const mapLimit = async (items, n, fn) => {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]); } }));
+  return out;
+};
 export const MODERATION_KINDS = Object.freeze({
   hidden: "moderation_hidden", request: "moderation_request", question: "moderation_question", unhidden: "moderation_unhidden", resolved: "moderation_resolved",
 });
@@ -89,6 +100,7 @@ export function createMemberSet({ load, ttlMs = 5 * 60_000, now = () => Date.now
       const raw = await load();
       const vals = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? Object.values(raw) : [];
       cache = { at: now(), ids: new Set(vals.filter((x) => typeof x === "string" && GID.test(x))) };
+      if (!cache.ids.size) log.error?.("member list empty after a successful load (record_updated_mine will notify nobody)");
     } catch (e) {
       log.error?.("member list unavailable (failing closed)", logSafeError(e));
       cache = { at: now() - ttlMs + 5_000, ids: new Set() };
@@ -201,7 +213,8 @@ export function createNotifier(deps) {
     /**
      * R-11, after a decision commits: the proposer. `decision` is accepted, declined, needs_changes or stale (BRD2 D2-15 names the rejection `proposal_declined`).
      * `{ proposal: { id, subject, subjectLabel?, proposer }, decision, note?, by: { id, label } }`. The admin's note is the inbox `detail` for declined and
-     * needs_changes only; it is never pushed. An unknown decision notifies nobody.
+     * needs_changes only; it is never pushed. An unknown decision notifies nobody. The deciding admin is excluded (deciding your own proposal notifies nobody).
+     * CALLER DUTY: validate `note` with the shared contact-info validator (R-18) before calling; the producer only caps it at 1000 chars. The inbox UI must render `detail` as text, never HTML.
      */
     onProposalDecided: guarded("proposal decision notification", async ({ proposal, decision, note, by } = {}) => {
       const type = DECISION_TYPES[decision];
@@ -216,7 +229,8 @@ export function createNotifier(deps) {
      * R-32, after a moderation transition commits. `kind`: hidden | request | question | unhidden | resolved.
      * `{ kind, item, target, authorId, by: { id, label }, askedBy?, note?, navigate }`. hidden, request, question and unhidden go to the item's author;
      * resolved (the author edited) goes to the admin who asked (`askedBy`), grouped `mod:<target>`. The actor is never notified.
-     * Only request and question carry the admin's note; a hide's reason stays private.
+     * Only request and question carry the admin's note; a hide's reason stays private. The acting admin is excluded (moderating your own item notifies nobody).
+     * CALLER DUTY: validate `note` with the shared contact-info validator (R-18) before calling; the producer only caps it at 1000 chars. The inbox UI must render `detail` as text, never HTML.
      */
     onModeration: guarded("moderation notification", async ({ kind, item, target, authorId, by, askedBy, note, navigate } = {}) => {
       const type = MODERATION_KINDS[kind];
@@ -240,6 +254,7 @@ export function createNotifier(deps) {
      * The owner (a member, per `listMembers`) gets record_updated_mine unless they are the actor; followers (per `followersOf`) get record_updated_followed,
      * never the actor and never the owner twice; a follower with more than DIGEST_OVER pages in one call gets one records_updated_followed_digest instead.
      * Idempotency across redelivery (dedupe key rec:<seq>:<subject>) is the consumer's; within a call a subject counts once.
+     * Budget: at most MAX_CHANGES subjects, follower Queries LOOKUP_CONCURRENCY at a time; the consumer should chunk large passes and must dedupe before redelivery.
      */
     onRecordChanged: guarded("record change notification", async (changes, { silent = false } = {}) => {
       if (silent === true || !Array.isArray(changes)) return;
@@ -255,12 +270,13 @@ export function createNotifier(deps) {
       if (!subjects.size) return;
       const members = deps.listMembers ? await deps.listMembers() : new Set();
       const followed = new Map(); // recipient -> [subject]
-      for (const [subject, c] of subjects) {
+      const entries = [...subjects];
+      const lookups = await mapLimit(entries, LOOKUP_CONCURRENCY, ([subject]) => (deps.followersOf ? deps.followersOf(subject).catch((e) => { log.error?.("followers lookup failed", logSafeError(e)); return []; }) : []));
+      for (const [idx, [subject, c]] of entries.entries()) {
         const actorId = c.actor?.id;
         const ownerNotified = members.has(c.gid) && c.gid !== actorId;
         if (ownerNotified) await notify("record_updated_mine", [c.gid], { navigate: personPath(c.gid), actorLabel: labelOf(c.actor), group: `rec:${subject}` });
-        const followers = deps.followersOf ? await deps.followersOf(subject).catch((e) => { log.error?.("followers lookup failed", logSafeError(e)); return []; }) : [];
-        for (const f of new Set(followers)) {
+        for (const f of new Set(lookups[idx])) {
           if (f === actorId || f === c.gid) continue; // the actor knows; the owner is covered by record_updated_mine
           (followed.get(f) ?? followed.set(f, []).get(f)).push(subject);
         }
