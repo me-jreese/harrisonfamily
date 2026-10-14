@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1976
+  },
+  "description": null,
+  "grampsId": "E9010",
+  "handle": "f56d3076627152847f6b8dfb5356",
+  "label": "Birth",
+  "place": {
+    "displayName": "Vectorland",
+    "grampsId": "P9001",
+    "handle": "418d233fd657b2fe34e7c93a6785",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

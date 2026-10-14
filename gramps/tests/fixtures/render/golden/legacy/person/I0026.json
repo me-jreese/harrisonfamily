@@ -1,0 +1,44 @@
+{
+  "displayName": "Primrose Fixturely",
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 1982
+      },
+      "description": null,
+      "grampsId": "E0038",
+      "handle": "dd920a9962e4b681f1b2bdf915ba",
+      "label": "Birth",
+      "place": null,
+      "type": {
+        "code": 12,
+        "string": "Birth"
+      }
+    }
+  ],
+  "familyTree": {
+    "parentFamilies": [],
+    "spouseFamilies": []
+  },
+  "gender": "female",
+  "givenName": "Primrose",
+  "grampsId": "I0026",
+  "handle": "6f848b7c4c49a86b1592ad33d2ad",
+  "isLiving": true,
+  "lifespan": {
+    "birth": {
+      "place": null,
+      "year": 1982
+    },
+    "death": {
+      "place": null,
+      "year": null
+    },
+    "summary": "1982\u2013"
+  },
+  "mediaGallery": [],
+  "notes": [],
+  "primaryPhoto": null,
+  "surname": "Fixturely"
+}

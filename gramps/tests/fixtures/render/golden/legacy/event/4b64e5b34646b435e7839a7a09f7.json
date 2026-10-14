@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1890
+  },
+  "description": null,
+  "grampsId": "E0024",
+  "handle": "4b64e5b34646b435e7839a7a09f7",
+  "label": "Residence",
+  "place": {
+    "displayName": "Coordinate Cove",
+    "grampsId": "P0005",
+    "handle": "9688ece0ec581a44add8c300d065",
+    "latitude": "12.345678",
+    "longitude": "-23.456789"
+  },
+  "type": {
+    "code": 42,
+    "string": "Residence"
+  }
+}

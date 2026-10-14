@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1840
+  },
+  "description": "Born (fictional)",
+  "grampsId": "E0001",
+  "handle": "06eb48e82e4e53f23d7154dadc6f",
+  "label": "Birth",
+  "place": {
+    "displayName": "Sample Farm",
+    "grampsId": "P0003",
+    "handle": "92f24ae20142c6b4030186345c8d",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

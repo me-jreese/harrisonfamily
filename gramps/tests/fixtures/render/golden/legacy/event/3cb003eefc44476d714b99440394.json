@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1844
+  },
+  "description": null,
+  "grampsId": "E0003",
+  "handle": "3cb003eefc44476d714b99440394",
+  "label": "Birth",
+  "place": {
+    "displayName": "Sample Farm",
+    "grampsId": "P0003",
+    "handle": "92f24ae20142c6b4030186345c8d",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 12,
+    "string": "Birth"
+  }
+}

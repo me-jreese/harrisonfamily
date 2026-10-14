@@ -1,0 +1,21 @@
+{
+  "date": {
+    "text": "",
+    "year": 1912
+  },
+  "description": null,
+  "grampsId": "E0002",
+  "handle": "3f4217e359de9316a2dd83b7f767",
+  "label": "Death",
+  "place": {
+    "displayName": "Exampleville",
+    "grampsId": "P0002",
+    "handle": "2274a9f6cb93e7050af9f7b80471",
+    "latitude": null,
+    "longitude": null
+  },
+  "type": {
+    "code": 13,
+    "string": "Death"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "The Summer Home",
+  "grampsId": "P9004",
+  "handle": "bca43347c8d814b471dd5152b28c",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Notecity",
+      "grampsId": "P9002",
+      "handle": "55404a8e9b32f2759bf1fad4004e",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 0,
+    "string": "Summer Home"
+  },
+  "urls": []
+}

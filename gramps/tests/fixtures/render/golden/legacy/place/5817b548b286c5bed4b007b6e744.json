@@ -1,0 +1,22 @@
+{
+  "code": null,
+  "displayName": "Sample Hall",
+  "grampsId": "P0007",
+  "handle": "5817b548b286c5bed4b007b6e744",
+  "latitude": null,
+  "longitude": null,
+  "parents": [
+    {
+      "displayName": "Example Street",
+      "grampsId": "P0006",
+      "handle": "d557fc2fadb8b92bfa96528704c5",
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "type": {
+    "code": 19,
+    "string": "Building"
+  },
+  "urls": []
+}

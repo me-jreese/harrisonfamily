@@ -1,0 +1,6 @@
+{
+  "grampsId": "N0001",
+  "handle": "021482b303418ebb656dd1bb870b",
+  "html": "<p><strong>Bold start</strong>, <em>italic middle</em>, <a href=\"https://notes.example.org/page\" rel=\"noopener noreferrer nofollow\" target=\"_blank\">link end</a>.</p>",
+  "raw": "Bold start, italic middle, link end."
+}

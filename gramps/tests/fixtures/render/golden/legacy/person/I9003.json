@@ -1,0 +1,171 @@
+{
+  "displayName": "Sage Notevector",
+  "events": [],
+  "familyTree": {
+    "parentFamilies": [
+      {
+        "children": [
+          {
+            "displayName": "Sage Notevector",
+            "frel": {
+              "code": 2,
+              "string": "Adopted"
+            },
+            "gender": "unspecified",
+            "grampsId": "I9003",
+            "handle": "18a011dd2d19d5425ee7ab2e127f",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": null
+              },
+              "death": {
+                "year": null
+              },
+              "summary": ""
+            },
+            "mrel": {
+              "code": 5,
+              "string": "Foster"
+            }
+          },
+          {
+            "displayName": "Wren Notevector",
+            "frel": {
+              "code": 7,
+              "string": "Fixture ward"
+            },
+            "gender": "female",
+            "grampsId": "I9004",
+            "handle": "f75bd58905a0153b789f844e7b65",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": null
+              },
+              "death": {
+                "year": null
+              },
+              "summary": ""
+            },
+            "mrel": {
+              "code": 1,
+              "string": "Birth"
+            }
+          }
+        ],
+        "events": [
+          {
+            "date": {
+              "text": "",
+              "year": 1975
+            },
+            "description": null,
+            "grampsId": "E9007",
+            "handle": "4bec3915d4b20e8bb288445f97a9",
+            "label": "Marriage",
+            "place": {
+              "displayName": "Notecity",
+              "grampsId": "P9002",
+              "handle": "55404a8e9b32f2759bf1fad4004e",
+              "latitude": null,
+              "longitude": null
+            },
+            "role": {
+              "code": 8,
+              "string": "Family"
+            },
+            "type": {
+              "code": 1,
+              "string": "Marriage"
+            }
+          },
+          {
+            "date": {
+              "text": "",
+              "year": 1976
+            },
+            "description": null,
+            "grampsId": "E9008",
+            "handle": "d0556447016691d91e51a710b07c",
+            "label": "Fixture Ceremony",
+            "place": {
+              "displayName": "The Summer Home",
+              "grampsId": "P9004",
+              "handle": "bca43347c8d814b471dd5152b28c",
+              "latitude": null,
+              "longitude": null
+            },
+            "role": {
+              "code": 0,
+              "string": "Fixture Role"
+            },
+            "type": {
+              "code": 0,
+              "string": "Fixture Ceremony"
+            }
+          }
+        ],
+        "father": {
+          "displayName": "Quill Notevector",
+          "gender": "male",
+          "grampsId": "I9001",
+          "handle": "7e5350b92612325e4d398cfedf96",
+          "isLiving": false,
+          "lifespan": {
+            "birth": {
+              "year": 1949
+            },
+            "death": {
+              "year": 1999
+            },
+            "summary": "1949\u20131999"
+          }
+        },
+        "grampsId": "F9001",
+        "handle": "8d77b8cc2d0624a52640a88db99c",
+        "mother": {
+          "displayName": "Rowan Tagvector",
+          "gender": "female",
+          "grampsId": "I9002",
+          "handle": "646aced328190be987524cae5dfa",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1976
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1976\u2013"
+          }
+        },
+        "type": {
+          "code": 2,
+          "string": "Civil Union"
+        }
+      }
+    ],
+    "spouseFamilies": []
+  },
+  "gender": "unspecified",
+  "givenName": "Sage",
+  "grampsId": "I9003",
+  "handle": "18a011dd2d19d5425ee7ab2e127f",
+  "isLiving": true,
+  "lifespan": {
+    "birth": {
+      "place": null,
+      "year": null
+    },
+    "death": {
+      "place": null,
+      "year": null
+    },
+    "summary": ""
+  },
+  "mediaGallery": [],
+  "notes": [],
+  "primaryPhoto": null,
+  "surname": "Notevector"
+}

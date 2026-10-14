@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 1880
+  },
+  "description": null,
+  "grampsId": "E0012",
+  "handle": "3096a008c770570735427f1314db",
+  "label": "Christening",
+  "place": null,
+  "type": {
+    "code": 22,
+    "string": "Christening"
+  }
+}

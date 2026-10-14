@@ -1,0 +1,349 @@
+{
+  "displayName": "Rowan Tagvector",
+  "events": [
+    {
+      "date": {
+        "text": "",
+        "year": 1976
+      },
+      "description": null,
+      "grampsId": "E9010",
+      "handle": "f56d3076627152847f6b8dfb5356",
+      "label": "Birth",
+      "place": {
+        "displayName": "Vectorland",
+        "grampsId": "P9001",
+        "handle": "418d233fd657b2fe34e7c93a6785",
+        "latitude": null,
+        "longitude": null
+      },
+      "type": {
+        "code": 12,
+        "string": "Birth"
+      }
+    }
+  ],
+  "familyTree": {
+    "parentFamilies": [],
+    "spouseFamilies": [
+      {
+        "children": [
+          {
+            "displayName": "Sage Notevector",
+            "frel": {
+              "code": 2,
+              "string": "Adopted"
+            },
+            "gender": "unspecified",
+            "grampsId": "I9003",
+            "handle": "18a011dd2d19d5425ee7ab2e127f",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": null
+              },
+              "death": {
+                "year": null
+              },
+              "summary": ""
+            },
+            "mrel": {
+              "code": 5,
+              "string": "Foster"
+            }
+          },
+          {
+            "displayName": "Wren Notevector",
+            "frel": {
+              "code": 7,
+              "string": "Fixture ward"
+            },
+            "gender": "female",
+            "grampsId": "I9004",
+            "handle": "f75bd58905a0153b789f844e7b65",
+            "isLiving": true,
+            "lifespan": {
+              "birth": {
+                "year": null
+              },
+              "death": {
+                "year": null
+              },
+              "summary": ""
+            },
+            "mrel": {
+              "code": 1,
+              "string": "Birth"
+            }
+          }
+        ],
+        "events": [
+          {
+            "date": {
+              "text": "",
+              "year": 1975
+            },
+            "description": null,
+            "grampsId": "E9007",
+            "handle": "4bec3915d4b20e8bb288445f97a9",
+            "label": "Marriage",
+            "place": {
+              "displayName": "Notecity",
+              "grampsId": "P9002",
+              "handle": "55404a8e9b32f2759bf1fad4004e",
+              "latitude": null,
+              "longitude": null
+            },
+            "role": {
+              "code": 8,
+              "string": "Family"
+            },
+            "type": {
+              "code": 1,
+              "string": "Marriage"
+            }
+          },
+          {
+            "date": {
+              "text": "",
+              "year": 1976
+            },
+            "description": null,
+            "grampsId": "E9008",
+            "handle": "d0556447016691d91e51a710b07c",
+            "label": "Fixture Ceremony",
+            "place": {
+              "displayName": "The Summer Home",
+              "grampsId": "P9004",
+              "handle": "bca43347c8d814b471dd5152b28c",
+              "latitude": null,
+              "longitude": null
+            },
+            "role": {
+              "code": 0,
+              "string": "Fixture Role"
+            },
+            "type": {
+              "code": 0,
+              "string": "Fixture Ceremony"
+            }
+          }
+        ],
+        "father": {
+          "displayName": "Quill Notevector",
+          "gender": "male",
+          "grampsId": "I9001",
+          "handle": "7e5350b92612325e4d398cfedf96",
+          "isLiving": false,
+          "lifespan": {
+            "birth": {
+              "year": 1949
+            },
+            "death": {
+              "year": 1999
+            },
+            "summary": "1949\u20131999"
+          }
+        },
+        "grampsId": "F9001",
+        "handle": "8d77b8cc2d0624a52640a88db99c",
+        "mother": {
+          "displayName": "Rowan Tagvector",
+          "gender": "female",
+          "grampsId": "I9002",
+          "handle": "646aced328190be987524cae5dfa",
+          "isLiving": true,
+          "lifespan": {
+            "birth": {
+              "year": 1976
+            },
+            "death": {
+              "year": null
+            },
+            "summary": "1976\u2013"
+          }
+        },
+        "type": {
+          "code": 2,
+          "string": "Civil Union"
+        }
+      }
+    ]
+  },
+  "gender": "female",
+  "givenName": "Rowan",
+  "grampsId": "I9002",
+  "handle": "646aced328190be987524cae5dfa",
+  "isLiving": true,
+  "lifespan": {
+    "birth": {
+      "place": {
+        "displayName": "Vectorland",
+        "grampsId": "P9001",
+        "handle": "418d233fd657b2fe34e7c93a6785",
+        "latitude": null,
+        "longitude": null
+      },
+      "year": 1976
+    },
+    "death": {
+      "place": null,
+      "year": null
+    },
+    "summary": "1976\u2013"
+  },
+  "mediaGallery": [
+    {
+      "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+      "grampsId": "O9001",
+      "handle": "d1cda1995d9d9c1567b848f58a96",
+      "mime": "image/jpeg",
+      "missing": false,
+      "region": [
+        50,
+        5,
+        95,
+        95
+      ],
+      "s3Key": "media/d1cda1995d9d9c1567b848f58a96.jpg",
+      "size": 632,
+      "tags": [
+        {
+          "attributes": [
+            {
+              "type": "Description",
+              "value": "Standing at left"
+            },
+            {
+              "type": "Mood",
+              "value": "Cheerful"
+            }
+          ],
+          "citations": [
+            "Fixture Photo Archive"
+          ],
+          "grampsId": "I9001",
+          "isPrimary": true,
+          "name": "Quill Notevector",
+          "notes": [
+            {
+              "grampsId": "N9101",
+              "handle": "be7e073a8e2b19787d18b37c3a42",
+              "html": "<p>Standing at the left of the porch.</p>",
+              "raw": "Standing at the left of the porch."
+            }
+          ],
+          "rect": [
+            5,
+            5,
+            45,
+            95
+          ],
+          "source": "gramps"
+        },
+        {
+          "attributes": [],
+          "citations": [
+            "Fixture Photo Archive"
+          ],
+          "grampsId": "I9002",
+          "isPrimary": true,
+          "name": "Rowan Tagvector",
+          "notes": [
+            {
+              "grampsId": "N9101",
+              "handle": "be7e073a8e2b19787d18b37c3a42",
+              "html": "<p>Standing at the left of the porch.</p>",
+              "raw": "Standing at the left of the porch."
+            }
+          ],
+          "rect": [
+            50,
+            5,
+            95,
+            95
+          ],
+          "source": "gramps"
+        }
+      ],
+      "title": "Porch group photo (fictional)"
+    }
+  ],
+  "notes": [],
+  "primaryPhoto": {
+    "checksum": "5e3b45d1dbe69c9d38983e9feff73adb92532d29a1a434edc6a96de57675b907",
+    "grampsId": "O9001",
+    "handle": "d1cda1995d9d9c1567b848f58a96",
+    "mime": "image/jpeg",
+    "missing": false,
+    "region": [
+      50,
+      5,
+      95,
+      95
+    ],
+    "s3Key": "media/d1cda1995d9d9c1567b848f58a96.jpg",
+    "size": 632,
+    "tags": [
+      {
+        "attributes": [
+          {
+            "type": "Description",
+            "value": "Standing at left"
+          },
+          {
+            "type": "Mood",
+            "value": "Cheerful"
+          }
+        ],
+        "citations": [
+          "Fixture Photo Archive"
+        ],
+        "grampsId": "I9001",
+        "isPrimary": true,
+        "name": "Quill Notevector",
+        "notes": [
+          {
+            "grampsId": "N9101",
+            "handle": "be7e073a8e2b19787d18b37c3a42",
+            "html": "<p>Standing at the left of the porch.</p>",
+            "raw": "Standing at the left of the porch."
+          }
+        ],
+        "rect": [
+          5,
+          5,
+          45,
+          95
+        ],
+        "source": "gramps"
+      },
+      {
+        "attributes": [],
+        "citations": [
+          "Fixture Photo Archive"
+        ],
+        "grampsId": "I9002",
+        "isPrimary": true,
+        "name": "Rowan Tagvector",
+        "notes": [
+          {
+            "grampsId": "N9101",
+            "handle": "be7e073a8e2b19787d18b37c3a42",
+            "html": "<p>Standing at the left of the porch.</p>",
+            "raw": "Standing at the left of the porch."
+          }
+        ],
+        "rect": [
+          50,
+          5,
+          95,
+          95
+        ],
+        "source": "gramps"
+      }
+    ],
+    "title": "Porch group photo (fictional)"
+  },
+  "surname": "Tagvector"
+}

@@ -1,0 +1,14 @@
+{
+  "code": null,
+  "displayName": "Vectorland",
+  "grampsId": "P9001",
+  "handle": "418d233fd657b2fe34e7c93a6785",
+  "latitude": null,
+  "longitude": null,
+  "parents": [],
+  "type": {
+    "code": 1,
+    "string": "Country"
+  },
+  "urls": []
+}

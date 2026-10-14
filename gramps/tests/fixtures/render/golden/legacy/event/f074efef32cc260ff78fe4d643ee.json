@@ -1,0 +1,15 @@
+{
+  "date": {
+    "text": "",
+    "year": 0
+  },
+  "description": null,
+  "grampsId": "E9005",
+  "handle": "f074efef32cc260ff78fe4d643ee",
+  "label": "Education",
+  "place": null,
+  "type": {
+    "code": 26,
+    "string": "Education"
+  }
+}
