@@ -7,6 +7,7 @@ installed (CI's stock python3 has none; the Lambda runtime and the maintainers' 
 import base64
 import hashlib
 import importlib
+import json
 import os
 import re
 import shutil
@@ -64,8 +65,25 @@ class HandlerEntry(unittest.TestCase):
     def test_a_failed_pass_raises_without_a_message(self):
         rig = sup.Rig("live", text_gate=lambda text: (_ for _ in ()).throw(ValueError("born 1840-02-14 MARKER-7Q")))
         with self.assertRaises(errors.RenderFailed) as ctx:
-            self.run_with("live", self.STREAM, rig.engine())
+            self.run_with("live", {"source": "schedule"}, rig.engine())
         self.assertNotIn("MARKER-7Q", repr(ctx.exception) + str(ctx.exception))
+
+    def test_a_failed_pass_on_the_stream_is_a_wake_up_that_failed_not_a_batch_failure(self):
+        rig = sup.Rig("live", text_gate=lambda text: (_ for _ in ()).throw(ValueError("born 1840-02-14 MARKER-7Q")))
+        with self.assertLogs("hfy.render", level="DEBUG") as logs:
+            out = self.run_with("live", self.STREAM, rig.engine())
+        self.assertEqual(out, {"batchItemFailures": []}, "the batch is not replayed against the same fault")
+        self.assertEqual(rig.state()["last_error"], "ValueError", "the failure is recorded for the schedule and the alarm")
+        self.assertEqual(rig.metrics.count("RenderError"), 1)
+        self.assertNotIn("MARKER-7Q", "\n".join(logs.output) + json.dumps(rig.state(), default=str))
+        rig.text_gate = None
+        self.assertEqual(self.run_with("live", {"source": "schedule"}, rig.engine())["status"], "rendered")
+
+    def test_a_fault_that_is_not_a_render_failure_is_still_raised_on_the_stream(self):
+        with mock.patch.object(handler, "build_engine", side_effect=KeyError("SYNC_BUCKET")):
+            with mock.patch.dict(os.environ, {"RENDER_MODE": "live"}):
+                with self.assertRaises(KeyError):
+                    handler.handler(self.STREAM, None)
 
 
 @unittest.skipUnless(HAVE_BOTO, "boto3 is not installed")

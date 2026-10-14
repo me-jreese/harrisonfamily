@@ -5,6 +5,9 @@ schedule (``{"source": "schedule"}``) and an operator invoke (``{"allow_mass_del
 ``{"force": true}``, ``{"reconcile": true}``). RENDER_MODE (``off`` | ``shadow`` | ``live``) comes from the stack parameter ``RenderMode``;
 ``off`` returns at once without a single AWS call. Settings: TABLE_NAME, SYNC_BUCKET, SITE_BUCKET, METRICS_NAMESPACE.
 
+A stream batch always answers ``{"batchItemFailures": []}`` once the pass has run: a render failure is recorded and alarmed by the engine
+and recovered by the schedule, so it is not a batch failure. A schedule or operator invoke still raises ``RenderFailed``.
+
 Nothing here logs or returns an exception message (see hfy_render/errors.py).
 """
 
@@ -56,5 +59,16 @@ def handler(event, context):
         return {"batchItemFailures": []} if stream else {"status": "noop", "mode": "off"}
     if mode not in ("shadow", "live"):
         raise RuntimeError("RENDER_MODE must be off, shadow or live")
-    result = build_engine(context).run(event)
-    return {"batchItemFailures": []} if stream else result
+    if not stream:
+        return build_engine(context).run(event)
+    # The stream is only a wake-up: the SYNC#LOG cursor is the truth and the 15-minute schedule retries. A failed pass has already
+    # recorded its rule id (SYNC#RENDER.last_error) and raised RenderError, so failing the batch would only make the event source mapping
+    # replay the same records against the same fault and stall the shard. Anything that is not a RenderFailed (a missing setting, a
+    # code fault) is still raised.
+    from hfy_render import errors
+
+    try:
+        build_engine(context).run(event)
+    except errors.RenderFailed as exc:
+        log.error("render stream wake-up failed rule=%s", exc.rule)
+    return {"batchItemFailures": []}

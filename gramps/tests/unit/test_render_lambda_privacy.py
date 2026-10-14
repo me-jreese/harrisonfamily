@@ -75,6 +75,22 @@ class Checker(unittest.TestCase):
         self.assertEqual(self.check({"place": {"latitude": "12.345678", "longitude": "-23.456789"}}), [])
         self.assertTrue(self.check({"place": {"latitude": "415 555 0136"}}), "a phone number in a coordinate is still scanned")
 
+    def test_identifier_fields_are_validated_by_shape_not_skipped(self):
+        shape = errors.RULE_IDENTIFIER_SHAPE
+        handle = "868977894a87ffaf7143ff092c63"
+        good = {"handle": handle, "grampsId": "I0004", "checksum": "a" * 64, "s3Key": "media/%s.jpg" % handle, "mime": "image/jpeg",
+                "generatedAt": "2000-01-01T00:00:00.000Z"}
+        self.assertEqual(self.check(good), [])
+        for key, value in (("grampsId", "4155550136"), ("grampsId", "I4155550136"), ("grampsId", "415-555-0136"), ("grampsId", "I0004\n"),
+                           ("grampsId", "i0004"), ("handle", "415-555-0136"), ("handle", "short"), ("handle", handle + "\n"),
+                           ("checksum", "415-555-0136"), ("s3Key", "media/../../x.jpg"), ("s3Key", "415-555-0136"),
+                           ("mime", "call 415-555-0136"), ("generatedAt", "born 14 February 1840"), ("generatedAt", "415-555-0136")):
+            self.assertIn(shape, self.check({"x": [{key: value}]}), (key, value))
+
+    def test_hash_like_values_under_other_keys_are_identifiers_and_numbers_are_not(self):
+        self.assertEqual(self.check({"note": "00b5eb85e13415ab52be7b30557c"}), [], "a hash with a hex letter is an identifier")
+        self.assertIn("privacy.detector.phone", self.check({"note": "4155550136"}))
+
     def test_not_json_is_a_violation(self):
         self.assertEqual(self.c.check(b"\xff\xfe"), [errors.RULE_NOT_JSON])
         self.assertEqual(self.c.check(b"{"), [errors.RULE_NOT_JSON])
@@ -173,6 +189,81 @@ class PlantedValues(unittest.TestCase):
         out = rig.run()
         self.assertGreaterEqual(out["blocked"], 1)
         self.assertFalse([k for k in rig.site.puts if not k.endswith(".json") or ".." in k])
+
+
+class WithdrawWithBlockedAggregate(unittest.TestCase):
+    """A withdraw whose pass also has a blocked file must not report success: the blocked aggregate may still name the person."""
+
+    def test_the_withdraw_is_held_alarmed_and_retried_until_the_block_clears(self):
+        rig = sup.Rig("live")
+        rig.run()
+        seq_before = rig.state()["rendered_seq"]
+        before = rig.site_files()
+        other = head_obj(rig, "Person", handle_of("I0005"))
+        original = other["primary_name"]["first_name"]
+        plant_phone(other)
+        rig.store.put(other)
+        rig.store.remove("Person", handle_of("I0004"), op="withdraw", reason="private", origin="admin")
+        with self.assertLogs("hfy.render", level="DEBUG") as logs:
+            out = rig.run()
+        self.assertEqual((out["status"], out["reason"]), ("blocked", errors.RULE_WITHDRAW_BLOCKED))
+        self.assertEqual(rig.state()["rendered_seq"], seq_before, "the cursor does not move")
+        self.assertEqual(rig.state()["last_error"], "RenderFailed:guard.withdraw_blocked")
+        self.assertEqual(rig.metrics.count("RenderPrivacyBlock"), out["blocked"], "the privacy-block alarm fires")
+        self.assertGreaterEqual(out["blocked"], 3)
+        self.assertNotIn("person/I0004.json", rig.site_files(), "the withdrawn person's own file is still removed")
+        self.assertEqual(rig.site_files()["person/index.json"], before["person/index.json"], "the blocked index keeps its last good copy")
+        for text in logs.output + [json.dumps(rig.state(), default=str)] + [v.decode() for v in rig.sync_store.values()]:
+            self.assertNotIn(PLANTED_PHONE, text)
+        self.assertEqual(len(rig.table.outbox()), 1, "no outbox item for the held range")
+        again = rig.run()
+        self.assertEqual(again["status"], "blocked")
+        self.assertEqual(rig.metrics.count("RenderPrivacyBlock"), 2 * out["blocked"], "the schedule alarms again")
+        other["primary_name"]["first_name"] = original
+        rig.store.put(other)
+        done = rig.run()
+        self.assertEqual((done["status"], done["blocked"]), ("rendered", 0))
+        self.assertEqual(rig.state()["rendered_seq"], rig.table.head_seq())
+        self.assertNotIn("last_error", rig.state())
+        self.assertNotIn("I0004", rig.site_files()["person/index.json"].decode())
+
+    def test_a_block_without_a_withdraw_still_advances(self):
+        rig = sup.Rig("live")
+        rig.run()
+        obj = head_obj(rig, "Person", handle_of("I0004"))
+        plant_phone(obj)
+        rig.store.put(obj)
+        out = rig.run()
+        self.assertEqual(out["status"], "rendered")
+        self.assertNotEqual(rig.state()["last_error"], "RenderFailed:guard.withdraw_blocked")
+        self.assertEqual(rig.state()["rendered_seq"], rig.table.head_seq())
+
+    def test_shadow_mode_is_not_held(self):
+        rig = sup.Rig("shadow")
+        rig.run()
+        other = head_obj(rig, "Person", handle_of("I0005"))
+        plant_phone(other)
+        rig.store.put(other)
+        rig.store.remove("Person", handle_of("I0004"), op="withdraw", reason="private", origin="admin")
+        self.assertEqual(rig.run()["status"], "rendered")
+
+
+class PlantedIdentifier(unittest.TestCase):
+    def test_a_phone_like_gramps_id_blocks_the_files_that_carry_it(self):
+        rig = sup.Rig("live")
+        rig.run()
+        before = rig.site_files()
+        obj = head_obj(rig, "Person", handle_of("I0004"))
+        obj["gramps_id"] = "4155550136"
+        rig.store.put(obj)
+        out = rig.run()
+        self.assertGreaterEqual(out["blocked"], 1)
+        report = json.loads(rig.sync_store["render/reports/%d.json" % rig.table.head_seq()])
+        rules = {r for b in report["blocked"] for r in b["rules"]}
+        self.assertIn(errors.RULE_IDENTIFIER_SHAPE, rules)
+        self.assertNotIn("person/4155550136.json", rig.site_files())
+        self.assertEqual(rig.site_files()["person/index.json"], before["person/index.json"])
+        self.assertNotIn("4155550136", "".join(v.decode() for v in rig.site_files().values()))
 
 
 class NoMessagesAnywhere(unittest.TestCase):

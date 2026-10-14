@@ -301,6 +301,25 @@ class MassDeleteGuard(unittest.TestCase):
         self.assertEqual(set(box["deleted_people"]), set(ids))
         self.assertEqual(rig.state()["rendered_seq"], rig.table.head_seq())
 
+    def test_a_single_withdraw_still_alarms_below_the_threshold(self):
+        rig = sup.Rig("live")
+        rig.run()
+        rig.store.remove("Person", handle_of("I0016"), op="withdraw", reason="private", origin="admin")
+        out = rig.run()
+        self.assertEqual(out["status"], "rendered")
+        self.assertGreaterEqual(out["exempt_deletes"], 1)
+        self.assertLessEqual(out["exempt_deletes"], 10, "well under the mass-delete threshold")
+        self.assertNotIn("person/I0016.json", rig.site_files())
+        self.assertEqual(rig.metrics.count("MassDeleteGuard"), 1, "an exempt delete alarms even far below the threshold")
+        self.assertEqual(rig.state()["rendered_seq"], rig.table.head_seq(), "and the pass still advances")
+
+    def test_a_pass_without_a_withdraw_raises_no_exempt_delete_alarm(self):
+        rig = sup.Rig("live")
+        rig.run()
+        rig.store.remove("Person", handle_of("I0016"))
+        rig.run()
+        self.assertEqual(rig.metrics.count("MassDeleteGuard"), 0)
+
     def test_a_moderation_hide_is_exempt_too(self):
         hidden_notes = [o["handle"] for o in rs.p_fixture() if o["_class"] == "Note" and o["gramps_id"].startswith("N9") and o["gramps_id"] != "N9101"]
 
@@ -321,7 +340,7 @@ class MassDeleteGuard(unittest.TestCase):
         self.assertEqual(out["status"], "rendered")
         self.assertEqual(out["exempt_deletes"], len(hidden_notes))
         self.assertTrue(all(f"note/{h}.json" not in rig.site_files() for h in hidden_notes))
-        self.assertEqual(rig.metrics.count("MassDeleteGuard"), 1 if len(hidden_notes) > 10 else 0)
+        self.assertEqual(rig.metrics.count("MassDeleteGuard"), 1, "a hide alarms however few")
 
 
 class Cursor(unittest.TestCase):
@@ -344,6 +363,32 @@ class Cursor(unittest.TestCase):
             rig = sup.Rig("live")
             rig.store.open_session("s", rig.clock.now - __import__("datetime").timedelta(seconds=age), state=state)
             self.assertEqual(rig.run()["status"], "rendered", (state, age))
+
+    def test_an_open_session_with_an_unreadable_opened_at_holds_the_render_and_alarms_until_it_is_aborted(self):
+        rig = sup.Rig("live")
+        rig.store.open_session("s", rig.clock.now)
+        rig.table.items[("SYNC#SESSION#s", "META")]["opened_at"] = "not a time"
+        for _ in range(2):
+            out = rig.run()
+            self.assertEqual((out["status"], out["reason"]), ("skipped", "push_session_open"))
+        self.assertEqual(rig.metrics.count("RenderError"), 2)
+        self.assertEqual(rig.state()["last_error"], "RenderFailed:session.opened_at_invalid")
+        self.assertNotIn("rendered_seq", rig.state())
+        self.assertEqual(rig.site_files(), {})
+        rig.table.items[("SYNC#SESSION#s", "META")]["state"] = "aborted"  # POST /api/sync/sessions/:id/abort
+        self.assertEqual(rig.run()["status"], "rendered")
+        self.assertNotIn("last_error", rig.state())
+
+    def test_an_unreadable_opened_at_falls_back_to_the_session_ttl(self):
+        import datetime
+
+        rig = sup.Rig("live")
+        rig.store.open_session("s", rig.clock.now)
+        item = rig.table.items[("SYNC#SESSION#s", "META")]
+        item["opened_at"] = None
+        item["ttl"] = int((rig.clock.now - datetime.timedelta(hours=1) + datetime.timedelta(seconds=engine.SESSION_TTL_SECONDS)).timestamp())
+        self.assertEqual(rig.run()["status"], "rendered", "opened an hour ago by the ttl: abandoned")
+        self.assertEqual(rig.metrics.count("RenderError"), 0)
 
     def test_a_missing_session_item_does_not_hold_the_render(self):
         rig = sup.Rig("live")
@@ -614,6 +659,10 @@ class NoGrampsId(unittest.TestCase):
         index = json.loads(files["person/index.json"])
         self.assertNotIn("Ivy", json.dumps(index))
         self.assertFalse([k for k in files if "feedfacefeedfacefeedface0001" in k])
+        self.assertFalse([k for k in files if k.startswith("person/") and k not in golden], "no person file beyond the golden set")
+        for key, body in files.items():  # absent from every index and every other output, search index included
+            self.assertNotIn("Ivy", body.decode("utf-8"), key)
+            self.assertNotIn("feedfacefeedfacefeedface0001", body.decode("utf-8"), key)
         obj["gramps_id"] = "I9999"
         rig.store.put(obj)
         rig.run()

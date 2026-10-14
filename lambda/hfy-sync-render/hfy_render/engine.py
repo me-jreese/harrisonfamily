@@ -125,6 +125,7 @@ class Plan:
     exempt_deletes: List[str]
     foreign: List[str]
     unlisted: List[str]
+    exposure_reduced: bool = False  # a withdraw or a moderation hide is part of this pass (so a stale public copy is a leak)
 
 
 class Engine:
@@ -218,12 +219,32 @@ class Engine:
         if not session or session.get("state") != "open":
             return False
         opened = parse_time(session.get("opened_at"))
+        if opened is None and isinstance(session.get("ttl"), int) and not isinstance(session.get("ttl"), bool):
+            opened = datetime.fromtimestamp(session["ttl"] - SESSION_TTL_SECONDS, tz=timezone.utc)  # the 7-day ttl dates the open
         if opened is None:
-            return False
+            # No usable clock on an open session: fail closed (a half-pushed tree is not rendered) and alarm. The API treats such a
+            # session as open too; aborting it (POST /api/sync/sessions/:id/abort) releases the render.
+            self._alarm("RenderError", errors.RULE_SESSION_OPENED_AT, now)
+            return True
         age = (now - opened).total_seconds()
         if age >= SESSION_TTL_SECONDS:
             return False  # treated as expired at opened_at + 7 d, without waiting for the TTL delete
         return age < SESSION_QUIET_SECONDS
+
+    def _alarm(self, metric: str, rule: str, now: datetime) -> None:
+        """A metric, a log line and ``last_error`` for a condition that holds a pass without being an exception. Best effort."""
+
+        log.error("render alarm %s rule=%s", metric, rule)
+        try:
+            self.d.metrics.emit(metric, 1)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.d.table.write_state({
+                "last_error": errors.last_error_text(errors.RenderFailed(rule)), "last_error_at": iso(now), "mode_attempted": self.d.mode,
+            })
+        except Exception:  # noqa: BLE001
+            log.error("render failed to record last_error")
 
     # --------------------------------------------------------------------------------------------------------------- view
     def _build_view(self, target: int, track_after: Optional[int]) -> StoreView:
@@ -350,12 +371,14 @@ class Engine:
             self._parallel(plan.foreign, lambda k: self._delete_one(bucket, k), lambda k, _r: pruned.append(k), None)
 
         guard_tripped = bool(plan.refused)
+        if guard_tripped or plan.exempt_deletes:
+            # AC7: an exposure-reducing delete is exempt from the guard but always alarms, however few there are (one MassDeleteGuard
+            # per pass; the report and the log carry the counts).
+            d.metrics.emit("MassDeleteGuard", 1)
         if guard_tripped:
-            d.metrics.emit("MassDeleteGuard", 1)
             log.error("render mass-delete guard refused=%d limit=%d", len(plan.refused), self._limit(base))
-        elif len(plan.exempt_deletes) > self._limit(base):
-            d.metrics.emit("MassDeleteGuard", 1)
-            log.warning("render exempt deletes above the threshold=%d", len(plan.exempt_deletes))
+        elif plan.exempt_deletes:
+            log.warning("render exempt deletes=%d", len(plan.exempt_deletes))
 
         counts = {
             "written": len(written), "deleted": len(deleted), "unchanged": len(desired) - len(plan.writes),
@@ -363,6 +386,19 @@ class Engine:
             "foreign": len(plan.foreign), "pruned": len(pruned), "files": len(desired),
         }
         self._report(mode, seq, counts, written, deleted, blocked, plan, now)
+
+        # A withdraw or a hide plus a privacy-blocked file: the blocked file keeps its last good copy, and that copy (an index, a family
+        # file, a search entry) may still name the person who was just withdrawn. The cursor does not move, a distinct last_error is
+        # stored (the RenderPrivacyBlock alarm already fired for the blocked files), and the schedule retries until the block clears or
+        # an operator acts (BRD2 R-18).
+        withdraw_held = mode == "live" and bool(blocked) and plan.exposure_reduced and not guard_tripped
+        if withdraw_held:
+            log.error("render withdraw held by privacy block files=%d", len(blocked))
+            d.table.write_state({
+                "last_error": errors.last_error_text(errors.RenderFailed(errors.RULE_WITHDRAW_BLOCKED)),
+                "last_error_at": iso(now), "mode_attempted": mode, "blocked_files": len(blocked),
+            })
+            return {"status": "blocked", "reason": errors.RULE_WITHDRAW_BLOCKED, "mode": mode, "seq": seq, **counts}
 
         if guard_tripped:
             d.table.write_state({
@@ -429,7 +465,11 @@ class Engine:
         if first_live or req.reconcile or req.prune_foreign:
             known = set(desired) | set(blocked) | set(base) | set(gone)
             foreign, unlisted = self._foreign(bucket, known)
-        return Plan(writes, sorted(deletes), sorted(refused), sorted(exempt_deletes), foreign, unlisted)
+        exposure_reduced = bool(
+            exempt_deletes or any(t.op == "withdraw" for t in view.touched.values())
+            or (first_live and any(h.deleted and h.op == "withdraw" for h in view.heads.values()))
+        )
+        return Plan(writes, sorted(deletes), sorted(refused), sorted(exempt_deletes), foreign, unlisted, exposure_reduced)
 
     def _foreign(self, bucket: Any, known: Set[str]) -> Tuple[List[str], List[str]]:
         """Renderer-shaped keys under the data prefixes that the renderer never wrote: reported, deleted only by ``prune_foreign``."""
