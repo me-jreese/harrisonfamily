@@ -4,11 +4,11 @@ import { test, expect } from "@playwright/test";
 const T0 = "2026-01-01T00:00:00.000Z";
 const POST = { id: "01JZZZZZZZZZZZZZZZZZZZZ001", type: "post", author: { id: "I9003", label: "Ann Other" }, subject: "I9003", body: "Seeded older post", attachments: [], visibility: "published", created_at: T0, updated_at: T0, can: { edit: false, delete: false, publish: false } };
 
-async function stub(page, { signedIn = true, stats = { total: 9, line: { x: 9, y: 2, unit: "month", window_days: 60, text: "9 contributions in the past 2 months" }, computed_at: T0 }, statsStatus = 200 } = {}) {
+async function stub(page, { signedIn = true, items = [POST], stats = { total: 9, line: { x: 9, y: 2, unit: "month", window_days: 60, text: "9 contributions in the past 2 months" }, computed_at: T0 }, statsStatus = 200 } = {}) {
   const asked = { stats: 0 };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/auth/session", (r) => r.fulfill({ json: signedIn ? { authenticated: true, sub: "I9001", grampsId: "I9001", label: "Test Person" } : { authenticated: false } }));
-  await page.route(/\/api\/posts(\/[^/?]+)?(\?.*)?$/, (r) => (signedIn ? r.fulfill({ json: { items: [POST], cursor: null } }) : r.fulfill({ status: 401, json: { error: "unauthenticated" } })));
+  await page.route(/\/api\/posts(\/[^/?]+)?(\?.*)?$/, (r) => (signedIn ? r.fulfill({ json: { items, cursor: null } }) : r.fulfill({ status: 401, json: { error: "unauthenticated" } })));
   await page.route("**/api/contributions/stats**", (r) => { asked.stats += 1; return r.fulfill({ status: statsStatus, json: statsStatus === 200 ? stats : { error: "not_found" } }); });
   return asked;
 }
@@ -37,10 +37,19 @@ for (const [name, path, scope] of [["home timeline", "/", "[data-hfy-timeline]"]
     await expect(line(page)).toHaveText("1 contribution in the past week");
   });
 
+  test(`${name}: an empty feed still shows the line, once`, async ({ page }) => {
+    await stub(page, { items: [] });
+    await page.goto(`${path}?hfy_flags=postsV2,shellV2,contribV1`, { waitUntil: "domcontentloaded" });
+    await expect(line(page)).toHaveText("9 contributions in the past 2 months");
+    await expect(line(page)).toHaveCount(1);
+  });
+
   test(`${name}: signed out renders no line and asks for no stats`, async ({ page }) => {
     const asked = await stub(page, { signedIn: false });
+    const session = page.waitForResponse("**/auth/session");
     await page.goto(`${path}?hfy_flags=postsV2,shellV2,contribV1`, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1000);
+    await session;
+    await page.waitForLoadState("networkidle");
     await expect(line(page)).toHaveCount(0);
     expect(asked.stats).toBe(0);
   });

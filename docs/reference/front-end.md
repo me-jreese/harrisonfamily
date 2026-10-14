@@ -127,6 +127,8 @@ In `<head>`, block A's early-hint script runs before any stylesheet. In the body
 
 [`11ty/_data/flags.json`](../../11ty/_data/flags.json) is served at `/_data/flags.json`. It defines ten flags: `aboutCta`, `authV2`, `navMe`, `notifyV2`, `personV2`, `photoTags`, `postsV2`, `profileLinks`, `searchV2` and `shellV2`. In the committed file seven are `true`; `aboutCta`, `photoTags` and `profileLinks` are `false` (they shipped default-off with HFY-TSK-136, HFY-TSK-169 and HFY-TSK-217). Six were set by PR #8 (HFY-TSK-069). `navMe` shipped default-off with HFY-TSK-091 (HFY-R8) and was turned on on 2026-10-13 with io's approval (HFY-TSK-223); setting it back to `false` is that flip's rollback. The production cutover ran on 2026-10-12 (HFY-TSK-069, HFY-R67): the site with the flip deployed first, and the data gate attached after it. To see what the site serves now:
 
+`contribV1` (HFY-TSK-190) is also declared, default `false`: under it the homepage timeline and `/posts/` show a `p.hfy-contrib-line` ("x contributions in the past y unit") read from `GET /api/contributions/stats`, for signed-in visitors only.
+
 ```sh
 curl -s https://<site>/_data/flags.json | jq .
 ```
