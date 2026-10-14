@@ -10,6 +10,8 @@ on:
       - io-kit deploy
     types:
       - completed
+    branches:
+      - main
   workflow_dispatch:
 permissions:
   contents: read

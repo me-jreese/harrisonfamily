@@ -471,7 +471,7 @@ Facts:
 - The sync excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`, and never deletes the excluded paths.
 - The invalidation covers `/*`, and the job waits for it to complete. Until it does, CloudFront can serve the old object for a new `?v`, because the default behavior's cache policy (CachingOptimized in the sample) leaves the query string out of the cache key.
 - The smoke job requests the home page and `/family-login/`. Any status outside 2xx and 3xx fails it.
-- `post-deploy-checks.yml` runs on `workflow_run` when an `io-kit deploy` run completes successfully, and by hand. It runs `scripts/infra/check-site-bucket-cors.sh`, the bucket CORS preflights, which the smoke job cannot express: its entries are URLs it requests with `GET`. A failure there rolls nothing back.
+- `post-deploy-checks.yml` runs on `workflow_run` when an `io-kit deploy` run on `main` completes successfully, and by hand. It runs `scripts/infra/check-site-bucket-cors.sh`, the bucket CORS preflights, which the smoke job cannot express: its entries are URLs it requests with `GET`. A failure there rolls nothing back.
 - The rollback strategy is `previous_artifact`. It redeploys the artifact of the last successful `io-kit-deploy.yml` run on the branch. That artifact's `flags.json` comes with it; see [Private data gate](#private-data-gate) for why that matters while the gate is attached.
 - The pipeline builds no islands, and deploys none of `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
 - `build-islands.sh`, `package-api.sh`, `package-auth.sh`, `package-edge-gate.sh`, `mcp-conformance.sh` and `publish-append-index.sh` are not run by any workflow.

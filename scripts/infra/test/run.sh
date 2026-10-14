@@ -894,7 +894,8 @@ job = wf["jobs"]["site-bucket-cors"]
 script = (root / "scripts/infra/check-site-bucket-cors.sh").read_text()
 default_url = re.search(r'^URL="([^"]+)"$', script, re.M).group(1)
 print("deploy-name", rendered["name"] == deploy_name)
-print("trigger", on["workflow_run"]["workflows"] == [deploy_name] and on["workflow_run"]["types"] == ["completed"])
+print("trigger", on["workflow_run"]["workflows"] == [deploy_name] and on["workflow_run"]["types"] == ["completed"]
+      and on["workflow_run"]["branches"] == [manifest.get("branch", "main")])
 print("success-only", "workflow_run.conclusion == 'success'" in job["if"])
 print("runs-script", any(s.get("run") == "bash scripts/infra/check-site-bucket-cors.sh" for s in job["steps"]))
 print("read-only", wf["permissions"] == {"contents": "read"} and "permissions" not in job)
@@ -903,7 +904,7 @@ print("smoke-not-s3", not any(".amazonaws.com" in u for u in deploy.get("smoke",
 PY
   )
   contains "the rendered deploy workflow is named as ci.manifest.yaml says" "$WIRING" "deploy-name True"
-  contains "post-deploy-checks.yml runs on workflow_run of that workflow, when it completes" "$WIRING" "trigger True"
+  contains "post-deploy-checks.yml runs on workflow_run of that workflow, when it completes on the deploy branch" "$WIRING" "trigger True"
   contains "...only after a successful deploy run (or by hand)" "$WIRING" "success-only True"
   contains "...runs check-site-bucket-cors.sh" "$WIRING" "runs-script True"
   contains "...with contents: read and nothing else (no AWS credentials)" "$WIRING" "read-only True"
