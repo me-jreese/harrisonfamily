@@ -13,7 +13,10 @@ export function json(statusCode, body, extra = {}) {
 }
 
 export class HttpError extends Error {
-  /** `details` (optional) is sent as the body's `details`: `{fields: [{field, code, suggest?}]}` on a 422, `{current}` on a 409. */
+  /**
+   * `details` (optional) is sent as the body's `details`: `{fields: [{field, code, suggest?}]}` on a 422, `{current}` on a 409, or
+   * a SyncError's structured conflict description (src/sync/apply.js).
+   */
   constructor(status, code, message, details) {
     super(message ?? code);
     this.status = status;
@@ -42,13 +45,14 @@ export function logSafeError(e, ctx = {}) {
 /** Maps any thrown value to a JSON error response. Unknown errors are 500 with no detail, logged as `logSafeError` only. */
 export function errorResponse(e, log = console, ctx = {}) {
   // `errors` is the R-18 guard's [{pointer, kind, span}] (src/guard.js): positions only, never the matched text. `details` is the
-  // HttpError's own (HFY-TSK-193): `{fields}` on a 422, `{current}` on a 409. An error that carries both sends both.
+  // HttpError's own structured, already-redacted object: `{fields}` on a 422 and `{current}` on a 409 (HFY-TSK-193), and applyBatch's
+  // SyncError conflict description (per-op current versions and objects, HFY-TSK-243). An error that carries both sends both.
   if (e instanceof HttpError) {
     return json(e.status, {
       error: e.code,
       message: e.message,
       ...(Array.isArray(e.errors) ? { errors: e.errors } : {}),
-      ...(e.details ? { details: e.details } : {}),
+      ...(e.details && typeof e.details === "object" ? { details: e.details } : {}),
     });
   }
   if (e instanceof ContentError) {
