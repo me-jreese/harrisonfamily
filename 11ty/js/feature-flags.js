@@ -9,7 +9,7 @@
     "islands": {
       "about-cta": {
         "js": "459c3035",
-        "css": "7d6cf784"
+        "css": "11377c0e"
       },
       "inbox": {
         "js": "fe44d358",
@@ -25,7 +25,7 @@
       },
       "my-posts": {
         "js": "07d3bb73",
-        "css": "5a80e679"
+        "css": "307f6c65"
       },
       "notifications": {
         "js": "cfb46f0e",
@@ -33,7 +33,7 @@
       },
       "person": {
         "js": "bc3b6ca7",
-        "css": "fc1191e0"
+        "css": "92f22fd0"
       },
       "person-links": {
         "js": "65b1ee44",
@@ -44,8 +44,8 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "931f1e2d",
-        "css": "dc46d8d9"
+        "js": "e316947d",
+        "css": "890fde1c"
       },
       "search": {
         "js": "3dd13244",
@@ -60,8 +60,8 @@
         "css": "dfe52562"
       },
       "timeline": {
-        "js": "347ae61d",
-        "css": "169edbe4"
+        "js": "ab7274dc",
+        "css": "8f618380"
       },
       "tree": {
         "js": "2f729552",
