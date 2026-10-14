@@ -24,9 +24,13 @@
 # and "$HOME/Pictures" (Gramps' default media folder, which GLib takes from the account on macOS, not
 # from HOME), for HOME as given and for the account's home in the user database.
 # Env: HFY_GRAMPS_APP (bundle path), HFY_KEEP=1 (keep the temp directory and print it).
+# Another lane reuses all of this (HFY-TSK-181): gramps/tests/e2e/run.sh sets HFY_LANE_DIR to its own directory and HFY_LANE_GLOB to its
+# file pattern, so its scenarios run on the same per-file tree copies under the same audit hook and negative controls.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LANE="${HFY_LANE_DIR:-$HERE}"
+LANE_GLOB="${HFY_LANE_GLOB:-test_*.py}"
 FIXTURES="$(cd "$HERE/../fixtures" && pwd)"
 SHIM="$HERE/gramps-shim.sh"
 REAL_HOME="$HOME"
@@ -68,11 +72,11 @@ echo "[run.sh] setting the template's media path and restoring the rects the XML
   || { cat "$WORK/prepare.log" >&2; fail "preparing the template tree failed"; }
 want_digest="$(ft digest "$TEMPLATE_DIR")"
 
-if [ "$#" -gt 0 ]; then tests=("$@"); else tests=("$HERE"/test_*.py); fi
+if [ "$#" -gt 0 ]; then tests=("$@"); else tests=("$LANE"/$LANE_GLOB); fi
 ran=0
 for t in "${tests[@]}"; do
-  # A bare name (run.sh test_x.py) means a test file in this directory.
-  if [ ! -f "$t" ] && [ -f "$HERE/$t" ]; then t="$HERE/$t"; fi
+  # A bare name (run.sh test_x.py) means a test file in the lane's directory.
+  if [ ! -f "$t" ] && [ -f "$LANE/$t" ]; then t="$LANE/$t"; fi
   [ -f "$t" ] || fail "no such test file: $t"
   base="$(basename "$t" .py)"
   copy="hfy-copy-$base"
