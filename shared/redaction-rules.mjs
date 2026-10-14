@@ -10,8 +10,8 @@
 //
 // Scope: this port holds the date, place, coordinate, attribute, rect and birth-like predicates, the URL channel rules (urlRules), the
 // path-pattern matcher (matchPointers) and the read-only pointer helpers (pointerGet, escapePointerToken). The projection-only
-// helpers of rules.py (pointer_set, pointer_remove) have no use on the server and are not ported. validator-js (api/src/sync/checker.js)
-// and the edit guard import this file.
+// helpers of rules.py (pointer_set, pointer_remove) have no use on the server and are not ported. validator-js (api/src/sync/checker.js),
+// the edit guard and the field policy (api/src/records/field-policy.js) import this file.
 //
 // No function here logs or returns a matched value. A nested value of the wrong shape (an event_ref_list entry that is not an
 // object, a type or a date that is not an object, a citation_list that is not an array) reads as absent, never throws. A date that
