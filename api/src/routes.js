@@ -164,6 +164,17 @@ export const ROUTES = defineRoutes([
     name: "comments.react", method: "POST", path: "/comments/:id/react", summary: "Set or toggle your single emoji reaction on a comment",
     handler: async (c) => ok(await c.comments.react(need(c.body.subject ?? c.query.subject, "subject"), `comment:${c.params.id}`, c.body.emoji)),
   },
+  // hfy-graduate-api (R-02; social.md section 10): an admin adds a comment photo to a person's gallery. Dark until graduateV1 is on (or the caller is uat).
+  // No MCP tool and no policy row. The reserve, copy, apply and finalize phases run under the key graduate:<comment>:<attachment> (src/graduate.js).
+  {
+    name: "comments.graduate", method: "POST", path: "/comments/:id/attachments/:aid/graduate",
+    summary: "Admins only: add a comment photo to a person's gallery {subject, person, title? (200), description? (500)}: 201 {media: {handle, gramps_id?}, person, state: done}, 200 when already done for that person; 409 already_graduated | graduation_pending | moderated, 400 with the pointer when validation refuses, 503 store_not_seeded | sync_unavailable | graduate_copy_failed (no MCP tool)",
+    gate: requireFeature("graduateV1"),
+    handler: async (c) => {
+      const r = await c.graduation.graduate(c.actor, { subject: c.body.subject ?? c.query.subject, commentId: c.params.id, aid: c.params.aid, person: c.body.person, title: c.body.title, description: c.body.description });
+      return ok(r.body, r.status);
+    },
+  },
   {
     name: "posts.list", method: "GET", path: "/posts", summary: "List posts newest first (cursor; filters type, author, subject, visibility)",
     handler: async (c) => {
@@ -360,6 +371,6 @@ export function buildCaps() {
     comments: { reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param: "required on PATCH/DELETE/react (query or body)" },
     mcp: { resource: MCP_RESOURCE, tools: ROUTES.filter((r) => r.mcp).map((r) => ({ name: r.mcp.tool, action: r.name, write: r.write })) },
     notifications: { types: NOTIFY_TYPES, default_level: 0 },
-    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear"] },
+    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear", "graduate"] },
   };
 }

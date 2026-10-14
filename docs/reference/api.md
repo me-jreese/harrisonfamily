@@ -177,6 +177,7 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `comments.update` | PATCH | `/comments/:id` | body `body`, optional `attachments`; `subject` in the body or the query | `200` comment | Author only. Photos can be removed or re-described, never added |
 | `comments.delete` | DELETE | `/comments/:id` | query `subject` (required), optional `reason` | `204` | Author or admin. `subject` is read from the query only. |
 | `comments.react` | POST | `/comments/:id/react` | body `emoji`; `subject` in the body or the query | `200` `{removed, reaction?}` | Set or toggle off |
+| `comments.graduate` | POST | `/comments/:id/attachments/:aid/graduate` | body `subject` (the comment's thread), `person` (a gramps_id), optional `title` (200) and `description` (500) | `201` `{media: {handle, gramps_id?}, person, state: "done"}`, or `200` with the same body when it was already done for that person | Admins only (`403 not_admin`). Behind `requireFeature("graduateV1")`. Not an MCP tool. See [Graduating a comment photo](#graduating-a-comment-photo). |
 | `posts.list` | GET | `/posts` | query `cursor`, `limit`, `subject`, `type`, `author`, `visibility` | `200` `{items, cursor}` | Newest first |
 | `posts.get` | GET | `/posts/:id` | none | `200` post | |
 | `posts.create` | POST | `/posts` | body `body`, optional `type`, `visibility`, `subject`, `title`, `attachments` | `201` post | Publishing sends notifications |
@@ -224,7 +225,7 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Twelve routes are behind the [feature gate](#feature-gate): the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
 Seven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`. See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the four `subscriptions.*` routes and the three `contributions.*` routes are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
@@ -716,7 +717,7 @@ Every post create, update, visibility change and delete, every comment create, e
 | Record | `op` values |
 | --- | --- |
 | Post | `create`, `update`, `visibility`, `delete` |
-| Comment | `create`, `edit`, `delete` |
+| Comment | `create`, `edit`, `delete`, `graduate` (id is the comment id; `before` and `after` hold `{attachment, graduated}`) |
 | Profile links | `links.clear` when the body names platforms only to clear them, `links.update` for any other change |
 
 The data change and its audit item are written in a single `TransactWriteItems` call (`transact` in `txn.js`). Both land or neither does, so a failed write leaves no audit item.
@@ -842,6 +843,27 @@ hfy-comments-photos-desc-api (BRD2 9.2). Behind `commentPhotosV1` (default off; 
 4. The comment write attaches each upload in the same transaction (`SET attached = <comment id> REMOVE ttl`, conditional on owner, purpose and not attached), so a binding that changes after the read cancels the write (`403 upload_not_owned`, nothing stored).
 5. `body` may be the empty string while the comment holds a photo. It must still be sent: a missing or non-string `body` is `422 validation` "body is required" on create and edit. `body` and every `alt` run the contact-information guard (`422 contact_info`, pointer `/attachments/<n>/alt`).
 6. `comments.update` can remove attachments or change an `alt` (matched by `url`, ids kept); an unchanged body and photo list is a no-op with no audit entry. It cannot add a photo: another member's key is `403 upload_not_owned`, anything else `422 validation` on `attachments`. Deleting a comment keeps its objects.
+
+## Graduating a comment photo
+
+hfy-graduate-api (BRD2 R-02, social.md section 10). `POST /api/comments/:id/attachments/:aid/graduate` adds a photo that a member attached to a comment to a person's gallery: one `Media` object and one `MediaRef` on the Person, written through `applyBatch()` with origin `graduation`. The code is [`graduate.js`](../../api/src/graduate.js). The route is dark (`404`) until `graduateV1` is on, and `403 not_admin` for a member. The body is `{subject, person, title?, description?}`: `subject` is the comment's thread (`person:<gramps_id>` or `post:<ulid>`), `person` is the gramps_id of the page the photo goes on, `title` becomes `Media.desc` (the photo's alt text when omitted) and `description` becomes a Media attribute of type Description (500 characters, not the design's 1000, which Gramps would not store). Both run the contact-information guard (`422 contact_info`).
+
+The action has four phases under the idempotency key `graduate:<comment id>:<attachment id>`. Each can be run again.
+
+| Phase | What it does | If it fails |
+| --- | --- | --- |
+| Reserve | Sets the attachment's `graduated` marker to `{state: "pending", media_handle, person, by, at, title?, description?}`. The handle is minted once and kept. | `409 conflict` when the comment changed under it |
+| Copy | Reads the source once (`image/jpeg` only, else `422 unsupported_photo`; `checkLocation`, else `400 photo_has_location`), then `CopyObject` from `uploads/comments/<ulid>/<name>` to `media/<handle>.jpg` with `ChecksumAlgorithm: "SHA256"`. S3 returns the checksum, so the Lambda never reads the bytes. | `503 graduate_copy_failed`; the reservation stays pending |
+| Apply | `applyBatch` with the admin who reserved as principal: create `Media` with a `blob` descriptor `{s3_key, sha256, size, content_type, state: "present"}` (the sha256 S3 returned) and append the `MediaRef` to the Person. A version conflict re-reads the person and retries once. | A validation-class `SyncError` (any 4xx but a version conflict) marks the marker `failed` `{code, pointer}` and answers `400 validation` with `details.pointer`, so the admin can correct the title and try again. A second conflict is `503 graduate_conflict`. Everything else (`store_not_seeded`, `sync_paused`, `retryable`) is `503` and leaves the reservation pending. |
+| Finalize | One transaction: the marker becomes `done`, an `AUDIT#<comment id>` item with op `graduate`, and the `photo_to_record` contribution of the photo's author (the admin is never credited). | `409 conflict` or `503`; the retry finalizes once |
+
+After the commit the author is told (`photo_graduated`, not when the admin is the author), then the marker's `notified` flag is set. A repeat of a `done` marker sends a notice that was not sent. The producers swallow their own failures (a committed write is a success), so a notice a producer lost is not retried; a crash between the notice and the flag can send it twice.
+
+Before anything is written the route checks, in this order: admin, the request shape and the guard, the S3 client (`503 unavailable` without one), the store gate (`SYNC#HEAD` absent or `seeded` not true is `503 store_not_seeded`, `writes_enabled: false` is `503 sync_paused`; the comment and the bucket are untouched), the comment and photo (`404`), moderation (`409 moderated` when `moderation.hidden` is set on the comment or the attachment), the marker (`done` for another person is `409 already_graduated`, pending for another person is `409 graduation_pending`) and the person (`404 person_not_found`). A marker already `done` for the same person is `200`.
+
+Concurrency: the comment item carries a write counter, `grad_v`, which never leaves the store. Every graduation write, and an author's edit or delete, is a Put or Delete guarded on `edited_at` and `grad_v`, so one cannot overwrite the other. An author's edit keeps a photo's marker, and cannot remove a photo whose graduation is pending (`409 graduation_pending`).
+
+The API role needs no new IAM: `s3:PutObject` on `media/*` and `s3:GetObject` on `uploads/comments/*` come from the sync stack parameters (`app-stack.yaml`). The graduated blob has no `md5` in its descriptor (S3's copy gives a SHA-256 only); the desktop materializer computes its own when it downloads the file.
 
 ## Uploads
 

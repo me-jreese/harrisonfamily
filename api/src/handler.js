@@ -20,6 +20,7 @@ import { editingOn } from "./records/edit-bundle.js";
 import { circleIds, loadProposal, visibleProposal } from "./records/proposal-store.js";
 import { isPersonWithdrawn } from "./sync/store.js";
 import { createAccessRequests } from "./access-requests.js";
+import { createGraduation } from "./graduate.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -117,10 +118,15 @@ export function createHandler(deps) {
     }
     /** For route handlers: is `name` on for this caller (their own preview header counts only if they are uat)? */
     const featureOn = (name) => features.featureOn(name, actor, { preview });
+    // hfy-graduate-api: comments.graduate. deps.applyBatch, deps.mintHandle and deps.graduateAfterPhase are the test seams (fake applyBatch, fixed handle, fault injection).
+    const graduation = createGraduation({
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, notifier, guard, now, uid, log, via,
+      ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
+    });
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { store, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { store, content, comments, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**

@@ -197,6 +197,7 @@ Paths:
   - `origin.js`: the `X-Origin-Verify` check.
   - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `graduate.js`: graduating a comment photo into a record photo behind `graduateV1` (HFY-TSK-214): reserve, copy, apply and finalize under `graduate:<comment>:<attachment>` ([API: Graduating a comment photo](api.md#graduating-a-comment-photo)).
   - `comment-photos.js`: comment photo attachments behind `commentPhotosV1`: the shape check, the `UPLOAD#` binding of `purpose` `comment` uploads, and the `HeadObject` and location checks before the write ([API: Comment photos](api.md#comment-photos)).
   - `contrib.js`: the contributions ledger (HFY-TSK-255): builders for the `CONTRIB#` event and its five `CSTAT#` counter updates (`contribOps`, `revokeOps`, `hideOps`, `mergeOps`), which `content.js` and `comments.js` commit in the same transaction as the write that earned or lost the credit, and the event read `getEvent` ([API: Contributions ledger](api.md#contributions-ledger)).
   - `contrib-read.js`: the contributions read side (HFY-TSK-256): `createContribReader` (`list`, `stats` and `site`, the three `contributions.*` routes behind `contribV1`), the pure feed-line rule `pickLine` with the cached `CSTAT#site/LINE` row, `hrefOf` and the default `proposalVisible` ([API: Contributions read API](api.md#contributions-read-api)).

@@ -1,4 +1,4 @@
-import { generateKeyPairSync, createPublicKey } from "node:crypto";
+import { generateKeyPairSync, createPublicKey, createHash } from "node:crypto";
 import { CommentError } from "@io-kit/comments";
 import { SignJWT, createLocalJWKSet } from "jose";
 import { createUlidFactory, ulidTime } from "@io-kit/feed";
@@ -61,11 +61,25 @@ export const CLEAN_JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
 export function createFakeS3(objects = new Map()) {
   const gets = [];
   const heads = [];
+  const copies = []; // CopyObject inputs, in order
+  const calls = []; // every command name, in order (a test reads the order of GetObject and CopyObject)
   return {
     objects,
     gets,
     heads,
+    copies,
+    calls,
     async send(cmd) {
+      calls.push(cmd.constructor.name);
+      if (cmd.constructor.name === "CopyObjectCommand") {
+        // Same-bucket copy; the checksum S3 computes for ChecksumAlgorithm SHA256 is returned base64, as in the SDK.
+        const i = cmd.input;
+        copies.push(i);
+        const src = objects.get(i.CopySource.slice(i.CopySource.indexOf("/") + 1));
+        if (!src) throw Object.assign(new Error("Not Found"), { name: "NoSuchKey", $metadata: { httpStatusCode: 404 } });
+        objects.set(i.Key, { bytes: src.bytes, contentType: src.contentType });
+        return { CopyObjectResult: i.ChecksumAlgorithm === "SHA256" ? { ChecksumSHA256: createHash("sha256").update(src.bytes).digest("base64") } : {} };
+      }
       if (cmd.constructor.name === "HeadObjectCommand") {
         heads.push(cmd.input);
         const o = objects.get(cmd.input.Key);
