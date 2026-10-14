@@ -216,6 +216,9 @@ const BY_SEX = {
 };
 const word = (kind, p) => (p && BY_SEX[kind][p.sex]) || { parent: "parent", child: "child", sibling: "sibling", partner: "partner", grandparent: "grandparent", grandchild: "grandchild", uncle: "aunt or uncle", nibling: "niece or nephew" }[kind];
 
+/** The plain role word for a kind of relative and a person's sex ("mother", "son", "aunt or uncle"). */
+export const roleWord = word;
+
 /** What `other` is to `viewer`, for the focus card ("your mother"): "you", parent, child, sibling (half-), partner, grandparent, grandchild,
  *  aunt or uncle, niece or nephew, cousin (anyone sharing a grandparent who is not a sibling; in practice a first cousin). Null when the pair is none of those (the card then shows no label). Unmarried partners
  *  are "partner" and married ones "wife" or "husband". */
