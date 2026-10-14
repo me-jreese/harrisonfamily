@@ -275,12 +275,11 @@ HFY_PERSON_DIR=DIR node <project>/scripts/search/build_search_index.js
 <project>/scripts/infra/publish_allowlists.sh
 ```
 
-- Takes no arguments. Reads `<project>/docs/dev/userGrampsID.json` and `<project>/docs/dev/harrisonfamily-allowlist.json`, and stops if either is missing.
-- In order, it uploads the map to `config/userGrampsID.json`, reads `HFY_ALLOWLIST_HMAC_SECRET` from Secrets Manager, hashes each email in the array (trimmed and lowercased) into a temporary directory, uploads `config/allowed_hashes.json`, and adds a version of the array to the Google secret `harrisonfamily-allowlist` with whichever gcloud configuration is active.
-- The digest upload is vestigial: nothing has read `config/allowed_hashes.json` since its only reader, the `hfy-check-allowed` Lambda, was deleted on 2026-10-14 (HFY-TSK-326). The script takes the HMAC key only from Secrets Manager, by the name in `HFY_HMAC_SECRET_NAME`; no environment variable or file supplies the key itself. Without the secret, the script stops at that step, after it has uploaded `config/userGrampsID.json`.
-- The Google Cloud write now always fails: the `harrisonfamily-allowlist` secret was deleted on 2026-10-14 with io's approval (HFY-TSK-325), and no sign-in path ever read it. It runs last, so when it fails the S3 objects are already updated, but the script never reaches its `[DONE]` line. Removing the step from the script, which is outside this repository, ends the failure.
-- Both uploads use `aws s3 cp --acl private`, so the caller needs `s3:PutObjectAcl` as well as `s3:PutObject`.
+- Takes no arguments. Checks that `<project>/docs/dev/userGrampsID.json` and `<project>/docs/dev/harrisonfamily-allowlist.json` exist, and stops if either is missing.
+- Uploads the map to `config/userGrampsID.json`, the file the auth edge reads, and does nothing else. It does not validate the map, and it reads nothing from the email array.
+- The upload uses `aws s3 cp --acl private`, so the caller needs `s3:PutObjectAcl` as well as `s3:PutObject`.
 - It does not write `config/admins.json` or `config/groups.json`, and it keeps no audit log.
+- History: until 2026-10-14 the script also read `HFY_ALLOWLIST_HMAC_SECRET` from Secrets Manager, uploaded HMAC digests of the array to `config/allowed_hashes.json`, and added a version of the array to the Google secret `harrisonfamily-allowlist`. Ruling P2-R51 removed both steps, after the digests' only reader, the `hfy-check-allowed` Lambda, and the Google secret had been deleted (HFY-TSK-326, HFY-TSK-325). The overrides for those steps, `HFY_ALLOWED_HASHES_KEY`, `HFY_HMAC_SECRET_NAME` and `HFY_GCP_SECRET_NAME`, went with them. A copy of the old script is kept beside it, outside the repository.
 
 | Environment override | Default |
 | --- | --- |
@@ -288,9 +287,6 @@ HFY_PERSON_DIR=DIR node <project>/scripts/search/build_search_index.js
 | `AWS_REGION` | `us-west-2` |
 | `HFY_CONFIG_BUCKET` | `<config-bucket>` |
 | `HFY_USER_GRAMPS_KEY` | `config/userGrampsID.json` |
-| `HFY_ALLOWED_HASHES_KEY` | `config/allowed_hashes.json` |
-| `HFY_HMAC_SECRET_NAME` | `HFY_ALLOWLIST_HMAC_SECRET` |
-| `HFY_GCP_SECRET_NAME` | `harrisonfamily-allowlist` (deleted on 2026-10-14) |
 
 ### mint_test_id_token.py
 
@@ -307,7 +303,6 @@ python3 <project>/scripts/auth/mint_test_id_token.py [--json]
 | Key | Format | Read by | Cache and failure behavior | Written by |
 | --- | --- | --- | --- | --- |
 | `userGrampsID.json` | Object keyed by `<email>`. Each value is `"<gramps-id>"`, or `{"gramps_id": "<gramps-id>", "label": "…", "roles": ["…"]}`. | Auth edge sign-in and password provisioning, through the manifest's `s3_allowlist` resolver ([`auth/edge.manifest.json`](../../auth/edge.manifest.json), [`auth/src/cognito.js`](../../auth/src/cognito.js)); auth edge MCP membership ([`auth/src/membership.js`](../../auth/src/membership.js)) | Sign-in: cached for `cacheSeconds: 300`, email matched case-insensitively. If a refresh fails it keeps serving the last good copy and retries on the next request; if no copy has ever loaded, the failed read denies sign-in (fails closed). Membership: 60 s; on a read failure it keeps the last good copy and retries in 5 s, and it fails closed if no copy was ever loaded. | `publish_allowlists.sh` |
-| `allowed_hashes.json` | Array of hex HMAC-SHA256 digests of each trimmed, lowercased email, keyed by the value of `HFY_ALLOWLIST_HMAC_SECRET` | Nothing. Its only reader, the legacy `hfy-check-allowed` Lambda, was deleted on 2026-10-14 (HFY-TSK-326). | Not read | `publish_allowlists.sh` |
 | `admins.json` | Array of `<gramps-id>` strings, or `{"admins": [...]}` | `hfy-api` ([`api/src/auth.js`](../../api/src/auth.js)), for the `admin` flag on the HTTP API; auth edge MCP membership, for the `admins` token group | 60 s in both. If the API cannot read it, nobody is an admin and it retries in 5 s. If the membership reader cannot, no token gets the `admins` group. The file may be absent, which means no moderators: every read fails, and the API logs `admin list unavailable (failing closed)` at most once every 5 s per container. | No script. Uploaded by hand. |
 | `groups.json` | `{"version": 1, "groups": {"mcp-authors": {"emails": [...], "subjects": [...]}, "hfy-admin": {"subjects": [...]}}}`. `subjects` are `<gramps-id>` strings and `emails` are `<email>` strings. The shape is documented in [`api/src/policy.js`](../../api/src/policy.js). | `hfy-api`, for MCP calls only (`createGroupResolver` in `policy.js`, wired in [`api/src/index.js`](../../api/src/index.js)) | Cached for 60 s. A failed read or a body that is not JSON grants no groups to anyone and drops any copy loaded earlier (fails closed), and the read is retried after 5 s. A missing group or list grants nothing. | No script. Written by hand. |
 
@@ -333,6 +328,7 @@ python3 <project>/scripts/auth/mint_test_id_token.py [--json]
 ```
 
 - The auth edge is the only reader of `userGrampsID.json`, and it accepts both entry forms and matches keys case-insensitively. The legacy Lambda, which returned an object entry whole as the Gramps ID and matched keys exactly, no longer exists.
+- `allowed_hashes.json`, the array of HMAC-SHA256 digests that only that Lambda read, was deleted on 2026-10-14 (ruling P2-R51), and `publish_allowlists.sh` no longer writes it. The bucket is versioned, so a delete marker stands in its place and the deletion can be reversed.
 - `roles` adds group names to MCP tokens. `members` is added for every allowlisted member and `admins` for every Gramps ID in `admins.json`. These token groups decide whether `/auth/authorize` and `/auth/token` issue a token at all (a subject not on the allowlist gets none), and `/auth/userinfo` returns them.
 - The MCP server ignores the token's `groups` claim. It authorizes each call from `groups.json` alone, so `admins.json` plays no part there, and an `hfy-admin` subject need not be on it. An `mcp-authors` `emails` entry matches the access token's `email` claim, case-insensitively, unless the token's `email_verified` claim is `false`; `hfy-admin` matches `subjects` only. See [MCP server: Groups](mcp-server.md#groups).
 - The auth edge reads the allowlist from the bucket and key in `edge.manifest.json`, and the admin list from the same bucket under `ADMIN_LIST_KEY` (the `AdminListKey` parameter). The `ConfigBucket` and `AllowlistKey` parameters only scope its read permission. When they disagree with the manifest, the read is denied and sign-in fails closed. `hfy-api` reads `ADMIN_LIST_BUCKET` and `ADMIN_LIST_KEY`, set from `ConfigBucket` and `AdminListKey`.
@@ -348,9 +344,9 @@ Every path below is outside the repository. Docs name these files and directorie
 | Family data | `<project>/workspace-local/harrisonfamily-frontend/` | `<site-bucket>` data prefixes, by `sync_to_s3.py` |
 | ETL working output | `<project>/workspace-local/etl-output/`, by convention | Not published directly |
 | Raw Gramps exports and inspection bundles | `<project>/reports/`, the default `--glob-root` of `export_person_bundle.py` when run from `<project>`. It also holds Gramps metadata reports. | Never published |
-| Email-to-Gramps-ID map and email array | `<project>/docs/dev/userGrampsID.json`, `<project>/docs/dev/harrisonfamily-allowlist.json`; a second copy of the array in `<project>/workspace-local/docs-dev/` | `config/userGrampsID.json` and `config/allowed_hashes.json`, by `publish_allowlists.sh` (from `<project>/docs/dev/` only). Its write to the Google secret fails, because that secret was deleted. |
+| Email-to-Gramps-ID map and email array | `<project>/docs/dev/userGrampsID.json`, `<project>/docs/dev/harrisonfamily-allowlist.json`; a second copy of the array in `<project>/workspace-local/docs-dev/` | The map only: `config/userGrampsID.json`, by `publish_allowlists.sh` (from `<project>/docs/dev/` only). The array is not published; the script only checks that it exists. |
 | Member email CSV | `<project>/docs/dev/initial_allowlist.csv` | Not read by any script |
-| Local digest array | `<project>/workspace-local/allowlist/allowed_hashes.json` | Not written or read by any script. `publish_allowlists.sh` hashes into a temporary directory. |
+| Local digest array | `<project>/workspace-local/allowlist/allowed_hashes.json` | Not written or read by any script. A leftover of the digest list retired on 2026-10-14 (ruling P2-R51). |
 | Admin list | None | `config/admins.json`, by hand |
 | MCP groups config | None | `config/groups.json`, by hand |
 | OAuth client files | `oauth_harrisonfamily*.json` and `oauth_harrisonfamily*.txt`, in both `<project>/docs/dev/` and `<project>/workspace-local/docs-dev/` | Not published |
@@ -371,11 +367,11 @@ All are expected in `us-west-2`, the region the stack and the scripts default to
 | `harrisonfamily/auth-edge/session-signing-key` | JSON `{privateKeyPem, kid}`, RSA-2048. A bare PKCS8 PEM is also accepted. | `hfy-auth-edge`, once per container at init ([`auth/src/index.js`](../../auth/src/index.js)) | [`scripts/infra/create-session-key.sh`](../../scripts/infra/create-session-key.sh) | [Rotate the session signing key](../how-to/rotate-the-session-signing-key.md) |
 | `harrisonfamily/cloudfront/origin-verify` | A plain string: 32 random bytes as hex | CloudFront, as the `X-Origin-Verify` origin header that [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh) and [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh) write into the `hfy-api-origin` origin and [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh) writes into `hfy-auth-origin`; `hfy-api` and `hfy-auth-edge`, as `ORIGIN_VERIFY`, resolved into each Lambda's environment by a dynamic reference when the stack deploys | [`scripts/infra/create-origin-verify.sh`](../../scripts/infra/create-origin-verify.sh) | [Rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md) |
 | `harrisonfamily/api/vapid`, the deployed name. The stack takes it in the `VapidSecretName` parameter, which is empty by default and then disables push. | JSON `{subject, publicKey, privateKey}`. [Turn on push notifications](../how-to/turn-on-push-notifications.md) creates it with an `https://` subject and refuses any other, and its [Verify](../how-to/turn-on-push-notifications.md#verify) step checks the stored subject. With an `https://` subject, no email address is sent to the push services. `hfy-api` passes the subject to `web-push` as given and does not check its form. | `hfy-api`, through `VAPID_SECRET`, on the first request in a container ([`api/src/index.js`](../../api/src/index.js)). A failed read disables push for the rest of that container's life. The public key is served to browsers. | By hand: [Turn on push notifications](../how-to/turn-on-push-notifications.md) | [Turn on push notifications](../how-to/turn-on-push-notifications.md#replace-the-key-pair). Browsers bind each push subscription to the public key, so a new key pair invalidates existing subscriptions. |
-| `HFY_ALLOWLIST_HMAC_SECRET` | A plain string, used as the HMAC key | `publish_allowlists.sh` only, to write `allowed_hashes.json`. Its runtime reader, the legacy `hfy-check-allowed` Lambda, was deleted on 2026-10-14 (HFY-TSK-326), so nothing checks a digest made with it. | By hand. No script. | Legacy. Nothing reads the digests, so a new value changes nothing at runtime. |
 
 - Both creation scripts are idempotent, accept `--dry-run`, and never print the value. If the secret exists, they change nothing.
 - The API, the MCP server and the data gate never read the signing key. They verify sessions and access tokens against the public JWKS that the edge publishes at `/auth/.well-known/jwks.json`.
 - The resolved origin-verify value sits in each Lambda's environment configuration, in the distribution's origin configuration, and in every pre-change backup that the `add-*-behavior.sh` scripts and `add-data-gate-behaviors.sh` save (see [Where the private source copies live](#where-the-private-source-copies-live)). Anyone who can read any of these can read it. The scripts redact it from the diffs they print. A new secret value reaches the Lambdas only through a stack update that resolves the reference again; see the rotation how-to.
+- `HFY_ALLOWLIST_HMAC_SECRET`, the HMAC key of the retired `allowed_hashes.json`, was scheduled on 2026-10-14 for deletion on 2026-11-13 (ruling P2-R51). Nothing reads it, and it can be recovered until that date.
 
 ## Google Cloud (legacy, deleted)
 
@@ -383,7 +379,7 @@ With io's approval, the Google Cloud pieces of the legacy allowlist were deleted
 
 | Name | Kind | State |
 | --- | --- | --- |
-| `harrisonfamily-allowlist` | Google Secret Manager secret: a JSON array of emails, which `getAllowlist` read | Deleted. `publish_allowlists.sh` still tries to add a version to it, and that step fails. |
+| `harrisonfamily-allowlist` | Google Secret Manager secret: a JSON array of emails, which `getAllowlist` read | Deleted. `publish_allowlists.sh` no longer writes to it (ruling P2-R51). |
 | `GCP_SERVICE_ACCOUNT_KEY` | GitHub repository secret: a JSON key of the `github-actions` service account, which `deploy-gcf-legacy.yml` used to deploy `getAllowlist` | The key is deleted on the service account, and no workflow reads the secret. |
 
 With that key deleted, CI holds no working long-lived credential: the AWS side uses OIDC, and the client ID is public. The `github-actions` service account itself still exists, with no user-managed key. What is left are copies of the dead key: the `GCP_SERVICE_ACCOUNT_KEY` repository secret, which can be deleted in the repository settings, the local key file `<project>/docs/dev/github-actions-service-account.json`, and the gcloud credential stores in `<project>/workspace-local/gcloud-config/`.
@@ -413,7 +409,7 @@ The deployed site, its Lambdas and CI use no Google client secret, and the Cogni
 | `HFY_EXPECT_GRAMPS` | `tests/login-flow/tests/auth-v2.spec.ts` | The test member's `<gramps-id>`. Not a secret, but a real ID. |
 
 - No value in this table belongs in a committed file or in printed output. The exception in the code is `HFY_EXPECT_GRAMPS`: the login-flow spec falls back to a committed default when it is unset, and that default is a real Gramps ID.
-- xtrace (`set -x`) prints expanded commands, values included, so any shell that holds these values leaks them with xtrace on. `publish_allowlists.sh` passes the HMAC secret to Python through an environment assignment, which xtrace would print.
+- xtrace (`set -x`) prints expanded commands, values included, so any shell that holds these values leaks them with xtrace on.
 - The `scripts/infra/` scripts and `scripts/ci/build-islands.sh` do not print the values they handle. The CloudFront scripts' output does name the distribution and print Lambda version ARNs, which contain the account ID, so docs quote it only with `<distribution-id>` and `<aws-account-id>` in place of those values. `token-smoke.sh` does not print the token, but its output includes the token's `sub` (the member's real Gramps ID), its groups and its expiry, so that output is private in the same way as sync output. `mint_test_id_token.py` prints the token by design.
 - The login-flow spec's HTML report and failure videos come from a signed-in session on the live site, so they are private. `tests/login-flow/.gitignore` ignores them.
 
@@ -433,8 +429,8 @@ An `mcp.audit` line names a real member, so `hfy-api` log output is private in t
 
 | Path | Mirrors | Notes |
 | --- | --- | --- |
-| [`allowlist/allowed_hashes.json`](../../allowlist/allowed_hashes.json) | `config/allowed_hashes.json` | Two 32-character hex strings. Real digests are 64 characters, so these never match. |
-| [`allowlist/harrisonfamily-allowlist.json`](../../allowlist/harrisonfamily-allowlist.json) | The email array: the publish input, and the format of the deleted Google secret | `example.com` addresses. |
+| [`allowlist/allowed_hashes.json`](../../allowlist/allowed_hashes.json) | `config/allowed_hashes.json`, deleted on 2026-10-14 (ruling P2-R51) | Two 32-character hex strings. Real digests are 64 characters, so these never match. Kept as a record of the retired format. |
+| [`allowlist/harrisonfamily-allowlist.json`](../../allowlist/harrisonfamily-allowlist.json) | The email array that `publish_allowlists.sh` requires but does not read, and the format of the deleted Google secret | `example.com` addresses. |
 | [`harrisonfamily-frontend/`](../../harrisonfamily-frontend/) | `<project>/workspace-local/harrisonfamily-frontend/` | One synthetic record per prefix, plus manifests. The shape predates the ETL: the person sample has `lifespanSummary` and `familyTree.families` in place of `lifespan`, `parentFamilies` and `spouseFamilies`; the media sample uses `mimeType` in place of `mime`; `person/index.json` is a bare array. It is not a valid fixture for the current contract. |
 | [`etl-output/`](../../etl-output/), including `sample_bundle/` | `<project>/workspace-local/etl-output/` | READMEs only. No data. |
 | [`cloudfront/distribution.json`](../../cloudfront/distribution.json) | The live distribution configuration before the `add-*-behavior.sh` scripts | A template with `example.com` aliases, one origin and the default behavior: the S3 origin, `s3-origin`, with an empty OAI and no OAC, and `CacheBehaviors` set to `{"Quantity": 0}`. Its placeholder API Gateway origin and the legacy `/api/*` behavior in front of it were removed with HFY-TSK-326, to match production. It has no `hfy-api`, `/auth/*`, `/uploads/*`, `/mcp*` or data-gate behavior, no Lambda@Edge association and no `X-Origin-Verify` header. |

@@ -73,7 +73,7 @@ The legacy Google sign-in is gone from the pages and the pipeline (HFY-TSK-317):
 
 Keep `authV2` set to `true`, as committed. With it off, the pages do not refresh `io_id`, and there is no other sign-in.
 
-The allowlist publisher in [Manage family access](manage-family-access.md#2-publish) still reads the `HFY_ALLOWLIST_HMAC_SECRET` secret from Secrets Manager to write the digest list, `config/allowed_hashes.json`, which nothing has read since the Lambda was deleted. A new environment does not need the secret. Without it, the publisher still uploads `config/userGrampsID.json`, the list the auth edge reads, and then stops at the digest step.
+The allowlist publisher in [Manage family access](manage-family-access.md#2-publish) needs no secret. It uploads `config/userGrampsID.json`, the list the auth edge reads, and nothing else. Its digest list, `config/allowed_hashes.json`, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keyed it were retired on 2026-10-14 (ruling P2-R51), so a new environment creates neither.
 
 ## Steps
 

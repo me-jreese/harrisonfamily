@@ -397,7 +397,8 @@ Facts:
 - `hfy-check-allowed` verified a Google ID token and checked an HMAC of the email against the hashed allowlist. Production CloudFront has no `/api/check-allowed*` behavior, so `/api/check-allowed` reaches `hfy-api` through `/api/*` and gets `404`.
 - `ci.manifest.yaml` has no `lambda` target (HFY-TSK-317).
 - The pre-commit sync check compares only `11ty/`. It has no Lambda or Cloud Function comparison.
-- Still in AWS: `config/allowed_hashes.json`, which the allowlist publisher writes and nothing reads, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keys it, which only the publisher reads. The deployed deploy-role stack keeps its grant on the deleted function until the GitHub-roles stack is next updated.
+- The hashed allowlist went too, under ruling P2-R51 on 2026-10-14: the allowlist publisher's digest step was removed, `config/allowed_hashes.json` was deleted, and the `HFY_ALLOWLIST_HMAC_SECRET` secret that keyed it was scheduled for deletion on 2026-11-13.
+- Still in AWS: the deployed deploy-role stack keeps its grant on the deleted function until the GitHub-roles stack is next updated.
 
 ## Infrastructure
 
@@ -547,7 +548,7 @@ Paths: [`allowlist/`](../../allowlist/), [`harrisonfamily-frontend/`](../../harr
 Facts:
 
 - These are placeholders that show the shape of the private data. The real files live under `<project>/workspace-local/`.
-- `allowlist/` holds example addresses and hashes.
+- `allowlist/` holds example addresses, and example hashes in the format of the retired digest list.
 - `harrisonfamily-frontend/` is a synthetic set of person, family, event, media, note and place records.
 - `etl-output/` holds only READMEs, and `gramps_exports/` holds only `.gitkeep`.
 - The top-level README in each sample directory that has one is a short pointer into these docs.
@@ -566,7 +567,7 @@ Facts:
 - The source's `partials/head.njk` already emits head blocks A and B, with a hard-coded theme `?v` and font file name that the islands build overwrites in the output. The base layout does not emit the `auth-v2.js` tag, and neither the Voice copy nor the asset versions are ported, so `copy.mjs` and `assets.mjs` are still needed. The source's layout still emits the retired Google client, `auth.js`, the navbar search and the `gateway` entry, and its `public/js/` still holds `auth.js`, `search-navbar.js` and `search-results.js`, until it is ported ([Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)).
 - The ETL scripts turn the Gramps export into person JSON and family-tree media.
 - `build_search_index.js` builds the person manifest and search index. The source's `build:search` step runs it.
-- `publish_allowlists.sh` publishes the email-to-gramps_id map and the hashed allowlist to the config bucket. Nothing has read the hashed allowlist since `hfy-check-allowed` was deleted, but that step still reads the `HFY_ALLOWLIST_HMAC_SECRET` secret from Secrets Manager, and the script stops there without it. Its last step still writes the allowlist to the Google Secret Manager secret, which was deleted on 2026-10-14, so that step fails after the uploads.
+- `publish_allowlists.sh` publishes the email-to-gramps_id map to the config bucket as `config/userGrampsID.json`, the file the auth edge reads, and does nothing else. Its hashed-allowlist and Google Secret Manager steps were removed on 2026-10-14 (ruling P2-R51).
 - `mint_test_id_token.py` mints Google ID tokens for the retired legacy sign-in. Nothing in the repository runs it any more.
 - `workspace-local/` holds the private family data and the real credentials.
 - The workspace sources of the legacy sign-in code are also outside the repository. See [Retired legacy sign-in](#retired-legacy-sign-in).

@@ -208,13 +208,13 @@ None of the buckets is managed by a stack.
 | Key | Contents | Read by |
 | --- | --- | --- |
 | `config/userGrampsID.json` | Map of verified email to Gramps ID | `hfy-auth-edge` (sign-in resolver, cached 300 s; MCP membership, cached 60 s) |
-| `config/allowed_hashes.json` | Array of HMAC-SHA256 hex digests of allowlisted emails, written by the allowlist publisher | Nothing. Its only reader, the legacy `hfy-check-allowed` Lambda, was deleted on 2026-10-14 (HFY-TSK-326) |
 | `config/admins.json` | Array of Gramps IDs, or `{"admins": [...]}`. May be absent, which means no admins (no moderators) | `hfy-api` (cached 60 s, fails closed); `hfy-auth-edge` (MCP `admins` group, cached 60 s) |
 | `config/groups.json` | The MCP groups `mcp-authors` and `hfy-admin`; the shape is in [`api/src/policy.js`](../../api/src/policy.js) and [MCP server: Groups](mcp-server.md#groups) | `hfy-api`, for MCP authorization only (cached 60 s, fails closed) |
 
 - **Locations.** The edge takes this bucket and the allowlist key from [`auth/edge.manifest.json`](../../auth/edge.manifest.json) (`resolver`), and the admin key from `ADMIN_LIST_KEY`. The API takes the admin list from `ADMIN_LIST_BUCKET` and `ADMIN_LIST_KEY`, and the groups file from `GROUPS_BUCKET` and `GROUPS_KEY`. The stack sets neither `GROUPS_*` variable, so the code defaults, `<config-bucket>` and `config/groups.json`, apply.
 - **A missing or unreadable file.** A missing `config/admins.json` makes nobody an admin: `hfy-api` logs `admin list unavailable (failing closed)` and retries after 5 s, and the edge's MCP membership logs `admin list unavailable (nobody is admin)` and grants no `admins` group. A missing or unparsable `config/groups.json` grants no MCP group to anyone and is retried after 5 s.
 - **Writers.** No script in the repository writes `config/groups.json`. See [How to add or remove a family member's access](../how-to/manage-family-access.md).
+- **Retired key.** `config/allowed_hashes.json`, the HMAC digest list that only the legacy `hfy-check-allowed` Lambda read, was deleted on 2026-10-14 (ruling P2-R51), and the allowlist publisher no longer writes it.
 
 ### `<code-bucket>`
 
