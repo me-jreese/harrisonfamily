@@ -36,10 +36,11 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups and the feature gate's `uat` group), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
+| [`comment-photos.js`](../../api/src/comment-photos.js) | Comment photo attachments: `normalizeNew` (the shape check), and `createUploadPhotos` with its `parse`, `owned` and `bind` (the `UPLOAD#` binding, `headUpload` and `checkLocation`). `uploadPhotosFor` wires it over the API's S3 client. See [Comment photos](#comment-photos). |
 | [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
 | [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. It validates with the shared [`profile-links.mjs`](../../shared/profile-links.mjs). See [Profile links](#profile-links). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
-| [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
+| [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). `headUpload(bucket, key)`: the `HeadObject` of a comment photo, with a 2 s timeout. See [Comment photos](#comment-photos). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
 | [`sync/store.js`](../../api/src/sync/store.js) | The cloud record store's keys and items (`REC#`, `SYNC#LOG`, `SYNC#HEAD`, `SYNC#BATCH#`, `GID#`, `IDALIAS#`), the batch id and request token, and the reads `applyBatch` needs. See [The cloud record store](#the-cloud-record-store). |
 | [`sync/apply.js`](../../api/src/sync/apply.js) | `applyBatch()`, the one write path into the record store. No route calls it yet. See [The cloud record store](#the-cloud-record-store). |
@@ -63,7 +64,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | Package | Version (lockfile) | Used for |
 | --- | --- | --- |
 | `@io-kit/content` | 0.3.1 | Post types and visibilities, `can` and visibility policy, `ContentError`, audit entry shape, list limits |
-| `@io-kit/comments` | 0.1.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
+| `@io-kit/comments` | 0.2.0 | Comment `can` policy, emoji check, `CommentError`, audit entry shape, list limits |
 | `@io-kit/notify` (`/server`) | 0.5.0 | The notification routes (five push routes and three inbox routes), the inbox store, persist-first delivery (`createDelivery`), subscription and preference stores, push payloads and sending |
 | `@io-kit/auth` (`/server`) | 2.2.0 | `resolveAuth`: JWT verification and claim mapping for the session cookie |
 | `@io-kit/mcp` (`/edge`, `/core`) | 0.1.0 | The MCP mount: bearer-token gate, protected-resource metadata and `401` challenges (`/edge`), and the JSON-RPC tools server evaluated against the policy table (`/core`) |
@@ -131,23 +132,23 @@ Two statuses exist for validation. Checks on the request itself (body parsing, a
 | --- | --- | --- |
 | 400 | `validation` | Unparseable or non-object body; missing `subject` on a comment route; upload input; a profile links person id, `links` or `version` of the wrong shape |
 | 400 | `cursor_invalid` | A posts or comments cursor that is malformed, or a posts cursor from another filter |
-| 400 | `photo_has_location` | A new post attachment whose stored bytes carry location metadata ([Location check](#location-check)) |
-| 400 | `upload_missing` | A new post attachment whose object is missing or empty, or whose type differs from the one it was presigned for |
+| 400 | `photo_has_location` | A new post or comment attachment whose stored bytes carry location metadata ([Location check](#location-check)) |
+| 400 | `upload_missing` | A new post or comment attachment whose object is missing or empty, or whose type differs from the one it was presigned for; a comment photo over 10 MB |
 | 401 | `unauthenticated` | No session cookie, or a token that fails verification |
 | 403 | `forbidden` | Failed origin check; caller lacks the permission for a post, comment or profile links action |
 | 403 | `self_react` | Reacting to your own comment |
-| 403 | `upload_not_owned` | A new post attachment that is not the caller's own, unexpired, not yet attached upload ([Upload binding](#upload-binding)) |
-| 404 | `not_found` | Unknown route; a route behind a feature gate that is closed to the caller; post missing or not visible to the caller; comment missing; malformed subject or comment id |
+| 403 | `upload_not_owned` | A new post or comment attachment that is not the caller's own, unexpired, not yet attached upload of the same purpose ([Upload binding](#upload-binding), [Comment photos](#comment-photos)) |
+| 404 | `not_found` | Unknown route; a route behind a feature gate that is closed to the caller; comment `attachments` on a create or edit, or an upload with `purpose` `comment`, while `commentPhotosV1` is closed to the caller; post missing or not visible to the caller; comment missing; malformed subject or comment id |
 | 405 | `method_not_allowed` | Known path, other method |
 | 409 | `conflict` | A post or comment write's transaction was cancelled by a failed condition, usually because the record changed or was deleted after it was read (see [Concurrent writes](#concurrent-writes)); a profile links write whose `version` is not the stored one, with the stored links in `details.current` |
 | 415 | `unsupported_media_type` | A write without a JSON content type |
-| 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body; malformed subject on comment create; emoji; profile link fields, listed in `details.fields` |
-| 422 | `contact_info` | A phone number, email address, street address, PO box or contact-channel link in a post's body, title or attachment description, or a comment's body ([Contact-information guard](#contact-information-guard)) |
+| 422 | `validation` | Post body, type, visibility, title, subject or attachments, or a post over the size cap; comment body or attachments; malformed subject on comment create; emoji; profile link fields, listed in `details.fields` |
+| 422 | `contact_info` | A phone number, email address, street address, PO box or contact-channel link in a post's body, title or attachment description, or a comment's body or attachment description ([Contact-information guard](#contact-information-guard)) |
 | 422 | `dob_not_allowed` | Only while `HFY_GUARD_DOB` is `on`: a birth day or month, and nothing else the guard refuses, in the same fields |
 | 500 | `server` | A comment create, edit or delete failed for a reason other than a cancelled transaction |
 | 500 | `internal` | Anything else |
 | 503 | `busy` | A post, comment or profile links write's transaction was cancelled by `TransactionConflict` on every one of its 4 attempts (see [Concurrent writes](#concurrent-writes)); nothing was written, retry |
-| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; a profile links transaction cancelled for any other reason, such as throttling; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new attachment on a handler built without an S3 client |
+| 503 | `unavailable` | A post write failed for a reason other than a failed condition or a conflict; a profile links transaction cancelled for any other reason, such as throttling; uploads with no presigner; the `UPLOAD#` write of a presign failed; a new post or comment attachment on a handler built without an S3 client; a comment photo's `HeadObject` that fails or takes longer than 2 s |
 
 ## Routes
 
@@ -156,9 +157,9 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | Name | Method | Path | Input | Success | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `me.get` | GET | `/me` | none | `200 {id, label, admin, can: {moderate, graduate, approve}}`, plus `badges: {accessRequests}` for admins only | Not an MCP tool. `admin` is `actor.admin` from `config/admins.json`, and `can.*` is computed on the server; clients never infer admin from `can.delete`. `badges.accessRequests` counts the GSI1 partition `ACCESSREQS#pending` (`0` when empty). If the badge count fails it is logged and `badges` is omitted (id, label, admin and `can.*` still return). Fields are additive only: later tasks add `ownRecord` and `editing`. Exempt from the [feature gate](#feature-gate) (`gateExempt`). `no-store`. |
-| `comments.list` | GET | `/comments` | query `subject` (required), `cursor`, `limit` | `200` thread | Oldest first |
-| `comments.create` | POST | `/comments` | body `subject`, `body`, optional `parentId` | `201` comment | Sends notifications |
-| `comments.update` | PATCH | `/comments/:id` | body `body`; `subject` in the body or the query | `200` comment | Author only |
+| `comments.list` | GET | `/comments` | query `subject` (required), `order` (`asc` default, or `desc` for newest first), `cursor`, `limit` | `200` thread | A cursor works only with the order that issued it: the other order answers `400 cursor_invalid` |
+| `comments.create` | POST | `/comments` | body `subject`, `body`, optional `parentId`, optional `attachments` | `201` comment | Sends notifications. `attachments` (up to 4; an empty `body` is allowed with one) is dark until `commentPhotosV1` is on: see [Comment photos](#comment-photos) |
+| `comments.update` | PATCH | `/comments/:id` | body `body`, optional `attachments`; `subject` in the body or the query | `200` comment | Author only. Photos can be removed or re-described, never added |
 | `comments.delete` | DELETE | `/comments/:id` | query `subject` (required), optional `reason` | `204` | Author or admin. `subject` is read from the query only. |
 | `comments.react` | POST | `/comments/:id/react` | body `emoji`; `subject` in the body or the query | `200` `{removed, reaction?}` | Set or toggle off |
 | `posts.list` | GET | `/posts` | query `cursor`, `limit`, `subject`, `type`, `author`, `visibility` | `200` `{items, cursor}` | Newest first |
@@ -167,7 +168,7 @@ All paths are under `/api`, and every route needs a session. Routes ignore body 
 | `posts.update` | PATCH | `/posts/:id` | body, all optional: `title`, `subject`, `body`, `attachments` | `200` post | Author only. `null` clears `title` or `subject`. |
 | `posts.visibility` | POST | `/posts/:id/visibility` | body `visibility` | `200` post | Author only |
 | `posts.delete` | DELETE | `/posts/:id` | none | `204` | Author or admin. Also removes the post's comment thread. |
-| `uploads.presign` | POST | `/uploads` | body `contentType`, `size` (a `filename` is ignored) | `201` | Presigned S3 PUT under `uploads/posts/` |
+| `uploads.presign` | POST | `/uploads` | body `contentType`, `size`, optional `purpose` (`post` default, or `comment`); a `filename` is ignored | `201` | Presigned S3 PUT under `uploads/posts/`, or `uploads/comments/` for `purpose` `comment` (jpeg, png or webp only; needs `commentPhotosV1`) |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
 | `notifications.vapid-public-key` | GET | `/notifications/vapid-public-key` | none | `200` `{public_key}` | Kit route |
@@ -217,7 +218,7 @@ A `ROUTES` entry may carry `gate`:
 ### The flags file
 
 - **Source.** `GET https://<site>/_data/flags.json`: the file the site itself serves, read over HTTPS through the CDN, so the role needs no S3 grant. `FLAGS_URL` overrides it ([Environment](#environment)). A URL that is not `https://` stops the function at start-up. Redirects are refused, and a read times out after 3 s.
-- **Cache.** 60 s per container from the last successful read, and concurrent requests share one read. Only routes with a feature gate read the file.
+- **Cache.** 60 s per container from the last successful read, and concurrent requests share one read. Routes with a feature gate read the file, and so does any handler that calls `c.featureOn`: `comments.create` and `comments.update` when the request carries `attachments`, and `uploads.presign` for `purpose` `comment` ([Comment photos](#comment-photos)).
 - **Failures.** A non-2xx status, a body that is not a JSON object, a timeout or a network error keeps the last good copy for up to 10 minutes after the last successful read. After that every feature is off until a read succeeds. A failed read is retried after 5 s. The log line is `flags read failed (keeping the last good flags)` or `flags read failed (features off)`, with only the error's name and code.
 - **Values.** Only boolean values are kept, and a feature is on only when its value is exactly `true`.
 - **Flips.** A change to `flags.json` reaches the API within about 60 s of the site deploy, with no API deploy.
@@ -225,6 +226,8 @@ A `ROUTES` entry may carry `gate`:
 ### `featureOn` for producers
 
 `featureOn(name, principal)` applies the same rule outside a route. `principal` is a gramps id or an actor: a `uat` principal gets `true`, anyone else the deployed value. `index.js` configures it with the deployed gate; until then it returns `false`. A route handler gets `c.featureOn(name)` for its caller, which counts the caller's preview header when they are `uat`.
+
+**Comment photos** ([`routes.js`](../../api/src/routes.js)). `comments.create`, `comments.update` and `uploads.presign` predate the gate and declare none. Their handlers call `c.featureOn("commentPhotosV1")` when the request carries comment `attachments` or `purpose` `comment`, and answer `404 not_found` while it is off for the caller. Requests without them never read the flag ([Comment photos](#comment-photos)).
 
 **Persist-first inbox writes** ([`notify.js`](../../api/src/notify.js)). The notifier stores an inbox item for a recipient, and puts the recipient's unread count in the push as `app_badge`, only while `featureOn("inboxV1", recipient)`. While `inboxV1` is off, no inbox item is stored for anyone outside `uat`, and pushes carry no badge. `new_family_post` is push-only and never stored. `index.js` wires a `DynamoNotificationStore` on the app table (`INBOX#<principal>` rows, `@io-kit/notify` 0.5.0). Delivery is the kit's `createDelivery`: it stores first, then pushes. Storing needs no `VAPID_SECRET`; only the push does. Unread items have no TTL, and a 90-day TTL starts when an item is read. The three inbox routes are dark behind `inboxV1` too (404 outside `uat`).
 
@@ -295,7 +298,7 @@ The post write then attaches each upload in the same transaction: `SET attached 
 
 ### Location check
 
-`checkLocation(bucket, key)` in [`upload-guard.js`](../../api/src/upload-guard.js) runs on every new attachment, after the binding checks and before the write. It reads the object with `GetObject` and `Range: bytes=0-262143`, so the first 256 KiB is inspected. A WebP whose data runs past that read is read a second time with `Range: bytes=-262144`, because its `EXIF` and `XMP ` chunks follow the image data. The object's size comes from the first read's `Content-Range`, or from the RIFF size when S3 gives none. The check refuses `400 photo_has_location` when the bytes carry any of:
+`checkLocation(bucket, key)` in [`upload-guard.js`](../../api/src/upload-guard.js) runs on every new attachment of a post or a comment ([Comment photos](#comment-photos)), after the binding checks and before the write. It reads the object with `GetObject` and `Range: bytes=0-262143`, so the first 256 KiB is inspected. A WebP whose data runs past that read is read a second time with `Range: bytes=-262144`, because its `EXIF` and `XMP ` chunks follow the image data. The object's size comes from the first read's `Content-Range`, or from the RIFF size when S3 gives none. The check refuses `400 photo_has_location` when the bytes carry any of:
 
 | Metadata | Where it is looked for | Counts as a location when |
 | --- | --- | --- |
@@ -365,9 +368,10 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 
 ### Comment object
 
-`{id, threadId, parentId?, author: {id, label}, body, created_at, edited_at?, can: {edit, delete, react}}`
+`{id, threadId, parentId?, author: {id, label}, body, attachments?, created_at, edited_at?, can: {edit, delete, react}}`
 
-- `body` is trimmed, must not be empty, and may be at most 1000 characters after trimming. Otherwise `422`. The trimmed text is stored.
+- `body` is a required string on create and edit. A missing or non-string `body` is `422 validation` "body is required", with or without photos, so an edit that leaves `body` out never empties a comment. It is trimmed and may be at most 1000 characters after trimming. It may be empty only while the comment holds a photo; otherwise an empty body is `422`. The trimmed text is stored.
+- `attachments` appears only on a comment with photos ([Comment photos](#comment-photos)).
 - `threadId` is the subject.
 - `author.label` is the caller's display label, never an email address ([Session verification](#session-verification)).
 
@@ -379,15 +383,15 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 { "thread": { "id": "<subject>", "topic": "default", "comments": [], "reactions": {}, "cursor": "<next>" }, "cursor": "<next>" }
 ```
 
-- Comments are oldest first, by id. `limit` defaults to 50 and is clamped to 1 through 200. A `limit` that is not a number is not clamped: it becomes `NaN` and is sent as the DynamoDB query's `Limit`. If the query succeeds, `comments` is empty and there is no cursor. If DynamoDB rejects the value, the response is `500 internal`.
-- `cursor` is the base64url encoding of the last comment id on the page. It appears, both inside `thread` and at the top level, only when more comments remain. A value that does not decode to a ULID is `400 cursor_invalid`.
+- Comments are oldest first, by id, unless `order=desc` (newest first); a cursor encodes the order that issued it. `limit` defaults to 50 and is clamped to 1 through 200. A `limit` that is not a number is not clamped: it becomes `NaN` and is sent as the DynamoDB query's `Limit`. If the query succeeds, `comments` is empty and there is no cursor. If DynamoDB rejects the value, the response is `500 internal`.
+- `cursor` is the base64url encoding of `a:<id>` (oldest first) or `d:<id>` (newest first), where `<id>` is the last comment id on the page. It appears, both inside `thread` and at the top level, only when more comments remain. A cursor works only with the order that issued it. A bare comment id, the cursor issued before `order` existed, is still accepted as an oldest-first cursor. Anything else, including a cursor from the other order, is `400 cursor_invalid`.
 - `reactions` maps a target to its reactions, oldest first. Targets are `comment:<id>` for the comments on the page, plus `root`. No route creates `root` reactions. A reaction is `{emoji, by, created_at}`.
 
 ### Create, edit, delete
 
 - **Create.** A `parentId`, if given, must name a comment in the same thread, otherwise `404`. Any comment can be a parent, so replies can nest. Returns `201`.
-- **Edit.** Author only. If the trimmed text equals the stored body, the comment is returned unchanged with no write. Otherwise the body is replaced and `edited_at` is set.
-- Create and edit run the [contact-information guard](#contact-information-guard) on `body` as sent, before the unchanged-body shortcut and before any write.
+- **Edit.** Author only. If the trimmed text equals the stored body and the photos are unchanged, the comment is returned unchanged with no write. Otherwise the body is replaced and `edited_at` is set. An edit can remove photos or change their `alt`, never add one ([Comment photos](#comment-photos)).
+- Create and edit run the [contact-information guard](#contact-information-guard) on `body` as sent and on every photo `alt`, before the unchanged-body shortcut and before any write.
 - **Delete.** Author or admin. Returns `204`. The comment and every reaction on it are deleted in one transaction with the audit item. Replies are not deleted and keep their `parentId`. The same transaction revokes the comment's credit, if it has one: its event delete and five counter updates ([Contributions ledger](#contributions-ledger)). A DynamoDB transaction holds at most 100 actions, so a credited comment with more than 92 reactions cannot be deleted, nor a comment from before the ledger (which has no event) with more than 98. Such a delete is `500 server` and changes nothing. See [Permissions](#permissions) for `reason`.
 - A create, edit or delete transaction cancelled by a failed condition, such as an edit that races another edit or a delete, is `409 conflict` ("comment changed concurrently"). One that stays cancelled by `TransactionConflict` after its retries is `503 busy`. Any other store failure is `500 server`.
 - On a `post:<ulid>` thread, list, create, edit and react first check that the caller can see the post ([Subjects](#subjects)).
@@ -451,7 +455,7 @@ R-18 (HFY-PLN-002 BRD2 section 5.2): personal contact information is never store
 | --- | --- | --- |
 | Post create | `body`, `title`, every attachment `alt` | `/body`, `/title`, `/attachments/<i>/alt` |
 | Post `PATCH` | The fields the request sends: `body`; `title` when it is a string; every `alt` when `attachments` is sent | The same |
-| Comment create and edit | `body`, as sent (before trimming) | `/body` |
+| Comment create and edit | `body`, as sent (before trimming); every attachment `alt` when `attachments` is sent | `/body`, `/attachments/<i>/alt` |
 
 The MCP tools `hfy_posts_create` and `hfy_comments_create` run these same route handlers through `handler.invoke`, so they are guarded too.
 
@@ -547,7 +551,7 @@ What the items hold:
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
 - Profile links items (`PLINKS#<gramps-id>` / `META`), one per person, carry `entity: "plinks"`, `links` (as in [Links object](#links-object)), `version`, `updatedAt` and `updatedBy` (the member id of the last writer). A person whose links were never written has no item.
 - Audit items are listed under [Audit records](#audit-records).
-- Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post attaches the upload, then `attached` (the post id) instead of `ttl`. See [Upload binding](#upload-binding).
+- Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post` or `comment`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post or comment of the same purpose attaches the upload, then `attached` (the post or comment id) instead of `ttl`. See [Upload binding](#upload-binding) and [Comment photos](#comment-photos).
 - Contribution events and counters are listed under [Contributions ledger](#contributions-ledger). A credited post or comment carries `contrib: { id }`, the id of its event, on every stored copy.
 
 Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<id>` / `META`) and `gsiThread`. Neither is used, because comments live under `THREAD#<subject>` ([item layout](architecture.md#item-layout)).
@@ -558,7 +562,7 @@ Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<i
 
 | Write | Ledger change |
 | --- | --- |
-| Comment create | Credit 1 (`kind: comment`). The stored comment gets `contrib: { id }`. |
+| Comment create | Credit 1 plus 1 per photo (`kind: comment`; [Comment photos](#comment-photos)). The stored comment gets `contrib: { id }`. A comment with 2 photos adds 3. |
 | Comment delete, by its author or an admin | Revoke the event of the comment's author. |
 | Post created published, or a draft's first publish | Credit 1 plus 1 per image attachment (`kind: post`), once per post. All three post items get `contrib: { id }`. A post with 3 photos adds 4. |
 | Withdraw, or return to draft | The event is hidden. No count changes. |
@@ -566,7 +570,7 @@ Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<i
 | Post delete, by its author or an admin | Revoke the event of the post's author. |
 | Post delete, for each comment removed with the post | Revoke each comment's event. The revokes of one transaction are merged, so 30 comments by one author in one month are one decrement per counter key. |
 
-Not counted: edits of posts and comments (so photos added to a published post by a later edit earn nothing: the photo credit is fixed at first publish, and a delete returns exactly what was credited), reactions, drafts, and desktop pushes. A comment made through an MCP tool is credited like any other and its event carries `via: "mcp"`; HTTP calls carry `via: "ui"`. An MCP post is always a draft, so it earns nothing until a person publishes it. A write that the R-18 guard or the upload binding refuses stores nothing, so it earns nothing: the guard runs before the transaction, and the upload bindings commit in the same transaction as the credit.
+Not counted: edits of posts and comments (so photos added to a published post by a later edit earn nothing, and a photo removed from a comment by an edit keeps its credit: the photo credit is fixed at first publish, and a delete returns exactly what was credited), reactions, drafts, and desktop pushes. A comment made through an MCP tool is credited like any other and its event carries `via: "mcp"`; HTTP calls carry `via: "ui"`. An MCP post is always a draft, so it earns nothing until a person publishes it. A write that the R-18 guard or the upload binding refuses stores nothing, so it earns nothing: the guard runs before the transaction, and the upload bindings commit in the same transaction as the credit.
 
 An event is `{ entity: "contrib", id, kind, actor: { id, label }, at, weight, photos, via, ref: { type, id, thread? }, subject?, hidden? }`. It copies no body text. `weight` is what the event adds to `n`: 1 for the kind plus `photos`. The counter rows hold `n`, `n_<kind>` for `post`, `comment`, `proposal_accepted`, `self_edit`, `tag` and `photo_to_record`, `n_photo`, and on `TOTAL` rows `first_at`. Readers clamp a negative value to 0, because revoking a credit whose `D#` row has already expired leaves a negative row that expires within days.
 
@@ -684,30 +688,42 @@ These responses come from the kit. Kit errors have the shape `{"error": "<text>"
 - `PUT` replaces the whole preference record. Type names are not checked against the four types. `GET` lists only the types that are stored.
 - The `DELETE` body is read by the kit itself, so it needs no JSON content type.
 
+## Comment photos
+
+hfy-comments-photos-desc-api (BRD2 9.2). Behind `commentPhotosV1` (default off; a dark call is `404 not_found`).
+
+1. `POST /uploads` with `purpose: "comment"` writes `UPLOAD#<ulid>` `{owner, purpose: "comment", key, contentType, ttl 24 h}` and returns `uploads/comments/<ulid>/photo.<ext>`. The name is the server's; a client file name is ignored. HEIC is refused (`400 validation`).
+2. `comments.create` takes `attachments`: at most 4 of `{url, mime, width?, height?, alt?}`. `url` is `<MEDIA_PUBLIC_BASE>/uploads/comments/<ulid>/<name>` or the same path relative; `mime` is jpeg, png or webp; `alt` is 500 characters or fewer; `width` and `height` are integers from 1 to 100000. The stored attachment is `{id: <upload ulid>, kind: "image", url: /uploads/comments/<ulid>/<name>, mime, width?, height?, alt?}`.
+3. Each photo must be the actor's own upload with purpose `comment`, unexpired and not yet attached, or the write is `403 upload_not_owned`. The API then HEADs the object (it exists, its `ContentType` equals the declared `mime` and the type presigned, and it is at most 10 MB; 2 s timeout, in parallel) and reads the first 256 KiB with `checkLocation`: `400 upload_missing` when HEAD finds no object (S3's `403` or `404`), the type differs or the object is over 10 MB, `400 photo_has_location` when the bytes carry a position or place, and `503 unavailable` when HEAD fails otherwise or takes longer than 2 s. A handler built without an S3 client answers `503 unavailable` to any comment with `attachments`.
+4. The comment write attaches each upload in the same transaction (`SET attached = <comment id> REMOVE ttl`, conditional on owner, purpose and not attached), so a binding that changes after the read cancels the write (`403 upload_not_owned`, nothing stored).
+5. `body` may be the empty string while the comment holds a photo. It must still be sent: a missing or non-string `body` is `422 validation` "body is required" on create and edit. `body` and every `alt` run the contact-information guard (`422 contact_info`, pointer `/attachments/<n>/alt`).
+6. `comments.update` can remove attachments or change an `alt` (matched by `url`, ids kept); an unchanged body and photo list is a no-op with no audit entry. It cannot add a photo: another member's key is `403 upload_not_owned`, anything else `422 validation` on `attachments`. Deleting a comment keeps its objects.
+
 ## Uploads
 
-`POST /uploads` returns a presigned S3 PUT for one post photo ([`uploads.js`](../../api/src/uploads.js), [`presign.js`](../../api/src/presign.js)). The Lambda never handles the image bytes.
+`POST /uploads` returns a presigned S3 PUT for one post photo, or one comment photo with `purpose` `comment` ([`uploads.js`](../../api/src/uploads.js), [`presign.js`](../../api/src/presign.js)). The Lambda never handles the image bytes.
 
 ### Request
 
-`{contentType, size}`. Each failure is `400 validation`.
+`{contentType, size, purpose?}`. Each failure is `400 validation`, except `purpose` `comment` while `commentPhotosV1` is closed to the caller, which is `404 not_found` before any other check.
 
 | Field | Rule |
 | --- | --- |
-| `contentType` | `image/jpeg`, `image/png`, `image/webp` or `image/heic` |
+| `contentType` | `image/jpeg`, `image/png`, `image/webp` or `image/heic`. For `purpose` `comment`, `image/jpeg`, `image/png` or `image/webp` only (`COMMENT_IMAGE_TYPES`) |
 | `size` | Positive integer, in bytes, at most 10 MB (10,485,760) |
+| `purpose` | Optional: `post` (the default) or `comment` |
 
 A `filename` field is accepted and ignored. The islands send a fixed `filename: "photo"`, never the file's own name, because the `hfy-api` deployed before the RG-2 change set refuses a presign without one (`400 validation`, "filename is required") and the site goes live on merge, ahead of that API. That API builds the key from the name too, so its keys are `photo.<ext>` as well.
 
 ### Object key
 
-The key is `uploads/posts/<ulid>/photo.<ext>` in `MEDIA_BUCKET` (`UPLOAD_PREFIX`, HFY-R58), where `<ext>` is `jpg`, `png`, `webp` or `heic` for the content type. The server chooses the whole key, so the uploader's file name, which can name a person, never reaches the bucket or a URL. The key is never under `media/`, which the Gramps data sync mirrors with `--delete`.
+The key is `uploads/posts/<ulid>/photo.<ext>` in `MEDIA_BUCKET` (`UPLOAD_PREFIX`, HFY-R58), or `uploads/comments/<ulid>/photo.<ext>` for `purpose` `comment` (`COMMENT_UPLOAD_PREFIX`), where `<ext>` is `jpg`, `png`, `webp` or `heic` for the content type. The server chooses the whole key, so the uploader's file name, which can name a person, never reaches the bucket or a URL. The key is never under `media/`, which the Gramps data sync mirrors with `--delete`.
 
 Uploads made before this rule keep keys built from the uploader's cleaned file name. Posts that already hold them keep them.
 
 ### Binding
 
-Before presigning, the API writes the `UPLOAD#<ulid>` / `META` item that binds the upload to its uploader: `owner`, `purpose` `post`, `key`, `contentType`, `size`, `created_at` and a `ttl` 24 hours later, on the condition that the item does not exist yet. If that write fails, the answer is `503 unavailable` and no URL is issued. A post may attach the upload only on the terms in [Upload binding](#upload-binding).
+Before presigning, the API writes the `UPLOAD#<ulid>` / `META` item that binds the upload to its uploader: `owner`, `purpose` (`post` or `comment`), `key`, `contentType`, `size`, `created_at` and a `ttl` 24 hours later, on the condition that the item does not exist yet. If that write fails, the answer is `503 unavailable` and no URL is issued. The purpose decides what may attach the upload: a post, on the terms in [Upload binding](#upload-binding), or a comment, on the terms in [Comment photos](#comment-photos). A post takes only `uploads/posts/` URLs and a comment only `uploads/comments/` URLs (`422 validation` otherwise), and each also requires its own `purpose` on the binding item (`403 upload_not_owned`).
 
 ### Response
 
@@ -721,7 +737,7 @@ Before presigning, the API writes the `UPLOAD#<ulid>` / `META` item that binds t
 | `headers` | `{"Content-Type": <contentType>}` |
 | `expiresIn` | `300` |
 
-The presigner signs `content-type` and `content-length` into the URL (`signableHeaders`), so S3 rejects a PUT whose `Content-Type` differs from the validated image type or whose body is not exactly `size` bytes. Send the returned `headers` exactly. The URL carries no checksum parameters: the S3 client is built with `requestChecksumCalculation: "WHEN_REQUIRED"`, because the SDK default would sign a checksum of an empty body and every real upload would fail with `400 BadDigest`. The API records the binding item and nothing else. The client puts `publicUrl` into the post's `attachments`. Nothing removes objects that no post references; their binding items expire after 24 hours.
+The presigner signs `content-type` and `content-length` into the URL (`signableHeaders`), so S3 rejects a PUT whose `Content-Type` differs from the validated image type or whose body is not exactly `size` bytes. Send the returned `headers` exactly. The URL carries no checksum parameters: the S3 client is built with `requestChecksumCalculation: "WHEN_REQUIRED"`, because the SDK default would sign a checksum of an empty body and every real upload would fail with `400 BadDigest`. The API records the binding item and nothing else. The client puts `publicUrl` into the post's or comment's `attachments`. Nothing removes objects that no post or comment references; their binding items expire after 24 hours.
 
 `uploadUrl` points at the bucket's own S3 endpoint (`https://<site-bucket>.s3.<region>.amazonaws.com/...`, in the function's region), never at `<site>`, so the PUT goes straight to S3 and never passes through CloudFront or the private data gate. [`presign.test.js`](../../api/test/presign.test.js) checks the host. `publicUrl` is on `<site>`, and reading it back goes through CloudFront ([Reading photos back](#reading-photos-back)).
 
@@ -729,7 +745,7 @@ The presigner signs `content-type` and `content-length` into the URL (`signableH
 
 - The handler returns `503 unavailable` ("uploads are not configured") only when it was built without a presigner. `index.js` always supplies one, and `MEDIA_BUCKET` and `MEDIA_PUBLIC_BASE` have defaults, so the deployed function never returns `503` for missing `MEDIA_*` settings. A wrong bucket shows up later, as a failed PUT.
 - The browser's PUT goes straight to S3 on another origin, so it needs the bucket CORS rule in [`site-bucket-cors.json`](../../infrastructure/cloudformation/site-bucket-cors.json): `PUT` from `https://<site>` or `https://www.<site>`, with the `Content-Type` header. The browser sets `Content-Length` itself, outside the preflight, so the rule does not list it, though the URL signs it. The site bucket is not managed by `app-stack.yaml`, so that rule is applied by hand. Without it the browser blocks the PUT. `scripts/infra/check-site-bucket-cors.sh` checks the live rule ([Architecture](architecture.md#site-bucket)).
-- The Lambda role may put objects only under `uploads/posts/*` in the media bucket (`PostPhotoUploads` in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)).
+- The Lambda role may put objects only under `uploads/posts/*` and `uploads/comments/*` in the media bucket (`PostPhotoUploads` and `CommentPhotoUploads` in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)).
 - The site deploy's sync excludes `uploads/*` (the `exclude` list in [`ci.manifest.yaml`](../../ci.manifest.yaml)), and the deploy role is denied `s3:PutObject` and `s3:DeleteObject` under `uploads/*` ([Repository operations](repository-operations.md#deploy-role-github-rolesyaml)), so uploaded photos survive site deploys.
 - The private data gate does not affect uploading, because the PUT goes to S3 directly. A failed upload is never a `401` from the gate.
 

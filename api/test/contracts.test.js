@@ -4,7 +4,7 @@ import { registerContentContract, FIXTURE_POSTS } from "@io-kit/content/testing"
 import { registerCommentContract } from "@io-kit/comments/testing";
 import { createContentSource, seedPosts } from "../src/content.js";
 import { createCommentSource } from "../src/comments.js";
-import { TABLE, UPLOAD_PHOTO, bindUploadPhoto, checkUploadPhoto, cmds, createFakeDdb, createUlidFactory, ticker, ulidTime } from "./world.js";
+import { TABLE, UPLOAD_PHOTO, contractPhotos, bindUploadPhoto, checkUploadPhoto, cmds, createFakeDdb, createUlidFactory, ticker, ulidTime } from "./world.js";
 
 // @io-kit/content 0.1.1+ reports a case the host cannot run (a capability it does not declare) through `skip`, so it shows as skipped, never as passed.
 const api = { describe, it: (name, fn) => it(name, fn), skip: (name, fn) => it.skip(name, fn) };
@@ -38,7 +38,7 @@ registerCommentContract(
       const now = ticker();
       const ulid = createUlidFactory();
       const audit = [];
-      return { audit, as: (viewer) => createCommentSource({ ddb, cmds, table: TABLE, viewer, now, ulid, uid: () => ulid(now()), maxLength: 1000, audit: (e) => void audit.push(e) }) };
+      return { audit, as: (viewer) => createCommentSource({ ddb, cmds, table: TABLE, viewer, now, ulid, uid: () => ulid(now()), maxLength: 1000, audit: (e) => void audit.push(e), photos: contractPhotos /* test-only policy; the production UPLOAD#/HEAD binding is covered over HTTP in comment-photos.test.js */ }) };
     },
     threadId: "person:I0001",
     author: roles("I0003", "Ann Author"),

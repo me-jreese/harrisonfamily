@@ -105,7 +105,7 @@ Paths:
 - [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `photo-tags.js` (the pure geometry, rect words and tag cleaning), `photo-tags-ui.js` (the DOM part of the photo tags island), `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css`, `islands/src/guard.css` and `islands/src/photo-tags.css` sit beside the directory.
 - [`islands/build.mjs`](../../islands/build.mjs): the build. It bundles the islands with esbuild and writes the outputs in [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - [`islands/kit-content.mjs`](../../islands/kit-content.mjs): how the build and the `node:test` suites load `@io-kit/content/react`. Its esbuild plugin keeps the kit's `DocumentEditor` from bundling Cloudscape's stylesheets into the posts islands, and the build fails if an island bundles `DocumentEditor`.
-- [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract` and `lint:css`. Every dependency is pinned to an exact version.
+- [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract`, `lint:css` and `measure:search`. Every dependency is pinned to an exact version.
 - [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs): the configuration of the island specs. See [Tests](#tests).
 - [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh): runs `npm ci` and `npm run build:islands`, then checks that `shell.js` and `shell.css` exist and prints `built islands -> 11ty/js/islands`. The build it runs writes every other output too, although the script checks only those two files.
 - [`11ty/js/islands/`](../../11ty/js/islands/): the committed build output.
@@ -191,15 +191,16 @@ Paths:
   - `origin.js`: the `X-Origin-Verify` check.
   - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `comment-photos.js`: comment photo attachments behind `commentPhotosV1`: the shape check, the `UPLOAD#` binding of `purpose` `comment` uploads, and the `HeadObject` and location checks before the write ([API: Comment photos](api.md#comment-photos)).
   - `contrib.js`: the contributions ledger (HFY-TSK-255): builders for the `CONTRIB#` event and its five `CSTAT#` counter updates (`contribOps`, `revokeOps`, `hideOps`, `mergeOps`), which `content.js` and `comments.js` commit in the same transaction as the write that earned or lost the credit, and the event read `getEvent` ([API: Contributions ledger](api.md#contributions-ledger)).
   - `links.js`: profile links (HFY-TSK-193), the store behind `GET` and `PUT /api/people/:id/links`: one `PLINKS#<gramps-id>` item per person, written with an `AUDIT#plinks:<gramps-id>` item and a version check. The owner sets or clears, an admin only clears, and both routes are behind `profileLinks`. It validates with `shared/profile-links.mjs` ([API: Profile links](api.md#profile-links)).
   - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
-  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
+  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos, and `headUpload`, the `HeadObject` of a comment photo with a 2 s timeout.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `allowlist-store.js`: the `ALLOW#` grant and revoke transaction items (conditional, audited) and the composite member reader that the auth edge and any later allowlist consumer, such as the chat directory route, share (HFY-TSK-134).
   - `notify.js`: push notifications and their templates.
-  - `uploads.js`: the upload route and the `UPLOAD#` binding.
+  - `uploads.js`: the upload route (`purpose` `post` or `comment`) and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
   - `sync/store.js`, `sync/apply.js`, `sync/hooks.js`: the cloud record store: key and item builders, `applyBatch()` (one `TransactWriteItems` per batch with the dense seq, receipt, GID guard and audit), and the commit-hook registry. No route reaches them yet ([API: The cloud record store](api.md#the-cloud-record-store)).
   - `sync/validator.js`, `sync/checker.js`, `sync/schema.js`, `sync/view.js`, `sync/errors.js`: the server validator that `applyBatch()` runs on every call (HFY-TSK-245): step-up and the destructive budget, the Gramps schema and `MediaRef.rect`, the privacy checker over `gramps/redaction/redaction-v1.json` (with RFC 6901 pointers, across the store view and the batch), id rules and integrity. It reads `gramps/schema/gramps-6.0.6.schema.json` and the policy, which `scripts/ci/package-api.sh` stages beside `src/`. No route reaches it yet ([API: The server validator](api.md#the-server-validator)).
@@ -224,7 +225,7 @@ Facts:
 - Every `/api` route needs the auth-edge session cookie (`io_id`), which the API verifies against the edge's public JWKS. The MCP paths never read that cookie: they are bearer-gated. See [MCP server](#mcp-server).
 - Admins are the gramps IDs listed in `config/admins.json` in `<config-bucket>`. The list fails closed: when the file is absent or unreadable, nobody is an admin, so posts and comments have no moderators.
 - An author label is never an email address. It is the session's `name` when that is a usable label without `@`, else the person's `displayName` from `person/<gramps-id>.json` in `<site-bucket>`, else the gramps ID. The role may read `person/*` in that bucket for this lookup only. Labels are cached per container.
-- `POST /api/uploads` returns a presigned S3 PUT for a key under `uploads/posts/<ulid>/` in the site bucket. The content type is signed, so S3 rejects a PUT with a different `Content-Type`.
+- `POST /api/uploads` returns a presigned S3 PUT for a key under `uploads/posts/<ulid>/` in the site bucket, or under `uploads/comments/<ulid>/` for `purpose` `comment`, which needs `commentPhotosV1`. The content type is signed, so S3 rejects a PUT with a different `Content-Type`.
 - The browser PUTs to the bucket's S3 endpoint, not through CloudFront, so a members-only `/uploads/*` never sees an upload (`api/test/presign.test.js`). Reading a photo back goes through CloudFront's `/uploads/*` behavior: see [Infrastructure](#infrastructure).
 - Push notifications are sent only when the stack parameter `VapidSecretName` names a VAPID secret. The live secret is `harrisonfamily/api/vapid`, a JSON `{subject, publicKey, privateKey}` whose `subject` is an `https://` URL, so no email address goes to the push services. Without the secret, subscriptions and preferences are stored but nothing is sent. See [How to turn on push notifications](../how-to/turn-on-push-notifications.md).
 - The push templates in `notify.js` (`TEMPLATE_REGISTRY`) and the lock-screen preview on `/me/notifications/` (`CATALOG` in `islands/src/islands/notifications.jsx`) carry the same text. They are kept in step by hand; no test compares them.
@@ -503,8 +504,8 @@ Paths:
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): `node:test`.
 - [`tests/client/`](../../tests/client/): `node:test` suites `auth-continuity.test.mjs` and `data-fetch.test.mjs`.
 - [`islands/tests/`](../../islands/tests/):
-  - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
-  - Playwright specs: `asset-versions`, `auth-continuity`, `d11-fixes`, `flags-fallback`, `islands-look`, `legacy-pages`, `notifications`, `person`, `person-page`, `posts`, `qa-fixes`, `qa2-fixes`, `search`, `shell`, `sw` and `theme-foundation`.
+  - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `feed-conformance`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
+  - Playwright specs: `asset-versions`, `auth-continuity`, `d11-fixes`, `flags-fallback`, `islands-look`, `legacy-pages`, `notifications`, `notifications-roundtrip`, `person`, `person-page`, `posts`, `qa-fixes`, `qa2-fixes`, `search`, `shell`, `sw` and `theme-foundation`.
   - Fixtures, all synthetic: `fixtures/islands-look.json`, `fixtures/person-legacy.json`, `fixtures/person-synthetic.json` and `fixtures/tree-synthetic.svg`.
 - [`scripts/cloudfront/test/`](../../scripts/cloudfront/test/): `node:test` suite `append-index.test.mjs` and its case table `append-index.cases.json`.
 - [`scripts/infra/test/`](../../scripts/infra/test/):
