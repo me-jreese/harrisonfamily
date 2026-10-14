@@ -52,8 +52,8 @@ Parameters:
   JoinSesIdentityArn: { Type: String, Default: "", Description: "Verified SES identity ARN of the join subdomain (same region) that sends the access-request mail from the auth edge (env: none, the grant only). Empty leaves the edge without a SendEmail grant, so the code route answers 503 unavailable" }
   JoinFromAddress: { Type: String, Default: "", AllowedPattern: "^$|^[^<>\\s]+@[^<>\\s]+$", Description: "Bare From address on the join identity, for example: no-reply@join.example.test (env JOIN_FROM_ADDRESS). Bare because the ses:FromAddress condition on the grant compares it exactly" }
   JoinSesConfigurationSet: { Type: String, Default: "", Description: "SES configuration set for access-request mail only: no open or click tracking, bounce and complaint feedback (env JOIN_SES_CONFIGURATION_SET). Required whenever JoinSesIdentityArn is set, and the code route answers 503 unavailable without it" }
-  JoinBounceAlarmName: { Type: String, Default: hfy-access-request-bounce, Description: "CloudWatch alarm on the join configuration set's bounce rate. The edge reads its state (cloudwatch:DescribeAlarms) and answers 503 unavailable on the code route while it is in ALARM, or if the alarm does not exist" }
-  JoinComplaintAlarmName: { Type: String, Default: hfy-access-request-complaint, Description: "CloudWatch alarm on the join configuration set's complaint rate; read like JoinBounceAlarmName" }
+  JoinBounceAlarmName: { Type: String, Default: hfy-ses-access-request-bounce-rate, Description: "CloudWatch alarm on the join configuration set's bounce rate. The edge reads its state (cloudwatch:DescribeAlarms) and answers 503 unavailable on the code route while it is in ALARM, or if the alarm does not exist" }
+  JoinComplaintAlarmName: { Type: String, Default: hfy-ses-access-request-complaint-rate, Description: "CloudWatch alarm on the join configuration set's complaint rate; read like JoinBounceAlarmName" }
   ChatServicePublicKeys: { Type: String, Default: "", Description: "JSON array of {kid, spki} chat-worker service public keys (env CHAT_SERVICE_PUBLIC_KEYS); public, so not a secret. Empty makes the chat service routes answer 503" }
   AlarmEmail: { Type: String, Default: "", Description: "Address subscribed to the alarm topic (io). Empty creates the topic without a subscription. The subscription is confirmed from the email it sends" }
   BreakGlassPrincipalArn: { Type: String, AllowedPattern: "^arn:aws[a-z-]*:iam::[0-9]{12}:(user|role)/.+$", Description: "IAM user or role (io) allowed to assume hfy-data-breakglass with MFA. Compared by ARN in a condition, so the role survives the principal being recreated" }
@@ -148,6 +148,11 @@ Resources:
                 Effect: Allow
                 Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem]
                 Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              # HFY-TSK-178: the record-change fan-out reads the table stream (the RecordFanoutMapping below). Read-only, this table's stream only.
+              - Sid: RecordFanoutStream
+                Effect: Allow
+                Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator]
+                Resource: !GetAtt Table.StreamArn
               - Sid: AdminList
                 Effect: Allow
                 Action: s3:GetObject
@@ -239,6 +244,25 @@ Resources:
           SYNC_BUCKET: !Ref SyncBucketName
           SES_FROM_ADDRESS: !Ref SesFromAddress
           SES_CONFIGURATION_SET: !Ref SesConfigurationSet
+
+  # HFY-TSK-178 (hfy-record-change-fanout; BRD2 D2-02, review SI-20): record-change notifications come from the render outbox only. The renderer
+  # writes SYNC#RENDERED/<seq> in its live passes; this mapping wakes hfy-api for each insert (KEYS_ONLY stream: the consumer reads the item back).
+  # Nothing is inserted while RenderMode is off or shadow, and delivery is gated per recipient by the recordSubsV1 flag, so the mapping is inert
+  # until the cutover and the flag. A failed record is retried 3 times and then dropped (delivery is a nicety; the dedupe claims make a replay by
+  # `aws lambda invoke --payload '{"source":"record-fanout","seq":N}'` safe).
+  RecordFanoutMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref Function
+      EventSourceArn: !GetAtt Table.StreamArn
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+      MaximumRetryAttempts: 3
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"Keys":{"PK":{"S":["SYNC#RENDERED"]}}}}'
 
   FunctionUrl:
     Type: AWS::Lambda::Url

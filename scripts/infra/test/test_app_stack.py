@@ -213,7 +213,7 @@ class SyncInfra(unittest.TestCase):
             "SyncBucketName": "harrisonfamily-sync", "AlarmEmail": "",
             # HFY-TSK-195 (P2-R23): the access-request mail identity, configuration set and alarms are separate from Cognito's and the API's
             "JoinSesIdentityArn": "", "JoinFromAddress": "", "JoinSesConfigurationSet": "",
-            "JoinBounceAlarmName": "hfy-access-request-bounce", "JoinComplaintAlarmName": "hfy-access-request-complaint",
+            "JoinBounceAlarmName": "hfy-ses-access-request-bounce-rate", "JoinComplaintAlarmName": "hfy-ses-access-request-complaint-rate",
         }
         for name, default in expected.items():
             self.assertIn(name, self.p, name)
@@ -281,6 +281,24 @@ class SyncInfra(unittest.TestCase):
         self.assertEqual(json.loads(m["FilterCriteria"]["Filters"][0]["Pattern"]), {"dynamodb": {"Keys": {"PK": {"S": ["SYNC#LOG"]}}}})
         self.assertEqual((m["MaximumBatchingWindowInSeconds"], m["MaximumRetryAttempts"], m["BisectBatchOnFunctionError"]), (5, 5, True))
         self.assertEqual(m["DestinationConfig"]["OnFailure"]["Destination"], {"Fn::GetAtt": ["RenderDlq", "Arn"]})
+
+    # HFY-TSK-178: the record-change fan-out consumer
+    def test_record_fanout_mapping_wakes_the_api_for_render_outbox_inserts_only(self):
+        m = self.r["RecordFanoutMapping"]["Properties"]
+        self.assertEqual(m["FunctionName"], {"Ref": "Function"})  # hfy-api, not the renderer
+        self.assertEqual(m["EventSourceArn"], {"Fn::GetAtt": ["Table", "StreamArn"]})
+        self.assertEqual(json.loads(m["FilterCriteria"]["Filters"][0]["Pattern"]),
+                         {"eventName": ["INSERT"], "dynamodb": {"Keys": {"PK": {"S": ["SYNC#RENDERED"]}}}})
+        self.assertEqual(m["FunctionResponseTypes"], ["ReportBatchItemFailures"])
+        self.assertEqual((m["StartingPosition"], m["MaximumRetryAttempts"]), ("LATEST", 3))
+        self.assertNotIn("DestinationConfig", m)
+
+    def test_api_role_reads_only_this_tables_stream_for_the_fanout(self):
+        stream = by_sid(self.r["Role"], "RecordFanoutStream")
+        self.assertEqual(sorted(stream["Action"]), ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator"])
+        self.assertEqual(stream["Resource"], {"Fn::GetAtt": ["Table", "StreamArn"]})
+        self.assertEqual(stream["Effect"], "Allow")
+        self.assertNotIn("Condition", self.r["RecordFanoutMapping"])  # no new parameter: inert until RenderMode is live and recordSubsV1 is on
 
     # AC1: alarms, AC6: topic + schedule
     def test_every_alarm_notifies_the_topic_and_the_five_named_alarms_exist(self):

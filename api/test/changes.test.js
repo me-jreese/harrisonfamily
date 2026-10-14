@@ -10,7 +10,8 @@ import { buildCaps, ROUTES } from "../src/routes.js";
 import { approvalActions, proposalTooLarge, ulidFloor, MAX_APPROVAL_OBJECTS } from "../src/records/proposals.js";
 import { isDestructive } from "../src/records/changes.js";
 import { contentHash, hashObject } from "../src/records/ops.js";
-import { idemKeys } from "../src/records/proposals.js";
+import { idemKeys, MAX_TXN_ACTIONS } from "../src/records/proposals.js";
+import { recordContributorActions, registerRecordContributor } from "../src/record-contributor.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -38,7 +39,7 @@ let envBefore;
 beforeEach(() => { envBefore = process.env.HFY_EDITING; process.env.HFY_EDITING = "on"; });
 afterEach(() => { if (envBefore === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = envBefore; });
 
-async function world({ clock = () => Date.now(), admins = [ADMIN, ADMIN2], seedExtra = [], guardDob } = {}) {
+async function world({ clock = () => Date.now(), admins = [ADMIN, ADMIN2], seedExtra = [], guardDob, meExtra = {} } = {}) {
   const txns = [];
   const race = { before: null };
   const afters = [];
@@ -67,7 +68,7 @@ async function world({ clock = () => Date.now(), admins = [ADMIN, ADMIN2], seedE
   const n1 = note(1);
   const n2 = note(2);
   const fam = family(1, { father_handle: h(1) });
-  const me = person(1, { family_list: [fam.handle], note_list: [n1.handle] });
+  const me = person(1, { family_list: [fam.handle], note_list: [n1.handle], ...meExtra });
   const other = person(2, { note_list: [n2.handle] });
   await seed([me, other, n1, n2, fam, ...seedExtra]);
   const bump = (obj, base) => applyBatch(sctx, { principal: "svc-seed", origin: "desktop", idempotencyKey: `bump${++k}`, ops: [{ op: "update", class: obj._class, handle: obj.handle, base_version: base, obj }] });
@@ -380,6 +381,54 @@ describe("the error matrix (AC3)", () => {
     expect(err(await w.post(ME, { base_versions: versions(w, [w.me]), ops }, { idem: "c-1" }))).toEqual({ status: 413, error: "too_large" });
     const mk = Array.from({ length: 11 }, (_, i) => ({ id: `mk${i}`, op: "create", obj: `new:${i + 1}`, cls: "Note", value: { _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: "x", tags: [] }, format: 0, type: typ("NoteType", 1) } }));
     expect(err(await w.post(ME, { base_versions: {}, ops: mk }, { idem: "c-2" }))).toEqual({ status: 413, error: "too_large" });
+  });
+});
+
+describe("the direct part's budget holds the registered record contributor's credit", () => {
+  // The production contributor (record-contributor.js) adds a member's self_edit credit inside applyBatch's transaction: 7 actions here, 8 when
+  // the save also tags. One member save: 10 Note creates, the member's note_list, 10 own Note deletes (direct), and `edits` review edits.
+  // Direct: 3 fixed + 1 budget counter + 10x3 + 1x2 + 10x3 = 66; puts: the receipt, META, IDX#BY, one IDX#REC per edit and the audit = edits + 4.
+  // The filler keeps 10 deletes under 5 % of the live heads (no step-up).
+  async function atLimit(edits) {
+    const own = Array.from({ length: 10 }, (_, i) => note(100 + i));
+    const others = Array.from({ length: 24 }, (_, i) => note(200 + i));
+    const filler = Array.from({ length: 180 }, (_, i) => note(500 + i));
+    const w = await world({ seedExtra: [...own, ...others, ...filler], meExtra: { note_list: [h(2001), ...own.map((n) => n.handle)] } });
+    registerRecordContributor({ ddb: w.ddb, cmds, table: TABLE }, w.hooks);
+    const value = (i) => ({ _class: "Note", gramps_id: "", private: false, text: { _class: "StyledText", string: `New synthetic ${i}`, tags: [] }, format: 0, type: typ("NoteType", 1) });
+    const ops = [
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `mk${i}`, op: "create", obj: `new:${i + 1}`, cls: "Note", value: value(i) })),
+      { id: "nl", op: "set", obj: key(w.me), path: "/note_list", base: [h(2001), ...own.map((n) => n.handle)], value: [h(2001), ...Array.from({ length: 10 }, (_, i) => `new:${i + 1}`)] },
+      ...own.map((n, i) => ({ id: `del${i}`, op: "delete", obj: key(n), base: hashObject(n) })),
+      ...others.slice(0, edits).map((n, i) => set(n, "/text/string", n.text.string, `Edited ${i}`, `rv${i}`)),
+    ];
+    const r = await w.post(ME, { base_versions: versions(w, [w.me, ...own, ...others.slice(0, edits)]), ops }, { idem: `limit-${edits}` });
+    return { w, r, budget: 66 + edits + 4 + recordContributorActions("self") };
+  }
+  it("a member save budgeted at exactly 100 actions commits, with the self_edit credit in its one transaction", async () => {
+    const { w, r, budget } = await atLimit(22);
+    expect(budget).toBe(MAX_TXN_ACTIONS);
+    expect(r.body.error).toBeUndefined();
+    expect(r.status).toBe(201);
+    expect(r.body.applied).not.toBeNull();
+    expect(r.body.proposal.targets).toHaveLength(22);
+    expect(w.txns).toHaveLength(1);
+    const items = w.txns[0].TransactItems;
+    expect(items.length).toBeLessThanOrEqual(MAX_TXN_ACTIONS);
+    const pk = (i) => (i.Put ?? i.Update ?? i.Delete ?? i.ConditionCheck).Item?.PK ?? (i.Put ?? i.Update ?? i.Delete ?? i.ConditionCheck).Key?.PK;
+    expect(items.filter((i) => /^(CONTRIB|CSTAT)#/.test(pk(i)))).toHaveLength(7); // the event, the CAP# marker and five counters
+    expect(w.rows(`CONTRIB#${ME}`).filter((x) => x.entity === "contrib").map((x) => x.kind)).toEqual(["self_edit"]);
+  });
+  it("one action past the budget is 413 too_large before anything is written, never a 500 from inside applyBatch", async () => {
+    for (const edits of [24, 23]) {
+      const { w, r, budget } = await atLimit(edits);
+      expect(budget).toBeGreaterThan(MAX_TXN_ACTIONS);
+      expect(err(r)).toEqual({ status: 413, error: "too_large" });
+      expect(w.txns).toEqual([]);
+      expect(w.rows("PROP#")).toEqual([]);
+      expect(w.rows("CONTRIB#")).toEqual([]);
+      expect(w.ddb.rows.get(`REC#Person#${w.me.handle}\u0000HEAD`).version).toBe(1);
+    }
   });
 });
 

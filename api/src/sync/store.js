@@ -219,6 +219,11 @@ export const getGid = (ctx, cls, grampsId) => get(ctx, gidKey(cls, grampsId));
 export const getAlias = (ctx, cls, oldId) => get(ctx, aliasKey(cls, oldId));
 export const getSession = (ctx, sessionId) => get(ctx, sessionKey(sessionId));
 export const getUpload = (ctx, handle, sha256Hex) => get(ctx, uploadKey(handle, sha256Hex));
+/** True when a Person's id is retired because the person was withdrawn (made private): GID#Person#<id> holds { retired: true, reason: "withdrawn" }. */
+export const isPersonWithdrawn = async (ctx, grampsId) => {
+  const g = await getGid(ctx, "Person", grampsId);
+  return g?.retired === true && g.reason === "withdrawn";
+};
 /** The raw head item of one object (tombstones included), or undefined. */
 export const getRecordItem = (ctx, cls, handle) => get(ctx, recKey(cls, handle));
 

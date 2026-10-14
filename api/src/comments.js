@@ -1,4 +1,4 @@
-// CommentSource (@io-kit/comments contract) over the hfy-app table. threadId is the subject: `person:<gramps_id>` or `post:<ulid>`.
+// CommentSource (@io-kit/comments contract) over the hfy-app table. threadId is the subject: `person:<gramps_id>`, `post:<ulid>` or `proposal:<ulid>`.
 //   comment   PK THREAD#<threadId>  SK C#<ulid>           GSI1PK COMMENTS  GSI1SK <ulid>
 //   reaction  PK THREAD#<threadId>  SK R#<target>#<by>    (one per principal per target)
 import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, commentTarget, computeCan, canWrite, isEmoji } from "@io-kit/comments";
@@ -9,7 +9,7 @@ import { contribOps, emptyOps, getEvent, mergeOps, mergedSize, revokeOps } from 
 import { createGuard, pointer } from "./guard.js";
 import { normalizeNew } from "./comment-photos.js";
 
-export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26})$/;
+export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26}|proposal:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64url");
 const unb64 = (s) => Buffer.from(s, "base64url").toString("utf8");
@@ -25,10 +25,14 @@ export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: act
 
 /**
  * `guard` is src/guard.js createGuard(): the R-18 check on the body and every photo alt of each create and edit (422, nothing stored).
+ * `proposalVisible(id)` (HFY-TSK-184) says whether the viewer may see proposal `id`: a `proposal:<ulid>` thread is exactly as visible as its proposal (the proposer,
+ * the admins and the owners of the targeted pages), for list, create, edit and react. Without it every proposal thread is not_found (fail closed).
  * `photos` is src/comment-photos.js (parse, owned, bind): without it a comment cannot carry attachments (503, fail closed).
+ * `isWithdrawn(grampsId)` (sync/store.js isPersonWithdrawn) says whether a person was withdrawn (made private); the thread of a withdrawn person is
+ * 404 to everyone but an admin (HFY-TSK-178, BRD2 PS-06), so a withdraw hides the discussion with the page. Without it no person thread is hidden.
  * `via` is the origin stamped on the contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
  */
-export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
+export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdrawn, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, proposalVisible, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
   const view = (c) => ({ ...structuredClone(c), can: computeCan(c, viewer, canOpts) });
@@ -54,6 +58,23 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       throw e;
     }
   }
+  // A proposal:<id> thread is exactly as visible as its proposal; anyone outside its visibility set gets not_found, as for a proposal that does not exist.
+  async function checkProposalVisible(t) {
+    if (!t.startsWith("proposal:")) return;
+    if (!proposalVisible || (await proposalVisible(t.slice(9))) !== true) throw new CommentError("not_found", `thread ${t}`);
+  }
+  // A person:<id> thread of a withdrawn person is hidden from everyone but an admin: list, create, edit and react answer not_found. An admin keeps
+  // reading and moderating it. A failed lookup is an error, never an open thread.
+  async function checkPersonVisible(t) {
+    if (!t.startsWith("person:") || typeof isWithdrawn !== "function") return;
+    if (viewer?.roles?.includes("admin")) return;
+    if (await isWithdrawn(t.slice(7))) throw new CommentError("not_found", `thread ${t}`);
+  }
+  const checkVisible = async (t) => {
+    await checkPostVisible(t);
+    await checkPersonVisible(t);
+    await checkProposalVisible(t);
+  };
   async function getComment(t, id) {
     checkThread(t);
     if (typeof id !== "string" || !ID_RE.test(id)) throw new CommentError("not_found", `comment ${id}`);
@@ -116,7 +137,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     ...(audit ? { audit } : {}),
     async list(t, opts = {}) {
       checkThread(t);
-      await checkPostVisible(t);
+      await checkVisible(t);
       const limit = Math.min(Math.max(Math.trunc(opts.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
       const order = opts.order ?? "asc";
       if (!ORDERS.includes(order)) throw new CommentError("validation", "order must be asc or desc", "order");
@@ -154,7 +175,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       const list = input.attachments === undefined ? [] : normalizeNew(input.attachments, parser);
       const text = body(input.body, list.length);
       guard("comments", "create", [[pointer("body"), input.body], ...altFields(list)]); // offsets into the body as submitted
-      await checkPostVisible(t); // not_found unless the post exists and is visible
+      await checkVisible(t); // not_found unless the post, the person page or the proposal behind the thread is visible to the viewer
       let parent;
       if (input.parentId !== undefined) {
         parent = await getComment(t, input.parentId);
@@ -182,7 +203,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     async edit(t, id, input) {
       const who = need();
       const c = await getComment(t, id);
-      await checkPostVisible(t);
+      await checkVisible(t);
       if (!computeCan(c, who, canOpts).edit) throw new CommentError("forbidden", "cannot edit this comment");
       // `attachments` omitted leaves the photos as stored. A listed photo is matched to a stored one by url; an edit can remove
       // photos or change their alt, never add one (changing photos means a new comment), so an unknown url is refused after the
@@ -229,7 +250,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     async react(t, target, emoji) {
       const who = need();
       checkThread(t);
-      await checkPostVisible(t);
+      await checkVisible(t);
       if (!isEmoji(emoji)) throw new CommentError("validation", "not an emoji", "emoji");
       let owner;
       if (target.startsWith("comment:")) owner = (await getComment(t, target.slice(8))).author.id;

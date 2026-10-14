@@ -8,13 +8,14 @@ import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
+import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
 export const API_NAME = "hfy-api";
 export const API_VERSION = "0.1.0";
 export const BASE_PATH = "/api";
-export const SUBJECT_FORMATS = ["person:<gramps_id>", "post:<ulid>"];
+export const SUBJECT_FORMATS = ["person:<gramps_id>", "post:<ulid>", "proposal:<ulid>"];
 
 /** Honest ContentSource capability declaration for the posts surface (no realtime, no since()). */
 export const CONTENT_CAPABILITIES = {
@@ -238,6 +239,25 @@ export const ROUTES = defineRoutes([
   {
     name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (no MCP tool)",
     gate: editingGate(), handler: changesPost,
+  },
+  // The proposal store (HFY-TSK-184; editing.md 7.4): lists, one proposal, amend, withdraw. Behind HFY_EDITING like the routes above. Decide is
+  // proposal-decision-api's; no `mcp` member (hfy_proposals_list and hfy_proposals_get are edit-mcp-tools'). A proposal outside the viewer's
+  // visibility set is 404 (the proposer, admins and the owners of the targeted pages see it), and view=queue is 403 for a non-admin.
+  {
+    name: "proposals.list", method: "GET", path: "/proposals", summary: "List suggestions: ?view=queue (admins, oldest first; pending and stale unless ?state=), mine (newest first) or about-me (suggestions about your own page or family); state, cursor, limit 1-50 (default 25): {items: ProposalView[], cursor} (no MCP tool)",
+    gate: editingGate(), handler: proposalsList,
+  },
+  {
+    name: "proposals.get", method: "GET", path: "/proposals/:id", summary: "One suggestion as a ProposalView (can, stale) plus rebase {status: current|clean|conflict, conflicts}; 404 outside the proposer, admins and the owners of the targeted pages (no MCP tool)",
+    gate: editingGate(), handler: proposalsGet,
+  },
+  {
+    name: "proposals.amend", method: "PATCH", path: "/proposals/:id", summary: "The proposer amends an open suggestion {ops, base_versions, note?} with If-Match: the etag: rev + 1 and back to pending; 412 precondition_failed carries the fresh view in details.proposal, 409 not_amendable once it is decided or withdrawn, 422 from the privacy guard (no MCP tool)",
+    gate: editingGate(), handler: proposalsAmend,
+  },
+  {
+    name: "proposals.withdraw", method: "POST", path: "/proposals/:id/withdraw", summary: "The proposer withdraws an open suggestion, with If-Match: the etag (no MCP tool)",
+    gate: editingGate(), handler: proposalsWithdraw,
   },
 ]);
 

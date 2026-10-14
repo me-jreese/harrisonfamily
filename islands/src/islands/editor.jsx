@@ -2,10 +2,11 @@
 // editing task fills: the route (`?cls=person&id=<gramps id>`), the edit bundle from GET /api/edit/:cls/:ref, the section framework (a sticky
 // index from 64rem, an accordion under it) and a mode badge on every field, drawn through the kit's `fieldAdornment` hook: "saves now",
 // "goes to review", or "only an admin can change this", from the policy table in the bundle. The names section is a live SchemaForm; the
-// other sections are frames. Saving is editor-save-flow's job, so the forms here have no submit (the kit's own button is hidden in the CSS).
+// other sections are frames. Saving is the save flow (HFY-TSK-213, lib/editor-save-ui.jsx): the forms report their values, a sticky bar counts the
+// changes, "review" opens the dry-run confirmation sheet, and the kit's own submit button stays hidden in the CSS.
 // The page loads this bundle only with recordEdit (feature-flags.js), so flag off the page keeps its "not available yet" note.
 import "./editor.css";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SchemaForm } from "@io-kit/schema_form";
 import { api } from "../lib/api.js";
 import { getMe } from "../lib/me.js";
@@ -15,8 +16,11 @@ import { mountIsland } from "../lib/mount.jsx";
 import {
   COPY, badgeFor, createModeResolver, introFor, parseRoute, sectionSchema, sectionValues, sectionsFor
 } from "../lib/editor-model.js";
+import { replaySeed } from "../lib/editor-save.js";
+import { ConfirmSheet, SaveDock, useCounts, useSaveFlow } from "../lib/editor-save-ui.jsx";
 
-export const signInHref = () => `/auth/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
+// `fresh`: a step-up (a destructive change needs a sign-in no older than 15 minutes), so the sign-in page asks again instead of reusing the session.
+export const signInHref = (fresh = false) => `/auth/login?${fresh ? "prompt=login&" : ""}returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
 
 const ICONS = {
   direct: "M4 12.5l5 5L20 6.5",
@@ -43,9 +47,11 @@ export function nameOf(obj) {
   return [n.first_name, surname].filter((x) => typeof x === "string" && x).join(" ");
 }
 
-function SectionForm({ section, schema, bundle, cls, resolver, viewer }) {
+function SectionForm({ section, schema, bundle, cls, resolver, viewer, seed, onDraft }) {
   const input = useMemo(() => sectionSchema(schema, section.form), [schema, section]);
-  const initialValues = useMemo(() => sectionValues(bundle.obj, section.form), [bundle, section]);
+  // The record's values, or the member's own values replayed over a refetched record (the save flow's conflict path).
+  const initialValues = useMemo(() => seed || sectionValues(bundle.obj, section.form), [bundle, section, seed]);
+  const onValueChange = useCallback((args) => onDraft(section.id, args), [onDraft, section.id]);
   const pendingPaths = useMemo(() => new Set((bundle.pending || []).flatMap((p) => p.paths || [])), [bundle]);
   const contract = useMemo(() => input && ({
     surface: "hfy", action: `edit.${section.id}`, title: section.title, inputSchema: input,
@@ -60,7 +66,7 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer }) {
   const pointerOf = (p) => `${section.form.prefix}${p}`;
   const codeOf = (p) => resolver.resolve(cls, pointerOf(p), viewer);
   const editable = (code) => code === "direct" || code === "proposal";
-  // Saving is editor-save-flow's job; Enter in a field must not submit (reload or POST) in the meantime.
+  // Enter in a field must not submit (a reload or a POST): the sticky bar's review button is the way to save.
   return (
     <div onSubmit={(e) => e.preventDefault()}>
     <SchemaForm
@@ -68,6 +74,7 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer }) {
       initialValues={initialValues}
       idPrefix={`hfy-${section.id}`}
       submitLabel="save"
+      onValueChange={onValueChange}
       fieldPolicy={(p) => (editable(codeOf(p)) ? "show" : "readonly")}
       fieldAdornment={(p) => (
         <>
@@ -117,13 +124,25 @@ function Editor({ route }) {
     setScrollTo(null);
   }, [scrollTo, open]);
   const [state, setState] = useState({ phase: "loading" });
+  // The member's form values per section (the forms report them), the epoch that remounts the forms after a refetch, and the values a
+  // remounted form starts from when the save flow replays the member's edits over a fresh bundle.
+  const [drafts, setDrafts] = useState({});
+  const [epoch, setEpoch] = useState(0);
+  const [seed, setSeed] = useState(null);
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const bundleRef = useRef(null);
+  const onDraft = useCallback((id, args) => setDrafts((prev) => (JSON.stringify(prev[id]) === JSON.stringify(args) ? prev : { ...prev, [id]: args })), []);
+  const fetchBundle = useCallback(() => api.get(`/edit/${route.cls}/${encodeURIComponent(route.ref)}`), [route.cls, route.ref]);
   useEffect(() => {
     let live = true;
     setState({ phase: "loading" });
     setOpen(null);
+    setDrafts({});
+    setSeed(null);
     (async () => {
       try {
-        const bundle = await api.get(`/edit/${route.cls}/${encodeURIComponent(route.ref)}`);
+        const bundle = await fetchBundle();
         const needsSchema = sectionsFor(route.cls, bundle.viewer).some((s) => s.form);
         const schema = needsSchema ? (await api.get(`/edit/schema/${route.cls}`)).schema : null;
         if (live) setState({ phase: "ready", bundle, schema });
@@ -135,12 +154,29 @@ function Editor({ route }) {
       }
     })();
     return () => { live = false; };
-  }, [route.cls, route.ref]);
+  }, [route.cls, route.ref, fetchBundle]);
+  // A refetched bundle replaces the page's: the forms remount (a new epoch). When the member's edits are to be replayed (a 409), the forms start
+  // from the fresh record with only the member's changed fields laid over it, and those are the drafts the ops are rebuilt from.
+  const sectionsRef = useRef([]);
+  const adopt = useCallback((bundle, keepDrafts, settled) => {
+    const old = bundleRef.current;
+    const next = keepDrafts && old ? replaySeed({ sections: sectionsRef.current, key: bundle.key, oldObj: old.obj, freshObj: bundle.obj, drafts: draftsRef.current, settled }) : null;
+    bundleRef.current = bundle;
+    draftsRef.current = next || {};
+    setState((cur) => ({ ...cur, bundle }));
+    setSeed(next);
+    setDrafts(next || {});
+    setEpoch((n) => n + 1);
+  }, []);
 
   const bundle = state.bundle;
+  bundleRef.current = bundle || null;
   const viewer = useMemo(() => bundle && ({ admin: bundle.viewer && bundle.viewer.admin === true, relation: bundle.relation === "own" ? "own" : "other" }), [bundle]);
   const resolver = useMemo(() => createModeResolver(bundle && bundle.policy), [bundle]);
   const sections = useMemo(() => (viewer ? sectionsFor(route.cls, viewer) : []), [viewer, route.cls]);
+  sectionsRef.current = sections;
+  const counts = useCounts({ bundle, sections, drafts, resolver, cls: route.cls, viewer });
+  const flow = useSaveFlow({ sections, viewer, getBundle: () => bundleRef.current, getDrafts: () => draftsRef.current, refetch: fetchBundle, adopt });
   const openSet = open || new Set(isWide ? sections.map((s) => s.id) : sections.slice(0, 1).map((s) => s.id));
   const toggle = (id) => { const next = new Set(openSet); if (next.has(id)) next.delete(id); else next.add(id); setOpen(next); };
   const reveal = (id) => { if (!openSet.has(id)) setOpen(new Set([...openSet, id])); setScrollTo(id); };
@@ -170,11 +206,13 @@ function Editor({ route }) {
         {sections.map((s) => (
           <Section key={s.id} section={s} open={openSet.has(s.id)} onToggle={toggle}>
             {s.form
-              ? <SectionForm section={s} schema={state.schema} bundle={bundle} cls={route.cls} resolver={resolver} viewer={viewer} />
+              ? <SectionForm key={`${s.id}:${epoch}`} section={s} schema={state.schema} bundle={bundle} cls={route.cls} resolver={resolver} viewer={viewer} seed={seed && seed[s.id]} onDraft={onDraft} />
               : <p className="hfy-editor__soon">{COPY.soon}</p>}
           </Section>
         ))}
       </div>
+      <SaveDock flow={flow} counts={counts} />
+      <ConfirmSheet flow={flow} signInHref={signInHref} />
     </div>
   );
 }
