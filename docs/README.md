@@ -50,7 +50,7 @@ For a new environment, for this family or another, in this order. The first page
 2. [Deploy and update the Lambda@Edge functions in us-east-1](how-to/deploy-the-edge-functions.md) — deploy `hfy-mcp-edge401` and `hfy-edge-gate`, validate the gate before anything attaches it, and later ship a change to either.
 3. [Add or remove a family member's access](how-to/manage-family-access.md) — publish the allowlist, the admin list and the MCP groups, and later change who has access or sign a member out on every device.
 4. [Deploy the app stack and its CloudFront behaviors](how-to/deploy-the-app-stack.md) — create or update `<app-stack>` from commit-named code zips through a reviewed change set, and add its behaviors.
-5. [Refresh the family data from Gramps](how-to/refresh-the-family-data.md) — re-export the tree, rebuild the search files and sync the data prefixes without touching member uploads.
+5. [Sync Gramps with the website](how-to/sync-gramps-with-the-website.md) — sync the Gramps tree through the cloud store, cut the site over (deny first, then live, then verify) and roll it back.
 6. [Cut over to authV2 and the private data gate, and roll back](how-to/cut-over-to-the-private-data-gate.md) — find which state a site is in, flip `authV2` before attaching the gate, and roll back in the reverse order; production cut over on 2026-10-12.
 7. [Turn on push notifications](how-to/turn-on-push-notifications.md) — optional: give the API a VAPID key pair, and later turn push off, replace the keys or correct their subject.
 

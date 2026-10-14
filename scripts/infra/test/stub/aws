@@ -4,6 +4,8 @@
 # secret (secretsmanager value), rhp.json (custom response headers policies: [{Id, ETag, Config}], absent = none),
 # fn-DEVELOPMENT.js / fn-LIVE.js (the code of the CloudFront Function fn-name, default HFYAppendIndex; absent stage = no such
 # function), fn-etag (its DEVELOPMENT ETag, default EFN-1), fn-runtime (default cloudfront-js-1.0).
+# bucket-policy.json (the bucket policy, absent = NoSuchBucketPolicy; put/delete-bucket-policy change it), account (sts, default 123456789012).
+# iam simulate-custom-policy models the Deny/Allow evaluation of a resource policy plus one identity policy in python (explicitDeny, allowed, implicitDeny).
 # Every call is appended to calls.log; each update-distribution payload is saved as update-<n>.json.
 set -euo pipefail
 : "${STUB_DIR:?STUB_DIR not set}"
@@ -95,5 +97,38 @@ case "$1 $2" in
     if [ -f "$STUB_DIR/stack-$key" ]; then cat "$STUB_DIR/stack-$key"; else echo None; fi ;;
   "secretsmanager get-secret-value")
     if [ -f "$STUB_DIR/secret" ]; then cat "$STUB_DIR/secret"; else echo "ResourceNotFoundException" >&2; exit 254; fi ;;
+  "sts get-caller-identity") cat "$STUB_DIR/account" 2>/dev/null || echo 123456789012 ;;
+  "s3api get-bucket-policy")
+    if [ -f "$STUB_DIR/bucket-policy.json" ]; then jq -c . "$STUB_DIR/bucket-policy.json"
+    else echo "An error occurred (NoSuchBucketPolicy) when calling the GetBucketPolicy operation: The bucket policy does not exist" >&2; exit 254; fi ;;
+  "s3api put-bucket-policy")
+    pol=$(arg policy "$@"); cp "${pol#file://}" "$STUB_DIR/bucket-policy.json"; printf 'put %s\n' "$(arg bucket "$@")" >> "$STUB_DIR/policy-writes.log" ;;
+  "s3api delete-bucket-policy") rm -f "$STUB_DIR/bucket-policy.json"; printf 'delete %s\n' "$(arg bucket "$@")" >> "$STUB_DIR/policy-writes.log" ;;
+  "iam simulate-custom-policy")
+    python3 - "$(arg policy-input-list "$@")" "$(arg resource-policy "$@")" "$(arg caller-arn "$@")" "$(arg action-names "$@")" "$(arg resource-arns "$@")" <<'PY'
+import fnmatch, json, sys
+ident, rpol, caller, action, res = sys.argv[1:6]
+load = lambda f: json.loads(f) if f.lstrip().startswith("{") else json.load(open(f[len("file://"):]))
+as_list = lambda v: v if isinstance(v, list) else [v]
+def match(pats, v): return any(fnmatch.fnmatchcase(v, p) for p in as_list(pats))
+def stmts(doc): return as_list(doc.get("Statement", []))
+decision = "implicitDeny"
+for st in stmts(load(ident)):
+    if st["Effect"] == "Allow" and match(st["Action"], action) and match(st["Resource"], res): decision = "allowed"
+for st in stmts(load(rpol)):
+    if st["Effect"] != "Deny" or not match(st["Action"], action) or not match(st["Resource"], res): continue
+    cond = st.get("Condition", {})
+    hit = True
+    for op, kv in cond.items():
+        for key, pats in kv.items():
+            if key != "aws:PrincipalArn": print("stub: unmodelled condition key " + key, file=sys.stderr); sys.exit(97)
+            m = match(pats, caller)
+            if op == "ArnNotLike": hit = hit and not m
+            elif op == "ArnLike": hit = hit and m
+            else: print("stub: unmodelled operator " + op, file=sys.stderr); sys.exit(97)
+    if hit: decision = "explicitDeny"
+print(decision)
+PY
+    ;;
   *) echo "aws stub: unexpected call: $*" >&2; exit 99 ;;
 esac

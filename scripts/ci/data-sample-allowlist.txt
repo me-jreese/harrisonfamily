@@ -1,9 +1,9 @@
 # Synthetic data samples allowed in the repository (HFY-PLN-002 D-03).
 # Format: <sha256>  <path>. Checked by scripts/ci/check-no-family-data.sh.
-2f75a498cca9f61341cb7194510c346e244d1af6638c59f6fe66d9756e94094e  etl-output/README.md
+d456e68041f6701f0904dd9ead466791e468ae085025fd104686eb7531303190  etl-output/README.md
 4127298a8c0b4e3735bb1b5d235f023d0f8d4879c9c33ac9b502a78636cb587a  etl-output/sample_bundle/README.md
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  gramps_exports/.gitkeep
-2f9596beb3d6ee4f7c26f9d1a912e36c9df4d883954459dad7a5be63c62c8e26  harrisonfamily-frontend/README.md
+cfbd835e904076d54b134691b2de137c07569ef4a135c38abe0550422f180487  harrisonfamily-frontend/README.md
 dfcf2bb025e6175e90dedcb6b6dd71c9e42d98386e82c6264864f62790d3031b  harrisonfamily-frontend/event/E0001.json
 1cdfee2a5414e54bdce53f14afe4ccb094a50f0a441c6af20b8a4c84f2824d51  harrisonfamily-frontend/family/F0001.json
 7e5cc79f96c868eb0cc56a96f65ae138885b32ecc8ee7356592dcb488b812a64  harrisonfamily-frontend/media/M0001.json

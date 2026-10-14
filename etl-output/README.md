@@ -4,4 +4,4 @@ Sanitized READMEs only, no data. The real ETL output is private, is generated ou
 
 - What counts as private and why: [The privacy model for family data](../docs/explanation/family-data-privacy.md)
 - The ETL scripts, their real flags and the data contract: [Private data and secrets](../docs/reference/private-data-and-secrets.md#out-of-repo-tooling)
-- Exporting and syncing safely (the sync must never reach member uploads): [Refresh the family data](../docs/how-to/refresh-the-family-data.md)
+- Exporting and syncing safely (the sync must never reach member uploads): [Sync Gramps with the website](../docs/how-to/sync-gramps-with-the-website.md)

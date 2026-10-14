@@ -884,7 +884,7 @@ aws iam get-role-policy --role-name hfy-api-role --policy-name hfy-api \
 | `author label unavailable (using the gramps_id)` lines | The lookup failed: S3 refused it, the 3 s timeout passed, or the record is not valid JSON. Each line names the Gramps ID and the error, so keep it private. The role cannot list the bucket, so a missing record usually shows here as `403`. |
 | The role's resource is missing, or does not end in `/person/*` in the bucket that `MediaBucket` names | The role predates HFY-R68 and cannot read person records. |
 
-**Fix.** Publish the member's person record with a `displayName` ([Refresh the family data](refresh-the-family-data.md)), or deploy the stack to update the role ([Deploy the app stack](deploy-the-app-stack.md)). Posts and comments written after that carry the name within a minute. Those already stored keep the Gramps ID.
+**Fix.** Publish the member's person record with a `displayName` ([Sync Gramps with the website](sync-gramps-with-the-website.md)), or deploy the stack to update the role ([Deploy the app stack](deploy-the-app-stack.md)). Posts and comments written after that carry the name within a minute. Those already stored keep the Gramps ID.
 
 ## An MCP client cannot connect
 

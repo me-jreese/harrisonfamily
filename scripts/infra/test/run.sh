@@ -942,9 +942,12 @@ PY
   contains "deploy.smoke never names an S3 endpoint (a GET there answers 403, which would roll back every deploy)" "$WIRING" "smoke-not-s3 True"
 else fail "python3 with PyYAML is required for the post-deploy-checks.yml wiring checks"; fi
 
+# shellcheck source=/dev/null
+. "$HERE/guard-tests.inc.sh"
+
 CURRENT="shellcheck"
 if command -v shellcheck >/dev/null; then
-  if shellcheck -x "$INFRA"/*.sh "$INFRA"/lib/*.sh "$HERE"/run.sh "$STUB_BIN"/aws "$HERE"/stub-curl/curl > "$T/sc.out" 2>&1; then ok; else fail "shellcheck"; cat "$T/sc.out" >&2; fi
+  if shellcheck -x "$INFRA"/*.sh "$INFRA"/lib/*.sh "$HERE"/run.sh "$HERE"/guard-tests.inc.sh "$STUB_BIN"/aws "$HERE"/stub-curl/curl > "$T/sc.out" 2>&1; then ok; else fail "shellcheck"; cat "$T/sc.out" >&2; fi
 else echo "  (shellcheck not installed: skipped)"; fi
 
 echo "scripts/infra tests: $PASS passed, $FAILED failed"

@@ -1,12 +1,108 @@
-# How to refresh the family data from Gramps
+# How to sync Gramps with the website
 
-Use this page to publish a new export of the Gramps database to the site. You re-export the people, rebuild their family-tree diagrams and the search files, and sync the six data prefixes of `<site-bucket>`. The procedure leaves the static site and the photos that members attached to posts in place. Those photos live under `uploads/posts/<ulid>/` (`UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js)), outside the data prefixes.
+Use this page to move changes between the Gramps tree on the desktop and the family site, to cut the site over from the legacy publish to the cloud store, and to roll that cutover back. The desktop addon pushes the tree to the cloud store. The render Lambda `hfy-sync-render` renders the store into the site's data files. Nothing else writes those files once the cutover is done (HFY-PLN-002; BRD2 D2-05).
 
-Family data never goes through Git or CI. The site deploy excludes the data prefixes and `uploads/` ([`ci.manifest.yaml`](../../ci.manifest.yaml); [Deploy a change to the static site](deploy-a-site-change.md)), so this procedure is the only thing that writes Gramps data to the bucket. The site, the data and the member photos share one bucket, and that sharing is why some steps below carry warnings. For the reasoning, see [The privacy model for family data](../explanation/family-data-privacy.md#one-bucket-for-the-site-and-the-data).
+The legacy publish, the ETL scripts and `sync_to_s3.py`, is kept at the end of this page as [the legacy procedure](#the-legacy-etl-publish-retired-at-the-cutover). It applies only before the cutover. After the cutover the bucket policy refuses it.
 
-The ETL and search scripts live in `<project>/scripts/`, outside the repository. This page follows the scripts as they are, and their argument parsers are authoritative ([Private data and secrets](../reference/private-data-and-secrets.md#out-of-repo-tooling)). Older notes show flags the scripts now reject, such as `--gramps-db`, `--force`, `--skip-media` and `--bucket`, and a root-level `aws s3 sync --delete`, which you must never run (see [step 4](#4-sync-the-data)).
+Placeholders: `<site-bucket>` is the site bucket, `<app-stack>` the app stack, `<tree name>` the name in Gramps' Family Trees manager, and `<account-id>` your AWS account. Use `--profile <aws-profile>` on each `aws` command if you use a named profile.
 
-Placeholders: `<project>` is the directory that holds the checkout at `<project>/repo` (see the [codebase map](../reference/codebase-map.md)). `<site-bucket>`, `<distribution-id>` and `<site>` are the site bucket, its CloudFront distribution and the site's host name. `<gramps-id>` is a person's Gramps ID, and `<aws-profile>` is an AWS CLI profile.
+## How the sync works
+
+| Piece | What it does | Where to read more |
+| --- | --- | --- |
+| The `hfy_sync` addon | Reads the tree, shows what differs, and pushes or pulls changes through the sync API | [Install the Gramps sync addon](install-the-gramps-sync-addon.md) |
+| The cloud store | The record log in the app table. Only the sync API writes it | [Operate the sync store](operate-the-sync-store.md) |
+| `hfy-sync-render` | Renders `person/`, `family/`, `event/`, `note/`, `place/` and `media/*.json` from the store, and writes only the keys that changed. Modes `off`, `shadow` and `live` | [The render Lambda](../reference/sync-render.md) |
+| The write guard | A bucket-policy deny that leaves the renderers and break-glass as the only writers of those keys | [Cut over](#cut-over-to-the-cloud-store) |
+
+## Sync day to day
+
+With Gramps closed, `gramps/bin/hfy-sync check --tree "<tree name>"` shows what would move in each direction and writes nothing. `gramps/bin/hfy-sync sync --tree "<tree name>" --yes` applies it. The same flow is in Gramps under **Tools > Family Tree Processing > Website sync...**. The exit codes are in [Install the Gramps sync addon](install-the-gramps-sync-addon.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
+
+## Cut over to the cloud store
+
+The cutover is io's decision (gate G-cutover) and the order below is fixed: **deny first, then live, then verify**. The deny is applied before `RENDER_MODE=live`, so no window exists in which the legacy publish and the renderer both write the same files (review R2-02). The cutover is run by the orchestrator (`cutover-live-render`); this section is its runbook. An agent runs a step only after io's go-ahead for that step is on the record in the session, and writes that go-ahead into the worklog with the dry-run output.
+
+Before you start:
+
+- The seed is done, the shadow render ran, and io approved its parity report.
+- `RENDER_MODE` is `shadow`, and the hfy-sync-render, hfy-graph-render, hfy-api and `hfy-data-breakglass` roles exist (`BreakGlassRoleArn` is an output of `<app-stack>`).
+- Your credentials can read and write the bucket policy of `<site-bucket>` and, for the simulation, call `iam:SimulateCustomPolicy`.
+- You know what the bucket policy holds now: the script keeps every statement that is not its own, and `--dry-run` shows them.
+
+### Deny first
+
+The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/apply-data-write-guard.sh). It denies `s3:PutObject` and `s3:DeleteObject` on `person/*.json`, `family/*`, `event/*`, `note/*`, `place/*` and `media/*.json`, and `s3:DeleteObject` on `media/*`, for every principal except `hfy-sync-render`, `hfy-graph-render`, `hfy-data-breakglass` and, for media binaries only, `hfy-api`. `hfy-api` is not an exception for the `*.json` keys. `person/index.html`, the person page shell, stays outside the deny, so the CI deploy keeps working: the deploy role still puts `person/index.html` and cannot put `person/<id>.json`.
+
+1. Look first. This prints the merged policy and changes nothing:
+
+   ```sh
+   scripts/infra/apply-data-write-guard.sh --dry-run
+   ```
+
+   Read the summary line (`others kept` is the number of statements that are not the guard's) and the merged policy. The guard adds two statements, `HfyDataWriteGuardRecords` and `HfyDataWriteGuardMediaDelete`.
+
+2. Run the matrix against the merged policy, still without changing anything:
+
+   ```sh
+   scripts/infra/apply-data-write-guard.sh --simulate
+   ```
+
+   It calls `aws iam simulate-custom-policy` for 19 cases, and ends with `simulation passed` or exits `1` on the first mismatch. The cases include the renderer putting `person/<id>.json` (allowed), a role outside the exceptions putting it (denied), the deploy role putting `person/index.html` (allowed) and `person/x.json` (denied), and `hfy-api` putting `media/x.json` (denied) and `media/x.jpg` (allowed). The IAM API documents `--caller-arn` as an IAM user, but a read-only run against live IAM accepted the role ARNs and evaluated `aws:PrincipalArn` from them (all 19 cases passed, and the script passes the policies as compact inline JSON because the API rejects a pretty-printed `file://` item). If a later run is refused, stop and ask the orchestrator: do not skip the check. A simulation models the policy, not S3, so the real canary Put in [Then verify](#then-verify) stays required. The script's policy tests pin the same cases offline. The exception ARNs match both `role/<name>` and `role/<path>/<name>`; the five default role names exist in the stack templates and need confirming only if a stack renames them.
+
+3. Apply, with io's G-cutover approval on the record. The `--confirm-g-cutover` flag is that approval: pass it only when io's G-cutover approval is on record for this run, and never together with `--dry-run` or `--simulate` (the script refuses the mix). The guard goes on before `RenderMode` is `live`, never after. The deny also covers `s3:DeleteObjectVersion`, which the design text does not list, so a versioned delete cannot slip past it; io or cutover-live-render confirms this at G-cutover, together with the rule that `hfy-api` may not Put `media/*.json`.
+
+   
+
+   ```sh
+   scripts/infra/apply-data-write-guard.sh --confirm-g-cutover
+   ```
+
+   The script saves the policy it replaced under `~/.local/state/hfy-infra/s3-policy` and prints the path. A rerun changes nothing.
+
+4. Confirm a CI deploy still works. Push nothing for this: re-run the latest successful `io-kit deploy` run on `main` from the Actions page, or wait for the next merge, and check that it is green. A red deploy here is the SI-05 failure, and it means the deny covers more than the data: run `--remove` (below) and report it.
+
+### Then live
+
+1. Set `RenderMode` to `live` on `<app-stack>` with a parameter-only change set ([Deploy the app stack](deploy-the-app-stack.md)). Review the change set before you execute it. It must change `RenderMode` and nothing else.
+2. The first live pass writes every desired key and deletes nothing, because no live manifest exists ([The first live pass](../reference/sync-render.md#the-first-live-pass)). Watch it finish: `node api/scripts/sync-admin.mjs render --dry-run` shows `rendered_seq` reaching the head seq.
+3. Read `render/reports/<seq>.json` in the sync bucket: keys and counts only. The expected number of deletes is `0`.
+
+### Then verify
+
+1. Every key under the data prefixes that the renderer wrote is current: the report has no failed writes and no `RenderPrivacyBlock` alarm.
+2. The legacy publish is refused. This is the check that the deny works, so run it from a role that is not an exception: `aws s3api put-object --bucket <site-bucket> --key person/guard-probe.json --body /dev/null` must fail with `AccessDenied`. If it succeeds, the deny is not working: delete the probe object and stop.
+3. Review the report's foreign keys. Prune the reviewed ones only, with io's go-ahead: `node api/scripts/sync-admin.mjs render --apply --prune-foreign` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
+4. Open the site as a signed-in member and check a person page, a family page and the search.
+
+## Roll back
+
+The primary rollback is `RENDER_MODE=off`. It freezes the files that are live now: the renderer stops, nothing is deleted and no republish happens, so the site keeps serving the last good render. Set `RenderMode` back to `off` with a parameter-only change set. Leave the write guard in place. Any record change made in the meantime waits in the store, and the next `live` pass catches up.
+
+Republishing from the legacy ETL is a last resort, for the case where the store itself cannot be repaired (a store fault is repaired store-scoped, [Operate the sync store](operate-the-sync-store.md)). It needs all of these, in this order:
+
+1. **A desktop pull first.** Run `hfy-sync check`, review the changes that would come from the website, and apply them, so the Gramps tree holds everything the store holds. The ETL publishes from the tree, so anything not pulled is lost from the site.
+2. **A break-glass run with `--no-delete`.** Assume `hfy-data-breakglass` (io only, MFA, one hour). It is an exception to the write guard, so the guard can stay on. Run the legacy sync with its break-glass escape, `--legacy-break-glass`, and with `--no-delete`, so nothing the tree lacks is removed. Member photos and every key the tree does not know stay in place.
+3. **Moderation hides re-applied by a script.** The legacy export does not know about moderation, so every record hidden since the cutover is public again after step 2. Re-apply the hides before you tell anyone the site is back, with the moderation re-apply script that `hfy-moderation-record-targets` ships. Until that script exists, do not run step 2. The check below fails closed while it is absent, and it must pass before step 2 starts:
+
+   ```sh
+   test -x scripts/moderation/reapply-moderation-hides.sh || { echo 'moderation re-apply script missing: rollback step 2 is blocked (hfy-moderation-record-targets)' >&2; exit 1; }
+   ```
+
+   The rollback is only partly delivered by this page: this step is blocked on `hfy-moderation-record-targets`, which must ship `scripts/moderation/reapply-moderation-hides.sh` (path to be confirmed there) before G-cutover.
+
+The policy-level rollback, taking the write guard off, is needed only for step 2 and for a deploy that the guard breaks. It is checked with a dry run first, so the policy it would leave is on screen before anything changes:
+
+```sh
+scripts/infra/apply-data-write-guard.sh --remove --dry-run
+scripts/infra/apply-data-write-guard.sh --remove --confirm-g-cutover
+```
+
+`--remove` drops the two guard statements and keeps every other statement. After the legacy republish, put the guard back with the apply command in [Deny first](#deny-first) before `RenderMode` goes to `live` again.
+
+## The legacy ETL publish (retired at the cutover)
+
+Everything below this heading is the procedure that the cloud sync replaces. It is kept for the window before the cutover and for the break-glass republish above. After the cutover, the scripts it runs refuse without `--legacy-break-glass` and the bucket policy denies their writes.
 
 ## What the refresh writes
 

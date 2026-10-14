@@ -2,7 +2,7 @@
 
 The Harrison family site publishes a family archive to a small, closed audience. Most of what makes it worth visiting is private: records of real people, many of them alive, and things family members write and upload. This page explains what the project treats as private, how that data is kept out of git and away from the public, what can leave the family boundary and how, where the design is fragile, and why documents, fixtures and commits are held to the same rules as code.
 
-This is an explanation. For the inventory of private assets, secret names and placeholders, see [Private data and secrets](../reference/private-data-and-secrets.md). For the steps to publish new family data safely, see [Refresh the family data](../how-to/refresh-the-family-data.md).
+This is an explanation. For the inventory of private assets, secret names and placeholders, see [Private data and secrets](../reference/private-data-and-secrets.md). For the steps to publish new family data safely, see [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md).
 
 ## What counts as private
 
@@ -38,7 +38,7 @@ The ETL is the first line of defence for living people, because it is the only s
 
 The result is an `isLiving` flag. The ETL writes it on every person record and on every relative stub embedded in another person's record. The flag travels with the data, so every consumer can act on it without re-deriving it. Today the consumers use it to withhold death details and death years and to label people as living.
 
-`isLiving` is a classification, not a redaction. A living person's record is still exported to the private prefixes. While the data gate is attached, it keeps the record from anyone without a member session (see [Gating the JSON](#gating-the-json)). Anything that must not reach even signed-in members, such as sensitive notes, has to be removed in Gramps or reviewed before export. [Refresh the family data](../how-to/refresh-the-family-data.md#before-you-start) lists that manual review. A Gramps user might expect the per-record private flag to do this job, but the ETL ignores Gramps's private flag, so removal or pre-export review is the only control. Nor does `isLiving` suppress sensitive notes, as older sample notes claimed.
+`isLiving` is a classification, not a redaction. A living person's record is still exported to the private prefixes. While the data gate is attached, it keeps the record from anyone without a member session (see [Gating the JSON](#gating-the-json)). Anything that must not reach even signed-in members, such as sensitive notes, has to be removed in Gramps or reviewed before export. [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md#before-you-start) lists that manual review. A Gramps user might expect the per-record private flag to do this job, but the ETL ignores Gramps's private flag, so removal or pre-export review is the only control. Nor does `isLiving` suppress sensitive notes, as older sample notes claimed.
 
 ## One bucket for the site and the data
 
@@ -55,7 +55,7 @@ The cost of the trade is that **every `aws s3 sync --delete` becomes a hazard.**
 | ETL sync (`<project>/scripts/etl/sync_to_s3.py`, outside the repo; options in [Private data and secrets](../reference/private-data-and-secrets.md#sync_to_s3py)) | The six data prefixes | Yes. `--no-delete` is opt-in | The sync is scoped to the data prefixes, since `--prefix` accepts only those six names. It excludes `index.html` under `person/` so it does not remove the page shell |
 | Members' browsers | `uploads/posts/<ulid>/…` photo uploads | Never deletes | Each presigned URL allows one `PUT` to one key that the server chose, and the API role may put objects only under `uploads/posts/` |
 
-The last row used to be the live hazard. Member photos exist **only** in S3. No copy exists in the repo, in the ETL output or on anyone's machine. Until HFY-R58 the uploads went under `media/posts/`, inside a prefix that the ETL sync mirrors with `--delete`. A default sync of `media` would have deleted every member photo, and the site deploy was safe only because its `media/*` exclude happened to cover the subtree. HFY-R58 gave the uploads a prefix that no writer's `--delete` reaches. The ETL sync cannot name it, the site deploy excludes it, and the deploy role's deny holds even if that exclude is lost ([The release model](release-model.md)). Photos uploaded before the move were not migrated, so [Refresh the family data](../how-to/refresh-the-family-data.md) checks for any left under `media/posts/` before it syncs.
+The last row used to be the live hazard. Member photos exist **only** in S3. No copy exists in the repo, in the ETL output or on anyone's machine. Until HFY-R58 the uploads went under `media/posts/`, inside a prefix that the ETL sync mirrors with `--delete`. A default sync of `media` would have deleted every member photo, and the site deploy was safe only because its `media/*` exclude happened to cover the subtree. HFY-R58 gave the uploads a prefix that no writer's `--delete` reaches. The ETL sync cannot name it, the site deploy excludes it, and the deploy role's deny holds even if that exclude is lost ([The release model](release-model.md)). Photos uploaded before the move were not migrated, so [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md) checks for any left under `media/posts/` before it syncs.
 
 The general lesson: **any new prefix in the bucket needs an exclude in every `--delete` sync in the same change.** Whoever adds the prefix knows about it. The sync script does not.
 
@@ -186,7 +186,7 @@ Writing about the system must not leak what the system protects, so docs, fixtur
 ## Further reading
 
 - [Private data and secrets](../reference/private-data-and-secrets.md): every private asset, where it lives, secret names and the placeholder forms.
-- [Refresh the family data](../how-to/refresh-the-family-data.md): running the ETL and syncing without deleting member uploads.
+- [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md): running the ETL and syncing without deleting member uploads.
 - [Cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md): the flags-first order, attaching the gate to the data and the photos, the optional Cloudflare purge, the checks and the rollback.
 - [Publish a change to the HFYAppendIndex CloudFront Function](../how-to/publish-the-cloudfront-function.md): testing, dry-running and publishing `HFYAppendIndex` and its default-deny, checking that the variants answer 404, and rolling it back.
 - [Front end](../reference/front-end.md): every web-storage key the site writes, and what the service worker caches.
