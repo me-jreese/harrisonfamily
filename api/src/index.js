@@ -5,7 +5,7 @@ import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoNotificationStore, DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
-import { createMemberSet } from "./notify.js";
+import { createMemberSet, queryFollowers } from "./notify.js";
 import { createAdminList, createAuthenticator, createJwks } from "./auth.js";
 import { createHandler } from "./handler.js";
 import { forbidden, originVerified } from "./origin.js";
@@ -17,6 +17,8 @@ import { createMcpMount, isMcpPath } from "./mcp.js";
 import { guardDobFromEnv } from "./guard.js";
 import { createSyncAuthenticator } from "./sync/auth.js";
 import { logSafeError } from "./http.js";
+import { registerRecordContributor } from "./record-contributor.js";
+import { createFanoutNotifier, createRecordFanout, isReplayEvent, isStreamEvent } from "./record-change-fanout.js";
 
 const env = process.env;
 const cmds = { GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand };
@@ -109,9 +111,31 @@ const authenticateSync = createSyncAuthenticator({ issuer: env.SESSION_ISSUER ??
 export const INBOX_TTL = Object.freeze({ unreadTtlDays: null, readTtlDays: 90 });
 export const createInboxStore = (client = ddb, commands = cmds, tableName = table) => new DynamoNotificationStore(client, commands, tableName, { ...INBOX_TTL });
 
+// HFY-TSK-178 (hfy-record-change-fanout): the self_edit and tag contribution ops come only from this contributor, added inside applyBatch's own
+// transaction by the commit-hook registry (sync/hooks.js). It is registered once per container, on the process-wide registry the push and edit routes use.
+registerRecordContributor({ ddb, cmds, table });
+
+// The render-outbox consumer (src/record-change-fanout.js), the only source of record-change notifications. Triggered by the table stream (SYNC#RENDERED inserts) or a direct invoke
+// { source: "record-fanout", seq }; neither comes through the Function URL, so neither carries the origin header. Recipients are gated by recordSubsV1.
+let fanout;
+async function recordFanout() {
+  if (fanout) return fanout;
+  const p = await loadPush();
+  const notifier = createFanoutNotifier({
+    subscriptions: new DynamoSubscriptionStore(ddb, cmds, table), preferences: new DynamoPreferencesStore(ddb, cmds, table),
+    webpush: p.webpush, vapid: p.vapid, inbox: createInboxStore(), featureOn: (name, principal) => features.featureOn(name, principal),
+    listMembers, followersOf: queryFollowers(ddb, cmds, table), log: console,
+  });
+  fanout = createRecordFanout({ ddb, cmds, table, notifier, labelOf: (sub) => resolveLabel({ sub }), log: console });
+  return fanout;
+}
+
 let inner;
 let mcp;
-export const handler = async (event) => {
+export const handler = async (event, context) => {
+  const remainingMs = () => context?.getRemainingTimeInMillis?.() ?? Number.POSITIVE_INFINITY;
+  if (isStreamEvent(event)) return (await recordFanout()).handleStream(event, { remainingMs });
+  if (isReplayEvent(event)) return (await recordFanout()).handleInvoke(event, { remainingMs });
   if (!originVerified(event, env.ORIGIN_VERIFY)) return forbidden(); // HFY-R43, before any routing
   if (!inner) {
     const p = await loadPush();
