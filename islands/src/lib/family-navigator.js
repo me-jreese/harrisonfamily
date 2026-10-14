@@ -72,7 +72,7 @@ export class FamilyNavigator extends Base {
   }
 
   get graph() { return this._graph; }
-  set graph(g) { this._graph = g || null; this._union = 0; this._queue(); }
+  set graph(g) { this._graph = g || null; this._union = 0; this._expanded.clear(); this._queue(); }
   get focus() { return this._focus; }
   set focus(id) {
     const next = id || null;
@@ -94,6 +94,8 @@ export class FamilyNavigator extends Base {
       this._ro = new ResizeObserver(() => this._refit());
       this._ro.observe(this);
     }
+    // A web font arriving changes the cards' widths without changing the column's: refit then too.
+    document.fonts?.ready?.then(() => this._refit(true), () => {});
     this._render();
   }
 
@@ -104,6 +106,7 @@ export class FamilyNavigator extends Base {
     this._mq = null;
     this._ro?.disconnect();
     this._ro = null;
+    this._retry = false;
     if (this._frame) cancelAnimationFrame(this._frame);
     this._frame = 0;
   }
@@ -282,6 +285,7 @@ export class FamilyNavigator extends Base {
   // Hide the cards of each line that do not fit its column and write its "+N more" button. Layout is read, so this runs after the DOM is in place.
   _fit() {
     if (!this._wide) return;
+    this._retry = false;
     for (const ul of this.querySelectorAll("ul[data-fit]")) {
       const key = ul.getAttribute("data-fit");
       const cards = [...ul.children].filter((li) => !li.hasAttribute("data-more-item"));
@@ -291,6 +295,7 @@ export class FamilyNavigator extends Base {
       moreLi.hidden = true;
       const avail = ul.clientWidth;
       const w = cards[0].offsetWidth;
+      if (!avail || !w) { this._retry = true; continue; } // not laid out yet (display:none): measure again at the next refit
       const gap = parseFloat(getComputedStyle(ul).columnGap) || 0;
       if (cards.length * w + (cards.length - 1) * gap <= avail + 0.5) continue; // the whole line fits: nothing to hide
       const btn = moreLi.firstElementChild;
@@ -311,8 +316,9 @@ export class FamilyNavigator extends Base {
   }
 
   // A resize observer callback: refit once per frame, and only when the width changed (hiding cards changes the height, which must not loop).
-  _refit() {
-    if (!this._wide || this._frame || this.clientWidth === this._lastWidth) return;
+  // `force` (fonts ready) and `_retry` (a line could not be measured) refit without a width change.
+  _refit(force = false) {
+    if (!this._wide || this._frame || !this.isConnected || (!force && !this._retry && this.clientWidth === this._lastWidth)) return;
     this._frame = requestAnimationFrame(() => {
       this._frame = 0;
       this._lastWidth = this.clientWidth;

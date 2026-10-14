@@ -308,3 +308,34 @@ test("1280, messy graph: not-recorded grandparents, no recorded parents, no unio
   await expect(nav(page).getByRole("tab")).toHaveCount(0);
   expect(await axeViolations(page, { include: ".hfy-tree" })).toEqual([]);
 });
+
+test("1024: the grid, the panel and the outline all show without sideways scroll; the long sibling line keeps one card and a '+N more' button", async ({ page }) => {
+  await open(page, { width: 1024, height: 1000 });
+  await expect(nav(page).locator("[data-nav-layout=grid]")).toBeVisible();
+  await expect(page.locator("[data-tree-panel]")).toBeVisible();
+  await expect(page.locator("[data-tree-outline]")).toBeVisible();
+  await expect(page.locator("[data-tree-generations]")).toHaveCount(0);
+  expect(await noSideways(page)).toBe(true);
+  const sibs = nav(page).locator("ul[data-fit=sibs]");
+  expect(await sibs.locator("li:not([hidden]) .hfy-nav__card").count()).toBeGreaterThanOrEqual(1);
+  await expect(sibs.locator("button[data-more]")).toHaveText(/^\+\d+ more$/);
+  const sb = await box(sibs);
+  for (const card of await sibs.locator("li:not([hidden]) .hfy-nav__card").all()) {
+    const c = await box(card);
+    expect(c.x + c.width).toBeLessThanOrEqual(sb.x + sb.width + 1);
+  }
+});
+
+test("1280: the '+N more' cut follows the cards' width when the column does not change (a late web font)", async ({ page }) => {
+  await open(page, { width: 1280, height: 1100 });
+  const visible = () => nav(page).locator("ul[data-fit=sibs] li:not([hidden]):not([data-more-item]) .hfy-nav__card").count();
+  const before = await visible();
+  // widen every card item without touching the column: only the fonts-ready / retry path can notice
+  await page.addStyleTag({ content: ".hfy-nav__line > .hfy-nav__item:not(.hfy-nav__item--more) { flex-basis: 18rem !important; width: 18rem !important; }" });
+  await page.evaluate(() => document.fonts.ready);
+  await nav(page).evaluate((el) => el._refit(true));
+  await expect.poll(visible).toBeLessThan(before);
+  const sb = await box(nav(page).locator("ul[data-fit=sibs]"));
+  const last = await box(nav(page).locator("ul[data-fit=sibs] li:not([hidden]):not([data-more-item]) .hfy-nav__card").last());
+  expect(last.x + last.width).toBeLessThanOrEqual(sb.x + sb.width + 1);
+});
