@@ -1,7 +1,7 @@
 /* HFY posts islands (timeline, /posts/, own-page posting) and the island-owned primitives every island shares (.hfy-h, .hfy-btn,
    .hfy-banner, .hfy-gate, .hfy-skeleton, .hfy-ping, .hfy-empty, .hfy-confirm). DS components/Posts. Every value aliases an --io-content-* /
    --io-feed-* contract token (kit-bridge) or an --io-typography-* token: no literals, no fallbacks (lint no-literal-token-values).
-   @io-kit/content 0.1.1 content.css reads the Enceladus short names (--fg, --bg-surface, ...) with literal fallbacks and sizes
+   @io-kit/content 0.3.1 content.css reads the Enceladus short names (--fg, --bg-surface, ...) with literal fallbacks and sizes
    meta and labels at 0.875em (15.75px, under the 16px floor); the rules below restate what the islands need on the contract. */
 
 /* ---- island-owned primitives (replace Bootstrap's .h3/.h4/.btn-primary inside islands) ------------------------------------ */

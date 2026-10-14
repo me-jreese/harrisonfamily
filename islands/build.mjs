@@ -27,6 +27,7 @@ import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
 import { expectedHeads, resolveToken } from "./heads.mjs";
 import { COPY_EXTRA, COPY_PAGES, applyCopy } from "./copy.mjs";
 import { htmlPages, sha8, stampSources, versionHtml, versionManifestCss } from "./assets.mjs";
+import { documentEditorLeaks, hfyNoDocumentEditor } from "./kit-content.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -93,7 +94,9 @@ const islandOptions = {
   chunkNames: "chunks/[name]-[hash]",
   define: { "process.env.NODE_ENV": '"production"' },
   loader: { ".css": "css" },
-  plugins: [hfyCloudscape],
+  // hfyNoDocumentEditor (kit-content.mjs): keeps @io-kit/content's DocumentEditor import from bundling Cloudscape's stylesheets.
+  plugins: [hfyCloudscape, hfyNoDocumentEditor],
+  metafile: true,
   write: false,
   logLevel: "silent"
 };
@@ -145,6 +148,9 @@ async function buildAll() {
   const dirs = new Map(); // site-relative directory that must hold exactly these files -> Set(site-relative paths)
 
   const islands = await build(islandOptions);
+  // An island that renders DocumentEditor would get an empty Cloudscape (kit-content.mjs): stop the build instead.
+  const leaks = documentEditorLeaks(islands.metafile);
+  if (leaks.length) throw new Error(`an island bundles @io-kit/content DocumentEditor, which this build stubs out (kit-content.mjs):\n  ${leaks.join("\n  ")}`);
   const islandSet = new Set();
   for (const f of islands.outputFiles) {
     const rel = posix(relative(site, f.path));

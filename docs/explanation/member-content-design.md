@@ -167,13 +167,13 @@ Two consequences remain. Deleting a post removes its items, its comments and its
 
 ## Why the same contract tests both sides
 
-The islands and the API are written separately, but they have to agree on the wire shape, the error codes and the permission rules. The kit packages define that agreement as contract suites: the content suite (CS-01 to CS-10) and the comments suite (CC-01 to CC-17). For the agreement between the two sides, harrisonfamily runs the kit's suites rather than writing a separate test for each side. The API also has its own tests for behavior the suites do not cover, in [`api/test/api.test.js`](../../api/test/api.test.js).
+The islands and the API are written separately, but they have to agree on the wire shape, the error codes and the permission rules. The kit packages define that agreement as contract suites: the content suite (CS-01 to CS-19) and the comments suite (CC-01 to CC-17). For the agreement between the two sides, harrisonfamily runs the kit's suites rather than writing a separate test for each side. The API also has its own tests for behavior the suites do not cover, in [`api/test/api.test.js`](../../api/test/api.test.js).
 
 - [`api/test/contracts.test.js`](../../api/test/contracts.test.js) runs both suites against the real API stores over an in-memory DynamoDB fake. These are the same `createContentSource` and `createCommentSource` the handler calls, so the transactions, audit items and Q-4 checks are what get tested.
 - [`islands/tests/content-contract.test.mjs`](../../islands/tests/content-contract.test.mjs) runs the content suite through the islands' posts adapter, with a mocked `fetch` that drives the real API handler. One test covers the adapter, the HTTP layer, session checks and server rules together. Cases that do not apply are reported as not applicable, never counted as passes.
 - [`islands/tests/contract.test.mjs`](../../islands/tests/contract.test.mjs) runs the comments suite through the islands' comment adapter. Its mocked API is the kit's in-memory store behind the same routes and error body, not the real handler. The comments side is therefore held to agreement by both ends passing the same suite, not by one test that spans them.
 
-Each side runs the suite version it pins, and the two pins can differ: today the islands lock `@io-kit/content` 0.1.1 and the API locks 0.1.0. A rule that changes in the kit therefore reaches each side only when that side upgrades, and then fails there if that side has not caught up. Drift between the halves shows up at upgrade time, not before. [Run the tests](../how-to/run-the-tests.md) lists the commands.
+Each side runs the suite version it pins, and the two pins are separate and can differ: [`api/test/kit-pins.test.js`](../../api/test/kit-pins.test.js) checks only that each is exact. A rule that changes in the kit therefore reaches each side only when that side upgrades, and then fails there if that side has not caught up. Drift between the halves shows up at upgrade time, not before. [Run the tests](../how-to/run-the-tests.md) lists the commands.
 
 ## Further reading
 
