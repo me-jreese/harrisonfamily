@@ -7,10 +7,10 @@ const ASSET_V = {
   "theme": "00520cc3",
   "manifest": "c0f9b5fc",
   "shell": {
-    "js": "354abba7",
+    "js": "7313488a",
     "css": "53cdeb03"
   },
-  "notify": "f25d03ad"
+  "notify": "9a3183f2"
 };
 /* hfy-asset-versions:end */
 // HFY-R58: the cache name comes from the ?v this worker is registered at (the hash of this file, which embeds the hashes above), so

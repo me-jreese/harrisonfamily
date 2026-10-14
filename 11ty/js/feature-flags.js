@@ -8,27 +8,35 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "2b569e77",
+        "js": "d86071e9",
         "css": "24d74883"
       },
+      "inbox": {
+        "js": "2e2d42c4",
+        "css": "d6605982"
+      },
+      "inbox-page": {
+        "js": "0d12d455",
+        "css": "38a33f05"
+      },
       "links-editor": {
-        "js": "05a03f0a",
+        "js": "7c09fba8",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "0708af25",
+        "js": "8a07c8d8",
         "css": "24a8cc2d"
       },
       "notifications": {
-        "js": "9ec1c0d9",
+        "js": "cfb46f0e",
         "css": "56799f74"
       },
       "person": {
-        "js": "5c2d9931",
+        "js": "c9cf8677",
         "css": "3909ca3c"
       },
       "person-links": {
-        "js": "70972ead",
+        "js": "65b1ee44",
         "css": "930bb673"
       },
       "photo-tags": {
@@ -36,33 +44,33 @@
         "css": "bf6043c1"
       },
       "posts": {
-        "js": "0e7f3e3f",
+        "js": "dea54f06",
         "css": "c678e2b1"
       },
       "search": {
-        "js": "3fa6315b",
+        "js": "a34fe804",
         "css": "9e007813"
       },
       "settings": {
-        "js": "9accb7d2",
+        "js": "f2245553",
         "css": "2ebf2e40"
       },
       "shell": {
-        "js": "354abba7",
+        "js": "7313488a",
         "css": "53cdeb03"
       },
       "timeline": {
-        "js": "e6378382",
+        "js": "2e984270",
         "css": "e839f302"
       },
       "tree": {
-        "js": "f2abdefe",
+        "js": "390e26c1",
         "css": "66b35626"
       }
     },
     "theme": "00520cc3",
     "manifest": "c0f9b5fc",
-    "sw": "abd09466"
+    "sw": "ff3c8dad"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -752,6 +760,20 @@
   resolveFlags().then((flags) => {
     if (flags.photoTags !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
     loadIsland("photo-tags", { onError() { /* the gallery stands without tag overlays */ } });
+  });
+
+  // HFY-TSK-185: inboxV1 mounts the notification inbox. The bell island fills the shell's bell slot on every page that has the shell, for a
+  // signed-in member only (the signed-out visitor never loads the bundle); the inbox-page island fills the static /me/inbox/ page.
+  // With the flag off neither bundle is requested and /me/inbox/ keeps its "not available yet" note (HFY-R8).
+  resolveFlags().then((flags) => {
+    if (flags.inboxV1 !== true) return;
+    if (/^\/me\/inbox\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("inbox-page", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+    if (flags.shellV2 !== true) return;
+    edgeSession().then((session) => {
+      if (session && session.authenticated === true && session.sub) loadIsland("inbox", { onError() { /* the bar stands without the bell */ } });
+    }, () => {});
   });
 
   // HFY-TSK-217: profileLinks mounts the links section on the person page (island person-links, under the lifespan line; it fills the person

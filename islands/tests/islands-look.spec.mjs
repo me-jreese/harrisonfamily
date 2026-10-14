@@ -264,8 +264,8 @@ test("notifications at 375: switch 52x32 with a 44 hit area, on = accent with an
   expect(a.knobW).toBe("24px");
   expect(a.knobBg).toBe(RGB.accentText);
   expect((await off.evaluate(sw)).bg).toBe(RGB.borderStrong);
-  const group = await page.locator(".hfy-notify .iok-notify-group > h4").evaluate((h) => { const cs = getComputedStyle(h); return { transform: cs.textTransform, spacing: cs.letterSpacing, size: cs.fontSize, text: h.textContent }; });
-  expect(group).toEqual({ transform: "none", spacing: "normal", size: "16px", text: "family" });
+  const group = await page.locator(".hfy-notify .iok-notify-group > h4").first().evaluate((h) => { const cs = getComputedStyle(h); return { transform: cs.textTransform, spacing: cs.letterSpacing, size: cs.fontSize, text: h.textContent }; });
+  expect(group).toEqual({ transform: "none", spacing: "normal", size: "16px", text: "about me" });
   expect(await page.locator(".hfy-notify .iok-notify-row").first().evaluate((li) => li.getBoundingClientRect().height)).toBeGreaterThanOrEqual(56);
   const chosen = page.locator('.hfy-notify [data-type="mention"] [role=radio][aria-checked=true]');
   expect(await chosen.evaluate((b) => [getComputedStyle(b).backgroundColor, getComputedStyle(b).color])).toEqual([RGB.accent, RGB.accentText]);

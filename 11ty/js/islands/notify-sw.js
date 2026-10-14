@@ -1,7 +1,9 @@
 /* eslint-disable no-undef */
 // @io-kit/notify service-worker handler. importScripts it from the generated
 // service worker. Handles classic pushes and the declarative web push (8030)
-// wrapper; tapping a notification focuses a window and navigates it.
+// wrapper; tapping a notification focuses a window and navigates it. Every push
+// also posts {type:"iok-notify:push"} to every open client, so an open inbox
+// (useInbox) refreshes at once.
 self.addEventListener("push", (event) => {
   let data;
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
@@ -13,6 +15,9 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(n.title || "Notification", opts),
     Number.isFinite(badge) && self.navigator && self.navigator.setAppBadge
       ? self.navigator.setAppBadge(badge).catch(() => {}) : null,
+    self.clients.matchAll({ type: "window", includeUncontrolled: true })
+      .then((wins) => { for (const w of wins) { try { w.postMessage({ type: "iok-notify:push" }); } catch { /* ignore */ } } })
+      .catch(() => {}),
   ]));
 });
 

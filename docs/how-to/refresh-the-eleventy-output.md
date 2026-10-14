@@ -52,7 +52,7 @@ Never mirror `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` or `fonts/`
 for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/person-page.js \
          sw.js manifest.webmanifest offline.html \
          images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-         posts/index.html me/index.html me/notifications/index.html me/links/index.html tree/index.html family-login/index.html; do
+         posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html tree/index.html family-login/index.html; do
   cmp -s "11ty/$f" "$SRC/public/$f" && echo "mirrored: $f" || echo "missing or different: $f"
 done
 grep -c 'src="/js/auth-v2.js"' "$SRC/src/_includes/layouts/base.njk"
@@ -71,7 +71,7 @@ The islands build rewrites ten of the mirrored files whenever a file they refere
 
 - `js/feature-flags.js` and `sw.js`, through their `hfy-asset-versions` blocks;
 - `manifest.webmanifest`, through its colours;
-- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html` and `tree/index.html`, through their head blocks and `?v=` versions.
+- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html` and `tree/index.html`, through their head blocks and `?v=` versions.
 
 For these, `missing or different` usually means only that a build has changed them since the last copy. Copy them again with mirror steps 1 and 2.
 
@@ -92,6 +92,7 @@ For these, `missing or different` usually means only that a build has changed th
 | `11ty/posts/index.html` | `public/posts/index.html` | Standalone, like the notifications page. |
 | `11ty/me/index.html` | `public/me/index.html` | The settings hub (`navMe`, HFY-TSK-091). Standalone, like the notifications page. |
 | `11ty/me/links/index.html` | `public/me/links/index.html` | The profile links editor (`profileLinks`, HFY-TSK-217). Standalone, like the notifications page. |
+| `11ty/me/inbox/index.html` | `public/me/inbox/index.html` | The notification inbox page (`inboxV1`, HFY-TSK-185). Standalone, like the notifications page. |
 | `11ty/tree/index.html` | `public/tree/index.html` | The family tree page (`familyViz`, HFY-TSK-201). Standalone, like the notifications page. |
 
 These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#steps). Do only those the check pointed you to.
@@ -121,7 +122,7 @@ These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#s
    for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/person-page.js \
             sw.js manifest.webmanifest offline.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/index.html me/notifications/index.html me/links/index.html tree/index.html family-login/index.html; do
+            posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html tree/index.html family-login/index.html; do
      mkdir -p "$SRC/public/$(dirname "$f")"
      cp "11ty/$f" "$SRC/public/$f"
    done
@@ -299,7 +300,7 @@ Never edit the head blocks, the family-voice copy, a `?v=` or an `hfy-asset-vers
    ```sh
    for f in _data/flags.json js/auth-v2.js sw.js manifest.webmanifest offline.html family-login/index.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/index.html me/notifications/index.html me/links/index.html tree/index.html; do
+            posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html tree/index.html; do
      test -f "11ty/$f" || echo "missing: $f"
    done
    ```

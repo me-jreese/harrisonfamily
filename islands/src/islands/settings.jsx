@@ -13,6 +13,7 @@ import { signOut } from "../lib/sign-out.js";
 /** The rows (DS voice: lowercase, no exclamation marks, "page" never "record"). */
 export const ROWS = [
   { id: "notifications", label: "notifications", href: "/me/notifications/", line: "texts on this device, and what they're about" },
+  { id: "inbox", label: "inbox", href: "/me/inbox/", line: "what's new for you, and what you've read", flag: "inboxV1" },
   { id: "links", label: "your links", href: "/me/links/", line: "facebook, instagram and the rest, on your page", flag: "profileLinks" },
   // "sessions" in io's brief: the kit's account page lists the sign-in methods and passkeys.
   { id: "sign-in", label: "sign-in and devices", href: "/auth/link", line: "google, password, face or fingerprint" }

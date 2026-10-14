@@ -68,7 +68,7 @@ Every page with the Eleventy `css/main.css` links the theme layer right after it
 
 | Partial | Covers |
 |---|---|
-| `10-kit-aliases.css` | One `html:root` block that maps the short variables `@io-kit/shell` 0.6.6, `@io-kit/content` 0.3.1 and `@io-kit/notify` 0.4.0 read (`--bg`, `--fg`, `--space-2` and others) to `--io-*` tokens. Those kit versions read the short names instead of their `--io-*` contracts (DVP-TSK-A73). `html:root` has specificity (0,1,1), so it beats any `:root` declaration of the same names. Its header says to delete the file once the kit reads only `--io-*` variables. |
+| `10-kit-aliases.css` | One `html:root` block that maps the short variables `@io-kit/shell` 0.6.6, `@io-kit/content` 0.3.1 and `@io-kit/notify` 0.6.0 read (`--bg`, `--fg`, `--space-2` and others) to `--io-*` tokens. Those kit versions read the short names instead of their `--io-*` contracts (DVP-TSK-A73). `html:root` has specificity (0,1,1), so it beats any `:root` declaration of the same names. Its header says to delete the file once the kit reads only `--io-*` variables. |
 | `20-base.css` | Global element rules (the page ground, text, links and headings) that override the literal values in `main.css`, and three `--bs-*` variables that `main.css` declares as literals |
 | `30-bootstrap.css` | The Bootstrap 5.3 components that `bs-bridge.css` cannot reach, re-pointed at `--io-*` tokens class by class. Each rule's comment names the `main.css` literal it replaces. |
 | `40-site.css` | The Eleventy site's own rules from `main.css` (gutters, `main` padding, footer and the rest), re-pointed at `--io-*` tokens |
@@ -140,7 +140,7 @@ The early-hint script is `try{localStorage.getItem("hfy:shell-hint")==="1"&&docu
 | Pages | Where the blocks go |
 |---|---|
 | The ten Eleventy pages (nine, plus the repo-owned redirect page `family-login/index.html`, which gets the blocks without the early hint): `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `person/`, `privacy/`, `private/`, `search/` and `terms/` | Block A immediately before the first `<link>` to `/css/main.css` (with or without a query), block B immediately after it |
-| The six repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `tree/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
+| The seven repo-owned pages: `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `tree/index.html`, `offline.html` | Block A and then block B right after `</title>`. These pages do not load `main.css`. |
 
 Each block takes the indentation of the line it is anchored to. A build first removes any existing blocks and then writes them again, so a second build changes nothing, and removing the blocks restores the page byte for byte. A page with neither a `main.css` link nor `</title>` fails the build with `<page>: no main.css link and no </title> to anchor the theme head block`, and a page in `PAGES` that does not exist fails it as well.
 
@@ -159,7 +159,7 @@ Each block takes the indentation of the line it is anchored to. A build first re
 | `index.html`, hero lede | `<h3>Learn about our heritage and help us preserve our family history.</h3>`, in either capitalization | `<p class="home-hero__lede">learn about our heritage and help us preserve our family history.</p>` |
 | `index.html`, calls to action | `About Us` (the `/about/` link) and `Family Login` (the `data-feature="familyLoginLink"` link) | `our story` and `sign in` |
 | `about/index.html`, heading | `Honoring the Harrison Family Legacy` | `honoring the Harrison family legacy` |
-| Every page with the footer line, and `posts/`, `me/`, `me/notifications/`, `me/links/` and `tree/` (`COPY_EXTRA`) | No links after the footer line | `FOOTER_NAV`: a `<nav class="site-footer__links" aria-label="about this site">` with `about`, `contact`, `privacy` and `terms`, once. The shell hides the navbar that linked them. `40-site.css` styles them (44 px targets, `text.dim`, underlined). |
+| Every page with the footer line, and `posts/`, `me/`, `me/notifications/`, `me/links/`, `me/inbox/` and `tree/` (`COPY_EXTRA`) | No links after the footer line | `FOOTER_NAV`: a `<nav class="site-footer__links" aria-label="about this site">` with `about`, `contact`, `privacy` and `terms`, once. The shell hides the navbar that linked them. `40-site.css` styles them (44 px targets, `text.dim`, underlined). |
 | All ten pages, meta description, `og:description`, `twitter:description` | The Eleventy default, `Modern genealogy archive built with gramps, 11ty and bootstrap. Family members, login to see your data.` | `DESCRIPTION`: `the Harrison family archive. family members sign in to see the private pages.` |
 | `logged-out/index.html`, heading, lede and buttons | `You are signed out`, `Your session has ended successfully. …`, `Return to Family Login` (`/family-login/`), `Back to Home` | `SIGNED_OUT`: `you're signed out.`, `come back whenever you like.`, `sign in again` (`/auth/login`), `home`. `src/logged-out.njk` in the source carries the same text. |
 | `person/index.html`, static strings | `Loading person record…`, `Loading high-resolution media…`, `Download original` | `loading…`, `loading the full-size photo…`, `download original` |
@@ -288,7 +288,7 @@ A build writes only the files whose bytes changed, creating directories as neede
 | Scope | Files |
 |---|---|
 | Stylesheets | Every `.css` file under `islands/src/`: the seven theme partials, `auth-edge/auth-edge.css`, `comments.css`, `posts.css`, `shell.css`, `islands/notifications.css` and `islands/search.css` |
-| Inline styles | The `<style>` elements and `style=""` attributes of `11ty/posts/index.html`, `11ty/me/index.html`, `11ty/me/notifications/index.html`, `11ty/me/links/index.html`, `11ty/tree/index.html` and `11ty/offline.html` |
+| Inline styles | The `<style>` elements and `style=""` attributes of `11ty/posts/index.html`, `11ty/me/index.html`, `11ty/me/notifications/index.html`, `11ty/me/links/index.html`, `11ty/me/inbox/index.html`, `11ty/tree/index.html` and `11ty/offline.html` |
 
 The ten Eleventy pages and `main.css` are not linted.
 

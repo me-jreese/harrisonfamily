@@ -1,0 +1,37 @@
+/* The kit inbox (@io-kit/notify 0.6.0 inbox.css) in the family's theme: shared by the bell's panel and sheet and by /me/inbox/
+   (HFY-TSK-185). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*, --io-radius-* and --io-typography-* (theme-lint
+   no-literal-token-values). The kit reads --io-notify-* keys; the harrisonfamily kit-bridge defines most of them, so only the bell
+   badge colours (which the bridge leaves to the kit's system-colour defaults) are set here.
+   Kit root cause: @io-kit/notify 0.6.0 inbox-tokens.css falls back to Highlight / HighlightText for --io-notify-badge-bg / -fg and the
+   bridge does not set them. Upstream: add the two keys to the bridge, then drop this block. */
+:root {
+  --io-notify-badge-bg: var(--io-color-semantic-accent-secondary);
+  --io-notify-badge-fg: var(--io-color-semantic-text-inverse);
+}
+
+/* Kit root cause: inbox.css sets the unread title weight as the literal 600; the DS semibold weight is a token. */
+.iok-notify-inbox-item[data-unread] .iok-notify-inbox-item-title { font-weight: var(--io-typography-weight-semibold); }
+/* Kit root cause: the inbox links are bare <a>/<button> in the kit sheet, so the reboot (main.css, the theme's base) and the shell's
+   button rule apply. The rows read as text, not as blue links: no underline in any state (the item title underlines on hover only). */
+.iok-notify-inbox a.iok-notify-inbox-open,
+.iok-notify-inbox a.iok-notify-inbox-open:hover { color: inherit; text-decoration: none; }
+.iok-notify-inbox-title { font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-lg); font-weight: var(--io-typography-weight-regular); line-height: var(--io-typography-leading-snug); }
+.iok-notify-inbox-segment, .iok-notify-inbox-button, .iok-notify-inbox-link, .iok-notify-inbox-mark, .iok-notify-bell { font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); }
+/* A row is at least 56px high (DS: 44px control + the row's own breathing room), the whole row tappable. */
+.iok-notify-inbox-item { align-items: center; min-height: calc(var(--io-control-tap-min) + var(--io-space-3)); }
+.iok-notify-inbox-open { align-content: center; }
+.iok-notify-inbox-dot { align-self: center; margin-top: 0; }
+.iok-notify-inbox-body:empty { display: none; }
+/* A long body or note wraps; nothing forces the page wider than the viewport. */
+.iok-notify-inbox { min-width: 0; max-width: 100%; }
+.iok-notify-inbox-main, .iok-notify-inbox-body { min-width: 0; overflow-wrap: anywhere; }
+/* The segments and tools wrap instead of overflowing at 375px. */
+.iok-notify-inbox-header { row-gap: var(--io-space-2); }
+.iok-notify-inbox-tools { margin-inline-start: auto; }
+/* Unread dot: a filled circle in the accent; the row text carries the unread state too (weight + the hidden "unread" word), so
+   the dot is never the only cue. */
+.iok-notify-inbox-item[data-unread] .iok-notify-inbox-dot { background: var(--io-color-semantic-accent); }
+/* Hover affordance for a pointer only. */
+@media (hover: hover) {
+  .iok-notify-inbox-item:hover { background: var(--io-color-semantic-surface-sunken); }
+}
