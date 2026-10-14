@@ -6,7 +6,7 @@ import { InMemoryNotificationStore, DynamoPreferencesStore, DynamoSubscriptionSt
 import { createFakeDdb, cmds, makeApi, signToken } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
-import { headKey, seqKey } from "../src/sync/store.js";
+import { ORIGINS, headKey, logKey, seqKey } from "../src/sync/store.js";
 import { createNotifier, queryFollowers } from "../src/notify.js";
 import { createSubscriptions } from "../src/subscriptions.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
@@ -28,7 +28,7 @@ const update = (obj, base) => ({ op: "update", class: obj._class, handle: obj.ha
 const withdraw = (obj, base) => ({ op: "withdraw", class: obj._class, handle: obj.handle, base_version: base, reason: "private" });
 const LABELS = { I0002: "Eve", I0004: "Dee", I0005: "Pat", I0007: "Sam", I0010: "Wynn", I0011: "Kit", I0012: "Lou" };
 
-function world({ members = [], flag = () => true } = {}) {
+function world({ members = [], flag = () => true, inbox: inboxStore, noInbox = false, chunkSize } = {}) {
   const ddb = createFakeDdb();
   ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 0, seeded: true, writes_enabled: true, merges_enabled: false });
   const clock = { t: Date.parse("2026-10-14T10:00:00Z") };
@@ -37,15 +37,15 @@ function world({ members = [], flag = () => true } = {}) {
   const ctx = { ddb, cmds, table: T, now: () => clock.t, hooks, log: { warn() {}, error() {} }, txnOpts: { sleep: async () => {} }, unsafeNoValidate: true };
   let k = 0;
   const apply = (ops, o = {}) => applyBatch(ctx, { principal: "svc", origin: "desktop", idempotencyKey: `key-${++k}`, ops, ...o });
-  const inbox = new InMemoryNotificationStore();
+  const inbox = inboxStore ?? new InMemoryNotificationStore();
   const followersSpy = vi.fn(queryFollowers(ddb, cmds, T));
   const calls = [];
   const notifier = createFanoutNotifier({
-    inbox, featureOn: async (name, p) => flag(name, p), listMembers: async () => new Set(members), followersOf: followersSpy,
+    ...(noInbox ? {} : { inbox }), featureOn: async (name, p) => flag(name, p), listMembers: async () => new Set(members), followersOf: followersSpy,
     preferences: new DynamoPreferencesStore(ddb, cmds, T), subscriptions: new DynamoSubscriptionStore(ddb, cmds, T), log: { error() {} },
   });
   const spied = { ...notifier, onRecordChanged: vi.fn(async (...a) => { calls.push(a); return notifier.onRecordChanged(...a); }) };
-  const fanout = createRecordFanout({ ddb, cmds, table: T, notifier: spied, now: ctx.now, log: { error() {}, warn() {} }, labelOf: async (id) => LABELS[id] });
+  const fanout = createRecordFanout({ ddb, cmds, table: T, notifier: spied, now: ctx.now, chunkSize, log: { error() {}, warn() {} }, labelOf: async (id) => LABELS[id] });
   const follow = async (who, target) => createSubscriptions({ ddb, cmds, table: T, actor: { id: who }, now: ctx.now, personExists: async () => true }).put(target);
   const types = async (p) => (await inbox.list(p)).items.map((i) => i.type);
   const items = async (p) => (await inbox.list(p)).items;
@@ -66,7 +66,12 @@ function world({ members = [], flag = () => true } = {}) {
 const seedPeople = async (w, ns) => { const r = await w.apply(ns.map((n) => create(person(n)))); return r.seq_to; };
 
 describe("silent passes: seeds, imports and baselines", () => {
-  it("an import of N records (a seed session, origin seed) writes nothing to any inbox and reads no followers", async () => {
+  it("the store has no import origin: an import IS the seed session (the first session, origin seed), so the seed rule covers it", () => {
+    expect(ORIGINS).not.toContain("import");
+    expect(ORIGINS).toContain("seed");
+  });
+
+  it("an import of N records (the seed session, named explicitly: origin seed) writes nothing to any inbox and reads no followers", async () => {
     const w = world({ members: ["I0005", "I0012"] });
     await w.follow("F1", "I0005");
     const N = 60;
@@ -90,6 +95,21 @@ describe("silent passes: seeds, imports and baselines", () => {
     const item = w.rendered(1, r.seq_to, { changed_people: ["I0005"], origins: [] });
     expect((await w.fanout.processRendered(item)).status).toBe("silent");
     expect(await w.items("I0005")).toEqual([]);
+  });
+
+  it("an import marker (item.import, an import origin or entry.import) is silent too, should one ever exist: D2-16's import:true", async () => {
+    const w = world({ members: ["I0005"] });
+    const seq = await seedPeople(w, [5]);
+    for (const extra of [{ import: true, origins: ["desktop"] }, { origins: ["import"] }]) {
+      expect(await w.fanout.processRendered(w.rendered(1, seq, { changed_people: ["I0005"], ...extra }))).toMatchObject({ status: "silent", reason: "import" });
+    }
+    // an entry-level marker, read back from the log range
+    const entry = w.ddb.rows.get(`${logKey(1).PK}\u0000${seqKey(seq)}`);
+    expect(entry).toBeDefined();
+    w.ddb.rows.set(`${logKey(1).PK}\u0000${seqKey(seq)}`, { ...entry, import: true });
+    expect(await w.fanout.processRendered(w.rendered(1, seq, { changed_people: ["I0005"], origins: ["desktop"] }))).toMatchObject({ status: "silent", reason: "import" });
+    expect(await w.items("I0005")).toEqual([]);
+    expect(w.notifier.onRecordChanged).not.toHaveBeenCalled();
   });
 
   it("a baseline pass (the first live pass of a mode) is silent: the site only came online", async () => {
@@ -270,12 +290,152 @@ describe("owners and followers receive the right types (end to end over the fake
     expect(await w.types("F2")).toEqual(["record_updated_followed"]);
   });
 
-  it("a flag read that fails notifies nobody", async () => {
-    const w = world({ members: ["I0005"], flag: () => { throw new Error("flags down"); } });
+  it("a flag read that fails is a retryable failure, not 'off': nothing is marked done, and the retry delivers once", async () => {
+    let down = true;
+    const w = world({ members: ["I0005"], flag: () => { if (down) throw new Error("flags down"); return true; } });
     const seq = await seedPeople(w, [5]);
     const r = await w.apply([update(person(5, { change: 1 }), 1)], { origin: "admin", principal: "I0099" });
-    await w.fanout.processRendered(w.rendered(seq + 1, r.seq_to, { changed_people: ["I0005"], origins: ["admin"], principals: ["I0099"] }));
+    const item = w.rendered(seq + 1, r.seq_to, { changed_people: ["I0005"], origins: ["admin"], principals: ["I0099"] });
+    await expect(w.fanout.processRendered(item)).rejects.toThrow("fanout_delivery_failed");
+    expect(w.rows("RECFAN#")).toEqual([]);
     expect(await w.items("I0005")).toEqual([]);
+    down = false;
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "notified", delivered: 1 });
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "duplicate" });
+    expect(await w.items("I0005")).toHaveLength(1);
+  });
+
+  it("the flag answer is read once per recipient per window, not once per pass per member", async () => {
+    const reads = vi.fn(() => true);
+    const w = world({ members: ["I0005"], flag: (name, p) => (name === "recordSubsV1" ? reads(p) : true) });
+    await w.follow("F1", "I0005");
+    const seq = await seedPeople(w, [5]);
+    for (const n of [1, 2]) {
+      const r = await w.apply([update(person(5, { change: n }), n)], { origin: "admin", principal: "I0099" });
+      await w.fanout.processRendered(w.rendered(r.seq_from, r.seq_to, { changed_people: ["I0005"], origins: ["admin"], principals: ["I0099"] }));
+    }
+    expect(seq).toBeGreaterThan(0);
+    expect(reads.mock.calls.filter(([p]) => p === "I0005")).toHaveLength(1);
+    expect(reads.mock.calls.filter(([p]) => p === "F1")).toHaveLength(1);
+    expect(await w.items("I0005")).toHaveLength(1);
+  });
+});
+
+describe("a delivery the real notifier could not make is not marked done", () => {
+  const failingInbox = () => {
+    const store = new InMemoryNotificationStore();
+    const state = { fail: true };
+    const add = store.add.bind(store);
+    store.add = async (...a) => { if (state.fail) throw new Error("inbox down"); return add(...a); };
+    return { store, state };
+  };
+  async function ownerEdit(w) {
+    const seq = await seedPeople(w, [5]);
+    const r = await w.apply([update(person(5, { change: 1 }), 1)], { origin: "admin", principal: "I0099" });
+    return w.rendered(seq + 1, r.seq_to, { changed_people: ["I0005"], origins: ["admin"], principals: ["I0099"] });
+  }
+
+  it("a failing inbox store releases the claims and fails the pass; the retry delivers once", async () => {
+    const { store, state } = failingInbox();
+    const w = world({ members: ["I0005"], inbox: store });
+    const item = await ownerEdit(w);
+    await expect(w.fanout.processRendered(item)).rejects.toThrow("fanout_delivery_failed");
+    expect(w.rows("RECFAN#")).toEqual([]); // released, not done
+    state.fail = false;
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "notified", delivered: 1 });
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "duplicate" });
+    expect(await w.items("I0005")).toHaveLength(1);
+  });
+
+  it("a failing follower lookup is a failure too (a lost follower notification is not 'sent')", async () => {
+    const w = world({ members: ["I0005"] });
+    const item = await ownerEdit(w);
+    w.followersSpy.mockRejectedValueOnce(new Error("gsi down"));
+    await expect(w.fanout.processRendered(item)).rejects.toThrow("fanout_delivery_failed");
+    expect(w.rows("RECFAN#")).toEqual([]);
+    expect((await w.fanout.processRendered(item)).status).toBe("notified");
+  });
+
+  it("with no push and no inbox configured nothing is sent and nothing is marked done: the pass ends 'inactive', without a retry loop, and a replay delivers once configured", async () => {
+    const w = world({ members: ["I0005"], noInbox: true });
+    const item = await ownerEdit(w);
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "inactive", delivered: 0 });
+    expect(w.rows("RECFAN#")).toEqual([]);
+    const live = world({ members: ["I0005"] }); // the same pass once an inbox exists
+    const again = await ownerEdit(live);
+    expect((await live.fanout.processRendered(again)).status).toBe("notified");
+  });
+});
+
+describe("claims: every in-flight Put settles before any claim is given back", () => {
+  async function twoOwners(w) {
+    const seq = await seedPeople(w, [5, 12]);
+    const r = await w.apply([update(person(5, { change: 1 }), 1), update(person(12, { change: 1 }), 1)], { origin: "admin", principal: "I0099" });
+    return w.rendered(seq + 1, r.seq_to, { changed_people: ["I0005", "I0012"], origins: ["admin"], principals: ["I0099"] });
+  }
+
+  it("one claim rejecting while another is still pending: the late claim is released too, and the retry delivers both", async () => {
+    const w = world({ members: ["I0005", "I0012"] });
+    const item = await twoOwners(w);
+    const send = w.ddb.send.bind(w.ddb);
+    let broken = true;
+    w.ddb.send = async (cmd) => {
+      const it = cmd?.input?.Item;
+      if (broken && it?.entity === "recfan") {
+        if (it.SK === "person:I0005") throw new Error("throttled");
+        await new Promise((r) => setTimeout(r, 25)); // lands after the sibling failed
+      }
+      return send(cmd);
+    };
+    await expect(w.fanout.processRendered(item)).rejects.toThrow("throttled");
+    expect(w.rows("RECFAN#")).toEqual([]); // the late Put landed, then was given back: no live claim blocks the retry
+    broken = false;
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "notified", delivered: 2 });
+    expect(await w.items("I0005")).toHaveLength(1);
+    expect(await w.items("I0012")).toHaveLength(1);
+  });
+
+  it("a release only deletes the claim its own call made", async () => {
+    const w = world({ members: ["I0005", "I0012"] });
+    const item = await twoOwners(w);
+    // another consumer's live claim on one subject
+    w.ddb.rows.set(`${markerKeys(item.seq_to, "person:I0012").PK}\u0000person:I0012`, {
+      ...markerKeys(item.seq_to, "person:I0012"), entity: "recfan", state: "claimed", lease_until: w.clock.t + LEASE_MS, owner: "other", ttl: 9_999_999_999,
+    });
+    w.notifier.onRecordChanged.mockImplementationOnce(async () => { throw new Error("boom"); });
+    await expect(w.fanout.processRendered(item)).rejects.toThrow("boom");
+    expect(w.rows("RECFAN#")).toEqual([expect.objectContaining({ SK: "person:I0012", owner: "other" })]);
+  });
+});
+
+describe("large passes are chunked, never truncated", () => {
+  const ids = [5, 12, 20, 21, 22, 23, 24];
+  async function bigPass(w) {
+    const seq = await seedPeople(w, ids);
+    const r = await w.apply(ids.map((n) => update(person(n, { change: 1 }), 1)), { origin: "admin", principal: "I0099" });
+    return w.rendered(seq + 1, r.seq_to, { changed_people: ids.map(gid), origins: ["admin"], principals: ["I0099"] });
+  }
+
+  it("every subject gets its notification: one claim-deliver-done round per chunk", async () => {
+    const w = world({ members: ids.map(gid), chunkSize: 3 });
+    const item = await bigPass(w);
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "notified", delivered: 7, subjects: 7, chunks: 3 });
+    expect(w.notifier.onRecordChanged).toHaveBeenCalledTimes(3);
+    for (const n of ids) expect(await w.types(gid(n))).toEqual(["record_updated_mine"]);
+    expect(w.rows("RECFAN#").every((r) => r.state === "done")).toBe(true);
+  });
+
+  it("a failure in chunk 2 keeps chunk 1 done: the retry delivers chunks 2 and 3 only, each owner once", async () => {
+    const w = world({ members: ids.map(gid), chunkSize: 3 });
+    const item = await bigPass(w);
+    const real = w.notifier.onRecordChanged.getMockImplementation();
+    let n = 0;
+    w.notifier.onRecordChanged.mockImplementation(async (...a) => { n += 1; if (n === 2) throw new Error("chunk 2 failed"); return real(...a); });
+    await expect(w.fanout.processRendered(item)).rejects.toThrow("chunk 2 failed");
+    expect(w.rows("RECFAN#").filter((r) => r.state === "done")).toHaveLength(3);
+    expect(w.rows("RECFAN#").filter((r) => r.state !== "done")).toEqual([]);
+    expect(await w.fanout.processRendered(item)).toMatchObject({ status: "notified", delivered: 4 });
+    for (const x of ids) expect(await w.items(gid(x))).toHaveLength(1);
   });
 });
 
@@ -383,6 +543,15 @@ describe("comments.list on a withdrawn person's thread", () => {
     expect((await post("person:I0011", member)).status).toBe(201);
     expect((await api.call("GET", "/api/comments", { token: member, query: { subject: "person:I0011" } })).status).toBe(200);
     expect((await api.call("GET", "/api/comments", { token: member, query: { subject: "person:I0777" } })).status).toBe(200); // an id the store never held
+
+    // The MCP tools are the same CommentSource (handler.invoke): hidden for a member, readable for an admin.
+    const asMember = { id: "I0002", label: "Eve", admin: false };
+    await expect(api.handler.invoke(asMember, "comments.list", { query: { subject: "person:I0010" } })).rejects.toMatchObject({ status: 404 });
+    await expect(api.handler.invoke(asMember, "comments.create", { body: { subject: "person:I0010", body: "via mcp" } })).rejects.toMatchObject({ status: 404 });
+    expect((await api.handler.invoke({ id: "I0099", label: "Ada", admin: true }, "comments.list", { query: { subject: "person:I0010" } })).status).toBe(200);
+    // Delete is the one deliberate exception: it returns no content and only reduces what is stored, so an author can still take their own comment down.
+    expect((await api.call("DELETE", `/api/comments/${before.body.id}`, { token: member, query: { subject: "person:I0010" } })).status).toBeLessThan(300);
+    expect((await api.call("GET", "/api/comments", { token: admin, query: { subject: "person:I0010" } })).body.items ?? []).toEqual([]);
   });
 });
 
@@ -440,7 +609,7 @@ describe("the triggers: stream records and a direct invoke", () => {
 describe("createFanoutNotifier keeps the producer contract", () => {
   it("is a notifier whose onRecordChanged is the render-outbox entry point and which still swallows its own failures", async () => {
     const n = createFanoutNotifier({ inbox: new InMemoryNotificationStore(), featureOn: async () => true, listMembers: async () => { throw new Error("down"); }, log: { error() {} } });
-    await expect(n.onRecordChanged([{ subject: "person:I0005", actor: null }])).resolves.toBeUndefined();
+    await expect(n.onRecordChanged([{ subject: "person:I0005", actor: null }])).resolves.toEqual({ error: true, lost: 1 }); // never throws; it reports
     expect(typeof createNotifier).toBe("function");
   });
 });

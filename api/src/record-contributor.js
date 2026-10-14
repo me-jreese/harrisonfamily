@@ -7,8 +7,17 @@
 //   origin "self"  (a member saving their own record)  -> one self_edit event for person:<principal>, capped at one per record per UTC day
 //                                                           by the CONTRIB#<principal>/CAP#self_edit#<subject>#<day> marker (contribOps writes
 //                                                           the marker; this module reads it first and skips the credit when it exists)
-//   origin self, tag, admin or proposal (a MediaRef region added, moved or removed) -> one tag event for the commit, weight 1, no cap, credited to
-//                                                           the tagger: the batch principal, or for a proposal the proposer (on_behalf_of)
+//                                                           The record is the Person the batch changed. A member's direct writes are limited to their own record
+//                                                           and its own-only objects (editing.md 3), so that is normally the principal's own Person, and a batch
+//                                                           with no Person change (an own-only Event or Note) is credited to the principal's Person. A batch that
+//                                                           does change a different Person is keyed (and capped) on that Person, so the cap is always per edited record.
+//   origin self, tag, admin or proposal (a Person-class MediaRef region added, moved or removed) -> one tag event for the commit, weight 1, no cap,
+//                                                           credited to the tagger: the batch principal, or for a proposal the proposer (on_behalf_of).
+//                                                           Add, move AND remove are all credited because AC3 names "add, change or remove"; only the Person class
+//                                                           counts (a crop on an Event or Family media list is not a person tag). A member moving their own avatar
+//                                                           crop is a Person-class region change and is credited; that, and add/remove cycling, is accepted: the web
+//                                                           origins that can write a region are the signed-in tagger, admin edits and approved proposals, and each
+//                                                           commit is audited. A per-(media, person, day) cap would need a marker beside contribOps and is not in the AC.
 //   every other origin (desktop, seed, graduation, moderation) -> nothing. A desktop push is maintenance and is never credited (social.md 7.1);
 //                                                           a graduation credits its photo's author in its own transaction; a moderation marker
 //                                                           changes no record. An admin's approval of a proposal is not credited (the proposer is).
@@ -52,11 +61,12 @@ const isRegion = (ref) => ref !== null && typeof ref === "object" && Array.isArr
 const mediaList = (obj) => (obj !== null && typeof obj === "object" && Array.isArray(obj.media_list) ? obj.media_list : []);
 
 /**
- * The person-region MediaRefs a change adds, moves or removes: the elements of the before and after media_list that the other side lacks,
- * compared as canonical JSON. A MediaRef without a region (a photo attached to the page) is not a tag. Only a live create or update counts.
+ * The person-region MediaRefs a change adds, moves or removes: the elements of the Person's before and after media_list that the other side lacks,
+ * compared as canonical JSON. A MediaRef without a region (a photo attached to the page) is not a tag, and neither is a region on any class but
+ * Person. Only a live create or update counts.
  */
 export function tagChanges(change) {
-  if (!change || (change.op !== "create" && change.op !== "update")) return [];
+  if (!change || change.class !== "Person" || (change.op !== "create" && change.op !== "update")) return [];
   const key = (e) => canonicalJson(e);
   const before = mediaList(change.before).map((e) => [key(e), e]);
   const after = mediaList(change.after).map((e) => [key(e), e]);
@@ -67,7 +77,13 @@ export function tagChanges(change) {
 
 /** The gramps_id of the first Person a batch tagged (the tagged person), or undefined. */
 function taggedPerson(changes) {
-  for (const c of changes) if (c.class === "Person" && tagChanges(c).length > 0 && GID_RE.test(String(c.gramps_id ?? ""))) return c.gramps_id;
+  for (const c of changes) if (tagChanges(c).length > 0 && GID_RE.test(String(c.gramps_id ?? ""))) return c.gramps_id;
+  return undefined;
+}
+
+/** The gramps_id of the first live Person a batch created or updated (the record that was edited), or undefined. */
+function editedPerson(changes) {
+  for (const c of changes) if (c.class === "Person" && (c.op === "create" || c.op === "update") && GID_RE.test(String(c.gramps_id ?? ""))) return c.gramps_id;
   return undefined;
 }
 
@@ -89,7 +105,8 @@ export function createRecordContributor({ ddb, cmds, table, log = console }) {
 
     if (origin === "self") {
       const actor = { id: principal };
-      const subject = `person:${principal}`; // a member's own record is their own Person
+      const edited = editedPerson(changes) ?? principal; // the record the batch changed; an own-only Event or Note batch has no Person change, so it is the member's own.
+      const subject = `person:${edited}`;
       let capped = false;
       try {
         capped = await selfEditCapped(store, { actor, subject, at });
@@ -97,7 +114,7 @@ export function createRecordContributor({ ddb, cmds, table, log = console }) {
         log.error?.("self_edit cap read failed (counting the save)", logSafeError(e));
       }
       if (!capped) {
-        fragments.push(contribOps({ actor, kind: "self_edit", ref: { type: "record", id: principal }, subject, at, id: deriveUlid(atMs, `${batch.batch_id}:self_edit`) }));
+        fragments.push(contribOps({ actor, kind: "self_edit", ref: { type: "record", id: edited }, subject, at, id: deriveUlid(atMs, `${batch.batch_id}:self_edit`) }));
       }
     }
 

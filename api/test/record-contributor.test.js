@@ -65,6 +65,20 @@ describe("self_edit: origin self, once per record per UTC day", () => {
     expect(w.total().n_self_edit).toBe(2);
   });
 
+  it("the credit and the cap are keyed on the Person the batch changed (a different Person than the principal's own is its own record), and an own-only Event batch counts for the member's own", async () => {
+    const w = world();
+    const event = { _class: "Event", handle: h(3000), gramps_id: "E0001", change: 1, private: false };
+    await w.apply([create(person(2)), create(person(9)), create(event)], { origin: "desktop", principal: "svc" });
+    await w.apply([update(person(9, { change: 1 }), 1)]); // principal I0002 edits Person I0009
+    await w.apply([update(person(9, { change: 2 }), 2)]); // same record, same day: capped
+    await w.apply([update(person(2, { change: 1 }), 1)]); // their own Person: a different record, counts
+    await w.apply([update({ ...event, change: 2 }, 1)]); // an own-only Event: credited to the member's own Person, capped by the line above
+    expect(w.events().filter((e) => e.kind === "self_edit").map((e) => e.subject).sort()).toEqual(["person:I0002", "person:I0009"]);
+    expect(w.rows("CONTRIB#I0002").filter((r) => r.entity === "contrib_cap").map((r) => r.SK).sort()).toEqual([
+      "CAP#self_edit#person:I0002#2026-10-14", "CAP#self_edit#person:I0009#2026-10-14",
+    ]);
+  });
+
   it("another member's save is a separate record: the cap is per member and record", async () => {
     const w = world();
     await w.apply([create(person(2)), create(person(3))], { origin: "desktop", principal: "svc" });
@@ -151,13 +165,25 @@ describe("tag: a person-region MediaRef added, moved or removed, from a web orig
     const a = ref(1);
     const moved = ref(1, [11, 11, 41, 41]);
     const plain = ref(2, null);
-    expect(tagChanges({ op: "update", before: person(2), after: person(2, { media_list: [a] }) })).toEqual([a]); // add
-    expect(tagChanges({ op: "update", before: person(2, { media_list: [a] }), after: person(2, { media_list: [moved] }) })).toEqual([a, moved]); // change
-    expect(tagChanges({ op: "update", before: person(2, { media_list: [a] }), after: person(2) })).toEqual([a]); // remove
-    expect(tagChanges({ op: "update", before: person(2), after: person(2, { media_list: [plain] }) })).toEqual([]); // a photo on the page, no region
-    expect(tagChanges({ op: "update", before: person(2, { media_list: [a] }), after: person(2, { media_list: [a], change: 5 }) })).toEqual([]); // unchanged
-    expect(tagChanges({ op: "delete", before: person(2, { media_list: [a] }), after: null })).toEqual([]);
+    expect(tagChanges({ op: "update", class: "Person", before: person(2), after: person(2, { media_list: [a] }) })).toEqual([a]); // add
+    expect(tagChanges({ op: "update", class: "Person", before: person(2, { media_list: [a] }), after: person(2, { media_list: [moved] }) })).toEqual([a, moved]); // change
+    expect(tagChanges({ op: "update", class: "Person", before: person(2, { media_list: [a] }), after: person(2) })).toEqual([a]); // remove
+    expect(tagChanges({ op: "update", class: "Person", before: person(2), after: person(2, { media_list: [plain] }) })).toEqual([]); // a photo on the page, no region
+    expect(tagChanges({ op: "update", class: "Person", before: person(2, { media_list: [a] }), after: person(2, { media_list: [a], change: 5 }) })).toEqual([]); // unchanged
+    expect(tagChanges({ op: "delete", class: "Person", before: person(2, { media_list: [a] }), after: null })).toEqual([]);
     expect(tagChanges(undefined)).toEqual([]);
+    // only the Person class carries a person tag: a crop on an Event's media list is not one
+    expect(tagChanges({ op: "update", class: "Event", before: { media_list: [] }, after: { media_list: [a] } })).toEqual([]);
+  });
+
+  it("a region on a non-Person object credits nothing and a batch's tag subject is always a Person", async () => {
+    const w = world();
+    const event = { _class: "Event", handle: h(3000), gramps_id: "E0001", change: 1, private: false, media_list: [] };
+    await w.apply([create(event), create(person(4))], { origin: "desktop", principal: "svc" });
+    await w.apply([update({ ...event, media_list: [ref(1)], change: 2 }, 1)], { origin: "tag", principal: "I0007" });
+    expect(w.events("I0007")).toHaveLength(0);
+    await w.apply([update({ ...event, media_list: [ref(1)], change: 3 }, 2), update(person(4, { media_list: [ref(1)], change: 1 }), 1)], { origin: "tag", principal: "I0007" });
+    expect(w.events("I0007")).toEqual([expect.objectContaining({ kind: "tag", subject: "person:I0004" })]);
   });
 
   it("origin tag: one tag event for the commit (weight 1, subject the tagged person), whether the tag is added, changed or removed", async () => {
