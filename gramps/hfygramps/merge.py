@@ -33,6 +33,12 @@ they name, re-indexed after the merge), and every list becomes a list view (``LV
     bag     ``alternate_names``, ``attribute_list``, ``urls``, ``surname_list``, ``alt_names``, ``alt_loc``, ``address_list``,
             ``lds_ord_list``: identity-less values keyed by the canonical hash of the element, never by position.
 
+A bag cannot tell an edited element from a removal plus an addition, so an element both sides dropped, with a different addition on
+each side, is the "ambiguous pairing" conflict even when the additions are unrelated: the engine asks rather than guesses. Raw
+local views (the desktop object against its projection) may carry elements the projection dropped (private duplicates): a
+duplicate with no leftover counterpart in the projection just gets a new key; only when the projection's own element also
+differs from the raw one is the pairing ambiguous, and the object is held as a stale key.
+
 Atomic values (never split): ``Date`` (``sortval`` is derived and ignored when comparing), ``StyledText``, every ``GrampsType``,
 ``MediaRef.rect`` and any list this table does not name. ``Media.checksum`` of a file the addon could not read is derived too
 (``merge_context(..., unreadable=...)``): it is never compared, each side keeps its own value. Order: if only one side reordered a list, that order wins; if both did,
@@ -55,7 +61,10 @@ the base value at the path as canonical JSON, ``None`` when the path was absent 
 the base for the path and its descendants, whatever the object's base row says, so a base row that advanced for other paths can
 never turn the pinned path into a silent take-local or take-cloud. The push carries the cloud value at a conflict path, the local
 apply keeps the local value there, and ``result.conflicts`` lists the conflict again each run (same ``id``) until a run finds the
-path converged or one-sided; the pin is then in ``result.closed``. A pin with the path ``""`` freezes the whole object.
+path converged or one-sided; the pin is then in ``result.closed``. A pin with the path ``""`` is on the whole object (a delete
+against an edit, an identity or integrity freeze): it stores no kind or reason, the object is merged again each run and finds the
+same object-level conflict while the cause stands, and the pin is in ``result.closed`` when the cause is gone (``merge_tree``
+re-checks integrity on the result, so a violation that still stands freezes the object again).
 
 Lift (6.5). ``lift(C, L, P(L))`` is the same engine run in its lift mode: a three-way merge with P(L) as the base, L as the local
 side and C as the cloud side, where a conflict takes C. What differs between L and P(L) is exactly what P took out of L (local-only
@@ -63,11 +72,19 @@ date parts, addresses, private list elements, local-only attributes, ``Media.pat
 precise coordinates and rectangles, ``lds_ord_list``), and what differs between C and P(L) is what the cloud changed, so every
 local-only part comes back and ``P(lift(C, L)) == C`` for every C the checker accepts. The indexes are recomputed from ``_birth_ref``.
 ``change`` is the one top-level key kept from L; Gramps stamps it again on commit.
+
+Conflicts hold projected values only (``base``, ``cloud`` and ``local`` are what the cloud may see; the sidecar mirrors them to
+the cloud). The raw desktop value at a conflict's path comes from ``local_value`` and goes to ``resolve_conflict`` as ``local_raw``
+when the user keeps mine, so a composite conflict's desktop-only refinement is never overwritten by its own projection.
+
+An object the cloud must not have (``local_proj`` is None) that was synced before is withdrawn (``action: withdraw``, a push op
+``withdraw`` with no step-up, sync.md 5.1); with no cloud copy left its base row is dropped.
 """
 
 import copy
 import hashlib
 import json
+import re
 
 from . import projection as PR
 from . import rules as R
@@ -484,7 +501,7 @@ class MergeResult:
     """What one object's merge decided.
 
     action          noop, unchanged, converged, create_local, push_create, update, delete_local, delete_deferred, push_delete,
-                    drop_base, conflict, excluded
+                    withdraw, drop_base, conflict, excluded
     local_obj       the local-form object to commit in Gramps (``lift(M, L)``), or None when nothing changes locally
     push            ``{"op": "create"|"update"|"delete", "class", "handle", "base_version", "obj"}``, or None when nothing is sent
     base_after      the projected object the sidecar's base row becomes (after the push is acknowledged), None when the row goes
@@ -567,10 +584,15 @@ def merge_object(base, local, local_proj, cloud, *, cloud_version=None, project_
     lp = local_proj
 
     if any(p["path"] == "" for p in pins):
-        pin = next(p for p in pins if p["path"] == "")
-        return _finish(make("conflict", base_after=base, conflicts=[_object_conflict(
-            cls, handle, gid, pin.get("kind", "integrity"), pin.get("reason", "an open conflict pins the object"), base,
-            cloud, lp)]), mode)
+        # A pin on the whole object is re-evaluated, never trusted: the object is merged again with the pin removed. While the
+        # cause stands the run finds the same object-level conflict (same id, kind and reason, derived and not stored); when it is
+        # gone (the cloud went back to the base, the target of a reference exists again) the pin is reported in ``closed``. An
+        # integrity freeze is re-checked by ``merge_tree`` on the result, which freezes the object again if the violation stands.
+        res = merge_object(base, local, local_proj, cloud, cloud_version=cloud_version, project_fn=project_fn,
+                           pins=[p for p in pins if p["path"] != ""], mode=mode, allow_deletes=allow_deletes, ctx=ctx)
+        if not any(c["path"] == "" for c in res.conflicts):
+            res.closed = [""] + list(res.closed)
+        return res
 
     if local is None:
         if not isinstance(cloud, dict):
@@ -584,7 +606,15 @@ def merge_object(base, local, local_proj, cloud, *, cloud_version=None, project_
             cls, handle, gid, "delete_edit", "deleted on the desktop, edited on the website", base, cloud, None)]), mode)
 
     if lp is None:
-        return _finish(make("excluded", base_after=base), mode)
+        # The cloud must not have this object. One that was synced before is withdrawn (sync.md 5.1, BRD2 5.1b: a delete that
+        # needs no step-up, because it reduces exposure); the cloud copy and the base row are reconciled, whatever the website
+        # did to it since. With no cloud copy left the base row just goes.
+        if base is None:
+            return _finish(make("excluded"), mode)
+        if isinstance(cloud, dict):
+            return _finish(make("withdraw", push={"op": "withdraw", "class": cls, "handle": handle,
+                                                  "base_version": cloud_version, "obj": None}), mode)
+        return _finish(make("drop_base"), mode)
 
     if cloud is None:
         if base is None:
@@ -597,15 +627,15 @@ def merge_object(base, local, local_proj, cloud, *, cloud_version=None, project_
         if base is None:
             return _finish(make("push_create", base_after=lp, push={
                 "op": "create", "class": cls, "handle": handle, "base_version": cloud_version, "obj": lp}), mode)
-        lost = diff_pointers(strip_change(local), lp)
-        if not _eq(lp, base):
-            reason, lost = "edited on the desktop, deleted on the website", diff_pointers(base, lp)
-        elif lost:
-            reason = REASON_DESKTOP_ONLY
-        else:
+        desk = diff_pointers(strip_change(local), lp)                # what only the desktop has (local-only, held, private)
+        edited = [] if _eq(lp, base) else diff_pointers(base, lp)    # what the desktop changed in the shared part
+        if not desk and not edited:
             return _finish(_delete_local(make, mode, allow_deletes), mode)
+        # Desktop-only data wins the reason even when the shared part was edited too (AC8); the preview lists both kinds.
+        reason = REASON_DESKTOP_ONLY if desk else "edited on the desktop, deleted on the website"
         return _finish(make("conflict", base_after=base, conflicts=[_object_conflict(
-            cls, handle, gid, "delete_edit", reason, base, TOMBSTONE, lp, lost=lost)]), mode)
+            cls, handle, gid, "delete_edit", reason, base, TOMBSTONE, lp, lost=list(dict.fromkeys(edited + desk)),
+            lost_edited=edited, lost_desktop_only=desk)]), mode)
 
     if base is None:
         if _eq(lp, cloud):
@@ -677,20 +707,24 @@ def _dicts(node, ptr=""):
 
 
 def check_integrity(objects, removed=()):
-    """The violations in a local tree (``{handle: object}``): ``[{"problem", "involves": [handles], "detail"}]`` for a missing
+    """The violations in a local tree (``{handle: object}``): ``[{"problem", "involves": [handles], "detail", "key"}]`` (``key``
+    names the violation without its position in a list, so two runs can be compared) for a missing
     or wrong-class target of a reference, a family list that does not match the family's parents, a parent-family list that does not
-    match its children, and a birth or death index out of range. ``removed`` are the handles this run deletes: a reference to one
+    match its children, and a birth or death index out of range or not an integer. ``removed`` are the handles this run deletes: a reference to one
     names it among the objects involved."""
     by = dict(objects)
     out = []
 
-    def add(problem, involves, detail):
-        out.append({"problem": problem, "involves": sorted(set(involves)), "detail": detail})
+    def add(problem, involves, detail, key=None):
+        out.append({"problem": problem, "involves": sorted(set(involves)), "detail": detail,
+                    "key": key or "%s|%s|%s" % (problem, ",".join(sorted(set(involves))), detail)})
 
     def target(src, ptr, h, cls):
         found = by.get(h)
         if found is None or found.get("_class") != cls:
-            add("dangling_reference", [src, h] if h in removed else [src], "%s names a %s that does not exist" % (ptr, cls))
+            # the key leaves out the position in a list, so a reference that merely moved is the same violation as before
+            add("dangling_reference", [src, h] if h in removed else [src], "%s names a %s that does not exist" % (ptr, cls),
+                "dangling_reference|%s|%s|%s" % (src, re.sub(r"/\d+", "/#", ptr), h))
 
     for h in sorted(by):
         o = by[h]
@@ -707,7 +741,8 @@ def check_integrity(objects, removed=()):
         if o.get("_class") == "Person":
             n = len(o.get("event_ref_list") or ())
             for key in ("birth_ref_index", "death_ref_index"):
-                if not -1 <= o.get(key, -1) < n:
+                v = o.get(key, -1)
+                if isinstance(v, bool) or not isinstance(v, int) or not -1 <= v < n:
                     add("index_out_of_range", [h], "/%s is outside the event reference list" % key)
             for fh in o.get("family_list") or ():
                 f = by.get(fh)
@@ -751,8 +786,8 @@ def merge_tree(base, local, local_proj, cloud, *, versions=None, pins=None, proj
     ``TOMBSTONE``); ``versions`` maps handles to C.version; ``pins`` maps handles to their open conflicts; ``unreadable`` are the Media handles whose file could not be read. With ``cloud_is_delta``
     a handle that ``cloud`` does not list is unchanged in the cloud (C = B); without it the cloud has no such head.
 
-    After the per-object merges the post-merge local tree is checked (6.6). A violation that involves an object this run changes
-    freezes that object (the run's change to it is not applied or pushed, its base row stays, and an ``integrity`` conflict
+    After the per-object merges the post-merge local tree is checked (6.6). A violation that is new in this run (the local tree
+    before the run did not have it) and involves an object this run changes freezes that object (the run's change to it is not applied or pushed, its base row stays, and an ``integrity`` conflict
     pins it); every other object's result stands."""
     versions, pins = versions or {}, pins or {}
     ctx = merge_context(local.values(), base.values(), sticky, policy, unreadable)
@@ -765,6 +800,7 @@ def merge_tree(base, local, local_proj, cloud, *, versions=None, pins=None, proj
         results[h] = merge_object(base.get(h), local.get(h), local_proj.get(h), c, cloud_version=versions.get(h),
                                   project_fn=project_fn, pins=pins.get(h, ()), mode=mode, allow_deletes=allow_deletes, ctx=ctx)
     integrity = []
+    existing = {v["key"] for v in check_integrity(local)}       # already there before this run: not this run's doing
     while True:
         after = dict(local)
         for h, r in results.items():
@@ -774,7 +810,7 @@ def merge_tree(base, local, local_proj, cloud, *, versions=None, pins=None, proj
                 after[h] = r.local_obj
         deleting = {h for h, r in results.items() if r.action == "delete_local"}
         changing = {h for h, r in results.items() if r.local_obj is not None} | deleting
-        found = [v for v in check_integrity(after, deleting) if changing & set(v["involves"])]
+        found = [v for v in check_integrity(after, deleting) if changing & set(v["involves"]) and v["key"] not in existing]
         if not found:
             break
         integrity += found
@@ -805,10 +841,23 @@ def date_choices():
     ]
 
 
+def _same_shape(cloud_date, local_date, pol):
+    """Whether the local day and month can be laid over the website's date: both are structured dates of the same modifier (single,
+    range, span, ...) and the same length, so each half has its own counterpart."""
+    cd, ld = cloud_date.get("dateval"), local_date.get("dateval")
+    return (isinstance(cd, list) and isinstance(ld, list) and len(cd) == len(ld)
+            and cloud_date.get("modifier") == local_date.get("modifier") != pol["dates"]["textOnlyModifier"])
+
+
 def resolve_date(cloud_date, local_date, choice=DEFAULT_DATE_CHOICE, confirmed=False, policy=None):
     """The outcome of a composite date conflict: ``{"local": the Date to store in Gramps, "cloud": the Date the cloud holds
     afterwards}``. ``cloud_date`` is the website's Date (projected form), ``local_date`` the raw local one. The default keeps the
-    local day and month under the website's year; clearing them needs ``confirmed=True``."""
+    local day and month under the website's year, and the website's text; clearing them needs ``confirmed=True``.
+
+    The default needs the two dates to have the same shape (same modifier, same number of values; a text-only local date has no
+    day or month to keep). When they do not, the day and month cannot be laid over the website's date, so the outcome is
+    ``keep_mine`` (nothing of the desktop is lost, the website's edit is not taken) and the result says so with
+    ``"fallback": "keep_mine"``; the GUI shows that and offers the other choice."""
     pol = policy or R.load_policy()
     if choice == "keep_mine":
         return {"local": copy.deepcopy(local_date), "cloud": R.reduce_date(local_date, pol)}
@@ -818,24 +867,53 @@ def resolve_date(cloud_date, local_date, choice=DEFAULT_DATE_CHOICE, confirmed=F
         return {"local": copy.deepcopy(cloud_date), "cloud": copy.deepcopy(cloud_date)}
     if choice != "take_year_keep_daymonth":
         raise ValueError("unknown choice %r" % (choice,))
+    if not _same_shape(cloud_date, local_date, pol):
+        return dict(resolve_date(cloud_date, local_date, "keep_mine", policy=pol), fallback="keep_mine")
     out = copy.deepcopy(cloud_date)
-    lv = list(local_date.get("dateval") or ())
-    dv = list(out.get("dateval") or [0, 0, 0, False])
+    lv = local_date["dateval"]
+    dv = list(out["dateval"])
     for i in pol["dates"]["dayMonthIndexes"]:
-        if i < len(dv) and i < len(lv):
+        if i < len(dv):
             dv[i] = lv[i]
-    out["dateval"], out["text"] = dv, local_date.get("text", "")
+    out["dateval"] = dv
     year = dv[2] if len(dv) > 2 else 0
     out["sortval"] = (R.sdn(out.get("calendar", 0), year, dv[1] or 1, dv[0] or 1) or 0) \
         if year and out.get("calendar", 0) in pol["dates"]["sortvalCalendars"] else 0
     return {"local": out, "cloud": copy.deepcopy(cloud_date)}
 
 
-def resolve_conflict(conflict, choice):
-    """``{"local": value, "cloud": value}`` for a non-date conflict: ``keep_mine`` keeps the desktop value (and pushes it),
-    ``take_website`` takes the cloud value, ``skip`` leaves the conflict open (``None``)."""
+def _tokens(path):
+    return [t.replace("~1", "/").replace("~0", "~") for t in path.split("/")[1:]]
+
+
+def local_value(conflict, local, local_proj, base):
+    """The raw desktop value at a conflict's path, for ``resolve_conflict(..., local_raw=...)``: what is in ``local`` where the
+    conflict's ``local`` (projected) value is, with the desktop-only parts. ``base`` is the object's base row, the one the
+    conflict was found against (it keys the keyed lists). ``None`` when the desktop has nothing at the path. A conflict holds
+    projected values only because it is mirrored to the cloud; the raw value never goes into one."""
+    if not conflict["path"]:
+        return strip_change(local)
+    bv = _build(base, None, None)
+    node = _build(local, None, _build(local_proj, None, bv))
+    for tok in _tokens(conflict["path"]):
+        node = node.items.get(tok, MISSING) if isinstance(node, LV) else node.get(tok, MISSING) if isinstance(node, dict) else MISSING
+        if node is MISSING:
+            return None
+    return _plain(node)
+
+
+def resolve_conflict(conflict, choice, local_raw=MISSING):
+    """``{"local": value, "cloud": value}`` for a non-date conflict: ``keep_mine`` keeps the desktop value and pushes its
+    projection, ``take_website`` takes the cloud value, ``skip`` leaves the conflict open (``None``).
+
+    A conflict lists the projected desktop value (``conflict["local"]``), which is what the cloud may see. Keeping mine must keep
+    the raw value, or it would overwrite the desktop-only refinement a composite conflict exists to protect (a street-level
+    event place, a held field, a private list element), so ``keep_mine`` needs ``local_raw``, from ``local_value(...)``, and
+    refuses without it."""
     if choice == "keep_mine":
-        return {"local": conflict["local"], "cloud": conflict["local"]}
+        if local_raw is MISSING:
+            raise ValueError("keep_mine needs the raw desktop value (local_value) so desktop-only parts are not overwritten")
+        return {"local": local_raw, "cloud": conflict["local"]}
     if choice == "take_website":
         return {"local": conflict["cloud"], "cloud": conflict["cloud"]}
     if choice == "skip":

@@ -522,6 +522,28 @@ class Lists(unittest.TestCase):
         r = mo(b, l, ed(b, lambda o: o["urls"].clear()))
         self.assertEqual(r.conflicts, [])
 
+    def test_a_bag_element_both_sides_dropped_with_an_unrelated_addition_each_is_conservatively_a_conflict(self):
+        # An edited bag element is a removal plus an addition, so this cannot be told from "both replaced it": the engine asks.
+        l0 = person(urls=[MV.URL("https://example.org/a")])
+        b = proj1(l0)
+        l = ed(l0, lambda o: o["urls"].__setitem__(0, MV.URL("https://example.org/x")))
+        c = ed(b, lambda o: o["urls"].__setitem__(0, MV.URL("https://example.org/y")))
+        r = mo(b, l, c)
+        self.assertEqual((conflict_paths(r), r.conflicts[0]["kind"]), (["/urls"], "list"))
+        self.assertEqual((r.local_obj, r.push), (None, None))
+
+    def test_a_private_duplicate_of_a_keyed_element_does_not_freeze_the_object_while_the_public_one_matches_the_base(self):
+        l = ed(person(media_list=[]), lambda o: o["media_list"].extend([MV.MR("m1", private=True), MV.MR("m1")]))
+        lp = proj1(l)
+        self.assertEqual(len(lp["media_list"]), 1)
+        b = copy.deepcopy(lp)
+        c = ed(b, lambda o: o.__setitem__("gender", 2))
+        r = M.merge_object(b, l, lp, c, cloud_version=2, project_fn=proj1)
+        self.assertEqual((r.action, r.conflicts), ("update", []))
+        self.assertEqual(r.local_obj["gender"], 2)
+        self.assertEqual([m.get("private") for m in r.local_obj["media_list"]], [True, False])      # the private copy survives
+        self.assertIsNone(r.push)
+
     def test_a_bag_inside_a_nested_object_merges_too(self):
         l0 = person()
         b = proj1(l0)
@@ -630,6 +652,21 @@ class ObjectTable(unittest.TestCase):
             self.assertEqual(r.conflicts[0]["disposition"], "parked")
             self.assertIsNone(r.local_obj)
 
+    def test_a_tombstone_for_an_object_with_a_shared_edit_and_a_desktop_only_part_names_both(self):
+        l = ed(self.l0, lambda o: (rename("Zed")(o), o["address_list"].append(MV.ADDR())))
+        lp = proj1(l)
+        self.assertNotEqual(lp, self.b)
+        r = mo(self.b, l, TOMB)
+        cf = r.conflicts[0]
+        self.assertEqual((r.action, cf["kind"], cf["reason"]), ("conflict", "delete_edit", "has desktop-only data"))
+        self.assertEqual(cf["lost_edited"], ["/primary_name/first_name"])
+        self.assertEqual(cf["lost_desktop_only"], ["/address_list"])
+        self.assertEqual(cf["lost"], ["/primary_name/first_name", "/address_list"])
+        self.assertIsNone(r.local_obj)
+        # a shared edit alone keeps its own reason, and its desktop-only list is empty
+        only = mo(self.b, ed(self.l0, rename("Zed")), TOMB).conflicts[0]
+        self.assertEqual((only["reason"], only["lost_desktop_only"]), ("edited on the desktop, deleted on the website", []))
+
     def test_a_tombstone_for_a_held_object_part_is_a_delete_edit_with_the_desktop_only_reason(self):
         n0 = MV.NOTE("n1", "plain text")
         b = proj1(n0)
@@ -679,18 +716,73 @@ class ObjectTable(unittest.TestCase):
         r = M.merge_object(None, priv, None, None)
         self.assertEqual((r.action, r.local_obj, r.push, r.base_after), ("excluded", None, None, None))
 
+    def test_an_object_that_became_excluded_after_it_was_synced_is_withdrawn_without_a_step_up(self):
+        priv = ed(self.l0, lambda o: o.__setitem__("private", True))
+        self.assertIsNone(proj1(priv))
+        for cloud in (copy.deepcopy(self.b), self.c):                       # whatever the website did to the copy meanwhile
+            r = M.merge_object(self.b, priv, None, cloud, cloud_version=6)
+            self.assertEqual((r.action, r.needs_step_up, r.base_after, r.local_obj, r.conflicts), ("withdraw", False, None, None, []))
+            self.assertEqual(r.push, {"op": "withdraw", "class": "Person", "handle": "p1", "base_version": 6, "obj": None})
+        for cloud in (TOMB, None):                                          # nothing left in the cloud to withdraw
+            r = M.merge_object(self.b, priv, None, cloud)
+            self.assertEqual((r.action, r.push, r.base_after), ("drop_base", None, None))
+
     def test_a_missing_cloud_head_for_a_known_object_is_an_identity_conflict(self):
         r = mo(self.b, self.l0, None)
         self.assertEqual((r.action, r.conflicts[0]["kind"], r.base_after), ("conflict", "identity", self.b))
 
-    def test_a_pin_on_the_whole_object_freezes_it(self):
-        pin = {"path": "", "base_json": None, "kind": "integrity", "reason": "the family it joins is missing"}
-        r = mo(self.b, ed(self.l0, rename("Zed")), self.c, pins=[pin], mode="gui")
-        self.assertEqual((r.action, r.local_obj, r.push, r.base_after), ("conflict", None, None, self.b))
-        self.assertEqual((r.conflicts[0]["kind"], r.conflicts[0]["reason"], r.conflicts[0]["disposition"]),
-                         ("integrity", "the family it joins is missing", "open"))
-        plain = mo(self.b, self.l0, self.c, pins=[{"path": ""}])
-        self.assertEqual((plain.conflicts[0]["kind"], plain.conflicts[0]["reason"]), ("integrity", "an open conflict pins the object"))
+    def test_a_pin_on_the_whole_object_is_re_evaluated_and_derives_its_kind_and_reason(self):
+        # the sidecar stores only a path and a base; the kind and the reason come from the object's situation each run
+        l = ed(self.l0, rename("Zed"))
+        for pin in ({"path": "", "base_json": None}, {"path": "", "base_json": None, "kind": "integrity", "reason": "stale text"}):
+            r = mo(self.b, l, TOMB, pins=[pin], mode="gui")
+            cf = r.conflicts[0]
+            self.assertEqual((r.action, r.local_obj, r.push, r.base_after), ("conflict", None, None, self.b))
+            self.assertEqual((cf["kind"], cf["reason"], cf["disposition"]), ("delete_edit", "edited on the desktop, deleted on the website", "open"))
+            self.assertEqual((cf["id"], r.closed), (mo(self.b, l, TOMB).conflicts[0]["id"], []))
+        missing = mo(self.b, self.l0, None, pins=[{"path": ""}])
+        self.assertEqual((missing.conflicts[0]["kind"], missing.closed), ("identity", []))
+        gone = mo(self.b, None, self.c, pins=[{"path": ""}])
+        self.assertEqual((gone.conflicts[0]["kind"], gone.closed), ("delete_edit", []))
+
+    def test_a_pin_on_the_whole_object_closes_when_its_cause_is_gone(self):
+        l = ed(self.l0, rename("Zed"))
+        r = mo(self.b, l, copy.deepcopy(self.b), pins=[{"path": ""}], cloud_version=3)          # the website undeleted it
+        self.assertEqual((r.closed, r.conflicts), ([""], []))
+        self.assertEqual(r.action, "update")
+        self.assertEqual(r.push["obj"]["primary_name"]["first_name"], "Zed")
+        r = mo(self.b, None, copy.deepcopy(self.b), pins=[{"path": ""}])                        # an identity or delete cause that moved on
+        self.assertEqual((r.closed, r.action), ([""], "push_delete"))
+
+    def test_a_parked_delete_edit_conflict_stays_open_and_unchanged_for_three_more_runs(self):
+        for mode in ("cli", "gui"):
+            with self.subTest(mode=mode):
+                side = Sidecar(self.b, TOMB, ed(self.l0, rename("Zed")))
+                local_before = M._dump(side.local)
+                first = side.run(mode)
+                self.assertEqual((first.action, conflict_paths(first)), ("conflict", [""]))
+                self.assertEqual(side.pins, [{"path": "", "base_json": M._dump(self.b)}])
+                for _ in range(3):
+                    r = side.run(mode)
+                    self.assertEqual((r.action, conflict_paths(r), r.closed), ("conflict", [""], []))
+                    self.assertEqual((r.conflicts[0]["kind"], r.conflicts[0]["id"]), ("delete_edit", first.conflicts[0]["id"]))
+                    self.assertEqual((r.local_obj, r.push), (None, None))
+                self.assertEqual((M._dump(side.local), side.cloud, side.base), (local_before, TOMB, self.b))
+                # the website brings the object back: the pin closes and the desktop edit is pushed
+                side.cloud, side.version = copy.deepcopy(self.b), 7
+                r = side.run(mode)
+                self.assertEqual((r.closed, r.conflicts, r.action), ([""], [], "update"))
+                self.assertEqual(side.pins, [])
+                self.assertEqual(side.cloud["primary_name"]["first_name"], "Zed")
+
+    def test_a_parked_identity_conflict_stays_open_and_a_transient_one_closes(self):
+        side = Sidecar(self.b, None, self.l0)
+        for _ in range(4):
+            r = side.run()
+            self.assertEqual((r.conflicts[0]["kind"], r.closed), ("identity", []))
+        side.cloud = copy.deepcopy(self.b)
+        r = side.run()
+        self.assertEqual((r.closed, r.conflicts), ([""], []))
 
     def test_a_lift_that_cannot_be_made_safely_becomes_an_integrity_conflict(self):
         l = ed(person(media_list=[]), lambda o: o["media_list"].extend([MV.MR("m1", private=True), MV.MR("m1", [1.5, 0, 5, 5])]))
@@ -930,17 +1022,65 @@ class DateChoices(unittest.TestCase):
         rng = M.resolve_date(MV.DY(1901, mod=MV.RANGE, second_year=1905), MV.DATE(0, 5, 1900, mod=MV.RANGE, second=(7, 8, 1904)))
         self.assertEqual(rng["local"]["dateval"], [0, 5, 1901, False, 7, 8, 1905, False])
         self.assertEqual(rng["local"]["sortval"], MV.sort_value(0, 1901, 5, 1))
-        # a local date with fewer values than the website's is tolerated
-        short = M.resolve_date(MV.DY(1901, mod=MV.RANGE, second_year=1905), {"_class": "Date", "dateval": [3, 4, 1900, False], "text": ""})
-        self.assertEqual(short["local"]["dateval"][:2], [3, 4])
+        # shapes that do not match (a range against a single date, a text-only local date) cannot take the day and month: keep mine
+        short = {"_class": "Date", "dateval": [3, 4, 1900, False], "text": "", "modifier": 0}
+        out = M.resolve_date(MV.DY(1901, mod=MV.RANGE, second_year=1905), short)
+        self.assertEqual((out["fallback"], out["local"], out["cloud"]), ("keep_mine", short, R.reduce_date(short, POLICY)))
+        text_only = MV.DATE(3, 4, 1900, text="about 3 Apr 1900", mod=6)
+        self.assertEqual(M.resolve_date(MV.DY(1901), text_only)["fallback"], "keep_mine")
+        self.assertNotIn("fallback", M.resolve_date(MV.DY(1901), MV.DATE(3, 4, 1900)))
+
+    def test_the_default_keeps_the_website_text_so_it_never_names_the_old_year(self):
+        local = MV.DATE(14, 2, 1900, text="14 Feb 1900")
+        cloud = ed(MV.DY(1901), lambda o: o.__setitem__("text", "1901"))
+        out = M.resolve_date(cloud, local)
+        self.assertEqual((out["local"]["dateval"][:3], out["local"]["text"]), ([14, 2, 1901], "1901"))
+        self.assertEqual(M.resolve_date(MV.DY(1901), local)["local"]["text"], "")
 
     def test_resolve_conflict_keeps_mine_takes_the_website_or_skips(self):
         cf = {"local": "Zed", "cloud": "Quill"}
-        self.assertEqual(M.resolve_conflict(cf, "keep_mine"), {"local": "Zed", "cloud": "Zed"})
+        self.assertEqual(M.resolve_conflict(cf, "keep_mine", local_raw="Zed"), {"local": "Zed", "cloud": "Zed"})
         self.assertEqual(M.resolve_conflict(cf, "take_website"), {"local": "Quill", "cloud": "Quill"})
         self.assertIsNone(M.resolve_conflict(cf, "skip"))
         with self.assertRaises(ValueError):
             M.resolve_conflict(cf, "later")
+        with self.assertRaises(ValueError):                     # keeping mine without the raw value could overwrite desktop-only parts
+            M.resolve_conflict(cf, "keep_mine")
+
+    def test_keep_mine_on_a_composite_conflict_keeps_the_raw_desktop_value_and_pushes_only_its_projection(self):
+        city, other = MV.PL("pc", "Fixtureland"), MV.PL("po", "Elsewhere")
+        street = MV.PL("ps", "1 Fixture Lane", t=MV.PL_STREET, parent="pc")
+        l = MV.EV("e1", MV.RESIDENCE, place="ps")
+        tree = projt([l, city, other, street])
+        b = tree["e1"]
+        c = ed(b, lambda o: o.__setitem__("place", "po"))
+        r = M.merge_object(b, l, b, c)
+        cf = r.conflicts[0]
+        self.assertEqual((cf["kind"], cf["local"]), ("composite", "pc"))          # the conflict holds the projected value only
+        self.assertNotIn("ps", M._dump(cf))
+        raw = M.local_value(cf, l, b, b)
+        self.assertEqual(raw, "ps")
+        out = M.resolve_conflict(cf, "keep_mine", local_raw=raw)
+        self.assertEqual(out, {"local": "ps", "cloud": "pc"})                      # Gramps keeps the street, the cloud the city
+        self.assertEqual(M.resolve_conflict(cf, "take_website"), {"local": "po", "cloud": "po"})
+
+    def test_local_value_finds_a_raw_value_by_path_through_keyed_lists_bags_and_the_whole_object(self):
+        l0 = person(media_list=[MV.MR("m1")], urls=[MV.URL("https://example.org/a")])
+        b = proj1(l0)
+        raw_rect = [1.5, 0, 5, 5]
+        l = ed(l0, lambda o: (o["media_list"][0].__setitem__("rect", raw_rect), rename("Zed")(o)))
+        lp = proj1(l)
+        c = ed(b, lambda o: o["media_list"][0].__setitem__("rect", [2, 0, 6, 6]))
+        r = M.merge_object(b, l, lp, c)
+        paths = conflict_paths(r)
+        self.assertEqual(paths, ["/media_list/m1#0/rect"])
+        self.assertEqual(M.local_value(r.conflicts[0], l, lp, b), raw_rect)
+        self.assertEqual(M.local_value({"path": "/primary_name/first_name"}, l, lp, b), "Zed")
+        self.assertIsNone(M.local_value({"path": "/primary_name/nothing"}, l, lp, b))
+        self.assertIsNone(M.local_value({"path": "/gender/deeper"}, l, lp, b))
+        whole = M.local_value({"path": ""}, l, lp, b)
+        self.assertEqual(whole, strip(l))
+        self.assertNotIn("change", whole)
 
 
 class Lift(unittest.TestCase):
@@ -1185,6 +1325,56 @@ class MergeTree(unittest.TestCase):
         res = self.run_tree(cloud)
         self.assertEqual({h: r.action for h, r in res.results.items() if r.action == "conflict"}, {"p1": "conflict", "c1": "conflict"})
         self.assertEqual(len(res.integrity), 2)
+
+    def test_a_violation_that_was_already_in_the_local_tree_does_not_freeze_an_unrelated_cloud_edit(self):
+        local = dict(self.local)
+        local["p9"] = ed(self.local["p9"], lambda o: o.__setitem__("note_list", ["n404"]))          # dangling before the run
+        lp = projt(local.values())
+        base = copy.deepcopy(lp)
+        self.assertEqual(len(M.check_integrity(local)), 1)
+        rename_p9 = {"p9": ed(base["p9"], rename("Zed"))}
+        res = M.merge_tree(base, local, lp, rename_p9, project_fn=proj1)
+        self.assertEqual((res.results["p9"].action, res.integrity, res.conflicts), ("update", [], []))
+        self.assertEqual(res.results["p9"].local_obj["primary_name"]["first_name"], "Zed")
+        self.assertEqual(res.results["p9"].local_obj["note_list"], ["n404"])
+        # a violation the run itself adds is still caught, on the same object, and a moved reference is not a new one
+        worse = {"p9": ed(base["p9"], lambda o: o.__setitem__("citation_list", ["c404"]))}
+        res = M.merge_tree(base, local, lp, worse, project_fn=proj1)
+        self.assertEqual((res.results["p9"].action, len(res.integrity)), ("conflict", 1))
+        local2 = dict(self.local)
+        local2["p9"] = ed(self.local["p9"], lambda o: o.__setitem__("media_list", [MV.MR("m405"), MV.MR("m404")]))
+        res = M.check_integrity({"p9": local2["p9"]})
+        shifted = M.check_integrity({"p9": ed(local2["p9"], lambda o: o["media_list"].reverse())})
+        self.assertEqual(sorted(v["key"] for v in res), sorted(v["key"] for v in shifted))
+
+    def test_an_integrity_freeze_is_re_checked_each_run_and_ends_when_the_cause_is_gone(self):
+        new_family = ed(self.base["f1"], lambda o: (o.__setitem__("father_handle", "p9"), o["child_ref_list"].append(MV.CHREF("p9"))))
+        cloud = {"f1": new_family}
+        first = self.run_tree(cloud, mode="gui")
+        self.assertEqual(first.results["f1"].action, "conflict")
+        pins = {"f1": [{"path": c["path"], "base_json": c["base_json"]} for c in first.results["f1"].conflicts]}
+        self.assertEqual(pins["f1"][0]["path"], "")
+        for _ in range(3):                                                    # the violation stands: frozen every run
+            again = self.run_tree(cloud, mode="gui", pins=pins)
+            self.assertEqual((again.results["f1"].action, again.results["f1"].conflicts[0]["kind"]), ("conflict", "integrity"))
+            self.assertEqual(again.results["f1"].conflicts[0]["id"], first.results["f1"].conflicts[0]["id"])
+        # the cause goes: p9 and p1 now agree with the family, so the same cloud change is applied and the pin is reported closed
+        local = dict(self.local)
+        local["p9"] = ed(self.local["p9"], lambda o: (o.__setitem__("family_list", ["f1"]), o.__setitem__("parent_family_list", ["f1"])))
+        local["p1"] = ed(self.local["p1"], lambda o: o.__setitem__("family_list", []))
+        lp = projt(local.values())
+        res = M.merge_tree(self.base, local, lp, cloud, project_fn=proj1, mode="gui", pins=pins)
+        self.assertEqual((res.results["f1"].action, res.results["f1"].closed, res.integrity), ("update", [""], []))
+        self.assertEqual(res.results["f1"].local_obj["father_handle"], "p9")
+
+    def test_an_index_that_is_not_an_integer_is_a_violation_and_not_a_crash(self):
+        t = {"p1": ed(person(), lambda o: o.__setitem__("birth_ref_index", "0"))}
+        self.assertEqual(self.problems_of(t), [("index_out_of_range", ["p1"])])
+        t = {"p1": ed(person(), lambda o: o.__setitem__("death_ref_index", True))}
+        self.assertEqual(self.problems_of(t), [("index_out_of_range", ["p1"])])
+
+    def problems_of(self, objs):
+        return [(v["problem"], v["involves"]) for v in M.check_integrity(objs)]
 
     def test_handles_the_cloud_does_not_list_are_unchanged_there_or_absent_from_a_complete_cloud(self):
         res = M.merge_tree(self.base, self.local, self.lp, {}, cloud_is_delta=True)
