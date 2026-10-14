@@ -40,7 +40,7 @@ The edge is built on the kit's `createEdgeApp` (kit `edge/deploy/app.js`), which
 - **Added routes.** `GET /auth/.well-known/jwks.json`, `GET /auth/passkeys` and `GET /auth/session`. The kit does not ship them (see [Routes added by HFY](#routes-added-by-hfy)).
 - **Return targets.** Every post-sign-in target is normalized by `safeReturnTo` (see [Return targets](#return-targets)) before the kit sees or sends it: the `returnTo` query of `/auth/login`, the `returnTo` in a `200` JSON body from `/auth/password` and from `/auth/passkey/login/verify`, and the `Location` of a redirect from `/auth/callback` (HFY-R58).
 - **Authorize return.** A request to `/auth/login?next=/auth/authorize?...` that has no `returnTo` is passed to the kit with `returnTo` set to the normalized `next` value, but only when that value still starts with `/auth/authorize?`. This is how a signed-out MCP authorization, or one that asked for a fresh sign-in, resumes after sign-in.
-- **No self-service sign-up.** `POST /auth/verify` returns `410 {"code":"AUTH_FORBIDDEN","detail":"signup_disabled"}` before the kit sees it. Users are created only by `POST /auth/link` (see [Cognito user pool](#cognito-user-pool)), so there is nothing for `ConfirmSignUp` to confirm.
+- **No self-service sign-up.** `POST /auth/verify` returns `410 {"code":"AUTH_FORBIDDEN","detail":"signup_disabled"}` before the kit sees it. Users are created only by the edge's own `AdminCreateUser` calls: at `POST /auth/link` (see [Cognito user pool](#cognito-user-pool)) and, while `FIRST_PASSWORD` is `on`, at `POST /auth/password/forgot` (see [First-password provisioning](#first-password-provisioning)). So there is nothing for `ConfirmSignUp` to confirm.
 - **Forgot-password rate limit.** `POST /auth/password/forgot` is counted and limited before the kit sends any email (see [Forgot-password rate limit](#forgot-password-rate-limit)).
 
 Requests are handled in this order:
@@ -428,7 +428,7 @@ Because the pool is admin-create-only, Cognito's public `SignUp` API refuses eve
 | --- | --- | --- |
 | `InitiateAuth` (`USER_PASSWORD_AUTH`) | `POST /auth/password` | The edge uses the `email`, `email_verified`, `iss` and `sub` claims of the Cognito ID token. A challenge response is refused with `403 challenge_unsupported`. |
 | `ForgotPassword`, `ConfirmForgotPassword` | The password lifecycle routes | Public client API calls (`fetch` to `cognito-idp.<region>.amazonaws.com`). `ForgotPassword` runs only within the rate limit. `ConfirmSignUp` is never called, because the edge refuses `POST /auth/verify`. |
-| `AdminGetUser`, `AdminCreateUser`, `AdminConfirmSignUp`, `AdminUpdateUserAttributes`, `AdminSetUserPassword` | `POST /auth/link` | [Password provisioning](#cognito-user-pool), above. These calls go through the AWS SDK with the Lambda role (`CognitoAdminLink`). They are the only code that creates Cognito users. |
+| `AdminGetUser`, `AdminCreateUser`, `AdminConfirmSignUp`, `AdminUpdateUserAttributes`, `AdminSetUserPassword` | `POST /auth/link` (`cognitoProvisioner`), and `POST /auth/password/forgot` while `FIRST_PASSWORD` is `on` (`cognitoFirstPassword`) | [Password provisioning](#cognito-user-pool), above, and [First-password provisioning](#first-password-provisioning). These calls go through the AWS SDK with the Lambda role (`CognitoAdminLink`). The two provisioners in [`auth/src/cognito.js`](../../auth/src/cognito.js) are the only code that creates Cognito users. |
 
 ### Stored records
 

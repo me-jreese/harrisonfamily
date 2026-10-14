@@ -386,8 +386,9 @@ export function createAuthEdge({ manifest, identity, verify, publicJwk, lifecycl
       const r = await oauth.handle(rel, event, () => sessionOf(event));
       if (r) return r;
     }
-    // Users are created only by AdminCreateUser (POST /auth/link). ConfirmSignUp only ever confirms a self-service sign-up, which
-    // this app never makes; refusing it keeps an account someone else signed up for an email from being confirmed here.
+    // Users are created only by AdminCreateUser: at POST /auth/link and, while FIRST_PASSWORD is on, at POST /auth/password/forgot (SURF-D18, io's Q2-12;
+    // cognito.js). ConfirmSignUp only ever confirms a self-service sign-up, which this app never makes; refusing it keeps an account someone else signed up
+    // for an email from being confirmed here.
     if (rel === "/verify" && method === "POST") return json(410, { code: "AUTH_FORBIDDEN", detail: "signup_disabled" });
     if (rel === "/password/forgot" && method === "POST") {
       if (limiter) {
