@@ -143,7 +143,7 @@ for (const [name, viewport] of VIEWPORTS) {
 
     test("person hero: hidden when signed out", async ({ page }) => {
       const s = await openPerson(page, { session: null });
-      await expect.poll(() => s.meCalls).toBeGreaterThan(0);
+      await expect.poll(() => s.bundleRequests.length).toBeGreaterThan(0);
       await page.waitForLoadState("networkidle");
       await expect(page.locator('#person-hero [data-slot="follow"]')).toBeEmpty();
       expect(s.gets).toEqual([]);
