@@ -12,6 +12,7 @@ import { readFileSync as readFile } from "node:fs";
 import { parsePath } from "./ops.js";
 import { isRefusal, stricter } from "./field-policy.js";
 
+const BIRTH = 12; // EventType Birth
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const TEMP = /^new:\d+$/;
 
@@ -25,12 +26,22 @@ function makeUnion(n) {
   return { find, join: (a, b) => { parent[find(a)] = find(b); } };
 }
 
-// Every string in a value that is exactly a temp handle (a note whose whole text is "new:1" is the only false positive).
-function temps(v, out = new Set()) {
-  if (typeof v === "string") { if (TEMP.test(v)) out.add(v); }
-  else if (Array.isArray(v)) v.forEach((x) => temps(x, out));
-  else if (isObj(v)) Object.values(v).forEach((x) => temps(x, out));
+// Temp handles in reference positions only: a `ref` or `place` field, a `*_handle` field, or an element of a handle list. Free text
+// (a note, a nickname) that happens to read "new:1" ties nothing together. `key` is the field the value sits in.
+const HANDLE_LISTS = new Set(["family_list", "parent_family_list", "note_list", "citation_list", "tag_list"]);
+const refKey = (key) => typeof key === "string" && (key === "ref" || key === "place" || key.endsWith("_handle") || HANDLE_LISTS.has(key));
+function temps(v, out = new Set(), key = null) {
+  if (typeof v === "string") { if (TEMP.test(v) && refKey(key)) out.add(v); }
+  else if (Array.isArray(v)) v.forEach((x) => temps(x, out, key));
+  else if (isObj(v)) for (const [k, x] of Object.entries(v)) temps(x, out, k);
   return out;
+}
+// The field an op path ends in (its last property name), for a bare value.
+function lastProp(path) {
+  try {
+    const props = parsePath(path).filter((s) => s.t === "prop");
+    return props.length ? props[props.length - 1].name : null;
+  } catch { return null; }
 }
 
 function pathTemps(path, out) {
@@ -71,8 +82,9 @@ export function groupOps(ops) {
     if (typeof op.obj === "string" && TEMP.test(op.obj)) t.add(op.obj);
     pathTemps(op.path, t);
     pathTemps(typeof op.before === "string" ? op.before : "", t);
-    temps(op.value, t);
-    temps(op.base, t);
+    const field = lastProp(op.path);
+    temps(op.value, t, field);
+    temps(op.base, t, field);
     for (const x of t) tie(`temp:${x}`, i);
     for (const p of linkPairs(op)) tie(`link:${p}`, i);
   });
@@ -146,10 +158,11 @@ function loadTitles() {
   return m;
 }
 
-function dateWords(d) {
+function dateWords(d, yearOnly = false) {
   if (!isObj(d)) return null;
   const dv = Array.isArray(d.dateval) ? d.dateval : [];
   const [day, month, year] = dv;
+  if (yearOnly) return year ? String(year) : null;
   if (year) {
     if (day && month) return `${day} ${MONTH[month] ?? month} ${year}`;
     if (month) return `${MONTH[month] ?? month} ${year}`;
@@ -159,14 +172,14 @@ function dateWords(d) {
 }
 
 /** A value as words, or null when it has no short plain form. */
-function valueWords(v, field) {
+function valueWords(v, field, yearOnly = false) {
   if (v === undefined || v === null || v === "") return null;
   if (field === "gender" && typeof v === "number") return GENDER[v] ? q(GENDER[v]) : null;
   if (typeof v === "string") return q(v);
   if (typeof v === "number") return String(v);
   if (typeof v === "boolean") return v ? "yes" : "no";
   if (isObj(v) && typeof v._class === "string") {
-    if (v._class === "Date") return dateWords(v);
+    if (v._class === "Date") return dateWords(v, yearOnly);
     if (v._class.endsWith("Type")) {
       const t = (typeof v.string === "string" && v.string) || enumTitle(v._class, v.value);
       return t ? q(t) : null;
@@ -207,6 +220,10 @@ export function summarizeOp(op, { objects = {} } = {}) {
   try { segs = parsePath(op.path ?? ""); } catch { return "make a change"; }
   const props = segs.filter((s) => s.t === "prop").map((s) => s.name);
   const last = props[props.length - 1];
+  // A birth event's day and month never reach a summary: its date is shown as a year, and a day or month edit is named generally.
+  const ev = cls === "Event" ? (TEMP.test(op.obj) ? null : objects[op.obj]) : null;
+  const yearOnly = cls === "Event" && (ev?.type?.value === BIRTH || (op.op === "create" && op.value?.type?.value === BIRTH));
+  if (yearOnly && props.includes("dateval") && segs.some((s) => s.t === "index" && s.i !== 2)) return "change the date";
   const elementEdit = op.op === "add" || segs[segs.length - 1]?.t !== "prop" ? LIST_WORD[op.op === "add" ? last : props[props.length - 1]] : null;
   if (op.op === "add") {
     const lw = LIST_WORD[last] ?? `an item to ${words(last)}`;
@@ -217,9 +234,8 @@ export function summarizeOp(op, { objects = {} } = {}) {
   if (op.op === "move") return `reorder ${LIST_WORD[last] ?? words(last)}`;
   if (last === "father_handle" || last === "mother_handle") return "change a parent";
   const field = describeField(segs, cls);
-  const to = valueWords(op.value, last);
-  const from = valueWords(op.base, last);
-  void objects;
+  const to = valueWords(op.value, last, yearOnly);
+  const from = valueWords(op.base, last, yearOnly);
   if (op.value === "" || op.value === null) return from ? `clear the ${field} (was ${from})` : `clear the ${field}`;
   if (to && from) return `change the ${field} from ${from} to ${to}`;
   if (to) return `set the ${field} to ${to}`;

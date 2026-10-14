@@ -12,7 +12,7 @@
 //
 // The ops are partitioned and summarised in edit-plan.js. Nothing calls this module yet: its first caller is `edit-api-core`, so it
 // ships, unreachable, in the hfy-api zip.
-import { applyOps, canonicalJson, OpsError, parsePath } from "./ops.js";
+import { applyOps, canonicalJson, hash12, OpsError, parsePath } from "./ops.js";
 import { birthDeathIndex, EVENT_TYPE, ROLE_PRIMARY } from "./semantics.js";
 import { buildTree, isBirthLike, placeCodeIsLocal } from "../shared/redaction-rules.mjs";
 import { loadPolicy } from "./guard.js";
@@ -100,7 +100,10 @@ export const FIELD_POLICY_ROWS = Object.freeze([
   ["Event", "/citation_list/**", P, P],
 
   // ---- Family (shared: a member's changes to a family are proposals; spouse and children are the Q2-15 row on the Person)
-  ["Family", "/{father_handle,mother_handle,type,complete,child_ref_list,event_ref_list}/**", P, P],
+  // The spouse and child links carry the Q2-15 `spouse-children` tag like Person.family_list, so one switch decides both sides of a
+  // link (a link always pairs a Person op with a Family op in one group). A Family is "own" when the member is a spouse or a child.
+  ["Family", "/{father_handle,mother_handle,child_ref_list}/**", P, P, { group: "spouse-children" }],
+  ["Family", "/{type,complete,event_ref_list}/**", P, P],
   ["Family", "/{attribute_list,note_list,media_list,citation_list}/**", P, P],
   ["Family", "/lds_ord_list/**", "desk", "desk", { group: "desk-list" }],
 
@@ -120,13 +123,17 @@ export const FIELD_POLICY_ROWS = Object.freeze([
   ["Repository", "/{name,type,note_list,urls}/**", P, P],
   ["Repository", "/address_list/**", "never", "never"],
   ["Media", "/{desc,date,attribute_list,note_list,citation_list}/**", P, P],
-  ["Media", "/{path,mime,checksum,thumb}", P, P], // the former 'A' rows (IF-04): proposals, never direct for a member
+  // The former 'A' rows (IF-04): a proposal for a member. They describe the stored file, so the photos-domain graduation path (server
+  // side) is their only writer: no web client op writes them for an admin either ("derived"), and a local absolute path never reaches the cloud.
+  // `thumb` is the stored thumbnail name in the Gramps Media schema; it follows its file.
+  ["Media", "/{path,mime,checksum,thumb}", P, P, { admin: "derived" }],
   ["Note", "/{text,format,type}/**", D, P], // own-only notes are direct
 
   // ---- never, desk and derived (the same for everyone)
   ["Person", "/address_list/**", "never", "never"],
   ["Person", "/attribute_list/**", "never", "never", { when: "neverAttribute" }],
   ["Person", "/urls/**", "never", "never", { when: "emailUrl" }],
+  ["Person", "/attribute_list/**", "desk", "desk", { when: "mergedGid", group: "desk-list" }], // the sync identity key (design 3.2)
   ["Person", "/lds_ord_list/**", "desk", "desk", { group: "desk-list" }],
   ["Person", "/{gramps_id,private}", "desk", "desk", { group: "desk-list" }],
   ["Person", "/primary_name/{group_as,sort_as,display_as}", "desk", "desk", { group: "desk-list" }],
@@ -139,9 +146,11 @@ export const FIELD_POLICY_ROWS = Object.freeze([
     [c, "/**/private", "desk", "desk", { group: "desk-list" }],
     [c, "/**/attribute_list/*", "never", "never", { when: "neverAttribute" }],
     [c, "/**/urls/*", "never", "never", { when: "emailUrl" }],
+    [c, "/**/attribute_list/*", "desk", "desk", { when: "mergedGid", group: "desk-list" }],
   ]),
   ["Person", "/**/attribute_list/*", "never", "never", { when: "neverAttribute" }],
   ["Person", "/**/urls/*", "never", "never", { when: "emailUrl" }],
+  ["Person", "/**/attribute_list/*", "desk", "desk", { when: "mergedGid", group: "desk-list" }],
 ]);
 
 /** The Birth and Death structure rules (IF-02), evaluated on the ops of a submission, not on a pointer. */
@@ -243,20 +252,35 @@ export const NEVER_TYPE_VALUES = Object.freeze({
 });
 const NEVER_SETS = Object.fromEntries(Object.entries(NEVER_TYPE_VALUES).map(([k, v]) => [k, new Set(v)]));
 
+const anyTyped = (value, test) => {
+  if (Array.isArray(value)) return value.some((x) => anyTyped(x, test));
+  if (!isObj(value)) return false;
+  if (isTyped(value) && test(value)) return true;
+  return Object.values(value).some((x) => anyTyped(x, test));
+};
+// The values a never-type predicate judges: the new value, the old value and the stored element the op addresses (all three, so a
+// retype away from a withheld type and an edit of a withheld element are caught, not only the creation of one). `unresolved`: the
+// op's key matched no stored element, so nothing can be judged and the stricter row applies.
+const seen = (c) => [c.value, c.old, c.element];
+const MERGED_GID = /^\s*merged gramps ids?\s*$/i;
+
 /** Predicates. ctx: { checks: [{obj, tree}] (the target object before and after the ops), value (the new value at this pointer),
- *  policy (redaction-v1) }. A predicate that cannot tell answers for the stricter row. */
+ *  old (the stored value there), element (the stored list element the op addresses), unresolved, policy (redaction-v1) }. A predicate
+ *  that cannot tell answers for the stricter row. */
 const WHEN = {
-  birthLike: (c) => c.checks.some(({ obj, tree }) => obj && isBirthLike(obj, tree, c.policy)),
+  birthLike: (c) => c.checks.length === 0 || c.checks.some(({ obj, tree }) => obj && isBirthLike(obj, tree, c.policy)),
   dayMonthInValue: (c) => {
+    if (c.value === undefined) return true;
     const dv = Array.isArray(c.value) ? c.value : isObj(c.value) ? c.value.dateval : null;
     if (!Array.isArray(dv)) return typeof c.value === "number" && c.value !== 0 ? true : false;
     return [0, 1, 4, 5].some((i) => dv[i] !== undefined && dv[i] !== 0 && dv[i] !== false);
   },
   localPlace: (c) => c.checks.every(({ obj }) => !obj) || c.checks.some(({ obj }) => obj && placeCodeIsLocal(obj, c.policy)),
   administrativePlace: (c) => !WHEN.localPlace(c),
-  neverPlaceType: (c) => hasTyped(c.value, "PlaceType", NEVER_SETS.PlaceType),
-  neverAttribute: (c) => hasTyped(c.value, "AttributeType", NEVER_SETS.AttributeType),
-  emailUrl: (c) => hasTyped(c.value, "UrlType", NEVER_SETS.UrlType),
+  neverPlaceType: (c) => seen(c).some((v) => hasTyped(v, "PlaceType", NEVER_SETS.PlaceType)) || c.checks.some(({ obj }) => obj && hasTyped(obj.place_type, "PlaceType", NEVER_SETS.PlaceType)),
+  neverAttribute: (c) => !!c.unresolved || seen(c).some((v) => hasTyped(v, "AttributeType", NEVER_SETS.AttributeType)),
+  emailUrl: (c) => !!c.unresolved || seen(c).some((v) => hasTyped(v, "UrlType", NEVER_SETS.UrlType)),
+  mergedGid: (c) => !!c.unresolved || seen(c).some((v) => anyTyped(v, (t) => t._class === "AttributeType" && t.value === 0 && MERGED_GID.test(String(t.string ?? "")))),
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -294,7 +318,8 @@ export function createFieldPolicy({ answers = {}, policy } = {}) {
     let best = null;
     rows.forEach((r, order) => {
       if (r.cls !== cls || !matchSegs(r.segs, 0, segs, 0)) return;
-      if (!ignoreWhen && r.when.length && !r.when.every((w) => WHEN[w](ctx ?? { checks: [], value: undefined, policy: redaction() }))) return;
+      // No ctx: a conditional row cannot be judged, so it counts (the stricter answer), never the fail-open one.
+      if (!ignoreWhen && ctx && r.when.length && !r.when.every((w) => WHEN[w](ctx))) return;
       if (!best || r.prio > best.row.prio || (r.prio === best.row.prio && (r.score > best.row.score || (r.score === best.row.score && order > best.order)))) best = { row: r, order };
     });
     return best?.row ?? null;
@@ -364,7 +389,8 @@ export async function ownRecord(actor, view, { log } = {}) {
 
 /** "own" or "other" for the object `key` ("Person:<handle>"). Fail closed: any doubt or error is "other".
  *  Person: the own handle. Event: referenced only by the own Person, and only with the Primary role. Note: referenced only by the
- *  own Person or by own-only events. Everything else (families, places, sources, citations, repositories, media) is shared. */
+ *  own Person or by own-only events. Family: the own Person is a spouse or a child of it (the Q2-15 spouse-children relation).
+ *  Everything else (places, sources, citations, repositories, media) is shared. */
 export async function relationOf(own, key, view, memo = new Map()) {
   if (!own || typeof key !== "string") return "other";
   if (memo.has(key)) return memo.get(key);
@@ -376,7 +402,10 @@ export async function relationOf(own, key, view, memo = new Map()) {
   try {
     if (cls === "Person") out = handle === own.handle ? "own" : "other";
     else if (cls === "Event") out = (await ownOnlyEvent(own, handle, view)) ? "own" : "other";
-    else if (cls === "Note") {
+    else if (cls === "Family") {
+      const f = await view.get("Family", handle);
+      out = f && (f.father_handle === own.handle || f.mother_handle === own.handle || (f.child_ref_list ?? []).some((c) => c && c.ref === own.handle)) ? "own" : "other";
+    } else if (cls === "Note") {
       const refs = (await view.referrers("Note", handle)) ?? [];
       let ok = refs.length > 0;
       for (const r of refs) {
@@ -448,6 +477,35 @@ function walkChanges(segs, nv, ov, emit) {
   emit(segs, nv, ov);
 }
 
+// Find the stored value an op path addresses in `root`: { value, keyMissing }. A list key that matches no element sets keyMissing.
+function locate(root, segs) {
+  let cur = root;
+  for (const s of segs) {
+    if (cur === undefined || cur === null) return { value: undefined, keyMissing: false };
+    if (s.t === "prop") cur = isObj(cur) ? cur[s.name] : undefined;
+    else if (s.t === "index") cur = Array.isArray(cur) ? cur[s.i] : undefined;
+    else {
+      if (!Array.isArray(cur)) return { value: undefined, keyMissing: true };
+      let hit;
+      if (s.t === "k") hit = cur.find((el) => isObj(el) && hash12(el) === s.hash);
+      else if (s.t === "item") hit = cur.find((el) => el === s.value);
+      else hit = cur.filter((el) => isObj(el) && el.ref === s.ref)[s.n ?? 0];
+      if (hit === undefined) return { value: undefined, keyMissing: true };
+      cur = hit;
+    }
+  }
+  return { value: cur, keyMissing: false };
+}
+const LISTS_OF_CONCERN = new Set(["attribute_list", "urls"]);
+// The stored attribute or URL element an op path addresses (or the whole list when the path ends at it).
+function storedElement(root, segs) {
+  let j = -1;
+  segs.forEach((s, i) => { if (s.t === "prop" && LISTS_OF_CONCERN.has(s.name)) j = i; });
+  if (j < 0) return undefined;
+  const upTo = segs[j + 1] && segs[j + 1].t !== "prop" && segs[j + 1].t !== "index" ? segs.slice(0, j + 2) : segs.slice(0, j + 1);
+  return locate(root, upTo).value;
+}
+
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const clsOf = (op) => (/^new:\d+$/.test(op.obj) ? op.cls : op.obj.slice(0, op.obj.indexOf(":")));
 const handleOfKey = (key) => key.slice(key.indexOf(":") + 1);
@@ -510,7 +568,7 @@ export async function classifyOps(ops, ctx = {}) {
   };
   for (const op of ops) if (op && op.op !== "create" && typeof op.obj === "string") scan(op.value, op.obj, undefined);
   const tempRelation = async (temp, cls) => {
-    if (!own || (cls !== "Event" && cls !== "Note")) return "other";
+    if (!own || (cls !== "Event" && cls !== "Note" && cls !== "Family")) return "other";
     const refs = referrers.get(temp) ?? [];
     if (!refs.length) return "other";
     for (const r of refs) {
@@ -550,23 +608,38 @@ export async function classifyOps(ops, ctx = {}) {
     const take = (c) => {
       code = stricter(code, c);
     };
-    const emit = (segs, nv, ov) => take(fp.resolve(cls, segs, viewer, { checks, value: nv, policy: redaction }));
+    // The stored value the op addresses, from the base map and never from the submitter's `op.base` (which only has to match at commit).
+    let parsed = [];
+    let stored;
+    let unresolved = false;
+    let element;
+    if (!isNew && typeof op.path === "string") {
+      parsed = parsePath(op.path);
+      const loc = locate(base[op.obj], parsed);
+      stored = loc.value;
+      unresolved = loc.keyMissing;
+      element = op.op === "add" ? undefined : storedElement(base[op.obj], parsed); // an add names the list, not an element in it
+    }
+    const emit = (segs, nv, ov) => take(fp.resolve(cls, segs, viewer, { checks, value: nv, old: ov, element, unresolved, policy: redaction }));
 
     if (op.op === "set") {
-      if (op.path === "" || op.path === undefined) walkChanges([], op.value, has(op, "base") ? op.base : undefined, emit);
+      if (op.path === "" || op.path === undefined) walkChanges([], op.value, isNew ? undefined : base[op.obj], emit);
       else {
         const segs = pointerSegments(op.path);
-        if (isObj(op.value) && !isTyped(op.value)) walkChanges(segs, op.value, has(op, "base") ? op.base : undefined, emit);
-        else emit(segs, op.value, op.base);
+        if (isObj(op.value) && !isTyped(op.value)) walkChanges(segs, op.value, stored, emit);
+        else emit(segs, op.value, stored);
       }
     } else if (op.op === "add") {
       const segs = pointerSegments(op.path).concat("*");
       emit(segs, op.value, undefined);
       if (isObj(op.value)) walkChanges(segs, op.value, undefined, (s, nv, ov) => (s.length > segs.length ? emit(s, nv, ov) : undefined));
     } else if (op.op === "remove" || op.op === "move") {
-      emit(pointerSegments(op.path), op.base, undefined);
+      // Judged on the stored element. A missing or different submitted base is a stale or forged op: it goes to review at the least.
+      if (unresolved || stored === undefined || (has(op, "base") && !same(op.base, stored))) take(P);
+      emit(pointerSegments(op.path), stored, undefined);
     } else if (op.op === "create") {
-      if (!admin && !(relation === "own" && (cls === "Event" || cls === "Note"))) take(P);
+      if (!admin && relation === "own" && cls === "Family") take(fp.resolve("Family", ["father_handle"], viewer)); // the Q2-15 spouse-children row
+      else if (!admin && !(relation === "own" && (cls === "Event" || cls === "Note"))) take(P);
       if (isObj(op.value)) walkChanges([], op.value, undefined, emit);
       const t = cls === "Event" ? eventTypeValue(op.value) : null;
       if (KIND_OF_TYPE[t]) kinds.add(KIND_OF_TYPE[t]);
@@ -584,6 +657,14 @@ export async function classifyOps(ops, ctx = {}) {
           const ref = op.op === "add" ? resolveTemp(op.value?.ref) : segs[1]?.t === "ref" ? segs[1].ref : null;
           const t = ref ? eventType(ref) ?? (op.op === "add" ? eventTypeValue(newEventValue(ops, op.value?.ref)) : null) : null;
           if (KIND_OF_TYPE[t]) kinds.add(KIND_OF_TYPE[t]);
+        }
+      }
+      // (b) link an EventRef to an Event that is not the member's own: only an own-only (or newly created own) Event is direct
+      if (cls === "Person" && relation === "own" && typeof op.path === "string" && (op.op === "add" || op.op === "set")) {
+        for (const t of eventRefTargets(op, parsed)) {
+          const temp = TEMP.test(t.ref);
+          const mine = temp ? (await tempRelation(t.ref, "Event")) === "own" : await linkableEvent(own, t.ref, ctx.view);
+          if (!mine || (!temp && t.role !== undefined && t.role !== ROLE_PRIMARY)) take(P);
         }
       }
       // (c) change an Event's type to or from Birth or Death
@@ -619,6 +700,27 @@ export async function classifyOps(ops, ctx = {}) {
     }
   }
   return out;
+}
+
+// The EventRefs an add or set puts on the own Person: [{ ref, role }].
+function eventRefTargets(op, segs) {
+  if (segs[0]?.t !== "prop" || segs[0].name !== "event_ref_list") return [];
+  const roleOf = (r) => (isObj(r) && isObj(r.role) ? r.role.value : undefined);
+  if (op.op === "add") return segs.length === 1 && isObj(op.value) && typeof op.value.ref === "string" ? [{ ref: op.value.ref, role: roleOf(op.value) }] : [];
+  if (segs.length === 1) return Array.isArray(op.value) ? op.value.filter((r) => isObj(r) && typeof r.ref === "string").map((r) => ({ ref: r.ref, role: roleOf(r) })) : [];
+  if (segs.length === 2) return isObj(op.value) && typeof op.value.ref === "string" ? [{ ref: op.value.ref, role: roleOf(op.value) }] : [];
+  if (segs.length === 3 && segs[2].t === "prop" && segs[2].name === "ref" && typeof op.value === "string") return [{ ref: op.value, role: undefined }];
+  return [];
+}
+
+// An existing Event the own Person may link to directly: nobody but the own Person refers to it (an orphan counts).
+async function linkableEvent(own, handle, view) {
+  try {
+    const refs = (await view.referrers("Event", handle)) ?? [];
+    return refs.every((r) => r.cls === "Person" && r.handle === own.handle);
+  } catch {
+    return false;
+  }
 }
 
 function newEventValue(ops, temp) {

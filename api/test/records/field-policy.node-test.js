@@ -105,7 +105,9 @@ describe("relationOf", () => {
     assert.equal(await relationOf(own, "Event:he1", view), "own");
     assert.equal(await relationOf(own, "Event:he3", view), "other");
     assert.equal(await relationOf(own, "Note:hn1", view), "own");
-    assert.equal(await relationOf(own, "Family:hf1", view), "other");
+    assert.equal(await relationOf(own, "Family:hf1", view), "own"); // the own Person is its spouse
+    assert.equal(await relationOf(own, "Family:hf2", view), "own"); // the own Person is its child
+    assert.equal(await relationOf(own, "Family:hf3", viewOf({ ...w, "Family:hf3": { _class: "Family", handle: "hf3", father_handle: "hp2", child_ref_list: [] } })), "other");
     assert.equal(await relationOf(own, "Place:hl1", view), "other");
     assert.equal(await relationOf(null, ME, view), "other");
   });
@@ -210,8 +212,13 @@ describe("Birth and Death structure on the own record (IF-02)", () => {
     const owner = createFieldPolicy({ answers: { "own-death-event": "owner-direct" } });
     assert.equal(await codeOf(add, { policy: owner }), "direct");
   });
-  it("adding a Burial EventRef is direct", async () => {
-    assert.equal(await codeOf({ op: "add", obj: ME, path: "/event_ref_list", value: eref("he3") }), "direct");
+  it("adding a Burial EventRef is direct for an event nobody else uses, a proposal for someone else's", async () => {
+    const w = world();
+    w["Event:hb1"] = { _class: "Event", handle: "hb1", gramps_id: "E9005", type: typed("EventType", 4), date: date(1990), description: "" };
+    assert.equal(await codeOf({ op: "add", obj: ME, path: "/event_ref_list", value: eref("hb1") }, { objects: w }), "direct");
+    assert.equal(await codeOf({ op: "add", obj: ME, path: "/event_ref_list", value: eref("he3") }, { objects: w }), "proposal", "another person's event");
+    assert.equal(await codeOf({ op: "add", obj: ME, path: "/event_ref_list", value: eref("hb1", 3) }, { objects: w }), "proposal", "not the Primary role");
+    assert.equal(await codeOf(set(ME, "/event_ref_list/@ref=he2/ref", "he2", "he3")), "proposal", "repointing a ref at another person's event");
   });
 });
 
@@ -457,5 +464,140 @@ describe("summaries are plain language", () => {
     const o = [{ id: "n", op: "set", obj: ME, path: "/primary_name/nick", base: "Tess", value: "Tee" }];
     const plan = planOps(o, await run(o));
     assert.deepEqual(plan.direct[0].summary, [{ text: "change the nickname from “Tess” to “Tee”", opIds: ["n"] }]);
+  });
+});
+
+describe("review fixes (HFY-TSK-233)", () => {
+  const typedAttr = (v, string = "") => ({ _class: "Attribute", type: typed("AttributeType", v, string), value: "x" });
+  const never = typedAttr(6);
+  const benign = typedAttr(2);
+  const mail = { _class: "Url", path: "a@example.test", desc: "", type: typed("UrlType", 1) };
+  const site = { _class: "Url", path: "https://example.test", desc: "", type: typed("UrlType", 2) };
+  const withLists = () => {
+    const w = world();
+    w[ME].attribute_list = [never, benign, typedAttr(0, "Merged Gramps ID")];
+    w[ME].urls = [mail, site];
+    return w;
+  };
+
+  describe("Q2-15 spouse-children covers both sides of a link", () => {
+    const owner = createFieldPolicy({ answers: { "spouse-children": "owner-direct" } });
+    const unlink = [
+      { id: "a", op: "remove", obj: ME, path: "/family_list/@=hf1", base: "hf1" },
+      { id: "b", op: "set", obj: "Family:hf1", path: "/father_handle", base: OWN, value: "" },
+    ];
+    it("by default the whole link group is a review group", async () => {
+      const plan = planOps(unlink, await run(unlink));
+      assert.deepEqual(plan.review.map((g) => g.opIds), [["a", "b"]]);
+      assert.deepEqual(plan.direct, []);
+    });
+    it("owner-direct makes a full spouse link group direct, with no code change", async () => {
+      const plan = planOps(unlink, await run(unlink, { policy: owner }));
+      assert.deepEqual(plan.direct.map((g) => g.opIds), [["a", "b"]]);
+      assert.deepEqual(plan.review, []);
+    });
+    it("a child link on a family the member belongs to follows the switch; a stranger's family never does", async () => {
+      const add = { op: "add", obj: "Family:hf1", path: "/child_ref_list", value: { _class: "ChildRef", ref: "hc9" } };
+      assert.equal(await codeOf(add), "proposal");
+      assert.equal(await codeOf(add, { policy: owner }), "direct");
+      const w = world();
+      w["Family:hf1"].father_handle = "hp3";
+      assert.equal(await codeOf(add, { policy: owner, objects: w }), "proposal");
+      assert.equal(await codeOf(set("Family:hf1", "/type", typed("FamilyRelType", 1), typed("FamilyRelType", 2)), { policy: owner }), "proposal", "other Family fields stay proposals");
+    });
+  });
+
+  it("every group tag in the table has a Q2-15 switch, and every grouped switch is used", () => {
+    const tags = new Set(FIELD_POLICY_ROWS.map((r) => r[4]?.group).filter(Boolean));
+    const switches = Q2_15_ROWS.filter((r) => r.group);
+    assert.deepEqual([...tags].sort(), switches.map((r) => r.id).sort());
+    for (const r of switches) assert.equal(r.id, r.group);
+  });
+
+  describe("withheld attribute and URL types are judged on the stored element too", () => {
+    it("editing the value of, retyping, or removing a never-type element is never; a benign element stays direct", async () => {
+      const w = withLists();
+      const nk = k(never);
+      assert.equal(await codeOf(set(ME, `/attribute_list/${nk}/value`, "x", "y"), { objects: w }), "never");
+      assert.equal(await codeOf(set(ME, `/attribute_list/${nk}/type`, never.type, typed("AttributeType", 2)), { objects: w }), "never");
+      assert.equal(await codeOf({ op: "remove", obj: ME, path: `/attribute_list/${nk}`, base: never }, { objects: w }), "never");
+      assert.equal(await codeOf(set(ME, `/attribute_list/${k(benign)}/value`, "x", "y"), { objects: w }), "direct");
+      const uk = k(mail);
+      assert.equal(await codeOf(set(ME, `/urls/${uk}/path`, mail.path, "b@example.test"), { objects: w }), "never");
+      assert.equal(await codeOf(set(ME, `/urls/${uk}/type`, mail.type, typed("UrlType", 2)), { objects: w }), "never");
+      assert.equal(await codeOf(set(ME, `/urls/${k(site)}/path`, site.path, "https://other.example.test"), { objects: w }), "direct");
+    });
+    it("a key that matches no stored element is not directly writable", async () => {
+      assert.equal(await codeOf(set(ME, "/attribute_list/@k=000000000000/value", "x", "y"), { objects: withLists() }), "never");
+    });
+    it("a Merged Gramps ID attribute is desktop-only (the sync identity key); a member cannot write it", async () => {
+      const w = withLists();
+      const merged = typedAttr(0, "Merged Gramps ID");
+      assert.equal(await codeOf({ op: "add", obj: ME, path: "/attribute_list", value: typedAttr(0, "merged gramps id") }, { objects: w }), "desk");
+      assert.equal(await codeOf(set(ME, `/attribute_list/${k(merged)}/value`, "x", "y"), { objects: w }), "desk");
+      assert.equal(await codeOf({ op: "add", obj: ME, path: "/attribute_list", value: benign }, { objects: w }), "direct");
+    });
+  });
+
+  it("remove and move are judged on the stored element, not on the submitted base", async () => {
+    const w = withLists();
+    const path = `/attribute_list/${k(never)}`;
+    assert.equal(await codeOf({ op: "remove", obj: ME, path }, { objects: w }), "never", "base omitted");
+    assert.equal(await codeOf({ op: "remove", obj: ME, path, base: benign }, { objects: w }), "never", "forged base");
+    assert.equal(await codeOf({ op: "move", obj: ME, path, before: "x" }, { objects: w }), "never", "move");
+    assert.equal(await codeOf({ op: "remove", obj: ME, path: "/note_list/@=hn1" }), "direct", "a plain element with no base is judged on what is stored");
+    assert.equal(await codeOf({ op: "remove", obj: ME, path: "/note_list/@=hn1", base: "other" }), "proposal", "a base that differs from the stored element");
+    assert.equal(await codeOf({ op: "remove", obj: ME, path: "/note_list/@=zz" }), "proposal", "no such element");
+  });
+
+  it("a set is judged against the stored value, not the submitted base", async () => {
+    // Forged base equal to the new name apart from nick: only the nick would look changed.
+    const forged = { ...world()[ME].primary_name, first_name: "Changed", nick: "Tess" };
+    const real = world()[ME].primary_name;
+    const out = await codeOf({ op: "set", obj: ME, path: "/primary_name", base: { ...forged, nick: "Old" }, value: forged });
+    assert.equal(out, "proposal");
+    assert.equal(real.first_name, "Testa");
+  });
+
+  it("resolve with no ctx answers for the stricter row", () => {
+    const v = (cls, ptr, viewer, ctx) => DEFAULT_FIELD_POLICY.resolve(cls, ptr, viewer, ctx);
+    assert.equal(v("Event", "/date/dateval/0", { relation: "own" }), "never");
+    assert.equal(v("Person", "/attribute_list/*", { relation: "own" }), "never");
+    assert.equal(v("Place", "/code", { relation: "own" }), "never");
+    assert.equal(v("Event", "/date/dateval/0", { relation: "own" }, { value: 5 }), "never", "ctx without checks");
+    assert.equal(v("Event", "/description", { relation: "own" }), "direct", "unconditional rows are unchanged");
+  });
+
+  it("Media file fields are a proposal for members and not writable by any web client for admins", () => {
+    for (const f of ["path", "mime", "checksum", "thumb"]) {
+      assert.equal(DEFAULT_FIELD_POLICY.resolve("Media", `/${f}`, { relation: "own" }), "proposal", f);
+      assert.equal(DEFAULT_FIELD_POLICY.resolve("Media", `/${f}`, { admin: true }), "derived", f);
+    }
+  });
+
+  describe("a note whose text looks like a temp handle does not tie ops together", () => {
+    it("groups only by reference positions", () => {
+      const ops = [
+        { id: "a", op: "create", obj: "new:1", cls: "Note", value: { _class: "Note", text: { _class: "StyledText", string: "new:2", tags: [] } } },
+        { id: "b", op: "create", obj: "new:2", cls: "Event", value: { _class: "Event", description: "x" } },
+        { id: "c", op: "add", obj: ME, path: "/note_list", value: "new:1" },
+        { id: "d", op: "add", obj: ME, path: "/event_ref_list", value: { ref: "new:2" } },
+        { id: "e", op: "set", obj: ME, path: "/primary_name/nick", base: "Tess", value: "new:2" },
+      ];
+      assert.deepEqual(groupOps(ops), [[0, 2], [1, 3], [4]]);
+    });
+  });
+
+  describe("summaries do not echo a birth date's day and month", () => {
+    const objects = world();
+    it("reduces a birth event's date to its year and names a day or month edit generally", () => {
+      const full = summarizeOp(set("Event:he1", "/date", date(1900), date(1901, 3, 4)), { objects });
+      assert.match(full, /1901/);
+      assert.doesNotMatch(full, /March|\b4\b|\b3\b/);
+      const day = summarizeOp(set("Event:he1", "/date/dateval/0", 0, 5), { objects });
+      assert.doesNotMatch(day, /\b5\b/);
+      const other = summarizeOp(set("Event:he2", "/date", date(1980, 3, 4), date(1981, 5, 6)), { objects });
+      assert.match(other, /March/);
+    });
   });
 });
