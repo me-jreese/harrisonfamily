@@ -358,6 +358,13 @@ Written by `hfy-api`:
 | Comment | `THREAD#<thread-id>` | `C#<ulid>` | `COMMENTS` / `<ulid>` | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Reaction, one per principal per target | `THREAD#<thread-id>` | `R#<target>#<principal>` | - | - | [`api/src/comments.js`](../../api/src/comments.js) |
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
+| Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js); not reachable from a route yet |
+| Record change log | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | - | `api/src/sync/apply.js` |
+| Record store sequence head | `SYNC#HEAD` | `META` | - | - | `api/src/sync/apply.js` (the seq); the bind and seed routes own the rest |
+| Record batch receipt | `SYNC#BATCH#<batch-id>` | `META` | `SYNCBATCH` / `<iso-time>#<batch-id>` | - (kept) | `api/src/sync/apply.js` |
+| gramps_id guard | `GID#<Class>#<gramps-id>` | `META` | - | - (a Person item is never deleted) | `api/src/sync/apply.js` |
+| gramps_id alias | `IDALIAS#<Class>#<old-gramps-id>` | `META` | - | - (never deleted) | `api/src/sync/apply.js` |
+| Record batch audit | `AUDIT#records:<batch-id>` | `<iso-time>#<uid>` | `AUDIT` / same as SK | - | `api/src/sync/apply.js`, through `auditItem` |
 | Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post attaches the upload | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) |
 | Allowlist grant, one per email | `ALLOW#<email>` | `META` | `ALLOWSUB#<gramps-id>` / `ALLOW#<email>` (its own PK) | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js) (writes), read by `hfy-auth-edge` |
 | Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |

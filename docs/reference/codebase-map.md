@@ -198,6 +198,7 @@ Paths:
   - `notify.js`: push notifications and their templates.
   - `uploads.js`: the upload route and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
+  - `sync/store.js`, `sync/apply.js`, `sync/hooks.js`: the cloud record store: key and item builders, `applyBatch()` (one `TransactWriteItems` per batch with the dense seq, receipt, GID guard and audit), and the commit-hook registry. No route reaches them yet ([API: The cloud record store](api.md#the-cloud-record-store)).
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
   - `records/semantics.js`, `records/gcalendar.js`: the Gramps rules for edited records (dates and `sortval`, references, two-sided family links, ancestry cycles, derived birth and death indexes) and the port of Gramps' calendar arithmetic. Pure, and no route reaches them yet.
   - `records/relationships.js`, `records/duplicates.js`: the relationship intent compiler (parents, children, spouse and unlink intents to Gramps Family and ChildRef EditOps, checked with `semantics.js`) and the accent-stripped duplicate-name matcher. Pure, and no route reaches them yet.
@@ -488,7 +489,7 @@ Facts:
 
 Paths:
 
-- [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers` and `txn`. `fake-ddb.js` and `world.js` are helpers.
+- [`api/test/`](../../api/test/): Vitest. The suites are `api`, `contracts`, `hardening`, `jwks`, `labels`, `mcp`, `mcp-conformance`, `mcp-infra`, `origin`, `package-api`, `presign`, `producers`, `sync-apply` and `txn`. `fake-ddb.js` and `world.js` are helpers.
 - [`api/test/records/`](../../api/test/records/): `node:test` suites `ops.node-test.js` (the EditOp engine), `semantics.node-test.js` (the Gramps rules, run against `fixtures/gramps-semantics.golden.json`, the values Gramps 6.0.6 computed) and `relationships.node-test.js` (the relationship compiler and the duplicate matcher, run against `fixtures/gramps-relationships.golden.json`, the objects Gramps 6.0.6 left after each scenario). Run by `npm test` after Vitest.
 - [`auth/test/`](../../auth/test/): Vitest. The suites are `cognito`, `edge`, `linkstore`, `oauth`, `origin`, `passkey`, `passkeystore` and `userinfo`. `fake-table.js` is a helper.
 - [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs): a Playwright end-to-end passkey test.

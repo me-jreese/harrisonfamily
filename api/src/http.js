@@ -40,7 +40,8 @@ export function logSafeError(e, ctx = {}) {
 /** Maps any thrown value to a JSON error response. Unknown errors are 500 with no detail, logged as `logSafeError` only. */
 export function errorResponse(e, log = console, ctx = {}) {
   // `errors` is the R-18 guard's [{pointer, kind, span}] (src/guard.js): positions only, never the matched text.
-  if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message, ...(Array.isArray(e.errors) ? { errors: e.errors } : {}) });
+  // `details` is a structured, already-redacted conflict description (applyBatch's SyncError: per-op current versions and objects).
+  if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message, ...(Array.isArray(e.errors) ? { errors: e.errors } : {}), ...(e.details && typeof e.details === "object" ? { details: e.details } : {}) });
   if (e instanceof ContentError) {
     return json(e.status, { error: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) });
   }

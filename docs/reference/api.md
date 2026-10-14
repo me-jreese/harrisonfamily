@@ -39,6 +39,9 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
+| [`sync/store.js`](../../api/src/sync/store.js) | The cloud record store's keys and items (`REC#`, `SYNC#LOG`, `SYNC#HEAD`, `SYNC#BATCH#`, `GID#`, `IDALIAS#`), the batch id and request token, and the reads `applyBatch` needs. See [The cloud record store](#the-cloud-record-store). |
+| [`sync/apply.js`](../../api/src/sync/apply.js) | `applyBatch()`, the one write path into the record store, and `SyncError`. No route calls it yet. See [The cloud record store](#the-cloud-record-store). |
+| [`sync/hooks.js`](../../api/src/sync/hooks.js) | The commit-hook registry: `registerContributor` and `registerAfterCommit`. |
 | [`keys.js`](../../api/src/keys.js) | Key helpers. |
 | [`notify.js`](../../api/src/notify.js) | Notification types, templates and fan-out, with the persist-first inbox gate (`featureOn("inboxV1", recipient)`). |
 | [`uploads.js`](../../api/src/uploads.js) | Presigned photo uploads: validation, the server-chosen object key and the `UPLOAD#` binding. |
@@ -114,7 +117,7 @@ A `204` response has an empty body.
 { "error": "<code>", "message": "<text>", "details": { }, "errors": [ ] }
 ```
 
-`details` appears only on kit errors that carry it. `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
+`details` appears only on kit errors that carry it, and on a record-store conflict ([The cloud record store](#the-cloud-record-store)). `errors` appears only on a contact-information refusal ([Contact-information guard](#contact-information-guard)). Post errors may carry `{"field": ...}` or `{"id": ...}`. Comment validation errors carry `{"field": ...}`. Any error that is not one of the API's or the kits' typed errors becomes `500` with `{"error":"internal","message":"internal error"}`, and the log line holds only `{name, code, route, requestId}` (never the message or stack, which can quote stored text; HFY-TSK-235). The origin-check `403` and the notification routes use shorter bodies, described in their sections.
 
 Two statuses exist for validation. Checks on the request itself (body parsing, a missing `subject` on a comment route, upload input) return `400 validation`. Checks on post and comment content return `422 validation`.
 
@@ -771,6 +774,51 @@ Other errors: `bad_intent` (the request is malformed, a person is chosen twice, 
 **Goldens.** The expectations in the tests are what Gramps 6.0.6 itself leaves in a database: [`api/test/records/fixtures/gramps-relationships.golden.json`](../../api/test/records/fixtures/gramps-relationships.golden.json) holds a synthetic tree and a set of scenarios, each the steps Gramps' editors perform through its DB API (`Family()`, `ChildRef()`, `Person.add_family_handle`, `commit_family`, `set_birth_death_index`), read back. They cover reusing a two-parent family, a single-parent family with and without children, never filling a slot of a family that has children, children with an unknown other parent, a spouse married then divorced, unlinking a child and a partner, stubs, places and relations. Other workers test against that file. It needs no Gramps to use: `python3 scripts/records/check_relationship_goldens.py` verifies it with the standard library alone and `python3 -m unittest discover gramps/tests/unit` runs that check in CI. Regenerating the file needs Gramps.app: see [Regenerate the Gramps goldens](../how-to/regenerate-the-gramps-goldens.md).
 
 The tests are [`api/test/records/relationships.node-test.js`](../../api/test/records/relationships.node-test.js), run by `npm test` after vitest, or alone with `node --test test/records/relationships.node-test.js`.
+
+## The cloud record store
+
+[`api/src/sync/`](../../api/src/sync/) holds the cloud record store and its one write path, `applyBatch()` (HFY-TSK-243). It is a library: no route, tool or Lambda path calls it yet, and it ships in the `hfy-api` zip unreachable until the sync and edit routes call it. The design is in the HFY-PLN-002 BRD (section 4, the key registry).
+
+### Items
+
+| Item | PK | SK | GSI1PK / GSI1SK | Holds |
+| --- | --- | --- | --- | --- |
+| Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps_id>#<handle>` (a Tag: `#<handle>`) | `version`, `seq`, `deleted`, `obj_json` (the canonical redacted Gramps object without `change`, null for a tombstone), `hash` (its sha256), `origin`, `updated_by`, `updated_at` |
+| Change log entry | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | One entry per op: `op`, `version`, `base_version`, `obj_json`, `batch_id`, `principal`, `origin`, `on_behalf_of` |
+| Sequence head | `SYNC#HEAD` | `META` | - | `seq`, `writes_enabled`, `seeded`, `merges_enabled`, `tree_id` |
+| Batch receipt | `SYNC#BATCH#<batch_id>` | `META` | `SYNCBATCH` / `<at>#<batch_id>` | `request_hash`, `seq_from`, `seq_to`, `results`. Kept for ever |
+| gramps_id guard | `GID#<Class>#<gramps_id>` | `META` | - | `handle`, and for a retired id `retired: true` and `reason` |
+| ID alias | `IDALIAS#<Class>#<old_gramps_id>` | `META` | - | `handle`, `current_gramps_id`, `reason` (`merge` or `renumber`). Written for Person ids only |
+| Batch audit | `AUDIT#records:<batch_id>` | `<at>#<uid>` | `AUDIT` / same as SK | `op: "records.batch"`, `before` and `after` lists of `{class, handle, version}` |
+
+`applyBatch` creates none of `SYNC#HEAD`'s settings: the bind and seed routes own `writes_enabled`, `seeded`, `merges_enabled` and `tree_id`. It owns `seq`. Only `SYNC#HEAD`, `REC#`, `SYNC#LOG`, `SYNC#BATCH#`, `GID#`, `IDALIAS#` and the audit item are its own; counters, proposal state and notifications belong to its callers.
+
+### One call, one transaction
+
+`applyBatch(ctx, {principal, origin, onBehalfOf?, idempotencyKey, ops, extra?})` writes a batch of at most 24 ops in one `TransactWriteItems` of at most 100 actions (`assertTxnSize`). `origin` is one of `desktop`, `seed`, `self`, `admin`, `proposal`, `graduation`, `moderation` or `tag`. An op is `create`, `update`, `delete`, `withdraw` or `marker`. The caller sends whole redacted objects with a `base_version`; the server never merges.
+
+- **Seq.** Every op takes the next seq, so seqs stay dense. The `SYNC#HEAD` update is conditioned on the seq that was read. A batch that loses the race re-reads `SYNC#HEAD`, runs `ctx.validate` again on the refreshed view and rebuilds, up to 3 times, then answers `503 retryable`. The `ClientRequestToken` is a hash of `batch_id:seq_from`, so a rebuilt item set never reuses a token; the `SYNC#BATCH` condition `attribute_not_exists` is the guard across attempts.
+- **Idempotency.** `batch_id` is derived from the principal and the `Idempotency-Key`. A key seen before with the same request returns the stored body with `replayed: true`; with a different request it is `422 idempotency_key_reused`. A missing key is `428 idempotency_key_required`.
+- **Versions.** A stale `base_version` is `409 version_conflict` with `details.conflicts`, one entry per op: `{op_id, class, handle, reason, current_version, current}`, where `current` is the stored redacted object. A create over a live object is `409 exists`. A tombstone is kept; it can be created over again only with `base_version` equal to its version.
+- **The store gate.** `SYNC#HEAD` is read inside every call. While it is absent or `seeded` is not true, every origin except `seed` gets `503 store_not_seeded`. While `writes_enabled` is false, every origin, `seed` included, gets `503 sync_paused`.
+- **Extra items.** `extra` (`{puts, deletes, updates, checks}`, the `transact()` shapes) commits in the same transaction, as do the items of registered contributors. A failed condition on one of the caller's own items surfaces as the `TxnCancelled`, with the caller's `tag`.
+- **Validator.** `ctx.validate(view)` is the seam for the server validator (`validator-js`). It throws an `HttpError` to refuse a batch.
+
+### Gramps ids
+
+One `GID#` write per distinct id decides the batch as a whole, so a swap or a rotation of non-person ids commits in one batch. Two claims on one id in a batch are `409 gid_conflict`; a claim on an id in use is `409 gramps_id_taken`.
+
+- **Person ids are permanent.** A delete, withdraw, merge or renumber rewrites `GID#Person#<id>` as `{handle, retired: true, reason}` and writes an `IDALIAS#` item for a merge or renumber. Nothing deletes either item (`gidDelete` refuses a Person), and another person claiming a retired id is `409 gramps_id_retired`. The same person may take its own id back when it is created over its tombstone.
+- **A person's id does not change** (`409 renumber_blocked`) unless the op carries `renumber: true`. A Person merge (a delete with `reason: "merge"` and `merged_into`) is `409 merges_disabled` until `SYNC#HEAD.merges_enabled` is true.
+- **Other ids are released** on delete or renumber. No identity is keyed by a non-person id: comment threads are `person:<id>` or `post:<ulid>`, record follows and profile links are keyed by a Person id, and allowlist grants by email.
+
+### Commit hooks
+
+[`sync/hooks.js`](../../api/src/sync/hooks.js) exports `registerContributor(fn)` and `registerAfterCommit(fn)`; both lists start empty.
+
+- A contributor, `fn(batch, origin)`, returns extra transaction items for the batch's own transaction. It runs on every attempt, so it must be pure. The self-edit and tag contribution ops come only from the contributor that `hfy-record-change-fanout` registers; no caller adds them.
+- An after-commit hook, `fn({batch_id, origin, seq_from, seq_to})`, runs once per committed batch, after the commit, and never for a replay or a refused batch. A hook that throws is logged by name and code and never fails the write. If the process dies between the commit and the hook, the hook does not run for that batch.
+- Record-change notifications do not come from here. They come from the render outbox.
 
 ## Environment
 
