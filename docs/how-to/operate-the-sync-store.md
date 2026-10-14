@@ -8,7 +8,7 @@ Pause the cloud record store, resume it, force the renderer to run, and bring ba
 
 - You are in `api/` with the dependencies installed (`npm ci`).
 - You have AWS credentials for the app stack's account and region, with read and write access to the app table and, for `render`, permission to invoke the render function (`hfy-sync-render`).
-- Common flags: `--table <app-table>` (default `hfy-app`) and `--region <region>` (default `us-west-2`). Every command takes exactly one of `--dry-run` or `--apply`. `--help` prints the usage.
+- Common flags: `--table <app-table>` (default `hfy-app`) and `--region <region>` (default `us-west-2`). Every command takes exactly one of `--dry-run` or `--apply` (each given once). `pause --all` and `resume --all` are accepted and change nothing: the switch is store-wide. `--help` prints the usage.
 
 ## Pause and resume the store
 
@@ -38,7 +38,7 @@ node scripts/sync-admin.mjs render --dry-run --full --region <region>
 node scripts/sync-admin.mjs render --apply --full --region <region>
 ```
 
-The dry run reads `SYNC#HEAD` and `SYNC#RENDER` (head seq, `rendered_seq`, mode, `last_error`) and prints the payload; it invokes nothing. `--apply` calls `aws lambda invoke` (pass `--function <name>` if the function is not `hfy-sync-render`) and prints the start of the response. A render in `RENDER_MODE=off` returns at once. See [The render Lambda](../reference/sync-render.md#operator-payloads).
+The dry run reads `SYNC#HEAD` and `SYNC#RENDER` (head seq, `rendered_seq`, mode, `last_error`) and prints the payload; it invokes nothing. `--apply` calls `aws lambda invoke` (pass `--function <name>` if the function is not `hfy-sync-render`) and reads the response from a temporary file and fails (exit 1) if the CLI reports a `FunctionError` or the body is an error (for example `RenderFailed`), so a refused pass is never reported as success. It passes `--cli-read-timeout 0` so the CLI waits for a full pass; if the call is interrupted anyway, check `SYNC#RENDER` before retrying, so two full passes do not overlap. A render in `RENDER_MODE=off` returns at once. See [The render Lambda](../reference/sync-render.md#operator-payloads).
 
 ## Resurrect a batch of deletes or withdraws
 
@@ -61,7 +61,8 @@ A delete or withdraw tombstones the head at once, but the log still holds the ve
    | `hash_mismatch` | The earlier version's text does not match its hash. Stop and raise it on the record. |
    | `head_moved` | The head changed after the tombstone, so it is no longer this batch's. |
    | `already_live` | The head is live again, for example because this command already ran. |
-   | `merge` | A person merge. The alias and the survivor are the merge's business. |
+   | `withdrawn_private_needs_flag` | The op was a privacy withdraw (reason `private`). Re-creating it puts the record back in the store and the next render republishes it, so it needs `--include-withdrawn` and io's explicit go-ahead for the withdrawn records. The dry run with the flag prints a WARNING naming the count. |
+| `merge` | A person merge. The alias and the survivor are the merge's business. |
    | `media_blob_not_in_log` | A Media's blob descriptor is on the head, not in the log. |
    | `gramps_id_taken` | Another object now holds the id. |
 4. After io's go-ahead, apply:

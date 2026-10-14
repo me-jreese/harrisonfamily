@@ -4,7 +4,7 @@
 //   node scripts/sync-admin.mjs pause    --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs resume   --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs render   --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
-//   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
 //   common: [--table hfy-app] [--region us-west-2]
 //
 //   pause      sets SYNC#HEAD.writes_enabled to false: applyBatch() then refuses every origin with 503 sync_paused.
@@ -26,6 +26,7 @@
 //   - the tombstone is older than 72 hours (the expunge grace: privacy-expunge removes the history after it),
 //   - the log holds no usable prior version (obj_json null or expunged, or its hash does not match),
 //   - the head moved after the tombstone (it is no longer the tombstone this batch wrote),
+//   - the op is a privacy withdraw and --include-withdrawn was not passed (re-creating it republishes a withdrawn record),
 //   - the delete was a merge (the id alias and the survivor are the merge's business, not this tool's),
 //   - the object is a Media (its blob descriptor is on the head, not in the log),
 //   - the gramps_id now belongs to another object.
@@ -34,6 +35,9 @@
 // Output names classes, opaque handles, versions, reasons and counts only: no object text and no gramps_id.
 import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
 import { batchKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
@@ -97,19 +101,60 @@ export const resume = (ctx, o) => setWrites(ctx, true, o);
 /** The Lambda payload for the render flags. Every flag is the literal `true`, which is what the renderer accepts. */
 export function renderPayload({ full, allowMassDelete, pruneForeign }) {
   if (!full && !allowMassDelete && !pruneForeign) throw new AdminError("render needs --full, --allow-mass-delete or --prune-foreign");
-  return { source: "operator", force: true, ...(allowMassDelete ? { allow_mass_delete: true } : {}), ...(pruneForeign ? { prune_foreign: true } : {}) };
+  return { force: true, ...(allowMassDelete ? { allow_mass_delete: true } : {}), ...(pruneForeign ? { prune_foreign: true } : {}) };
 }
 
-/** Invokes the Lambda through the AWS CLI (the api package carries no Lambda client; the operator's credentials come from the CLI). */
-export function cliInvoke({ functionName, region, payload, run = execFile }) {
-  return new Promise((resolve, reject) => {
-    run(
-      "aws",
-      ["lambda", "invoke", "--function-name", functionName, "--region", region, "--cli-binary-format", "raw-in-base64-out", "--payload", JSON.stringify(payload), "/dev/stdout"],
-      { maxBuffer: 1 << 20 },
-      (err, stdout) => (err ? reject(new AdminError(`aws lambda invoke failed (${err.code ?? "error"})`)) : resolve(String(stdout))),
-    );
-  });
+/** Reads an invoke result (the CLI's metadata JSON and the response body) and throws on a function error. Names the error type only. */
+export function checkInvokeResult(metaText, body) {
+  let meta = {};
+  try {
+    meta = JSON.parse(String(metaText || "{}"));
+  } catch {
+    throw new AdminError("aws lambda invoke printed metadata that is not JSON; check the function's runs before retrying");
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(String(body));
+  } catch {
+    /* the response need not be JSON */
+  }
+  const errType = meta.FunctionError || parsed?.errorType;
+  if (errType || (parsed && typeof parsed === "object" && parsed.errorMessage)) {
+    const msg = String(parsed?.errorMessage ?? "").slice(0, 200);
+    throw new AdminError(`the renderer failed (${parsed?.errorType ?? meta.FunctionError}${msg ? `: ${msg}` : ""}); see SYNC#RENDER.last_error`);
+  }
+  if (meta.StatusCode !== undefined && meta.StatusCode !== 200) throw new AdminError(`aws lambda invoke returned status ${meta.StatusCode}`);
+  return String(body);
+}
+
+/**
+ * Invokes the Lambda through the AWS CLI (the api package carries no Lambda client; the operator's credentials come from the CLI).
+ * The response goes to a temp file, so the CLI's metadata (StatusCode, FunctionError) on stdout stays separate. The CLI exits 0 when the
+ * function itself fails, so the metadata and body are checked. --cli-read-timeout 0 waits for a full pass: the default 60 s timeout would
+ * fail the CLI while the Lambda kept running, and a retry would start a second, overlapping pass.
+ */
+export async function cliInvoke({ functionName, region, payload, run = execFile }) {
+  const dir = await mkdtemp(join(tmpdir(), "sync-admin-"));
+  const outFile = join(dir, "response.json");
+  try {
+    const stdout = await new Promise((resolve, reject) => {
+      run(
+        "aws",
+        ["lambda", "invoke", "--function-name", functionName, "--region", region, "--cli-read-timeout", "0", "--cli-binary-format", "raw-in-base64-out", "--payload", JSON.stringify(payload), outFile],
+        { maxBuffer: 1 << 20 },
+        (err, out) => (err ? reject(new AdminError(`aws lambda invoke failed (${err.code ?? "error"}); the renderer may still be running: check SYNC#RENDER before retrying`)) : resolve(String(out))),
+      );
+    });
+    let body = "";
+    try {
+      body = await readFile(outFile, "utf8");
+    } catch {
+      /* no body written */
+    }
+    return checkInvokeResult(stdout, body);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function render(ctx, { apply, full = false, allowMassDelete = false, pruneForeign = false, functionName = DEFAULT_FUNCTION, region = "us-west-2", invoke = cliInvoke }) {
@@ -157,10 +202,11 @@ async function batchTombstones(ctx, batchId) {
 }
 
 /** Plans one tombstone. Returns { ok, ... } or { ok: false, reason }. */
-async function planOne(ctx, tomb, nowMs) {
+async function planOne(ctx, tomb, nowMs, includeWithdrawn = false) {
   const ref = { class: tomb.class, handle: tomb.handle, version: tomb.version, op: tomb.op };
   const refuse = (reason) => ({ ok: false, ref, reason });
-  if (tomb.reason === "merge") return refuse("merge");
+  if (tomb.reason === "merge") return refuse("merge"); // the log entry of a merge delete (apply.js op.reason)
+  if (tomb.op === "withdraw" && !includeWithdrawn) return refuse("withdrawn_private_needs_flag");
   if (tomb.class === "Media") return refuse("media_blob_not_in_log");
   if (!(nowMs - Date.parse(tomb.at) <= GRACE_MS)) return refuse("past_grace");
   const headNow = await get(ctx, recKey(tomb.class, tomb.handle));
@@ -266,18 +312,20 @@ async function commitChunk(ctx, chunk, batchId, by) {
   return { seq_from: head.seq + 1, seq_to: seq };
 }
 
-async function resurrect(ctx, { apply, batch, by = "operator" }) {
+async function resurrect(ctx, { apply, batch, by = "operator", includeWithdrawn = false }) {
   const { log } = ctx;
   if (!batch || !/^[A-Za-z0-9]{1,64}$/.test(batch)) throw new AdminError("resurrect needs --batch <batch_id>");
   const nowMs = ctx.now();
   const tombs = await batchTombstones(ctx, batch);
   const plans = [];
-  for (const t of tombs) plans.push(await planOne(ctx, t, nowMs));
+  for (const t of tombs) plans.push(await planOne(ctx, t, nowMs, includeWithdrawn));
   const ok = plans.filter((p) => p.ok);
   const refused = plans.filter((p) => !p.ok);
   log(`resurrect: batch ${batch} holds ${tombs.length} delete/withdraw op(s)`);
   for (const p of ok) log(`  will re-create  ${p.ref.class} ${p.ref.handle} (tombstone v${p.ref.version} ${p.ref.op} -> v${p.ref.version + 1}, from v${p.prior.version})`);
   for (const p of refused) log(`  refused         ${p.ref.class} ${p.ref.handle} (v${p.ref.version} ${p.ref.op}): ${p.reason}`);
+  const wd = ok.filter((p) => p.ref.op === "withdraw").length;
+  if (wd > 0) log(`WARNING: ${wd} of these are privacy withdraws (reason private). Re-creating them puts the record back in the store and the next render republishes it. Proceed only on io's explicit go-ahead for the withdrawn records.`);
   log(`plan: ${ok.length} to re-create, ${refused.length} refused`);
   if (!apply) {
     log("dry run: nothing written");
@@ -302,8 +350,9 @@ Usage:
   node scripts/sync-admin.mjs pause     --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs resume    --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs render    --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
-  node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--by <name>]
-Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --apply is required. -h/--help prints this.
+  node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
+Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --apply is required (once).
+On pause and resume, --all is accepted and changes nothing (the switch is store-wide). -h/--help prints this.
 
 IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume and resurrect) or makes the renderer write and
 delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
@@ -316,32 +365,36 @@ export function parseArgs(argv) {
   if (rest.includes("-h") || rest.includes("--help")) return { help: true };
   out.command = rest.shift();
   if (!["pause", "resume", "render", "resurrect"].includes(out.command)) throw new AdminError(`unknown or missing command ${out.command ?? ""} (pause, resume, render, resurrect)`);
+  const modes = { dry: 0, apply: 0 };
   const value = (flag, i) => {
     if (rest[i + 1] === undefined || rest[i + 1].startsWith("--")) throw new AdminError(`${flag} needs a value`);
     return rest[i + 1];
   };
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i];
-    if (a === "--dry-run") out.apply = out.apply === true ? "both" : false;
-    else if (a === "--apply") out.apply = out.apply === false ? "both" : true;
+    if (a === "--dry-run") modes.dry += 1;
+    else if (a === "--apply") modes.apply += 1;
     else if (a === "--table") out.table = value(a, i++);
     else if (a === "--region") out.region = value(a, i++);
     else if (a === "--by") out.by = value(a, i++);
     else if (a === "--batch") out.batch = value(a, i++);
     else if (a === "--function") out.functionName = value(a, i++);
+    else if (a === "--all") out.all = true;
+    else if (a === "--include-withdrawn") out.includeWithdrawn = true;
     else if (a === "--full") out.full = true;
     else if (a === "--allow-mass-delete") out.allowMassDelete = true;
     else if (a === "--prune-foreign") out.pruneForeign = true;
     else throw new AdminError(`unknown argument ${a}`);
   }
-  if (out.apply === undefined || out.apply === "both") throw new AdminError("pass exactly one of --dry-run or --apply");
+  if (modes.dry + modes.apply !== 1) throw new AdminError("pass exactly one of --dry-run or --apply");
+  out.apply = modes.apply === 1;
   const allowed = {
-    pause: ["by"],
-    resume: ["by"],
+    pause: ["by", "all"],
+    resume: ["by", "all"],
     render: ["full", "allowMassDelete", "pruneForeign", "functionName"],
-    resurrect: ["by", "batch"],
+    resurrect: ["by", "batch", "includeWithdrawn"],
   }[out.command];
-  for (const k of ["by", "batch", "full", "allowMassDelete", "pruneForeign", "functionName"]) {
+  for (const k of ["by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName"]) {
     if (out[k] !== undefined && !allowed.includes(k)) throw new AdminError(`--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`).replace("function-name", "function")} does not apply to ${out.command}`);
   }
   if (!out.table || !out.region) throw new AdminError("--table and --region need a value");

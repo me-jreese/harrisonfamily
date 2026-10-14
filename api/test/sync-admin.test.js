@@ -46,6 +46,13 @@ describe("argument handling and --help", () => {
     expect(() => args([])).toThrow(AdminError);
     expect(() => args(["pause"])).toThrow(/exactly one/);
     expect(() => args(["pause", "--dry-run", "--apply"])).toThrow(/exactly one/);
+    expect(() => args(["pause", "--apply", "--dry-run", "--apply"])).toThrow(/exactly one/);
+    expect(() => args(["pause", "--apply", "--apply"])).toThrow(/exactly one/);
+    expect(() => args(["pause", "--dry-run", "--dry-run"])).toThrow(/exactly one/);
+    expect(args(["pause", "--all", "--apply"])).toMatchObject({ apply: true, all: true });
+    expect(args(["resume", "--all", "--dry-run"])).toMatchObject({ apply: false });
+    expect(() => args(["render", "--dry-run", "--full", "--all"])).toThrow(/does not apply/);
+    expect(() => args(["pause", "--dry-run", "--include-withdrawn"])).toThrow(/does not apply/);
     expect(() => args(["pause", "--dry-run", "--full"])).toThrow(/does not apply/);
     expect(() => args(["render", "--dry-run", "--batch", "x"])).toThrow(/does not apply/);
     expect(() => args(["pause", "--dry-run", "--nope"])).toThrow(/unknown argument/);
@@ -104,9 +111,9 @@ describe("pause and resume", () => {
 
 describe("render", () => {
   it("builds the operator payload from the flags and refuses a bare render", () => {
-    expect(renderPayload({ full: true })).toEqual({ source: "operator", force: true });
-    expect(renderPayload({ allowMassDelete: true })).toEqual({ source: "operator", force: true, allow_mass_delete: true });
-    expect(renderPayload({ full: true, pruneForeign: true, allowMassDelete: true })).toEqual({ source: "operator", force: true, allow_mass_delete: true, prune_foreign: true });
+    expect(renderPayload({ full: true })).toEqual({ force: true });
+    expect(renderPayload({ allowMassDelete: true })).toEqual({ force: true, allow_mass_delete: true });
+    expect(renderPayload({ full: true, pruneForeign: true, allowMassDelete: true })).toEqual({ force: true, allow_mass_delete: true, prune_foreign: true });
     expect(() => renderPayload({})).toThrow(/needs --full/);
   });
   it("--dry-run reads the render state and invokes nothing; --apply invokes once with the payload", async () => {
@@ -119,18 +126,43 @@ describe("render", () => {
     expect(calls).toHaveLength(0);
     expect(w.snapshot()).toBe(before);
     expect(w.lines.join("\n")).toMatch(/rendered_seq 4, mode live/);
+    for (const flag of ["--allow-mass-delete", "--prune-foreign"]) {
+      w.lines.length = 0;
+      await run({ ...args(["render", "--dry-run", flag]), invoke }, w.ctx);
+      expect(calls).toHaveLength(0);
+      expect(w.lines.join("\n")).toMatch(flag === "--prune-foreign" ? /"prune_foreign":true/ : /"allow_mass_delete":true/);
+    }
 
     await run({ ...args(["render", "--apply", "--full", "--allow-mass-delete", "--prune-foreign"]), invoke }, w.ctx);
-    expect(calls).toEqual([{ functionName: "hfy-sync-render", region: "us-west-2", payload: { source: "operator", force: true, allow_mass_delete: true, prune_foreign: true } }]);
+    expect(calls).toEqual([{ functionName: "hfy-sync-render", region: "us-west-2", payload: { force: true, allow_mass_delete: true, prune_foreign: true } }]);
     expect(w.snapshot()).toBe(before); // the script itself writes no table item for a render
   });
-  it("cliInvoke runs the AWS CLI with the payload and hides the failure detail", async () => {
+  it("cliInvoke runs the AWS CLI with the payload, reads the response file and hides the failure detail", async () => {
+    const { writeFileSync } = await import("node:fs");
     let seen;
-    const out = await cliInvoke({ functionName: "f", region: "r", payload: { force: true }, run: (cmd, a, o, cb) => ((seen = [cmd, a]), cb(null, "ok")) });
-    expect(out).toBe("ok");
+    const fake = (meta, body) => (cmd, a, o, cb) => {
+      seen = [cmd, a];
+      writeFileSync(a[a.length - 1], body);
+      cb(null, meta);
+    };
+    const out = await cliInvoke({ functionName: "f", region: "r", payload: { force: true }, run: fake('{"StatusCode":200}', '{"status":"rendered"}') });
+    expect(out).toBe('{"status":"rendered"}');
     expect(seen[0]).toBe("aws");
-    expect(seen[1]).toEqual(expect.arrayContaining(["lambda", "invoke", "--function-name", "f", "--payload", '{"force":true}']));
-    await expect(cliInvoke({ functionName: "f", region: "r", payload: {}, run: (c, a, o, cb) => cb(Object.assign(new Error("secret detail"), { code: 254 })) })).rejects.toThrow(/failed \(254\)$/);
+    expect(seen[1]).toEqual(expect.arrayContaining(["lambda", "invoke", "--function-name", "f", "--payload", '{"force":true}', "--cli-read-timeout", "0"]));
+    expect(seen[1]).not.toContain("/dev/stdout");
+    await expect(cliInvoke({ functionName: "f", region: "r", payload: {}, run: (c, a, o, cb) => cb(Object.assign(new Error("secret detail"), { code: 254 })) })).rejects.toThrow(/failed \(254\)/);
+  });
+  it("cliInvoke throws when the function failed although the CLI exited 0 (FunctionError or an error body)", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const fake = (meta, body) => (cmd, a, o, cb) => (writeFileSync(a[a.length - 1], body), cb(null, meta));
+    const body = '{"errorMessage":"RenderFailed: guard.mass_delete","errorType":"RenderFailed"}';
+    await expect(cliInvoke({ functionName: "f", region: "r", payload: {}, run: fake('{"StatusCode":200,"FunctionError":"Unhandled"}', body) })).rejects.toThrow(/renderer failed \(RenderFailed: RenderFailed: guard.mass_delete\)|renderer failed/);
+    await expect(cliInvoke({ functionName: "f", region: "r", payload: {}, run: fake("{}", body) })).rejects.toThrow(/guard\.mass_delete/);
+    await expect(cliInvoke({ functionName: "f", region: "r", payload: {}, run: fake('{"StatusCode":500}', "{}") })).rejects.toThrow(/status 500/);
+    // render --apply surfaces the failure instead of reporting success
+    const w = world();
+    await expect(run({ ...args(["render", "--apply", "--full"]), invoke: (c) => cliInvoke({ ...c, run: fake('{"FunctionError":"Unhandled"}', body) }) }, w.ctx)).rejects.toThrow(AdminError);
+    expect(w.lines.join("\n")).not.toMatch(/invoked/);
   });
 });
 
@@ -155,9 +187,15 @@ describe("resurrect", () => {
     w.clock.advance(3600 * 1000);
     await run(args(["resurrect", "--batch", r.batch_id, "--dry-run"]), w.ctx);
     expect(w.snapshot()).toBe(snap);
+    expect(w.lines.join("\n")).toMatch(/plan: 2 to re-create, 1 refused/);
+    expect(w.lines.join("\n")).toMatch(/withdrawn_private_needs_flag/);
+    w.lines.length = 0;
+    await run(args(["resurrect", "--batch", r.batch_id, "--dry-run", "--include-withdrawn"]), w.ctx);
+    expect(w.snapshot()).toBe(snap);
+    expect(w.lines.join("\n")).toMatch(/WARNING: 1 of these are privacy withdraws/);
     expect(w.lines.join("\n")).toMatch(/plan: 3 to re-create, 0 refused/);
 
-    await run(args(["resurrect", "--batch", r.batch_id, "--apply", "--by", "operator-a"]), w.ctx);
+    await run(args(["resurrect", "--batch", r.batch_id, "--apply", "--include-withdrawn", "--by", "operator-a"]), w.ctx);
     const head = w.row(`REC#Person#${p1.handle}`, "HEAD");
     expect(head).toMatchObject({ deleted: false, version: 4, origin: "admin", updated_by: "operator:sync-admin", gramps_id: "I0001" });
     expect(JSON.parse(head.obj_json)).toMatchObject({ gender: 0 }); // the latest live version (v2), not v1
@@ -177,7 +215,7 @@ describe("resurrect", () => {
     // idempotent: a second plan has nothing to do
     const done = w.snapshot();
     w.lines.length = 0;
-    await run(args(["resurrect", "--batch", r.batch_id, "--apply"]), w.ctx);
+    await run(args(["resurrect", "--batch", r.batch_id, "--apply", "--include-withdrawn"]), w.ctx);
     expect(w.snapshot()).toBe(done);
     expect(w.lines.join("\n")).toMatch(/plan: 0 to re-create, 3 refused/);
     expect(w.lines.join("\n")).toMatch(/already_live/);
@@ -188,7 +226,7 @@ describe("resurrect", () => {
     const r = await w.batch([withdraw(p1, 2), del(p2, 1, { reason: "cleanup" })]);
     // past grace
     w.clock.advance(GRACE_MS + 60_000);
-    await run(args(["resurrect", "--batch", r.batch_id, "--apply"]), w.ctx);
+    await run(args(["resurrect", "--batch", r.batch_id, "--apply", "--include-withdrawn"]), w.ctx);
     expect(w.lines.join("\n")).toMatch(/plan: 0 to re-create, 2 refused/);
     expect((w.lines.join("\n").match(/past_grace/g) ?? []).length).toBe(2);
     expect(w.row(`REC#Person#${p1.handle}`, "HEAD").deleted).toBe(true);
@@ -239,13 +277,59 @@ describe("resurrect", () => {
     const sent = [];
     const real = w.ddb.send.bind(w.ddb);
     w.ctx.ddb = { send: async (c) => (c.constructor.name === "TransactWriteCommand" && sent.push(c.input.TransactItems.length), real(c)) };
-    for (const id of ids) await run(args(["resurrect", "--batch", id, "--apply"]), w.ctx);
+    for (const id of ids) await run(args(["resurrect", "--batch", id, "--apply", "--include-withdrawn"]), w.ctx);
     expect(sent.length).toBe(3);
     expect(Math.max(...sent)).toBeLessThanOrEqual(100);
     expect(w.ddb.all().filter((r) => r.entity === "rec" && r.deleted === false)).toHaveLength(45);
     const text = w.lines.join("\n");
     expect(text).not.toMatch(/I0\d{3}/);
     expect(text).not.toMatch(/Synthetic/);
+  });
+
+  it("splits a single 24-op batch into transactions of 20 and 4 objects", async () => {
+    const w = world();
+    const notes = Array.from({ length: 24 }, (_, i) => note(300 + i));
+    await w.batch(notes.slice(0, 12).map(create));
+    await w.batch(notes.slice(12).map(create));
+    const r = await w.batch(notes.map((n) => del(n, 1, { reason: "cleanup" })));
+    const sent = [];
+    const real = w.ddb.send.bind(w.ddb);
+    w.ctx.ddb = { send: async (c) => (c.constructor.name === "TransactWriteCommand" && sent.push(c.input.TransactItems.length), real(c)) };
+    await run(args(["resurrect", "--batch", r.batch_id, "--apply"]), w.ctx);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toBe(1 + 3 * 20 + 1); // head update + 20 x (head, log, gid) + audit
+    expect(sent[1]).toBe(1 + 3 * 4 + 1);
+    expect(w.ddb.all().filter((x) => x.entity === "rec" && x.deleted === false)).toHaveLength(24);
+  });
+
+  it("refuses a Media (media_blob_not_in_log) and a gid retired by a merge when the log entry lacks the merge reason", async () => {
+    const w = world({ seq: 0, seeded: true, writes_enabled: true, live_heads: 0 });
+    const media = { _class: "Media", handle: h(5000), gramps_id: "O0001", change: 1, private: false, path: "synthetic.png", mime: "image/png", desc: "x" };
+    const p = person(41);
+    await w.batch([create(p)]);
+    await w.batch([create(media)]);
+    const r = await w.batch([del(media, 1, { reason: "cleanup" }), del(p, 1, { reason: "cleanup" })]);
+    // only the GID item carries the merge reason
+    w.ddb.rows.set("GID#Person#I0041\u0000META", { ...w.row("GID#Person#I0041", "META"), retired: true, reason: "merged" });
+    await run(args(["resurrect", "--batch", r.batch_id, "--dry-run"]), w.ctx);
+    const text = w.lines.join("\n");
+    expect(text).toMatch(/refused\s+Person .*: merge/);
+    expect(text).toMatch(/media_blob_not_in_log/);
+  });
+
+  it("resurrects a tombstone just inside the grace window and refuses one just past it", async () => {
+    const w = world();
+    const a = note(401);
+    await w.batch([create(a)]);
+    const r = await w.batch([del(a, 1, { reason: "cleanup" })]);
+    const tombAt = Date.parse(w.row("SYNC#LOG", seqKey(2)).at);
+    w.clock.advance(tombAt + GRACE_MS - 1000 - w.clock.now());
+    await run(args(["resurrect", "--batch", r.batch_id, "--dry-run"]), w.ctx);
+    expect(w.lines.join("\n")).toMatch(/plan: 1 to re-create/);
+    w.lines.length = 0;
+    w.clock.advance(2000);
+    await run(args(["resurrect", "--batch", r.batch_id, "--dry-run"]), w.ctx);
+    expect(w.lines.join("\n")).toMatch(/past_grace/);
   });
 
   it("stops with the loser's error when the SYNC#HEAD seq moved under it, and writes nothing", async () => {
@@ -258,7 +342,7 @@ describe("resurrect", () => {
         return real(c);
       },
     };
-    await expect(run(args(["resurrect", "--batch", r.batch_id, "--apply"]), w.ctx)).rejects.toThrow();
+    await expect(run(args(["resurrect", "--batch", r.batch_id, "--apply", "--include-withdrawn"]), w.ctx)).rejects.toThrow();
     expect(w.row(`REC#Person#${p1.handle}`, "HEAD").deleted).toBe(true);
   });
 
