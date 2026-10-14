@@ -5,11 +5,14 @@
 //   POST /api/access-requests/:id/decision   { decision: "link" | "new" | "decline", version, ... }
 //   POST /api/access-requests/:id/revoke     { version, reason?, confirmedOutside }
 //   POST /api/access-requests/:id/resend-notice   the owner re-sends the member's notice of a held second email that never reached them
+//   GET  /api/second-email                   the MEMBER's own held second emails they can still answer: { items: [{ id, noticed, until }] }
 //   POST /api/second-email/:id               { response: "confirm" | "object" }   the MEMBER answers the 72 hour notice (not an admin route)
 //
 // The admin routes sit behind the `accessRequests` flag (default off): while it is off they are 404 to everyone outside the uat group (dark), and once it
-// is on (or the caller is uat) a member gets 403 not_admin on every one of them. The member's answer route (/second-email/:id) is NOT behind the flag: a
-// hold that is running must stay answerable if the flag is turned off, so it is a 404 for anyone but the held member whatever the flag says. Nothing here
+// is on (or the caller is uat) a member gets 403 not_admin on every one of them. The member's routes (/second-email) are NOT behind the flag: a hold
+// that is running must stay answerable if the flag is turned off. Their gate is their own rule instead (secondEmailGate, run before the handler): 401
+// signed out, and 404 for anyone but the held member, whatever the flag says. The member finds the request id two ways: the inbox item (and its push)
+// opens secondEmailPath(id), and GET /api/second-email lists it, which also serves a member whose only notice was the content-free mail. Nothing here
 // answers with a full requester address (IF-06), and every message to the requester is a system template (shared/emails.mjs): the only free text an
 // admin adds is the decline note, which the R-18 guard scans first.
 //
@@ -30,11 +33,12 @@
 // A request stays reachable by its id only for its retention (DECIDED_TTL_SECONDS, surfaces.md 7.9), and revoke goes through the request, so an
 // active grant older than that cannot be revoked here (an open issue for io: docs/how-to/manage-family-access.md "Revoke").
 import { HttpError } from "./http.js";
+import { serverSwitch } from "./features.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
 import { allowKeys, emailOfAllowItem, grantItems, isAllowedNow, listAllowBySub, normalizeAllowEmail, readAllowEntry, revokeItems } from "./allowlist-store.js";
 import { createGuard } from "./guard.js";
 import { mapToGramps } from "./shared/legacy-form.mjs";
-import { createSystem, loadProposal, withdrawSystem } from "./records/proposal-store.js";
+import { createSystem, loadProposal, systemProposalOf, withdrawSystem } from "./records/proposal-store.js";
 import { problem, requireRecentSignIn } from "./records/changes.js";
 import { byGrampsId, get } from "./records/index.js";
 
@@ -79,6 +83,50 @@ const errName = (e) => (e instanceof Error && e.name ? e.name : "error");
 const validation = (errors, message = "the request is not valid") => problem(400, "validation", message, { errors });
 const unavailable = () => new HttpError(503, "unavailable", "the store is busy; try again");
 const conflict = (req) => new HttpError(409, "conflict", "this request changed; reload it", { current: { state: req.state, version: req.version } });
+
+// ---- the member's second-email routes: the gate and the lookups it shares with the domain ----------------------------------------------
+/** Where the member's notice of a held second email opens (the inbox item and its push): the inbox, carrying the id POST /api/second-email/:id takes. */
+export const secondEmailPath = (id) => `/me/inbox/?second-email=${encodeURIComponent(id)}`;
+/** What the gate of the member's routes enforces, as caps.json publishes it beside the switch name. */
+export const SECOND_EMAIL_RULE = "the held member only: 401 signed out, 404 for anyone else; open whatever the accessRequests flag or the edge's ACCESS_REQUESTS says, so a running hold stays answerable";
+
+const expiredAt = (it, nowSec) => Number.isFinite(it?.ttl) && it.ttl <= nowSec;
+/** `req` is a decided request whose second email is held for member `sub`: the only principal who may answer it. */
+const heldFor = (req, sub) => Boolean(isObj(req) && req.entity === "accessreq" && req.state !== "pending" && isObj(req.hold) && typeof sub === "string" && sub && req.hold.grampsId === sub);
+/** The member can still answer: the request is active, and either no notice was delivered yet (the clock has not started) or the 72 hours run. */
+const holdOpen = (req, nowMs) => req.state === "active" && (typeof req.hold?.noticedAt !== "string" || Date.parse(req.hold.until) > nowMs);
+
+/** Member `sub`'s ALLOW# items that are second emails still held for them: active, `effectiveAt` set (a confirm removes it), granted by a request. */
+async function heldItemsOf({ ddb, cmds, table }, sub) {
+  const items = await listAllowBySub(ddb, cmds, table, sub);
+  return items.filter((it) => it.state === "active" && it.sub === sub && it.effectiveAt !== undefined && it.effectiveAt !== null && typeof it.requestId === "string" && ID_RE.test(it.requestId));
+}
+
+/**
+ * The gate of the member's second-email routes (api-feature-gate AC3). They stay outside the accessRequests flag on purpose: the grant takes effect on
+ * the clock, so the member's right to object cannot depend on a kill switch. So the check enforces the routes' own rule before the handler runs, with
+ * `ctx` ({ddb, cmds, table, now}) and `params` from the handler: a signed-out caller gets 401 (the clients' sign-in path keys on it; the route is no
+ * secret), and a signed-in one passes only as the held member, of request :id (the answer) or of at least one held second email (the list). Anyone
+ * else gets 404 not_found, the same as no request, and so does a call without the context or a lookup that fails (fail closed).
+ */
+export function secondEmailGate({ log = console } = {}) {
+  return serverSwitch("ACCESS_REQUESTS", async ({ actor, params, ctx }) => {
+    if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
+    if (!ctx?.ddb || !ctx.cmds || typeof actor.id !== "string" || !actor.id) return false;
+    try {
+      if (params && Object.hasOwn(params, "id")) {
+        if (typeof params.id !== "string" || !ID_RE.test(params.id)) return false;
+        const r = await ctx.ddb.send(new ctx.cmds.GetCommand({ TableName: ctx.table, Key: requestKey(params.id), ConsistentRead: true }));
+        const nowMs = typeof ctx.now === "function" ? ctx.now() : Date.now();
+        return heldFor(r?.Item, actor.id) && !expiredAt(r.Item, Math.floor(nowMs / 1000));
+      }
+      return (await heldItemsOf(ctx, actor.id)).length > 0;
+    } catch (e) {
+      log.error?.("second email gate: lookup failed (404, fail closed)", errName(e));
+      return false;
+    }
+  }, { rule: SECOND_EMAIL_RULE });
+}
 
 /** The body of a decision, validated field by field (400 validation with JSON pointers; nothing is echoed). */
 export function parseDecision(body) {
@@ -223,7 +271,7 @@ export function createAccessRequests(deps) {
     const r = await send(new cmds.GetCommand({ TableName: table, Key: requestKey(id), ConsistentRead: true }));
     const it = r?.Item;
     if (!it || it.entity !== "accessreq") return null;
-    if (Number.isFinite(it.ttl) && it.ttl <= sec()) return null; // DynamoDB deletes lazily; an expired request is gone
+    if (expiredAt(it, sec())) return null; // DynamoDB deletes lazily; an expired request is gone
     return it;
   }
   async function need(id) {
@@ -444,7 +492,8 @@ export function createAccessRequests(deps) {
       puts: [...grant.puts, audit("accessreq.decide", req, actor.id, at, { state: req.state }, { state: "active", decision: "link", sub: grampsId, confirmedOutside: true, secondEmail: hold })],
       updates: [update(req, { state: "active", at, ttl, decision, extra: hold ? { hold: { until: effectiveAt, grampsId } } : {} })],
     });
-    // Committed. Nothing below can change the answer.
+    // Committed. Nothing below can change the answer. The filed proposal goes first, so the window in which an approval could still mint it is short.
+    await withdrawFiled(store, req);
     let emailSent;
     let held = {};
     if (hold) {
@@ -456,9 +505,22 @@ export function createAccessRequests(deps) {
     }
     await mirrorGuard(req, "active", ttl);
     await tellAdmins(actor, req);
-    if (req.state === "awaiting_record" && req.proposalId) await after("withdraw proposal", () => withdrawSystem(store, req.proposalId)); // nobody should approve it now
     await after("facts proposal", () => proposeFacts(store, req, grampsId));
     return { state: "active", emailSent, ...(hold ? { memberNotified: held.notified, ...(held.notified ? { effectiveAt: held.effectiveAt } : {}) } : {}) };
+  }
+
+  /**
+   * Takes back the person.create proposal a `new` decision filed for this request, if there is one and it is still open; best effort, after the
+   * request's own commit. It goes by the id the request records or, when it records none, by the request id (PROPREQ#): that also finds a proposal
+   * whose request commit failed after the filing (a busy store, an error) and that was then linked or declined instead of retried. So nobody can
+   * approve it later into a Person that no request is waiting for.
+   */
+  async function withdrawFiled(store, req) {
+    await after("withdraw proposal", async () => {
+      if (!store) return;
+      const id = typeof req.proposalId === "string" && req.proposalId ? req.proposalId : await systemProposalOf(store, req.id);
+      if (id) await withdrawSystem(store, id);
+    });
   }
 
   async function tellAdmins(actor, req) {
@@ -470,13 +532,15 @@ export function createAccessRequests(deps) {
   }
 
   /**
-   * The member's side of a second email: one inbox item, and a mail to every address they already sign in with. Content-free. True when the member
+   * The member's side of a second email: one inbox item, and a mail to every address they already sign in with. Content-free (the item carries the
+   * request id in its path, and the mail nothing: the member lists the id with GET /api/second-email). True when the member
    * can have seen it: the inbox item was stored or pushed, or at least one mail was taken by SES. False means nobody was told.
    */
-  async function noticeMember(grampsId, existing) {
+  async function noticeMember(requestId, grampsId, existing) {
     let delivered = false;
     if (deps.notify) {
-      const r = await deps.notify("second_email_notice", [grampsId], { navigate: "/me/inbox/" }).catch((e) => { log.error?.("access request notice failed", errName(e)); return undefined; });
+      // The item opens the inbox with the request id, so the screen it lands on can answer POST /api/second-email/:id; the id names nobody.
+      const r = await deps.notify("second_email_notice", [grampsId], { navigate: secondEmailPath(requestId) }).catch((e) => { log.error?.("access request notice failed", errName(e)); return undefined; });
       if (r && r.lost === 0 && (r.stored > 0 || r.sent > 0)) delivered = true; // an inbox item written, or a push sent, with nothing lost
     }
     for (const to of existing.slice(0, 10)) if (await mailTo(to, "second_email_notice")) delivered = true;
@@ -489,7 +553,7 @@ export function createAccessRequests(deps) {
    * notice nothing is written and the grant stays closed (isAllowedNow). `{ notified, effectiveAt? }`.
    */
   async function holdNotice(actor, req, sub, existing) {
-    if (!(await noticeMember(sub, existing))) return { notified: false };
+    if (!(await noticeMember(req.id, sub, existing))) return { notified: false };
     const at = iso();
     const effectiveAt = iso(now() + HOLD_MS);
     const hold = { ...(req.hold ?? {}), until: effectiveAt, grampsId: sub, noticedAt: at };
@@ -558,7 +622,7 @@ export function createAccessRequests(deps) {
           if (cur?.proposalId !== proposal.id) await withdrawSystem(store, proposal.id); // the winner did not use it (a link, a decline)
         });
       }
-      throw e; // a 503 keeps the proposal: the retry with the same preview finds it
+      throw e; // a 503 or 500 keeps the proposal: the retry with the same preview finds it, and a link or decline instead withdraws it (withdrawFiled)
     }
     const emailSent = await mailTo(req.email, "awaiting_record");
     await mirrorGuard(req, "awaiting_record", ttl);
@@ -574,8 +638,8 @@ export function createAccessRequests(deps) {
       // the duplicate guard follows the request: a declined address may ask again, and the stub goes 30 days after the decline
       updates: [update(req, { state: "declined", at, ttl, decision }), guardUpdate(req, "declined", ttl)],
     });
+    await withdrawFiled(store, req);
     const emailSent = await mailTo(req.email, "declined", input.note && input.sendNote ? { note: input.note } : {});
-    if (req.state === "awaiting_record" && req.proposalId && store) await after("withdraw proposal", () => withdrawSystem(store, req.proposalId));
     return { state: "declined", emailSent };
   }
 
@@ -616,16 +680,38 @@ export function createAccessRequests(deps) {
   }
 
   // ---- the member answers a second email ------------------------------------------------------------------------------------------
+  /**
+   * The member's own second emails that they can still answer (GET /api/second-email): `{ items: [{ id, noticed, until }] }`, by id. `id` is what the
+   * answer route takes; `until` is when the address counts, null while no notice was delivered (the clock has not started). Content-free: no address
+   * and no name. A hold whose 72 hours ran out after a delivered notice already counts, and a confirmed one has no hold left: neither is listed.
+   */
+  async function listSecondEmails(actor) {
+    const sub = actor?.id;
+    if (typeof sub !== "string" || !sub) throw new HttpError(404, "not_found", "no such route");
+    const seen = new Set();
+    const items = [];
+    for (const it of await heldItemsOf({ ddb, cmds, table }, sub)) {
+      if (seen.has(it.requestId)) continue;
+      seen.add(it.requestId);
+      const req = await loadRequest(it.requestId);
+      if (!heldFor(req, sub) || typeof req.hold.confirmedAt === "string" || !holdOpen(req, now())) continue;
+      const noticed = typeof req.hold.noticedAt === "string";
+      items.push({ id: req.id, noticed, until: noticed ? req.hold.until : null });
+    }
+    items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return { items };
+  }
+
   async function respondSecondEmail(actor, id, body) {
     checkId(id);
     const b = isObj(body) ? body : {};
     if (b.response !== "confirm" && b.response !== "object") throw validation([{ pointer: "/response", detail: "response is confirm or object" }]);
     const req = await loadRequest(id);
-    // not the member's request: the same 404 as no request, so the route reveals nothing about requests that are not theirs
-    if (!req || req.state === "pending" || !req.hold || req.hold.grampsId !== actor.id) throw new HttpError(404, "not_found", "no such request");
+    // not the member's request: the same 404 as no request, so the route reveals nothing about requests that are not theirs (the gate checked this
+    // already; the domain does not rely on it)
+    if (!heldFor(req, actor?.id)) throw new HttpError(404, "not_found", "no such request");
     // open: the member can still object. Before a notice was delivered the clock has not started (the grant is closed), so it is open whatever `until` says.
-    const noticed = typeof req.hold.noticedAt === "string";
-    const open = req.state === "active" && (!noticed || Date.parse(req.hold.until) > now());
+    const open = holdOpen(req, now());
     if (b.response === "confirm") {
       if (req.state === "active" && !open) return { state: "active", effective: true }; // the window ran out after a delivered notice: it already counts
       if (!open) throw new HttpError(409, "window_closed", "that is no longer open");
@@ -752,5 +838,5 @@ export function createAccessRequests(deps) {
     await createSystem(store, { kind: n > 0 ? "create" : "edit", ops, origin: "access_request", requestId: `${req.id}-facts`, base_versions: { [key]: head.version } });
   }
 
-  return { list, get: getOne, decide, revoke, resendNotice, respondSecondEmail, completeAccessRequest, afterComplete, completeById, accessRequestOf };
+  return { list, get: getOne, decide, revoke, resendNotice, listSecondEmails, respondSecondEmail, completeAccessRequest, afterComplete, completeById, accessRequestOf };
 }

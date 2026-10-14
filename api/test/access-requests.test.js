@@ -11,9 +11,10 @@ import { createHookRegistry } from "../src/sync/hooks.js";
 import { completeAssignments, createIdPolicy } from "../src/sync/id-policy.js";
 import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
-import { loadProposal, withdrawSystem } from "../src/records/proposal-store.js";
+import { loadProposal, systemProposalOf, withdrawSystem } from "../src/records/proposal-store.js";
 import {
-  AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
+  AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, SECOND_EMAIL_RULE, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
+  secondEmailGate, secondEmailPath,
 } from "../src/access-requests.js";
 import { createSesMailer, sendEmailInput } from "../src/mailer.js";
 import { allowKeys, createCompositeMemberReader, grantItems, isAllowedNow, readAllowEntry } from "../src/allowlist-store.js";
@@ -128,8 +129,9 @@ const err = (r) => ({ status: r.status, error: r.body?.error });
 const lastTxn = (w) => w.txns.at(-1).TransactItems;
 
 describe("the routes exist and are for admins (AC1)", () => {
-  it("registers the six routes, the admin ones behind the accessRequests flag and the member's answer outside it, with no MCP tool", () => {
-    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.resendNotice", "accessRequests.secondEmail"];
+  it("registers the seven routes, the admin ones behind the accessRequests flag and the member's two outside it, with no MCP tool", () => {
+    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.resendNotice", "accessRequests.secondEmails", "accessRequests.secondEmail"];
+    const held = { switch: "ACCESS_REQUESTS", rule: SECOND_EMAIL_RULE }; // open past the flag on purpose, and gated by the held-member rule, which caps.json says
     const caps = buildCaps().actions.filter((a) => names.includes(a.name));
     expect(caps.map((a) => [a.name, a.method, a.path, a.gate])).toEqual([
       ["accessRequests.list", "GET", "/api/access-requests", { feature: "accessRequests" }],
@@ -137,7 +139,8 @@ describe("the routes exist and are for admins (AC1)", () => {
       ["accessRequests.decide", "POST", "/api/access-requests/:id/decision", { feature: "accessRequests" }],
       ["accessRequests.revoke", "POST", "/api/access-requests/:id/revoke", { feature: "accessRequests" }],
       ["accessRequests.resendNotice", "POST", "/api/access-requests/:id/resend-notice", { feature: "accessRequests" }],
-      ["accessRequests.secondEmail", "POST", "/api/second-email/:id", { switch: "ACCESS_REQUESTS" }], // open on purpose: a running hold stays answerable whatever the flag says
+      ["accessRequests.secondEmails", "GET", "/api/second-email", held],
+      ["accessRequests.secondEmail", "POST", "/api/second-email/:id", held],
     ]);
     for (const n of names) expect(ROUTES.find((r) => r.name === n).mcp).toBeUndefined();
   });
@@ -154,10 +157,12 @@ describe("the routes exist and are for admins (AC1)", () => {
       expect((await w.call(m, p, { token: member, ...(m === "POST" ? { body: {} } : {}) })).status, `${m} ${p} member`).toBe(404);
       expect((await w.call(m, p, { ...(m === "POST" ? { body: {} } : {}) })).status, `${m} ${p} signed out`).toBe(404);
     }
-    // the member's answer is not dark: it needs a session, and is the same 404 as no request for anyone who has no hold
+    // the member's routes are not dark: they need a session, and are the same 404 as no request for anyone who has no hold
     const second = `/api/second-email/${ID1}`;
     expect((await w.call("POST", second, { body: { response: "object" } })).status).toBe(401);
     expect((await w.call("POST", second, { token: admin, body: { response: "object" } })).status).toBe(404);
+    expect((await w.call("GET", "/api/second-email", {})).status).toBe(401);
+    expect((await w.call("GET", "/api/second-email", { token: member })).status).toBe(404);
   });
 
   it("answers 401 signed out and 403 not_admin to a member on every admin route, before it reads a thing", async () => {
@@ -645,6 +650,43 @@ describe("a 'new' decision files a person.create system proposal (AC3)", () => {
     expect(err(await w3.decide(ADMIN, ID1, { decision: "new", preview: fixed, version: 1, confirmedOutside: true }))).toEqual({ status: 422, error: "idempotency_mismatch" });
   });
 
+  it("a 'new' whose request commit failed (busy 503, or an error 500) leaves a proposal the request never recorded: a link or a decline instead of a retry withdraws it, so no Person is minted for no request", async () => {
+    const busy = () => Object.assign(new Error("busy"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "TransactionConflict" }] });
+    const broken = () => Object.assign(new Error("socket hang up"), { name: "TimeoutError" });
+    for (const [then, failure, status] of [["link", busy, 503], ["decline", broken, 500], ["link", broken, 500], ["decline", busy, 503]]) {
+      const at = `${then} after ${status}`;
+      const w = await world();
+      w.seed();
+      const detail = (await w.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body;
+      const realSend = w.ddb.send.bind(w.ddb);
+      let n = 0;
+      // the first transaction files the proposal; every later one (the request's guarded commit and its retries) fails
+      w.ddb.send = async (cmd) => {
+        if (cmd.constructor.name === "TransactWriteCommand" && ++n >= 2) throw failure();
+        return realSend(cmd);
+      };
+      expect((await w.decide(ADMIN, ID1, { decision: "new", preview: detail.preview, version: 1, confirmedOutside: true })).status, at).toBe(status);
+      w.ddb.send = realSend;
+      expect(w.req(), at).toMatchObject({ state: "pending", version: 1 });
+      expect(w.req(), at).not.toHaveProperty("proposalId"); // the request never learnt of it
+      const filed = await systemProposalOf(w.storeCtx, ID1);
+      expect((await loadProposal(w.storeCtx, filed)).state, at).toBe("pending"); // kept for a retry
+      const people = () => [...w.ddb.rows.keys()].filter((k) => k.startsWith("REC#Person#") && k.endsWith("HEAD")).length;
+      const before = people();
+      const r = then === "link" ? await w.link(ADMIN, ID1) : await w.decide(ADMIN, ID1, { decision: "decline", version: 1 });
+      expect(r.status, `${at}: ${JSON.stringify(r.body)}`).toBe(200);
+      expect((await loadProposal(w.storeCtx, filed)).state, at).toBe("withdrawn");
+      expect(w.audits(`proposal:${filed}`).map((a) => a.op), at).toContain("proposal.withdraw");
+      const approve = await approveVia(w, await loadProposal(w.storeCtx, filed), ADMIN2, `approve-${then}-${status}`);
+      expect(approve.statusCode, at).toBe(409);
+      expect(JSON.parse(approve.body).error, at).toBe("invalid_state");
+      expect(people(), at).toBe(before); // nothing was minted
+    }
+    // a link or decline of a request that never filed anything looks the request id up and withdraws nothing
+    expect(await systemProposalOf((await world()).storeCtx, ID2)).toBeNull();
+    expect(await systemProposalOf((await world()).storeCtx, "not an id")).toBeNull();
+  });
+
   it("approving the Person an access request asked for needs a sign-in within 900 s: a stale session cannot activate access (401 step_up_required)", async () => {
     const w = await world();
     w.seed();
@@ -912,9 +954,10 @@ describe("allowSecondEmail (AC7, PS-13)", () => {
     expect((await w.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body.hold).toEqual({ until: effectiveAt, noticed: true });
     expect(w.audits(`accessreq:${ID1}`).find((a) => a.op === "accessreq.decide").after).toMatchObject({ secondEmail: true, confirmedOutside: true });
     expect(w.audits(`accessreq:${ID1}`).map((a) => a.op).sort()).toEqual(["accessreq.decide", "accessreq.notice"]);
-    // the member's inbox item, content-free and opening the inbox
+    // the member's inbox item, content-free, opening the inbox with the request id the answer takes (it names nobody)
     const items = (await w.inbox.list(HAS_EMAIL)).items;
-    expect(items.map((i) => [i.type, i.navigate])).toEqual([["second_email_notice", "/me/inbox/"]]);
+    expect(items.map((i) => [i.type, i.navigate])).toEqual([["second_email_notice", `/me/inbox/?second-email=${ID1}`]]);
+    expect(secondEmailPath(ID1)).toBe(`/me/inbox/?second-email=${ID1}`);
     expect(JSON.stringify(items)).not.toMatch(/Sam|Exampleton|example\.test/);
     // a mail to the address the member already signs in with, and to the requester
     const toOld = w.sent.filter((m) => m.to === OLD_EMAIL);
@@ -1095,6 +1138,106 @@ describe("a second email fails closed when the member's notice is lost (PS-13)",
     expect(w.allow().state).toBe("revoked");
     // everyone else is still the same 404 as no request
     expect((await w.call("POST", `/api/second-email/${ID1}`, ADMIN, { body: { response: "object" } })).status).toBe(404);
+  });
+});
+
+describe("the member finds the request id of a held second email, and only the held member passes the gate (PS-13, AC7)", () => {
+  const brokenInbox = () => {
+    const inbox = new InMemoryNotificationStore();
+    inbox.add = async () => { throw new Error("down"); };
+    return inbox;
+  };
+  const held = (w) => w.link(OWNER, ID1, { grampsId: HAS_EMAIL, allowSecondEmail: true });
+  const mine = (w, who = HAS_EMAIL) => w.call("GET", "/api/second-email", who);
+
+  it("GET /api/second-email lists the member's open hold with the id the answer takes, content-free; the answer works from it, and then the hold is gone", async () => {
+    const w = await world();
+    w.seed();
+    await held(w);
+    const until = new Date(T0 + HOLD_MS).toISOString();
+    const r = await mine(w);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ items: [{ id: ID1, noticed: true, until }] });
+    expect(JSON.stringify(r.body)).not.toMatch(/example\.test|Sam|Exampleton|s\*\*\*/);
+    // the inbox item opens the same id
+    expect((await w.inbox.list(HAS_EMAIL)).items.map((i) => i.navigate)).toEqual([secondEmailPath(r.body.items[0].id)]);
+    // nobody else has a hold: the same 404 as no route, admins and the owner included; signed out is 401
+    for (const who of [ADMIN, OWNER, OTHER, LIVING]) expect((await mine(w, who)).status, who).toBe(404);
+    expect((await w.call("GET", "/api/second-email", null)).status).toBe(401);
+    // the member confirms with the listed id: the address counts, and nothing is held any more
+    w.clock.t += 3600_000;
+    expect((await w.call("POST", `/api/second-email/${r.body.items[0].id}`, HAS_EMAIL, { body: { response: "confirm" } })).body).toEqual({ state: "active", effective: true });
+    expect((await mine(w)).status).toBe(404);
+  });
+
+  it("a member told by mail alone (no inbox item) finds the id through the list, and so does one whose notice never got through (the clock has not started: until is null)", async () => {
+    const byMail = await world({ inbox: brokenInbox() });
+    byMail.seed();
+    expect((await held(byMail)).body).toMatchObject({ memberNotified: true });
+    expect((await byMail.inbox.list(HAS_EMAIL)).items).toEqual([]);
+    expect((await mine(byMail)).body).toEqual({ items: [{ id: ID1, noticed: true, until: new Date(T0 + HOLD_MS).toISOString() }] });
+    const lost = await world({ mailFails: true, inbox: brokenInbox() });
+    lost.seed();
+    expect((await held(lost)).body).toMatchObject({ memberNotified: false });
+    lost.clock.t += HOLD_MS * 2;
+    expect((await mine(lost)).body).toEqual({ items: [{ id: ID1, noticed: false, until: null }] });
+    expect((await lost.call("POST", `/api/second-email/${ID1}`, HAS_EMAIL, { body: { response: "object" } })).body).toEqual({ state: "revoked" });
+    expect((await mine(lost)).status).toBe(404); // revoked: nothing held
+  });
+
+  it("a hold whose 72 hours ran out after a delivered notice already counts: it is no longer listed", async () => {
+    const w = await world();
+    w.seed();
+    await held(w);
+    w.clock.t += HOLD_MS + 1;
+    expect((await mine(w)).body).toEqual({ items: [] });
+  });
+
+  it("the gate is the held-member lookup, not an always-open switch: 401 signed out, true for the held member only, 404 without a context or when the lookup fails (logged by name only)", async () => {
+    const w = await world();
+    w.seed();
+    w.seed({ id: ID2, emailHash: "hash-2", email: "pat.synthetic@example.test" }); // a pending request with no hold
+    await held(w);
+    const ctx = { ddb: w.ddb, cmds, table: TABLE, now: () => w.clock.t };
+    const gate = secondEmailGate({ log: q });
+    expect(gate).toMatchObject({ type: "switch", name: "ACCESS_REQUESTS", rule: SECOND_EMAIL_RULE });
+    for (const n of ["accessRequests.secondEmails", "accessRequests.secondEmail"]) expect(ROUTES.find((r) => r.name === n).gate).toMatchObject({ type: "switch", rule: SECOND_EMAIL_RULE });
+    const check = (actor, params, c = ctx) => gate.check({ actor, params, ctx: c });
+    expect(await check({ id: HAS_EMAIL }, { id: ID1 })).toBe(true);
+    expect(await check({ id: HAS_EMAIL }, {})).toBe(true); // the list: the member has a second email on hold
+    for (const actor of [{ id: OTHER }, { id: ADMIN, admin: true }, { id: OWNER, admin: true }, { id: LIVING }]) {
+      expect(await check(actor, { id: ID1 }), actor.id).toBe(false);
+      expect(await check(actor, {}), actor.id).toBe(false);
+    }
+    expect(await check({ id: HAS_EMAIL }, { id: ID2 })).toBe(false); // not a held request
+    expect(await check({ id: HAS_EMAIL }, { id: "01J00000000000000000000777" })).toBe(false); // no request
+    expect(await check({ id: HAS_EMAIL }, { id: "../x" })).toBe(false);
+    expect(await gate.check({ actor: { id: HAS_EMAIL }, params: { id: ID1 } })).toBe(false); // no context (an MCP call): closed
+    await expect(check(undefined, { id: ID1 })).rejects.toMatchObject({ status: 401, code: "unauthenticated" });
+    // an expired request is gone for the gate as for the domain
+    w.ddb.rows.set(`ACCESSREQ#${ID1}\u0000META`, { ...w.req(), ttl: Math.floor(w.clock.t / 1000) - 1 });
+    expect(await check({ id: HAS_EMAIL }, { id: ID1 })).toBe(false);
+    w.ddb.rows.set(`ACCESSREQ#${ID1}\u0000META`, { ...w.req(), ttl: Math.floor(w.clock.t / 1000) + 86400 });
+    // a lookup that fails is 404 (fail closed), and the log carries the error name only
+    const logged = [];
+    const failing = secondEmailGate({ log: { error: (...a) => logged.push(a) } });
+    const bad = { ...ctx, ddb: { send: async () => { throw Object.assign(new Error(`throttled for ${EMAIL}`), { name: "ProvisionedThroughputExceededException" }); } } };
+    expect(await failing.check({ actor: { id: HAS_EMAIL }, params: { id: ID1 }, ctx: bad })).toBe(false);
+    expect(await failing.check({ actor: { id: HAS_EMAIL }, params: {}, ctx: bad })).toBe(false);
+    expect(logged).toHaveLength(2);
+    expect(JSON.stringify(logged)).not.toMatch(/example\.test/);
+    expect(JSON.stringify(logged)).toMatch(/ProvisionedThroughputExceededException/);
+    // end to end: the held member's answer is refused 404 while the lookup fails, and nothing is written
+    const realSend = w.ddb.send.bind(w.ddb);
+    w.ddb.send = async (cmd) => {
+      if (cmd.constructor.name === "GetCommand" && cmd.input.Key?.PK === `ACCESSREQ#${ID1}`) throw Object.assign(new Error("down"), { name: "InternalServerError" });
+      return realSend(cmd);
+    };
+    w.txns.length = 0;
+    expect(err(await w.call("POST", `/api/second-email/${ID1}`, HAS_EMAIL, { body: { response: "object" } }))).toEqual({ status: 404, error: "not_found" });
+    expect(w.txns).toEqual([]);
+    w.ddb.send = realSend;
+    expect(w.allow().state).toBe("active");
   });
 });
 

@@ -3,7 +3,7 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt, requireFeature, serverSwitch } from "./features.js";
+import { describeGate, gateExempt, requireFeature } from "./features.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
@@ -11,6 +11,7 @@ import { changesPost } from "./records/changes.js";
 import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
 import { proposalsDecide } from "./records/proposal-decision.js";
+import { secondEmailGate } from "./access-requests.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, SYNC_ISSUER } from "./sync/auth.js";
 import { ACCEPTED_GRAMPS, DEFAULT_ACCEPTED_SCHEMA, DEFAULT_MIN_CLIENT, HEADERS, LIMITS } from "./sync/guard.js";
 
@@ -279,7 +280,7 @@ export const ROUTES = defineRoutes([
   },
   // The access-request admin API (HFY-TSK-141, surf-access-admin-api; surfaces.md 7.4), dark until the accessRequests flag is on (or the caller is uat).
   // Once the flag is on (or the caller is uat), the admin routes are 403 not_admin for a member; while it is off they are 404 (dark). Nothing answers with a full requester address, and no route has an MCP tool: approving who may
-  // sign in is a human action in the site UI. secondEmail is the one member route: the member whose account got a second email answers the notice.
+  // sign in is a human action in the site UI. secondEmails and secondEmail are the member's routes: the member whose account got a second email finds and answers the notice.
   {
     name: "accessRequests.list", method: "GET", path: "/access-requests", summary: "The access-request queue, admins only: ?state=pending (default) | awaiting_record | done, cursor, limit 1-50 (default 25): {items: [{id, state, createdAt, givenNames, maidenSurname, birthYear, birthPlace}], cursor}; no email (no MCP tool)",
     gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.list(c.actor, c.query)),
@@ -300,12 +301,16 @@ export const ROUTES = defineRoutes([
     name: "accessRequests.resendNotice", method: "POST", path: "/access-requests/:id/resend-notice", summary: "The owner re-sends the notice of a held second email that never reached the member (memberNotified: false on the link): 200 {state, memberNotified, emailSent, effectiveAt?}; the 72 hours start when a notice is delivered, and the address stays closed until then; needs a sign-in within 900 s (401 step_up_required); 403 owner_only, 409 conflict | already_noticed (no MCP tool)",
     gate: requireFeature("accessRequests"), handler: async (c) => ok(await c.accessRequests.resendNotice(c.actor, c.params.id)),
   },
-  // NOT behind the accessRequests flag: a hold that is running must stay answerable if the flag is turned off (the grant takes effect on the clock, so the
-  // member's right to object cannot depend on a kill switch). It answers 404 to anyone but the held member, so a dark flag exposes nothing.
+  // The member's routes are NOT behind the accessRequests flag: a hold that is running must stay answerable if the flag is turned off (the grant takes
+  // effect on the clock, so the member's right to object cannot depend on a kill switch). Their gate enforces their own rule instead (secondEmailGate:
+  // 401 signed out, a lookup of the held member, 404 for anyone else), and caps.json publishes that rule beside the switch name.
+  {
+    name: "accessRequests.secondEmails", method: "GET", path: "/second-email", summary: "The member's own second emails on hold that they can still answer: {items: [{id, noticed, until}]} (until is null before the notice is delivered); content-free; 404 for anyone with no second email on hold; available whatever the accessRequests flag says (no MCP tool)",
+    gate: secondEmailGate(), handler: async (c) => ok(await c.accessRequests.listSecondEmails(c.actor)),
+  },
   {
     name: "accessRequests.secondEmail", method: "POST", path: "/second-email/:id", summary: "The member answers the notice that a second email was allowed on their account: {response: confirm | object}; 404 for anyone but that member, 409 window_closed after 72 hours; available whatever the accessRequests flag says (no MCP tool)",
-    gate: serverSwitch("ACCESS_REQUESTS", () => true), // declared for the gate rule, and open on purpose: the route's own rule (the held member only) is its gate
-    handler: async (c) => ok(await c.accessRequests.respondSecondEmail(c.actor, c.params.id, c.body)),
+    gate: secondEmailGate(), handler: async (c) => ok(await c.accessRequests.respondSecondEmail(c.actor, c.params.id, c.body)),
   },
 ]);
 

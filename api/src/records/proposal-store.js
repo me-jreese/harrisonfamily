@@ -5,6 +5,7 @@
 //   PATCH  /api/proposals/:id            If-Match: etag                    the proposer amends: rev + 1, back to pending
 //   POST   /api/proposals/:id/withdraw   If-Match: etag                    the proposer withdraws
 //   createSystem(ctx, input), withdrawSystem(ctx, id)                      a system proposal for the access-request flow, and taking it back (not routes)
+//   systemProposalOf(ctx, requestId)                                       the id of the system proposal filed for an access request, or null
 //
 // POST /api/proposals/:id/decision is proposal-decision-api's (proposal-decision.js). The document, its items and the etag live in proposals.js; this file reads and
 // rewrites them. Every state change here is ONE transaction: META (moved between PROPQ#<state> partitions), IDX#BY, every IDX#REC copy and the
@@ -408,5 +409,15 @@ export async function withdrawSystem(ctx, id) {
   return true;
 }
 
+/**
+ * systemProposalOf(ctx, requestId): the id of the system proposal createSystem filed for `requestId` (its PROPREQ# item, which never expires), or
+ * null when there is none. It finds a proposal whose request never recorded it, for example when the request's own commit failed after the filing.
+ */
+export async function systemProposalOf(ctx, requestId) {
+  if (typeof requestId !== "string" || !REQUEST_ID_RE.test(requestId)) return null;
+  const r = await ctx.ddb.send(new ctx.cmds.GetCommand({ TableName: ctx.table, Key: { PK: `PROPREQ#${requestId}`, SK: "META" }, ConsistentRead: true }));
+  return r?.Item?.entity === "proposal_request" && typeof r.Item.id === "string" && r.Item.id ? r.Item.id : null;
+}
+
 /** The proposals domain as the access-request flow imports it: `proposals.createSystem(ctx, { kind, ops, origin, requestId })`. */
-export const proposals = Object.freeze({ createSystem, withdrawSystem });
+export const proposals = Object.freeze({ createSystem, withdrawSystem, systemProposalOf });
