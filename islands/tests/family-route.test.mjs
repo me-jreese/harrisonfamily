@@ -61,8 +61,8 @@ test("shell.jsx composes its nav with navItems() and keeps no inline registry of
 // The four flag combinations (HFY-PLN-002 surfaces §3.1), each signed in (the session names the member) and signed out (or pending).
 // `route(signedIn)` per id; notifyV2 only decides where "me" goes while it is still the settings item.
 const TABLE = [
-  { navMe: false, familyViz: false, ids: ["home", "family", "search", "posts", "me"], family: (inn) => (inn ? OWN : "/private/"), me: (_, notify) => (notify ? "/me/notifications/" : "/family-login/") },
-  { navMe: false, familyViz: true, ids: ["home", "family", "search", "posts", "me"], family: () => "/tree/", me: (_, notify) => (notify ? "/me/notifications/" : "/family-login/") },
+  { navMe: false, familyViz: false, ids: ["home", "family", "search", "posts", "me"], family: (inn) => (inn ? OWN : "/private/"), me: (_, notify) => (notify ? "/me/notifications/" : "/auth/link") },
+  { navMe: false, familyViz: true, ids: ["home", "family", "search", "posts", "me"], family: () => "/tree/", me: (_, notify) => (notify ? "/me/notifications/" : "/auth/link") },
   { navMe: true, familyViz: false, ids: ["home", "search", "posts", "me"], family: null, me: (inn) => (inn ? OWN : "/private/") },
   { navMe: true, familyViz: true, ids: ["home", "family", "search", "posts", "me"], family: () => "/tree/", me: (inn) => (inn ? OWN : "/private/") }
 ];
@@ -99,7 +99,7 @@ for (const row of TABLE) {
 
 test("navItems: the defaults are today's nav (every flag off)", () => {
   assert.deepEqual(navItems({ sub: SUB }), navItems({ navMe: false, familyViz: false, notifyV2: false, sub: SUB }));
-  assert.deepEqual(navItems().map((i) => [i.id, i.route]), [["home", "/"], ["family", "/private/"], ["search", "/search/"], ["posts", "/posts/"], ["me", "/family-login/"]]);
+  assert.deepEqual(navItems().map((i) => [i.id, i.route]), [["home", "/"], ["family", "/private/"], ["search", "/search/"], ["posts", "/posts/"], ["me", "/auth/link"]]);
 });
 
 test("aria-current without navMe: the family tab on the own page only", () => {

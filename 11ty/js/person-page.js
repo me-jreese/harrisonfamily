@@ -82,7 +82,6 @@
     mediaBase: normalizeBase(config.mediaBase || "/media/"),
     lastDataUrl: null
   };
-  const loginRedirect = config.loginRedirect || "/family-login/";
   const lightboxState = {
     items: [],
     modal: null,
@@ -123,11 +122,6 @@
         }
         return;
       }
-
-    const authorized = await requireAuthenticated({ loading, error });
-    if (!authorized) {
-      return;
-    }
 
     fetchPerson(personId)
         .then((person) => {
@@ -235,9 +229,8 @@
     const dataUrl = buildDataUrl(personId);
     state.lastDataUrl = dataUrl;
 
-    const fetchOptions = await buildAuthorizedFetchOptions();
-    const response = await dataFetch(dataUrl, fetchOptions);
-    if (response.status === 401 && (await edgeSessionInit())) {
+    const response = await dataFetch(dataUrl, { credentials: "same-origin" });
+    if (response.status === 401) {
       const featureFlags = window.HFYFeatureFlags;
       const err = new Error("Your sign-in has expired.");
       err.signInUrl = featureFlags && typeof featureFlags.signInUrl === "function" ? featureFlags.signInUrl() : "/auth/login";
@@ -250,37 +243,15 @@
     return response.json();
   }
 
-  // HFY-R66: data requests go through HFYFeatureFlags.dataFetch. authV2 off: exactly fetch(url, init). authV2 on: the edge
-  // session is refreshed once if it lapsed, a gate 401 is refreshed and retried once, and only an interactive load that still
-  // fails goes to /auth/login. Without feature-flags.js on the page this is a plain fetch.
+  // HFY-R66: data requests go through HFYFeatureFlags.dataFetch: the edge session is refreshed once if it lapsed, a gate 401 is
+  // refreshed and retried once, and only an interactive load that still fails goes to /auth/login. Without feature-flags.js on
+  // the page this is a plain fetch.
   async function dataFetch(url, init, options) {
     const featureFlags = await waitForFeatureFlags();
     if (featureFlags && typeof featureFlags.dataFetch === "function") {
       return featureFlags.dataFetch(url, init, options);
     }
     return fetch(url, init);
-  }
-
-  // HFY-TSK-080: true when authV2 is on, i.e. data requests carry the io_id cookie and the edge gate decides access.
-  async function edgeSessionInit() {
-    const featureFlags = await waitForFeatureFlags();
-    return featureFlags && typeof featureFlags.dataFetchInit === "function" ? featureFlags.dataFetchInit() : null;
-  }
-
-  async function requireAuthenticated() {
-    if (await edgeSessionInit()) {
-      return true; // no legacy token under authV2; dataFetch refreshes on a gate 401 and only then sends the visitor to /auth/login
-    }
-    const { token } = await waitForSessionToken({
-      timeoutMs: 8000,
-      label: "[HFY_PERSON]"
-    });
-    if (token) {
-      return true;
-    }
-    console.warn("[HFY_PERSON] Unable to obtain session token before timeout; redirecting to login.");
-    redirectToLogin();
-    return false;
   }
 
   function renderPerson(person, personId) {
@@ -451,10 +422,6 @@
     return waitForGlobal(() => window.HFYFeatureFlags, timeoutMs);
   }
 
-  function waitForAuth(timeoutMs = 6000) {
-    return waitForGlobal(() => window.HFY_AUTH, timeoutMs);
-  }
-
   function waitForGlobal(getter, timeoutMs) {
     const existing = getter();
     if (existing) {
@@ -472,95 +439,6 @@
           resolve(null);
         }
       }, 100);
-    });
-  }
-
-  function redirectToLogin() {
-    const next = window.location.pathname + window.location.search + window.location.hash;
-    const target = new URL(loginRedirect, window.location.origin);
-    if (next) {
-      target.searchParams.set("next", next);
-    }
-    window.location.replace(target.toString());
-  }
-
-  async function buildAuthorizedFetchOptions() {
-    const edgeInit = await edgeSessionInit();
-    if (edgeInit) {
-      return edgeInit; // authV2: cookie only, no X-HFY-Session
-    }
-    const { token } = await waitForSessionToken({
-      timeoutMs: 2000,
-      label: "[HFY_PERSON] fetchPerson"
-    });
-    if (token) {
-      return {
-        credentials: "include",
-        headers: {
-          "X-HFY-Session": token
-        }
-      };
-    }
-    return { credentials: "include" };
-  }
-
-  async function waitForSessionToken({ timeoutMs = 6000, label = "[HFY_SESSION]" } = {}) {
-    const featureFlags = await waitForFeatureFlags();
-    const auth = await waitForAuth();
-
-    // Fast path: session token already available (e.g., restored from sessionStorage)
-    const immediateToken =
-      featureFlags && typeof featureFlags.requireSessionToken === "function"
-        ? featureFlags.requireSessionToken()
-        : null;
-    if (immediateToken) {
-      return { token: immediateToken, featureFlags, auth };
-    }
-
-    // Event-driven path: subscribe to auth change events, resolve when token appears
-    return new Promise((resolve) => {
-      let resolved = false;
-      let unsubscribe = null;
-      let fallbackTimer = null;
-      const deadline = Date.now() + timeoutMs;
-
-      function checkToken() {
-        if (resolved) {
-          return;
-        }
-        const token =
-          featureFlags && typeof featureFlags.requireSessionToken === "function"
-            ? featureFlags.requireSessionToken()
-            : null;
-        if (token) {
-          resolved = true;
-          if (unsubscribe) {
-            unsubscribe();
-          }
-          clearInterval(fallbackTimer);
-          resolve({ token, featureFlags, auth });
-        }
-      }
-
-      if (auth && typeof auth.onChange === "function") {
-        unsubscribe = auth.onChange(() => checkToken());
-      }
-
-      // Slow fallback poll (500ms) guards against edge cases where onChange is unavailable
-      fallbackTimer = setInterval(() => {
-        if (Date.now() >= deadline) {
-          if (!resolved) {
-            resolved = true;
-            if (unsubscribe) {
-              unsubscribe();
-            }
-            clearInterval(fallbackTimer);
-            resolve({ token: null, featureFlags, auth });
-          }
-          return;
-        }
-        checkToken();
-      }, 500);
     });
   }
 

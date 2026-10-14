@@ -23,6 +23,8 @@ describe("scripts/ci/package-api.sh", () => {
       cpSync(join(api, "../shared"), join(root, "shared"), { recursive: true });
       mkdirSync(join(root, "gramps/redaction"), { recursive: true });
       cpSync(join(api, "../gramps/redaction/redaction-v1.json"), join(root, "gramps/redaction/redaction-v1.json"));
+      mkdirSync(join(root, "gramps/schema"), { recursive: true });
+      cpSync(join(api, "../gramps/schema/gramps-6.0.6.schema.json"), join(root, "gramps/schema/gramps-6.0.6.schema.json"));
       writeFileSync(join(root, "api/.npmrc"), "# test stub\n");
       const bin = join(tmp, "bin");
       mkdirSync(bin);
@@ -46,10 +48,16 @@ describe("scripts/ci/package-api.sh", () => {
       expect(files.filter((f) => f.startsWith("./src/shared/") && !shared.includes(f.slice("./src/shared/".length)))).toEqual([]);
       expect(files.filter((f) => f.startsWith("./scripts/") || f === "./.npmrc" || f === "./package-lock.json")).toEqual([]);
       expect(files).toContain("./gramps/redaction/redaction-v1.json"); // the edit guard reads the policy beside src/
+      expect(files).toContain("./gramps/schema/gramps-6.0.6.schema.json"); // the server validator reads the schema beside src/
       // The guard must find its policy in the PACKAGED layout (src/ at the stage root), not only in the checkout.
       symlinkSync(join(api, "node_modules"), join(tmp, "staged", "node_modules"));
       const staged = await import(/* @vite-ignore */ pathToFileURL(join(tmp, "staged", "src/records/guard.js")).href);
       expect(staged.loadPolicy().dates.dayMonthIndexes).toBeDefined();
+      // ...and so must the server validator, which reads the policy and the schema from the same staged layout.
+      const stagedSchema = await import(/* @vite-ignore */ pathToFileURL(join(tmp, "staged", "src/sync/schema.js")).href);
+      expect(stagedSchema.loadSchema()["x-gramps"].gramps_version).toBe("6.0.6");
+      const stagedValidator = await import(/* @vite-ignore */ pathToFileURL(join(tmp, "staged", "src/sync/validator.js")).href);
+      expect(typeof stagedValidator.createValidator()).toBe("function");
       const caps = JSON.parse(readFileSync(join(root, "api/dist/caps.json"), "utf8"));
       expect(caps).toEqual(JSON.parse(JSON.stringify(buildCaps())));
     } finally {

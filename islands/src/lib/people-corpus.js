@@ -1,11 +1,10 @@
 // HFY-TSK-065: CorpusSource for the family index (local-only tier of @io-kit/search 1.0). No server search, no hybrid.
-// Seeded from the same signed-session assets the Lunr search used: /person/index.json (manifest) + /person/search-index.json.
+// Seeded from the signed-session assets /person/index.json (manifest) + /person/search-index.json. The old Lunr page is gone (HFY-TSK-317).
 import { createLocalEngine } from "@io-kit/search";
 import { cleanText } from "../../../shared/validate.mjs"; // repo-root shared/ (pure ESM, also staged into the api and auth zips)
 
 const MANIFEST_URL = "/person/index.json";
 const INDEX_URL = "/person/search-index.json";
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // DS Voice: errors say what happened and who to text. The search island shows the corpus error in its banner as-is, so the message
 // is the family-facing line; the technical detail rides on `cause` for the console.
@@ -15,26 +14,10 @@ export const SEARCH_COPY = {
 };
 const fail = (message, cause) => Object.assign(new Error(message), { cause });
 
-/** Same credentials path as search-results.js: X-HFY-Session header + credentials:include once the session token exists. */
-async function authInit() {
-  const flags = window.HFYFeatureFlags;
-  const edge = flags && flags.dataFetchInit ? await flags.dataFetchInit() : null;
-  if (edge) return edge; // authV2: the io_id cookie is the credential at the edge data gate (HFY-TSK-080)
-  const enforce = Boolean(flags && flags.config && flags.config.gateway && flags.config.gateway.enforceAssets);
-  let token = null;
-  const end = Date.now() + 8000;
-  while (flags && flags.requireSessionToken && !(token = flags.requireSessionToken()) && Date.now() < end) await sleep(100);
-  if (token) return { headers: { "X-HFY-Session": token }, credentials: "include" };
-  if (enforce) {
-    // path + query + hash, like the legacy pages: under authV2 /family-login/ hands `next` to /auth/login as returnTo (HFY-TSK-069).
-    const next = window.location.pathname + window.location.search + window.location.hash;
-    window.location.replace("/family-login/?next=" + encodeURIComponent(next));
-    throw fail(SEARCH_COPY.signedOut, new Error("no session token after 8 s; sent to /family-login/"));
-  }
-  return {};
-}
+/** The io_id cookie is the credential at the edge data gate (HFY-TSK-080); a gate 401 is refreshed and retried by getJson. */
+const authInit = async () => ({ credentials: "same-origin" });
 
-/** HFY-R66: authV2 refreshes a lapsed edge session and retries a gate 401 once before sending the visitor to sign in. */
+/** HFY-R66: a lapsed edge session is refreshed and a gate 401 retried once before the visitor is sent to sign in. */
 async function getJson(url, init) {
   const flags = window.HFYFeatureFlags;
   let res;

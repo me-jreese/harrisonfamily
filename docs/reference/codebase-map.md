@@ -29,7 +29,7 @@ Each capability has a section below with its paths, the facts that change how yo
 | [Private data gate](#private-data-gate) | `edge-gate/`, `infrastructure/cloudformation/edge-gate-stack.yaml`, `scripts/ci/package-edge-gate.sh`, `scripts/infra/add-data-gate-behaviors.sh` | [Identity services](identity-services.md#private-data-gate-hfy-edge-gate), [Architecture](architecture.md#hfy-edge-gate) |
 | [Family graph builder](#family-graph-builder) | `graph/` | [Graph builder README](../../graph/README.md) |
 | [CloudFront Function](#cloudfront-function) | `scripts/cloudfront/`, `scripts/infra/publish-append-index.sh` | [Architecture](architecture.md#hfyappendindex) |
-| [Legacy sign-in](#legacy-sign-in) | `lambda/`, `functions/`, `gcloud/` | [Identity services](identity-services.md) |
+| [Retired legacy sign-in](#retired-legacy-sign-in) | `lambda/`, `functions/`, `gcloud/` | [Identity services](identity-services.md) |
 | [Infrastructure](#infrastructure) | `infrastructure/`, `scripts/infra/`, `cloudfront/` | [Architecture](architecture.md) |
 | [CI and repo operations](#ci-and-repo-operations) | `ci.manifest.yaml`, `.github/`, `scripts/ci/`, `scripts/git-hooks/`, the workspace helpers in `scripts/` | [Repository operations](repository-operations.md) |
 | [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `gramps/tests/unit/`, `shared/*.test.mjs`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
@@ -42,34 +42,32 @@ Paths:
 
 - [`11ty/`](../../11ty/): the deployable site. Each file is classified in [What in `11ty/` is generated](#what-in-11ty-is-generated).
 - [`11ty/README.md`](../../11ty/README.md): a pointer into these docs, plus two machine-checked blocks: the repo-owned files table and the refresh `rsync`. See the constraint in [Notes](#notes).
-- [`workspace/11ty-dev/src/_data/featureFlags.js`](../../workspace/11ty-dev/src/_data/featureFlags.js): a stray tracked copy of one source data file.
 
 Facts:
 
 - `11ty/` is Eleventy output plus repo-owned files. Its source is `<eleventy-source>`, outside the repository.
 - [`islands/build.mjs`](../../islands/build.mjs) also writes into `11ty/`: the island bundles, the theme layer, the sign-in stylesheet, the fonts, and parts of the pages, `sw.js`, `js/feature-flags.js` and `manifest.webmanifest`. Every output is committed. See [React islands](#react-islands) and [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
-- CI deploys `11ty/` as committed and builds nothing into it. Its one change in CI is `scripts/ci/patch-client-id.sh`, which replaces the `REPLACE_WITH_GOOGLE_CLIENT_ID` placeholder in the HTML and JS files of the CI checkout. The committed files keep the placeholder.
-- The `?v=<sha8>` on each script and stylesheet reference is the hash of the committed file. The client-ID patch changes `js/auth.js` after that, so the served `auth.js` does not hash to its own `?v`.
+- CI deploys `11ty/` as committed and builds nothing into it and changes nothing in it: the manifest's build command only echoes (HFY-TSK-317 removed the client-ID patch and the Lambda zip).
+- The `?v=<sha8>` on each script and stylesheet reference is the hash of the committed file, which is also the deployed file.
 - `11ty/README.md` is repo-only: `ci.manifest.yaml` excludes `README.md` from the static sync, so it is not served. It still names no private path, because the repository can be read by others.
 - When any staged path is under `11ty/`, the pre-commit check [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh) compares `<project>/workspace/11ty-dev/_site` with `11ty/` using `rsync -ain --delete --omit-dir-times`. Any difference fails the commit.
-- That comparison excludes the data directories (`person/`, `family/`, `event/`, `note/`, `media/`, `place/`), `private/`, `uploads/`, `README.md`, `.DS_Store` and the repo-owned files, among them `js/person-page.js`, `js/auth.js`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`.
+- That comparison excludes the data directories (`person/`, `family/`, `event/`, `note/`, `media/`, `place/`), `private/`, `uploads/`, `README.md`, `.DS_Store` and the repo-owned files, among them `js/person-page.js`, `family-login/`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`.
 - Excluding `person/` and `private/` also excludes the one page in each, `person/index.html` and `private/index.html`. The other Eleventy pages are compared whole. Fresh source output lacks their `auth-v2.js` tag, their Voice copy and their `?v` versions, so it differs from the committed pages (see [What in `11ty/` is generated](#what-in-11ty-is-generated)).
 - `SKIP_DEPLOYMENT_SYNC_CHECK=1` skips the check.
-- `workspace/11ty-dev/src/_data/featureFlags.js` is the legacy `window.HFY_FEATURE_FLAGS` config. Nothing in the repository builds from it, so it has no effect.
 
 ## Front-end runtime
 
 Paths:
 
-- [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js): the legacy visibility gating and session cache (`window.HFYFeatureFlags`). It also holds, added in the repository:
+- [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js): the visibility gating (`window.HFYFeatureFlags`). It also holds, added in the repository:
   - the `hfy-asset-versions` stamp block (`ASSET_V`) at the top, which every islands build rewrites, and the fallback link to the theme layer;
-  - the island loader: flag resolution, the `?hfy_flags=` override and its banner, `loadIsland`, `whenIsland`, `searchV2Live` and `assetVersions`;
+  - the island loader: flag resolution, the `?hfy_flags=` override and its banner, `loadIsland`, `whenIsland` and `assetVersions`;
   - the `authV2` data path: `dataFetchInit`, `dataFetch`, `edgeSession`, `forgetEdgeSession`, `signInUrl`, and the deprecated `dataResponse`;
   - the edge overlay, near the top of the file.
-- [`11ty/js/auth.js`](../../11ty/js/auth.js): the legacy Google Identity Services sign-in. It posts the ID token to `/api/check-allowed`. It is repo-owned: when `authV2` resolves on, by build flag or override, it still renders the Google button but skips One Tap (`googleAccounts.prompt()`), whose bottom sheet covered the shell's tab bar at 375 px.
-- [`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js): the `authV2` sign-in through `/auth`. It reads the session through `HFYFeatureFlags.edgeSession()` and calls `forgetEdgeSession()` on sign-out.
-- [`11ty/js/person-page.js`](../../11ty/js/person-page.js): renders the person page in the design system's PersonRecord layout. It is repo-owned: its data requests go through `HFYFeatureFlags.dataFetch`.
-- [`11ty/js/search-results.js`](../../11ty/js/search-results.js), [`11ty/js/search-navbar.js`](../../11ty/js/search-navbar.js): the Lunr search page and navbar search. Both are edited in the repository: they stand down for `searchV2`, and their data requests go through `HFYFeatureFlags.dataFetch`.
+
+- [`11ty/js/auth-v2.js`](../../11ty/js/auth-v2.js): the sign-in script for the edge sign-in at `/auth` (the only sign-in since HFY-TSK-317). It reads the session through `HFYFeatureFlags.edgeSession()` and calls `forgetEdgeSession()` on sign-out.
+- [`11ty/js/person-page.js`](../../11ty/js/person-page.js): renders the person page in the design system's PersonRecord layout. It is repo-owned: its data requests go through `HFYFeatureFlags.dataFetch` with the `io_id` cookie.
+- [`11ty/family-login/index.html`](../../11ty/family-login/index.html): the static redirect page that replaced the Google sign-in page (HFY-TSK-317). Old `/family-login/?next=<path>` links land on `/auth/login?returnTo=<path>`. `/search/` has no script of its own: the `search` island is the only search.
 - [`11ty/_data/flags.json`](../../11ty/_data/flags.json): the build-time flags.
 - [`11ty/sw.js`](../../11ty/sw.js): the service worker. Its `hfy-asset-versions` stamp block is rewritten by every islands build.
 - [`11ty/manifest.webmanifest`](../../11ty/manifest.webmanifest), [`11ty/offline.html`](../../11ty/offline.html): the PWA manifest, whose colours the islands build writes, and the offline page, which loads no scripts.
@@ -81,19 +79,19 @@ Facts:
 - The override lasts for the current tab only. It is kept in `sessionStorage` under `hfy:flags`. `-name` forces a flag off, and an empty `?hfy_flags=` clears the override.
 - Earlier builds kept the override in `localStorage`. The script deletes that key on every load.
 - While an override is active, the page shows a fixed `preview flags on — turn off` banner (`.hfy-flag-banner`, styled by the theme partial `80-pages.css`). Its button clears the override.
-- The override is cleared when a flagged dependency is unavailable: an island bundle fails to load, or `/auth/session` does not answer for `authV2`. The page then falls back to the legacy behaviour.
+- The override is cleared when a flagged dependency is unavailable: an island bundle fails to load, or `/auth/session` does not answer for `authV2`. The page then falls back to the page as it is without the flag.
 - `loadIsland(name)` requests `/js/islands/<name>.css?v=` and `/js/islands/<name>.js?v=` with the hashes from the stamp block, or the bare paths when the block is unstamped. It appends the module only after the stylesheet's `load` or `error` event, so an island never mounts unstyled.
 - Once the shell island has loaded, the loader links `/manifest.webmanifest?v=` and sets `localStorage` `hfy:shell-hint` to `1`. It sets `0` when `shellV2` is off or the island fails. The early-hint script in head block A reads it, so the shell frame paints before the flags are fetched ([Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions)).
 - `auth-v2.js` does nothing while `authV2` is off.
-- On `/family-login/` with `authV2` on, `auth-v2.js` sends a signed-out visitor to `/auth/login?returnTo=<next>`. `next` is the page's `?next=` value when it is a same-origin path with one leading `/`, no backslash or control character, at most 2048 characters, and not under `/auth` or `/family-login`; otherwise it is `/`. A visitor already signed in at the edge keeps the legacy page.
-- The legacy fallbacks in `person-page.js`, `search-results.js`, `search-navbar.js` and `islands/src/lib/people-corpus.js` send a signed-out visitor to `/family-login/?next=<path+search+hash>`, so with the hand-over above a deep link survives sign-in.
-- With `authV2` off, `dataFetch` is exactly `fetch`, and the legacy `X-HFY-Session` requests are unchanged. Those legacy code paths in `feature-flags.js`, `person-page.js` and the search scripts are still deployed.
-- With `authV2` on, data requests send the `io_id` cookie (`credentials: "same-origin"`) and no `X-HFY-Session` header. That cookie is what the [private data gate](#private-data-gate) checks.
+- Signed out under `authV2`, `auth-v2.js` points the sign-in links at `/auth/login?returnTo=<this page>` when that is a same-origin path with one leading `/`, no backslash or control character, at most 2048 characters, and not under `/auth` or `/family-login`; otherwise at `returnTo=%2F`. `feature-flags.js`, not `auth-v2.js`, deletes the keys the retired Google sign-in left in the browser, on every page.
+- A visitor without a session who is refused person data is sent to `/auth/login?returnTo=<path+search+hash>` by `dataFetch`, so a deep link survives sign-in.
+- With `authV2` off, `dataFetch` is exactly `fetch`: a plain same-origin request that nothing refreshes. The legacy `X-HFY-Session` code paths are gone from the front end.
+- With `authV2` on, data requests send the `io_id` cookie (`credentials: "same-origin"`). That cookie is what the [private data gate](#private-data-gate) checks.
 - `edgeSession()` calls `GET /auth/session` once per page. When the session is near expiry, or signed out in a browser that has held an edge session before, it calls `POST /auth/refresh` once and asks again.
 - `dataFetch` refreshes a lapsed session once before the page's first data request. On a 401 from the gate, it refreshes once and retries the request once.
 - When recovery fails, an interactive load goes to `/auth/login?returnTo=<path+search+hash>`, unless this tab was sent there in the last 10 minutes. A background load (`{interactive: false}`) never redirects.
-- The edge overlay lays an authenticated edge session over the legacy state for `[data-feature]` visibility only. The legacy `auth.js` therefore cannot hide the signed-in navigation after an edge-only sign-in.
-- The Lunr scripts stand down only after the search island has mounted (`HFYFeatureFlags.searchV2Live()`). A missing or failed island leaves the legacy search working.
+- The edge overlay lays an authenticated edge session over the page's default state for `[data-feature]` visibility only, so the signed-in navigation holds after an edge-only sign-in.
+
 - Only the shell island registers the service worker, at `/sw.js?v=<sha8 of sw.js>` with scope `/` and `updateViaCache: "none"`. The worker names its cache `hfy-shell-<that ?v>`, or `hfy-shell-dev` without a valid `?v`, and deletes every other cache on activate. It loads `/js/islands/notify-sw.js?v=` with `importScripts`.
 - Cloudflare keeps static files for up to 4 h under the URL first fetched. To check a deployed script or stylesheet, fetch the versioned URL the page references: read `?v` from the HTML or from `HFYFeatureFlags.assetVersions`. `/_data/flags.json` is JSON, which Cloudflare does not cache.
 
@@ -105,7 +103,7 @@ Paths:
 - [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `photo-tags.js` (the pure geometry, rect words and tag cleaning), `photo-tags-ui.js` (the DOM part of the photo tags island), `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css`, `islands/src/guard.css` and `islands/src/photo-tags.css` sit beside the directory.
 - [`islands/build.mjs`](../../islands/build.mjs): the build. It bundles the islands with esbuild and writes the outputs in [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - [`islands/kit-content.mjs`](../../islands/kit-content.mjs): how the build and the `node:test` suites load `@io-kit/content/react`. Its esbuild plugin keeps the kit's `DocumentEditor` from bundling Cloudscape's stylesheets into the posts islands, and the build fails if an island bundles `DocumentEditor`.
-- [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract` and `lint:css`. Every dependency is pinned to an exact version.
+- [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract`, `lint:css` and `measure:search`. Every dependency is pinned to an exact version.
 - [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs): the configuration of the island specs. See [Tests](#tests).
 - [`scripts/ci/build-islands.sh`](../../scripts/ci/build-islands.sh): runs `npm ci` and `npm run build:islands`, then checks that `shell.js` and `shell.css` exist and prints `built islands -> 11ty/js/islands`. The build it runs writes every other output too, although the script checks only those two files.
 - [`11ty/js/islands/`](../../11ty/js/islands/): the committed build output.
@@ -120,7 +118,7 @@ Facts:
 - `npm run check:islands` (`node build.mjs --check`) builds in memory and compares. On a mismatch it exits `1` and prints ``<site> is out of date with islands/ (run `npm run build` and commit):``, then one `missing <path>`, `stale <path>` or `extra <path>` line per problem, `stale auth/edge.manifest.json` included. On success it prints `<site> is up to date (<n> generated files)`, with `<site>` as an absolute path.
 - `islands/tests/bundle.test.mjs` runs the same check, and also fails when a build output is gitignored, or when the person, my-posts, posts or timeline island loads Cloudscape code or styles.
 - No workflow runs either check, although a comment in `islands/copy.mjs` says CI does.
-- The person island (`person.jsx`) and the search corpus (`lib/people-corpus.js`) read family data through `HFYFeatureFlags.dataFetch` when it exists, so they follow the same `authV2` data path as the legacy scripts.
+- The person island (`person.jsx`) and the search corpus (`lib/people-corpus.js`) read family data through `HFYFeatureFlags.dataFetch` when it exists, so they follow the same `authV2` data path as `person-page.js`.
 - `createApi` in `lib/api.js` skips an `/api` call when `HFYFeatureFlags.edgeSession()` has answered signed out: it throws `ApiError(401, "unauthenticated")` without sending the request. With `authV2` off, or `/auth/session` unreachable, requests go out as before. The timeline island renders nothing for a signed-out visitor.
 - Photos in posts are same-origin `<img src>` elements, so the browser sends `io_id` to a members-only `/uploads/*`. A script that fetches a photo must use `credentials: "same-origin"`.
 - Flags:
@@ -130,7 +128,7 @@ Facts:
   - Under `postsV2`, `my-posts` loads on `/person/?id=…`, `timeline` on `/`, and `posts` on `/posts/`.
   - `notifications` loads on `notifyV2`, on `/me/notifications/`.
   - `settings` loads on `navMe`, on `/me/`: the settings hub (HFY-TSK-091).
-- The shell's navigation registry is `navItems()` in `src/lib/nav.js`, a pure function of the flags `navMe`, `familyViz` and `notifyV2` and the edge session's sub. With `navMe` off it has five items: home, family (`/private/`), search, posts, and me (`/family-login/`, or `/me/notifications/` under `notifyV2`). With `navMe` on (HFY-TSK-091), "me" takes the family tab's own-page route, "family" leaves the bar until `familyViz` gives it `/tree/`, and a gear before the account control opens the `/me/` settings hub. The family tab is "your family": once the edge session names the member, its route becomes their own page, `/person/?id=<sub>` (`src/lib/family-route.js`), and it is marked current on that page only. Signed out, or before the session answers, it stays `/private/`, a redirect page (`HFYFeatureFlags.goToFamily`) that sends a signed-in visitor to their own page and a signed-out one to `/auth/login?returnTo=/private/`. `/person/` without an id does the same. `/family/` cannot be the route: it is a gated data prefix.
+- The shell's navigation registry is `navItems()` in `src/lib/nav.js`, a pure function of the flags `navMe`, `familyViz` and `notifyV2` and the edge session's sub. With `navMe` off it has five items: home, family (`/private/`), search, posts, and me (`/auth/link`, or `/me/notifications/` under `notifyV2`). With `navMe` on (HFY-TSK-091), "me" takes the family tab's own-page route, "family" leaves the bar until `familyViz` gives it `/tree/`, and a gear before the account control opens the `/me/` settings hub. The family tab is "your family": once the edge session names the member, its route becomes their own page, `/person/?id=<sub>` (`src/lib/family-route.js`), and it is marked current on that page only. Signed out, or before the session answers, it stays `/private/`, a redirect page (`HFYFeatureFlags.goToFamily`) that sends a signed-in visitor to their own page and a signed-out one to `/auth/login?returnTo=/private/`. `/person/` without an id does the same. `/family/` cannot be the route: it is a gated data prefix.
 - Installing needs `CODEARTIFACT_AUTH_TOKEN` for the `@io-kit/*` packages ([`islands/.npmrc`](../../islands/.npmrc)). The build also needs the dev dependencies, which hold the fonts, so install with `npm ci`, not with `--omit=dev`. `package.json` requires Node 22 or later.
 - How to rebuild: [How to build and preview the React islands](../how-to/build-and-preview-the-islands.md).
 
@@ -157,7 +155,7 @@ Facts:
 - A new HTML page must be added to `PAGES`. `islands/tests/theme-delivery.test.mjs` fails when a page is not registered or lacks the blocks.
 - `fonts.mjs` copies the faces from exact-pinned devDependencies: `@fontsource-variable/source-sans-3` (the UI face), `@fontsource/libre-caslon-text` (the display serif) and `@fontsource-variable/source-code-pro`. `11ty/fonts/` holds 12 latin and latin-ext `woff2` files named `<base>.<sha256-8>.woff2`, plus three `LICENSE-*.txt` files.
 - The site loads no font from a third party. `theme-delivery.test.mjs` fails on a Google Fonts, Typekit, Bunny or Adobe font origin.
-- `copy.mjs` rewrites the Voice copy on the 10 Eleventy pages: the home hero and its calls to action, the about and family-login headings, the lowercase page titles (`<title>`, `og:title` and `twitter:title`) and the footer. It matches only the old copy, so it is idempotent and never touches family-written prose. `islands/tests/copy.test.mjs` and `check:islands` fail while a page still carries old copy.
+- `copy.mjs` rewrites the Voice copy on the 10 Eleventy pages: the home hero and its calls to action, the about heading, the lowercase page titles (`<title>`, `og:title` and `twitter:title`) and the footer. It matches only the old copy, so it is idempotent and never touches family-written prose. `islands/tests/copy.test.mjs` and `check:islands` fail while a page still carries old copy.
 - Some UI copy names a family contact by initial: in `person-page.js`, several islands and `islands/src/lib/` modules, the `copy` block of `auth/edge.manifest.json` and the overrides in `auth/src/edge.js`. Cite the file or manifest key in docs, never the string.
 - `assets.mjs` gives every same-origin reference in every `11ty/**/*.html` a `?v=<first 8 hex of the sha256 of the file>`: `<script src>`, `<link rel=stylesheet|manifest|modulepreload>`, and `preload` with `as=script` or `as=style`. An existing `?v` is replaced and other query parameters are kept. Absolute `https://<site>` URLs count as same-origin. The build fails on a reference to a file that does not exist.
 - The page walk skips the top-level `js`, `css`, `fonts`, `images`, `media`, `uploads`, `_data`, `family`, `event`, `note` and `place` directories. Fonts and island chunks get no `?v`: their file names already carry a content hash.
@@ -191,21 +189,24 @@ Paths:
   - `origin.js`: the `X-Origin-Verify` check.
   - `content.js`: posts, and the upload binding of their new attachments.
   - `comments.js`: comments and reactions.
+  - `comment-photos.js`: comment photo attachments behind `commentPhotosV1`: the shape check, the `UPLOAD#` binding of `purpose` `comment` uploads, and the `HeadObject` and location checks before the write ([API: Comment photos](api.md#comment-photos)).
   - `contrib.js`: the contributions ledger (HFY-TSK-255): builders for the `CONTRIB#` event and its five `CSTAT#` counter updates (`contribOps`, `revokeOps`, `hideOps`, `mergeOps`), which `content.js` and `comments.js` commit in the same transaction as the write that earned or lost the credit, and the event read `getEvent` ([API: Contributions ledger](api.md#contributions-ledger)).
   - `links.js`: profile links (HFY-TSK-193), the store behind `GET` and `PUT /api/people/:id/links`: one `PLINKS#<gramps-id>` item per person, written with an `AUDIT#plinks:<gramps-id>` item and a version check. The owner sets or clears, an admin only clears, and both routes are behind `profileLinks`. It validates with `shared/profile-links.mjs` ([API: Profile links](api.md#profile-links)).
   - `guard.js`: the R-18 contact-information guard on post and comment text, and the `HFY_GUARD_DOB` switch.
-  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos.
+  - `upload-guard.js`: `checkLocation`, the location-metadata refusal on uploaded photos, and `headUpload`, the `HeadObject` of a comment photo with a 2 s timeout.
   - `txn.js`: `transact()` (puts, deletes, updates, checks, token, conflict retry), the counter, merge and size helpers, and audit items.
   - `keys.js`: table key layout.
   - `allowlist-store.js`: the `ALLOW#` grant and revoke transaction items (conditional, audited) and the composite member reader that the auth edge and any later allowlist consumer, such as the chat directory route, share (HFY-TSK-134).
   - `notify.js`: push notifications and their templates.
-  - `uploads.js`: the upload route and the `UPLOAD#` binding.
+  - `uploads.js`: the upload route (`purpose` `post` or `comment`) and the `UPLOAD#` binding.
   - `presign.js`: the presigned S3 PUT.
   - `sync/store.js`, `sync/apply.js`, `sync/hooks.js`: the cloud record store: key and item builders, `applyBatch()` (one `TransactWriteItems` per batch with the dense seq, receipt, GID guard and audit), and the commit-hook registry. No route reaches them yet ([API: The cloud record store](api.md#the-cloud-record-store)).
+  - `sync/validator.js`, `sync/checker.js`, `sync/schema.js`, `sync/view.js`, `sync/errors.js`: the server validator that `applyBatch()` runs on every call (HFY-TSK-245): step-up and the destructive budget, the Gramps schema and `MediaRef.rect`, the privacy checker over `gramps/redaction/redaction-v1.json` (with RFC 6901 pointers, across the store view and the batch), id rules and integrity. It reads `gramps/schema/gramps-6.0.6.schema.json` and the policy, which `scripts/ci/package-api.sh` stages beside `src/`. No route reaches it yet ([API: The server validator](api.md#the-server-validator)).
   - `records/ops.js`: the EditOp engine: keyed list addressing, apply, inverse, three-way rebase and Gramps handle minting. It is pure (no import at all) and no route reaches it yet.
   - `records/semantics.js`, `records/gcalendar.js`: the Gramps rules for edited records (dates and `sortval`, references, two-sided family links, ancestry cycles, derived birth and death indexes) and the port of Gramps' calendar arithmetic. Pure, and no route reaches them yet.
   - `records/relationships.js`, `records/duplicates.js`: the relationship intent compiler (parents, children, spouse and unlink intents to Gramps Family and ChildRef EditOps, checked with `semantics.js`) and the accent-stripped duplicate-name matcher. Pure, and no route reaches them yet.
   - `records/guard.js`: the R-18 and R-19 guard for every edit path: an adapter over `shared/edit-guard.mjs`, which wraps the one text detector (`shared/privacy-guard.mjs`) and the one `isBirthLike` predicate (`shared/redaction-rules.mjs`) with `gramps/redaction/redaction-v1.json`. It scans every string leaf of the resulting objects, proposal notes, decision reasons and relationship stub fields, applies the structural never-rules, and throws a 422 (`contact_info`, `dob_not_allowed` or `never_in_cloud`) with pointers and spans only; its log line carries counts per code. `scripts/ci/package-api.sh` stages the policy file beside `src/`. The browser mirror is `islands/src/lib/edit-guard.js`; `shared/edit-guard.cases.json` is the corpus all three run. No route reaches it yet.
+  - `records/field-policy.js`, `records/edit-plan.js`: the field-policy table (class, pointer pattern, own, other), io's Q2-15 switches, the own-record resolver, the op classifier, the partition into direct and review groups and the plain-language summaries. No route reaches them yet.
   - `onthisday/build.js`, `onthisday/select.js`: the on-this-day index builder and day selector. Pure functions with no route yet (HFY-TSK-168); the copy deck is `shared/onthisday-copy.mjs`.
 - [`api/scripts/scan-contact-info.mjs`](../../api/scripts/scan-contact-info.mjs): the one-off, read-only scan of existing posts and comments for contact information; counts only ([API: Contact-information guard](api.md#contact-information-guard)).
 - [`api/scripts/contrib-backfill.mjs`](../../api/scripts/contrib-backfill.mjs): the one-off backfill of the contributions ledger: credits the posts and comments written before it, then rebuilds every `CSTAT#` counter from the events. `--dry-run` writes nothing, and `--apply` is idempotent and runs only with io's go-ahead ([Backfill the contributions ledger](../how-to/backfill-the-contributions-ledger.md)).
@@ -223,7 +224,7 @@ Facts:
 - Every `/api` route needs the auth-edge session cookie (`io_id`), which the API verifies against the edge's public JWKS. The MCP paths never read that cookie: they are bearer-gated. See [MCP server](#mcp-server).
 - Admins are the gramps IDs listed in `config/admins.json` in `<config-bucket>`. The list fails closed: when the file is absent or unreadable, nobody is an admin, so posts and comments have no moderators.
 - An author label is never an email address. It is the session's `name` when that is a usable label without `@`, else the person's `displayName` from `person/<gramps-id>.json` in `<site-bucket>`, else the gramps ID. The role may read `person/*` in that bucket for this lookup only. Labels are cached per container.
-- `POST /api/uploads` returns a presigned S3 PUT for a key under `uploads/posts/<ulid>/` in the site bucket. The content type is signed, so S3 rejects a PUT with a different `Content-Type`.
+- `POST /api/uploads` returns a presigned S3 PUT for a key under `uploads/posts/<ulid>/` in the site bucket, or under `uploads/comments/<ulid>/` for `purpose` `comment`, which needs `commentPhotosV1`. The content type is signed, so S3 rejects a PUT with a different `Content-Type`.
 - The browser PUTs to the bucket's S3 endpoint, not through CloudFront, so a members-only `/uploads/*` never sees an upload (`api/test/presign.test.js`). Reading a photo back goes through CloudFront's `/uploads/*` behavior: see [Infrastructure](#infrastructure).
 - Push notifications are sent only when the stack parameter `VapidSecretName` names a VAPID secret. The live secret is `harrisonfamily/api/vapid`, a JSON `{subject, publicKey, privateKey}` whose `subject` is an `https://` URL, so no email address goes to the push services. Without the secret, subscriptions and preferences are stored but nothing is sent. See [How to turn on push notifications](../how-to/turn-on-push-notifications.md).
 - The push templates in `notify.js` (`TEMPLATE_REGISTRY`) and the lock-screen preview on `/me/notifications/` (`CATALOG` in `islands/src/islands/notifications.jsx`) carry the same text. They are kept in step by hand; no test compares them.
@@ -316,7 +317,7 @@ Paths:
 - [`scripts/cloudfront/append-index.js`](../../scripts/cloudfront/append-index.js): the default-deny for spellings of the data paths that no gated behavior matches. See [CloudFront Function](#cloudfront-function).
 - The client data path:
   - [`11ty/js/feature-flags.js`](../../11ty/js/feature-flags.js): `dataFetchInit`, `dataFetch` and `edgeSession` (see [Front-end runtime](#front-end-runtime)).
-  - [`11ty/js/person-page.js`](../../11ty/js/person-page.js), [`11ty/js/search-navbar.js`](../../11ty/js/search-navbar.js), [`11ty/js/search-results.js`](../../11ty/js/search-results.js): the legacy callers.
+  - [`11ty/js/person-page.js`](../../11ty/js/person-page.js): the page script that reads person data.
   - [`islands/src/islands/person.jsx`](../../islands/src/islands/person.jsx), [`islands/src/lib/people-corpus.js`](../../islands/src/lib/people-corpus.js): the island callers.
 
 Facts:
@@ -330,7 +331,7 @@ Facts:
 - The stack reads the code from `<edge-code-bucket>` and has no default key. A code change is therefore always a new key, so the stack updates the function and publishes a new numbered version.
 - The gate is not behind a flag. It takes effect when `add-data-gate-behaviors.sh` attaches it.
 - Once the gate is attached, visitors without `authV2` cannot read the family data. `authV2` is therefore turned on first and the gate attached after it. The production cutover ran in that order on 2026-10-12 (HFY-TSK-069, HFY-R67). See [How to cut over to authV2 and the private data gate, and roll back](../how-to/cut-over-to-the-private-data-gate.md), and for the reasoning, [The gate is a third switch, and the order matters](../explanation/release-model.md#the-gate-is-a-third-switch-and-the-order-matters).
-- While the gate is attached, an automatic rollback or a revert that restores a `flags.json` with `authV2` false, or any change that sets `authV2` false, locks visitors out of the family data: the legacy client can neither get nor refresh the `io_id` cookie that the gate checks. Remove the gate first: `add-data-gate-behaviors.sh --remove --app-stack <app-stack>`, with `us-west-2` as the CLI's region, or with `--restore-uploads-policy-id`. For what `--remove` changes, see [Infrastructure](#infrastructure); for what the data paths answer afterwards, see [CloudFront Function](#cloudfront-function).
+- While the gate is attached, an automatic rollback or a revert that restores a `flags.json` with `authV2` false, or any change that sets `authV2` false, locks visitors out of the family data: the client then never refreshes the `io_id` cookie that the gate checks, and nothing else opens the data. Remove the gate first: `add-data-gate-behaviors.sh --remove --app-stack <app-stack>`, with `us-west-2` as the CLI's region, or with `--restore-uploads-policy-id`. For what `--remove` changes, see [Infrastructure](#infrastructure); for what the data paths answer afterwards, see [CloudFront Function](#cloudfront-function).
 - No workflow builds, deploys or attaches the gate. Building, validating and deploying it: [How to deploy and update the Lambda@Edge functions in us-east-1](../how-to/deploy-the-edge-functions.md). Why it exists: [Gating the JSON](../explanation/family-data-privacy.md#gating-the-json).
 
 ## Family graph builder
@@ -380,25 +381,23 @@ Facts:
 - The repository does not record which code `LIVE` runs. `publish-append-index.sh --dry-run` shows it as a diff against the repository file.
 - How to publish: [How to publish the CloudFront Function](../how-to/publish-the-cloudfront-function.md). The first creation and association are part of [How to stand up the static site and its deploy access](../how-to/stand-up-the-static-site.md).
 
-## Legacy sign-in
+## Retired legacy sign-in
+
+HFY-TSK-317 took the legacy Google sign-in out of the code and the pipeline. Nothing was deleted in AWS or Google Cloud (ruling P2-R42).
 
 Paths:
 
-- [`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs): the `hfy-check-allowed` Lambda.
+- [`lambda/hfy-check-allowed/index.mjs`](../../lambda/hfy-check-allowed/index.mjs): the source of the `hfy-check-allowed` Lambda, which stays deployed in AWS until io retires it. No workflow deploys it.
 - [`functions/get-allowlist/`](../../functions/get-allowlist/): the `getAllowlist` Google Cloud Function. This is the deployed copy.
 - [`gcloud/allowlist-fn/`](../../gcloud/allowlist-fn/): a byte-identical sample copy.
 
 Facts:
 
-- `hfy-check-allowed` verifies a Google ID token and checks an HMAC of the email against the hashed allowlist. It looks the email up in the email-to-gramps_id map and returns a session token.
-- `11ty/js/auth.js` calls it at `/api/check-allowed`. `add-api-behavior.sh` pins `/api/check-allowed*` to the origin that serves it, ahead of the new `/api/*` behavior.
-- With `authV2` on, `auth-v2.js` sends a signed-out visitor on `/family-login/` to `/auth/login`, so a signed-out visitor gets the legacy Google sign-in on that page only with `authV2` off, for example in a tab with `?hfy_flags=-authV2`, or when `/auth/session` does not answer.
-- The legacy pieces are still deployed, and every push to `main` ships them again: `io-kit-deploy.yml` deploys `hfy-check-allowed` (`scripts/ci/package-lambda.sh` builds its zip), the `/api/check-allowed*` pin stays in the distribution, and `deploy-gcf-legacy.yml` deploys `getAllowlist`. The `X-HFY-Session` code paths stay in the front end ([Front-end runtime](#front-end-runtime)).
-- `getAllowlist` returns the allowlist from Google Secret Manager.
-- [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) deploys `getAllowlist` from `functions/get-allowlist/` on push to `main`. Its header comment marks it "retired by HFY-TSK-062", but its triggers are active.
-- The pre-commit sync check compares two directories with their workspace sources when files under them are staged:
-  - `lambda/hfy-check-allowed/` with `<project>/scripts/auth/check-allowed-lambda/`, excluding `node_modules/`.
-  - `functions/get-allowlist/` with `<project>/workspace/gcloud/allowlist-fn/`.
+- No page loads Google Identity Services or calls `/api/check-allowed`. `js/auth.js`, `js/search-navbar.js` and `js/search-results.js` are deleted, and `/family-login/` redirects to `/auth/login`.
+- `hfy-check-allowed` verifies a Google ID token and checks an HMAC of the email against the hashed allowlist. `add-api-behavior.sh` still pins `/api/check-allowed*` to the origin that serves it, ahead of the `/api/*` behavior, so the function keeps answering a direct call.
+- `ci.manifest.yaml` has no `lambda` target: a push no longer deploys `hfy-check-allowed`, and a rollback no longer touches it.
+- [`deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml) deploys `getAllowlist` from `functions/get-allowlist/` only when started by hand.
+- The pre-commit sync check compares `functions/get-allowlist/` with `<project>/workspace/gcloud/allowlist-fn/` when files under it are staged. It no longer compares `lambda/`.
 
 ## Infrastructure
 
@@ -436,10 +435,10 @@ Facts:
 - Each edge stack publishes a new numbered version only when its version resource changes: the gate's through `CodeSha256`, the 401-restore function's through the code hash in its `Description`. Old versions are retained, because CloudFront replicas pin them.
 - `github-roles.yaml` is deployed once by hand.
 - The deploy role denies `s3:PutObject` and `s3:DeleteObject` under `uploads/*` in the site bucket.
-- The deploy role's Lambda permissions cover `hfy-check-allowed`, `hfy-api` and `hfy-auth-edge` in us-west-2. Its only CloudFront permissions are invalidations on the site's distribution.
+- The deploy role's Lambda permissions cover `hfy-check-allowed` (a grant no target uses any more), `hfy-api` and `hfy-auth-edge` in us-west-2. Its only CloudFront permissions are invalidations on the site's distribution.
 - The deploy role has no permission on `hfy-edge-gate`, `hfy-mcp-edge401`, any CloudFormation stack or any CloudFront Function, so CI can deploy neither edge stack nor `HFYAppendIndex`.
 - `add-auth-behavior.sh` adds the `hfy-auth-edge` origin and two behaviors, `/auth/*` and `/.well-known/oauth-authorization-server*`.
-- `add-api-behavior.sh` adds the `hfy-api` origin and the `/api/*` behavior. Before `/api/*`, it pins a `/api/check-allowed*` behavior, cloned from the one that serves `/api/check-allowed` now. This keeps the legacy sign-in from being shadowed.
+- `add-api-behavior.sh` adds the `hfy-api` origin and the `/api/*` behavior. Before `/api/*`, it pins a `/api/check-allowed*` behavior, cloned from the one that serves `/api/check-allowed` now. This keeps a direct call to the retired legacy endpoint from being shadowed.
 - It exits with status 3 when it cannot find that origin and no pin exists, unless `--legacy-origin` names the origin.
 - `add-uploads-behavior.sh` adds a GET and HEAD `/uploads/*` behavior on the default behavior's S3 origin, with CachingOptimized and the stack's uploads policy: the public state.
 - When `/uploads/*` already carries the gate's association, `add-uploads-behavior.sh` leaves it as it is, prints `/uploads/* is members-only (hfy-edge-gate association, add-data-gate-behaviors.sh): left as it is. add-data-gate-behaviors.sh --remove ungates it.` and then `no change`. `--gate-function-name` (default `hfy-edge-gate`) names the function it looks for.
@@ -462,11 +461,11 @@ Paths:
 
 - [`ci.manifest.yaml`](../../ci.manifest.yaml): the pipeline definition.
 - [`.github/workflows/io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml), [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml): rendered from `ci.manifest.yaml` by `@io-kit/ci` 0.1.3. Each carries a "do not edit" header.
-- [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/): the composite actions those workflows call. They are `build`, `package`, `deploy-static`, `deploy-lambda`, `invalidate`, `smoke`, `rollback`, `parity-report` and `secret-scan`.
-- [`.github/workflows/deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml): the `getAllowlist` deploy.
+- [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/): the composite actions those workflows call. They are `build`, `package`, `deploy-static`, `invalidate`, `smoke`, `rollback`, `parity-report` and `secret-scan`. The manifest has no Lambda target, so the kit renders no `deploy-lambda` action.
+- [`.github/workflows/deploy-gcf-legacy.yml`](../../.github/workflows/deploy-gcf-legacy.yml): the `getAllowlist` deploy, started by hand only.
 - [`.github/workflows/post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml): checks the kit's smoke job cannot express, run after each successful deploy run. Hand-maintained.
 - [`scripts/ci/`](../../scripts/ci/):
-  - `patch-client-id.sh` and `package-lambda.sh` are the manifest build command.
+  - None is the manifest build command any more: it only echoes, because `11ty/` is committed output.
   - `build-islands.sh`, `package-api.sh`, `package-auth.sh` and `package-edge-gate.sh` are local build scripts.
   - `mcp-conformance.sh` is the MCP conformance gate. See [MCP server](#mcp-server).
 - [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit): the pre-commit hook.
@@ -474,18 +473,18 @@ Paths:
 
 Facts:
 
-- `io-kit-ci.yml` runs on pull requests and on manual dispatch. It runs the build, a parity report in report mode, and a TruffleHog scan.
+- `io-kit-ci.yml` runs on pull requests and on manual dispatch. It runs the build, a blocking parity report (`pipeline_drift` fails the job), and a TruffleHog scan.
 - `io-kit-deploy.yml` runs on push to `main` and on manual dispatch. Its jobs run in this order: build, package, deploy, invalidate, smoke, then rollback if the smoke check fails.
-- The build job runs `patch-client-id.sh`, then `package-lambda.sh`, on Node 22. The package job uploads `11ty/` and `dist/hfy-check-allowed.zip` as the artifact `io-kit-release-<sha>`.
-- The deploy job runs one `aws s3 sync 11ty/ s3://<site-bucket>/ --delete` and then updates the `hfy-check-allowed` code. The sync has no HTML-last ordering, so a page can go live a moment before a file it references by a new `?v`.
+- The build job runs the manifest's echo command on Node 22. The package job uploads `11ty/` as the artifact `io-kit-release-<sha>`.
+- The deploy job runs one `aws s3 sync 11ty/ s3://<site-bucket>/ --delete`. The sync has no HTML-last ordering, so a page can go live a moment before a file it references by a new `?v`.
 - The sync excludes `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` and `uploads/*`, and never deletes the excluded paths.
 - The invalidation covers `/*`, and the job waits for it to complete. Until it does, CloudFront can serve the old object for a new `?v`, because the default behavior's cache policy (CachingOptimized in the sample) leaves the query string out of the cache key.
 - The smoke job requests the home page and `/family-login/`. Any status outside 2xx and 3xx fails it.
 - `post-deploy-checks.yml` runs on `workflow_run` when an `io-kit deploy` run on `main` completes successfully, and by hand. It runs `scripts/infra/check-site-bucket-cors.sh`, the bucket CORS preflights, which the smoke job cannot express: its entries are URLs it requests with `GET`. A failure there rolls nothing back.
 - The rollback strategy is `previous_artifact`. It redeploys the artifact of the last successful `io-kit-deploy.yml` run on the branch. That artifact's `flags.json` comes with it; see [Private data gate](#private-data-gate) for why that matters while the gate is attached.
-- The pipeline builds no islands, and deploys none of `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
+- The pipeline builds no islands, and deploys none of `hfy-check-allowed`, `hfy-api`, `hfy-auth-edge`, `hfy-edge-gate`, `hfy-mcp-edge401` and `HFYAppendIndex`. `ci.manifest.yaml` has no target for any of them.
 - `build-islands.sh`, `package-api.sh`, `package-auth.sh`, `package-edge-gate.sh`, `mcp-conformance.sh` and `publish-append-index.sh` are not run by any workflow.
-- `deploy-gcf-legacy.yml` deploys `getAllowlist` on push to `main`. See [Legacy sign-in](#legacy-sign-in).
+- `deploy-gcf-legacy.yml` deploys `getAllowlist` only by hand. See [Retired legacy sign-in](#retired-legacy-sign-in).
 - The pre-commit hook runs `check-deployment-sync.sh`, then a `trufflehog` filesystem scan. It fails when `trufflehog` is not installed.
 - The hook runs only when `core.hooksPath` is `scripts/git-hooks`.
 - The workspace helpers treat the checkout's parent directory as `<project>`.
@@ -502,8 +501,8 @@ Paths:
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): `node:test`.
 - [`tests/client/`](../../tests/client/): `node:test` suites `auth-continuity.test.mjs` and `data-fetch.test.mjs`.
 - [`islands/tests/`](../../islands/tests/):
-  - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
-  - Playwright specs: `asset-versions`, `auth-continuity`, `d11-fixes`, `flags-fallback`, `islands-look`, `legacy-pages`, `notifications`, `person`, `person-page`, `posts`, `qa-fixes`, `qa2-fixes`, `search`, `shell`, `sw` and `theme-foundation`.
+  - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `feed-conformance`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
+  - Playwright specs: `asset-versions`, `auth-continuity`, `d11-fixes`, `flags-fallback`, `islands-look`, `legacy-pages`, `notifications`, `notifications-roundtrip`, `person`, `person-page`, `posts`, `qa-fixes`, `qa2-fixes`, `search`, `shell`, `sw` and `theme-foundation`.
   - Fixtures, all synthetic: `fixtures/islands-look.json`, `fixtures/person-legacy.json`, `fixtures/person-synthetic.json` and `fixtures/tree-synthetic.svg`.
 - [`scripts/cloudfront/test/`](../../scripts/cloudfront/test/): `node:test` suite `append-index.test.mjs` and its case table `append-index.cases.json`.
 - [`scripts/infra/test/`](../../scripts/infra/test/):
@@ -512,7 +511,7 @@ Paths:
   - `test_edge_gate_stack.py` and `test_mcp_edge401_stack.py`: static checks on the two us-east-1 templates.
   - `test_privacy_terms_pages.py`: `11ty/privacy/index.html` and `11ty/terms/index.html` carry each required section of the approved privacy and terms amendment, `docs/drafts/privacy-terms-2026-10-update.md` (HFY-TSK-239).
   - `stub/aws`, `cf-echo.jq`, `fixtures/live-like.json` and `fixtures/live-with-uploads.json`: test doubles.
-- [`tests/login-flow/`](../../tests/login-flow/): Playwright specs `login-flow.spec.ts` and `auth-v2.spec.ts`.
+- [`tests/login-flow/`](../../tests/login-flow/): the Playwright spec `auth-v2.spec.ts`. The legacy `login-flow.spec.ts` is deleted with the Google sign-in it drove.
 - [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py): `unittest`, standard library only. They run [`scripts/records/check_gramps_goldens.py`](../../scripts/records/check_gramps_goldens.py) and [`check_relationship_goldens.py`](../../scripts/records/check_relationship_goldens.py) over the committed Gramps goldens and check that tampering is caught.
 - [`scripts/mcp/token-smoke.sh`](../../scripts/mcp/token-smoke.sh): a live MCP token check.
 
@@ -528,7 +527,7 @@ Facts:
 - `passkey.e2e.mjs` drives Chromium's virtual authenticator against the real edge app on `http://localhost`, with in-memory stores. It runs with `npm run e2e` in `auth/`, after `npx playwright install chromium`, and is not part of `npm test`.
 - `signin-theme.e2e.mjs` runs with `SITE=<scratch site> npm run e2e:theme` in `auth/`, where the scratch site is a copy of `11ty/` built with `node build.mjs --site`. It exits `2` without `SITE`. It serves the real edge pages, with their real CSP, on `http://localhost:$E2E_PORT` (default `4175`), serves `/css` and `/fonts` from `SITE`, and drives Chrome (`channel: chrome`) at 375 and 1024 px with test-only wiring and a synthetic allowlist. `E2E_SHOTS=<dir>` saves screenshots and `E2E_OFFLINE=1` blocks Google Identity Services. It is not part of `npm test`.
 - `edge-gate/` has no dependencies. `npm test` there runs `node --test`.
-- `tests/client` loads the real `11ty/js/feature-flags.js` into a `vm` sandbox with a stubbed `fetch`. It needs no install: `node --test tests/client/*.test.mjs` from the repository root. `auth-continuity.test.mjs` also covers the `/family-login/?next=` hand-over to `returnTo`.
+- `tests/client` loads the real `11ty/js/feature-flags.js` into a `vm` sandbox with a stubbed `fetch`. It needs no install: `node --test tests/client/*.test.mjs` from the repository root. `auth-continuity.test.mjs` also covers the `/family-login/` redirect page's `?next=` hand-over to `returnTo`.
 - The islands content-contract test drives the real `api/` handler.
 - `bundle.test.mjs` checks that every build output is tracked, present and identical to a fresh build.
 - `npm run test:contract` in `islands/` runs every `node:test` suite there, the theme lint included. `npm test` runs those and then the Playwright specs.
@@ -540,12 +539,6 @@ Facts:
 - Besides the behavior scripts, `run.sh` covers: `/uploads/*` gated in place, its drift repair, the `--remove` restore (the `--restore-uploads-policy-id` override, the refusal when no policy can be found, a second `--remove` as a no-op, both policies kept) and the uploads policy and its repair; `publish-append-index.sh` against the stub (diff, `test-function` gate, publish, backup, idempotency and refusals); the repo-owned `11ty/` paths in `11ty/README.md` and the sync check; and the `?v` on `auth/edge.manifest.json` `theme.cssUrl`.
 - `test_app_stack.py` checks that the `UploadsResponseHeadersPolicy` CSP equals `UPLOADS_CSP` and the gate script's uploads policy.
 - `tests/login-flow` targets the live site by default (`HFY_SITE_BASE`).
-- The legacy spec signs in with a Google ID token on `/family-login/`. Under `authV2` that page sends a signed-out visitor to `/auth/login`, so the spec can pass only against a site with `authV2` off. The `auth-v2` spec is the check for an `authV2` site. It asserts structure, not copy.
-- The legacy spec reads its Google ID token from `HFY_TEST_ID_TOKEN`. Without that variable, it runs the helper named by `HFY_MINT_HELPER` with `python3`.
-- The `HFY_MINT_HELPER` default is `../../scripts/auth/mint_test_id_token.py`, relative to the working directory. The default finds the helper from neither copy of the suite:
-  - From `<project>/workspace/tests/login-flow`, it resolves to `<project>/workspace/scripts/auth/`, which does not exist.
-  - From the repository copy, it resolves to `<project>/repo/scripts/auth/`, which does not exist either.
-- The helper is at `<project>/scripts/auth/mint_test_id_token.py`. The suite therefore needs either `HFY_MINT_HELPER` set to that path or `HFY_TEST_ID_TOKEN`.
 - The `auth-v2` spec is skipped unless `HFY_AUTH_V2=1`. Its password path also needs `HFY_TEST_EMAIL` and `HFY_TEST_PASSWORD`.
 - `token-smoke.sh` validates an MCP access token from `MCP_TOKEN` against the live auth edge, without printing it.
 - No workflow runs any of these suites. How to run them: [How to run the test suites](../how-to/run-the-tests.md).
@@ -573,13 +566,13 @@ Facts:
 
 - They are named here so you know they exist. These docs do not reproduce their contents.
 - `<eleventy-source>` builds `11ty/`.
-- The source's `partials/head.njk` already emits head blocks A and B, with a hard-coded theme `?v` and font file name that the islands build overwrites in the output. The base layout does not emit the `auth-v2.js` tag, and neither the Voice copy nor the asset versions are ported, so `copy.mjs` and `assets.mjs` are still needed. The source's `public/js/auth.js` still prompts One Tap.
+- The source's `partials/head.njk` already emits head blocks A and B, with a hard-coded theme `?v` and font file name that the islands build overwrites in the output. The base layout does not emit the `auth-v2.js` tag, and neither the Voice copy nor the asset versions are ported, so `copy.mjs` and `assets.mjs` are still needed. The source's layout still emits the retired Google client, `auth.js`, the navbar search and the `gateway` entry, and its `public/js/` still holds `auth.js`, `search-navbar.js` and `search-results.js`, until it is ported ([Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)).
 - The ETL scripts turn the Gramps export into person JSON and family-tree media.
 - `build_search_index.js` builds the person manifest and search index. The source's `build:search` step runs it.
 - `publish_allowlists.sh` publishes the allowlist to Secret Manager and the email-to-gramps_id map to the config bucket.
-- `mint_test_id_token.py` mints test ID tokens for `tests/login-flow`.
+- `mint_test_id_token.py` mints Google ID tokens for the retired legacy sign-in. Nothing in the repository runs it any more.
 - `workspace-local/` holds the private family data and the real credentials.
-- The workspace sources of the legacy sign-in code are also outside the repository. See [Legacy sign-in](#legacy-sign-in).
+- The workspace sources of the legacy sign-in code are also outside the repository. See [Retired legacy sign-in](#retired-legacy-sign-in).
 
 ## What in `11ty/` is generated
 
@@ -601,12 +594,11 @@ After any refresh, and after `scripts/promote_workspace_assets.sh`, run `cd isla
 | Files | Kind | Plain refresh | README refresh | Sync check |
 |---|---|---|---|---|
 | `css/main.css`, `css/main.css.map`; `images/` except `pwa-*`; `js/bootstrap.bundle.min.js` | Generated. The script is copied from the source's `public/js/`. `main.css` is never edited: the theme layer loads after it. | Replaced from source output. Nothing is lost. | Replaced from source output. | Compared. |
-| `index.html`, and `index.html` under `about/`, `contact/`, `family-login/`, `logged-out/`, `privacy/`, `search/` and `terms/` | Repo-edited. Added by hand: `<script src="/js/auth-v2.js" defer></script>`. Written by the islands build: head blocks A and B around the `main.css` link, the Voice copy, and `?v=<sha8>` on every same-origin script, stylesheet and manifest reference, the `auth-v2.js` tag included. | Overwritten. All of these changes are lost. | Overwritten too. Re-add the tag, then run the islands build, which restores the rest. | Compared, whole. |
+| `index.html`, and `index.html` under `about/`, `contact/`, `logged-out/`, `privacy/`, `search/` and `terms/` | Repo-edited. Added by hand: `<script src="/js/auth-v2.js" defer></script>`. Removed by hand (HFY-TSK-317): the Google client, `auth.js`, `search-navbar.js`, the `HFY_AUTH_CONFIG` and `HFY_SEARCH_CONFIG` blocks, the navbar search and the `gateway` entry of the inlined config. Written by the islands build: head blocks A and B around the `main.css` link, the Voice copy, and `?v=<sha8>` on every same-origin script, stylesheet and manifest reference, the `auth-v2.js` tag included. | Overwritten. All of these changes are lost. | Overwritten too. Re-add the tag and remove the retired ones, then run the islands build, which restores the rest. | Compared, whole. |
 | `person/index.html`, `private/index.html` | Repo-edited, with the same changes. | Excluded.[^dirs] | Excluded.[^dirs] | Excluded.[^dirs] |
-| `js/search-navbar.js`, `js/search-results.js` | Repo-edited. A comment and a `hfySearchV2Live()` helper at the top (lines 2–5), and `edgeSessionInit()` and `dataFetch()` helpers (lines 74–85 in `search-navbar.js`, 144–155 in `search-results.js`). Stand-down checks `if (await hfySearchV2Live())` before the data load: line 116 (in `loadData()`) in `search-navbar.js`, and lines 187 (in `loadData()`) and 417 (in `bootstrap()`) in `search-results.js`. Under `authV2`, the manifest and index load through `dataFetch` with the cookie only, `requireAuthenticated()` returns at once, and `subscribeToAuthChanges()` preloads on the edge session. | Overwritten with the source copy, which lacks these edits. | Excluded. | Excluded. |
-| `js/feature-flags.js` | Repo-edited. At the top: the `hfy-asset-versions` stamp block (`ASSET_V`), which every islands build rewrites, and the theme fallback link. Near the top: the edge overlay, `edgeOverlay` and `visibilityState()`, which `shouldShow` and `featureAPI.shouldShow` read. From `window.HFYFeatureFlags = featureAPI;` to the last `onReady(applyFeatureVisibility);`: flag resolution, the `?hfy_flags=` override and banner, the `authV2` data path (`dataFetchInit` to `dataResponse`), `loadIsland`, `assetVersions`, `whenIsland`, `searchV2Live` and the per-flag loaders. The rest is the legacy visibility gating and session cache. | Overwritten with the source copy, which lacks these edits. | Excluded. | Excluded. |
-| `js/person-page.js` | Repo-edited, and largely rewritten for the design system's PersonRecord layout: a hero, then life, family, photos and stories, and a tree toolbar with zoom and a legend. The data path: `dataFetch()` and `edgeSessionInit()` send the data requests through `HFYFeatureFlags.dataFetch`. Under `authV2`, `requireAuthenticated()` and `buildAuthorizedFetchOptions()` use the cookie instead of the legacy token, and `fetchPerson()` turns a final 401 into a sign-in link, which `showSignIn()` shows. `renderFamilyVisualization()` loads the family-tree SVG as a background request. | Overwritten with the source copy, which lacks the layout and the `authV2` data path. | Excluded. | Excluded. |
-| `js/auth.js` | Repo-edited. `authV2Active()` and the guard around `googleAccounts.prompt()` in `initAuthUI()`: with `authV2` on, One Tap does not prompt. | Overwritten with the source copy, which still prompts One Tap. | Excluded. | Excluded. |
+| `family-login/index.html` | Repo-owned: a static redirect page to `/auth/login` (HFY-TSK-317), in place of the source's Google sign-in page. | Overwritten with the source's Google sign-in page. | Excluded. | Excluded. |
+| `js/feature-flags.js` | Repo-edited. At the top: the `hfy-asset-versions` stamp block (`ASSET_V`), which every islands build rewrites, and the theme fallback link. Near the top: the edge overlay, `edgeOverlay` and `visibilityState()`, which `shouldShow` and `featureAPI.shouldShow` read. From `window.HFYFeatureFlags = featureAPI;` to the last `onReady(applyFeatureVisibility);`: flag resolution, the `?hfy_flags=` override and banner, the `authV2` data path (`dataFetchInit` to `dataResponse`), `loadIsland`, `assetVersions`, `whenIsland` and the per-flag loaders. The rest is the visibility gating. | Overwritten with the source copy, which lacks these edits. | Excluded. | Excluded. |
+| `js/person-page.js` | Repo-edited, and largely rewritten for the design system's PersonRecord layout: a hero, then life, family, photos and stories, and a tree toolbar with zoom and a legend. The data path: `dataFetch()` sends the data requests through `HFYFeatureFlags.dataFetch` with the cookie, and `fetchPerson()` turns a final 401 into a sign-in link, which `showSignIn()` shows. `renderFamilyVisualization()` loads the family-tree SVG as a background request. | Overwritten with the source copy, which lacks the layout and the `authV2` data path. | Excluded. | Excluded. |
 | `_data/flags.json`, `js/auth-v2.js`, `images/pwa-192.png`, `images/pwa-512.png`, `images/pwa-maskable-512.png` | Repo-only. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `sw.js`, `manifest.webmanifest` | Repo-only. The islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
 | `offline.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html` | Repo-only. The islands build writes their head blocks and `?v` versions. | Deleted, or replaced by the source copy where the source output has one. | Excluded. | Excluded. |
@@ -631,7 +623,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `cloudfront/` | Infrastructure (sample distribution), sanitized samples |
 | `docs/`, `AGENTS.md` | This documentation. `AGENTS.md` is the entry point for automated agents. |
 | `edge-gate/` | Private data gate |
-| `functions/`, `gcloud/`, `lambda/` | Legacy sign-in |
+| `functions/`, `gcloud/`, `lambda/` | Retired legacy sign-in |
 | `graph/` | Family graph builder |
 | `gramps/` | The Gramps desktop core, standard library only: `gramps/hfygramps/scanner.py` is the Python port of the R-18 detector, tested against `shared/privacy-guard.vectors.json` by `python3 -m unittest discover gramps/tests/unit` (the `tests` key of `ci.manifest.yaml` runs it on pull requests). `gramps/hfygramps/render/` is the site renderer, `render_site(objects) -> {s3_key: bytes}`: the D-02-fixed ETL transforms and `build_search_index.js` as pure functions, with no caller yet (HFY-TSK-229). `gramps/tests/fixtures/` holds the synthetic tree and, under `render/`, the renderer's parity inputs, the live ETL's golden output and the expected-delta list. `gramps/redaction/redaction-v1.json` is the redaction policy (schema, golden vectors in `gramps/redaction/vectors/`, generators `make_vectors.py` and `render_reference.py`); `gramps/hfygramps/rules.py` loads it and holds `is_birth_like`, the one birth-like predicate. See [Redaction policy v1](redaction-policy.md). `gramps/hfygramps/projection.py` is the projection `P` (`project_tree`, `project`, the `birthlike_sticky` helpers and the coordinate and rectangle lift rules; HFY-TSK-241) and `gramps/hfygramps/canonical.py` writes the canonical JSON and hash of a stored object; neither is called by anything deployed yet. |
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
@@ -639,7 +631,6 @@ The reverse lookup: from a directory to the capability sections above.
 | `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/allowlist-store.mjs` is the read side of the DynamoDB allowlist (`ALLOW#` keys, `readAllowEntry`, `listAllowBySub`, `createCompositeMemberReader`); it takes the DynamoDB client and command classes as arguments, so it still imports nothing (HFY-TSK-134). `shared/redaction-rules.mjs` is the JavaScript port of the redaction predicates (`isBirthLike` and the date, place, coordinate, attribute and rect helpers); it takes the parsed `gramps/redaction/redaction-v1.json` as an argument and is tested against the golden vectors by `api/test/redaction-rules.test.js` ([Redaction policy v1](redaction-policy.md)). `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. `shared/legacy-form.mjs` is the join form's schema (`FIELDS`, `validateForm`, `mapToGramps`; surfaces.md 7.3): birth year only, male or female, place fields city and state only, every free-text field through the R-18 detector; `mapToGramps` takes `storeCurrentCity` (Q2-11(a)). `shared/canonical.mjs` is the JavaScript original of canonical JSON and the object hash (`canonicalJson`, `objectJson`, `objectHash`; keys sorted by code point, integers only); it and `gramps/hfygramps/canonical.py` pass `shared/canonical.vectors.json`, and `shared/shared.test.mjs` imports `canonical.test.mjs`. `api/src/sync/store.js` and `api/src/sync/apply.js` write `obj_json` and `blob` with its `canonicalJson`. It is not reachable from any deployed route yet. |
 | `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests, and the Gramps golden tooling (`scripts/records/`: the bundle shim, the generator and the standard-library check) |
 | `tests/` (`client/`, `login-flow/`) | Tests |
-| `workspace/` | Static site output (the stray `featureFlags.js` only) |
 
 ## Notes
 
@@ -651,7 +642,7 @@ The reverse lookup: from a directory to the capability sections above.
   [How to turn a feature flag on for one tab or for everyone](../how-to/toggle-a-feature-flag.md) covers the flags, and the [release model](../explanation/release-model.md) explains them. The private data gate is not a flag: it applies from the moment `add-data-gate-behaviors.sh` attaches it.
 - The repository does not record whether the follow-up live operations ran: the `/uploads/*` gating, the `HFYAppendIndex` publish, and the `hfy-auth-edge` and `hfy-api` redeploys that the theme and sign-in changes need. The pages that describe them give the checks.
 - `11ty/README.md` is machine-checked. `scripts/infra/test/run.sh` reads two blocks from it and compares them with the Eleventy excludes in `scripts/check-deployment-sync.sh`:
-  - the section from `## Repo-owned files` to `## Refreshing` must name `js/person-page.js`, `js/auth.js`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`;
+  - the section from `## Repo-owned files` to `## Refreshing` must name `js/person-page.js`, `family-login/`, `css/auth-edge.css`, `css/hfy-theme.css` and `fonts/`;
   - the excludes of the command that starts `rsync -a --delete -n -i`, read up to its `_site/` line, must include those same paths and equal the sync check's excludes, `.DS_Store` aside.
 
   Change the exclude list in both files together, and keep those two headings and that command line as they are, or `run.sh` fails. The same test also checks that `auth/edge.manifest.json` `theme.cssUrl` carries the current hash of `11ty/css/auth-edge.css`.

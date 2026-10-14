@@ -7,11 +7,15 @@ import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
 import { contribOps, emptyOps, getEvent, mergeOps, mergedSize, revokeOps } from "./contrib.js";
 import { createGuard, pointer } from "./guard.js";
+import { normalizeNew } from "./comment-photos.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64url");
 const unb64 = (s) => Buffer.from(s, "base64url").toString("utf8");
+const ORDERS = ["asc", "desc"];
+// A cursor is bound to the order that issued it: base64url("a:<id>") or ("d:<id>"). A pre-order cursor (the bare id) was an asc one.
+const mintCursor = (order, id) => b64(`${order === "desc" ? "d" : "a"}:${id}`);
 const threadPk = (t) => `THREAD#${t}`;
 const cKey = (t, id) => ({ PK: threadPk(t), SK: `C#${id}` });
 const rKey = (t, target, by) => ({ PK: threadPk(t), SK: `R#${target}#${by}` });
@@ -20,10 +24,11 @@ const rKey = (t, target, by) => ({ PK: threadPk(t), SK: `R#${target}#${by}` });
 export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: actor.label, ...(actor.admin ? { roles: ["admin"] } : {}) } : null);
 
 /**
- * `guard` is src/guard.js createGuard(): the R-18 check on the body of every create and edit (422, nothing stored).
+ * `guard` is src/guard.js createGuard(): the R-18 check on the body and every photo alt of each create and edit (422, nothing stored).
+ * `photos` is src/comment-photos.js (parse, owned, bind): without it a comment cannot carry attachments (503, fail closed).
  * `via` is the origin stamped on the contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
  */
-export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard(), via = "ui" }) {
+export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
   const view = (c) => ({ ...structuredClone(c), can: computeCan(c, viewer, canOpts) });
@@ -56,9 +61,15 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     if (!c) throw new CommentError("not_found", `comment ${id}`);
     return c;
   }
-  function body(raw) {
-    const text = typeof raw === "string" ? raw.trim() : "";
-    if (text === "") throw new CommentError("validation", "body is required", "body");
+  /**
+   * A comment is text, a photo, or both: the trimmed body may be empty only while the comment holds at least one photo.
+   * `body` is a required string on create and edit, photo or not (the kit's CreateInput/EditInput): a missing or non-string
+   * body is refused rather than read as "", so a PATCH that leaves `body` out cannot wipe a photo comment's text.
+   */
+  function body(raw, photoCount = 0) {
+    if (typeof raw !== "string") throw new CommentError("validation", "body is required", "body");
+    const text = raw.trim();
+    if (text === "" && photoCount === 0) throw new CommentError("validation", "body is required", "body");
     if (text.length > maxLength) throw new CommentError("validation", `body exceeds ${maxLength} characters`, "body");
     return text;
   }
@@ -76,15 +87,25 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     }
     return out;
   }
-  // `ops` is a contrib.js fragment (credit or revoke): its event and counter writes ride in this transaction.
-  async function commit(entry, { put, deletes = [], ops = emptyOps() }) {
+  const altFields = (list) => list.map((a, i) => [pointer("attachments", i, "alt"), a.alt]);
+  const photoParser = () => {
+    if (!photos) throw new HttpError(503, "unavailable", "photos are not configured");
+    return photos;
+  };
+  const parser = { parse: (url) => photoParser().parse(url) };
+  const stored = ({ id, path, mime, width, height, alt }) => ({ id, kind: "image", url: path, mime, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), ...(alt ? { alt } : {}) });
+  // `updates` are the UPLOAD# bindings of new photos (tag "upload"); `ops` is a contrib.js fragment (credit or revoke). Both ride in
+  // this transaction.
+  async function commit(entry, { put, deletes = [], updates = [], ops = emptyOps() }) {
     const puts = [{ item: auditItem(entry, uid(), table) }];
     if (put) puts.unshift(put);
     try {
-      await transact(ddb, cmds, table, mergeOps({ puts, deletes }, ops));
+      await transact(ddb, cmds, table, mergeOps({ puts, deletes, updates }, ops));
     } catch (e) {
       // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
       if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
+      // An UPLOAD# binding changed between the read and the write (attached elsewhere, or not this member's): 403, nothing written.
+      if (e instanceof TxnCancelled && e.conditionFailed && e.failures.length > 0 && e.failures.every((f) => f.tag === "upload")) throw new HttpError(403, "upload_not_owned", "that photo can't be attached here. add it again.");
       if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "conflict", "comment changed concurrently");
       throw new CommentError("server", "store unavailable");
     }
@@ -97,20 +118,29 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       checkThread(t);
       await checkPostVisible(t);
       const limit = Math.min(Math.max(Math.trunc(opts.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
-      let lo = "C#";
+      const order = opts.order ?? "asc";
+      if (!ORDERS.includes(order)) throw new CommentError("validation", "order must be asc or desc", "order");
+      const desc = order === "desc";
+      let after;
       if (opts.cursor !== undefined) {
-        let after;
-        try { after = unb64(opts.cursor); } catch { throw new CommentError("cursor_invalid"); }
-        if (!ID_RE.test(after)) throw new CommentError("cursor_invalid");
-        lo = `C#${after}!`;
+        let raw;
+        try { raw = unb64(opts.cursor); } catch { throw new CommentError("cursor_invalid"); }
+        const m = /^([ad]):([0-9A-HJKMNP-TV-Z]{26})$/.exec(raw);
+        const legacy = ID_RE.test(raw); // an asc cursor minted before order existed
+        if (!(m ? (m[1] === "d") === desc : legacy && !desc)) throw new CommentError("cursor_invalid");
+        after = m ? m[2] : raw;
       }
+      // asc: SK in (C#<after>, C#~]; desc: SK in [C#, C#<after>), newest first. BETWEEN is inclusive, so desc drops the cursor row itself
+      // when it still exists (it may have been deleted since), and asc starts just past it ("!" sorts below every id character).
+      const lo = !desc && after !== undefined ? `C#${after}!` : "C#";
+      const hi = desc && after !== undefined ? `C#${after}` : "C#~";
       const r = await ddb.send(new cmds.QueryCommand({
         TableName: table, KeyConditionExpression: "PK = :pk AND SK BETWEEN :lo AND :hi",
-        ExpressionAttributeValues: { ":pk": threadPk(t), ":lo": lo, ":hi": "C#~" }, Limit: limit + 1,
+        ExpressionAttributeValues: { ":pk": threadPk(t), ":lo": lo, ":hi": hi }, Limit: limit + 2, ...(desc ? { ScanIndexForward: false } : {}),
       }));
-      const rows = (r.Items ?? []).map((i) => i.comment);
+      const rows = (r.Items ?? []).map((i) => i.comment).filter((c) => c && !(desc && c.id === after));
       const page = rows.slice(0, limit);
-      const next = rows.length > limit ? b64(page[page.length - 1].id) : undefined;
+      const next = rows.length > limit ? mintCursor(order, page[page.length - 1].id) : undefined;
       const targets = new Set(["root", ...page.map((c) => commentTarget(c.id))]);
       const reactions = {};
       for (const item of (await reactionRows(t)).sort((a, b) => (a.reaction.created_at < b.reaction.created_at ? -1 : 1))) {
@@ -121,15 +151,18 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     async create(t, input) {
       const who = need();
       checkThread(t, true);
-      const text = body(input.body);
-      guard("comments", "create", [[pointer("body"), input.body]]); // offsets into the body as submitted
+      const list = input.attachments === undefined ? [] : normalizeNew(input.attachments, parser);
+      const text = body(input.body, list.length);
+      guard("comments", "create", [[pointer("body"), input.body], ...altFields(list)]); // offsets into the body as submitted
       await checkPostVisible(t); // not_found unless the post exists and is visible
       let parent;
       if (input.parentId !== undefined) {
         parent = await getComment(t, input.parentId);
       }
       const at = iso();
-      const c = { id: ulid(now()), threadId: t, ...(parent ? { parentId: parent.id } : {}), author: { id: who.id, label: who.label }, body: text, created_at: at };
+      const id = ulid(now());
+      const updates = list.length > 0 ? await photoParser().bind(list, who, id) : []; // 403 upload_not_owned, 400 upload_missing / photo_has_location
+      const c = { id, threadId: t, ...(parent ? { parentId: parent.id } : {}), author: { id: who.id, label: who.label }, body: text, ...(list.length > 0 ? { attachments: list.map(stored) } : {}), created_at: at };
       // The credit commits with the comment (D2-17): one event, five counters, and the link on the stored comment.
       const credit = contribOps({
         actor: { id: who.id, label: who.label }, kind: "comment", ref: { type: "comment", id: c.id, thread: t }, subject: t,
@@ -138,6 +171,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       c.contrib = { id: credit.event.id };
       await commit(auditEntry("create", c.id, who.id, null, c, at), {
         put: { item: { ...cKey(t, c.id), GSI1PK: "COMMENTS", GSI1SK: c.id, entity: "comment", comment: c }, condition: "attribute_not_exists(PK)" },
+        updates,
         ops: credit,
       });
       if (onCreated) await onCreated(c, { parent });
@@ -150,11 +184,29 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       const c = await getComment(t, id);
       await checkPostVisible(t);
       if (!computeCan(c, who, canOpts).edit) throw new CommentError("forbidden", "cannot edit this comment");
-      const text = body(input.body);
-      guard("comments", "update", [[pointer("body"), input.body]]); // before the no-op shortcut: an unchanged legacy hit is refused too
-      if (text === c.body) return view(c);
+      // `attachments` omitted leaves the photos as stored. A listed photo is matched to a stored one by url; an edit can remove
+      // photos or change their alt, never add one (changing photos means a new comment), so an unknown url is refused after the
+      // ownership check: another member's key answers 403 upload_not_owned, anything else 422 validation.
+      const heldAll = c.attachments ?? [];
+      let final = heldAll;
+      let altChecked = [];
+      if (input.attachments !== undefined) {
+        const submitted = normalizeNew(input.attachments, parser);
+        const held = new Map(heldAll.map((a) => [a.url, a]));
+        const fresh = submitted.filter((a) => !held.has(a.path));
+        if (fresh.length > 0) {
+          await photoParser().owned(fresh, who);
+          throw new CommentError("validation", "photos can only be removed from a comment", "attachments");
+        }
+        final = submitted.map((a) => stored({ ...held.get(a.path), path: a.path, alt: a.alt }));
+        altChecked = altFields(final);
+      }
+      const text = body(input.body, final.length);
+      guard("comments", "update", [[pointer("body"), input.body], ...altChecked]); // before the no-op shortcut: an unchanged legacy hit is refused too
+      if (text === c.body && JSON.stringify(final) === JSON.stringify(heldAll)) return view(c);
       const at = iso();
-      const next = { ...c, body: text, edited_at: at };
+      const { attachments: _drop, ...rest } = c;
+      const next = { ...rest, body: text, ...(final.length > 0 ? { attachments: final } : {}), edited_at: at };
       await commit(auditEntry("edit", id, who.id, structuredClone(c), next, at), {
         put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...versionGuard("comment", "edited_at", c.edited_at) },
       });

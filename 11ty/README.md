@@ -23,9 +23,8 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `fonts/` | Build output: the self-hosted brand faces (Source Sans 3, Libre Caslon Text, Source Code Pro) as content-hashed `woff2` files, with their OFL licence texts, copied from pinned `@fontsource` packages. |
 | `js/auth-v2.js` | The flag-gated `authV2` sign-in script (HFY-TSK-062). |
 | `js/feature-flags.js` | Edited in the repository: the flag resolver, preview override and island loader, and the `authV2` data path. Its `hfy-asset-versions` block, the content hashes the island loader and the worker registration use, is a build stamp that every islands build rewrites. |
-| `js/search-navbar.js`, `js/search-results.js` | Edited in the repository: the `searchV2` stand-down and the `authV2` data path. |
 | `js/person-page.js` | Edited in the repository: its data requests go through the `authV2` data path, `HFYFeatureFlags.dataFetch` (HFY-R66), and it renders the design system's person layout and the extension points below. The source's copy lacks both and still waits for the legacy `X-HFY-Session` token, which breaks person pages while the private data gate is attached. |
-| `js/auth.js` | Edited in the repository: with `authV2` on, the legacy Google button still renders but One Tap no longer prompts, because its bottom sheet covered the shell's tab bar at 375 px (HFY-TSK-069). The source's copy still prompts. |
+| `family-login/index.html` | A redirect page to `/auth/login` (HFY-TSK-317), carrying `?next=<path>` over as `returnTo`, so old bookmarks of the retired Google sign-in page still work. The source's page is the Google sign-in, which the refresh must not bring back. |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | The PWA shell (HFY-TSK-064). Every islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. The worker is registered at `/sw.js?v=<sha8 of sw.js>` and names its cache after that hash. |
 | `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068), and `me/index.html`, the settings hub of the `navMe` island `settings` (HFY-TSK-091). |
 | `private/index.html` | The route of the shell's own-page tab: "me" since the `navMe` flip (HFY-TSK-223), "family" with `navMe` off (HFY-TSK-091). Its title is "your page" (`islands/copy.mjs`). It is a redirect page with no person data. Signed in, it sends the visitor to their own page, `/person/?id=<gramps id>`; signed out, to the edge sign-in, which returns to `/private/`. It replaced the 2025 "Person Directory" dev scaffold. It is not `/family/`, which is a gated data prefix. The refresh excludes `private/`; the source's matching page is `src/private/index.njk`. |
@@ -61,9 +60,9 @@ rsync -a --delete -n -i \
   --exclude _data/flags.json \
   --exclude js/islands/ \
   --exclude js/auth-v2.js \
-  --exclude js/feature-flags.js --exclude js/search-navbar.js --exclude js/search-results.js \
+  --exclude js/feature-flags.js \
   --exclude js/person-page.js \
-  --exclude js/auth.js \
+  --exclude family-login/ \
   --exclude css/auth-edge.css \
   --exclude css/hfy-theme.css --exclude fonts/ \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \

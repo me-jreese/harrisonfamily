@@ -1,10 +1,9 @@
-# retired by HFY-TSK-062
+# Manual only (HFY-TSK-317): this workflow no longer runs on a push to main. The getAllowlist Cloud Function served the retired Google
+# sign-in (/api/check-allowed); the function itself is not deleted (HFY-PLN-002 ruling P2-R42), so io can still redeploy or
+# retire it by hand from the Actions tab.
 name: Deploy GCF (legacy)
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:

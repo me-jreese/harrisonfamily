@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:957e781752bfd06ce4f3ad44dfd1ea1c3e2fa968cc777b2cef0673b963a2e71d
+# @io-kit/ci 0.1.3 rendered — do not edit; sha256:aa1c6c0c56385694058ac85611ad69bc43b1f736948d1ec18bb79abf5f18c6d1
 name: io-kit package
 description: Upload the release artifact (build output, extra artifacts, release.json) named io-kit-release-<sha>; rollback redeploys it later.
 inputs:
@@ -7,7 +7,7 @@ inputs:
     default: 11ty
   artifacts:
     description: JSON array of extra artifact paths (artifacts).
-    default: '["dist/hfy-check-allowed.zip"]'
+    default: "[]"
 runs:
   using: composite
   steps:

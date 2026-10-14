@@ -580,7 +580,7 @@ README_EX=$(sed -n '/^rsync -a --delete -n -i/,/_site\//p' "$ROOT/11ty/README.md
 contains "the sync check treats js/person-page.js as repo-owned" "$SYNC_EX" "js/person-page.js"
 contains "the README refresh rsync excludes js/person-page.js" "$README_EX" "js/person-page.js"
 contains "the README repo-owned table lists js/person-page.js" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "js/person-page.js"
-for owned in js/auth.js css/auth-edge.css css/hfy-theme.css fonts/ private/; do
+for owned in family-login/ css/auth-edge.css css/hfy-theme.css fonts/ private/; do
   contains "the sync check treats $owned as repo-owned" "$SYNC_EX" "$owned"
   contains "the README refresh rsync excludes $owned" "$README_EX" "$owned"
   contains "the README repo-owned table lists $owned" "$(sed -n '/^## Repo-owned files/,/^## Refreshing/p' "$ROOT/11ty/README.md")" "$owned"
@@ -604,10 +604,11 @@ if command -v rsync >/dev/null && command -v git >/dev/null; then
   set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
   eq "a repo-only person-page.js does not fail the pre-commit sync check" "$DS_RC" 0
   mkdir -p "$DS/workspace/11ty-dev/_site/css" "$DS/repo/11ty/css"; echo '/* site */' > "$DS/workspace/11ty-dev/_site/css/main.css"; cp "$DS/workspace/11ty-dev/_site/css/main.css" "$DS/repo/11ty/css/main.css"
-  echo '/* auth edge */' > "$DS/repo/11ty/css/auth-edge.css"; echo '// authV2 One Tap' > "$DS/repo/11ty/js/auth.js"
-  echo '// legacy One Tap' > "$DS/workspace/11ty-dev/_site/js/auth.js"; git -C "$DS/repo" add -A
+  echo '/* auth edge */' > "$DS/repo/11ty/css/auth-edge.css"; mkdir -p "$DS/repo/11ty/family-login" "$DS/workspace/11ty-dev/_site/family-login"
+  echo '<!-- redirect to /auth/login -->' > "$DS/repo/11ty/family-login/index.html"
+  echo '<!-- legacy Google sign-in page -->' > "$DS/workspace/11ty-dev/_site/family-login/index.html"; git -C "$DS/repo" add -A
   set +e; DS_OUT=$(cd "$DS/repo" && bash "$ROOT/scripts/check-deployment-sync.sh" 2>&1); DS_RC=$?; set -e
-  eq "a repo-only css/auth-edge.css and a repo-owned js/auth.js do not fail it either" "$DS_RC" 0
+  eq "a repo-only css/auth-edge.css and a repo-owned family-login/ page do not fail it either" "$DS_RC" 0
   # design-system pass: the theme layer and the self-hosted faces are islands/build.mjs outputs the workspace never produces
   mkdir -p "$DS/repo/11ty/fonts"; echo 'woff2' > "$DS/repo/11ty/fonts/source-sans-3-latin-wght-normal.0123abcd.woff2"
   echo 'OFL' > "$DS/repo/11ty/fonts/LICENSE-source-sans-3.txt"; echo '/* generated theme */' > "$DS/repo/11ty/css/hfy-theme.css"

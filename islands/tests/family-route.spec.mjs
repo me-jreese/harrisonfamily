@@ -193,14 +193,12 @@ test("after the sign-in comes back to /private/, the member lands on the own pag
   await page.waitForURL((u) => u.pathname === "/person/" && u.searchParams.get("id") === SUB);
 });
 
-test("/private/ with authV2 off: the legacy sign-in hands the id over; no stored id goes to /family-login/ with next", async ({ page }) => {
+test("/private/ with authV2 off: the edge sign-in with a return to /private/; an id the retired Google sign-in left behind is ignored", async ({ page }) => {
   const flags = { authV2: false, shellV2: true, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false };
   await hermetic(page, { session: "unreachable", flags });
+  await page.addInitScript(() => localStorage.setItem("HFY_AUTH_USER_GRAMPS_ID", "I0042"));
   await page.goto("/private/", { waitUntil: "domcontentloaded" });
-  await page.waitForURL((u) => u.pathname === "/family-login/" && u.searchParams.get("next") === "/private/");
-  await page.evaluate(() => localStorage.setItem("HFY_AUTH_USER_GRAMPS_ID", "I0042"));
-  await page.goto("/private/", { waitUntil: "domcontentloaded" });
-  await page.waitForURL((u) => u.pathname === "/person/" && u.searchParams.get("id") === "I0042");
+  await page.waitForURL((u) => u.pathname === "/auth/login" && u.searchParams.get("returnTo") === "/private/");
 });
 
 test("/private/ holds no directory: no cards, no sample person, no media, a noscript sign-in link", async ({ page }) => {

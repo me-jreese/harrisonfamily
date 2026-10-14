@@ -105,8 +105,8 @@ function Account({ notifyV2, navMe }) {
   const [open, setOpen] = useState(false);
   if (session === undefined) return <span className="hfy-account__skel" aria-hidden="true" data-hfy-account="loading" data-slot="account" />;
   if (!memberSub(session)) {
-    // authV2 signed out: the edge sign-in. authV2 off / edge unreachable: the legacy entry, which hands `next` to the edge when authV2 is on.
-    const href = session ? `/auth/login?returnTo=${encodeURIComponent(here())}` : `/family-login/?next=${encodeURIComponent(here())}`;
+    // Signed out (or the edge unreachable): the edge sign-in, back to this page afterwards.
+    const href = `/auth/login?returnTo=${encodeURIComponent(here())}`;
     return <a className="hfy-signin" href={href} data-hfy-account="signed-out" data-slot="account">sign in</a>;
   }
   const label = String(session.label || session.sub);

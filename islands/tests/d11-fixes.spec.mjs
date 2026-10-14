@@ -198,38 +198,26 @@ test("D-11 follow-up 2: authV2 signed in, and authV2 off: the same requests ARE 
   await expect.poll(() => offApi.filter((a) => a.endsWith("/api/posts")).length).toBeGreaterThan(0);
 });
 
-// ---------------------------------------------------------------- follow-up 4: One Tap must not auto-prompt under authV2
-const GIS_STUB = `window.__gis={initialize:0,prompt:0,renderButton:0};
-window.google={accounts:{id:{initialize:function(){window.__gis.initialize++},prompt:function(){window.__gis.prompt++},renderButton:function(){window.__gis.renderButton++},disableAutoSelect:function(){},cancel:function(){}}}};`;
-async function gisCalls(page, path) {
+// ---------------------------------------------------------------- follow-up 4 (HFY-TSK-317): no Google Identity Services at all
+test("D-11 follow-up 4 / HFY-TSK-317: no page requests the Google client or /api/check-allowed, so there is no One Tap to prompt", async ({ page }) => {
   await hermetic(page, { signedIn: false });
-  await page.route("https://accounts.google.com/gsi/client", (r) => r.fulfill({ contentType: "application/javascript", body: GIS_STUB }));
-  await page.goto(path, { waitUntil: "domcontentloaded" });
-  await expect.poll(() => page.evaluate(() => window.__gis && window.__gis.initialize)).toBeGreaterThan(0);
-  await page.waitForTimeout(600);
-  return page.evaluate(() => window.__gis);
-}
-test("D-11 follow-up 4: authV2 on: the legacy Google One Tap does not auto-prompt (it covered the shell tab bar)", async ({ page }) => {
-  const g = await gisCalls(page, "/?hfy_flags=authV2,shellV2");
-  expect(g.initialize).toBe(1);
-  expect(g.prompt).toBe(0);
-});
-test("D-11 follow-up 4: authV2 off: the legacy flow still prompts exactly as before", async ({ page }) => {
-  const g = await gisCalls(page, "/?hfy_flags=-authV2");
-  expect(g.initialize).toBe(1);
-  expect(g.prompt).toBe(1);
+  const hits = [];
+  page.on("request", (r) => { if (/accounts\.google\.com|\/api\/check-allowed/.test(r.url())) hits.push(r.url()); });
+  for (const path of ["/?hfy_flags=authV2,shellV2", "/?hfy_flags=-authV2", "/about/", "/search/?hfy_flags=searchV2", "/person/?id=I0001"]) {
+    await page.goto(path, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(400);
+  }
+  expect(hits).toEqual([]);
 });
 
-// ---------------------------------------------------------------- item 6 (searchV2 variant): the island's own 8 s token fallback keeps the hash too
-test("D-11 item 6: searchV2's 8 s legacy-token fallback sends /family-login/?next= with path, query and hash", async ({ page }) => {
-  test.setTimeout(45_000);
+// ---------------------------------------------------------------- item 6 (searchV2 variant), after HFY-TSK-317
+test("D-11 item 6 / HFY-TSK-317: the search island's corpus refused with 401 shows the signed-out line; there is no 8 s wait and no /family-login/ detour", async ({ page }) => {
   await hermetic(page, { signedIn: false });
   await page.route("**/person/index.json", (r) => r.fulfill({ status: 401, json: {} }));
   await page.route("**/auth/login**", (r) => r.fulfill({ contentType: "text/html", body: "<h1>edge login</h1>" }));
-  // the legacy-token path is authV2-off only; the build flags now have authV2 on, so the override pins it off for this tab
+  // authV2 off for this tab: dataFetch is a plain fetch, so the 401 reaches the corpus, which shows its banner
   await page.goto("/?hfy_flags=searchV2,-authV2");
-  const here = "/search/?query=Harrison#top";
-  await page.goto(here);
-  await page.waitForURL((u) => u.pathname === "/family-login/", { timeout: 25_000 });
-  expect(new URL(page.url()).searchParams.get("next")).toBe(here);
+  await page.goto("/search/?query=Harrison#top");
+  await expect(page.locator("#hfy-search-v2")).toContainText("family-only", { timeout: 10_000 });
+  expect(new URL(page.url()).pathname).toBe("/search/");
 });
