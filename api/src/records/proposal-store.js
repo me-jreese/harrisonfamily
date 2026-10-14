@@ -4,7 +4,7 @@
 //   GET    /api/proposals/:id                                              ProposalView + { rebase }; 404 outside the visibility set
 //   PATCH  /api/proposals/:id            If-Match: etag                    the proposer amends: rev + 1, back to pending
 //   POST   /api/proposals/:id/withdraw   If-Match: etag                    the proposer withdraws
-//   createSystem(ctx, input)                                               a system proposal for the access-request flow (not a route)
+//   createSystem(ctx, input), withdrawSystem(ctx, id)                      a system proposal for the access-request flow, and taking it back (not routes)
 //
 // POST /api/proposals/:id/decision is proposal-decision-api's (proposal-decision.js). The document, its items and the etag live in proposals.js; this file reads and
 // rewrites them. Every state change here is ONE transaction: META (moved between PROPQ#<state> partitions), IDX#BY, every IDX#REC copy and the
@@ -387,5 +387,26 @@ export async function createSystem(ctx, input = {}, { onSubmitted } = {}) {
   return doc;
 }
 
+/**
+ * withdrawSystem(ctx, id): the site takes back a system proposal it filed (the access request it belongs to was linked by hand, declined or lost a race), so
+ * an admin cannot approve it later and mint a Person nobody asked for. Only an OPEN proposal of origin `access_request` moves, to `withdrawn`, in the same
+ * one-transaction rewrite as a member's withdraw. Returns true when it moved, false when there was nothing to withdraw (missing, decided, a member's own).
+ * A concurrent change of the proposal (the etag moved) is false too: whoever changed it decided. The caller treats this as best effort.
+ */
+export async function withdrawSystem(ctx, id) {
+  const prev = await loadProposal(ctx, id);
+  if (!prev || prev.origin !== SYSTEM_ORIGIN || prev.proposer?.id !== SYSTEM_PROPOSER.id || !OPEN_STATES.includes(prev.state)) return false;
+  const at = new Date(ctx.now()).toISOString();
+  const next = withState(prev, "withdrawn", at);
+  const audit = proposalAuditItem({ op: "proposal.withdraw", id: prev.id, principalId: SYSTEM_PROPOSER.id, at, uid: ctx.uid(), table: ctx.table, before: { state: prev.state, rev: prev.rev }, after: { state: next.state, rev: next.rev } });
+  try {
+    await commitRewrite({ store: ctx, actor: { id: SYSTEM_PROPOSER.id, label: SYSTEM_PROPOSER.label, admin: true } }, prev, proposalRewrite(prev, next), audit);
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 412) return false;
+    throw e;
+  }
+  return true;
+}
+
 /** The proposals domain as the access-request flow imports it: `proposals.createSystem(ctx, { kind, ops, origin, requestId })`. */
-export const proposals = Object.freeze({ createSystem });
+export const proposals = Object.freeze({ createSystem, withdrawSystem });

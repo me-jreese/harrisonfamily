@@ -11,7 +11,7 @@ import { createHookRegistry } from "../src/sync/hooks.js";
 import { completeAssignments, createIdPolicy } from "../src/sync/id-policy.js";
 import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
-import { loadProposal } from "../src/records/proposal-store.js";
+import { loadProposal, withdrawSystem } from "../src/records/proposal-store.js";
 import {
   AWAITING_TTL_SECONDS, DECIDED_TTL_SECONDS, HOLD_MS, LIST_STATES, STORE_CURRENT_CITY, createAccessRequests, maskEmail, opsFromPreview, parseDecision,
 } from "../src/access-requests.js";
@@ -72,8 +72,9 @@ async function world({ mailFails = false, members = [], inbox: inboxStore } = {}
   const race = { before: null };
   const facts = { [LIVING]: { isLiving: true }, [HAS_EMAIL]: { isLiving: true }, [DEAD_IN_STORE]: { isLiving: true }, [NOT_LIVING]: { isLiving: false } };
   const fileEntries = new Map([[OLD_EMAIL, { sub: HAS_EMAIL }]]); // io's S3 file: HAS_EMAIL already signs in with OLD_EMAIL
+  const flags = { accessRequests: true, inboxV1: true };
   const w = makeApi({
-    admins: [ADMIN, ADMIN2, OWNER], log: q, clock: () => clock.t, inbox, flags: { accessRequests: true, inboxV1: true },
+    admins: [ADMIN, ADMIN2, OWNER], log: q, clock: () => clock.t, inbox, flags,
     intercept: async (cmd) => {
       if (cmd.constructor.name !== "TransactWriteCommand") return;
       txns.push(structuredClone(cmd.input));
@@ -120,33 +121,43 @@ async function world({ mailFails = false, members = [], inbox: inboxStore } = {}
   const link = (who, id, over = {}, opts) => decide(who, id, { decision: "link", grampsId: LIVING, version: 1, confirmedOutside: true, ...over }, opts);
   const revoke = (who, id, over = {}, opts) => call("POST", `/api/access-requests/${id}/revoke`, who, { body: { version: 2, confirmedOutside: true, ...over }, ...opts });
   const storeCtx = { ddb: w.ddb, cmds, table: TABLE, now: () => clock.t, uid: () => `s${++u}`, log: q, txnOpts: { sleep: async () => {} } };
-  return { ...w, clock, sent, mail, inbox, txns, race, call, token, seed, row, req, allow, audits, decide, link, revoke, fileEntries, facts, storeCtx, hooks };
+  return { ...w, flags, clock, sent, mail, inbox, txns, race, call, token, seed, row, req, allow, audits, decide, link, revoke, fileEntries, facts, storeCtx, hooks };
 }
 const accessAudits = (w) => [...w.audits("accessreq:"), ...w.audits("allow:")];
 const err = (r) => ({ status: r.status, error: r.body?.error });
 const lastTxn = (w) => w.txns.at(-1).TransactItems;
 
 describe("the routes exist and are for admins (AC1)", () => {
-  it("registers the five routes behind the accessRequests flag, with no MCP tool", () => {
-    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.secondEmail"];
+  it("registers the six routes, the admin ones behind the accessRequests flag and the member's answer outside it, with no MCP tool", () => {
+    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.resendNotice", "accessRequests.secondEmail"];
     const caps = buildCaps().actions.filter((a) => names.includes(a.name));
     expect(caps.map((a) => [a.name, a.method, a.path, a.gate])).toEqual([
       ["accessRequests.list", "GET", "/api/access-requests", { feature: "accessRequests" }],
       ["accessRequests.get", "GET", "/api/access-requests/:id", { feature: "accessRequests" }],
       ["accessRequests.decide", "POST", "/api/access-requests/:id/decision", { feature: "accessRequests" }],
       ["accessRequests.revoke", "POST", "/api/access-requests/:id/revoke", { feature: "accessRequests" }],
-      ["accessRequests.secondEmail", "POST", "/api/second-email/:id", { feature: "accessRequests" }],
+      ["accessRequests.resendNotice", "POST", "/api/access-requests/:id/resend-notice", { feature: "accessRequests" }],
+      ["accessRequests.secondEmail", "POST", "/api/second-email/:id", { switch: "ACCESS_REQUESTS" }], // open on purpose: a running hold stays answerable whatever the flag says
     ]);
     for (const n of names) expect(ROUTES.find((r) => r.name === n).mcp).toBeUndefined();
   });
 
-  it("is dark while the flag is off: 404 to everyone, an admin included", async () => {
+  it("is dark while the flag is off: the admin routes are 404 to everyone, an admin included (403 not_admin for a member only once the flag is on)", async () => {
     const w = makeApi({ admins: [ADMIN], log: q });
     const admin = await signToken(ADMIN);
-    for (const [m, p] of [["GET", "/api/access-requests"], ["GET", `/api/access-requests/${ID1}`], ["POST", `/api/access-requests/${ID1}/decision`], ["POST", `/api/access-requests/${ID1}/revoke`], ["POST", `/api/second-email/${ID1}`]]) {
+    const member = await signToken(MEMBER);
+    for (const [m, p] of [
+      ["GET", "/api/access-requests"], ["GET", `/api/access-requests/${ID1}`], ["POST", `/api/access-requests/${ID1}/decision`], ["POST", `/api/access-requests/${ID1}/revoke`],
+      ["POST", `/api/access-requests/${ID1}/resend-notice`],
+    ]) {
       expect((await w.call(m, p, { token: admin, ...(m === "POST" ? { body: {} } : {}) })).status, `${m} ${p}`).toBe(404);
+      expect((await w.call(m, p, { token: member, ...(m === "POST" ? { body: {} } : {}) })).status, `${m} ${p} member`).toBe(404);
       expect((await w.call(m, p, { ...(m === "POST" ? { body: {} } : {}) })).status, `${m} ${p} signed out`).toBe(404);
     }
+    // the member's answer is not dark: it needs a session, and is the same 404 as no request for anyone who has no hold
+    const second = `/api/second-email/${ID1}`;
+    expect((await w.call("POST", second, { body: { response: "object" } })).status).toBe(401);
+    expect((await w.call("POST", second, { token: admin, body: { response: "object" } })).status).toBe(404);
   });
 
   it("answers 401 signed out and 403 not_admin to a member on every admin route, before it reads a thing", async () => {
@@ -155,6 +166,7 @@ describe("the routes exist and are for admins (AC1)", () => {
     for (const [m, p, body] of [
       ["GET", "/api/access-requests"], ["GET", `/api/access-requests/${ID1}`],
       ["POST", `/api/access-requests/${ID1}/decision`, { decision: "decline", version: 1 }], ["POST", `/api/access-requests/${ID1}/revoke`, { version: 1, confirmedOutside: true }],
+      ["POST", `/api/access-requests/${ID1}/resend-notice`, {}],
     ]) {
       expect((await w.call(m, p, null, { ...(body ? { body } : {}) })).status, `${m} ${p} signed out`).toBe(401);
       const r = await w.call(m, p, MEMBER, { ...(body ? { body } : {}) });
@@ -535,23 +547,133 @@ describe("a 'new' decision files a person.create system proposal (AC3)", () => {
     expect(w.sent.map((m) => [m.template, m.to])).toEqual([["approved", EMAIL]]);
   });
 
-  it("when the request is no longer awaiting_record (declined meanwhile) the approval still commits and links nothing", async () => {
+  const approveVia = async (w, proposal, who = ADMIN2, key = "approve-x", opts) => w.handler({
+    requestContext: { http: { method: "POST" } }, rawPath: `/api/proposals/${proposal.id}/decision`, cookies: [`io_id=${await w.token(who, opts)}`],
+    headers: { "content-type": "application/json", "if-match": `"${proposal.etag}"`, "idempotency-key": key }, body: JSON.stringify({ verdict: "approve" }),
+  });
+  const awaiting = async (w) => {
+    const detail = (await w.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body;
+    const made = await w.decide(ADMIN, ID1, { decision: "new", preview: detail.preview, version: 1, confirmedOutside: true });
+    expect(made.status, JSON.stringify(made.body)).toBe(200);
+    return made.body.proposalId;
+  };
+
+  it("when the request is declined meanwhile, its system proposal is withdrawn: nobody can approve it into a Person with no request", async () => {
+    const w = await world();
+    w.seed();
+    const id = await awaiting(w);
+    expect((await w.decide(ADMIN, ID1, { decision: "decline", version: 2 })).status).toBe(200);
+    expect(await loadProposal(w.storeCtx, id)).toMatchObject({ state: "withdrawn" });
+    const r = await approveVia(w, await loadProposal(w.storeCtx, id));
+    expect(r.statusCode, r.body).toBe(409);
+    expect(JSON.parse(r.body).error).toBe("invalid_state");
+    expect(w.allow()).toBeUndefined();
+    expect(w.req().state).toBe("declined");
+    expect(w.audits(`proposal:${id}`).map((a) => a.op)).toContain("proposal.withdraw");
+  });
+
+  it("a request that is no longer awaiting_record links nothing (completeAccessRequest is null), so an approval that got through still commits alone", async () => {
+    const w = await world();
+    w.seed({ state: "declined" });
+    const domain = createAccessRequests({ ddb: w.ddb, cmds, table: TABLE, now: () => w.clock.t, uid: () => "u1", log: q });
+    expect(await domain.completeAccessRequest({ requestId: ID1, grampsId: "I8001" })).toBeNull();
+    expect(await domain.completeAccessRequest({ requestId: "01J00000000000000000000999", grampsId: "I8001" })).toBeNull();
+  });
+
+  it("a manual link from awaiting_record withdraws the pending system proposal, so a later approval cannot mint a second Person", async () => {
+    const w = await world();
+    w.seed();
+    const id = await awaiting(w);
+    const people = () => [...w.ddb.rows.keys()].filter((k) => k.startsWith("REC#Person#") && k.endsWith("HEAD")).length;
+    const before = people();
+    const r = await w.link(ADMIN, ID1, { version: 2 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await loadProposal(w.storeCtx, id)).toMatchObject({ state: "withdrawn" });
+    const approve = await approveVia(w, await loadProposal(w.storeCtx, id));
+    expect(approve.statusCode).toBe(409);
+    expect(people()).toBe(before); // nothing was minted
+    expect(w.allow()).toMatchObject({ sub: LIVING, state: "active" });
+  });
+
+  it("withdrawSystem moves only an open system proposal: a decided, missing or member's proposal is left alone", async () => {
+    const w = await world();
+    w.seed();
+    const id = await awaiting(w);
+    expect(await withdrawSystem(w.storeCtx, id)).toBe(true);
+    expect(await withdrawSystem(w.storeCtx, id)).toBe(false); // already withdrawn
+    expect(await withdrawSystem(w.storeCtx, "01J00000000000000000000999")).toBe(false);
+    expect(await withdrawSystem(w.storeCtx, "not-an-id")).toBe(false);
+  });
+
+  it("a 'new' that loses the race to another admin's link withdraws the proposal it filed; a retry after a busy store keeps it", async () => {
     const w = await world();
     w.seed();
     const detail = (await w.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body;
-    const made = await w.decide(ADMIN, ID1, { decision: "new", preview: detail.preview, version: 1, confirmedOutside: true });
-    expect((await w.decide(ADMIN, ID1, { decision: "decline", version: 2 })).status).toBe(200);
-    const proposal = await loadProposal(w.storeCtx, made.body.proposalId);
-    const token = await w.token(ADMIN2);
-    const r = await w.handler({
-      requestContext: { http: { method: "POST" } }, rawPath: `/api/proposals/${proposal.id}/decision`, cookies: [`io_id=${token}`],
-      headers: { "content-type": "application/json", "if-match": `"${proposal.etag}"`, "idempotency-key": "approve-2" }, body: JSON.stringify({ verdict: "approve" }),
-    });
-    expect(r.statusCode, r.body).toBe(200);
-    expect(w.allow()).toBeUndefined();
-    expect(w.req().state).toBe("declined");
+    const body = { decision: "new", preview: detail.preview, version: 1, confirmedOutside: true };
+    // the first transaction is the proposal's own; the second is the guarded commit: the version moves just before it (another admin decided)
+    w.race.before = async () => { w.race.before = async () => { w.ddb.rows.set(`ACCESSREQ#${ID1}\u0000META`, { ...w.req(), state: "active", version: 2, GSI1PK: "ACCESSREQS#active" }); }; };
+    expect(err(await w.decide(ADMIN, ID1, body))).toEqual({ status: 409, error: "conflict" });
+    const orphan = [...w.ddb.rows.values()].find((r) => r.entity === "proposal" && r.SK === "META").proposal;
+    expect(orphan.state).toBe("withdrawn");
+    // a busy store (503) is different: the request is unchanged, the proposal stays, and a retry with the same preview finds it
+    const w2 = await world();
+    w2.seed();
+    const d2 = (await w2.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body;
+    const b2 = { decision: "new", preview: d2.preview, version: 1, confirmedOutside: true };
+    const realSend = w2.ddb.send.bind(w2.ddb);
+    let n = 0;
+    w2.ddb.send = async (cmd) => {
+      if (cmd.constructor.name === "TransactWriteCommand" && ++n >= 2) throw Object.assign(new Error("busy"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "TransactionConflict" }] });
+      return realSend(cmd);
+    };
+    const busy = await w2.decide(ADMIN, ID1, b2);
+    expect(busy.status).toBe(503);
+    const kept = [...w2.ddb.rows.values()].find((r) => r.entity === "proposal" && r.SK === "META").proposal;
+    expect(kept.state).toBe("pending");
+    w2.ddb.send = realSend;
+    const again = await w2.decide(ADMIN, ID1, b2);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body.proposalId).toBe(kept.id);
+    // ... while a retry with a CORRECTED preview is refused outright (422), never answered with the first proposal in disguise
+    const w3 = await world();
+    w3.seed();
+    const d3 = (await w3.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body;
+    expect((await w3.decide(ADMIN, ID1, { decision: "new", preview: d3.preview, version: 1, confirmedOutside: true })).status).toBe(200);
+    w3.ddb.rows.set(`ACCESSREQ#${ID1}\u0000META`, { ...w3.req(), state: "pending", version: 1, GSI1PK: "ACCESSREQS#pending" }); // as if the commit never happened
+    const fixed = structuredClone(d3.preview);
+    fixed.person.primary_name.first_name = "Samantha";
+    expect(err(await w3.decide(ADMIN, ID1, { decision: "new", preview: fixed, version: 1, confirmedOutside: true }))).toEqual({ status: 422, error: "idempotency_mismatch" });
   });
 
+  it("approving the Person an access request asked for needs a sign-in within 900 s: a stale session cannot activate access (401 step_up_required)", async () => {
+    const w = await world();
+    w.seed();
+    const id = await awaiting(w);
+    const proposal = await loadProposal(w.storeCtx, id);
+    w.txns.length = 0;
+    const stale = await approveVia(w, proposal, ADMIN2, "approve-stale", { fresh: false });
+    expect(stale.statusCode, stale.body).toBe(401);
+    expect(JSON.parse(stale.body).error).toBe("step_up_required");
+    expect(w.txns).toEqual([]);
+    expect(w.allow()).toBeUndefined();
+    expect(w.req().state).toBe("awaiting_record");
+    expect((await approveVia(w, proposal, ADMIN2, "approve-fresh")).statusCode).toBe(200); // the same proposal with a fresh sign-in
+    expect(w.allow()).toMatchObject({ state: "active" });
+  });
+
+  it("assign mode finds the awaiting request however long the queue is: more than one page of awaiting requests is paged through", async () => {
+    const w = await world();
+    for (let i = 1; i <= 105; i += 1) {
+      const id = `01J00000000000000000${String(i).padStart(6, "0")}`;
+      w.seed({ id, state: "awaiting_record", proposalId: `01J00000000000000000P${String(i).padStart(5, "0")}`, emailHash: `h${i}`, email: `req${i}@example.test` });
+    }
+    const real = "01J0000000000000000999999Z".slice(0, 26);
+    w.seed({ id: real, state: "awaiting_record", proposalId: ID3, emailHash: "h-real", email: "real@example.test" }); // sorts after the first 100
+    const proposal = { id: ID3, state: "approved", decision: { verdict: "approve", applied: { "Person:forced-handle-0002": 1 } }, targets: [], proposer: { id: "system:access_request" } };
+    w.ddb.rows.set(`PROP#${ID3}\u0000META`, { PK: `PROP#${ID3}`, SK: "META", entity: "proposal", proposal });
+    const domain = createAccessRequests({ ddb: w.ddb, cmds, table: TABLE, now: () => w.clock.t, uid: () => "u1", log: q });
+    expect(await domain.accessRequestOf({ class: "Person", handle: "forced-handle-0002", store: w.storeCtx })).toBe(real);
+  });
   it("otherwise a later link from awaiting_record works (no gramps_id minted yet)", async () => {
     const w = await world();
     w.seed({ state: "awaiting_record", version: 2, proposalId: "01J0000000000000000000PROP" });
@@ -729,6 +851,35 @@ describe("revoke (AC4)", () => {
   });
 });
 
+describe("revoke records the confirmation, and its limits (PS-13, AC6)", () => {
+  it("an admin's revoke records 'confirmed outside the site' in the revoke audit and on the request; a member's own objection has nothing to confirm", async () => {
+    const w = await world();
+    w.seed();
+    await w.link(ADMIN, ID1);
+    expect((await w.revoke(ADMIN2, ID1, { reason: "left the family" })).status).toBe(200);
+    const audit = w.audits(`accessreq:${ID1}`).find((a) => a.op === "accessreq.revoke");
+    expect(audit.after).toEqual({ state: "revoked", sub: LIVING, confirmedOutside: true });
+    expect(w.req().decision.revoked).toMatchObject({ by: ADMIN2, confirmedOutside: true });
+    const m = await world();
+    m.seed();
+    await m.link(OWNER, ID1, { grampsId: HAS_EMAIL, allowSecondEmail: true });
+    expect((await m.call("POST", `/api/second-email/${ID1}`, HAS_EMAIL, { body: { response: "object" } })).status).toBe(200);
+    const objected = m.audits(`accessreq:${ID1}`).find((a) => a.op === "accessreq.object");
+    expect(objected.after).toEqual({ state: "revoked", sub: HAS_EMAIL });
+    expect(m.req().decision.revoked).toMatchObject({ byMember: true });
+    expect(m.req().decision.revoked).not.toHaveProperty("confirmedOutside");
+  });
+
+  it("KNOWN LIMIT (surfaces.md 7.9, an open issue for io): revoke goes through the request, which is gone 30 days after the decision, so older access cannot be revoked here", async () => {
+    const w = await world();
+    w.seed();
+    await w.link(ADMIN, ID1);
+    w.clock.t += DECIDED_TTL_SECONDS * 1000 + 1000;
+    expect(err(await w.revoke(ADMIN2, ID1))).toEqual({ status: 404, error: "not_found" });
+    expect(w.allow().state).toBe("active");
+  });
+});
+
 describe("allowSecondEmail (AC7, PS-13)", () => {
   it("is for the gramps-owner alone: 403 owner_only for an admin who is not, before anything else is read or written", async () => {
     const w = await world();
@@ -755,10 +906,12 @@ describe("allowSecondEmail (AC7, PS-13)", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const effectiveAt = new Date(T0 + HOLD_MS).toISOString();
     expect(HOLD_MS).toBe(72 * 3600_000);
-    expect(r.body).toEqual({ state: "active", emailSent: true, effectiveAt });
-    expect(w.allow()).toMatchObject({ state: "active", sub: HAS_EMAIL, effectiveAt });
-    expect(w.req()).toMatchObject({ state: "active", hold: { until: effectiveAt, grampsId: HAS_EMAIL }, decision: { secondEmail: true } });
-    expect(w.audits(`accessreq:${ID1}`)[0].after).toMatchObject({ secondEmail: true, confirmedOutside: true });
+    expect(r.body).toEqual({ state: "active", emailSent: true, memberNotified: true, effectiveAt });
+    expect(w.allow()).toMatchObject({ state: "active", sub: HAS_EMAIL, effectiveAt, noticedAt: new Date(T0).toISOString() });
+    expect(w.req()).toMatchObject({ state: "active", hold: { until: effectiveAt, grampsId: HAS_EMAIL, noticedAt: new Date(T0).toISOString() }, decision: { secondEmail: true } });
+    expect((await w.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body.hold).toEqual({ until: effectiveAt, noticed: true });
+    expect(w.audits(`accessreq:${ID1}`).find((a) => a.op === "accessreq.decide").after).toMatchObject({ secondEmail: true, confirmedOutside: true });
+    expect(w.audits(`accessreq:${ID1}`).map((a) => a.op).sort()).toEqual(["accessreq.decide", "accessreq.notice"]);
     // the member's inbox item, content-free and opening the inbox
     const items = (await w.inbox.list(HAS_EMAIL)).items;
     expect(items.map((i) => [i.type, i.navigate])).toEqual([["second_email_notice", "/me/inbox/"]]);
@@ -801,7 +954,7 @@ describe("allowSecondEmail (AC7, PS-13)", () => {
     expect(r.body).toEqual({ state: "active", effective: true });
     expect(w.allow()).not.toHaveProperty("effectiveAt");
     expect(isAllowedNow(w.allow(), w.clock.t)).toBe(true);
-    expect(w.audits(`accessreq:${ID1}`).map((a) => a.op).sort()).toEqual(["accessreq.confirm", "accessreq.decide"]);
+    expect(w.audits(`accessreq:${ID1}`).map((a) => a.op).sort()).toEqual(["accessreq.confirm", "accessreq.decide", "accessreq.notice"]);
     // a late confirm after the window is a no-op that says so
     w.clock.t += HOLD_MS;
     expect((await w.call("POST", `/api/second-email/${ID1}`, HAS_EMAIL, { body: { response: "confirm" } })).body).toEqual({ state: "active", effective: true });
@@ -849,6 +1002,99 @@ describe("allowSecondEmail (AC7, PS-13)", () => {
     expect(r.body).toEqual({ state: "active", emailSent: true });
     expect(w.allow()).not.toHaveProperty("effectiveAt");
     expect((await w.inbox.list(LIVING)).items).toEqual([]);
+  });
+});
+
+describe("a second email fails closed when the member's notice is lost (PS-13)", () => {
+  const brokenInbox = () => {
+    const inbox = new InMemoryNotificationStore();
+    inbox.add = async () => { throw new Error("down"); };
+    return inbox;
+  };
+  const held = (w) => w.link(OWNER, ID1, { grampsId: HAS_EMAIL, allowSecondEmail: true });
+  const resend = (w, who = OWNER, opts) => w.call("POST", `/api/access-requests/${ID1}/resend-notice`, who, { body: {}, ...opts });
+  const canSignIn = async (w) => {
+    const item = await readAllowEntry(w.ddb, cmds, TABLE, EMAIL);
+    return Boolean(item && isAllowedNow(item, w.clock.t));
+  };
+
+  it("with the inbox and the mail both failing the link still commits but says memberNotified:false, and the address stays closed however long the clock runs", async () => {
+    const w = await world({ mailFails: true, inbox: brokenInbox() });
+    w.seed();
+    const r = await held(w);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ state: "active", emailSent: false, memberNotified: false });
+    expect(w.allow()).toMatchObject({ state: "active", sub: HAS_EMAIL });
+    expect(w.allow()).not.toHaveProperty("noticedAt");
+    expect((await w.call("GET", `/api/access-requests/${ID1}`, ADMIN)).body.hold.noticed).toBe(false);
+    w.clock.t += HOLD_MS * 5; // 15 days: far past the planned date, inside the request's 30 day life
+    expect(await canSignIn(w)).toBe(false);
+    const reader = createCompositeMemberReader({ readEntries: async () => new Map(), ddb: w.ddb, cmds, table: TABLE, now: () => w.clock.t, ttlMs: 0, log: q });
+    expect(await reader(HAS_EMAIL)).toBeNull();
+    // the member can still object (the clock never started), and it ends the grant
+    expect((await w.call("POST", `/api/second-email/${ID1}`, HAS_EMAIL, { body: { response: "object" } })).body).toEqual({ state: "revoked" });
+  });
+
+  it("the owner re-sends the notice: the 72 hours start when it is delivered, the requester is told the date then, and a second re-send is refused", async () => {
+    const w = await world({ mailFails: true, inbox: brokenInbox() });
+    w.seed();
+    await held(w);
+    w.clock.t += 5 * 86400_000; // the planned date came and went unseen
+    expect(await canSignIn(w)).toBe(false);
+    expect(err(await resend(w, ADMIN))).toEqual({ status: 403, error: "owner_only" });
+    expect(err(await resend(w, OWNER, { fresh: false }))).toEqual({ status: 401, error: "step_up_required" });
+    const still = await resend(w); // still nothing gets through
+    expect(still.body).toEqual({ state: "active", memberNotified: false, emailSent: false });
+    expect(await canSignIn(w)).toBe(false);
+    w.mail.fail = false;
+    const r = await resend(w);
+    const effectiveAt = new Date(w.clock.t + HOLD_MS).toISOString();
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ state: "active", memberNotified: true, emailSent: true, effectiveAt });
+    expect(w.sent.find((m) => m.to === OLD_EMAIL)).toEqual({ template: "second_email_notice", to: OLD_EMAIL, vars: {} });
+    expect(w.sent.find((m) => m.to === EMAIL)).toEqual({ template: "approved_later", to: EMAIL, vars: { when: effectiveAt.slice(0, 10) } });
+    expect(w.allow()).toMatchObject({ effectiveAt, noticedAt: new Date(w.clock.t).toISOString() });
+    expect(w.req().hold).toMatchObject({ until: effectiveAt, noticedAt: new Date(w.clock.t).toISOString() });
+    expect(await canSignIn(w)).toBe(false);
+    w.clock.t += HOLD_MS - 1000;
+    expect(await canSignIn(w)).toBe(false);
+    w.clock.t += 1000;
+    expect(await canSignIn(w)).toBe(true);
+    expect(err(await resend(w))).toEqual({ status: 409, error: "already_noticed" });
+  });
+
+  it("an inbox item alone is a delivered notice (mail failing), and a mail alone is too (inbox failing)", async () => {
+    const a = await world({ mailFails: true });
+    a.seed();
+    expect((await held(a)).body).toMatchObject({ memberNotified: true, effectiveAt: new Date(T0 + HOLD_MS).toISOString() });
+    expect((await a.inbox.list(HAS_EMAIL)).items).toHaveLength(1);
+    const b = await world({ inbox: brokenInbox() });
+    b.seed();
+    expect((await held(b)).body).toMatchObject({ memberNotified: true });
+  });
+
+  it("a re-send needs a held, un-noticed second email: 409 for a plain link or a pending request, 404 for an unknown one", async () => {
+    const w = await world();
+    w.seed();
+    expect(err(await resend(w))).toEqual({ status: 409, error: "conflict" }); // pending
+    await w.link(OWNER, ID1, { grampsId: LIVING });
+    expect(err(await resend(w))).toEqual({ status: 409, error: "conflict" }); // an ordinary link has no hold
+    expect(err(await w.call("POST", "/api/access-requests/01J00000000000000000000999/resend-notice", OWNER, { body: {} }))).toEqual({ status: 404, error: "not_found" });
+  });
+
+  it("the member can still answer when the accessRequests flag is turned off mid-hold; the admin routes go dark", async () => {
+    const w = await world();
+    w.seed();
+    await held(w);
+    w.flags.accessRequests = false;
+    expect((await w.call("GET", "/api/access-requests", OWNER)).status).toBe(404);
+    expect((await resend(w)).status).toBe(404);
+    const r = await w.call("POST", `/api/second-email/${ID1}`, HAS_EMAIL, { body: { response: "object" } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ state: "revoked" });
+    expect(w.allow().state).toBe("revoked");
+    // everyone else is still the same 404 as no request
+    expect((await w.call("POST", `/api/second-email/${ID1}`, ADMIN, { body: { response: "object" } })).status).toBe(404);
   });
 });
 

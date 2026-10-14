@@ -250,7 +250,7 @@ describe("sign-in through the edge", () => {
 
 describe("a held second email and the admin API's items (surf-access-admin-api)", () => {
   const HOLD = "2026-03-07T05:06:07.000Z";
-  const held = (email, sub) => allow(email, sub, "active", { effectiveAt: HOLD });
+  const held = (email, sub) => allow(email, sub, "active", { effectiveAt: HOLD, noticedAt: "2026-03-01T00:00:00.000Z" });
 
   it("a held address is denied until effectiveAt, then admitted, with the clock injected and no sweep", async () => {
     let t = Date.parse(HOLD) - 1;
@@ -260,6 +260,12 @@ describe("a held second email and the admin API's items (surf-access-admin-api)"
     expect(await r("second@example.com", { kind: "google" })).toEqual({ sub: "I0111", label: "second@example.com", roles: ["member"], claims: {} });
     // the member's first address, listed in io's file, is not touched by the second one
     expect((await r("ana@example.com", { kind: "google" }))?.sub).toBe("I0111");
+  });
+
+  it("a held address whose member notice was never delivered (no noticedAt) is denied even after effectiveAt: fail closed", async () => {
+    const lost = allow("second@example.com", "I0111", "active", { effectiveAt: HOLD });
+    const r = createCompositeResolver({ s3: s3Resolver(), ddb: fakeDoc([lost]), cmds, table: TABLE, log: quiet, now: () => Date.parse(HOLD) + 10 * 86400_000 });
+    expect(await r("second@example.com", { kind: "google" })).toBeNull();
   });
 
   it("a held address is denied even when io's file lists it (an item overrides the file); the member's confirmation (no effectiveAt) admits it", async () => {

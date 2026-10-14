@@ -22,10 +22,15 @@ export const emailOfAllowItem = (item) => (typeof item?.PK === "string" && item.
  * An item grants access at `nowMs` only when it is active, names a principal, and has taken effect. `effectiveAt` (an ISO time) is set on a SECOND
  * email for a member who already has access (surf-access-admin-api, review PS-13): the grant counts 72 hours after an admin allows it, unless the
  * member confirms it sooner (the admin API removes `effectiveAt`) or objects (the item is revoked). A malformed `effectiveAt` never grants.
+ *
+ * A held item also needs `noticedAt`: the API stamps it only once the member's notice (an inbox item or a mail to an address they already use) was
+ * actually delivered, and moves `effectiveAt` to 72 hours after that. A notice that was lost therefore never lets the hold run out unseen: the
+ * grant stays closed until the owner re-sends the notice (fail closed, review PS-13). A confirmation removes `effectiveAt` and needs no notice.
  */
 export function isAllowedNow(item, nowMs) {
   if (item?.state !== "active" || typeof item.sub !== "string" || item.sub.length === 0) return false;
   if (item.effectiveAt === undefined || item.effectiveAt === null) return true;
+  if (typeof item.noticedAt !== "string" || !Number.isFinite(Date.parse(item.noticedAt))) return false;
   const at = typeof item.effectiveAt === "string" ? Date.parse(item.effectiveAt) : Number.NaN;
   return Number.isFinite(at) && at <= nowMs;
 }

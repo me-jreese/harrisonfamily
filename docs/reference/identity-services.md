@@ -345,7 +345,7 @@ For one email, the composite resolver decides in this order:
 | DynamoDB `ALLOW#<email>` | S3 file | Result |
 | --- | --- | --- |
 | `active` | listed or not | The principal: `sub` from the item, `label` the email, `roles` `["member"]`, `claims` `{}`. The item's `sub` wins over the file's. |
-| `active` with an `effectiveAt` still ahead | listed or not | `null` until `effectiveAt` (a second email for a member who already has access, held 72 hours for the member to object; `isAllowedNow` in `shared/allowlist-store.mjs` compares the clock, so nothing runs when the time comes). The item still beats the file. |
+| `active` with an `effectiveAt` still ahead | listed or not | `null` until `effectiveAt`, and always `null` without `noticedAt` (a second email for a member who already has access, held 72 hours from the moment the member's notice was delivered, for the member to object; `isAllowedNow` in `shared/allowlist-store.mjs` compares the clock, so nothing runs when the time comes). The item still beats the file. |
 | `revoked` | listed or not | `null`, so `403 not_allowlisted`. A revoked item beats the file. |
 | any other `state`, or no `sub` | any | `null`. A malformed item denies; it does not fall through. |
 | no item | listed | The file's principal, exactly as before. |

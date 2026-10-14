@@ -5,6 +5,8 @@
 //
 // The api role's ses:SendEmail grant, conditioned on ses:FromAddress, comes from app-stack-sync-infra (SesIdentityArn, SesFromAddress and
 // SesConfigurationSet; test_app_stack.py pins it), so this mailer sends from SES_FROM_ADDRESS with SES_CONFIGURATION_SET.
+// That is the api's general identity, not the auth edge's Join* identity: the join alarms (bounce, complaint) do not see these admin-triggered mails.
+// AC5 names the sync-infra grant, so this stays; whether requester mail should move to the Join* identity is an open question for io.
 import { renderEmail } from "./shared/emails.mjs";
 
 /** The SESv2 SendEmail input for one template. `from` is a bare address (the IAM ses:FromAddress condition compares it exactly). */

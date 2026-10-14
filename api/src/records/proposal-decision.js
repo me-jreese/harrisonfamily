@@ -19,6 +19,7 @@
 //                           - the guard failing now (the rules may have tightened since) moves the proposal to needs_changes with a system reason;
 //                             the matched text is never echoed, logged or stored
 //                           - a destructive result (an object deleted, a parent, child or spouse link removed) needs auth_time within 900 s (401 step_up_required)
+//                           - so does approving the Person an access request asked for (the link that lets the requester sign in commits with it)
 //                           - ONE applyBatch() transaction (origin "proposal", on behalf of the proposer) carries the record ops AND, through a contributor
 //                             that is local to this call: the proposal META (pinned to etag and state), every IDX# copy, AUDIT#proposal, the IDEM# receipt,
 //                             the completeAccessRequest fragment and contribOps(proposal_accepted, actor = the proposer). A concurrent second approval
@@ -374,6 +375,10 @@ async function approve(c, prev, input, requestHash) {
   const amended = input.amend !== undefined;
   const nowMs = ctx.now();
   const idem = { input, requestHash };
+
+  // Approving the Person an access request asked for also lets the requester sign in (the completeAccessRequest link commits with the approval), so it
+  // needs the same sign-in at most 900 s old as the `link` decision does (401 step_up_required). A stale session cannot activate access by approving.
+  if (accessRequestOf(prev) && [...arr(prev.ops), ...arr(input.amend?.ops)].some((o) => o?.op === "create" && o.cls === "Person")) requireRecentSignIn(actor, nowMs);
 
   let planned;
   for (let round = 0; ; round += 1) {

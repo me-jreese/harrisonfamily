@@ -186,20 +186,25 @@ describe("a held second email (effectiveAt, PS-13)", () => {
 
   it("counts only from effectiveAt on; a malformed one never grants; no effectiveAt means now", () => {
     const base = { state: "active", sub: "I0555" };
-    expect(isAllowedNow({ ...base, effectiveAt: HOLD }, Date.parse(HOLD) - 1)).toBe(false);
-    expect(isAllowedNow({ ...base, effectiveAt: HOLD }, Date.parse(HOLD))).toBe(true);
-    expect(isAllowedNow({ ...base, effectiveAt: "soon" }, Date.parse(HOLD))).toBe(false);
-    expect(isAllowedNow({ ...base, effectiveAt: 5 }, Date.parse(HOLD))).toBe(false);
+    const noticed = { ...base, noticedAt: "2026-03-01T00:00:00.000Z" };
+    expect(isAllowedNow({ ...noticed, effectiveAt: HOLD }, Date.parse(HOLD) - 1)).toBe(false);
+    expect(isAllowedNow({ ...noticed, effectiveAt: HOLD }, Date.parse(HOLD))).toBe(true);
+    expect(isAllowedNow({ ...noticed, effectiveAt: "soon" }, Date.parse(HOLD))).toBe(false);
+    expect(isAllowedNow({ ...noticed, effectiveAt: 5 }, Date.parse(HOLD))).toBe(false);
+    // fail closed (PS-13): a hold whose member notice was never delivered (no noticedAt, or a malformed one) never runs out
+    expect(isAllowedNow({ ...base, effectiveAt: HOLD }, Date.parse(HOLD) + 10 * 86400_000)).toBe(false);
+    expect(isAllowedNow({ ...base, effectiveAt: HOLD, noticedAt: "later" }, Date.parse(HOLD) + 10 * 86400_000)).toBe(false);
     expect(isAllowedNow(base, 0)).toBe(true);
     expect(isAllowedNow({ ...base, state: "revoked" }, Date.parse(HOLD))).toBe(false);
     expect(isAllowedNow({ state: "active" }, 0)).toBe(false);
     // as a bare callback it takes the item alone (the index must not become the clock)
-    expect([{ ...base, effectiveAt: "2000-01-01T00:00:00.000Z" }, { ...base }].filter(isActiveAllowItem)).toHaveLength(2);
+    expect([{ ...noticed, effectiveAt: "2000-01-01T00:00:00.000Z" }, { ...base }].filter(isActiveAllowItem)).toHaveLength(2);
   });
 
   it("the member reader does not count a held address, and does once the clock passes it", async () => {
     const ddb = createFakeDdb();
     await grantAllow(ddb, cmds, T, { ...grant, effectiveAt: HOLD });
+    for (const [k, r] of ddb.rows) if (r.PK?.startsWith("ALLOW#")) ddb.rows.set(k, { ...r, noticedAt: "2026-03-01T00:00:00.000Z" }); // the member's notice was delivered
     let t = Date.parse(HOLD) - 1000;
     const read = createCompositeMemberReader({ readEntries: async () => new Map(), ddb, cmds, table: T, log: quiet, ttlMs: 0, now: () => t });
     expect(await read("I0555")).toBeNull();
