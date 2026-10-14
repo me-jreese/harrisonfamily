@@ -14,6 +14,14 @@
   <link rel="stylesheet" href="/css/hfy-theme.css?v=f103422b" />
   <!-- hfy-theme:end B -->
   <meta name="robots" content="noindex">
+  <!-- HFY-TSK-301: the island's place is a screen tall from the first paint, so the footer does not ride down as the tree arrives (CLS). It must
+       be here, not in the island's CSS, which loads after the page has painted. Released for the short states (data-tree-state: being prepared,
+       sign in, error, offline), when the tree is off or did not load (data-tree-unavailable) and when scripting is off, so none of them sits above a blank screen. -->
+  <style>
+    [data-island="tree"] { min-height: 100vh; }
+    [data-island="tree"]:has([data-tree-state]), main:has([data-tree-unavailable]) [data-island="tree"] { min-height: 0; }
+    @media (scripting: none) { [data-island="tree"] { min-height: 0; } }
+  </style>
 </head>
 <body>
   <main class="hfy-page">
@@ -27,6 +35,6 @@
       <nav class="site-footer__links" aria-label="about this site"><a href="/about/">about</a><a href="/contact/">contact</a><a href="/privacy/">privacy</a><a href="/terms/">terms</a></nav>
     </div>
   </footer>
-  <script src="/js/feature-flags.js?v=1d320bfd"></script>
+  <script src="/js/feature-flags.js?v=369a5c7f"></script>
 </body>
 </html>

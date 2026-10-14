@@ -167,7 +167,11 @@ test("structure: focus section with h2, grouped lists of re-centre buttons, one 
   await expect(outline(page).locator("details").nth(1)).toHaveAttribute("open", "");
   await expect(outline(page).locator("details").nth(0)).not.toHaveAttribute("open", "");
   await expect(outline(page).locator("details").last().locator("summary")).toContainText("not yet connected");
-  await expect(page.locator("[role=tree], [role=treeitem], [tabindex]:not([tabindex='-1'])")).toHaveCount(0);
+  // No tree widget, and no tab stop other than the natively focusable controls. The one place a roving tabindex is allowed is the cards view
+  // itself (<family-navigator>, its own tab pattern); everything else on the page, the toggle, the notice, the focus navigator and the outline
+  // included, adds none. (The outline-only page has none at all: tests/tree-fallback.spec.mjs.)
+  await expect(page.locator("[role=tree], [role=treeitem]")).toHaveCount(0);
+  expect(await page.evaluate(() => [...document.querySelectorAll("[tabindex]:not([tabindex='-1'])")].filter((e) => !e.closest("family-navigator")).length)).toBe(0);
 });
 
 test("grandparents are a collapsed fold; the outline re-centres and marks the current person", async ({ page }) => {
@@ -473,6 +477,8 @@ test("cards view: axe reports no serious or critical issues at 375px, with each 
   expect(await axeViolations(page, { include: ".hfy-tree" })).toEqual([]);
   await nav(page).locator(".hfy-nav__card--focus").click();
   await expect(page.getByRole("dialog")).toBeVisible();
+  // the sheet fades in: axe reads the colour mid-fade as low contrast, so let its transitions finish first
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null))));
   expect(await axeViolations(page, { include: "[role=dialog]" })).toEqual([]);
 });
 
@@ -550,5 +556,6 @@ test("cards: a chart chunk that fails to load leaves the outline and the focus n
   await expect(focusName(page)).toHaveText("Ada Example");
   await expect(outline(page)).toBeVisible();
   await expect(page.locator("family-navigator")).toHaveCount(0);
+  await expect(page.locator("[data-tree-chart-failed]")).toHaveText("the chart didn't load. the outline below has everything.");
   await expect.poll(() => errors.some((e) => e.includes("CHART_CHUNK_FAILED"))).toBe(true);
 });

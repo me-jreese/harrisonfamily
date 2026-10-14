@@ -53,7 +53,7 @@ export const focusParam = (search) => new URLSearchParams(search).get("focus") |
 export function focusUrl(loc, id) {
   const q = new URLSearchParams(loc.search);
   q.set("focus", id);
-  return `${loc.pathname}?${q.toString()}`;
+  return `${loc.pathname}?${q.toString()}${loc.hash || ""}`;
 }
 
 const yearsOf = (p) => {

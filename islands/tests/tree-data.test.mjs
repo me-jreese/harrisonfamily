@@ -46,6 +46,7 @@ test("URL helpers: focusParam, focusUrl keeps other parameters, signInHref retur
   assert.equal(focusParam(""), null);
   assert.equal(focusUrl({ pathname: "/tree/", search: "?view=chart" }, "I9002"), "/tree/?view=chart&focus=I9002");
   assert.equal(focusUrl({ pathname: "/tree/", search: "" }, "I9002"), "/tree/?focus=I9002");
+  assert.equal(focusUrl({ pathname: "/tree/", search: "?focus=I9001", hash: "#generations" }, "I9002"), "/tree/?focus=I9002#generations");
   assert.equal(signInHref({ pathname: "/tree/", search: "?focus=I9007" }), "/auth/login?returnTo=%2Ftree%2F%3Ffocus%3DI9007");
 });
 
