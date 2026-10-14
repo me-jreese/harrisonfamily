@@ -1,7 +1,9 @@
 // Photo tags (HFY-TSK-169, flag photoTags; HFY-PLN-002 surfaces 8.2): the DOM part. Fills the person page's gallery and lightbox from
 // the cleaned tags (lib/photo-tags.js). It adds nodes next to the page's own and never edits the page's: a decorative layer inside
 // each thumbnail button, a names list under each tagged photo, and, in the lightbox, a layer of interactive region links, a names
-// list under the caption and a "names" toggle in the header.
+// list under the caption and a "names" toggle in the header. Each names-list chip is the name as a link to the person's page
+// (ruling P2-R53, which applies P2-R46 to the names under a photo; lib/person-name.js) and, beside it, a 44px icon button that shows
+// the tag's data and highlights its region.
 //
 // Every string that came from the data (a name, an attribute, a note, a citation title) is put in with textContent. Nothing here
 // builds markup from data, so an <img onerror> value is shown as the text it is.
@@ -18,6 +20,7 @@ import {
   stackLabels,
   tagsOf
 } from "./photo-tags.js";
+import { personNameNode } from "./person-name.js";
 
 let serial = 0;
 const nextId = (prefix) => `${prefix}-${(serial += 1)}`;
@@ -35,10 +38,17 @@ const HIDE_DELAY_MS = 160;
 const CARD_MARGIN = 8;
 
 // ---------------------------------------------------------------------------------------------------------------- details
-/** The tag data as text nodes: the Gramps data (area, attributes, notes, citations, source) and, apart, the site's own line. */
-export function buildDetails(view) {
+/**
+ * The tag data as text nodes: the Gramps data (area, attributes, notes, citations, source) and, apart, the site's own line. With `link`
+ * (the pinned panel), the name heading the data is a link to the person's page when the tag names a Gramps person id (HFY-TSK-323,
+ * ruling P2-R46: a listed name is a link; lib/person-name.js); the hovercard is a tooltip, plain text only, so there it stays text.
+ */
+export function buildDetails(view, { link = false } = {}) {
   const box = node("div", "photo-tags__details");
-  box.append(node("p", "photo-tags__who", view.isPrimary ? `${view.name} · their portrait` : view.name));
+  const who = node("p", "photo-tags__who");
+  who.append(personNameNode(document, { id: link ? view.grampsId : null, name: view.name }));
+  if (view.isPrimary) who.append(document.createTextNode(" · their portrait"));
+  box.append(who);
   const facts = node("dl", "photo-tags__facts");
   const row = (term, values) => {
     if (!values.length) return;
@@ -112,9 +122,12 @@ function placeCard(card, anchor) {
 
 // ---------------------------------------------------------------------------------------------------------------- names list
 /**
- * The names list for one photo: `ul.photo-tags__names` (one button per tag), the hovercards inside its items and one pinned
- * panel per tag after the list. `regions` maps a tag index to its region element (or nothing), kept live by the caller, so a
- * name, a hover and a pin highlight the region.
+ * The names list for one photo: `ul.photo-tags__names`, one chip (`li.photo-tags__item`) per tag, the hovercards inside the chips
+ * and one pinned panel per tag after the list. A chip holds the name, `a.hfy-person-name.photo-tags__name` to the person's page
+ * (a span when the tag names no Gramps person id; ruling P2-R53), and `button.photo-tags__show` ("show where {name} is in the
+ * photo"), which does what the whole chip did before: keyboard focus shows the hovercard, a click, tap or Enter pins the panel, and
+ * it carries aria-expanded and aria-controls. A fine-pointer hover anywhere on the chip shows the card too. `regions` maps a tag
+ * index to its region element (or nothing), kept live by the caller, so a hover, a focus and a pin highlight the region.
  * Returns { root, list, regions, setActive, hideCard, destroy }.
  */
 export function buildNames(views, { regions = new Map(), listId = nextId("photo-tags-list") } = {}) {
@@ -123,6 +136,7 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
   list.id = listId;
   list.setAttribute("aria-label", "in this photo");
   root.append(list);
+  const chips = [];
   const buttons = [];
   const cards = [];
   const panels = [];
@@ -135,7 +149,7 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
   const setActive = (i, on) => {
     const region = regions.get(i);
     if (region) region.classList.toggle("is-active", on);
-    buttons[i].classList.toggle("is-active", on);
+    chips[i].classList.toggle("is-active", on);
   };
   const refresh = (i) => setActive(i, i === pinned || i === hovered);
   const hideCard = () => {
@@ -196,9 +210,14 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
 
   views.forEach((view, i) => {
     const li = node("li", "photo-tags__item");
-    const button = node("button", "photo-tags__name", view.name);
+    const name = personNameNode(document, { id: view.grampsId, name: view.name, className: "photo-tags__name" });
+    const button = node("button", "photo-tags__show");
     button.type = "button";
+    button.setAttribute("aria-label", `show where ${view.name} is in the photo`);
     button.setAttribute("aria-expanded", "false");
+    const icon = node("span", "photo-tags__show-icon");
+    icon.setAttribute("aria-hidden", "true");
+    button.append(icon);
     const card = node("div", "photo-tags__card");
     card.id = nextId("photo-tags-card");
     card.setAttribute("role", "tooltip");
@@ -207,7 +226,7 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
     const panel = node("div", "photo-tags__panel");
     panel.id = nextId("photo-tags-panel");
     panel.hidden = true;
-    panel.append(buildDetails(view));
+    panel.append(buildDetails(view, { link: true }));
     const href = personHref(view);
     if (href) {
       const open = node("a", "photo-tags__open", `open ${view.name}'s page`);
@@ -215,16 +234,21 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
       panel.append(open);
     }
     button.setAttribute("aria-controls", panel.id);
-    button.addEventListener("pointerenter", (e) => { if (finePointer(e)) showCard(i, button); });
-    button.addEventListener("pointerleave", (e) => { if (finePointer(e)) leave(i); });
-    button.addEventListener("focus", () => { if (button.matches(":focus-visible")) showCard(i, button); });
+    // The card sits under the chip, whichever half of it (the name or the button) the pointer or the focus is on. Not on the <li>: the
+    // card is inside it, so entering the card would re-anchor a card that a lightbox region opened.
+    for (const el of [name, button]) {
+      el.addEventListener("pointerenter", (e) => { if (finePointer(e)) showCard(i, li); });
+      el.addEventListener("pointerleave", (e) => { if (finePointer(e)) leave(i); });
+    }
+    button.addEventListener("focus", () => { if (button.matches(":focus-visible")) showCard(i, li); });
     button.addEventListener("blur", () => { hovered = -1; hideCard(); refresh(i); });
     button.addEventListener("click", () => togglePin(i));
     card.addEventListener("pointerenter", () => window.clearTimeout(timer));
     card.addEventListener("pointerleave", (e) => { if (finePointer(e)) leave(i); });
-    li.append(button, card);
+    li.append(name, button, card);
     list.append(li);
     root.append(panel);
+    chips.push(li);
     buttons.push(button);
     cards.push(card);
     panels.push(panel);

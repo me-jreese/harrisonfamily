@@ -55,7 +55,8 @@ Requests are handled in this order:
 8. OAuth routes, including `/auth/userinfo`, if the authorization server is enabled.
 9. `POST /auth/verify`, refused with `410`.
 10. `POST /auth/password/forgot`, counted against the rate limit; a request over the limit stops here with `429`.
-11. Everything else goes to the kit app, with `/auth/login`'s `returnTo` normalized first. The kit's response is then rewritten (cookies, `Location`, links and the HTML overrides). The JSON `returnTo` of `/auth/password` and `/auth/passkey/login/verify`, and the `Location` of a `/auth/callback` redirect, are normalized afterwards.
+11. The [access-request routes](#access-request-routes), if the path starts with `/auth/access-request/`.
+12. Everything else goes to the kit app, with `/auth/login`'s `returnTo` normalized first. The kit's response is then rewritten (cookies, `Location`, links and the HTML overrides). The JSON `returnTo` of `/auth/password` and `/auth/passkey/login/verify`, and the `Location` of a `/auth/callback` redirect, are normalized afterwards.
 
 ### edge.manifest.json
 
@@ -85,7 +86,7 @@ Requests are handled in this order:
 | `resolver` | `{ "kind": "s3_allowlist", "bucket": "<config-bucket>", "key": "config/userGrampsID.json", "cacheSeconds": 300 }` | See [Principal resolution](#principal-resolution). |
 | `theme.cssUrl` | `https://<site>/css/auth-edge.css?v=<sha8>` | The sign-in stylesheet (see [Page theme and HFY overrides](#page-theme-and-hfy-overrides)). `<sha8>` is the first 8 hex digits of the SHA-256 of `11ty/css/auth-edge.css`. The islands build ([`islands/assets.mjs`](../../islands/assets.mjs), `versionManifestCss`) rewrites this one value in place when it builds into `11ty/`, and `npm run check:islands` fails while it is stale. There is no `theme.vars`. |
 | `theme.fontOrigins` | `["self"]` | Read by the kit (2.2.0) into the pages' CSP `font-src`, which lets the pages load the self-hosted fonts under `https://<site>/fonts/`. |
-| `copy` | Every key of the kit's `DEFAULT_COPY` (kit `edge/deploy/manifest.js`): `title`, `subtitle`, `google_heading`, `password_heading`, `email_label`, `password_label`, `sign_in`, `forgot`, `verify_link`, `passkey_heading`, `passkey_button`, `passkey_failed`, `passkey_add_title`, `passkey_add_body`, `passkey_add`, `passkey_later`, `passkey_manage`, `passkey_remove`, `denied_title`, `denied_body`, `invalid_credentials`, `unconfirmed`, `generic_error`, `forgot_title`, `forgot_done`, `reset_title`, `verify_title`, `link_title`, `link_password`, `code_label`, `new_password_label`, `submit`, `done` | The family-voice text of the sign-in, password, passkey, denied, forgot and reset, verify and account (`/auth/link`) pages. No `DEFAULT_COPY` text is shown. The kit literals named under [On the kit pages](#on-the-kit-pages), the linked-method items on `/auth/link` (`<kind> (<email>)`, or `-` when none), and the HTML 404 text "Not found" remain. A test in [`auth/test/edge.test.js`](../../auth/test/edge.test.js) checks that every key is set. |
+| `copy` | Every key of the kit's `DEFAULT_COPY` (kit `edge/deploy/manifest.js`): `title`, `subtitle`, `google_heading`, `password_heading`, `email_label`, `password_label`, `sign_in`, `forgot`, `verify_link`, `passkey_heading`, `passkey_button`, `passkey_failed`, `passkey_cancelled`, `passkey_exists`, `passkey_unsupported`, `passkey_add_title`, `passkey_add_body`, `passkey_add`, `passkey_later`, `passkey_manage`, `passkey_remove`, `denied_title`, `denied_body`, `invalid_credentials`, `unconfirmed`, `generic_error`, `error_details`, `forgot_title`, `forgot_done`, `reset_title`, `verify_title`, `link_title`, `link_password`, `code_label`, `new_password_label`, `submit`, `done` | The family-voice text of the sign-in, password, passkey, denied, forgot and reset, verify and account (`/auth/link`) pages. No `DEFAULT_COPY` text is shown. The kit literals named under [On the kit pages](#on-the-kit-pages), the linked-method items on `/auth/link` (`<kind> (<email>)`, or `-` when none), and the HTML 404 text "Not found" remain. A test in [`auth/test/edge.test.js`](../../auth/test/edge.test.js) checks that every key is set. |
 
 `loadManifest` in `edge.js` copies the manifest and fills in the three runtime ids. If `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID` or `GOOGLE_CLIENT_ID` is missing, it throws `environment variable <NAME> is not set`. Startup fails closed: every request then returns `500 {"code":"AUTH_CONFIG"}`. Set `EDGE_MANIFEST_PATH` to load the manifest from a different path.
 
@@ -97,7 +98,7 @@ Every POST route below, and `DELETE /auth/passkey/<id>`, requires the header `X-
 
 | Method | Path | Request | Response |
 | --- | --- | --- | --- |
-| GET | `/auth/login?returnTo=` | | HTML sign-in page with three paths: the Google button (with no automatic One Tap prompt, see `providers[0]` under [edge.manifest.json](#edgemanifestjson)), an email and password form, and the passkey button (`id="pk-btn"`, labelled with the manifest's `passkey_button`). The email field has `autocomplete="username webauthn"`, so a browser with passkey autofill offers saved passkeys from that field. The page posts to `/auth/google`, `/auth/password` and the passkey routes. A failed sign-in shows the manifest text for its `detail`: `denied_body` for `not_allowlisted`, `invalid_credentials`, `unconfirmed`, `passkey_failed` for `passkey_unknown`, `passkey_assertion_failed` and `passkey_clone_suspected` (and for a passkey ceremony that throws), and otherwise `generic_error` (kit `edge/deploy/pages.js`, `ioFail`). See [Passkeys: On the kit pages](#on-the-kit-pages) and [Page theme and HFY overrides](#page-theme-and-hfy-overrides). |
+| GET | `/auth/login?returnTo=` | | HTML sign-in page with three paths: the Google button (with no automatic One Tap prompt, see `providers[0]` under [edge.manifest.json](#edgemanifestjson)), an email and password form, and the passkey button (`id="pk-btn"`, labelled with the manifest's `passkey_button`). The email field has `autocomplete="username webauthn"`, so a browser with passkey autofill offers saved passkeys from that field. The page posts to `/auth/google`, `/auth/password` and the passkey routes. A failed sign-in shows the manifest text for its `detail`: `denied_body` for `not_allowlisted`, `invalid_credentials`, `unconfirmed`, `passkey_failed` for `passkey_unknown`, `passkey_assertion_failed` and `passkey_clone_suspected` (and for a passkey ceremony that throws), and otherwise `generic_error` (kit `edge/deploy/pages.js`, `ioFail`). Since `@io-kit/auth` 2.2.2 no error line shows a technical code: the diagnostic sits in a collapsed `<details>` under the line, whose summary is the manifest's `error_details` ("details"). See [Passkeys: On the kit pages](#on-the-kit-pages) and [Page theme and HFY overrides](#page-theme-and-hfy-overrides). |
 | POST | `/auth/google` | `{ credential, profile? }` (a Google ID token) | `200 {ok, exp}` and session cookies. `400` for a malformed body. `401 AUTH_EXPIRED` for an invalid Google token (`detail` such as `expired`, `wrong_audience`, `email_unverified`). `403 AUTH_FORBIDDEN` with `not_allowlisted` or `link_conflict`. `503 AUTH_NETWORK` when Google's keys cannot be fetched. |
 | POST | `/auth/password` | `{ email, password, returnTo?, profile? }` | `200 {ok, exp, returnTo}` and session cookies. `returnTo` is normalized by `safeReturnTo`. `401 invalid_credentials`. `403` with `unconfirmed`, `email_unverified`, `not_allowlisted` or `challenge_unsupported`. `503 AUTH_NETWORK`. |
 | GET, POST, DELETE | `/auth/passkey/*` | See [Passkeys](#passkeys) | Passkey enrolment, sign-in, listing and removal. |
@@ -159,9 +160,9 @@ Any other method or path under `/auth/passkey/` returns `404 {"code":"NOT_FOUND"
 From kit `edge/deploy/pages.js`:
 
 - **Sign-in page.** The page loads `/auth/passkey/client.js`, and its Content-Security-Policy adds `'self'` to `script-src` for it. The passkey button runs `login/options`, the browser ceremony and `login/verify`, then goes to the returned `returnTo`. When the browser supports passkey autofill (conditional UI), the page also starts a `login/options` request on load and waits for the visitor to pick a passkey from the email field's suggestions.
-- **The add-a-passkey prompt** (`id="pk-prompt"`, titled with `passkey_add_title`). After a Google or password sign-in, the page checks `/auth/passkey/list`. When the browser supports WebAuthn, the list is empty and the visitor has not dismissed the prompt before, the page hides the sign-in paths and shows `passkey_add_body` with two buttons, `passkey_add` and `passkey_later`. Adding runs `register/options` and `register/verify` with the label `navigator.platform` (or `This device`), then continues to the return target. `passkey_later` sets `io-passkey-dismissed` to `1` in `localStorage` and continues. A passkey sign-in never shows the prompt.
-- **Account page.** `/auth/link` lists the member's passkeys by label (`Passkey` when there is none), removes one with `DELETE /auth/passkey/<id>`, and adds one the same way as the prompt. `/auth/passkeys` redirects there.
-- **Text.** Every heading, button and message above comes from the manifest's `copy` keys named in [edge.manifest.json](#edgemanifestjson). The labels `navigator.platform`, `This device` and `Passkey` are kit literals.
+- **The add-a-passkey prompt** (`id="pk-prompt"`, titled with `passkey_add_title`). After a Google or password sign-in, the page checks `/auth/passkey/list`. When the browser supports WebAuthn, the list is empty and the visitor has not dismissed the prompt before, the page hides the sign-in paths and shows `passkey_add_body` with two buttons, `passkey_add` and `passkey_later`. Adding runs `register/options` and `register/verify` with a friendly device name as the label (iPhone, iPad, Mac, Android phone, Windows PC, Chromebook, Linux, else `This device`; `@io-kit/auth` 2.2.2), then continues to the return target. `passkey_later` sets `io-passkey-dismissed` to `1` in `localStorage` and continues. A passkey sign-in never shows the prompt.
+- **Account page.** `/auth/link` lists the member's passkeys by label (`Passkey` when there is none; a label stored earlier as a platform string, such as `MacIntel` or `Win32`, is shown as the friendly device name), removes one with `DELETE /auth/passkey/<id>`, and adds one the same way as the prompt. `/auth/passkeys` redirects there.
+- **Text.** Every heading, button and message above comes from the manifest's `copy` keys named in [edge.manifest.json](#edgemanifestjson). The device names, `This device` and `Passkey` are kit literals.
 
 ### Page theme and HFY overrides
 
@@ -272,6 +273,54 @@ The response never carries `email`, `amr` or `auth_time` as fields of their own.
 
 The OAuth routes are listed under [MCP authorization server](#mcp-authorization-server).
 
+### Access-request routes
+
+The anonymous sign-up routes of the join flow (HFY-TSK-195, surfaces.md 7.2 and 7.5; [`auth/src/access-request.js`](../../auth/src/access-request.js)). The submit route, `POST /auth/access-request`, is a later task (`surf-access-submit`) that reuses this module's gate, Turnstile check and admission limits. The routes are wired in `createAuthEdge` before the kit fall-through, and they never reach the kit app.
+
+Every route answers `503 {"detail":"closed"}` while the stack parameter `AccessRequests` is not `on`, whatever the method or headers. When it is on, a `POST` route also needs the method `POST`, a `content-type` of `application/json`, `X-Requested-With: io-kit` and an `Origin` equal to `https://<site>`, or it answers `403 {"detail":"forbidden"}`. The config route is a `GET` that needs the header and takes an `Origin` only when the browser sent one.
+
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| GET | `/auth/access-request/config` | | `200 {open, turnstileSiteKey}` |
+| POST | `/auth/access-request/start` | `{ email, turnstileToken, company }` | `202 {ok:true}` for every address. `400 invalid_email`. `403 bot_check_failed`. `429 rate_limited` with `Retry-After`. `503 unavailable` (the limiter, the table, a secret, SES, Turnstile or the mail alarm is down) or `503 queue_full`. |
+| POST | `/auth/access-request/verify` | `{ email, code }` | `200 {ticket, expiresAt}`. `400 invalid_code`. `429 too_many_attempts`. `503 unavailable`. An expired code is the same `400 invalid_code` as a missing one. |
+
+**Start, in order.**
+
+1. The honeypot `company`: when it is not blank the answer is `202` and nothing else happens (no Turnstile call, no limiter hit, no write, no mail).
+2. The address is trimmed, lower-cased and checked (one `@`, a dot in the domain, at most 254 characters). With no client address (the edge cannot derive one) or with `JOIN_FROM_ADDRESS` or `JOIN_SES_CONFIGURATION_SET` empty, the route answers `503 unavailable` here, before anything is spent. Mail without the configuration set would send no bounce or complaint feedback, so the alarm gate would watch nothing.
+3. Turnstile `siteverify` with the secret from `TURNSTILE_SECRET_NAME`, the token and the client IP. It must report `success`, the site's hostname and `action` `join`. A refused token is `403`. A timeout after 3 s, a network or HTTP error, an unreadable answer or a server-side misconfiguration fails closed with `503`.
+4. The bounce and complaint alarms: while either alarm named in `JOIN_MAIL_ALARMS` is in `ALARM`, the route answers `503 unavailable` and sends nothing. A missing alarm, an unset list or a CloudWatch failure fails closed the same way. `OK` and `INSUFFICIENT_DATA` let mail go. An answer is cached for 30 s.
+5. The queue cap: with 100 `ACCESSREQS#pending` items on `GSI1`, every address gets `503 queue_full`.
+6. The rate limits, in the order of the table below. They stop at the first denial, so a request that a narrow limit refused never spends the global budget.
+7. One membership lookup (the composite resolver) and one request lookup (`ACCESSREQEMAIL#<emailHash>`; a request in any state except `declined` or `expired`, and not past its `ttl`, is open).
+8. One `ACCESSCODE#<emailHash>` write, then one mail. A member gets `already_member`, an open request `already_requested`, and anyone else the code. The new item keeps the attempts of a still-live previous code (a resend never refills the guess budget). A failed mail puts the previous live code back, or removes ours, and answers `503`. The limiters run before the mail, so a transient `503` still spends the per-address, per-IP and global counters and the 60 s resend gap; that is deliberate (fail closed).
+
+| Name | Scope | Limit |
+| --- | --- | --- |
+| `joincode` | email (the resend gap) | 1 per 60 s |
+| `joincode` | email and IP | 3 per hour |
+| `joincode` | email | 5 per 24 h |
+| `joincode` | IP | 10 per 24 h |
+| `joincode` | global | 50 per 24 h |
+| `joinverify` | IP, then email | 30 and 10 per hour (`429 too_many_attempts`); the IP limit runs first, so one client cannot spend an address owner's budget |
+| `joinsubmit` | IP | 5 per 24 h |
+| `joinsubmit` | global | 20 per 24 h |
+
+The `joinsubmit` limits and the queue cap are applied by `submitAdmission()` for the submit route.
+
+**Enumeration parity.** A member, an open request and a new address take the same path: the same lookups, the same write and one mail each, so `start` answers every address with the same `202`. The `ACCESSCODE#` item written for a member or an open request is a decoy whose MAC can never match. A later `verify` therefore answers a wrong code with `400`, the fifth with `429` and an expired one with `400`, whichever of the three the address was. An address that never asked for a code gets `400 invalid_code` too.
+
+**Code.** Six digits from `crypto.randomInt`, stored in `ACCESSCODE#<emailHash>` as `codeMac`, the HMAC-SHA256 of the pepper over `<email>:<code>`, with `attempts`, `expiresAt` and `ttl` 15 minutes ahead. Each `verify` counts the attempt atomically before it compares, so at most 5 comparisons happen however many requests run in parallel. The fifth wrong attempt locks the code: the item stays, spent, until it expires, so a resend cannot start a fresh budget (the locked item keeps its original expiry). A right code is deleted in the same transaction that writes the ticket.
+
+**Ticket.** 32 random bytes, base64url, returned once. The table keeps `ACCESSTICKET#<sha256 hex of the ticket>` with the address, its hash and a 60 minute `expiresAt` and `ttl`. The submit route deletes it conditionally, so it is single use.
+
+**`emailHash`** is the HMAC-SHA256 of the pepper (`ACCESS_REQUEST_PEPPER_SECRET`) over the normalized address.
+
+**Mail.** [`auth/src/mailer.js`](../../auth/src/mailer.js) sends the plain-text templates of [`shared/emails.mjs`](../../shared/emails.mjs) through SES from the join identity (`JOIN_FROM_ADDRESS`) with its own configuration set (`JOIN_SES_CONFIGURATION_SET`), which has no open or click tracking. Cognito's mail and the API's mail use the other identity (`SesIdentityArn`), so abuse of the join flow cannot pause password-reset mail.
+
+**Logs.** A log line is a fixed label and an error name, for example `{"msg":"access-request unavailable","step":"send","error":"MessageRejected"}`. No address, code, ticket, hash or SES message is logged; a test captures the logs of every success and failure path and searches them. The limiter keys are hashes.
+
 ### Principal resolution
 
 A sign-in turns a verified email into a host principal, whose `sub` is a Gramps ID. The resolver is the composite resolver in [`auth/src/allowlist.js`](../../auth/src/allowlist.js) (HFY-TSK-134). `index.js` passes it to `createIdentityService` and to `cognitoProvisioner`. It checks DynamoDB `ALLOW#` items first and the kit's `s3_allowlist` second (`buildResolver` and `parseAllowlist` in kit `edge/deploy/resolver.js`), which reads the S3 object named in the manifest, `config/userGrampsID.json` in `<config-bucket>`. The manifest's resolver stays `s3_allowlist`, so `auth/edge.manifest.json` is unchanged. `resolveHostPrincipal`, linking and the refresh checks are in kit `server/identity.js`.
@@ -365,7 +414,9 @@ The edge uses the DynamoDB table named by `AUTH_TABLE` (`hfy-app` in the stack).
 | `PASSKEY#` | Kit passkey store, wrapped by `hfyPasskeyStore` ([`auth/src/passkeystore.js`](../../auth/src/passkeystore.js)) | One credential, keyed by its id: host `sub`, email, public key, signature counter, transports, device type, backed-up flag, label, AAGUID, and the created and last-used times. `GSI1PK` is `PASSKEYSUB#<sub>`. The kit writes no `GSI1SK`, and `GSI1` indexes only items that carry both keys, so the wrapper writes `GSI1SK` equal to the item's `PK` on every put (HFY-R67). The kit's `listByPrincipal` queries `GSI1`, and the passkey list, the per-member limit, `excludeCredentials` and `allowCredentials` all depend on it. An item written without `GSI1SK` gets it the next time it is read, by a conditional update that sets only `GSI1SK` and never rewrites the credential, so it cannot undo a concurrent counter update. A failed repair logs `passkey index backfill failed`, and the read still succeeds. |
 | `PASSKEYCHAL#` | Kit challenge store | One challenge: its purpose (`register`, `login` or `stepup`), the `sub` it is bound to (registration and step-up), and its expiry 300 s after issue. Taken with an atomic delete on first use. `ttl` is one hour after expiry. No `GSI1` keys. |
 | `ALLOW#` | Not written by the edge. Read by [`auth/src/allowlist.js`](../../auth/src/allowlist.js) and [`membership.js`](../../auth/src/membership.js); written by `hfy-api` ([`api/src/allowlist-store.js`](../../api/src/allowlist-store.js)) | `sub`, `state` (`active` or `revoked`), `source`, `requestId?`, `at`, `by`, and `revokedAt` and `revokedBy` once revoked. |
-| `RATE#` | [`auth/src/ratelimit.js`](../../auth/src/ratelimit.js) | A request counter `n` for one forgot-password window. No email or IP. |
+| `RATE#` | [`auth/src/ratelimit.js`](../../auth/src/ratelimit.js) | A request counter `n` for one forgot-password or access-request (`joincode`, `joinverify`, `joinsubmit`) window. No email or IP. |
+| `ACCESSCODE#` | [`auth/src/access-request.js`](../../auth/src/access-request.js) | One join code per email hash: `codeMac` (an HMAC, never the code), `attempts`, `expiresAt`. A member's or an open request's item is a decoy whose MAC never matches. `ttl` is 15 minutes ahead. |
+| `ACCESSTICKET#` | [`auth/src/access-request.js`](../../auth/src/access-request.js) | A join ticket, keyed by the SHA-256 of the ticket: the verified email, its hash and `expiresAt`. `ttl` is 60 minutes ahead. |
 | `MCPCODE#` | OAuth | Authorization code binding: client, `redirect_uri`, PKCE challenge, `sub`, resource, scope, expiry, and the sign-in facts: `email`, `amr`, `authTime` (`0` means unknown) and `name` |
 | `MCPRT#` | OAuth | MCP refresh token: client, `sub`, resource, scope, family, expiry, and the same `email`, `amr`, `authTime` and `name` |
 | `MCPRTUSED#` | OAuth | Marker for a used refresh token, with its family |
@@ -667,10 +718,17 @@ Defined on `AuthFunction` in [`infrastructure/cloudformation/app-stack.yaml`](..
 | `MCP_CLIENT_ID` | No | Not set | Overrides `mcp-harrisonfamily` |
 | `HFY_SYNC_DESKTOP_CLIENT` | No | Not set | `1` registers the `hfy-sync-desktop` client |
 | `EDGE_MANIFEST_PATH` | No | Not set | Overrides the manifest path |
+| `ACCESS_REQUESTS` | No | `AccessRequests` (default `off`) | `on` opens the [access-request routes](#access-request-routes); any other value answers them `503 closed` |
+| `TURNSTILE_SITE_KEY` | No | `TurnstileSiteKey` | The public Turnstile key that `GET /auth/access-request/config` returns |
+| `TURNSTILE_SECRET_NAME` | Only with `ACCESS_REQUESTS=on` | `TurnstileSecretName` | Secrets Manager name of the Turnstile secret (a plain string or `{"secret": ...}`) |
+| `ACCESS_REQUEST_PEPPER_SECRET` | Only with `ACCESS_REQUESTS=on` | `AccessRequestPepperSecretName` | Secrets Manager name of the pepper for the email hash and the code MAC |
+| `JOIN_FROM_ADDRESS` | Only with `ACCESS_REQUESTS=on` | `JoinFromAddress` | Bare From address on the join SES identity |
+| `JOIN_SES_CONFIGURATION_SET` | Only with `ACCESS_REQUESTS=on` (the route answers `503` while empty) | `JoinSesConfigurationSet` | SES configuration set for access-request mail only |
+| `JOIN_MAIL_ALARMS` | Only with `ACCESS_REQUESTS=on` | `JoinBounceAlarmName`, `JoinComplaintAlarmName` | Comma list of the CloudWatch alarms the code route watches |
 
 The allowlist bucket and key come from the manifest, not from the stack. The stack parameters `ConfigBucket`, `AllowlistKey` and `AdminListKey` scope the function's `s3:GetObject` permission, so they must name the same objects. The role also allows `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem` and `Query` on the table and its indexes, `secretsmanager:GetSecretValue` on the signing-key secret, and `AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminConfirmSignUp` and `AdminUpdateUserAttributes` on the user pool.
 
-The `SesIdentityArn` and `SesFromAddress` stack parameters are not passed to the function. They set the user pool's email configuration (see [Cognito user pool](#cognito-user-pool)).
+The `SesIdentityArn` and `SesFromAddress` stack parameters are not passed to the function. They set the user pool's email configuration (see [Cognito user pool](#cognito-user-pool)). The role's `ses:SendEmail` grant is on the separate join identity (`JoinSesIdentityArn`, conditioned on `JoinFromAddress`), and it also allows `cloudwatch:DescribeAlarms` on the two join alarms and `secretsmanager:GetSecretValue` on the Turnstile and pepper secrets.
 
 ## Private data gate: hfy-edge-gate
 

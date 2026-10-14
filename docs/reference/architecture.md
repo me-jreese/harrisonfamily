@@ -443,6 +443,10 @@ Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/
 | `GoogleClientId` | None (required, public value) | `GOOGLE_CLIENT_ID` |
 | `SesIdentityArn` | Empty | A verified SES identity, in the stack's region, for Cognito email; drives `HasSes` |
 | `SesFromAddress` | Empty | The `From` address when `SesIdentityArn` is set; drives `HasSesFrom` |
+| `JoinSesIdentityArn` | Empty | The verified SES identity of the join subdomain that sends access-request mail from the auth edge; drives `HasJoinSes` and the edge's `ses:SendEmail` grant |
+| `JoinFromAddress` | Empty | The bare `From` address on that identity (`JOIN_FROM_ADDRESS`); the grant is conditioned on it |
+| `JoinSesConfigurationSet` | Empty | The configuration set for access-request mail only (`JOIN_SES_CONFIGURATION_SET`); required whenever `JoinSesIdentityArn` is set (the stack refuses one without the other), and the code route answers `503 unavailable` while it is empty |
+| `JoinBounceAlarmName`, `JoinComplaintAlarmName` | `hfy-access-request-bounce`, `hfy-access-request-complaint` | The CloudWatch alarms the code route reads (`JOIN_MAIL_ALARMS`); the edge may call `cloudwatch:DescribeAlarms` (read-only, on `*`: the call is list-style and AWS may not honor an alarm ARN for it; the code asks for these two names only, and the RG-4 route smoke checks the real IAM behavior) |
 
 #### Conditions
 
