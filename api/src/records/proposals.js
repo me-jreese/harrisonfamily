@@ -6,7 +6,7 @@
 //   PROP#<ulid> / IDX#BY          GSI1 PROPBY#<principal> / <ulid>   a full copy, for the proposer's list and the 24-hour rate limit
 //   PROP#<ulid> / IDX#REC#<k>     GSI1 PROPREC#<k> / <ulid>          a full copy per target object (<k> = "Class:handle"), for pending[] on a page
 //   IDEM#<principal>#<sha256(key)> / META                             the generic route receipt: { requestHash, result: { status, body } }, 24 h
-//   AUDIT#proposal:<ulid>                                             one audit item per state change (proposal.create here)
+//   AUDIT#proposal:<ulid>                                             one audit item per state change (proposal.create here; .decide and .stale in proposal-decision.js)
 // A state change rewrites META and every IDX copy in one transaction. The document never holds an email (HFY-R68): the proposer label is the
 // session label.
 import { createHash } from "node:crypto";
@@ -121,9 +121,12 @@ export function proposalPuts(p) {
  * transaction, so no copy ever shows an older state than META. META is written only if it still holds `prev` (compare-and-set on the etag, tag
  * "proposal:cas"); a target the new document no longer has loses its IDX#REC item.
  */
-export function proposalRewrite(prev, next) {
+export function proposalRewrite(prev, next, { pinState = false } = {}) {
   const base = { entity: "proposal", proposal: next };
-  const cas = { condition: "attribute_exists(PK) AND #p.#e = :etag", names: { "#p": "proposal", "#e": "etag" }, values: { ":etag": prev.etag }, tag: "proposal:cas" };
+  // `pinState` (a decision, HFY-TSK-209) also pins the state it was read in: the proposal is still pending (or stale) when the write commits.
+  const cas = pinState
+    ? { condition: "attribute_exists(PK) AND #p.#e = :etag AND #p.#st = :st", names: { "#p": "proposal", "#e": "etag", "#st": "state" }, values: { ":etag": prev.etag, ":st": prev.state }, tag: "proposal:cas" }
+    : { condition: "attribute_exists(PK) AND #p.#e = :etag", names: { "#p": "proposal", "#e": "etag" }, values: { ":etag": prev.etag }, tag: "proposal:cas" };
   const exists = { condition: "attribute_exists(PK)", tag: "proposal:copy" };
   const puts = [
     { item: { ...proposalKeys(next.id), GSI1PK: `PROPQ#${next.state}`, GSI1SK: next.id, ...base }, ...cas },
@@ -136,8 +139,8 @@ export function proposalRewrite(prev, next) {
 }
 
 /** The AUDIT#proposal:<ulid> item for a state change; `op` is proposal.create | .amend | .withdraw | .decide | .stale | .supersede. */
-export function proposalAuditItem({ op, id, principalId, at, uid, table, before = null, after }) {
-  return { item: auditItem({ op, id: auditIdOf(id), principalId, at, before, after }, uid, table), tag: "changes:audit" };
+export function proposalAuditItem({ op, id, principalId, at, uid, table, before = null, after, reason }) {
+  return { item: auditItem({ op, id: auditIdOf(id), principalId, at, before, after, ...(reason !== undefined ? { reason } : {}) }, uid, table), tag: "changes:audit" };
 }
 
 /** The generic route receipt (IDEM#): written in the same transaction as the change, so a replay finds it exactly when the change committed. */

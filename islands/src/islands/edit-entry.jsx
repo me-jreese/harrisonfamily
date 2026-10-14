@@ -7,18 +7,35 @@ import "./edit-entry.css";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { getMe } from "../lib/me.js";
+import { api } from "../lib/api.js";
 import { ENTRY_LABEL, editHref, entryMode } from "../lib/editor-model.js";
+import { pendingChip } from "../lib/editor-pending.js";
 
 export function EditEntry({ personId }) {
   const [mode, setMode] = useState(null);
+  const [chip, setChip] = useState(null);
   useEffect(() => {
     let live = true;
     getMe().then((me) => { if (live) setMode(entryMode(me, personId)); });
     return () => { live = false; };
   }, [personId]);
+  // The "N suggested changes waiting for review" chip (editing.md 9.1), only once the entry itself shows (so only while recordEdit is on and
+  // the viewer is signed in). It reads the same edit bundle the editor does, whose pending[] the server already limits to the proposals the
+  // viewer may see (their own, any for an admin, or one about their own page, PS-09); a failed read just leaves the chip out.
+  useEffect(() => {
+    if (!mode) return undefined;
+    let live = true;
+    setChip(null);
+    api.get(`/edit/Person/${encodeURIComponent(personId)}`).then((bundle) => { if (live) setChip(pendingChip(bundle && bundle.pending)); }, () => {});
+    return () => { live = false; };
+  }, [mode, personId]);
   if (!mode) return null;
+  const href = editHref("Person", personId);
   return (
-    <a className="hfy-edit-entry" href={editHref("Person", personId)} data-hfy-edit-entry={mode}>{ENTRY_LABEL[mode]}</a>
+    <div className="hfy-edit-entry__wrap">
+      <a className="hfy-edit-entry" href={href} data-hfy-edit-entry={mode}>{ENTRY_LABEL[mode]}</a>
+      {chip && <p className="hfy-edit-entry__chip" role="status" data-hfy-pending-chip>{chip.text}</p>}
+    </div>
   );
 }
 
