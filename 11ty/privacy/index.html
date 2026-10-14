@@ -51,7 +51,7 @@
   <!-- hfy-theme:end A -->
   <link rel="stylesheet" href="/css/main.css?v=6853df92" />
   <!-- hfy-theme:start B -->
-  <link rel="stylesheet" href="/css/hfy-theme.css?v=6f489551" />
+  <link rel="stylesheet" href="/css/hfy-theme.css?v=1e33d0e0" />
   <!-- hfy-theme:end B -->
 </head>
 
@@ -132,29 +132,35 @@
   <div class="container">
     <header class="mb-4 text-center text-md-start">
       <h1 class="display-5 fw-bold">Harrison Family Website Privacy Policy</h1>
-      <p class="text-muted mb-1">Last updated: November 6, 2025 &middot; Contact: info [@] harrisonfamily [DOT] us</p>
+      <p class="text-muted mb-1">Last updated: October 13, 2026 &middot; Contact: info [@] harrisonfamily [DOT] us</p>
     </header>
 
     <article class="privacy-policy text-light">
       <hr>
       <h2>1. Introduction</h2>
-      <p>The Harrison Family Website (“we,” “our,” “us”) provides a private digital archive of family history and media. This Privacy Policy explains how we handle personal information, including data processed through Google Sign-In, in compliance with Google’s API Services User Data Policy and applicable privacy laws.</p>
+      <p>The Harrison Family Website (“we,” “our,” “us”) provides a private digital archive of family history and media. This Privacy Policy explains how we handle personal information, including data processed when you sign in (with Google, with an email and password, or with your face or fingerprint) and when you post, comment or turn on notifications, in compliance with Google’s API Services User Data Policy and applicable privacy laws.</p>
 
       <hr>
       <h2>2. Scope</h2>
       <p>This policy applies to all use of the website located at <a href="https://harrisonfamily.us/">https://harrisonfamily.us</a> and its subpages (the “Site”). It specifically governs:</p>
       <ul>
         <li>Authentication via Google Identity Services.</li>
+        <li>Sign-in with email and password (Amazon Cognito) and with a passkey (face or fingerprint).</li>
+        <li>Posts, comments, reactions and photos you add.</li>
+        <li>Notifications.</li>
+        <li>Optional AI connectors (Claude) for family members you allow.</li>
         <li>Access to private genealogical content derived from the Gramps family database.</li>
         <li>Any data hosted in our AWS infrastructure (S3 + CloudFront) and served through Cloudflare.</li>
       </ul>
 
       <hr>
       <h2>3. Data We Collect</h2>
-      <h3>3.1 From Google Sign-In</h3>
+      <h3>3.1 From Sign-In</h3>
       <ul>
         <li>Your verified Google account email address.</li>
         <li>Your Google profile name and ID token, for identity verification.</li>
+        <li><strong>Email and password:</strong> your email and a password held by Amazon Cognito (we never see the password).</li>
+        <li><strong>Face or fingerprint (passkey):</strong> your face or fingerprint never leaves your device; we store only a public key and a device label so you can sign in and remove it later.</li>
       </ul>
       <p>We do not request or access any other Google account data (e.g., contacts, photos, Drive files).</p>
 
@@ -162,14 +168,48 @@
       <ul>
         <li>Access logs (browser type, IP address, timestamp) collected by AWS CloudFront for diagnostic and security purposes.</li>
         <li>No tracking cookies or analytics services are used.</li>
+        <li>Two sign-in cookies (<code>io_id</code>, about 1 hour; <code>io_rt</code>, up to 30 days on the installed app) that keep you signed in; they are not used for tracking.</li>
       </ul>
 
-      <h3>3.3 From Genealogical Data</h3>
-      <ul>
-        <li>Family data derived from a read-only export of Gramps records, including names, relationships, dates, places, and media.</li>
-        <li>Living persons’ details are visible only to authenticated and whitelisted users.</li>
-        <li>No additional personal data is collected from you when you browse family pages.</li>
-      </ul>
+      <h3>3.3 From Family Data and What You Add</h3>
+      <p>Family data (names, relationships, dates, places and media) comes from the family tree program (Gramps) on the archivist's computer. It is now kept in the site's own database on AWS (Amazon DynamoDB), which stays in step with the family tree program in both directions: family members can add to it and suggest changes (3.6), and changes made on the site are copied back into the family tree program. Living persons' details are visible only to signed-in family members on the family access list. Posts, comments, reactions and photos you add are stored on AWS (DynamoDB and S3) and shown only to signed-in family members. A record of each change (who, when, before/after) is kept so mistakes can be undone. While you have the site open, family members can also see whether you're online or idle (3.14).</p>
+
+      <h3>3.4 Notifications</h3>
+      <p>If you turn on notifications, we store your browser's push address and your choices. By default a notification says only that something new happened, not what it says.</p>
+      <p>Notifications in your inbox (the bell) are kept until you read them, then for 90 days after you read them, and are then deleted automatically. A moderator's note to you can show in your inbox; only you and the admins see it. You can follow a family page to be told when it changes; you choose what to follow, and the person whose page it is isn't told.</p>
+
+      <h3>3.5 What the Site Keeps Out</h3>
+      <p>Family pages and the family tree data on the site never include: a full birthday for anyone, living or not (only the year; the family tree program on the archivist's computer keeps full dates); street addresses; phone numbers; email addresses other than the one you sign in with; ID numbers such as Social Security numbers; anything marked private in the family tree program; or photos that carry a map location. Posts, comments, chat, links, suggested changes and the join form are all checked for phone numbers, street addresses, email addresses, links that are a way to message someone, and birthdays (a day and month written near a word like "born" or "birthday"), and anything the check finds is refused until you take it out ("we only keep the birth year on the site."). The check can't catch everything, so please don't type these details in. Photos you add to posts and comments are checked for a map location (3.8). A living person's city and state are allowed, but never on the family map.</p>
+
+      <h3>3.6 Suggested Changes</h3>
+      <p>You can suggest a change to a family page, for example a name, a date or a parent. On your own page, changes to your names, birth year, parents, spouse, children and your own death are suggestions too; most other changes to your own page apply right away. A suggestion waits, with no time limit, until an admin approves or declines it. Only you, the admins, and family members whose own page it would change can see it, its notes and its comments. If it's declined, you'll see why. Suggestions are kept after the decision too, including declined ones and ones you take back; you can ask for one to be removed (section 7). A suggestion gets the same check (3.5) before it's saved, and anything the check finds is refused.</p>
+
+      <h3>3.7 Dates on Family Pages</h3>
+      <p>Birthdays show the year only, for everyone. For other events, such as deaths, weddings and moves, family members see only the year; admins see the full date, and so do you on events that are yours alone. If you edit a date that shows only its year, the day and month already stored stay as they were. "On this day" shows only to signed-in family members. It can show deaths, weddings and other events from today's date or this week; when there are none, round-number years from this year, worked out from the year alone (for a birth, "turns 40 this year" for a living relative, or "was born 100 years ago" for others); and family posts from this date in past years. It never shows the day or month of anyone's birth, or anything marked private. Anyone in an item, or an admin, can hide it.</p>
+
+      <h3>3.8 Photos and Location</h3>
+      <p>When you add a photo to a post or comment, your browser re-saves it before upload, which removes hidden details such as where it was taken. The server checks again and refuses any photo that still carries a location. Photos from the family tree that carry a location are held back until the location is removed. Photos added to posts before these checks were turned on were not re-checked and keep whatever details they were uploaded with, which can include where they were taken; ask (section 7) and we'll remove one.</p>
+
+      <h3>3.9 Photos Added to a Family Page</h3>
+      <p>An admin can add a photo from a comment to a person's photos on their family page. It is then copied into the family record, including the family tree on the archivist's computer, and kept like any other family photo; deleting the comment later doesn't take it off the family page (ask, see section 7). You're told when this happens to your photo, and it counts as one of your contributions. Photos that carry a location, or that a moderator has hidden, can't be added.</p>
+
+      <h3>3.10 Contribution Counts</h3>
+      <p>The site counts what you add. Each post, comment, photo, approved suggestion, photo tag and photo added to a family page counts as one, and so does editing your own page (at most once per page per day). Your total shows on your page, including "0 contributions". A line for the whole family, such as "12 contributions in the past 3 days", shows on the home page and the posts page. Edits to posts or comments, reactions, moderation and approvals don't count, and deleting something removes its count. Only signed-in family members see counts.</p>
+
+      <h3>3.11 Profile Links</h3>
+      <p>You can add links to your public profiles on Facebook, Instagram, Snapchat, TikTok, Linktree and LinkedIn, and to one website. They show in a "links" section on your family page, to signed-in family members. Only you can add or change them; an admin can remove one. Links that are a way to message you (email, phone, text, WhatsApp, Messenger and the like), short links and share links are refused. Links stay on the website only (they're not copied into the family tree) and are kept until you remove them.</p>
+
+      <h3>3.12 Asking to Join</h3>
+      <p>On the join page you give your email and prove it's yours with a 6-digit code, then fill in the family form: your names, gender (male or female), where you were born and the year (never the full birthday), where you live now (city and state only), and optional details: what the family calls you, the year you moved to where you live now, school details, and whether you were ever married (that answer helps the admin and isn't added to the family tree). Cloudflare Turnstile checks that you're a person and not a bot; it loads on the join page only. An admin checks with you outside the site before approving, and sees only part of your email. If you're new to the family tree, you get a permanent family-tree number from a block kept for the website (8000-8999). We keep the code for 15 minutes; the one-time pass it gives you for 60 minutes or until it's used; a request with no decision for 90 days; and a decided request for 30 days after the decision. A scrambled copy of your email that stops duplicate requests is kept as long as the request, and for 30 days after a decline. After that, only a note of the request's number and outcome remains. Your email stays on the family access list while you have access, and never goes into the family tree, onto a page or into a log.</p>
+
+      <h3>3.13 Chat</h3>
+      <p>Chat messages and group names are stored by Cloudflare, which runs chat for us as a processor (it handles them only to run the site's chat), with a copy in our own AWS storage. You can see the last 30 days of a chat; older messages disappear from every screen. The site keeps messages with no end date, and older ones can be pulled out only with the admin's go-ahead, as a one-off export from storage. If you leave a group and come back, you see only what was said while you were in it. Chat is text and emoji only: no photos, reactions or read receipts, and no "last seen". While you type, the other person can see that you're typing. Chat notifications never include the message. Chat text gets the same check as posts (3.5).</p>
+
+      <h3>3.14 Online Status and Accounts</h3>
+      <p>Online status: while you have the site open, every family member can see that you are online or idle, on your page and in chat; there is no invisible mode. "Online" means the site is open on any of your devices, plus 20 seconds after you close it. You show as idle after 15 minutes with no typing, tapping or scrolling, and idle still counts as online. A computer keeps you online while the site is open, even in a background tab; a phone goes offline about 20 seconds after it locks or you switch apps. Only your current status is kept, never a history. Chat lists every relative who has an account (by name, never by email), so family members can see who has joined.</p>
+
+      <h3>3.15 Moderation</h3>
+      <p>An admin can hide a post, comment or photo, ask you to change it, or ask you a question about it. You'll see your item with the admin's note, which only you and the admins can see; other family members no longer see a hidden item on the site's pages. If you're asked for changes, it shows again once you edit it. Admins can also hide notes and photos on family pages, and the page's owner is told. Every moderation step is recorded (who, when, what); an admin's private reason, if any, stays in that record and is never shown. Hiding takes an item off the site's pages. A photo on a hidden post or comment is kept while it's hidden, so it can be restored; its file isn't deleted, so a family member who already has the photo's direct link can still open it while signed in. Deleting a post or comment takes its photos off the site, but the photo files stay in storage until they're removed on request. You can ask for a photo to be removed from storage at any time (section 7).</p>
 
       <hr>
       <h2>4. How We Use Your Data</h2>
@@ -183,14 +223,14 @@
         </thead>
         <tbody>
           <tr>
-            <td>Google account email</td>
-            <td>Verify identity and confirm whitelisted access to private content.</td>
-            <td>Not stored permanently; verified in-session only via token validation.</td>
+            <td>Email</td>
+            <td>Used to check you're on the family access list and to sign you in.</td>
+            <td>Kept with your sign-in records.</td>
           </tr>
           <tr>
             <td>Google ID token</td>
-            <td>Authenticate session locally in your browser (no server-side storage).</td>
-            <td>Discarded upon sign-out or page close.</td>
+            <td>Checked once at sign-in.</td>
+            <td>Then discarded; the site issues its own session cookie.</td>
           </tr>
           <tr>
             <td>Access logs</td>
@@ -198,51 +238,113 @@
             <td>Rotated automatically by AWS (approximately 90 days).</td>
           </tr>
           <tr>
-            <td>Gramps genealogical data</td>
-            <td>Display family history.</td>
-            <td>Stored in static JSON on AWS S3; updated manually by archivists.</td>
+            <td>Family data</td>
+            <td>Shows family history, and family members can add to it.</td>
+            <td>It is kept in the site's database (Amazon DynamoDB), in step with the family tree program (3.3), and the family pages are built from it into private S3 storage. Family members add to it and suggest changes; admins approve suggestions. Kept for the family archive; it can be corrected or removed on request (section 7).</td>
+          </tr>
+        </tbody>
+      </table>
+      <table class="table table-dark table-striped table-bordered align-middle">
+        <thead>
+          <tr>
+            <th scope="col">Data Type</th>
+            <th scope="col">Retention</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Posts/<wbr>comments/<wbr>photos</td>
+            <td>Kept until you or a moderator removes them; photo files stay in storage until removed on request, see 3.15.</td>
+          </tr>
+          <tr>
+            <td>Change records</td>
+            <td>&mdash;</td>
+          </tr>
+          <tr>
+            <td>Push addresses</td>
+            <td>Until you turn notifications off.</td>
+          </tr>
+          <tr>
+            <td>Passkeys</td>
+            <td>Until you remove them.</td>
+          </tr>
+          <tr>
+            <td>Suggested changes</td>
+            <td>Kept, including declined and taken-back ones, until removed on request, see 3.6.</td>
+          </tr>
+          <tr>
+            <td>Inbox notifications</td>
+            <td>Until read, then 90 days.</td>
+          </tr>
+          <tr>
+            <td>Chat</td>
+            <td>Shown for 30 days, kept with no end date.</td>
+          </tr>
+          <tr>
+            <td>Profile links</td>
+            <td>Until you remove them.</td>
+          </tr>
+          <tr>
+            <td>Join requests</td>
+            <td>See 3.12.</td>
+          </tr>
+          <tr>
+            <td>Online status</td>
+            <td>The current status only, no history.</td>
+          </tr>
+          <tr>
+            <td>Contribution counts</td>
+            <td>Until the thing counted is deleted.</td>
           </tr>
         </tbody>
       </table>
 
       <hr>
       <h2>5. Data Sharing and Disclosure</h2>
-      <p>We do not share, sell, or transmit user data to any third parties. The only external systems involved are:</p>
+      <p>The only external systems involved are:</p>
       <ul>
         <li>Google Identity Services, which handles sign-in and token issuance.</li>
-        <li>Amazon Web Services (AWS), which stores static site and data assets.</li>
+        <li>Amazon Web Services (AWS), which stores the site, family data and what you add.</li>
+        <li>Amazon Cognito (password sign-in).</li>
+        <li>Amazon SES (part of AWS) sends the site's emails, such as join codes, from a no-reply address in the site's name, in plain text with no links.</li>
         <li>Cloudflare, which provides DNS and HTTPS routing.</li>
+        <li>Cloudflare also stores chat messages as our processor (3.13) and runs Turnstile on the join page (3.12).</li>
+        <li>Apple / Google / Mozilla push services (only the push address and a content-free message).</li>
+        <li>Anthropic only if a family member connects Claude to the site.</li>
       </ul>
+      <p>Still no selling or sharing beyond these.</p>
       <p>Each provider processes minimal data necessary for website functionality under its own privacy policy.</p>
 
       <hr>
       <h2>6. Security</h2>
       <ul>
         <li>HTTPS enforced for all traffic via Cloudflare + AWS ACM certificates.</li>
-        <li>All data hosted on private S3 buckets using Origin Access Control (OAC).</li>
+        <li>Site files, family data files and photos are hosted on private S3 buckets using Origin Access Control (OAC). Family records, what you add and the record of changes are kept in Amazon DynamoDB on AWS. Chat is also stored by Cloudflare (3.13).</li>
         <li>JSON and media served through CloudFront with restricted access policies.</li>
-        <li>Living-person data visible only after client-side token validation using Google Sign-In.</li>
+        <li>Living-person records and family photos are now protected on the server: every request for them must carry a valid signed-in session, checked at the edge before any file is served.</li>
         <li>MFA required for administrative AWS access.</li>
-        <li>ETL scripts operate in read-only mode when accessing the live Gramps database.</li>
+        <li>The site has one admin for now; more can be added later. Admins can see hidden items, every suggestion, full dates and join requests. Approving a join, deleting family records and other big changes need a fresh sign-in, and deletes have limits. Every admin action is recorded.</li>
+        <li>The sync between the family tree program and the site runs from the archivist's computer. It now also writes changes made on the site into the family tree program, and it checks what it sends and receives for details the site keeps out (3.5).</li>
       </ul>
       <p>No sensitive data (e.g., tokens, credentials) is stored in public repositories.</p>
 
       <hr>
       <h2>7. Data Retention and Deletion</h2>
       <ul>
-        <li>Authentication data is stored only in your browser session.</li>
+        <li>Sign-in data is kept as section 4 says: your email while you're on the family access list, passkeys until you remove them, and the sign-in cookies described in 3.2.</li>
         <li>Access logs expire automatically after approximately 90 days.</li>
-        <li>Family data persists indefinitely for archival purposes but can be updated or removed by authorized archivists upon request.</li>
+        <li>To have something removed from the site and its cloud storage (a detail on a family page, a suggestion, a chat message or a photo), email the contact address at the top of this page, or tell the admin, and say what it is. The admin can remove it from every copy we keep in the cloud: the change history, saved snapshots, the chat copy and stored photos. A detail, suggestion, chat message or photo is removed from those copies as soon as the admin removes it. If a whole family record is taken down, it disappears from the site at once and its history is erased after 72 hours, in case it was taken down by mistake. Our database's automatic backups go back 35 days, so a removed item can stay in those backups for up to 35 days before they age out. Removing it from the family tree on the archivist's computer is a separate step you can ask for too.</li>
       </ul>
       <p>To request deletion or correction of personal information, email info [@] harrisonfamily [DOT] us.</p>
 
       <hr>
       <h2>8. Children’s Privacy</h2>
-      <p>This site is intended for family members and is not directed to children under 13. Accounts for minors are managed by their guardians.</p>
+      <p>This site is intended for family members and is not directed to children under 13. Each account belongs to one person. Anyone who asks to join does so for themselves: the join form asks you to confirm the request is about you, not someone else. Changes a parent wants on a child's family page go through suggestions (3.6).</p>
 
       <hr>
       <h2>9. International Data Transfers</h2>
-      <p>All data is stored and processed in the United States using AWS (us-west-2 region).</p>
+      <p>Except for the chat copy described below, all data is stored and processed in the United States using AWS (us-west-2 region).</p>
+      <p>Chat messages are also stored by Cloudflare (3.13). We ask Cloudflare to keep them in western North America, near our AWS region, but Cloudflare treats this as a preference, not a guarantee, so they may be stored outside the United States. Our own copy of chat messages stays with AWS in the United States.</p>
 
       <hr>
       <h2>10. Your Rights</h2>
@@ -251,6 +353,7 @@
         <li>Confirmation of whether your data appears in our genealogical exports.</li>
         <li>Correction or removal of inaccuracies about you or your immediate relatives.</li>
         <li>Removal of media in which you appear.</li>
+        <li>Ask for a suggestion, a chat message or a photo you added to be removed from the cloud (section 7).</li>
       </ul>
       <p>Send requests to info [@] harrisonfamily [DOT] us with sufficient identifying information.</p>
 
@@ -289,7 +392,7 @@
       );
     </script>
     <script src="/js/auth-v2.js?v=67814cdc" defer></script>
-    <script src="/js/feature-flags.js?v=8d6007b2"></script>
+    <script src="/js/feature-flags.js?v=49d3a7b7"></script>
     <script>
       window.HFY_AUTH_CONFIG = Object.assign(
         {},

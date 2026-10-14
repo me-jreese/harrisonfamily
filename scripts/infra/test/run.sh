@@ -537,6 +537,11 @@ if command -v cfn-lint >/dev/null; then
 else echo "  (cfn-lint not installed: skipped)"; fi
 
 # ---------------------------------------------------------------------------------------------------------------------
+CURRENT="privacy and terms pages: the io-approved amendment (HFY-TSK-239)"
+# stdlib only (no PyYAML): 11ty/privacy/ and 11ty/terms/ carry every required section of docs/drafts/privacy-terms-2026-10-update.md
+if (cd "$HERE" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -q test_privacy_terms_pages 2> "$T/py4.out"); then ok; else fail "test_privacy_terms_pages.py"; cat "$T/py4.out" >&2; fi
+
+# ---------------------------------------------------------------------------------------------------------------------
 CURRENT="package-edge-gate.sh: content-addressed CodeKey (cfn-code-never-updates, edge-gate-update-same-key-fails)"
 if command -v node >/dev/null && command -v zip >/dev/null && command -v openssl >/dev/null; then
   PKG="$T/pkg"; mkdir -p "$PKG/scripts/ci" "$PKG/edge-gate/src"   # a scratch copy: the build writes $PKG/dist, never the repo's dist/

@@ -51,7 +51,7 @@
   <!-- hfy-theme:end A -->
   <link rel="stylesheet" href="/css/main.css?v=6853df92" />
   <!-- hfy-theme:start B -->
-  <link rel="stylesheet" href="/css/hfy-theme.css?v=6f489551" />
+  <link rel="stylesheet" href="/css/hfy-theme.css?v=1e33d0e0" />
   <!-- hfy-theme:end B -->
 </head>
 
@@ -132,19 +132,20 @@
   <div class="container">
     <header class="mb-4 text-center text-md-start">
       <h1 class="display-5 fw-bold">Harrison Family Website — Terms of Service</h1>
-      <p class="text-muted mb-1">Last updated: November 6, 2025 &middot; Contact: info [@] harrisonfamily [DOT] us</p>
+      <p class="text-muted mb-1">Last updated: October 13, 2026 &middot; Contact: info [@] harrisonfamily [DOT] us</p>
     </header>
 
     <article class="privacy-policy text-light">
       <hr>
       <h2>1. Overview</h2>
-      <p>The Harrison Family Website (“the Site”) is a private, invitation-only platform that shares genealogical information, photos, and stories about members of the Harrison family. By accessing or using the Site, you agree to these Terms of Service (“Terms”). If you do not agree, you should not use the Site.</p>
+      <p>The Harrison Family Website (“the Site”) is a private platform for the family that shares genealogical information, photos, and stories about members of the Harrison family. Anyone can ask to join on the join page, and an admin approves each request. By accessing or using the Site, you agree to these Terms of Service (“Terms”). If you do not agree, you should not use the Site.</p>
 
       <hr>
       <h2>2. Eligibility and Access</h2>
       <ul>
-        <li>Access to private content requires authentication via Google Sign-In.</li>
-        <li>Only approved email addresses on the family whitelist may sign in.</li>
+        <li>Access to private content requires signing in (Google, email and password, or face or fingerprint).</li>
+        <li>Only approved email addresses on the family access list may sign in.</li>
+        <li>To join, ask on the join page. An admin checks with you outside the site before approving.</li>
         <li>The Site and its content are for personal, non-commercial, family use only.</li>
         <li>Unauthorized access attempts, data scraping, or automated downloading are strictly prohibited.</li>
       </ul>
@@ -154,10 +155,12 @@
       <p>You agree not to:</p>
       <ul>
         <li>Share or republish private content outside the family without explicit consent.</li>
-        <li>Attempt to bypass Google Sign-In or other security measures.</li>
+        <li>Attempt to bypass sign-in or other security measures.</li>
+        <li>Post anything that shares a living relative's private details without their okay.</li>
         <li>Upload or distribute malicious software or engage in activities that could harm the Site or its users.</li>
         <li>Misrepresent your identity or impersonate another person.</li>
       </ul>
+      <p>Don't post phone numbers, street addresses, email addresses, full birthdays or ID numbers, yours or anyone else's; the site refuses the ones it recognizes.</p>
       <p>We reserve the right to revoke access if these rules are violated.</p>
 
       <hr>
@@ -165,6 +168,8 @@
       <ul>
         <li><strong>Family content:</strong> All genealogical data, photos, and media are shared by family archivists and contributors. You may view, but not redistribute, private materials without permission.</li>
         <li><strong>Your contributions:</strong> If you contribute photos, notes, or other materials, you retain ownership but grant the Harrison Family collective a perpetual, non-exclusive right to display and preserve them for family use.</li>
+        <li>Family moderators can remove posts or comments that break these terms.</li>
+        <li>Approved suggestions, and photos an admin adds from a comment to a family page, become part of the family record and are kept with it. Moderators can hide anything you post, ask you to change it, or ask you about it; an item hidden for changes shows again once you edit it. Admins can remove profile links.</li>
         <li><strong>Software and design:</strong> The Site’s code, design, and architecture remain the property of its maintainers.</li>
       </ul>
 
@@ -172,10 +177,11 @@
       <h2>5. Privacy and Data Use</h2>
       <p>Use of the Site is governed by the Harrison Family <a href="/privacy/">Privacy Policy</a>. In brief:</p>
       <ul>
-        <li>Google Sign-In is used only for authentication and email verification.</li>
+        <li>Sign-in details are used only to confirm you're family.</li>
         <li>No personal data is sold or shared.</li>
-        <li>All genealogical data is stored in static form on AWS S3 and distributed via CloudFront.</li>
+        <li>Family data is stored on AWS (Amazon DynamoDB and S3) and delivered through CloudFront; chat is also stored by Cloudflare.</li>
         <li>Living-person data is visible only to authenticated family members.</li>
+        <li>While you have the site open, family members can see that you're online or idle, and who has an account.</li>
       </ul>
 
       <hr>
@@ -248,7 +254,7 @@
       );
     </script>
     <script src="/js/auth-v2.js?v=67814cdc" defer></script>
-    <script src="/js/feature-flags.js?v=8d6007b2"></script>
+    <script src="/js/feature-flags.js?v=49d3a7b7"></script>
     <script>
       window.HFY_AUTH_CONFIG = Object.assign(
         {},

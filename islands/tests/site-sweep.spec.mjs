@@ -124,3 +124,32 @@ test("the obfuscated address reads [DOT] (the zero is fixed) on contact, privacy
     expect(html, path).not.toContain("[D0T]");
   }
 });
+
+test("/privacy/ at 375: the section 4 tables keep every label and purpose word whole and stay inside the article", async ({ page }) => {
+  await hermetic(page);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/privacy/");
+  await page.evaluate(() => document.fonts.ready);
+  const r = await page.evaluate(() => {
+    const article = document.querySelector("article.privacy-policy");
+    const tables = [...article.querySelectorAll("table")];
+    const split = []; // words whose own range spans more than one line box; the last (retention) column may break one when it must
+    for (const t of tables) for (const tr of t.querySelectorAll("tbody tr")) for (const cell of [...tr.cells].slice(0, -1)) {
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      for (let tn = walker.nextNode(); tn; tn = walker.nextNode()) {
+        for (const m of tn.textContent.matchAll(/\S+/g)) {
+          const range = document.createRange();
+          range.setStart(tn, m.index);
+          range.setEnd(tn, m.index + m[0].length);
+          if (new Set([...range.getClientRects()].map((x) => Math.round(x.top))).size > 1) split.push(m[0]);
+        }
+      }
+    }
+    const right = article.getBoundingClientRect().right;
+    return { tables: tables.length, split, wider: tables.filter((t) => t.getBoundingClientRect().right > right + 0.5).length, hscroll: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth };
+  });
+  expect(r.tables).toBe(2);
+  expect(r.split, "label or purpose words split across lines").toEqual([]);
+  expect(r.wider, "tables wider than the article").toBe(0);
+  expect(r.hscroll, "page h-scroll").toBe(0);
+});
