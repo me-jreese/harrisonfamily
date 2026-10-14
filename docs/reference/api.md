@@ -1216,6 +1216,28 @@ Notes for the clients (`addon-media`, the sync dev harness):
 
 **Operations.** The `hfy-api` role needs `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on `media/*` of the media bucket (the `MediaBinaries` statement in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)). `s3:DeleteObject` is the action the release adds: it is granted on all of `media/*`, but the code deletes only a staging object and the binary an extension change orphaned (`media/<handle><old ext>`), and the change-set summary for io lists it. The routes ship in the `hfy-api` zip with the release group's change set ([Deploy the app stack](../how-to/deploy-the-app-stack.md)), and `SyncApiEnabled` stays `0` until the seed.
 
+## The pull routes
+
+HFY-TSK-174 (design: HFY-PLN-002 sync.md sections 4.2 and 7.2, BRD2 section 11.1, reviews SI-30 and PS-22). Code: [`sync/pull.js`](../../api/src/sync/pull.js). Each route is a `sync-bearer` route in `SYNC_ROUTES`, so [every step of the sync middleware](#what-a-sync-request-goes-through) applies. The change feed, `GET /api/sync/changes`, is phase B (`changes-feed`) and is not here. A paused store (`writes_enabled` false) still serves every pull route: the POST routes set `pausedOk`.
+
+| Route | Success | Errors besides the middleware's |
+| --- | --- | --- |
+| `GET /api/sync/snapshot` | `200 {seq, url, body_sha256, count, generated_at}`; `url` is a presigned GET valid for 300 s | `503 retryable` (store or S3), `503 unavailable` (no sync bucket or signer wired) |
+| `POST /api/sync/media/:handle/download` | `200 {url, sha256, md5, size, content_type, expires_in: 300}` | `404 no_blob` (unknown or malformed handle, a tombstone, a held blob, no descriptor), `503 retryable` |
+| `POST /api/sync/status` | `204` | `400 validation` |
+| `GET /api/sync/conflicts?state=open&limit=<1..100>&cursor=` | `200 {state, conflicts, next_cursor}`, oldest first | `400 validation` (state, limit), `400 bad_cursor` |
+| `POST /api/sync/conflicts/:id/decision` `{decision}` | `200` the updated conflict | `400 validation`, `403 not_owner`, `403 step_up_required`, `404 not_found`, `409 already_resolved` |
+
+**The snapshot file.** It is built on demand from the store view (the heads, tombstones included, never a GSI read) and cached per seq at `snapshots/<seq>.jsonl.gz` in the sync bucket (`SYNC_BUCKET`, default `harrisonfamily-sync`); the object's metadata holds `body_sha256`, `count`, `generated_at` and `tree_id`, so a repeat call at the same seq costs one `HeadObject`. `snapshots/latest.json` records the newest. Line 1 is the header `{"type":"header","tree_id","seq","schema":21,"redaction":1,"count","body_sha256"}`. Every further line is `{"class","handle","gramps_id","version","seq","deleted","obj"}` in class then handle order, as canonical JSON ending in `\n`; a tombstone, a withdrawn head or an expunged entry has `deleted: true` and `obj: null`. `body_sha256` is the SHA-256 (hex) of the uncompressed body, every byte after the header line. The gzip header carries no mtime, so the same heads give the same bytes. The add-on checks the header (`tree_id`, `schema`, `redaction`, `count`), the digest, and `seq >= last_pull_seq` (D10, D11).
+
+**Blob downloads.** The descriptor on the Media head decides: a present blob under `media/<handle><ext>` is presigned for 300 s with its recorded content type, and the response carries the checksums the add-on verifies (D33). A blob whose key is not of that shape is never presigned.
+
+**Status.** The body is `{client_instance_id, dbid, fingerprint, addon_version, gramps_version, schema, last_run: {run_id, action, result, exit_code?, counts?, finished_at}}`, every field shape-checked; unknown fields are dropped. It replaces the single `SYNC#CLIENT#<client_instance_id>` item. The body carries no tree name, person, path or free text.
+
+**Conflicts.** `SYNC#CONFLICT#<ulid>` items are read through GSI1 `SYNCCONFLICT#<state>`. The cursor is opaque, rebuilt from the last item, and can only walk the partition it is used with. A decision needs the sync bearer: a `gramps-owner` whose sign-in has `amr` `mfa` and `auth_time` within 300 s (`requireConflictDecision`, checked before the item is read). An `hfy-admin` session cookie alone is refused (`401` with no bearer, `403 not_owner` for an admin bearer). The conditional update stores `{decision, cloud_version, cloud_value_hash}` with the state `resolved` and an audit item (`AUDIT#conflict:<id>`). `cloud_version` is the version of the object's head when the decision was made; `cloud_value_hash` is the SHA-256 of the canonical JSON of `[{path, cloud}]` from the conflict's own `paths`, the values the admin saw. The add-on applies the decision only while both still match, else it reopens the conflict (SI-30). A conflict that is not open, including a dismissed one, is `409 already_resolved`. Nothing in this release writes a `SYNC#CONFLICT#` item: the desktop's mirror of parked conflicts and the proposals domain's `proposal_stale` source are later tasks.
+
+**Operations.** The `hfy-api` role reads and writes `snapshots/*` in the sync bucket (the `SyncSnapshots` statement in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)), and the stack sets `SYNC_BUCKET`. The routes answer `404 not_enabled` until `SYNC_API_ENABLED` is `1`.
+
 ## Environment
 
 Read in [`index.js`](../../api/src/index.js) and, for the `MCP_*` variables, in `loadMcpConfig` in [`mcp.js`](../../api/src/mcp.js). A default in code applies only when the variable is absent. [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml) sets the variables in the first table, each from a stack parameter.
@@ -1231,6 +1253,7 @@ Read in [`index.js`](../../api/src/index.js) and, for the `MCP_*` variables, in 
 | `ADMIN_LIST_BUCKET` | `<config-bucket>` | `ConfigBucket` | Bucket holding the admin list |
 | `ADMIN_LIST_KEY` | `config/admins.json` | `AdminListKey` | Admin list key |
 | `MEDIA_BUCKET` | `<site-bucket>` | `MediaBucket` | Bucket that uploads are presigned into, and that person records (`person/<gramps-id>.json`) are read from for [author labels](#author-label) |
+| `SYNC_BUCKET` | `harrisonfamily-sync` | `SyncBucketName` | Private bucket for the sync snapshots (`snapshots/<seq>.jsonl.gz`), see [The pull routes](#the-pull-routes) |
 | `MEDIA_PUBLIC_BASE` | `https://<site>` | `MediaPublicBase` | Origin that serves `uploads/`. Upload `publicUrl`s start with it, and attachment URLs must. |
 | `HFY_GUARD_DOB` | unset: off | `GuardDob` (`off` or `on`, default `off`) | `on` makes the contact-information guard refuse `dob_not_allowed`. Any other value is off. See [Contact-information guard](#contact-information-guard). |
 | `VAPID_SECRET` | unset: push is not sent | `VapidSecretName` (left out when empty) | Secret holding the VAPID keys |

@@ -1,6 +1,6 @@
 // HFY-R58 (2): the real AWS SDK presigner, run offline with fake credentials (signing is local; nothing is sent).
 import { describe, expect, it } from "vitest";
-import { createPresignPut, PRESIGN_CLIENT_OPTIONS } from "../src/presign.js";
+import { createPresignGet, createPresignPut, PRESIGN_CLIENT_OPTIONS } from "../src/presign.js";
 import { UPLOAD_EXPIRES_SECONDS, UPLOAD_PREFIX } from "../src/uploads.js";
 
 const presignPut = createPresignPut({
@@ -58,5 +58,16 @@ describe("presigned upload PUT with a signed SHA-256 (HFY-TSK-173, sync.md 9)", 
     const other = Buffer.alloc(32, 9).toString("base64");
     expect((await signWith(b64)).searchParams.get("X-Amz-Signature")).not.toBe((await signWith(other)).searchParams.get("X-Amz-Signature"));
     expect((await signWith(undefined)).searchParams.get("X-Amz-SignedHeaders")).not.toContain("x-amz-checksum-sha256");
+  });
+});
+
+describe("createPresignGet (HFY-TSK-174, the sync pull routes)", () => {
+  const presignGet = createPresignGet({ region: "us-west-2", credentials: { accessKeyId: "AKIDEXAMPLETEST", secretAccessKey: "test-secret-not-a-real-key-000000000000" } });
+  it("signs a GET for the key with the expiry, and the response content type when given", async () => {
+    const u = new URL(await presignGet({ bucket: "sync-bucket.test", key: "snapshots/7.jsonl.gz", expiresIn: 300, contentType: "application/gzip" }));
+    expect(u.pathname.endsWith("/snapshots/7.jsonl.gz")).toBe(true);
+    expect(u.searchParams.get("X-Amz-Expires")).toBe("300");
+    expect(u.searchParams.get("response-content-type")).toBe("application/gzip");
+    expect(new URL(await presignGet({ bucket: "sync-bucket.test", key: "snapshots/7.jsonl.gz", expiresIn: 300 })).searchParams.has("response-content-type")).toBe(false);
   });
 });
