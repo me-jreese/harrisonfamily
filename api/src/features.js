@@ -42,7 +42,8 @@ export function requireFeature(name) {
 /**
  * ROUTES entry member: the route sits behind stack switch `name`. `check({actor})` runs on every call before the handler (and before the 401
  * for a signed-out caller): return true to continue, false for 404 not_found, or throw the switch's own HttpError (for example 404 not_enabled
- * for SYNC_API_ENABLED, 503 when chat service keys are unset).
+ * for SYNC_API_ENABLED, 503 when chat service keys are unset). `check` also receives `params` (the matched path parameters) and `ctx`
+ * ({ddb, cmds, table, now}) when the handler supplies them (the records routes read them to let a member reach their own record).
  */
 export function serverSwitch(name, check) {
   if (!SERVER_SWITCHES.includes(name)) throw new TypeError(`serverSwitch: unknown switch ${JSON.stringify(name)} (one of ${SERVER_SWITCHES.join(", ")})`);
@@ -177,7 +178,7 @@ export function createFeatureGate({ flags, isUat, log = console }) {
       throw notFound();
     }
     if (gate.type === "switch") {
-      if ((await gate.check({ actor })) === true) return;
+      if ((await gate.check({ actor, params: opts?.params, ctx: opts?.ctx })) === true) return;
       throw notFound();
     }
     throw notFound(); // an unknown gate kind fails closed

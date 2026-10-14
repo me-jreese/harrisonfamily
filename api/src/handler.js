@@ -94,7 +94,7 @@ export function createHandler(deps) {
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
+    return { store: { ddb, cmds, table, now }, content, comments, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, featureOn, log };
   }
 
   /**
@@ -144,7 +144,7 @@ export function createHandler(deps) {
       } else {
         actor = await authenticate(event);
         // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.
-        await features.check(route.gate, actor, { preview });
+        await features.check(route.gate, actor, { preview, params, ctx: { ddb, cmds, table, now } });
         if (!actor) throw new HttpError(401, "unauthenticated", "sign in required");
       }
 
