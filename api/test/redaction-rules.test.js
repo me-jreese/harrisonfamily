@@ -4,9 +4,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  attributeRule, birthCitationHandles, buildTree, coordinateIsFine, dateViolations, isBirthLike, placeCodeIsLocal, placeExclusionRule,
-  rectProblem, reduceDate, reducedSortval, roundCoordinate, sdn,
+  attributeRule, birthCitationHandles, buildTree, coordinateIsFine, dateViolations, escapePointerToken, expandBraces, isBirthLike, matchPointers,
+  placeCodeIsLocal, placeExclusionRule, pointerGet, rectProblem, reduceDate, reducedSortval, roundCoordinate, sdn, urlParts, urlRules,
 } from "../src/shared/redaction-rules.mjs";
+import { scanText } from "../src/shared/privacy-guard.mjs";
 
 const redaction = new URL("../../gramps/redaction/", import.meta.url);
 const policy = JSON.parse(readFileSync(new URL("redaction-v1.json", redaction), "utf8"));
@@ -204,5 +205,53 @@ describe("shared/redaction-rules.mjs against the golden vectors", () => {
   it("is driven by the policy file and names its rules", () => {
     expect(rulesOf("birth.date.daymonth").action).toBe("reduce_date");
     expect(policy.birthLike.eventTypes.map((t) => t.value)).toEqual([12, 14, 15, 18, 22, 45]);
+  });
+
+  it("urlRules agrees with the vectors on every Url of a Person, Place or Repository", () => {
+    let urls = 0;
+    for (const v of vectors) {
+      for (const o of v.input) {
+        if (!["Person", "Place", "Repository"].includes(o._class)) continue;
+        (o.urls || []).forEach((u, i) => {
+          const want = v.expected.server.violations.filter((x) => x.handle === o.handle && x.pointer === `/urls/${i}` && x.rule.startsWith("contact.url.")).map((x) => x.rule).sort();
+          expect(urlRules(u, (t) => scanText(t), policy).sort(), `${v.id} ${o.handle} /urls/${i}`).toEqual(want);
+          urls += 1;
+        });
+      }
+    }
+    expect(urls).toBeGreaterThanOrEqual(20);
+  });
+
+  it("urlParts reads a Url the way a browser does", () => {
+    expect(urlParts("  HTTPS:///User@Wa.me./x?y")).toEqual(["https", "wa.me", "/x?y"]);
+    expect(urlParts("http:\\\\host.example\\p")).toEqual(["http", "host.example", "/p"]);
+    expect(urlParts("host:8080/x")).toEqual(["", "host", "/x"]); // a port, not a scheme
+    expect(urlParts("mailto:a@b.example")).toEqual(["mailto", "", "a@b.example"]);
+    expect(urlParts("\u00a0\u3000//t.me/x\u2003")).toEqual(["", "t.me", "/x"]); // Python's strip() whitespace
+    expect(urlParts(null)).toEqual(["", "", ""]);
+    expect(urlRules({ path: "https://notwa.me/x", type: { value: 0 } }, () => [], policy)).toEqual([]); // a suffix match is by label
+    expect(urlRules({ path: "https://x.wa.me/x" }, () => [], policy)).toEqual(["contact.url.channel"]);
+    expect(urlRules({ path: "https://www.instagram.com/M/abc" }, () => [], policy)).toEqual(["contact.url.channel"]);
+    expect(urlRules({ path: "https://www.instagram.com/someone" }, () => [], policy)).toEqual([]);
+    expect(urlRules(null, () => [], policy)).toEqual([]);
+  });
+
+  it("matchPointers and pointerGet follow rules.py: wildcards, ** and braces, numeric order, own keys only", () => {
+    const o = { a: [{ x: 1 }, { x: 2 }, { x: 3 }, { x: 4 }, { x: 5 }, { x: 6 }, { x: 7 }, { x: 8 }, { x: 9 }, { x: 10 }, { x: 11 }], b: { attribute_list: [1, 2], c: { attribute_list: [3] } }, "k/~": { v: 1 } };
+    expect(matchPointers(o, "/a/*/x").slice(-3)).toEqual(["/a/8/x", "/a/9/x", "/a/10/x"]); // numeric, not lexical
+    expect(matchPointers(o, "/**/attribute_list/*")).toEqual(["/b/attribute_list/0", "/b/attribute_list/1", "/b/c/attribute_list/0"]);
+    expect(matchPointers(o, "/{b,a}/0")).toEqual(["/a/0"]);
+    expect(matchPointers(o, "/")).toEqual([""]);
+    expect(matchPointers(o, "/k~1~0")).toEqual([]); // patterns take plain keys; a key with a slash is reached with *
+    expect(matchPointers(o, "/*/v")).toEqual(["/k~1~0/v"]);
+    expect(matchPointers({ a: 1 }, "/constructor")).toEqual([]);
+    expect(matchPointers({ a: [1] }, "/a/1")).toEqual([]);
+    expect(pointerGet(o, "/k~1~0/v")).toBe(1);
+    expect(pointerGet(o, "/a/10/x")).toBe(11);
+    expect(pointerGet(o, "/a/11/x", "none")).toBe("none");
+    expect(pointerGet(o, "/constructor")).toBeUndefined();
+    expect(pointerGet(o, "")).toBe(o);
+    expect(escapePointerToken("a/b~c")).toBe("a~1b~0c");
+    expect(expandBraces("/a/{b,c/d}/e")).toEqual(["/a/b/e", "/a/c/d/e"]);
   });
 });

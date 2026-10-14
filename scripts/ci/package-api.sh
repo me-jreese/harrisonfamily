@@ -12,6 +12,8 @@ rm -rf "$STAGE/src/shared" && mkdir "$STAGE/src/shared"
 for f in "$ROOT"/shared/*.mjs; do case "$f" in *.test.mjs) ;; *) cp "$f" "$STAGE/src/shared/" ;; esac; done
 # The edit guard (src/records/guard.js) reads the redaction policy at ../../gramps/redaction/redaction-v1.json from src/records.
 mkdir -p "$STAGE/gramps/redaction" && cp "$ROOT/gramps/redaction/redaction-v1.json" "$STAGE/gramps/redaction/"
+# The server validator (src/sync/schema.js) reads the Gramps JSON Schema at ../../gramps/schema/gramps-6.0.6.schema.json from src/sync.
+mkdir -p "$STAGE/gramps/schema" && cp "$ROOT/gramps/schema/gramps-6.0.6.schema.json" "$STAGE/gramps/schema/"
 [ ! -L "$STAGE/src/shared" ] || { echo "package-api: src/shared is still a symlink" >&2; exit 1; }
 ls "$STAGE"/src/shared/*.mjs >/dev/null 2>&1 || { echo "package-api: no shared/*.mjs staged" >&2; exit 1; }
 ( cd "$STAGE" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund >/dev/null && rm -f .npmrc package-lock.json )
