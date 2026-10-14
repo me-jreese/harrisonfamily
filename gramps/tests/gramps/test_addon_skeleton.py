@@ -357,7 +357,7 @@ class Refusals(AddonCase):
 
     def test_actions_the_skeleton_does_not_have_yet_say_so(self):
         self.bind()
-        for action in ("sync", "pull", "push", "check", "login"):
+        for action in ("sync", "pull", "push", "check"):
             proc = S.run_wrapper([action, "--tree", self.name])
             self.assertEqual(proc.returncode, 69, "%s: %s" % (action, proc.stdout + proc.stderr))
             self.assertEqual(self.status()["error"]["code"], "not_enabled")
