@@ -32,7 +32,13 @@ export const COPY = Object.freeze({
 });
 
 export const giveAccessPrompt = (name, person) => `give ${name} access as ${person}?`;
-export const removePrompt = (name) => `remove ${name}'s access?`;
+export const removePrompt = (name) => `remove ${name}'s access? this removes all of their ways in, every email they use.`;
+export const NO_MEMBER_ID = "this request isn't linked to a person in the tree, so there is no access to remove here.";
+/** The member to remove: the person the request was linked to, or the one a held second email belongs to. Null when neither is known. */
+export const revokeTarget = (detail) => {
+  const id = [detail?.decision?.grampsId, detail?.hold?.grampsId].find((x) => typeof x === "string" && x.trim());
+  return id ? id.trim() : null;
+};
 
 /** The tabs: the list `state` the API takes, and the plain words. */
 export const TABS = Object.freeze([
@@ -320,23 +326,45 @@ export const REVOKE_PATH = "/allow-grants/revoke";
 // ---- a half-edited "they're new" preview survives the step-up sign-in (sessionStorage, this tab only; no storage means no draft)
 const DRAFT_PREFIX = "hfy-requests-draft:";
 const store = () => { try { return typeof sessionStorage === "undefined" ? null : sessionStorage; } catch { return null; } };
-export function saveDraft(id, preview, storage = store()) {
-  try { if (storage && typeof id === "string" && id && preview && typeof preview === "object") storage.setItem(DRAFT_PREFIX + id, JSON.stringify(preview)); } catch { /* storage full or blocked: the edits are not kept */ }
+const STEPUP_PREFIX = "hfy-requests-stepup:";
+const DRAFT_MAX_AGE_MS = 60 * 60 * 1000;
+/** Keeps the preview with the request's version and the time, so an old or out-of-date draft is not brought back. */
+export function saveDraft(id, preview, storage = store(), { version, now = Date.now() } = {}) {
+  try { if (storage && typeof id === "string" && id && preview && typeof preview === "object") storage.setItem(DRAFT_PREFIX + id, JSON.stringify({ at: now, version: Number.isInteger(version) ? version : null, preview })); } catch { /* storage full or blocked: the edits are not kept */ }
 }
-export function loadDraft(id, storage = store()) {
+/** The kept preview, or null when there is none, it is older than an hour, or it was made against another version of the request. */
+export function loadDraft(id, storage = store(), { version, now = Date.now() } = {}) {
   try {
     const raw = storage && typeof id === "string" && id ? storage.getItem(DRAFT_PREFIX + id) : null;
     const got = raw ? JSON.parse(raw) : null;
-    return got && typeof got === "object" && !Array.isArray(got) ? got : null;
+    if (!got || typeof got !== "object" || Array.isArray(got) || !got.preview || typeof got.preview !== "object" || Array.isArray(got.preview)) return null;
+    if (typeof got.at !== "number" || now - got.at > DRAFT_MAX_AGE_MS) return null;
+    if (Number.isInteger(version) && Number.isInteger(got.version) && version !== got.version) return null;
+    return got.preview;
   } catch { return null; }
 }
 export function clearDraft(id, storage = store()) {
-  try { if (storage && typeof id === "string" && id) storage.removeItem(DRAFT_PREFIX + id); } catch { /* nothing to clear */ }
+  try { if (storage && typeof id === "string" && id) { storage.removeItem(DRAFT_PREFIX + id); storage.removeItem(STEPUP_PREFIX + id); } } catch { /* nothing to clear */ }
+}
+/** A draft comes back only after a step-up sign-in: the flag is set when the sign-in is asked for and read once. */
+export function markStepUp(id, storage = store()) {
+  try { if (storage && typeof id === "string" && id) storage.setItem(STEPUP_PREFIX + id, "1"); } catch { /* no flag: no restore */ }
+}
+export function takeStepUp(id, storage = store()) {
+  try {
+    if (!storage || typeof id !== "string" || !id) return false;
+    const on = storage.getItem(STEPUP_PREFIX + id) === "1";
+    storage.removeItem(STEPUP_PREFIX + id);
+    return on;
+  } catch { return false; }
 }
 
 /** The result line for a decision answer `{state, emailSent}`. `mail: false` is a decision that sends none (revoke). */
 export function resultLine(answer, { revoke = false } = {}) {
-  if (revoke) return COPY.doneRemoved;
+  if (revoke) {
+    const n = Array.isArray(answer?.revoked) ? answer.revoked.length : 0;
+    return n > 0 ? `${COPY.doneRemoved} ${n === 1 ? "1 way in was" : `${n} ways in were`} removed.` : COPY.doneRemoved;
+  }
   if (answer && answer.emailSent === false) return COPY.doneNoEmail;
   if (answer && answer.emailSent === true) return COPY.done;
   return COPY.doneNoMail;
@@ -351,7 +379,7 @@ export function describeError(err, { revoke = false } = {}) {
   const code = err?.code;
   if (revoke && status === 404) return { kind: "plain", text: "they have no access to remove. it may already be gone." };
   if (revoke && status === 422 && code === "too_many") return { kind: "plain", text: "this person has more ways in than can be removed here. ask the owner of the site." };
-  if (revoke && (status === 400 || status === 422)) return { kind: "plain", text: "that didn't go through. confirm with this person outside the site, then try again." };
+  if (revoke && (status === 400 || status === 422)) return { kind: "plain", text: "that didn't go through. reload this page and try again." };
   if (status === 401 && code === "step_up_required") return { kind: "signin", text: "to do this, sign in again first." };
   if (status === 401) return { kind: "signin", text: "your sign-in ran out. sign in again." };
   if (status === 403 && code === "owner_only") return { kind: "plain", text: "only the owner of the site can allow a second email." };

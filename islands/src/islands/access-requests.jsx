@@ -14,7 +14,7 @@ import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
 import { PersonName } from "../lib/person-name.jsx";
 import {
-  COPY, TABS, answersOf, clearDraft, loadDraft, saveDraft, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, giveAccessPrompt, linkBody, locationFor, newBody,
+  COPY, TABS, answersOf, clearDraft, loadDraft, markStepUp, NO_MEMBER_ID, revokeTarget, saveDraft, takeStepUp, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, giveAccessPrompt, linkBody, locationFor, newBody,
   parseLocation, placeChoices, previewFields, rankCandidates, removePrompt, requesterName, resultLine, REVOKE_PATH, revokeBody, setEventPlace, stateWords, tabById, tidyPreviewNames,
 } from "../lib/access-requests-model.js";
 
@@ -170,9 +170,11 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
 
   const reset = () => { clearDraft(detail.id); setMode(null); setConfirmed(false); setNote(""); setSendNote(false); setNeedSecond(false); onProblem(null); };
   // A step-up sign-in leaves the page; the half-edited preview comes back with it (sessionStorage, keyed by the request).
-  const edited = (next) => { setPreview(next); saveDraft(detail.id, next); };
+  const edited = (next) => { setPreview(next); saveDraft(detail.id, next, undefined, { version: detail.version }); };
   useEffect(() => {
-    const kept = pending ? loadDraft(detail.id) : null;
+    const back = takeStepUp(detail.id);
+    const kept = pending && back ? loadDraft(detail.id, undefined, { version: detail.version }) : null;
+    if (!pending || !back) clearDraft(detail.id);
     if (!kept) return undefined;
     let live = true;
     loadIndexes().then((i) => { if (!live) return; setPlaces(i.places); setPreview(kept); setMode("new"); });
@@ -183,7 +185,7 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
     setConfirmed(false);
     const i = await loadIndexes();
     setPlaces(i.places);
-    const kept = loadDraft(detail.id);
+    const kept = loadDraft(detail.id, undefined, { version: detail.version });
     setPreview(kept || (detail.preview ? tidyPreviewNames(applyUniquePlaces(detail.preview, i.places)) : null));
     setMode("new");
   };
@@ -198,6 +200,7 @@ function Actions({ detail, name, onDone, onProblem, onReload, problem, busy, set
       reset();
     } catch (err) {
       const p = describeError(err);
+      if (p.kind === "signin") markStepUp(detail.id);
       if (p.kind === "second" && !second) setNeedSecond(true);
       onProblem(p);
     } finally {
@@ -272,11 +275,13 @@ function Revoke({ detail, name, onDone, onProblem, onReload, problem, busy, setB
   const base = useId();
   const [open, setOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const target = revokeTarget(detail);
   const go = async () => {
+    if (!target) return;
     setBusy(true);
     onProblem(null);
     try {
-      const answer = await api.post(REVOKE_PATH, revokeBody({ grampsId: detail.decision?.grampsId, confirmedOutside: confirmed }));
+      const answer = await api.post(REVOKE_PATH, revokeBody({ grampsId: target, confirmedOutside: confirmed }));
       announceChanged();
       onDone(resultLine(answer, { revoke: true }));
       setOpen(false);
@@ -288,7 +293,9 @@ function Revoke({ detail, name, onDone, onProblem, onReload, problem, busy, setB
   };
   return (
     <section className="hfy-requests__actions" data-hfy-actions>
-      {!open ? (
+      {!target ? (
+        <p className="hfy-requests__note" data-hfy-no-member>{NO_MEMBER_ID}</p>
+      ) : !open ? (
         <button type="button" className="hfy-requests__btn hfy-requests__btn--danger" onClick={() => { setOpen(true); onProblem(null); }} disabled={busy} data-hfy-act="remove-open">remove access</button>
       ) : (
         <form className="hfy-requests__confirm" role="group" aria-label="remove access" onSubmit={(e) => { e.preventDefault(); if (confirmed && !busy) go(); }} data-hfy-confirm="revoke">

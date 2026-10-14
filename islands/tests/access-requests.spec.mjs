@@ -249,11 +249,27 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(act(page, "remove")).toBeDisabled();
       await page.getByLabel("confirmed with this person outside the site").check();
       await act(page, "remove").click();
-      await expect(page.locator("[data-hfy-result]")).toHaveText("done. their access is removed.");
+      await expect(page.locator("[data-hfy-result]")).toHaveText("done. their access is removed. 1 way in was removed.");
       expect(s.posts[0].path).toBe("/api/allow-grants/revoke");
       expect(s.posts[0].body).toEqual({ grampsId: "I9001", confirmedOutside: true });
       expect(s.calls.some((c) => /\/access-requests\/req4\/revoke/.test(c.path))).toBe(false);
       expect(await axeViolations(page)).toEqual([]);
+    });
+
+    test("done tab: an active request with no linked person offers no remove button and sends nothing", async ({ page }) => {
+      const s = await open(page, { requests: [request("req5", "active", { rest: { decision: {} } })] }, "?tab=done&id=req5");
+      await expect(page.locator("[data-hfy-no-member]")).toBeVisible();
+      await expect(act(page, "remove-open")).toHaveCount(0);
+      expect(s.posts.length).toBe(0);
+    });
+
+    test("done tab: a held second email's person is the one removed", async ({ page }) => {
+      const s = await open(page, { requests: [request("req6", "active", { rest: { decision: {}, hold: { until: "2030-01-01", grampsId: "I9002" } } })] }, "?tab=done&id=req6");
+      await act(page, "remove-open").click();
+      await page.getByLabel("confirmed with this person outside the site").check();
+      await act(page, "remove").click();
+      await expect(page.locator("[data-hfy-result]")).toBeVisible();
+      expect(s.posts[0].body).toEqual({ grampsId: "I9002", confirmedOutside: true });
     });
 
     for (const [status, code, text, kind] of [

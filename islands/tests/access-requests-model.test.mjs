@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mapToGramps } from "../../shared/legacy-form.mjs";
 import {
   COPY, TABS, answersOf, applyUniquePlaces, askedAgo, bornLine, declineBody, describeError, editPreview, fold, givenOverlap, linkBody, locationFor, matchPlaces,
-  newBody, parseLocation, placeChoices, previewFields, rankCandidates, requesterName, tidyPreviewNames, resultLine, revokeBody, REVOKE_PATH, saveDraft, loadDraft, clearDraft, scoreCandidate, setEventPlace, stateWords,
+  newBody, parseLocation, placeChoices, previewFields, rankCandidates, requesterName, tidyPreviewNames, resultLine, revokeBody, REVOKE_PATH, saveDraft, loadDraft, clearDraft, markStepUp, takeStepUp, revokeTarget, NO_MEMBER_ID, scoreCandidate, setEventPlace, stateWords,
 } from "../src/lib/access-requests-model.js";
 
 const PEOPLE = [
@@ -216,7 +216,30 @@ test("a preview draft round-trips through storage, and a missing or broken stora
   mem.set("hfy-requests-draft:bad", "{not json");
   assert.equal(loadDraft("bad", st), null);
   const boom = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
+  saveDraft("v", { a: 1 }, st, { version: 3, now: 1000 });
+  assert.deepEqual(loadDraft("v", st, { version: 3, now: 2000 }), { a: 1 });
+  assert.equal(loadDraft("v", st, { version: 4, now: 2000 }), null, "another version of the request");
+  assert.equal(loadDraft("v", st, { version: 3, now: 1000 + 61 * 60 * 1000 }), null, "older than an hour");
+  assert.equal(takeStepUp("v", st), false);
+  markStepUp("v", st);
+  assert.equal(takeStepUp("v", st), true);
+  assert.equal(takeStepUp("v", st), false, "read once");
+  markStepUp("v", st);
+  clearDraft("v", st);
+  assert.equal(takeStepUp("v", st), false, "clearing a draft clears the flag");
   assert.doesNotThrow(() => { saveDraft("x", { a: 1 }, boom); clearDraft("x", boom); });
   assert.equal(loadDraft("x", boom), null);
   assert.equal(loadDraft("x", null), null);
+});
+
+test("revokeTarget uses the linked person, then the held one, else null; resultLine counts what was removed", () => {
+  assert.equal(revokeTarget({ decision: { grampsId: "I9001" }, hold: { grampsId: "I9002" } }), "I9001");
+  assert.equal(revokeTarget({ hold: { grampsId: "I9002" } }), "I9002");
+  assert.equal(revokeTarget({ decision: {} }), null);
+  assert.equal(revokeTarget(null), null);
+  assert.match(NO_MEMBER_ID, /no access to remove/);
+  assert.equal(resultLine({ revoked: [{ email: "a***@example.test" }, { email: "b***@example.test" }] }, { revoke: true }), `${COPY.doneRemoved} 2 ways in were removed.`);
+  assert.equal(resultLine({ revoked: [{ email: "a***@example.test" }] }, { revoke: true }), `${COPY.doneRemoved} 1 way in was removed.`);
+  assert.equal(resultLine({}, { revoke: true }), COPY.doneRemoved);
+  assert.doesNotMatch(describeError({ status: 400, code: "validation" }, { revoke: true }).text, /outside the site/);
 });
