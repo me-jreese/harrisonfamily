@@ -1,0 +1,613 @@
+{
+  "x-hfy-sha256": "c8675562248d1101744faee960f724158cc27f94f2bc9255c2c64fb2403502d3",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hfy:records/Note",
+  "title": "Note",
+  "additionalProperties": false,
+  "properties": {
+    "_class": {
+      "enum": [
+        "Note"
+      ]
+    },
+    "change": {
+      "title": "Last changed",
+      "type": "integer",
+      "minimum": 0
+    },
+    "format": {
+      "type": "integer",
+      "oneOf": [
+        {
+          "const": 0,
+          "title": "Flowed text"
+        },
+        {
+          "const": 1,
+          "title": "Preformatted text"
+        }
+      ],
+      "title": "Format"
+    },
+    "gramps_id": {
+      "title": "Gramps ID",
+      "type": "string",
+      "maxLength": 30,
+      "pattern": "^[A-Za-z0-9_-]*$"
+    },
+    "handle": {
+      "maxLength": 50,
+      "title": "Handle",
+      "type": "string"
+    },
+    "private": {
+      "title": "Private",
+      "type": "boolean"
+    },
+    "tag_list": {
+      "items": {
+        "maxLength": 50,
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array",
+      "maxItems": 500
+    },
+    "text": {
+      "$ref": "#/$defs/StyledText"
+    },
+    "type": {
+      "$ref": "#/$defs/NoteType"
+    }
+  },
+  "required": [
+    "_class"
+  ],
+  "type": "object",
+  "x-hfy": {
+    "generator": "scripts/records/gen-edit-schemas.mjs",
+    "policy": "redaction-v1",
+    "gramps": "6.0.6",
+    "sourceSchemaSha256": "865219475947fc1b80e554251dc2290b8abf18f2c1179427e288bf3c10880c72",
+    "sourceLabelsSha256": "755b82c1b5814f3b445c9618e6d6b8b111029200c7f5634c3b9a14cf070c327a",
+    "dropped": [],
+    "normalize": [
+      "NFC",
+      "trim"
+    ]
+  },
+  "$defs": {
+    "NoteType": {
+      "title": "Note type",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "_class": {
+          "enum": [
+            "NoteType"
+          ]
+        },
+        "string": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "value": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "_class",
+        "value"
+      ],
+      "oneOf": [
+        {
+          "title": "Unknown",
+          "properties": {
+            "value": {
+              "const": -1
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "General",
+          "properties": {
+            "value": {
+              "const": 1
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Research",
+          "properties": {
+            "value": {
+              "const": 2
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Analysis",
+          "properties": {
+            "value": {
+              "const": 27
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Transcript",
+          "properties": {
+            "value": {
+              "const": 3
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Source text",
+          "properties": {
+            "value": {
+              "const": 21
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Citation",
+          "properties": {
+            "value": {
+              "const": 22
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Report",
+          "properties": {
+            "value": {
+              "const": 23
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "HTML code",
+          "properties": {
+            "value": {
+              "const": 24
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "To-do",
+          "properties": {
+            "value": {
+              "const": 25
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Link",
+          "properties": {
+            "value": {
+              "const": 26
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Person Note",
+          "properties": {
+            "value": {
+              "const": 4
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Name Note",
+          "properties": {
+            "value": {
+              "const": 20
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Attribute Note",
+          "properties": {
+            "value": {
+              "const": 5
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Address Note",
+          "properties": {
+            "value": {
+              "const": 6
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Association Note",
+          "properties": {
+            "value": {
+              "const": 7
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "LDS Note",
+          "properties": {
+            "value": {
+              "const": 8
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Family Note",
+          "properties": {
+            "value": {
+              "const": 9
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Event Note",
+          "properties": {
+            "value": {
+              "const": 10
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Event Reference Note",
+          "properties": {
+            "value": {
+              "const": 11
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Source Note",
+          "properties": {
+            "value": {
+              "const": 12
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Source Reference Note",
+          "properties": {
+            "value": {
+              "const": 13
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Place Note",
+          "properties": {
+            "value": {
+              "const": 14
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Repository Note",
+          "properties": {
+            "value": {
+              "const": 15
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Repository Reference Note",
+          "properties": {
+            "value": {
+              "const": 16
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Media Note",
+          "properties": {
+            "value": {
+              "const": 17
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Media Reference Note",
+          "properties": {
+            "value": {
+              "const": 18
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Child Reference Note",
+          "properties": {
+            "value": {
+              "const": 19
+            },
+            "string": {
+              "const": ""
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "title": "Custom (your own wording)",
+          "properties": {
+            "value": {
+              "const": 0
+            },
+            "string": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+            }
+          },
+          "required": [
+            "value",
+            "string"
+          ],
+          "x-hfy-custom-registry": "NoteType"
+        }
+      ]
+    },
+    "StyledText": {
+      "additionalProperties": false,
+      "properties": {
+        "_class": {
+          "enum": [
+            "StyledText"
+          ]
+        },
+        "string": {
+          "title": "Text",
+          "type": "string",
+          "maxLength": 10000,
+          "pattern": "^(?!\\s)(?:[^\\p{Cc}]|[\\n\\t])*(?<!\\s)$"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/StyledTextTag"
+          },
+          "title": "Styled Text Tags",
+          "type": "array",
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "_class"
+      ],
+      "title": "Styled Text",
+      "type": "object"
+    },
+    "StyledTextTag": {
+      "additionalProperties": false,
+      "properties": {
+        "_class": {
+          "enum": [
+            "StyledTextTag"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/StyledTextTagType"
+        },
+        "ranges": {
+          "items": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "title": "Ranges",
+          "type": "array",
+          "maxItems": 500
+        },
+        "value": {
+          "title": "Value",
+          "type": [
+            "null",
+            "string",
+            "integer",
+            "boolean"
+          ],
+          "maxLength": 200,
+          "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+        }
+      },
+      "required": [
+        "_class"
+      ],
+      "title": "Tag",
+      "type": "object"
+    },
+    "StyledTextTagType": {
+      "additionalProperties": false,
+      "properties": {
+        "_class": {
+          "enum": [
+            "StyledTextTagType"
+          ]
+        },
+        "string": {
+          "title": "Custom type",
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^(?!\\s)[^\\p{Cc}]*(?<!\\s)$"
+        },
+        "value": {
+          "title": "Type code",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "_class"
+      ],
+      "title": "Type",
+      "type": "object"
+    }
+  }
+}
