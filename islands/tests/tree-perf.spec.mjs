@@ -122,7 +122,8 @@ async function stub(page, graphBody, sub) {
 
 for (const { people, focusMs, longTaskMs } of CASES) {
   test.describe(`${people} people, 4x CPU, slow 4G`, () => {
-    test.describe.configure({ mode: "serial" });
+    // Two retries: the budgets are wall-clock times on a shared machine. A real regression misses on every attempt; a busy machine rarely does.
+    test.describe.configure({ mode: "serial", retries: 2 });
     test.setTimeout(90_000);
     const graph = synthGraph(people);
     const body = JSON.stringify(graph);
