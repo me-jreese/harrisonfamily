@@ -2,14 +2,14 @@
 // In-memory DynamoDB fake, synthetic ids, names and dates only.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InMemoryNotificationStore } from "@io-kit/notify/server";
-import { cmds, makeApi, signToken, TABLE } from "./world.js";
+import { cmds, createFakeDdb, createUlidFactory, makeApi, signToken, TABLE, ticker } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { buildCaps, ROUTES } from "../src/routes.js";
 import { SYSTEM_PROPOSER, approvalHookFragment, newProposal, proposalPuts, proposalEtag, withState } from "../src/records/proposals.js";
 import { createSystem } from "../src/records/proposal-store.js";
-import { SUBJECT_RE } from "../src/comments.js";
+import { SUBJECT_RE, createCommentSource } from "../src/comments.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -467,6 +467,28 @@ describe("comments on proposal threads (AC5)", () => {
     const p = await w.propose(OTHER, w.me, "Aldric", "c-2");
     process.env.HFY_EDITING = "off";
     expect(err(await as(w, ADMIN, "GET", "/api/comments", { query: { subject: `proposal:${p.id}` } })).status).toBe(404);
+  });
+  it("the proposal check and HFY-TSK-178's withdrawn-person check sit side by side: each guards only its own thread kind", async () => {
+    const ddb = createFakeDdb();
+    const now = ticker();
+    const ulid = createUlidFactory();
+    const asked = { withdrawn: [], proposal: [] };
+    const source = (viewer) => createCommentSource({
+      ddb, cmds, table: TABLE, viewer, now, ulid, uid: () => ulid(now()),
+      isWithdrawn: async (gid) => { asked.withdrawn.push(gid); return gid === "I0010"; },
+      proposalVisible: async (id) => { asked.proposal.push(id); return id === "01J00000000000000000000001"; },
+    });
+    const member = source({ id: OTHER, label: "Member" });
+    const admin = source({ id: ADMIN, label: "Admin", roles: ["admin"] });
+    const code = (p) => p.then(() => "ok", (e) => e.code);
+    expect(await code(member.list("person:I0010"))).toBe("not_found"); // withdrawn person: hidden from a member
+    expect(await code(admin.list("person:I0010"))).toBe("ok"); // and readable by an admin
+    expect(await code(member.list("person:I0011"))).toBe("ok");
+    expect(await code(member.list("proposal:01J00000000000000000000001"))).toBe("ok"); // inside the visibility set
+    expect(await code(member.list("proposal:01J00000000000000000000002"))).toBe("not_found");
+    expect(await code(admin.list("proposal:01J00000000000000000000002"))).toBe("not_found"); // the admin bypass is the person check's only
+    expect(asked.withdrawn).toEqual(["I0010", "I0011"]); // never asked about a proposal thread, nor for an admin
+    expect(asked.proposal).toEqual(["01J00000000000000000000001", "01J00000000000000000000002", "01J00000000000000000000002"]); // never about a person thread
   });
   it("the guard runs on a proposal-thread comment (R-18)", async () => {
     const w = await world();

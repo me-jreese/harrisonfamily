@@ -18,6 +18,7 @@ import { unauthenticated } from "./sync/auth.js";
 import { syncContext } from "./sync/guard.js";
 import { editingOn } from "./records/edit-bundle.js";
 import { circleIds, loadProposal, visibleProposal } from "./records/proposal-store.js";
+import { isPersonWithdrawn } from "./sync/store.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -78,6 +79,7 @@ export function createHandler(deps) {
       getPost: (id) => content.get(id),
       // A proposal:<ulid> thread: dark with HFY_EDITING, and visible only inside the proposal's visibility set (the proposer, admins, owners of the targeted pages).
       proposalVisible: async (id) => editingOn() && (await visibleProposal(store, actor, id)) !== null,
+      isWithdrawn: (grampsId) => isPersonWithdrawn({ ddb, cmds, table }, grampsId), // a withdrawn person's thread is 404 to all but an admin (HFY-TSK-178)
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
         if (c.threadId.startsWith("proposal:")) {
