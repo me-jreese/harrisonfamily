@@ -132,14 +132,15 @@ const err = (r) => ({ status: r.status, error: r.body?.error });
 const lastTxn = (w) => w.txns.at(-1).TransactItems;
 
 describe("the routes exist and are for admins (AC1)", () => {
-  it("registers the seven routes, the admin ones behind the accessRequests flag and the member's two outside it, with no MCP tool", () => {
-    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.resendNotice", "accessRequests.secondEmails", "accessRequests.secondEmail"];
+  it("registers the eight routes, the admin ones behind the accessRequests flag and the member's two outside it, with no MCP tool", () => {
+    const names = ["accessRequests.list", "accessRequests.get", "accessRequests.decide", "accessRequests.revoke", "accessRequests.revokeGrant", "accessRequests.resendNotice", "accessRequests.secondEmails", "accessRequests.secondEmail"];
     const held = { switch: "ACCESS_REQUESTS", rule: SECOND_EMAIL_RULE }; // open past the flag on purpose, and gated by the held-member rule, which caps.json says
     const caps = buildCaps().actions.filter((a) => names.includes(a.name));
     expect(caps.map((a) => [a.name, a.method, a.path, a.gate])).toEqual([
       ["accessRequests.list", "GET", "/api/access-requests", { feature: "accessRequests" }],
       ["accessRequests.get", "GET", "/api/access-requests/:id", { feature: "accessRequests" }],
       ["accessRequests.decide", "POST", "/api/access-requests/:id/decision", { feature: "accessRequests" }],
+      ["accessRequests.revokeGrant", "POST", "/api/allow-grants/revoke", { feature: "accessRequests" }],
       ["accessRequests.revoke", "POST", "/api/access-requests/:id/revoke", { feature: "accessRequests" }],
       ["accessRequests.resendNotice", "POST", "/api/access-requests/:id/resend-notice", { feature: "accessRequests" }],
       ["accessRequests.secondEmails", "GET", "/api/second-email", held],
@@ -1416,6 +1417,22 @@ describe("revoke by ALLOW# entry (HFY-TSK-331, P2-R60)", () => {
     expect(w.txns).toHaveLength(1);
     expect(w.req()).toMatchObject({ state: "revoked", GSI1PK: "ACCESSREQS#revoked", decision: { revoked: { by: ADMIN2, confirmedOutside: true } } });
     expect(w.audits(`accessreq:${ID1}`).map((a) => a.op).sort()).toEqual(["accessreq.decide", "accessreq.revoke"]);
+  });
+
+  it("R-18 scans the reason before any read: contact info is 422, echoes no text and touches nothing", async () => {
+    const w = await world();
+    w.seed();
+    await w.link(ADMIN, ID1);
+    w.txns.length = 0;
+    for (const reason of ["call 503 555 0100", "write to someone@example.test"]) {
+      w.ddb.calls.length = 0;
+      const r = await grantRevoke(w, ADMIN2, { reason });
+      expect(err(r)).toEqual({ status: 422, error: "contact_info" });
+      expect(JSON.stringify(r.body)).not.toContain(reason);
+      expect(w.ddb.calls).toEqual([]);
+    }
+    expect(w.txns).toHaveLength(0);
+    expect(w.allow().state).toBe("active");
   });
 
   it("is admin-only and dark behind the flag", async () => {

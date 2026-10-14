@@ -252,7 +252,10 @@ export function opsFromPreview(preview, { nowYear }) {
 /**
  * The domain. `deps`:
  *   ddb, cmds, table, now() ms, uid() the audit suffix (a ULID), log
- *   mailer            { send({ template, to, vars }) } or absent (then emailSent is false)
+ *   mailer            { send({ template, to, vars }) } through the general SES_* identity, for the member's second_email_notice only; or absent
+ *                     (then that notice is not mailed)
+ *   requesterMailer   the same shape through the Join identity (JOIN_*, P2-R61), for every requester template (approved, approved_later,
+ *                     declined, awaiting_record); or absent (then emailSent is false: requester mail never falls back to `mailer`)
  *   notify            the notifier's notify(feature, recipients, opts), or absent
  *   getAdmins         async () => Set of admin gramps_ids
  *   isOwner           async (sub) => boolean, the gramps-owner group

@@ -254,8 +254,9 @@ class SyncInfra(unittest.TestCase):
         index = (ROOT / "api" / "src" / "index.js").read_text()
         self.assertIn("env.JOIN_FROM_ADDRESS && env.JOIN_SES_CONFIGURATION_SET", index)
 
-    # HFY-TSK-141 (surf-access-admin-api AC5): the api sends the admin routes' mail (approved, declined, awaiting_record, the second-email notice) with the
-    # ses:SendEmail grant app-stack-sync-infra gave its role, and with the env it already carries. This task changes no IAM and adds no parameter.
+    # HFY-TSK-141 (surf-access-admin-api AC5), narrowed by HFY-TSK-331 (P2-R61): only the member's second_email_notice still goes out with the
+    # ses:SendEmail grant app-stack-sync-infra gave the api role and its SES_* env. Requester mail (approved, approved_later, declined, awaiting_record)
+    # moved to the Join identity and the api role's SendRequesterEmail grant (test_api_requester_mail_uses_the_join_identity above).
     def test_api_mail_for_the_access_request_admin_routes_uses_the_sync_infra_grant(self):
         api = self.r["Function"]["Properties"]["Environment"]["Variables"]
         self.assertEqual(api["SES_FROM_ADDRESS"], {"Ref": "SesFromAddress"})
