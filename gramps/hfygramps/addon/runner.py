@@ -10,8 +10,9 @@ import hashlib
 import os
 import sys
 import time
+import webbrowser
 
-from . import binding, consts, paths, preflight, sidecar, status
+from . import binding, consts, keychain, oauth, paths, preflight, sidecar, status, transport
 
 
 class TreeAccess:
@@ -37,8 +38,9 @@ class TreeAccess:
 
 
 class Options:
-    def __init__(self, action="status", dry_run=False, allow_deletes=False, yes=False):
+    def __init__(self, action="status", dry_run=False, allow_deletes=False, yes=False, step_up=False):
         self.action = action
+        self.step_up = bool(step_up)
         self.dry_run = bool(dry_run)
         self.allow_deletes = bool(allow_deletes)
         self.yes = bool(yes)
@@ -65,7 +67,7 @@ def _versions(tree):
             "redaction": consts.REDACTION_VERSION}
 
 
-def run(tree, mode, options, run_id=None, argv=None, environ=None):
+def run(tree, mode, options, run_id=None, argv=None, environ=None, services=None):
     """Runs `options.action` on `tree`; returns the status document, which is also written to `<dbid>/status.json`."""
     environ = os.environ if environ is None else environ
     run_id = run_id or status.new_run_id()
@@ -77,7 +79,7 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None):
         tree_paths.ensure()
         log = _Log(tree_paths, run_id)
         log.line("run %s action=%s mode=%s" % (run_id, options.action, mode))
-        result = _decide(tree, mode, options, tree_paths, log, argv if argv is not None else sys.argv, environ, outcome)
+        result = _decide(tree, mode, options, tree_paths, log, argv if argv is not None else sys.argv, environ, outcome, services or {})
         side = outcome.get("side")
         if side is None and outcome["bound"] and os.path.exists(tree_paths.sidecar):
             try:
@@ -118,7 +120,7 @@ def _refused(code):
     return ("refused", exit_code, next_action, error)
 
 
-def _decide(tree, mode, options, tp, log, argv, environ, outcome):
+def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
     """Returns (result, exit_code, next_action, error)."""
     if options.action not in consts.ACTIONS:
         log.line("refused usage")
@@ -172,9 +174,35 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome):
             return (consts.OK, consts.EXIT_OK, "none", None)
         if options.action == "bind":
             return _bind(tree, mode, options, tp, log, config, outcome)
+        if options.action == "login":
+            return _login(options, config, log, services)
         exit_code, next_action, message = consts.NOT_ENABLED
         log.line("not enabled %s" % options.action)
         return ("refused", exit_code, next_action, {"code": "not_enabled", "message": message})
+
+
+def _login(options, config, log, services):
+    """`login` (sync.md 8.5): needs no bound tree. `services` lets tests replace the Keychain, the browser and the transport."""
+    server = services.get("server") or (config or {}).get("server") or consts.DEFAULT_SERVER
+    if options.dry_run:
+        log.line("login: dry run")
+        return (consts.OK, consts.EXIT_OK, "none", None)
+    try:
+        kc = services.get("keychain") or keychain.Keychain()
+        oauth.login(server, kc, http=services.get("http"), open_browser=services.get("open_browser", webbrowser.open),
+                    timeout=services.get("timeout", consts.LOGIN_TIMEOUT_S), step_up=options.step_up)
+    except ValueError:
+        log.line("login: unusable server URL")
+        return ("refused", consts.EXIT_CONFIG, "none", {"code": "config_unreadable", "message": "The server in config.json is not an https URL. Fix or remove it."})
+    except keychain.KeychainError:
+        log.line("login: keychain unavailable")
+        return ("refused", consts.EXIT_SIGN_IN, "login", {"code": "D42", "message": "The Keychain is locked or unavailable. Unlock it and run login again."})
+    except transport.TransportError as exc:
+        log.line("login: %s" % exc.code)
+        res = "refused" if exc.exit_code in (consts.EXIT_USAGE, consts.EXIT_NOT_ENABLED, consts.EXIT_SIGN_IN, consts.EXIT_CONFIG) else "failed"
+        return (res, exc.exit_code, exc.next_action, {"code": exc.code, "message": exc.message})
+    log.line("login: signed in")
+    return (consts.OK, consts.EXIT_OK, "none", None)
 
 
 def _bind(tree, mode, options, tp, log, config, outcome):

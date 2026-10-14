@@ -1,6 +1,6 @@
 # How to install and run the Gramps sync addon
 
-Use this page to put the `hfy_sync` addon into Gramps on the Mac that holds the family tree, check that it sees the tree, and bind the tree to the website. The addon is the desktop half of the sync design (HFY-PLN-002). This build is the skeleton (HFY-TSK-179): it installs, reports status and binds a tree, and refuses unsafe starts. It does not send or fetch any family data yet, so installing it changes nothing on the website.
+Use this page to put the `hfy_sync` addon into Gramps on the Mac that holds the family tree, check that it sees the tree, and bind the tree to the website. The addon is the desktop half of the sync design (HFY-PLN-002). This build is the skeleton (HFY-TSK-179) with the sign-in (HFY-TSK-180): it installs, reports status, binds a tree, signs you in to the website, and refuses unsafe starts. It does not send or fetch any family data yet, so installing it changes nothing on the website.
 
 ## Before you start
 
@@ -40,6 +40,18 @@ gramps/bin/hfy-sync bind --tree "<tree name>" --yes    # writes the marker, the 
 
 Binding writes a small marker into the tree (inside one Gramps transaction, together with the sidecar that remembers it), creates `~/Library/Application Support/hfy_sync/<dbid>/state.sqlite`, and writes `~/Library/Application Support/hfy_sync/config.json`. Nothing is sent to the website. In the Gramps window, **Website sync...** shows the status and offers the same bind. Binding twice does nothing the second time.
 
+### 4. Sign in
+
+With Gramps closed:
+
+```sh
+gramps/bin/hfy-sync login --tree "<tree name>"
+```
+
+Your browser opens the website's sign-in page. Sign in as the tree's owner and approve; the page then says you can close the tab. The addon waits five minutes. The refresh token is kept in your login Keychain, in an item that only the Python inside Gramps (and the `security` tool that created it) may read without a prompt. The short-lived access token is never stored. If macOS asks to unlock the Keychain, unlock it and run the command again (exit 77). `login --step-up` asks for a fresh sign-in and a second factor; the website requires it for deletes and rebinding. A token that has gone unused for 30 days expires, and the next run says `login`.
+
+If the sign-in fails with a certificate message (exit 78), do not work around it: the Mac's trust file is `/etc/ssl/cert.pem`, and the addon never turns verification off.
+
 ## Exit codes
 
 The wrapper exits with the `exit_code` in `~/Library/Application Support/hfy_sync/<dbid>/status.json`, which holds counts and codes only.
@@ -49,10 +61,11 @@ The wrapper exits with the `exit_code` in `~/Library/Application Support/hfy_syn
 | `0` | Done, or nothing to do | None |
 | `10` | A dry run found changes (a `bind` without `--yes`) | Run again with `--yes` if the plan is right |
 | `64` | `--force-unlock` was given, or the options were wrong | Run again without it. The addon never forces a lock |
-| `69` | The action is not in this build (`login`, `check`, `pull`, `push`, `sync`) | Wait for the later tasks |
+| `69` | The action is not in this build (`check`, `pull`, `push`, `sync`), or the website's sync is paused or switched off | Wait for the later tasks, or for the website |
 | `70` | An internal error, or `status.json` is missing or belongs to another run (D41) | Read the newest file in `<dbid>/logs/` |
-| `75` | The tree is open in Gramps (D01), another run holds `state.lock` (D14) | Close Gramps and run again, or wait for the other run |
-| `78` | Wrong tree (D03), unsupported schema or Gramps version (D04), sync state missing (D12) or damaged (D13) | See below |
+| `75` | The tree is open in Gramps (D01), another run holds `state.lock` (D14), or the network or the website was unavailable after three retries | Close Gramps and run again, or wait for the other run or the network |
+| `77` | You are not signed in, the sign-in was reused, revoked or expired, a fresh sign-in is needed (`step_up`), or the Keychain is locked (D42) | `gramps/bin/hfy-sync login` (add `--step-up` when `next_action` says `step_up`); unlock the Keychain |
+| `78` | Wrong tree (D03), unsupported schema or Gramps version (D04), sync state missing (D12) or damaged (D13), the addon is too old for the website (`update_addon`), or the website's certificate could not be verified | See below |
 
 If Gramps is closed and the command still says the tree is open, the `lock` file is left over from a crash. Open the tree once in the Gramps window and close it normally. Never use `Gramps -u` or `--force-unlock`: the wrapper and the tool both refuse it.
 
@@ -60,7 +73,7 @@ If Gramps is closed and the command still says the tree is open, the `lock` file
 
 The addon follows one tree. It checks that the tree's folder name, a marker stored in the tree and the sidecar agree, and that at least 90 % of the objects the last sync saw are still in the tree. A few creates and deletes between syncs never trip this. A different tree does: one restored from an old copy, re-imported from an export, or with more than a tenth of its objects deleted.
 
-Open the bound tree and run again. To make the website follow the new tree on purpose, the rebind goes through a fresh sign-in, a new sidecar, rebase mode (objects equal to the website's copy are re-based, everything else becomes a conflict that you resolve in the Gramps window) and the mass-delete guard. Those steps arrive with later tasks (`addon-transport-auth` and `addon-push` for the sign-in and the step-up, `addon-pull-apply` and `addon-gui-preview` for the new sidecar and rebase mode, `addon-push` and `addon-pull-apply` for the mass-delete guard); until then the addon only refuses. D12 and D13 are the same family: the sync state for the tree is gone or damaged, and rebasing it is a Gramps-window action that sends nothing by itself.
+Open the bound tree and run again. To make the website follow the new tree on purpose, the rebind goes through a fresh sign-in, a new sidecar, rebase mode (objects equal to the website's copy are re-based, everything else becomes a conflict that you resolve in the Gramps window) and the mass-delete guard. Those steps arrive with later tasks (`addon-push` for the step-up, `addon-pull-apply` and `addon-gui-preview` for the new sidecar and rebase mode, `addon-push` and `addon-pull-apply` for the mass-delete guard); until then the addon only refuses. D12 and D13 are the same family: the sync state for the tree is gone or damaged, and rebasing it is a Gramps-window action that sends nothing by itself.
 
 ## Run the addon's tests
 

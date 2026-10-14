@@ -13,8 +13,20 @@ SIMILARITY_MIN_PERCENT = 90  # at least this share of the sidecar base handles m
 DEFAULT_SERVER = "https://harrisonfamily.us"
 DEFAULT_MEDIA_ROOT = "~/Pictures/hfy-sync-media"
 
+# Transport and sign-in (sync.md 7.1, 8.1, 8.5; HFY-TSK-180)
+SYSTEM_CA_FILE = "/etc/ssl/cert.pem"  # the fallback when Gramps' bundled Python has an empty default trust store (R2-08)
+RETRY_DELAYS_S = (1, 4, 16)  # idempotent calls retry three times at these gaps
+HTTP_TIMEOUT_S = 30
+LOGIN_TIMEOUT_S = 300  # sync.md 8.5: the loopback server waits five minutes
+OAUTH_CLIENT_ID = "hfy-sync-desktop"
+SYNC_RESOURCE = "https://harrisonfamily.us/api/sync"
+OAUTH_SCOPE = "sync"
+STEP_UP_MAX_AGE_S = 300
+KEYCHAIN_SERVICE = "hfy_sync"
+KEYCHAIN_ACCOUNT = "refresh-token"
+
 ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind")
-IMPLEMENTED_ACTIONS = ("status", "bind")  # the rest wait for addon-transport-auth, addon-pull-apply and addon-push
+IMPLEMENTED_ACTIONS = ("status", "bind", "login")  # the rest wait for addon-pull-apply and addon-push
 # Gramps classes in the order a push sends them (sync.md 8.3 step 12); the sidecar `base.class` column uses these names.
 CLASSES = ("Tag", "Place", "Note", "Source", "Repository", "Citation", "Media", "Event", "Person", "Family")
 

@@ -1,6 +1,6 @@
 # gramps
 
-Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231), the projection, the merge engine (HFY-TSK-242) and the desktop addon skeleton (HFY-TSK-179) are the last sections; other tasks add the rest of the addon beside them.
+Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231), the projection, the merge engine (HFY-TSK-242) the desktop addon skeleton (HFY-TSK-179) and its transport and sign-in (HFY-TSK-180) are the last sections; other tasks add the rest of the addon beside them.
 
 Every value under `gramps/tests/fixtures/` is fictional. Phones are 555-01xx, mail is example.org, addresses are documentation-style, names are invented. Never copy a record, date, name or contact detail from the real tree into this directory (D-03).
 
@@ -206,7 +206,7 @@ python3 -m coverage report -m                                            # 100 %
 
 ## The desktop addon skeleton
 
-HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. It has two real actions, `status` and `bind`. `login`, `check`, `pull`, `push` and `sync` are registered and answer exit `69` (not enabled) until the transport, pull-apply and push tasks fill them in. The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
+HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. It has three real actions, `status`, `bind` and `login` (the transport and sign-in section below). `check`, `pull`, `push` and `sync` are registered and answer exit `69` (not enabled) until the pull-apply and push tasks fill them in. The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
 
 | Path | What it is |
 | --- | --- |
@@ -217,7 +217,7 @@ HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): reg
 | `bin/hfy-sync` | The wrapper. It generates a run id, runs `Gramps -O <tree> -a tool -p name=hfy_sync,...,run_id=<id>`, reads `status.json` and exits with its `exit_code`; a missing file, or one with another run's `run_id`, is exit `70` (D41). Before Gramps starts it refuses `--force-unlock` (64), a tree whose database schema the addon does not read (78; Gramps would upgrade an older tree on open) and a tree with a `lock` file (75). It never removes a lock. |
 | `scripts/build-addon.sh` | Writes `gramps/dist/hfy_sync-<version>/` (the Gramps files, a vendored copy of `hfygramps/` without `render/` and `schema_check.py`, and `redaction/redaction-v1.json`, which `rules.py` finds beside the package) and the zip of it. `dist/` is not tracked. |
 | `scripts/install-addon.sh` | Builds, then replaces `<plugins>/hfy_sync`: `--dest`, else `$GRAMPSHOME/gramps/gramps60/plugins`, else `~/Library/Application Support/gramps/gramps60/plugins`. Nothing but the `hfy_sync` folder is touched. |
-| `tests/unit/test_addon_runtime.py`, `test_addon_wrapper.py` | CI: the runtime against a fake tree, the wrapper against a fake Gramps command, the build and the installer in a temporary folder. |
+| `tests/unit/test_addon_runtime.py`, `test_addon_wrapper.py`, `test_addon_transport.py` | CI: the runtime against a fake tree, the wrapper against a fake Gramps command, the build and the installer in a temporary folder. |
 | `tests/gramps/test_addon_skeleton.py`, `addon_support.py` | The Gramps lane (`io-mac-gramps`): installs the addon into the throwaway `GRAMPSHOME` and drives the real Gramps CLI and the wrapper on copies of the fixture tree. |
 
 The sync state lives outside Dropbox and git, under `~/Library/Application Support/hfy_sync/` (`config.json`, then `<dbid>/` with `state.sqlite`, `state.lock`, `status.json`, `previews/`, `backups/`, `logs/`, `cache/`), all owner-only. The `<dbid>` is the tree's folder name under Gramps' `grampsdb` (`db.get_dbid()`). The tests point `HOME` and `GRAMPSHOME` at a temporary directory, so they never read or write the real one; the wrapper and the tool read `HOME` and `GRAMPSHOME` only.
@@ -227,6 +227,30 @@ python3 -m unittest discover gramps/tests/unit                  # CI: includes t
 gramps/tests/gramps/run.sh test_addon_skeleton.py               # Mac with Gramps 6.0.6: the integration suite
 gramps/scripts/install-addon.sh --dest <a-throwaway-folder>      # try the installer without touching Gramps
 ```
+
+### Transport and sign-in
+
+HFY-TSK-180 adds the network layer the later actions call, and the one action that uses it now, `hfy-sync login`. All of it is standard library and Python 3.9 compatible, and runs inside Gramps' bundled Python.
+
+| Path | What it is |
+| --- | --- |
+| `hfygramps/addon/transport.py` | `make_ssl_context()` (urllib's default context; when its trust store is empty, as in Gramps' bundled Python, `/etc/ssl/cert.pem` is added; hostname and certificate checks are never off, and a context that does not verify is refused). `Http` (retries, no redirects), `Client` (the `/api/sync/*` calls, with the handshake headers), `Versions` and `TransportError`. |
+| `hfygramps/addon/oauth.py` | `login()` (PKCE S256 and `state`, a one-shot `http.server` on `127.0.0.1` on an ephemeral port, five-minute wait, code exchange at `/auth/token`) and `TokenManager` (the access token in memory, refreshed with the stored refresh token). |
+| `hfygramps/addon/keychain.py` | The refresh token in the login Keychain through `security`. |
+| `scripts/probe-cloudflare.py` | The review DL-31 probe: one request from the bundled Python through Cloudflare, printing the status, the error code, the `cf-mitigated` header's presence and whether the fallback roots were needed. Counts and codes only. |
+| `tests/unit/test_addon_transport.py` | CI: local https and http servers, a fake `security`, a fake sign-in server. |
+
+**TLS.** `ssl.create_default_context()` first. Gramps' bundled Python 3.13 has an empty default store (checked on 6.0.6), so `/etc/ssl/cert.pem` is loaded into it; the check stays `CERT_REQUIRED` with hostname checking. A test serves https with a throwaway self-signed certificate and proves a refused handshake, the fallback and a hostname mismatch. A test also fails if the addon source ever contains `CERT_NONE` or an unverified context.
+
+**Retries.** A call is idempotent when it is a `GET` or carries an `Idempotency-Key` (a replay of a batch). Those retry three times, after 1, 4 and 16 s, only on a network error or `503` with the error code `retryable`. Everything else is sent once. A certificate failure is not transient and is not retried. The token endpoint is never retried: a refresh whose answer was lost would leave the rotated token unknown and the next try would revoke the token family.
+
+**Errors and exit codes.** `401` and `403 step_up_required` are exit `77` (`next_action` `login` and `step_up`); `426` and `409 redaction_version_mismatch` are `78` (`update_addon`). The rest follow sync.md 8.7: other `403` `78`, `sync_paused` and `404 not_enabled` `69`, `400`, `413` and `422` `65`, a retryable error that stayed after the retries, a network error and other `409` or `5xx` `75`. A message carries the status and the error code, never a response body.
+
+**Handshake headers.** Every sync call carries `X-HFY-Sync-Client: hfy_sync/<semver>`, `X-HFY-Gramps-Version`, `X-HFY-Gramps-Schema`, `X-HFY-Redaction-Version` and, once the tree is bound, `X-HFY-Tree-Id` (sync.md 7.1), plus `Authorization: Bearer`. Every request also sends `User-Agent: hfy_sync/<semver>`. This one is not optional: Cloudflare answers urllib's default `Python-urllib/x.y` agent with its own `403` (`error code: 1010`) before the origin sees the request, and passes the named agent through (probe, below).
+
+**Sign-in.** `hfy-sync login` (`--step-up` adds `prompt=login&max_age=300`) opens the browser at `/auth/authorize` for the `hfy-sync-desktop` client, resource `https://harrisonfamily.us/api/sync`, scope `sync`. The loopback server takes one callback: it checks the `Host` header, the `state` (constant time) and the issuer, then closes. The refresh token is written by `security -i` with the command on **stdin**, so it never shows in `ps`; the item is created with `-T <the Gramps bundle's Python>` so no other program reads it silently; and the write is read back. Reading is `security find-generic-password -w`. A rotated refresh token is written and read back **before** the access token that came with it is used; if that fails the new access token is dropped. `invalid_grant` (a reused or revoked token, or 30 days idle) removes the dead item and asks for a new sign-in (exit `77`). A locked Keychain is D42: exit `77` from the command line. `hfy-sync login` needs the tree closed in Gramps like every command-line action.
+
+**The Cloudflare probe (DL-31).** `gramps/tests/gramps/gramps-shim.sh --script gramps/scripts/probe-cloudflare.py` sends one `GET /api/sync/meta` from the bundled Python with no token. On 2026-10-14, from Python 3.13.2 in Gramps 6.0.6: default store roots `0`, fallback used, `CERT_REQUIRED`; with the addon's agent the answer was the origin's house-format error (`404`, `not_found`, no sync route deployed yet) with no `cf-mitigated` header; with urllib's default agent it was Cloudflare's own `403`, `error code: 1010`. Run it again after the sync routes are live (the answer should then be `401`) and before the seed; a WAF skip rule for `/api/sync/*` stays the fallback if Cloudflare ever challenges the named agent too.
 
 ### The tree binding
 
