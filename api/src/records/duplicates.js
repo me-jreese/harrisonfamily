@@ -58,7 +58,8 @@ function surnameClose(a, b) {
   return Math.min(a.length, b.length) >= 5 && lev(a, b) <= 1 ? "close" : false;
 }
 
-// Given names: equal, same first word, a nickname or initial that starts the other, one slip in a word of four or more.
+// Given names: equal, same first word, a nickname or initial that starts the other ("prefix"), one slip in a word of
+// four or more.
 function givenClose(a, b) {
   if (!a || !b) return false;
   if (a === b) return "exact";
@@ -67,8 +68,10 @@ function givenClose(a, b) {
   if (fa === fb) return "close";
   const [short, long] = fa.length <= fb.length ? [fa, fb] : [fb, fa];
   if (short.length === 1 && long.startsWith(short)) return "close"; // an initial
-  if (short.length >= 3 && long.startsWith(short)) return "close"; // a short form that starts the longer one: "jon" / "jonathan"
-  return Math.min(fa.length, fb.length) >= 4 && lev(fa, fb) <= 1 ? "close" : false;
+  if (Math.min(fa.length, fb.length) >= 4 && lev(fa, fb) <= 1) return "close"; // one slip
+  // a short form that starts the longer one: "jon" / "jonathan". Weak on its own ("ann" starts anna, annabel,
+  // anneliese): the caller accepts it only with an exact surname.
+  return short.length >= 3 && long.startsWith(short) ? "prefix" : false;
 }
 
 const asYear = (n) => (Number.isInteger(n) && n > 0 ? n : null);
@@ -117,10 +120,14 @@ function score(stub, p) {
   const fs = foldName(stub.surname);
   let best = 0;
   for (const n of p.names || []) {
-    const g = fg && foldName(n.given) ? givenClose(fg, foldName(n.given)) : fg || foldName(n.given) ? false : "exact";
-    const s = fs && foldName(n.surname) ? surnameClose(fs, foldName(n.surname)) : fs || foldName(n.surname) ? false : "exact";
+    // A part that is empty on both sides matches by absence only: it adds no weight ("empty").
+    const g = fg && foldName(n.given) ? givenClose(fg, foldName(n.given)) : fg || foldName(n.given) ? false : "empty";
+    const s = fs && foldName(n.surname) ? surnameClose(fs, foldName(n.surname)) : fs || foldName(n.surname) ? false : "empty";
     if (!g || !s) continue;
-    best = Math.max(best, (g === "exact" ? 2 : 1) + (s === "exact" ? 2 : 1));
+    if (g === "empty" && s === "empty") continue;
+    if (g === "prefix" && s !== "exact") continue;
+    const w = (x) => (x === "exact" ? 2 : x === "empty" ? 0 : 1);
+    best = Math.max(best, w(g) + w(s));
   }
   if (!best) return 0;
   if (sy !== null && p.birthYear && sy === p.birthYear) best += 1;

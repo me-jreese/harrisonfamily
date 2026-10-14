@@ -5,6 +5,9 @@
 //   intent -> ops   parents | children | spouse | unlink (design 8.2). The client sends INTENTS, never ops.
 //   reuse           an existing family with the same parents is reused before a new one is made (Gramps' own warning,
 //                   "it is possible to accidentally create multiple families with the same parents", in reverse).
+//   spouse          an existing family of exactly the pair is reused; else a childless single-parent family of either is
+//                   filled with the other (children in it: a new family and the same warning). An omitted relType
+//                   keeps an existing family's type (a new family is `unknown`).
 //   single parent   a parent's single-parent family is reused. A second parent fills its empty slot only when the
 //                   family has no children; with children the slot stays empty, a new family is made and the result
 //                   carries the warning `single_parent_family_has_children` (filling it would give those children a
@@ -26,7 +29,7 @@
 //                   compile that fails any of them returns no ops.
 //
 // NOT HERE: the R-18/R-19 privacy guard over the stub fields and the note (the record API runs `checkObjects()`
-// on the whole resulting state, `edit-guard-wiring`), the 64 KB / 50 op / 10 new object caps of a proposal document
+// on the whole resulting state, `edit-guard-wiring`; `relationship-api` must call it before any proposal write), the 64 KB / 50 op / 10 new object caps of a proposal document
 // (`proposal-store-api`; `stats` reports the numbers), and the routes (`relationship-api`).
 //
 // PURE. Imports are the EditOp engine, the Gramps semantics and the duplicate matcher; no AWS, no clock beyond the
@@ -38,16 +41,19 @@
 //              "Family:<handle>"; a new person is { new: Stub }.
 //     get      (key) => Gramps JSON object | undefined | null. Persons, Families, Events (for the existing marriage
 //              and the birth years) and Places.
-//     version  (key) => int | undefined: the stored version of an existing object, for `base_versions`.
+//     version  (key) => int | undefined: the stored version of an existing object, for `base_versions` (every changed
+//              object; one with no version is a `compile_conflict`) and `read_versions` (objects read, not changed).
 //     people   an iterable of matcher summaries (duplicates.js `summarizePerson`): the people the VIEWER may see.
 //              Without it `duplicates` is [].
-//     confirmDistinct  the `new:n` stubs the member confirmed are different people. Given (even as []), an
-//              unconfirmed duplicate fails with `unconfirmed_duplicate`; absent (a preview), duplicates are reported.
+//     mode     "preview" (default) or "commit". A commit ALWAYS enforces the duplicate gate: an unconfirmed duplicate
+//              fails with `unconfirmed_duplicate`, and an absent `confirmDistinct` counts as []. A preview enforces it
+//              only when `confirmDistinct` is given (even as []); otherwise duplicates are only reported.
+//     confirmDistinct  the `new:n` stubs the member confirmed are different people.
 //     mint     () => handle, for the throwaway handles of the validation pass and for tests. The returned ops keep
 //              their `new:n` temporaries; the commit mints the real handles.
 //     admin, today   passed to checkSemantics.
 //     maxActions     the approval transaction budget (default 100).
-//   -> { ok: true, alreadyRecorded, destructive, subject, ops, base_versions, summary, warnings, duplicates,
+//   -> { ok: true, alreadyRecorded, destructive, subject, ops, base_versions, read_versions, summary, warnings, duplicates,
 //        followUps, stats: { ops, created, touched, actions }, preview: { objects, minted, created, touched } }
 //   -> { ok: false, errors: [{ code, message, ... }] }
 //
@@ -342,7 +348,10 @@ function normalizeStub(stub, where) {
   };
   const living = stub.living === undefined || stub.living === null ? "unknown" : stub.living;
   if (!["yes", "no", "unknown"].includes(living)) fail(ERROR.badStub, "living must be yes, no or unknown", { where });
-  return { given, surname, gender, birthYear: year(stub.birthYear, "birthYear"), living, deathYear: year(stub.deathYear, "deathYear") };
+  const birthYear = year(stub.birthYear, "birthYear");
+  const deathYear = year(stub.deathYear, "deathYear");
+  if (birthYear !== null && deathYear !== null && deathYear < birthYear) fail(ERROR.badStub, "the death year is before the birth year", { where });
+  return { given, surname, gender, birthYear, living, deathYear };
 }
 
 // Every `who` of an intent, in numbering order.
@@ -352,7 +361,7 @@ function whosOf(intent) {
       return asList(intent.parents).map((p) => p && p.who);
     case "children": {
       const other = intent.otherParent;
-      const list = other && (other.ref || other.new) ? [other] : [];
+      const list = other && (other.ref !== undefined || other.new !== undefined) ? [other] : [];
       return list.concat(asList(intent.children).map((c) => c && c.who));
     }
     case "spouse":
@@ -658,7 +667,10 @@ function planChildren(d, intent) {
   if (kidsIn.length < 1) bad("choose at least one child");
   if (kidsIn.length > MAX_CHILDREN) fail(ERROR.tooManyChildren, `at most ${MAX_CHILDREN} children at a time; please send these in smaller batches`, { limit: MAX_CHILDREN, count: kidsIn.length });
   const other = intent.otherParent === undefined || intent.otherParent === null ? { unknown: true } : intent.otherParent;
-  if (!isPlain(other) || (!other.unknown && other.ref === undefined && other.new === undefined)) bad("otherParent must be { ref }, { new } or { unknown: true }");
+  if (!isPlain(other)) bad("otherParent must be { ref }, { new } or { unknown: true }");
+  const forms = [other.ref !== undefined, other.new !== undefined, other.unknown !== undefined && other.unknown !== false].filter(Boolean).length;
+  if (forms !== 1 || (other.unknown !== undefined && other.unknown !== false && other.unknown !== true)) bad("otherParent must be exactly one of { ref }, { new } or { unknown: true }");
+  if (other.ref !== undefined && (typeof other.ref !== "string" || !other.ref)) bad("otherParent.ref must be a Person reference");
   const relOf = (r, field) => {
     const v = r === undefined || r === null ? "birth" : r;
     if (!Object.prototype.hasOwnProperty.call(CHILD_REL, v)) bad(`unknown relationship in ${field}`, { rel: String(v) });
@@ -733,7 +745,9 @@ function eventsOf(d, f, type) {
 
 function planSpouse(d, intent) {
   const person = d.load(intent.person, "Person");
-  const relName = intent.relType === undefined || intent.relType === null ? "unknown" : intent.relType;
+  // An omitted relType means "no opinion": an existing family keeps its type, a new family is `unknown`.
+  const relGiven = intent.relType !== undefined && intent.relType !== null;
+  const relName = relGiven ? intent.relType : "unknown";
   if (!Object.prototype.hasOwnProperty.call(FAMILY_REL, relName)) bad("unknown kind of partnership", { relType: String(relName) });
   const wantType = FAMILY_REL[relName];
   const married = intent.married === undefined ? null : intent.married;
@@ -760,11 +774,26 @@ function planSpouse(d, intent) {
       return have.length === 2 && have.includes(spouse.handle) && have.includes(me.handle);
     });
   }
+  // else a childless single-parent family of one of them: the other fills its empty slot (as parents/children do).
+  // With children in it the slot stays empty, a new family is made and a warning says so.
+  let fill = null;
+  if (!reuse) {
+    const found = findFill(d, chosen);
+    fill = found.fill || null;
+    if (found.blocked) {
+      d.warn({
+        code: WARNING.singleParentFamilyHasChildren,
+        family: familyKey(found.blocked.fh),
+        detail: `${nameOfPerson(found.blocked.entry.person)} already has a family with no second parent and with children. A new family was made instead of adding a partner to it; consider merging the families in Gramps.`,
+      });
+    }
+  }
+  const target = reuse || fill;
   const who = listNames(d, chosen);
-  const skipMarriage = !!(married && reuse && eventsOf(d, reuse.f, EVENT.MARRIAGE).length > 0);
-  const skipDivorce = !!(ended && ended.how === "divorced" && reuse && eventsOf(d, reuse.f, EVENT.DIVORCE).length > 0);
-  if (skipMarriage) d.warn({ code: WARNING.marriageAlreadyRecorded, family: familyKey(reuse.fh), detail: `${who} already have a marriage recorded; it was left as it is.` });
-  if (skipDivorce) d.warn({ code: WARNING.divorceAlreadyRecorded, family: familyKey(reuse.fh), detail: `${who} already have a divorce recorded; it was left as it is.` });
+  const skipMarriage = !!(married && target && eventsOf(d, target.f, EVENT.MARRIAGE).length > 0);
+  const skipDivorce = !!(ended && ended.how === "divorced" && target && eventsOf(d, target.f, EVENT.DIVORCE).length > 0);
+  if (skipMarriage) d.warn({ code: WARNING.marriageAlreadyRecorded, family: familyKey(target.fh), detail: `${who} already have a marriage recorded; it was left as it is.` });
+  if (skipDivorce) d.warn({ code: WARNING.divorceAlreadyRecorded, family: familyKey(target.fh), detail: `${who} already have a divorce recorded; it was left as it is.` });
 
   // the numbered objects, in order: a new place, the Marriage, the Divorce, then the Family
   const newEvents = [];
@@ -782,13 +811,17 @@ function planSpouse(d, intent) {
     d.say(`records the divorce of ${who}${ended.year ? " in " + ended.year : ""}`, `event:${t}`);
   }
 
-  if (reuse) {
-    const tag = `fam:${reuse.fh}`;
-    if (reuse.f.type && reuse.f.type.value !== wantType) {
-      d.change({ op: "set", obj: familyKey(reuse.fh), path: "/type", base: reuse.f.type, value: typed("FamilyRelType", wantType) }, tag);
-      d.say(`changes the family of ${who} from ${FAMILY_REL_NAME[reuse.f.type.value] || "other"} to ${FAMILY_REL_NAME[wantType]}`, tag);
+  if (target) {
+    const tag = `fam:${target.fh}`;
+    if (fill) {
+      linkParents(d, { kind: "fill", fh: fill.fh, slot: fill.slot, entry: fill.entry }, chosen);
+      d.say(`adds ${entryName(d, fill.entry)} as a partner in the family of ${listNames(d, chosen.filter((e) => e !== fill.entry))}`, tag);
     }
-    for (const t of newEvents) d.change({ op: "add", obj: familyKey(reuse.fh), path: "/event_ref_list", value: eventRef(t, ROLE.FAMILY) }, tag);
+    if (relGiven && target.f.type && target.f.type.value !== wantType) {
+      d.change({ op: "set", obj: familyKey(target.fh), path: "/type", base: target.f.type, value: typed("FamilyRelType", wantType) }, tag);
+      d.say(`changes the family of ${who} from ${FAMILY_REL_NAME[target.f.type.value] || "other"} to ${FAMILY_REL_NAME[wantType]}`, tag);
+    }
+    for (const t of newEvents) d.change({ op: "add", obj: familyKey(target.fh), path: "/event_ref_list", value: eventRef(t, ROLE.FAMILY) }, tag);
   } else {
     const slots = assignSlots(me, spouse);
     const temp = d.alloc();
@@ -885,7 +918,8 @@ export function compileRelationship(opts) {
 }
 
 function compile(opts) {
-  const { intent, get, version, people, confirmDistinct, mint, admin = false, today, maxActions = MAX_TXN_ACTIONS } = opts;
+  const { intent, get, version, people, confirmDistinct, mint, admin = false, today, maxActions = MAX_TXN_ACTIONS, mode = "preview" } = opts;
+  if (mode !== "preview" && mode !== "commit") throw new TypeError('compileRelationship mode must be "preview" or "commit"');
   if (!isPlain(intent)) bad("the intent must be an object");
   if (typeof get !== "function") throw new TypeError("compileRelationship needs get(key)");
   const planner = PLANNERS[intent.type];
@@ -920,6 +954,7 @@ function compile(opts) {
       subject,
       ops: [],
       base_versions: {},
+      read_versions: {},
       summary: [{ text: "the tree already says this; nothing to change", opIds: [] }],
       warnings: d.warnings,
       duplicates: [],
@@ -961,16 +996,30 @@ function compile(opts) {
   addNamed({ ref: intent.person });
   for (const w of whosOf(intent)) addNamed(w);
   const duplicates = stubList.length && people ? findDuplicates(stubList, people, { exclude: [...named] }) : [];
-  if (Array.isArray(confirmDistinct)) {
-    const missing = unconfirmedDuplicates(duplicates, confirmDistinct);
+  // A commit always runs the gate (no confirmDistinct means nothing was confirmed); a preview only reports.
+  if (mode === "commit" || Array.isArray(confirmDistinct)) {
+    const missing = unconfirmedDuplicates(duplicates, Array.isArray(confirmDistinct) ? confirmDistinct : []);
     if (missing.length) fail(ERROR.unconfirmedDuplicate, "is this the same person?", { unconfirmed: missing, duplicates });
   }
 
+  // base_versions guards every object the ops change. read_versions guards the objects a decision was based on but
+  // that the ops leave alone (a family with children that blocked a fill, the Marriage and Divorce events already
+  // there, the people whose birth years were read): the proposal store checks them too, so a proposal does not
+  // apply on a view that changed under it. With `version` given, a touched object with no version is a conflict.
   const base_versions = {};
+  const read_versions = {};
   if (typeof version === "function") {
+    const missingVersion = [];
     for (const k of touchedKeys) {
       const v = version(k);
-      if (v !== undefined && v !== null) base_versions[k] = v;
+      if (v === undefined || v === null) missingVersion.push(k);
+      else base_versions[k] = v;
+    }
+    if (missingVersion.length) fail(ERROR.conflict, "a changed object has no stored version to guard it", { objects: missingVersion });
+    for (const [k, o] of d.cache) {
+      if (!o || TEMP.test(handleOf(k)) || k in base_versions) continue;
+      const v = version(k);
+      if (v !== undefined && v !== null) read_versions[k] = v;
     }
   }
   return {
@@ -980,6 +1029,7 @@ function compile(opts) {
     subject,
     ops,
     base_versions,
+    read_versions,
     summary,
     warnings: d.warnings,
     duplicates,

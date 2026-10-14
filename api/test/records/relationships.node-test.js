@@ -711,3 +711,98 @@ describe("module hygiene", () => {
     }
   });
 });
+
+describe("review fixes (HFY-TSK-251)", () => {
+  const stubParents = (stub) => ({ type: "parents", person: P(9012), parents: [{ who: { new: stub } }] });
+  const people = Object.keys(TREE).filter((k) => k.startsWith("Person:")).map((k) => summarizePerson(TREE[k], (h) => TREE[`Event:${h}`]));
+
+  it("spouse: an omitted relType leaves an existing family's type alone (a divorce year on a married pair)", () => {
+    const res = compile({ type: "spouse", person: P(9002), spouse: { ref: P(9001) }, ended: { how: "divorced", year: 1995 } });
+    assert.equal(res.ok, true);
+    assert.ok(!res.ops.some((o) => o.op === "set" && o.path === "/type"), "no /type set");
+    assert.deepEqual(res.ops.map((o) => [o.op, o.obj]), [["create", "new:1"], ["add", F(9001)]]);
+    // a stated relType still changes it; a new family with none is unknown
+    const stated = compile({ type: "spouse", person: P(9002), spouse: { ref: P(9001) }, relType: "unmarried" });
+    assert.ok(stated.ops.some((o) => o.op === "set" && o.path === "/type"));
+    const fresh = compile({ type: "spouse", person: P(9008), spouse: { ref: P(9009) } });
+    assert.equal(fresh.ops.find((o) => o.cls === "Family").value.type.value, 3);
+  });
+
+  it("spouse: a childless single-parent family is filled, like parents/children do (no second family)", () => {
+    const res = compile({ type: "spouse", person: P(9005), spouse: { ref: P(9009) }, relType: "married", married: { year: 1990 } });
+    assert.equal(res.ok, true, JSON.stringify(res.errors));
+    assert.ok(!res.ops.some((o) => o.cls === "Family"), "no new family");
+    const set = res.ops.find((o) => o.op === "set" && o.path === "/mother_handle");
+    assert.deepEqual({ obj: set.obj, base: set.base, value: set.value }, { obj: F(9002), base: null, value: H("Person", 9009) });
+    assert.ok(res.ops.some((o) => o.obj === P(9009) && o.path === "/family_list" && o.value === H("Family", 9002)));
+    assert.ok(res.ops.some((o) => o.obj === F(9002) && o.path === "/event_ref_list"));
+    assert.deepEqual(res.warnings, []);
+  });
+
+  it("spouse: a single-parent family with children is not filled: a new family and a warning", () => {
+    const res = compile({ type: "spouse", person: P(9006), spouse: { ref: P(9008) }, relType: "married" });
+    assert.equal(res.ok, true, JSON.stringify(res.errors));
+    assert.deepEqual(warnCodes(res), [WARNING.singleParentFamilyHasChildren]);
+    assert.equal(res.stats.created, 1);
+    assert.ok(!res.ops.some((o) => o.obj === F(9003)));
+  });
+
+  it("children: otherParent must be exactly one of ref, new or unknown", () => {
+    const kids = [{ who: { ref: P(9012) } }];
+    const run = (otherParent) => compile({ type: "children", person: P(9008), otherParent, children: kids });
+    const bothForms = run({ unknown: true, new: { given: "A", surname: "B" } });
+    assert.deepEqual(codes(bothForms), [ERROR.badIntent]);
+    assert.deepEqual(codes(run({ ref: P(9009), unknown: true })), [ERROR.badIntent]);
+    assert.deepEqual(codes(run({ ref: "" })), [ERROR.badIntent]);
+    assert.deepEqual(codes(run({ ref: null })), [ERROR.badIntent]);
+    assert.deepEqual(codes(run({})), [ERROR.badIntent]);
+    assert.deepEqual(codes(run({ unknown: "yes" })), [ERROR.badIntent]);
+    assert.equal(run({ unknown: true }).ok, true);
+    assert.equal(run({ ref: P(9009) }).ok, true);
+    assert.equal(run({ new: { given: "A", surname: "B" } }).ok, true);
+  });
+
+  it("a stub whose death year is before its birth year is refused", () => {
+    const res = compile(stubParents({ given: "A", surname: "B", birthYear: 2000, living: "no", deathYear: 1990 }));
+    assert.deepEqual(codes(res), [ERROR.badStub]);
+    assert.equal(compile(stubParents({ given: "A", surname: "B", birthYear: 1950, living: "no", deathYear: 1950 })).ok, true);
+  });
+
+  it("commit mode always enforces the duplicate gate, even with no confirmDistinct", () => {
+    const intent = stubParents({ given: "Ann", surname: "Alpha", gender: "female", birthYear: 1950 });
+    const commit = compile(intent, { people, mode: "commit" });
+    assert.deepEqual(codes(commit), [ERROR.unconfirmedDuplicate]);
+    assert.equal(compile(intent, { people, mode: "commit", confirmDistinct: ["new:1"] }).ok, true);
+    assert.equal(compile(intent, { people }).ok, true, "a preview still only reports");
+    assert.throws(() => compile(intent, { mode: "submit" }), TypeError);
+  });
+
+  it("a touched object with no stored version is a compile_conflict; read-only objects are listed in read_versions", () => {
+    const intent = { type: "children", person: P(9008), otherParent: { unknown: true }, children: [{ who: { ref: P(9012) } }] };
+    const missing = compile(intent, { version: (k) => (k === P(9012) ? undefined : 9) });
+    assert.deepEqual(codes(missing), [ERROR.conflict]);
+    assert.deepEqual(missing.errors[0].objects, [P(9012)]);
+    // the existing Marriage event and the people read for the decision are guarded, not touched
+    const spouse = compile({ type: "spouse", person: P(9002), spouse: { ref: P(9001) }, relType: "unmarried" }, { version: (k) => (k.startsWith("Event:") ? 4 : 9) });
+    assert.deepEqual(Object.keys(spouse.base_versions), [F(9001)]);
+    assert.ok(Object.keys(spouse.read_versions).length > 0);
+    for (const k of Object.keys(spouse.read_versions)) assert.ok(!(k in spouse.base_versions), k);
+    assert.ok(Object.keys(spouse.read_versions).some((k) => k.startsWith("Event:")));
+    assert.deepEqual(compileRelationship({ intent, get, today: TODAY }).read_versions, {});
+  });
+
+  it("the matcher: a short prefix of a given name needs an exact surname; empty-on-both-sides adds no weight", () => {
+    const pool = [
+      { handle: "p1", names: [{ given: "Anna", surname: "Weber" }], gender: 0 },
+      { handle: "p2", names: [{ given: "Anneliese", surname: "Webber-Smith" }], gender: 0 },
+      { handle: "p3", names: [{ given: "", surname: "Weber" }], gender: 3 },
+      { handle: "p4", names: [{ given: "", surname: "" }], gender: 3 },
+    ];
+    const ids = (stub) => (findDuplicates([stub], pool)[0] || { candidates: [] }).candidates.map((c) => c.handle);
+    assert.deepEqual(ids({ given: "Ann", surname: "Weber" }), ["p1"], "prefix + exact surname");
+    assert.deepEqual(ids({ given: "Ann", surname: "Webber" }), [], "prefix + close surname is not enough");
+    // no given name on the stub: the empty given matches only by the surname, and ranks below a named match
+    assert.deepEqual(ids({ given: "", surname: "Weber" }), ["p3"]);
+    assert.deepEqual(ids({ given: "", surname: "" }), [], "nothing to match on");
+  });
+});
