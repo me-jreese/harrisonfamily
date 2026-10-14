@@ -32,7 +32,9 @@ browser ──HTTPS──▶ Cloudflare (proxies <site>) ──HTTPS──▶ Cl
 
 hfy-api         ▶ DynamoDB hfy-app
                 ▶ S3 <config-bucket>/config/ (admins.json; groups.json for MCP)
-                ▶ S3 <site-bucket>: presigned PUT into uploads/posts/; GetObject on person/* (author labels)
+                ▶ S3 <site-bucket>: presigned PUT into uploads/posts/ and uploads/comments/;
+                  ranged GetObject on both (location check), HEAD on comment photos;
+                  GetObject on person/* (author labels)
                 ▶ JWKS from https://<site>/auth/.well-known/jwks.json (back through Cloudflare and CloudFront)
                 ▶ Secrets Manager (VAPID secret) and web push services (subscription endpoints), only when HasVapid
 hfy-auth-edge   ▶ DynamoDB hfy-app (refresh tokens, links, passkeys and their challenges, MCP codes and tokens, rate counters)
@@ -187,6 +189,7 @@ None of the buckets is managed by a stack.
 | Root | The static site, synced from `11ty/` | The `s3_static` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), run by [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) | No (this is what the sync owns) |
 | `person/`, `family/`, `event/`, `note/`, `place/`, `media/` | Private Gramps data and media. Served through the six gated behaviors | The private data sync ([How to refresh the family data from Gramps](../how-to/refresh-the-family-data.md)), which syncs these six prefixes and nothing else | Yes: `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*` |
 | `uploads/posts/<ulid>/photo.<ext>` | Photos attached to member posts (`UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js), HFY-R58). The server names every new upload `photo.<ext>`; older uploads keep the uploader's cleaned file name. Served through the `/uploads/*` CloudFront behavior, in its public or members-only state ([Request routing](#request-routing)) | Browsers, by presigned PUT issued by `hfy-api` | Yes: `uploads/*`. The deploy role also denies `s3:PutObject` and `s3:DeleteObject` here ([`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml), `ProtectMemberUploads`) |
+| `uploads/comments/<ulid>/photo.<ext>` | Photos attached to member comments, behind `commentPhotosV1` (`COMMENT_UPLOAD_PREFIX` in [`api/src/uploads.js`](../../api/src/uploads.js); [API: Comment photos](api.md#comment-photos)). JPEG, PNG or WebP only, named `photo.<ext>` by the server. Removing a photo from a comment, or deleting the comment, leaves the object in place. Served through the same `/uploads/*` behavior as post photos | Browsers, by presigned PUT issued by `hfy-api` for `purpose` `comment` | Yes: `uploads/*`, under the same deploy-role denial |
 | `media/posts/<ulid>/<name>` | Legacy: photos uploaded before HFY-R58, if any remain. Nothing moved them | No writer since HFY-R58 | Yes, under `media/*`. The private data sync deletes them unless run with `--no-delete` |
 | `js/islands/` | Island bundles | The `11ty/` sync, from the committed build output (HFY-R58) | No (this is site output) |
 | `css/hfy-theme.css`, `css/auth-edge.css`, `fonts/` | The design system's theme layer, the auth edge's sign-in stylesheet, and the self-hosted brand fonts with content-hashed file names ([Theme and asset build](theme-and-asset-build.md)) | The `11ty/` sync, from the committed islands-build output | No (this is site output) |
@@ -358,14 +361,25 @@ Written by `hfy-api`:
 | Audit entry | `AUDIT#<record-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/txn.js`](../../api/src/txn.js) |
 | Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
 | Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |
-| Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post attaches the upload | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) |
+| Record head | `REC#<Class>#<handle>` | `HEAD` | `RECS#<Class>` / `<gramps-id>#<handle>` | - | [`api/src/sync/store.js`](../../api/src/sync/store.js), written by [`api/src/sync/apply.js`](../../api/src/sync/apply.js); not reachable from a route yet |
+| Record change log | `SYNC#LOG` | the seq, 12 digits | `RECHIST#<Class>#<handle>` / the version, 8 digits | - | `api/src/sync/apply.js` |
+| Record store sequence head | `SYNC#HEAD` | `META` | - | - | `api/src/sync/apply.js` (the seq); the bind and seed routes own the rest |
+| Record batch receipt | `SYNC#BATCH#<batch-id>` | `META` | `SYNCBATCH` / `<iso-time>#<batch-id>` | - (kept) | `api/src/sync/apply.js` |
+| gramps_id guard | `GID#<Class>#<gramps-id>` | `META` | - | - (a Person item is never deleted) | `api/src/sync/apply.js` |
+| gramps_id alias | `IDALIAS#<Class>#<old-gramps-id>` | `META` | - | - (never deleted) | `api/src/sync/apply.js` |
+| Record batch audit | `AUDIT#records:<batch-id>` | `<iso-time>#<uid>` | `AUDIT` / same as SK | - | `api/src/sync/apply.js`, through `auditItem` |
+| Upload binding, one per presign | `UPLOAD#<ulid>` | `META` | - | 24 hours after the presign; removed when a post or comment of the upload's `purpose` attaches it | [`api/src/uploads.js`](../../api/src/uploads.js), attached by [`api/src/content.js`](../../api/src/content.js) (`purpose` `post`) or by [`api/src/comment-photos.js`](../../api/src/comment-photos.js) in the comment write of [`api/src/comments.js`](../../api/src/comments.js) (`purpose` `comment`) |
 | Allowlist grant, one per email | `ALLOW#<email>` | `META` | `ALLOWSUB#<gramps-id>` / `ALLOW#<email>` (its own PK) | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js) (writes), read by `hfy-auth-edge` |
 | Allowlist audit entry | `AUDIT#allow:<sha256-hex-of-email>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/allowlist-store.js`](../../api/src/allowlist-store.js), through `auditItem` |
 | Push subscription | `SUB#<principal>` | `ENDPOINT#<endpoint-url>` | - | 90 days after write | `@io-kit/notify` `DynamoSubscriptionStore` |
 | Notification preferences | `PREF#<principal>` | `PREFS` | - | - | `@io-kit/notify` `DynamoPreferencesStore` |
 | Inbox item, its unread copy, the unread counter and the coalescing pointer | `INBOX#<principal>` | `N#<ulid>`, `U#<ulid>`, `COUNT`, `G#<group>` | - | none while unread; 90 days after read | `@io-kit/notify` `DynamoNotificationStore` |
+| Contribution event, one per credited contribution | `CONTRIB#<principal>` | `E#<ulid>` | `CONTRIBS` / `<ulid>` | - | [`api/src/contrib.js`](../../api/src/contrib.js) |
+| Self-edit daily marker (at most one self-edit credit per record per UTC day) | `CONTRIB#<principal>` | `CAP#self_edit#<subject>#<YYYY-MM-DD>` | - | 2 days after the write | [`api/src/contrib.js`](../../api/src/contrib.js) |
+| Site counters | `CSTAT#site` | `TOTAL`; `D#<YYYY-MM-DD>`; `M#<YYYY-MM>`; `LINE` (the feed-line cache, written by the read API) | - | `D#` rows 800 days after their day; `LINE` 2 hours | [`api/src/contrib.js`](../../api/src/contrib.js) |
+| Person counters | `CSTAT#person:<principal>` | `TOTAL`; `M#<YYYY-MM>` | - | - | [`api/src/contrib.js`](../../api/src/contrib.js) |
 
-Each post, comment and profile links change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item. All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
+Each post, comment and profile links change is one `TransactWriteItems` call that carries the data change and its `AUDIT#` item, and, when a post or comment change earns or loses a contribution, the `CONTRIB#` event and the `CSTAT#` counters ([API: Contributions ledger](api.md#contributions-ledger)). All three post items carry the full post, so a list needs no second read. `<target>` is `root` or `comment:<ulid>`. Reactions are plain puts and deletes with no audit item.
 
 Written by `hfy-auth-edge`, through the `@io-kit/auth` 2.2.0 stores and the local stores wired in [`auth/src/index.js`](../../auth/src/index.js). `<scope>` is `email+ip` or `ip`, and the hash covers the email and client IP, so neither is stored:
 

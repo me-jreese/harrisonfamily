@@ -5,12 +5,17 @@ import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, comm
 import { ContentError } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
+import { contribOps, emptyOps, getEvent, mergeOps, mergedSize, revokeOps } from "./contrib.js";
 import { createGuard, pointer } from "./guard.js";
+import { normalizeNew } from "./comment-photos.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64url");
 const unb64 = (s) => Buffer.from(s, "base64url").toString("utf8");
+const ORDERS = ["asc", "desc"];
+// A cursor is bound to the order that issued it: base64url("a:<id>") or ("d:<id>"). A pre-order cursor (the bare id) was an asc one.
+const mintCursor = (order, id) => b64(`${order === "desc" ? "d" : "a"}:${id}`);
 const threadPk = (t) => `THREAD#${t}`;
 const cKey = (t, id) => ({ PK: threadPk(t), SK: `C#${id}` });
 const rKey = (t, target, by) => ({ PK: threadPk(t), SK: `R#${target}#${by}` });
@@ -18,8 +23,12 @@ const rKey = (t, target, by) => ({ PK: threadPk(t), SK: `R#${target}#${by}` });
 /** Maps the API actor onto the comments Principal (admin => moderator role). */
 export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: actor.label, ...(actor.admin ? { roles: ["admin"] } : {}) } : null);
 
-/** `guard` is src/guard.js createGuard(): the R-18 check on the body of every create and edit (422, nothing stored). */
-export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard() }) {
+/**
+ * `guard` is src/guard.js createGuard(): the R-18 check on the body and every photo alt of each create and edit (422, nothing stored).
+ * `photos` is src/comment-photos.js (parse, owned, bind): without it a comment cannot carry attachments (503, fail closed).
+ * `via` is the origin stamped on the contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
+ */
+export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
   const view = (c) => ({ ...structuredClone(c), can: computeCan(c, viewer, canOpts) });
@@ -52,9 +61,15 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     if (!c) throw new CommentError("not_found", `comment ${id}`);
     return c;
   }
-  function body(raw) {
-    const text = typeof raw === "string" ? raw.trim() : "";
-    if (text === "") throw new CommentError("validation", "body is required", "body");
+  /**
+   * A comment is text, a photo, or both: the trimmed body may be empty only while the comment holds at least one photo.
+   * `body` is a required string on create and edit, photo or not (the kit's CreateInput/EditInput): a missing or non-string
+   * body is refused rather than read as "", so a PATCH that leaves `body` out cannot wipe a photo comment's text.
+   */
+  function body(raw, photoCount = 0) {
+    if (typeof raw !== "string") throw new CommentError("validation", "body is required", "body");
+    const text = raw.trim();
+    if (text === "" && photoCount === 0) throw new CommentError("validation", "body is required", "body");
     if (text.length > maxLength) throw new CommentError("validation", `body exceeds ${maxLength} characters`, "body");
     return text;
   }
@@ -72,14 +87,25 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     }
     return out;
   }
-  async function commit(entry, { put, deletes = [] }) {
+  const altFields = (list) => list.map((a, i) => [pointer("attachments", i, "alt"), a.alt]);
+  const photoParser = () => {
+    if (!photos) throw new HttpError(503, "unavailable", "photos are not configured");
+    return photos;
+  };
+  const parser = { parse: (url) => photoParser().parse(url) };
+  const stored = ({ id, path, mime, width, height, alt }) => ({ id, kind: "image", url: path, mime, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), ...(alt ? { alt } : {}) });
+  // `updates` are the UPLOAD# bindings of new photos (tag "upload"); `ops` is a contrib.js fragment (credit or revoke). Both ride in
+  // this transaction.
+  async function commit(entry, { put, deletes = [], updates = [], ops = emptyOps() }) {
     const puts = [{ item: auditItem(entry, uid(), table) }];
     if (put) puts.unshift(put);
     try {
-      await transact(ddb, cmds, table, { puts, deletes });
+      await transact(ddb, cmds, table, mergeOps({ puts, deletes, updates }, ops));
     } catch (e) {
       // A failed condition is a 409; retries that ran out on TransactionConflict are a 503 busy; any other cancellation is the store failing.
       if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
+      // An UPLOAD# binding changed between the read and the write (attached elsewhere, or not this member's): 403, nothing written.
+      if (e instanceof TxnCancelled && e.conditionFailed && e.failures.length > 0 && e.failures.every((f) => f.tag === "upload")) throw new HttpError(403, "upload_not_owned", "that photo can't be attached here. add it again.");
       if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "conflict", "comment changed concurrently");
       throw new CommentError("server", "store unavailable");
     }
@@ -92,20 +118,29 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       checkThread(t);
       await checkPostVisible(t);
       const limit = Math.min(Math.max(Math.trunc(opts.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
-      let lo = "C#";
+      const order = opts.order ?? "asc";
+      if (!ORDERS.includes(order)) throw new CommentError("validation", "order must be asc or desc", "order");
+      const desc = order === "desc";
+      let after;
       if (opts.cursor !== undefined) {
-        let after;
-        try { after = unb64(opts.cursor); } catch { throw new CommentError("cursor_invalid"); }
-        if (!ID_RE.test(after)) throw new CommentError("cursor_invalid");
-        lo = `C#${after}!`;
+        let raw;
+        try { raw = unb64(opts.cursor); } catch { throw new CommentError("cursor_invalid"); }
+        const m = /^([ad]):([0-9A-HJKMNP-TV-Z]{26})$/.exec(raw);
+        const legacy = ID_RE.test(raw); // an asc cursor minted before order existed
+        if (!(m ? (m[1] === "d") === desc : legacy && !desc)) throw new CommentError("cursor_invalid");
+        after = m ? m[2] : raw;
       }
+      // asc: SK in (C#<after>, C#~]; desc: SK in [C#, C#<after>), newest first. BETWEEN is inclusive, so desc drops the cursor row itself
+      // when it still exists (it may have been deleted since), and asc starts just past it ("!" sorts below every id character).
+      const lo = !desc && after !== undefined ? `C#${after}!` : "C#";
+      const hi = desc && after !== undefined ? `C#${after}` : "C#~";
       const r = await ddb.send(new cmds.QueryCommand({
         TableName: table, KeyConditionExpression: "PK = :pk AND SK BETWEEN :lo AND :hi",
-        ExpressionAttributeValues: { ":pk": threadPk(t), ":lo": lo, ":hi": "C#~" }, Limit: limit + 1,
+        ExpressionAttributeValues: { ":pk": threadPk(t), ":lo": lo, ":hi": hi }, Limit: limit + 2, ...(desc ? { ScanIndexForward: false } : {}),
       }));
-      const rows = (r.Items ?? []).map((i) => i.comment);
+      const rows = (r.Items ?? []).map((i) => i.comment).filter((c) => c && !(desc && c.id === after));
       const page = rows.slice(0, limit);
-      const next = rows.length > limit ? b64(page[page.length - 1].id) : undefined;
+      const next = rows.length > limit ? mintCursor(order, page[page.length - 1].id) : undefined;
       const targets = new Set(["root", ...page.map((c) => commentTarget(c.id))]);
       const reactions = {};
       for (const item of (await reactionRows(t)).sort((a, b) => (a.reaction.created_at < b.reaction.created_at ? -1 : 1))) {
@@ -116,17 +151,28 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
     async create(t, input) {
       const who = need();
       checkThread(t, true);
-      const text = body(input.body);
-      guard("comments", "create", [[pointer("body"), input.body]]); // offsets into the body as submitted
+      const list = input.attachments === undefined ? [] : normalizeNew(input.attachments, parser);
+      const text = body(input.body, list.length);
+      guard("comments", "create", [[pointer("body"), input.body], ...altFields(list)]); // offsets into the body as submitted
       await checkPostVisible(t); // not_found unless the post exists and is visible
       let parent;
       if (input.parentId !== undefined) {
         parent = await getComment(t, input.parentId);
       }
       const at = iso();
-      const c = { id: ulid(now()), threadId: t, ...(parent ? { parentId: parent.id } : {}), author: { id: who.id, label: who.label }, body: text, created_at: at };
+      const id = ulid(now());
+      const updates = list.length > 0 ? await photoParser().bind(list, who, id) : []; // 403 upload_not_owned, 400 upload_missing / photo_has_location
+      const c = { id, threadId: t, ...(parent ? { parentId: parent.id } : {}), author: { id: who.id, label: who.label }, body: text, ...(list.length > 0 ? { attachments: list.map(stored) } : {}), created_at: at };
+      // The credit commits with the comment (D2-17): one event, five counters, and the link on the stored comment.
+      const credit = contribOps({
+        actor: { id: who.id, label: who.label }, kind: "comment", ref: { type: "comment", id: c.id, thread: t }, subject: t,
+        photos: Array.isArray(c.attachments) ? c.attachments.length : 0, at, via, uid,
+      });
+      c.contrib = { id: credit.event.id };
       await commit(auditEntry("create", c.id, who.id, null, c, at), {
         put: { item: { ...cKey(t, c.id), GSI1PK: "COMMENTS", GSI1SK: c.id, entity: "comment", comment: c }, condition: "attribute_not_exists(PK)" },
+        updates,
+        ops: credit,
       });
       if (onCreated) await onCreated(c, { parent });
       return view(c);
@@ -138,11 +184,29 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       const c = await getComment(t, id);
       await checkPostVisible(t);
       if (!computeCan(c, who, canOpts).edit) throw new CommentError("forbidden", "cannot edit this comment");
-      const text = body(input.body);
-      guard("comments", "update", [[pointer("body"), input.body]]); // before the no-op shortcut: an unchanged legacy hit is refused too
-      if (text === c.body) return view(c);
+      // `attachments` omitted leaves the photos as stored. A listed photo is matched to a stored one by url; an edit can remove
+      // photos or change their alt, never add one (changing photos means a new comment), so an unknown url is refused after the
+      // ownership check: another member's key answers 403 upload_not_owned, anything else 422 validation.
+      const heldAll = c.attachments ?? [];
+      let final = heldAll;
+      let altChecked = [];
+      if (input.attachments !== undefined) {
+        const submitted = normalizeNew(input.attachments, parser);
+        const held = new Map(heldAll.map((a) => [a.url, a]));
+        const fresh = submitted.filter((a) => !held.has(a.path));
+        if (fresh.length > 0) {
+          await photoParser().owned(fresh, who);
+          throw new CommentError("validation", "photos can only be removed from a comment", "attachments");
+        }
+        final = submitted.map((a) => stored({ ...held.get(a.path), path: a.path, alt: a.alt }));
+        altChecked = altFields(final);
+      }
+      const text = body(input.body, final.length);
+      guard("comments", "update", [[pointer("body"), input.body], ...altChecked]); // before the no-op shortcut: an unchanged legacy hit is refused too
+      if (text === c.body && JSON.stringify(final) === JSON.stringify(heldAll)) return view(c);
       const at = iso();
-      const next = { ...c, body: text, edited_at: at };
+      const { attachments: _drop, ...rest } = c;
+      const next = { ...rest, body: text, ...(final.length > 0 ? { attachments: final } : {}), edited_at: at };
       await commit(auditEntry("edit", id, who.id, structuredClone(c), next, at), {
         put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...versionGuard("comment", "edited_at", c.edited_at) },
       });
@@ -155,8 +219,11 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
       if (!computeCan(c, who, canOpts).delete) throw new CommentError("forbidden", "cannot delete this comment");
       const cascade = (await reactionRows(t, `R#${commentTarget(id)}#`)).map((i) => ({ PK: i.PK, SK: i.SK }));
       const reason = opts.reason !== undefined && who.roles?.includes("admin") && c.author.id !== who.id ? opts.reason : undefined;
+      // Deletes revoke the credit, whoever deletes: the event sits under the comment's author.
+      const event = c.contrib ? await getEvent({ ddb, cmds, table }, c.author.id, c.contrib.id) : undefined;
       await commit(auditEntry("delete", id, who.id, structuredClone(c), null, iso(), reason), {
         deletes: [{ key: cKey(t, id), ...versionGuard("comment", "edited_at", c.edited_at) }, ...cascade],
+        ...(event ? { ops: revokeOps(event) } : {}),
       });
     },
     async react(t, target, emoji) {
@@ -187,7 +254,9 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, now = () 
 
 /**
  * Removes a whole thread (comments + reactions), e.g. after its post is deleted. Each removed comment gets its own D-15
- * `delete` audit item (reason "post deleted") in the same transaction as the delete; at most 100 items per transaction.
+ * `delete` audit item (reason "post deleted") in the same transaction as the delete, and its contribution is revoked there too
+ * (BRD2 D2-17: deletes revoke, cascade included). The revokes of one batch are merged (mergeOps), so 30 comments by one author in
+ * one month are one decrement per counter key instead of 30 duplicate targets. A batch holds at most 100 actions after the merge.
  * Returns the number of comments removed.
  */
 export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), uid }, t, principalId, reason = "post deleted") {
@@ -201,22 +270,51 @@ export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), ui
     key = r.LastEvaluatedKey;
     if (!key) break;
   }
-  let batch = { puts: [], deletes: [] };
-  const size = () => batch.puts.length + batch.deletes.length;
+  // The stored events of the comments that were credited (a comment from before the ledger has none and revokes nothing).
+  const events = new Map();
+  const credited = rows.filter((row) => row.SK.startsWith("C#") && row.comment?.contrib);
+  for (let i = 0; i < credited.length; i += 25) {
+    await Promise.all(credited.slice(i, i + 25).map(async ({ comment: c }) => {
+      const e = await getEvent({ ddb, cmds, table }, c.author.id, c.contrib.id);
+      if (e) events.set(c.id, e);
+    }));
+  }
+  // Each batch entry keeps its row, so a retry can rebuild the revokes from fresh events.
+  const opsFor = (row) => (events.has(row.comment?.id) ? revokeOps(events.get(row.comment.id)) : emptyOps());
+  const refresh = async (batchRows) => {
+    for (const row of batchRows.filter((r) => r.SK.startsWith("C#") && r.comment?.contrib)) {
+      const e = await getEvent({ ddb, cmds, table }, row.comment.author.id, row.comment.contrib.id);
+      if (e) events.set(row.comment.id, e);
+      else events.delete(row.comment.id);
+    }
+  };
+  let batch = [];
+  const build = () => mergeOps(...batch.flatMap(({ frag, row }) => [frag, opsFor(row)]));
   const flush = async () => {
-    if (size() > 0) await transact(ddb, cmds, table, batch);
-    batch = { puts: [], deletes: [] };
+    if (batch.length === 0) return;
+    try {
+      await transact(ddb, cmds, table, build());
+    } catch (e) {
+      // A revoke deletes its event only if it still exists. If the comment's author deleted it between our read and this batch, the
+      // condition fails and the whole batch is cancelled. Re-read the batch's events (the vanished one has already been revoked by that
+      // delete, so it drops out) and commit once more. Busy and store failures are not retried here: transact() already did.
+      if (!(e instanceof TxnCancelled) || e.kind !== "condition") throw e;
+      await refresh(batch.map(({ row }) => row));
+      await transact(ddb, cmds, table, build());
+    }
+    batch = [];
   };
   let removed = 0;
   for (const row of rows) {
     const isComment = row.SK.startsWith("C#") && row.comment;
-    if (size() + (isComment ? 2 : 1) > 100) await flush();
-    batch.deletes.push({ PK: row.PK, SK: row.SK });
+    const frag = { puts: [], deletes: [{ PK: row.PK, SK: row.SK }] };
     if (isComment) {
       const at = new Date(now()).toISOString();
-      batch.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
-      removed += 1;
+      frag.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
     }
+    if (batch.length > 0 && mergedSize(...batch.flatMap((b) => [b.frag, opsFor(b.row)]), frag, opsFor(row)) > 100) await flush();
+    batch.push({ frag, row });
+    if (isComment) removed += 1;
   }
   await flush();
   return removed;

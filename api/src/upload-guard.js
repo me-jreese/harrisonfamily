@@ -16,7 +16,7 @@
 // refused as if it carried a location (fail closed).
 // Nothing here logs, and the bytes, the key and what was found never reach an error message.
 import { constants as zlibConstants, inflateSync } from "node:zlib";
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { HttpError } from "./http.js";
 
 /**
@@ -427,4 +427,30 @@ export async function checkLocation(bucket, key, { s3 } = {}) {
     if (findWebpLocation(head, tail.length > LOCATION_BYTES ? tail.subarray(tail.length - LOCATION_BYTES) : tail)) throw refused();
   }
   return { contentType: typeof r.ContentType === "string" ? r.ContentType : undefined };
+}
+
+/** How long a comment photo's HEAD may take before the write answers 503 instead of hanging on S3. */
+export const HEAD_TIMEOUT_MS = 2000;
+
+/**
+ * HeadObject of s3://bucket/key (hfy-comments-photos-desc-api): resolves `{ contentType, size }`.
+ *   400 upload_missing  no object (S3 answers 403 AccessDenied for a missing key without s3:ListBucket);
+ *   503 unavailable     S3 failed or did not answer within `timeoutMs`.
+ * `deps.s3` is injected by tests.
+ */
+export async function headUpload(bucket, key, { s3, timeoutMs = HEAD_TIMEOUT_MS } = {}) {
+  const client = s3 ?? (sharedS3 ??= new S3Client({}));
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new HttpError(503, "unavailable", "photos are unavailable, try again")), timeoutMs); });
+  try {
+    const r = await Promise.race([client.send(new HeadObjectCommand({ Bucket: bucket, Key: key })), late]);
+    return { contentType: typeof r.ContentType === "string" ? r.ContentType : undefined, size: typeof r.ContentLength === "number" ? r.ContentLength : undefined };
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    const status = e?.$metadata?.httpStatusCode;
+    if (MISSING.has(e?.name) || MISSING.has(e?.Code) || status === 404 || status === 403) throw missing();
+    throw new HttpError(503, "unavailable", "photos are unavailable, try again");
+  } finally {
+    clearTimeout(timer);
+  }
 }

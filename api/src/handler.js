@@ -7,6 +7,7 @@ import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
 import { createGuard } from "./guard.js";
+import { uploadPhotosFor } from "./comment-photos.js";
 import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
@@ -37,14 +38,15 @@ export function createHandler(deps) {
     }
   };
 
-  function build(actor, event, preview) {
+  // `via` is the origin stamped on contribution events: "ui" for HTTP, "mcp" for a tool call (invoke).
+  function build(actor, event, preview, via = "ui") {
     const notifier = createNotifier({
       subscriptions: deps.subscriptions, preferences: deps.preferences, webpush: deps.webpush, vapid: deps.vapid, log,
       listPrincipals: scanSubscribedPrincipals(ddb, cmds, table),
       // A recipient's inbox write follows featureOn for the RECIPIENT, never the actor's preview header.
       inbox: deps.inbox, featureOn: (name, principal) => features.featureOn(name, principal),
     });
-    const base = { ddb, cmds, table, actor, now, ulid, uid };
+    const base = { ddb, cmds, table, actor, now, ulid, uid, via };
     const commenterIds = async (threadId) => {
       const ids = new Set();
       let key;
@@ -62,6 +64,7 @@ export function createHandler(deps) {
     const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload });
     const comments = createCommentSource({
       ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
+      photos: uploadPhotosFor({ ddb, cmds, table, bucket: mediaBucket, base: deps.mediaPublicBase, now, s3: deps.s3 }), // HEAD + checkLocation + UPLOAD# binding for comment photos
       getPost: (id) => content.get(id),
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
@@ -94,7 +97,7 @@ export function createHandler(deps) {
     const route = routes.find((r) => r.name === routeName);
     if (!route) throw new HttpError(404, "not_found", "no such route");
     await features.check(route.gate, actor);
-    return route.handler({ ...build(actor, {}), actor, params, query, body, event: {} });
+    return route.handler({ ...build(actor, {}, undefined, "mcp"), actor, params, query, body, event: {} });
   }
 
   async function handler(event) {
