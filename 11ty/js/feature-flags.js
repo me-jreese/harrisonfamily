@@ -12,11 +12,11 @@
         "css": "11377c0e"
       },
       "edit-entry": {
-        "js": "c9826971",
+        "js": "6918b446",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "219848a8",
+        "js": "a619a333",
         "css": "d8c9710c"
       },
       "follow": {

@@ -1,7 +1,9 @@
 // HFY-TSK-157 (flag recordEdit): the editors of the other record classes at 375 and 1280: Event, Place, Source, Citation, Repository, Media (metadata),
 // Note and Family open by /edit/?cls=<class>&id=<gramps id or h:handle>; the drill-down links (event to place, citation to source to repository); a
 // member's fields all say "goes to review" while an admin's say "saves now"; tags are picked from the ones that exist; the place type select has no
-// street, building or number; the repository editor has no addresses; a styled note keeps the styles outside the edit and warns about one it drops.
+// street, building or number; a place's code is locked and explained below the administrative level, and a longer coordinate is sent rounded; the
+// repository editor has no addresses; a styled note keeps the styles outside the edit and warns about one it drops; a change sent for review is not
+// sent again by the next save when the member typed on while it was out.
 // Synthetic records only; /auth, /api and the flags file are stubbed.  HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/editor-records.spec.mjs
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -33,16 +35,17 @@ const RELATED = {
 const TAGS = [{ handle: "hst1", name: "family" }, { handle: "hst2", name: "needs a check" }];
 const ID = { Event: "E9001", Place: "P9001", Source: "S9001", Citation: "C9001", Repository: "R9001", Media: "O9001", Note: "N9001", Family: "F9001" };
 
-async function stub(page, { admin = false } = {}) {
+async function stub(page, { admin = false, objects = OBJECTS } = {}) {
   const state = { calls: [] };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, photoTags: false, profileLinks: false, recordSubsV1: false, recordEdit: true } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9001", grampsId: "I9001", label: "Sam Example" } }));
   await page.route("**/auth/refresh", (r) => r.fulfill({ status: 401, json: { error: "no refresh" } }));
   await page.route("**/api/me", (r) => r.fulfill({ json: { id: "I9001", label: "Sam Example", admin, can: {}, ownRecord: { cls: "Person", handle: "hsyn0001", gramps_id: "I9001" }, editing: true } }));
-  await page.route(/\/api\/edit\/(Event|Place|Source|Citation|Repository|Media|Note|Family)\/[^/]+$/, (r) => {
+  await page.route(/\/api\/edit\/(Event|Place|Source|Citation|Repository|Media|Note|Family)\/[^/]+$/, async (r) => {
+    if (state.hold) await state.hold; // a test holds the refetch after a save
     const cls = new URL(r.request().url()).pathname.split("/")[3];
-    const obj = OBJECTS[cls];
+    const obj = objects[cls];
     return r.fulfill({ json: { key: `${cls}:${obj.handle}`, version: 7, etag: `${cls}:${obj.handle}@7`, obj, related: RELATED, relation: "other", viewer: { admin }, policy: POLICY, pending: [], customTypes: {}, tags: TAGS, schemaHash: "0".repeat(64) } });
   });
   await page.route("**/api/edit/schema/*", (r) => {
@@ -80,10 +83,11 @@ for (const [name, viewport] of VIEWPORTS) {
     test.use({ viewport });
 
     for (const cls of Object.keys(OBJECTS)) {
-      test(`${cls}: opens by gramps id and by h:handle, every field of a member goes to review, the page is accessible`, async ({ page }) => {
+      test(`${cls}: opens by gramps id and by h:handle, every field a member can change goes to review, the page is accessible`, async ({ page }) => {
         await open(page, cls);
         await expect(page.locator("[data-hfy-subject]")).toContainText(cls.toLowerCase());
-        expect(await modes(page)).toEqual(["proposal"]);
+        // the synthetic place is a city, whose code is never kept on the site (R-18)
+        expect(await modes(page)).toEqual(cls === "Place" ? ["proposal", "locked"] : ["proposal"]);
         expect(await axeViolations(page)).toEqual([]);
         const byHandle = await page.context().newPage();
         await stub(byHandle);
@@ -120,6 +124,50 @@ for (const [name, viewport] of VIEWPORTS) {
       expect(options).not.toMatch(/street|building|number/);
       expect(options).toContain("city");
       await expect(body.locator("[data-pointer*='alt_loc'], [data-pointer*='address']")).toHaveCount(0);
+    });
+
+    test("place: on a city the code is locked and explained; on a county it goes to review; a longer coordinate is sent rounded", async ({ page }) => {
+      await open(page, "Place");
+      let body = await section(page, "details");
+      await expect(body.locator("[data-pointer='/code'] [data-hfy-mode]")).toHaveAttribute("data-hfy-mode", "locked");
+      await expect(body.getByLabel("code", { exact: true })).not.toBeEditable();
+      await expect(body).toContainText("kept only for a country, state, county, province, region or department");
+      const county = { ...OBJECTS, Place: { ...OBJECTS.Place, place_type: typed("PlaceType", 3) } };
+      const state = await open(page, "Place", { objects: county });
+      body = await section(page, "details");
+      await expect(body.locator("[data-pointer='/code'] [data-hfy-mode]")).toHaveAttribute("data-hfy-mode", "proposal");
+      await body.getByLabel("code", { exact: true }).fill("AB1");
+      await body.getByLabel("latitude", { exact: true }).fill("51.5074");
+      await body.getByLabel("longitude", { exact: true }).fill("-0.1278");
+      await expect(body).toContainText("rounded to two decimals when you save");
+      await page.locator("[data-hfy-review]").click();
+      await expect(page.locator("[data-hfy-sheet='ready']")).toBeVisible();
+      const ops = state.calls[state.calls.length - 1].ops;
+      expect(ops.map((o) => [o.path, o.value])).toEqual([["/code", "AB1"], ["/lat", "51.51"], ["/long", "-0.13"]]);
+    });
+
+    test("a change sent for review is not sent again: typing while the refetch after the save is out keeps only the new edit", async ({ page }) => {
+      const state = await open(page, "Source");
+      const body = await section(page, "details");
+      await body.getByLabel("title", { exact: true }).fill("New ledger");
+      await page.locator("[data-hfy-review]").click();
+      await expect(page.locator("[data-hfy-sheet='ready']")).toBeVisible();
+      let release;
+      state.hold = new Promise((resolve) => { release = resolve; });
+      await page.locator("[data-hfy-save]").click();
+      await expect(page.locator("[data-hfy-toast-text]")).toBeVisible();
+      await body.getByLabel("author", { exact: true }).fill("A. Synth");
+      release();
+      state.hold = null;
+      await expect(page.locator("[data-hfy-bar-text]")).toHaveText("1 change — 1 goes to review");
+      const after = await section(page, "details");
+      await expect(after.getByLabel("author", { exact: true })).toHaveValue("A. Synth");
+      await expect(after.getByLabel("title", { exact: true })).toHaveValue("A synthetic ledger");
+      await page.locator("[data-hfy-review]").click();
+      await expect(page.locator("[data-hfy-sheet='ready']")).toBeVisible();
+      const ops = state.calls[state.calls.length - 1].ops;
+      expect(state.calls[state.calls.length - 1].dry_run).toBe(true);
+      expect(ops.map((o) => [o.path, o.value])).toEqual([["/author", "A. Synth"]]);
     });
 
     test("repository: no addresses; its internet-free form is the name and kind", async ({ page }) => {

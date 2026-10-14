@@ -82,16 +82,17 @@ export function opsFromDrafts({ key, sections, obj, drafts, bundle, viewer }) {
  * The form values to start from when the member's edits are replayed over a refetched record (a 409): the fresh record's values with only the
  * fields the member changed (against the record they edited) laid over them, so a field somebody else changed meanwhile is neither lost nor
  * silently reverted. `settled` maps an op id to the value the server just took (a save that went through): an edit still equal to it is
- * done and is not laid over the fresh record again, so only what the member typed after the save survives. -> { [sectionId]: args }.
- * (The forms only; replayDrafts below adds the list sections.)
+ * done and is not laid over the fresh record again, so only what the member typed after the save survives. A record form (editor-records.js)
+ * makes several ops per field, so it is judged by `settledUnits` instead, the `<section>/<field>` units whose every op the save stored
+ * (settledUnitsOf). -> { [sectionId]: args }. (The forms only; replayDrafts below adds the list sections.)
  */
-export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = {} }) {
+export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = {}, settledUnits = new Set() }) {
   void key;
   const out = {};
   for (const section of sections) {
     if (!section.form) continue;
     const draft = drafts && drafts[section.id];
-    if (section.form.record) { out[section.id] = recordSeed({ section, oldObj, freshObj, draft }); continue; }
+    if (section.form.record) { out[section.id] = recordSeed({ section, oldObj, freshObj, draft, settled: settledUnits }); continue; }
     const values = sectionValues(freshObj, section.form);
     const before = sectionValues(oldObj, section.form);
     if (isObj(draft)) {
@@ -113,7 +114,7 @@ export function replaySeed({ sections, key, oldObj, freshObj, drafts, settled = 
  * bundle, minus the units already stored). `settledUnits` is a set of `<section>/<unit>` strings.
  */
 export function replayDrafts({ sections, oldBundle, freshBundle, drafts, settled = {}, settledUnits = new Set(), schemas = {} }) {
-  const out = replaySeed({ sections, key: freshBundle.key, oldObj: oldBundle.obj, freshObj: freshBundle.obj, drafts, settled });
+  const out = replaySeed({ sections, key: freshBundle.key, oldObj: oldBundle.obj, freshObj: freshBundle.obj, drafts, settled, settledUnits });
   const lookups = makeLookups(freshBundle, schemas);
   for (const s of sections) {
     for (const id of s.lists || []) {

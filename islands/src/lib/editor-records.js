@@ -6,10 +6,14 @@
 // A record form is a section whose `form.record` is true: `form.cls` names the class and `form.fields` the field specs below. A spec is
 //   { key, title, kind, ptr, ... }   kind: text | styled | type | int | date | place | source | parent | tags
 // `ptr` is the record pointer the field's policy is judged at (the badge asks the bundle's table, so the words "saves now", "goes to review" and
-// "only an admin can change this" come from there, never from this file). The form's values are plain JSON: a string for text and styled, the
+// "only an admin can change this" come from there, never from this file). One exception: a Place's code is locked here unless the place is, and
+// stays, an administrative kind, because the table's row for it depends on the record (R-18, place.code.local_only) and the lenient resolver the
+// form badges with leaves such rows out. A latitude or longitude is rounded to the policy's decimals before it is sent (place.coordinates.round),
+// as a birth's date is cut to its year (DEC-E4). The form's values are plain JSON: a string for text and styled, the
 // type code ("12" or "c:<text>") for type, a number's text for int, a Gramps Date for date, { ref, name } for place, source and parent, and an
 // array of tag handles for tags. A field the record does not hold starts blank. The server decides on every write; nothing here is a policy.
 import { keySegment } from "../../../api/src/records/ops.js";
+import { roundCoordinate } from "../../../shared/redaction-rules.mjs";
 import {
   baseOf, birthDate, clone, constOptions, dateText, drillHref, emptyDate, isBirthCode, isWordsDate, makeEmitter,
   restyleText, sameDate, sameValue, typeCode, typeObject, typeOptions
@@ -28,9 +32,9 @@ export const RECORD_COPY = Object.freeze({
   placeNone: "(none)",
   noteAddress: "we don't keep phone numbers, street addresses, e-mail addresses or id numbers on the site.",
   placeStreet: "we don't keep street-level places on the site, so street, building and number aren't offered.",
-  placeCoords: "we keep places to about two decimals (town level), so a longer number is rounded when it is reviewed.",
+  placeCoords: "we keep places to two decimals (about town level), so a longer number is rounded to two decimals when you save.",
   dateBirthLike: "a birth, baptism or christening date, or a date equal to one, is kept as a year only.",
-  placeCodeHint: "a postal or other code, for towns and larger places only.",
+  placeCodeHint: "a postal or other code is kept only for a country, state, county, province, region or department. for any other kind of place it can't be changed on the site.",
   repoNoAddress: "we don't keep addresses on the site, so a repository has no addresses.",
   mediaFile: "the photo file itself can't be changed here.",
   noteStyled: "bold, italic and links in the text outside your change are kept. a style that touches your change is dropped.",
@@ -43,6 +47,38 @@ export const RECORD_COPY = Object.freeze({
 
 /** The place types a member never sees (DEC-E12): Street (7), Building (19), Number (20). */
 export const PLACE_TYPES_SKIPPED = Object.freeze([7, 19, 20]);
+
+/** The place types that keep a code (gramps/redaction/redaction-v1.json places.administrativeTypes, R-18): Country, State, County, Province,
+ *  Region, Department. Any other kind, a custom one included, is local and its code is never in the cloud. A test pins this list to the policy file. */
+export const PLACE_TYPES_ADMINISTRATIVE = Object.freeze([1, 2, 3, 8, 9, 10]);
+
+/** The coordinate rule of the policy file (places.coordinateDecimals and places.coordinatePattern), in the shape roundCoordinate takes. A test
+ *  pins it to the policy file. */
+export const COORDINATE_POLICY = Object.freeze({ places: Object.freeze({ coordinateDecimals: 2, coordinatePattern: "^[+-]?[0-9]+(\\.[0-9]+)?$" }) });
+
+/** What the coordinate fields accept while the member types: up to three whole digits and any number of decimals, which are rounded on the way out. */
+const COORDINATE_INPUT = "^(?:[+-]?[0-9]{1,3}(?:\\.[0-9]+)?)?$";
+
+/** A latitude or longitude as it is sent: rounded half away from zero to the policy's decimals. A value that is not a plain decimal is left as
+ *  typed, so the form's pattern flags it and the server refuses it; it is never blanked silently. */
+export const roundedCoordinate = (text) => {
+  const r = roundCoordinate(text, COORDINATE_POLICY);
+  return r === null ? text : r;
+};
+
+const isAdministrativeCode = (code) => /^\d+$/.test(String(code)) && PLACE_TYPES_ADMINISTRATIVE.includes(Number(code));
+const placeTypeOf = (obj) => typeCode(get(obj, "/place_type"));
+
+/**
+ * True when a Place's code can be written: the stored place is an administrative kind and so is the kind the form now holds (`live.place_type`;
+ * a blank keeps the record's). The server's field policy refuses a code when the place is local before or after the change (field-policy.js
+ * localPlace), so both are judged here.
+ */
+export function placeCodeOpen(obj, live = {}) {
+  const stored = placeTypeOf(obj);
+  const now = isObj(live) && typeof live.place_type === "string" && live.place_type !== "" ? live.place_type : stored;
+  return isAdministrativeCode(stored) && isAdministrativeCode(now);
+}
 
 const f = (key, title, kind, ptr, extra = {}) => ({ key, title, kind, ptr, ...extra });
 const TAGS = f("tags", "tags", "tags", "/tag_list");
@@ -59,9 +95,9 @@ export const RECORD_FIELDS = Object.freeze({
   Place: Object.freeze([
     f("name", "name", "text", "/name/value", { max: 200 }),
     f("place_type", "kind of place", "type", "/place_type", { def: "PlaceType", skip: PLACE_TYPES_SKIPPED, hint: RECORD_COPY.placeStreet }),
-    f("code", "code", "text", "/code", { max: 20, hint: RECORD_COPY.placeCodeHint }),
-    f("lat", "latitude", "text", "/lat", { max: 7, hint: RECORD_COPY.placeCoords }),
-    f("long", "longitude", "text", "/long", { max: 8, hint: RECORD_COPY.placeCoords }),
+    f("code", "code", "text", "/code", { max: 20, hint: RECORD_COPY.placeCodeHint, administrativeOnly: true }),
+    f("lat", "latitude", "text", "/lat", { max: 12, coordinate: true, hint: RECORD_COPY.placeCoords }),
+    f("long", "longitude", "text", "/long", { max: 12, coordinate: true, hint: RECORD_COPY.placeCoords }),
     f("enclosed", "inside", "parent", "/placeref_list", { widget: "placeRef" }),
     TAGS
   ]),
@@ -138,10 +174,15 @@ function valueOf(obj, sp) {
   }
 }
 
-/** The pointer a form field's badge is judged at. A birth's date is the birth-year row; any other date follows the event's own fields. */
-export function recordPolicy(form, key, live = {}) {
+/**
+ * The pointer a form field's badge is judged at: [class, pointer], or [class, pointer, "never"] when the form already knows the server refuses the
+ * field whatever the table's unconditional rows say (a Place's code while the place is, or becomes, a local kind: placeCodeOpen). A birth's date
+ * is the birth-year row; any other date follows the event's own fields. `obj` is the record the form was made from.
+ */
+export function recordPolicy(form, key, live = {}, obj = null) {
   const sp = form.fields.find((x) => x.key === key);
   if (!sp) return [form.cls, ""];
+  if (sp.administrativeOnly && !placeCodeOpen(obj, live)) return [form.cls, sp.ptr, "never"];
   if (form.cls === "Event" && key === "date") return [form.cls, isBirthCode(live.type) ? "/date/dateval/2" : "/description"];
   if (sp.kind === "tags") return [form.cls, "/tag_list/0"];
   if (sp.kind === "parent") return [form.cls, "/placeref_list/0"];
@@ -169,6 +210,8 @@ export function recordSchema(schema, form, lookups, values = {}) {
     if (sp.kind === "text") {
       const base = sp.key === "name" && form.cls === "Place" ? defs && defs.PlaceName && defs.PlaceName.properties && defs.PlaceName.properties.value : schema && schema.properties && schema.properties[sp.ptr.split("/")[1]];
       prop = { ...(isObj(base) && base.type === "string" ? base : { type: "string", maxLength: sp.max }), title };
+      // A coordinate takes more decimals than the record keeps: they are rounded before the change is sent (roundedCoordinate).
+      if (sp.coordinate) Object.assign(prop, { maxLength: sp.max, pattern: COORDINATE_INPUT });
       delete prop["x-hfy-note"];
     } else if (sp.kind === "styled") {
       prop = { type: "string", title, maxLength: sp.max, "x-io-widget": "textarea" };
@@ -212,11 +255,12 @@ export function recordOps({ key, bundle, section, draft }) {
   for (const sp of form.fields) {
     const after = draft[sp.key];
     if (after === undefined && !["text", "styled", "tags", "place", "parent", "source"].includes(sp.kind)) continue; // a typed field cleared away keeps the record's value
+    if (sp.administrativeOnly && !placeCodeOpen(obj, draft)) continue; // locked on a local place (recordPolicy): the server would refuse it
     const stored = get(obj, sp.ptr);
     switch (sp.kind) {
       case "text": {
         const before = typeof stored === "string" ? stored : "";
-        const next = trimmed(after);
+        const next = sp.coordinate ? roundedCoordinate(trimmed(after)) : trimmed(after);
         if (next === before.trim()) break;
         e.add(sp.key, sp.title, { op: "set", obj: key, path: sp.ptr, base: typeof stored === "string" ? stored : null, value: next });
         break;
@@ -321,15 +365,18 @@ function tagOps(e, { sp, key, obj, wanted }) {
 }
 
 /**
- * The form values after the record changed under them (a 409): the fresh record's values with only the fields the member changed (against the
- * record they edited) laid over them.
+ * The form values after the record changed under them (a 409, or the refetch after a save): the fresh record's values with only the fields the
+ * member changed (against the record they edited) laid over them. `settled` is the set of `<section>/<field>` units whose every op a save just
+ * stored (editor-save.js settledUnitsOf): such a field is done, as a change that saved or one that went to review, so it is not laid over the
+ * fresh record again and the next save does not send it twice. Only what the member typed after the save survives.
  */
-export function recordSeed({ section, oldObj, freshObj, draft }) {
+export function recordSeed({ section, oldObj, freshObj, draft, settled = new Set() }) {
   const form = section.form;
   const values = recordValues(freshObj, form);
   if (!isObj(draft)) return values;
   const before = recordValues(oldObj, form);
   for (const sp of form.fields) {
+    if (settled.has(`${section.id}/${sp.key}`)) continue;
     const after = draft[sp.key];
     const was = before[sp.key];
     const norm = (v) => (v === undefined ? (sp.kind === "tags" ? [] : sp.kind === "place" || sp.kind === "source" || sp.kind === "parent" ? { ref: "", name: "" } : "") : v);

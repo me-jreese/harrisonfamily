@@ -1,15 +1,22 @@
 // HFY-TSK-157: the editors of the other record classes (src/lib/editor-records.js). The form of each of the eight classes, the EditOps a change makes
 // (every case runs them through the ops engine, api/src/records/ops.js), the styled-note rule (DEC-E11), the place-type and address rules (DEC-E12,
-// R-18) and the drill-down links. Synthetic records only.
+// R-18), the place code and coordinate rules, the replay after a save, and the drill-down links. Synthetic records only.
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { applyOps } from "../../api/src/records/ops.js";
+import { classifyOps } from "../../api/src/records/field-policy.js";
+import { createEditGuard } from "../../shared/edit-guard.mjs";
 import { EDIT_SCHEMAS } from "../src/lib/edit-schemas.js";
 import { PERSON_SECTIONS, createModeResolver, parseRoute, sectionSchema, sectionValues, sectionsFor } from "../src/lib/editor-model.js";
-import { RECORD_COPY, RECORD_FIELDS, PLACE_TYPES_SKIPPED, drillLinks, recordNotes, recordOps, recordPolicy, recordSeed, recordTitle } from "../src/lib/editor-records.js";
+import {
+  COORDINATE_POLICY, PLACE_TYPES_ADMINISTRATIVE, RECORD_COPY, RECORD_FIELDS, PLACE_TYPES_SKIPPED, drillLinks, placeCodeOpen, recordNotes, recordOps,
+  recordPolicy, recordSchema, recordSeed, recordTitle, roundedCoordinate
+} from "../src/lib/editor-records.js";
 import { BIRTH_LIKE_CODES, BIRTH_LIKE_CUSTOM, isBirthCode, makeLookups, restyleText } from "../src/lib/editor-sections.js";
-import { countOps, modeOfOp, opsFromDrafts } from "../src/lib/editor-save.js";
+import { countOps, modeOfOp, opsFromDrafts, replayDrafts, settledUnitsOf } from "../src/lib/editor-save.js";
+
+const REDACTION = JSON.parse(readFileSync(new URL("../../gramps/redaction/redaction-v1.json", import.meta.url), "utf8"));
 
 const typed = (cls, value, string = "") => ({ _class: cls, value, string });
 const date = (d, m, y, extra = {}) => ({ _class: "Date", calendar: 0, modifier: 0, quality: 0, dateval: [d, m, y, false], text: "", sortval: 2400000, newyear: 0, ...extra });
@@ -182,14 +189,20 @@ test("every birth-like type is cut to a year and badged by the birth-year row (D
   }
 });
 
-test("fields explain the year-only date and the rounded coordinates; own and unknown tag handles", () => {
+test("fields explain the year-only date, the rounded coordinates and the administrative-only code; own and unknown tag handles", () => {
   for (const cls of ["Event", "Citation", "Media"]) assert.equal(RECORD_FIELDS[cls].find((f) => f.key === "date").hint, RECORD_COPY.dateBirthLike);
   for (const k of ["lat", "long"]) assert.equal(RECORD_FIELDS.Place.find((f) => f.key === k).hint, RECORD_COPY.placeCoords);
+  assert.match(RECORD_COPY.placeCoords, /rounded to two decimals when you save/);
+  assert.equal(RECORD_FIELDS.Place.find((f) => f.key === "code").hint, RECORD_COPY.placeCodeHint);
+  assert.match(RECORD_COPY.placeCodeHint, /only for a country, state, county, province, region or department/);
+  assert.doesNotMatch(RECORD_COPY.placeCodeHint, /town/);
   const resolver = createModeResolver(JSON.parse(JSON.stringify(POLICY)));
   const form = secOf("Place").form;
-  const [c, ptr] = recordPolicy(form, "code");
+  const county = { ...OBJECTS.Place, place_type: typed("PlaceType", 3) };
+  const [c, ptr, fixed] = recordPolicy(form, "code", { place_type: "3" }, county);
+  assert.equal(fixed, undefined);
   const member = resolver.resolve(c, ptr, { admin: false, relation: "other" }, { lenient: true });
-  assert.equal(member, "proposal", "the fixture table sends a member's place code to review; the live bundle table decides the admin-only badge");
+  assert.equal(member, "proposal", "the fixture table sends a member's code on an administrative place to review");
   const own = resolver.resolve("Event", "/description", { admin: false, relation: "own" }, { lenient: true });
   assert.equal(own, "direct", "own relation resolves through the same table");
   const stale = makeLookups({ ...bundleFor("Event"), tags: [] }, schemas);
@@ -213,8 +226,9 @@ test("the modes: a member's every field goes to review, an admin's saves now; ta
   const resolver = createModeResolver(JSON.parse(JSON.stringify(POLICY)));
   for (const cls of CLASSES) {
     const form = secOf(cls).form;
+    const obj = cls === "Place" ? { ...OBJECTS.Place, place_type: typed("PlaceType", 3) } : OBJECTS[cls]; // a county keeps its code
     for (const sp of form.fields) {
-      const [c, ptr] = recordPolicy(form, sp.key, { type: "21" });
+      const [c, ptr] = recordPolicy(form, sp.key, { type: "21", place_type: cls === "Place" ? "3" : undefined }, obj);
       const member = resolver.resolve(c, ptr, { admin: false, relation: "other" }, { lenient: true });
       const admin = resolver.resolve(c, ptr, { admin: true, relation: "other" }, { lenient: true });
       assert.equal(member, "proposal", `${cls}.${sp.key} for a member`);
@@ -256,6 +270,103 @@ test("styled notes keep tags outside the edited span and drop overlapping ones (
   // an unchanged text writes nothing, so a note's style is never rewritten by changing its kind
   const kind = run("Note", { ...valuesOf("Note"), type: "2" });
   assert.deepEqual(kind.ops.map((o) => o.path), ["/type"]);
+});
+
+test("the administrative place types and the coordinate rule are the policy file's", () => {
+  assert.deepEqual([...PLACE_TYPES_ADMINISTRATIVE], REDACTION.places.administrativeTypes.map((t) => t.value));
+  assert.equal(COORDINATE_POLICY.places.coordinateDecimals, REDACTION.places.coordinateDecimals);
+  assert.equal(COORDINATE_POLICY.places.coordinatePattern, REDACTION.places.coordinatePattern);
+});
+
+test("coordinates: a longer number is rounded to two decimals before it is sent, and the result passes the guard (R-18)", async () => {
+  const guard = createEditGuard({ policy: REDACTION });
+  const r = run("Place", { ...valuesOf("Place"), lat: "51.5074", long: "-0.1278" });
+  const byPath = Object.fromEntries(r.ops.map((o) => [o.path, o]));
+  assert.equal(byPath["/lat"].value, "51.51");
+  assert.equal(byPath["/long"].value, "-0.13");
+  assert.ok(r.applied.ok, JSON.stringify(r.applied.conflicts));
+  assert.deepEqual(guard.checkObjects(r.applied.objects), [], "the guard finds nothing on the rounded place");
+  // what the hint promised is what the guard would have refused unrounded
+  const raw = applyOps({ [r.b.key]: r.b.obj }, [{ id: "x", op: "set", obj: r.b.key, path: "/lat", base: "", value: "51.5074" }], { versions: { [r.b.key]: 7 } });
+  assert.deepEqual(guard.checkObjects(raw.objects).map((e) => [e.code, e.kind, e.path]), [["never_in_cloud", "coordinate", "/lat"]]);
+  // half away from zero, a short value as typed, nothing to send when the rounded value is the stored one, a non-decimal left for the server
+  assert.deepEqual(["47.6", "+47.6", "-122.4194", "0.004", "-0.004", "179.995", "", "north"].map(roundedCoordinate), ["47.6", "+47.6", "-122.42", "0.00", "0.00", "180.00", "", "north"]);
+  const stored = { ...OBJECTS.Place, lat: "51.51" };
+  assert.deepEqual(run("Place", { ...valuesOf("Place"), lat: "51.5074" }, { obj: stored }).ops, []);
+  // the form takes the longer number (no pattern error under the field), and the hint is shown
+  const schema = recordSchema(EDIT_SCHEMAS.Place, secOf("Place").form, makeLookups(bundleFor("Place"), schemas), valuesOf("Place"));
+  for (const k of ["lat", "long"]) {
+    const prop = schema.properties[k];
+    assert.equal(prop.description, RECORD_COPY.placeCoords);
+    assert.ok(new RegExp(prop.pattern).test("-122.4194") && new RegExp(prop.pattern).test("") && !new RegExp(prop.pattern).test("north"), k);
+    assert.ok(prop.maxLength >= "-122.4194".length, k);
+  }
+});
+
+test("the place code: locked on a town or a city (never in the cloud), open on an administrative place, judged before and after a type change", async () => {
+  const form = secOf("Place").form;
+  const resolver = createModeResolver(JSON.parse(JSON.stringify(POLICY)));
+  const guard = createEditGuard({ policy: REDACTION });
+  const view = { get: async () => null, byGrampsId: async () => null, referrers: async () => [] };
+  const place = (t) => ({ ...OBJECTS.Place, place_type: typed("PlaceType", t) });
+  // [stored type, type in the form, the form's answer]
+  const cases = [[15, "15", false], [4, "4", false], [3, "3", true], [1, "1", true], [10, "10", true], [15, "3", false], [3, "15", false], [3, "c:Shire", false], [3, "", true], [3, undefined, true]];
+  for (const [stored, now, open] of cases) {
+    const obj = place(stored);
+    const live = { ...sectionValues(obj, form), place_type: now, code: "AB1" };
+    assert.equal(placeCodeOpen(obj, live), open, `${stored} -> ${now}`);
+    const [c, ptr, fixed] = recordPolicy(form, "code", live, obj);
+    const badge = (admin) => fixed || resolver.resolve(c, ptr, { admin, relation: "other" }, { lenient: true });
+    assert.equal(badge(false), open ? "proposal" : "never", `member badge ${stored} -> ${now}`);
+    assert.equal(badge(true), open ? "direct" : "never", `admin badge ${stored} -> ${now}`);
+    const r = run("Place", live, { obj });
+    const codeOps = r.ops.filter((o) => o.path === "/code");
+    assert.equal(codeOps.length, open ? 1 : 0, `a code op only when open: ${stored} -> ${now}`);
+    // the server agrees: the field policy and the guard
+    const served = await classifyOps([{ id: "c", op: "set", obj: r.b.key, path: "/code", base: "", value: "AB1" }, ...(now && String(now) !== String(stored) ? [{ id: "t", op: "set", obj: r.b.key, path: "/place_type", base: obj.place_type, value: now.startsWith("c:") ? typed("PlaceType", 0, now.slice(2)) : typed("PlaceType", Number(now)) }] : [])], { actor: { id: "I9001", admin: false }, view, objects: { [r.b.key]: obj } });
+    assert.equal(served.find((x) => x.id === "c").code, open ? "proposal" : "never", `field policy ${stored} -> ${now}`);
+    if (open) assert.deepEqual(guard.checkObjects(r.applied.objects), [], `guard ${stored} -> ${now}`);
+  }
+  // the reviewer's case: a code on a town or a city would be refused by the guard, so the form never sends it
+  for (const t of [15, 4]) {
+    const raw = applyOps({ "Place:hl1": place(t) }, [{ id: "x", op: "set", obj: "Place:hl1", path: "/code", base: "", value: "AB1" }], { versions: { "Place:hl1": 7 } });
+    assert.deepEqual(guard.checkObjects(raw.objects).map((e) => [e.code, e.kind]), [["never_in_cloud", "place_code"]]);
+  }
+});
+
+test("a replay after a save does not lay the saved field over the fresh record again; what was typed since survives (record forms)", () => {
+  // The member saves a new title (it goes to review), and types an author while the save is out. The refetch replays the drafts.
+  const sec = secOf("Source");
+  const b = bundleFor("Source");
+  const drafts = { details: { ...valuesOf("Source"), title: "New ledger", author: "A. Synth" } };
+  const saved = opsFromDrafts({ key: b.key, sections: [sec], obj: b.obj, bundle: b, drafts: { details: { ...valuesOf("Source"), title: "New ledger" } }, viewer: viewer() });
+  assert.deepEqual(saved.ops.map((o) => o.path), ["/title"]);
+  const settled = Object.fromEntries(saved.ops.map((o) => [o.id, o.value]));
+  const built = opsFromDrafts({ key: b.key, sections: [sec], obj: b.obj, bundle: b, drafts, viewer: viewer() });
+  const settledUnits = settledUnitsOf(built, settled);
+  assert.deepEqual([...settledUnits], ["details/title"]);
+  const fresh = { ...b, version: 8 }; // a proposal: the record itself is unchanged
+  const out = replayDrafts({ sections: [sec], oldBundle: b, freshBundle: fresh, drafts, settled, settledUnits });
+  assert.equal(out.details.title, OBJECTS.Source.title, "the suggested title is not laid over the record again");
+  assert.equal(out.details.author, "A. Synth");
+  const next = opsFromDrafts({ key: b.key, sections: [sec], obj: fresh.obj, bundle: fresh, drafts: out, viewer: viewer() });
+  assert.deepEqual(next.ops.map((o) => [o.path, o.value]), [["/author", "A. Synth"]], "the next save sends only the author");
+  // a saved field typed over again since is kept; a direct save is not reverted to the old value
+  const again = { details: { ...drafts.details, title: "Newer ledger" } };
+  const units2 = settledUnitsOf(opsFromDrafts({ key: b.key, sections: [sec], obj: b.obj, bundle: b, drafts: again, viewer: viewer() }), settled);
+  assert.equal(replayDrafts({ sections: [sec], oldBundle: b, freshBundle: fresh, drafts: again, settled, settledUnits: units2 }).details.title, "Newer ledger");
+  const stored = { ...b, version: 8, obj: { ...b.obj, title: "New ledger" } };
+  assert.equal(replayDrafts({ sections: [sec], oldBundle: b, freshBundle: stored, drafts, settled, settledUnits }).details.title, "New ledger");
+  // tags and a date are several ops per field: the unit settles only when all of them were stored
+  const ev = bundleFor("Event");
+  const evSec = secOf("Event");
+  const evDrafts = { details: { ...valuesOf("Event"), tags: ["ht2"], description: "Out back" } };
+  const evSaved = opsFromDrafts({ key: ev.key, sections: [evSec], obj: ev.obj, bundle: ev, drafts: { details: { ...valuesOf("Event"), tags: ["ht2"] } }, viewer: viewer() });
+  const evSettled = Object.fromEntries(evSaved.ops.map((o) => [o.id, o.value]));
+  const evUnits = settledUnitsOf(opsFromDrafts({ key: ev.key, sections: [evSec], obj: ev.obj, bundle: ev, drafts: evDrafts, viewer: viewer() }), evSettled);
+  const evOut = replayDrafts({ sections: [evSec], oldBundle: ev, freshBundle: { ...ev, version: 8 }, drafts: evDrafts, settled: evSettled, settledUnits: evUnits });
+  assert.deepEqual(evOut.details.tags, ["ht1"]);
+  assert.equal(evOut.details.description, "Out back");
 });
 
 test("a stale-record replay lays only the member's changed fields over the fresh record", () => {

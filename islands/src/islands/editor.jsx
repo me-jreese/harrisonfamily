@@ -60,8 +60,9 @@ function SectionForm({ section, schema, bundle, cls, resolver, viewer, seed, onD
   // A record form of another class judges each field at the pointer its adapter names (a birth's date, a tag, an enclosing place); the rest by the field's own.
   const codeOf = (p) => {
     if (section.form.record) {
-      const [c, ptr] = recordPolicy(section.form, String(p).split("/")[1], live);
-      return resolver.resolve(c, ptr, viewer, { lenient: true });
+      // A third element is a code the form already knows (a Place's code on a local place is never kept): it outranks the lenient table.
+      const [c, ptr, fixed] = recordPolicy(section.form, String(p).split("/")[1], live, bundle.obj);
+      return fixed || resolver.resolve(c, ptr, viewer, { lenient: true });
     }
     return resolver.resolve(cls, pointerOf(p), viewer);
   };
