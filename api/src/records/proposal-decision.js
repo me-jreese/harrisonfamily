@@ -254,8 +254,11 @@ async function planApproval(c, prev, amend, nowMs, guard) {
   }
   // A relationship proposal also names the objects its decision was based on but its ops leave alone (read_versions, relationship-api): if any of
   // them moved, the suggestion was judged on a page that is no longer there.
+  // With an amend, the keys the edited ops touch are judged by the admin's own base_versions above (effectiveProposal drops them from read_versions).
   const readRows = [];
+  const amendTouched = amend ? new Set(Object.keys(versions)) : new Set();
   for (const [k, v] of Object.entries(isObj(prev.read_versions) ? prev.read_versions : {})) {
+    if (amendTouched.has(k)) continue;
     const [cls, handle] = keyParts(k);
     const head = await get(ctx, cls, handle);
     if (!head || head.version !== v) readRows.push({ opId: null, obj: k, path: "", reason: "read_version_changed" });
@@ -272,7 +275,7 @@ async function effectiveProposal(c, prev, amend, planned) {
   if (!amend || !review) return prev;
   const touched = sortedUnique(review.ops.map(existingKey).filter(Boolean));
   // The intent a relationship proposal was compiled from no longer describes the admin's ops, so it is dropped; read_versions is recomputed to the
-  // objects read but not touched by the edited ops (planApproval has just verified each is still at that version). The kind follows the ops below.
+  // objects read but not touched by the edited ops (planApproval has just verified each is still at that version; the touched ones it skipped, as the amend's base_versions cover them). The kind follows the ops below.
   const { intent: _intent, read_versions: prevRead, ...rest } = prev;
   const read = Object.fromEntries(Object.entries(isObj(prevRead) ? prevRead : {}).filter(([k]) => !touched.includes(k)));
   return {
