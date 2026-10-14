@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SignJWT, importJWK } from "jose";
 import priv from "@io-kit/mcp/fixtures/keys/hfy-auth-edge.private.jwk.json" with { type: "json" };
 import jwks from "@io-kit/mcp/fixtures/jwks/hfy-auth-edge.jwks.json" with { type: "json" };
-import { buildMcpRegistry, createMcpMount } from "../src/mcp.js";
+import { actorFor, buildMcpRegistry, createMcpMount } from "../src/mcp.js";
+import { requireRecentSignIn } from "../src/records/changes.js";
 import { createGroupResolver, POLICY_ROWS } from "../src/policy.js";
 import { ROUTES } from "../src/routes.js";
 import { mcpToolsList } from "../src/mcp-caps.js";
@@ -272,6 +273,20 @@ describe("the live edge today (documented limitation, not a goal)", () => {
     // When the kit mints type agent (a client or scope marker), this flips to a plan with no write: update this test with the follow-up then.
     expect(r.structuredContent.kind).not.toBe("resolved_call");
     expect(r.structuredContent.applied ?? r.structuredContent.proposal).toBeTruthy();
+  });
+  it("so hfy_changes_submit's description says a call without mode writes, and never that dry_run is the default", () => {
+    const d = ROUTES.find((r) => r.name === "changes.post").mcp.description;
+    expect(d).toMatch(/WRITES unless you set mode to "dry_run"/);
+    expect(d).toMatch(/without mode .* submits for real/);
+    expect(d).not.toMatch(/dry_run is the default|plan only/i);
+  });
+  it("the MCP actor carries no authTime, so an admin's destructive direct edit is 401 step_up_required even right after an mfa sign-in", async () => {
+    const nowMs = Date.parse("2026-10-14T00:00:00Z");
+    const principal = { type: "human", sub: ADMIN, groups: ["hfy-admin"], authTime: nowMs / 1000 - 10, amr: ["passkey", "mfa"] };
+    const actor = await actorFor(principal, async () => "Synthetic Admin");
+    expect(actor).toEqual({ id: ADMIN, label: "Synthetic Admin", admin: true });
+    // When actorFor carries the token's own auth_time (as src/auth.js does for the session), this passes: update the test and mcp-server.md then.
+    expect(() => requireRecentSignIn(actor, nowMs)).toThrow(expect.objectContaining({ status: 401, code: "step_up_required" }));
   });
 });
 

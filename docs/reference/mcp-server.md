@@ -158,7 +158,7 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 | `hfy_posts_create` | `posts.create` | `POST /api/posts` | true | none | Always a draft: the tool sets `visibility: "draft"` and has no visibility argument. Publishing is a person's action in the site. No `attachments` argument. |
 | `hfy_posts_delete` | `posts.delete` | `DELETE /api/posts/:id` | true | destructive, idempotent | Admin with a fresh step-up only. Also removes the post's comment thread. |
 | `hfy_records_get` | `edit.get` | `GET /api/edit/:cls/:ref` | false | readOnly, idempotent | The edit bundle, through `publishView` and `applyModOverlay`; `pending[]` lists only suggestions the caller may see. 404 while `HFY_EDITING` is off. |
-| `hfy_changes_submit` | `changes.post` | `POST /api/changes` | true | none | Submits EditOps. An agent call returns the plan and writes nothing (see [Editing tools](#editing-tools)). A real submission needs an `idempotency_key`. |
+| `hfy_changes_submit` | `changes.post` | `POST /api/changes` | true | none | Submits EditOps. On this server a call without `mode` submits and needs an `idempotency_key`; with `mode: "dry_run"` it returns the route's plan and writes nothing (see [Editing tools](#editing-tools)). |
 | `hfy_proposals_list` | `proposals.list` | `GET /api/proposals` | false | readOnly, idempotent | Only suggestions the caller may see; `view=queue` is 403 for a non-admin. |
 | `hfy_proposals_get` | `proposals.get` | `GET /api/proposals/:id` | false | readOnly, idempotent | 404 outside the proposer, admins and the owners of the targeted pages. |
 
@@ -193,7 +193,7 @@ Every input schema is an object with `additionalProperties: false`. The `require
 | --- | --- |
 | The route returns a body | `content: [{type: "text", text: <the body as JSON>}]`, plus `structuredContent` (the body) when the body is an object |
 | The route returns no body (a delete's `204`) | The same, for `{"ok": true, "action": "<route action>"}` |
-| The route throws (validation, not found, conflict) | `isError: true` with `content` holding the error's message only. The HTTP status and error code are not returned. The error is logged as `tool <name> failed`. |
+| The route throws (validation, not found, conflict) | `isError: true` with `content` holding the error's message only. The HTTP status and error code are not returned. The error is logged as `tool <name> failed`. The four editing tools differ: their text is JSON with the status and code ([Editing tools](#editing-tools)). |
 | The contact-information guard refuses the text (`hfy_posts_create` body or title, `hfy_comments_create` body) | `isError: true` with `content` holding the guard's copy only ("this looks like a phone number or street address. …", or "we only keep the birth year on the site." while `HFY_GUARD_DOB` is `on`). Nothing is stored, and the matched text is not returned ([API: Contact-information guard](api.md#contact-information-guard)). |
 | The policy denies the call | `isError: true`, `content` holding the reason's message (or its code when it has none), and `structuredContent: {reason: {code, message?}}` |
 | The tool is hidden from the caller, or does not exist | JSON-RPC error `-32602`, `Unknown tool: <name>`. A hidden tool and an unknown one cannot be told apart (M-07). |
@@ -242,9 +242,11 @@ From [`api/test/mcp.test.js`](../../api/test/mcp.test.js):
 | Caller | `tools/list` | Calling a delete tool |
 | --- | --- | --- |
 | Valid token, in neither group | `{"tools": [], "_meta": {"reason": {"code": "not_in_group", "group": "mcp-authors", ...}}}` | `-32602` |
-| `mcp-authors` member | The five read and create tools. No delete tools. | `-32602`, as for an unknown tool |
-| `hfy-admin`, no fresh step-up | All seven tools. `hfy_comments_delete` and `hfy_posts_delete` have `disabled: true` and `reason.code` `step_up_required`. | `isError: true` with `structuredContent.reason.code` `step_up_required` |
-| `hfy-admin` with a fresh step-up | All seven tools, none disabled | Runs. An admin can delete any post or comment. |
+| `mcp-authors` member | Nine tools: the five read and create tools for posts and comments, and the four editing tools. No delete tools. | `-32602`, as for an unknown tool |
+| `hfy-admin`, no fresh step-up | All eleven tools. `hfy_comments_delete` and `hfy_posts_delete` have `disabled: true` and `reason.code` `step_up_required`. | `isError: true` with `structuredContent.reason.code` `step_up_required` |
+| `hfy-admin` with a fresh step-up | All eleven tools, none disabled | Runs. An admin can delete any post or comment. |
+
+The editing tools are listed whether or not `HFY_EDITING` is on. While it is off, a call to one answers `404 not_found`.
 
 Other cases the tests pin:
 
@@ -280,7 +282,7 @@ Other cases the tests pin:
 
 ## Actor and label
 
-A tool runs as the actor `{id, label, admin}`, the shape the HTTP path builds from the session cookie (`actorFor` in [`mcp.js`](../../api/src/mcp.js)):
+A tool runs as the actor `{id, label, admin}` (`actorFor` in [`mcp.js`](../../api/src/mcp.js)). The HTTP path builds the same fields from the session cookie, plus `authTime`, which the MCP actor lacks (see [Editing tools](#editing-tools)):
 
 | Field | Value |
 | --- | --- |
@@ -316,7 +318,8 @@ A tool runs as the actor `{id, label, admin}`, the shape the HTTP path builds fr
 HFY-TSK-211 (editing design 7.6). The four editing tools are listed to `mcp-authors` and `hfy-admin` and hidden from everyone else, and the routes behind them answer 404 while the `HFY_EDITING` stack switch is off.
 
 - **There is no decide tool** (DEC-E5). Approving, denying, amending and withdrawing a suggestion are people's actions in the site: `proposals.decide`, `proposals.amend` and `proposals.withdraw` have no `mcp` member and no policy row, and a `tools/call` naming a decide tool is `-32602`.
-- **`hfy_changes_submit` for an agent.** A principal of type `agent` defaults to `dry_run` and is denied `execute` with `agent_dry_run_only`. The dry run adds the route's own plan to the ResolvedCall: `plan` (`{direct, review}`), `warnings` and `errors`, or `planError` (`{status, error, message, errors}`) when the route refuses the submission. It runs the planning steps of `POST /api/changes` with `dry_run: true`, which write nothing (no receipt, `PROP#`, `IDX#` or `THREAD#` row). The shipped edge builds every principal as `human`, so for a person's session the plan comes from an explicit `mode: "dry_run"`, and a call without `mode` submits.
+- **`hfy_changes_submit` writes unless the call asks for the plan.** The shipped edge builds every principal as `human`, so on this server a call without `mode`, or with `mode: "execute"`, submits, and needs an `idempotency_key`. The tool's description says so. With `mode: "dry_run"` the ResolvedCall also carries the route's own plan: `plan` (`{direct, review}`), `warnings` and `errors`, or `planError` (`{status, error, message, errors}`) when the route refuses the submission. It runs the planning steps of `POST /api/changes` with `dry_run: true`, which write nothing (no receipt, `PROP#`, `IDX#` or `THREAD#` row). The policy row's `agentMode: "dry_run"` would make the plan the default for a principal of type `agent`, and deny its `execute` with `agent_dry_run_only`, but no principal on this server is an agent ([Dry runs](#dry-runs)).
+- **An admin cannot make a destructive direct edit over MCP.** `actorFor` builds the actor as `{id, label, admin}`, with no `authTime`, and `requireRecentSignIn` in [`changes.js`](../../api/src/records/changes.js) counts a missing `authTime` as stale. So for an `hfy-admin` caller, a direct group that deletes an object or removes a parent, child or spouse link answers `401 step_up_required`, "this change needs a fresh sign-in", in a dry run's `planError` too. A fresh passkey sign-in does not change that, even one that enables the delete tools. The refusal writes nothing. To make such a change, send it with `route: "review"` and approve the suggestion in the site, or make it in the site's editor. `api/test/edit-mcp-tools.test.js` pins this limitation.
 - **Failures keep their status.** A tool with `mcp.problem` set in `routes.js` returns a failing route as `isError: true` whose text is JSON, `{status, error, message, errors?, details?}`: the HTTP body, so a privacy-guard refusal reads as `422` with positions and codes only, never the matched text.
 - **Reads go through the record views.** `hfy_records_get` hides moderated items from callers who are not an admin or the page owner and shows non-birth dates as the year only, and `pending` lists only the caller's own suggestions, those about their page and, for an admin, all of them.
 
@@ -345,7 +348,7 @@ A `tools/call` on a write tool (any tool that is not `readOnly`) with `arguments
 ```
 
 - It comes back as both `content` (text) and `structuredContent`, never as `isError`. A denied dry run carries `decision.effect` `deny` and `wouldExecute: false`.
-- A dry run checks the policy only: the row's `show` groups and the step-up. `wouldExecute` is true when the dry run is allowed and an execute would be allowed too. The route handler does not run, so its validation does not either, and `wouldExecute: true` does not promise the call will succeed.
+- A dry run checks the policy only: the row's `show` groups and the step-up. `wouldExecute` is true when the dry run is allowed and an execute would be allowed too. The route handler does not run, so its validation does not either, and `wouldExecute: true` does not promise the call will succeed. `hfy_changes_submit` is the exception: an allowed dry run of it also runs the route's planning steps and returns their `plan` or `planError` ([Editing tools](#editing-tools)).
 - `mode: "execute"` and a missing `mode` both execute. A call without `mode` executes (`create post is always a draft` in `mcp.test.js`).
 - Read tools always execute. `mode` is removed from their arguments and ignored.
 - **`agentMode`** is published in the policy (`dist/policy.json`). In the installed `@io-kit/mcp` 0.1.0 the core applies it only to principals of type `agent`: for them a write tool defaults to `dry_run`, an execute is denied with `agent_dry_run_only` unless the row's `agentMode` is `execute`, and a row with `agentMode: "deny"` lists the tool as disabled and denies every call. The kit does not put `agentMode` in `tools/list`. The 0.1.0 edge builds every principal with type `human`, so on this server `agentMode` is never applied.
@@ -378,7 +381,7 @@ Each `tools/call` that reaches the policy writes one structured log line, `mcp.a
 | --- | --- | --- |
 | `dist/caps.json` | `buildCaps` in [`routes.js`](../../api/src/routes.js) | The API capability document ([API: caps.json](api.md#capsjson)), now with an `mcp` field: `{resource: MCP_RESOURCE, tools: [{name, action, write}]}`, one entry per tool |
 | `dist/policy.json` | `policyDocument()` in [`policy.js`](../../api/src/policy.js) | `{version: 1, defaultGroup: "mcp-authors", adminGroup: "hfy-admin", stepUp: {maxAgeSeconds: 300, amr: ["mfa"]}, rows: POLICY_ROWS}` |
-| `dist/mcp/tools.json` | `mcpToolsList` in [`mcp-caps.js`](../../api/src/mcp-caps.js) | The `tools/list` result for a build principal in both groups with a fresh `mfa` step-up: all seven tools, none disabled |
+| `dist/mcp/tools.json` | `mcpToolsList` in [`mcp-caps.js`](../../api/src/mcp-caps.js) | The `tools/list` result for a build principal in both groups with a fresh `mfa` step-up: all eleven tools, none disabled |
 | `dist/mcp/parity-caps.json` | `mcpParityCaps` in `mcp-caps.js` | An `@io-kit/parity` caps document (`schemaVersion` `1.1.0`, `surface` `hfy-mcp`, a fixed `generatedAt`), with one action per tool named like the tool: `title` (the description up to its first period), `inputSchema`, `outputSchema: null`, `annotations`, `requiresGovernanceHash: false`, `via: "top-level"`, and `dryRun` true for each write tool |
 
 [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) runs `gen-caps` inside its staging directory and zips the whole `dist/`, so all four files ship in `hfy-api.zip`. It checks only that `caps.json` is not empty, and copies only `caps.json` back to `api/dist/`. No route serves any of the four.
