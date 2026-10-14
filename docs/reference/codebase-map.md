@@ -100,7 +100,7 @@ Facts:
 Paths:
 
 - [`islands/src/islands/`](../../islands/src/islands/): one entry per island. The entries are `shell.jsx`, `search.jsx`, `person.jsx`, `my-posts.jsx`, `timeline.jsx`, `posts.jsx` and `notifications.jsx`, `settings.jsx`, `about-cta.jsx` and `photo-tags.js`, plus their stylesheets.
-- [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `photo-tags.js` (the pure geometry, rect words and tag cleaning), `photo-tags-ui.js` (the DOM part of the photo tags island), `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css`, `islands/src/guard.css` and `islands/src/photo-tags.css` sit beside the directory.
+- [`islands/src/lib/`](../../islands/src/lib/): shared adapters and UI. The files are `api.js`, `cloudscape-theme.js`, `comment-source.js`, `comments-ui.jsx`, `contact-guard.js`, `contact-precheck.js`, `content-source.js`, `me.js` (the one `GET /api/me` reader, shared per page), `mount.jsx`, `people-corpus.js`, `person-name.js` and `person-name.jsx` (the one rule for linking a person's name to their page, ruling P2-R46, and `<PersonName>`), `photo-tags.js` (the pure geometry, rect words and tag cleaning), `photo-tags-ui.js` (the DOM part of the photo tags island), `posts-ui.jsx`, `time.js` and `upload.js`. `islands/src/shell.css`, `islands/src/posts.css`, `islands/src/comments.css`, `islands/src/guard.css` and `islands/src/photo-tags.css` sit beside the directory.
 - [`islands/build.mjs`](../../islands/build.mjs): the build. It bundles the islands with esbuild and writes the outputs in [Theme layer, fonts and asset versions](#theme-layer-fonts-and-asset-versions).
 - [`islands/kit-content.mjs`](../../islands/kit-content.mjs): how the build and the `node:test` suites load `@io-kit/content/react`. Its esbuild plugin keeps the kit's `DocumentEditor` from bundling Cloudscape's stylesheets into the posts islands, and the build fails if an island bundles `DocumentEditor`.
 - [`islands/package.json`](../../islands/package.json): the scripts `build`, `build:islands`, `check:islands`, `test`, `test:contract`, `lint:css` and `measure:search`. Every dependency is pinned to an exact version.
@@ -234,7 +234,7 @@ Facts:
 - The lock-screen preview on `/me/notifications/` (`CATALOG` in `islands/src/islands/notifications.jsx`) repeats the push text in `notify.js` (`TEMPLATE_REGISTRY`) word for word for the types it lists. The registry also holds PLN-002 types that are not in `CATALOG` yet. `islands/tests/notifications-roundtrip.spec.mjs` compares the two: every registry type must be in `CATALOG` or on the test's pinned list, and each `CATALOG` type's strings must match. See [Notifications](api.md#notifications).
 - `api/dist/` is gitignored.
 - `package-api.sh` needs `CODEARTIFACT_AUTH_TOKEN`. It runs `gen-caps.mjs` inside its staging copy, so the zip holds all four generated documents. Only `caps.json` is copied back to `api/dist/`.
-- `api/` and `auth/` pin the same `@io-kit/auth` version, 2.2.0.
+- `api/` and `auth/` pin the same `@io-kit/auth` version, 2.2.2.
 - No workflow deploys `hfy-api`. It ships by hand through the app stack: see [Infrastructure](#infrastructure).
 
 ## MCP server

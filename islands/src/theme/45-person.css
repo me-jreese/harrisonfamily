@@ -209,10 +209,13 @@
   min-height: var(--io-control-tap-min);
   margin: 0;
 }
+/* A relative's name links to their page with no underline in any state (ruling P2-R46, HFY-TSK-323; the id selector outranks every
+   link-state rule); the link colour still marks it. */
 #person-family-data .family-link {
   display: inline-flex;
   align-items: center;
   min-height: var(--io-control-tap-min);
+  text-decoration: none;
 }
 #person-family-data .family-meta { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
 

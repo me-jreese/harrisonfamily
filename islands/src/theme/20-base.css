@@ -32,6 +32,21 @@ a:focus {
   text-decoration-color: currentColor;
 }
 
+/* A person's name is a link to their page, never underlined (HFY-TSK-323, ruling P2-R46; islands/src/lib/person-name.js). It keeps
+   the look of the text it sits in: the same colour and weight in every link state, the pointer, and the theme focus ring on
+   keyboard focus. The kit author links (a.iok-content-author, a.io-comments-author) follow the same rule in posts.css and
+   comments.css. */
+a.hfy-person-name:is(:link, :visited, :hover, :focus, :active) {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+a.hfy-person-name:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}
+
 /* Headings are the archival serif, regular weight (lowercase is the brand; no small caps). Sizes are per surface. */
 h1, h2, h3, h4,
 .h1, .h2, .h3, .h4 {

@@ -123,6 +123,15 @@
 }
 .photo-tags__panel { margin-block-start: var(--io-space-2); }
 .photo-tags__who { margin: 0 0 var(--io-space-2); font-weight: var(--io-typography-weight-semibold); }
+/* In the pinned panel the name links to the person's page (ruling P2-R46; lib/person-name.js personNameNode, styled in the theme's
+   20-base.css); it heads the panel, so it is a 44px target (tap.min): a transparent band centred on the name, at least tap.min wide. */
+.photo-tags__who > a.hfy-person-name { position: relative; }
+.photo-tags__who > a.hfy-person-name::after {
+  content: "";
+  position: absolute;
+  inset-block: calc(50% - var(--io-control-tap-min) / 2);
+  inset-inline: min(0%, calc(50% - var(--io-control-tap-min) / 2));
+}
 .photo-tags__facts { display: grid; grid-template-columns: auto 1fr; gap: var(--io-space-1) var(--io-space-3); margin: 0; }
 .photo-tags__term { color: var(--io-color-semantic-text-dim); }
 .photo-tags__value { margin: 0; overflow-wrap: anywhere; }

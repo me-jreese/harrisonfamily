@@ -18,6 +18,7 @@ import {
   stackLabels,
   tagsOf
 } from "./photo-tags.js";
+import { personNameNode } from "./person-name.js";
 
 let serial = 0;
 const nextId = (prefix) => `${prefix}-${(serial += 1)}`;
@@ -35,10 +36,17 @@ const HIDE_DELAY_MS = 160;
 const CARD_MARGIN = 8;
 
 // ---------------------------------------------------------------------------------------------------------------- details
-/** The tag data as text nodes: the Gramps data (area, attributes, notes, citations, source) and, apart, the site's own line. */
-export function buildDetails(view) {
+/**
+ * The tag data as text nodes: the Gramps data (area, attributes, notes, citations, source) and, apart, the site's own line. With `link`
+ * (the pinned panel), the name heading the data is a link to the person's page when the tag names a Gramps person id (HFY-TSK-323,
+ * ruling P2-R46: a listed name is a link; lib/person-name.js); the hovercard is a tooltip, plain text only, so there it stays text.
+ */
+export function buildDetails(view, { link = false } = {}) {
   const box = node("div", "photo-tags__details");
-  box.append(node("p", "photo-tags__who", view.isPrimary ? `${view.name} · their portrait` : view.name));
+  const who = node("p", "photo-tags__who");
+  who.append(personNameNode(document, { id: link ? view.grampsId : null, name: view.name }));
+  if (view.isPrimary) who.append(document.createTextNode(" · their portrait"));
+  box.append(who);
   const facts = node("dl", "photo-tags__facts");
   const row = (term, values) => {
     if (!values.length) return;
@@ -207,7 +215,7 @@ export function buildNames(views, { regions = new Map(), listId = nextId("photo-
     const panel = node("div", "photo-tags__panel");
     panel.id = nextId("photo-tags-panel");
     panel.hidden = true;
-    panel.append(buildDetails(view));
+    panel.append(buildDetails(view, { link: true }));
     const href = personHref(view);
     if (href) {
       const open = node("a", "photo-tags__open", `open ${view.name}'s page`);

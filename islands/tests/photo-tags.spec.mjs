@@ -274,6 +274,19 @@ test.describe("touch at 375", () => {
     const open = panel.locator("a.photo-tags__open");
     await expect(open).toHaveAttribute("href", "/person/?id=I9002");
     expect((await open.boundingBox()).height).toBeGreaterThanOrEqual(43.9);
+    // P2-R46 (HFY-TSK-323): the name heading the panel links to the person's page with the line's own look, never underlined, and is a
+    // 44px target; the hovercard (a tooltip) keeps the name as plain text
+    const who = panel.locator(".photo-tags__who > a.hfy-person-name");
+    await expect(who).toHaveText("Spouse Example");
+    await expect(who).toHaveAttribute("href", "/person/?id=I9002");
+    expect(await who.evaluate((a) => {
+      const cs = getComputedStyle(a);
+      const line = getComputedStyle(a.parentElement);
+      const r = a.getBoundingClientRect();
+      const hit = (dy) => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2 + dy)?.closest("a") === a;
+      return { deco: cs.textDecorationLine, color: cs.color === line.color, weight: cs.fontWeight === line.fontWeight, cursor: cs.cursor, band: hit(-21) && hit(21) };
+    })).toEqual({ deco: "none", color: true, weight: true, cursor: "pointer", band: true });
+    await expect(fig.locator('.photo-tags__item [role="tooltip"]').nth(0).locator("a")).toHaveCount(0);
     await expect(fig.locator('.photo-tags__region[data-tag="0"]')).toHaveClass(/is-active/);
     // full width under the list: the panel spans the figure
     const [pb, fb] = await Promise.all([panel.boundingBox(), fig.boundingBox()]);

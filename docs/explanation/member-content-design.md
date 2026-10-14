@@ -88,6 +88,14 @@ The order is the same on both doors. The site's session check ([`api/src/auth.js
 
 The label is copied when the item is written. It is stored on the post's main item and its index items, on the comment, and inside the `before` and `after` snapshots of the D-15 audit entries. An edit keeps the stored author, and nothing in the repository rewrites a label afterwards. A later change to a person's `displayName` does not relabel their old content. Content written before HFY-R68 keeps the label it was stored with, which may be an email address, and no edit changes it. That fits D-15. Rewriting stored labels would be a change to member content that no member made, outside any audited transaction.
 
+## A name leads to the person, and a photo's words are shown
+
+Two of io's design rulings shape how member content is read. The facts are in the [front-end reference](../reference/front-end.md#person-names-and-photo-captions).
+
+**Every name is a link to its person (ruling P2-R46).** The site exists to connect people to their family. A name under a post, beside a comment or in a photo's tag panel is the natural way in to that person's page, so it is always a link, styled to look like the name and not like a link: the same colour and weight, with no underline. The author's stored principal already carries the Gramps ID, so the link needs no lookup and no new data. A principal without a Gramps person ID has no page to open, and its name stays plain text rather than linking somewhere wrong. One rule in the islands decides this for every surface, so the posts, the comments and the photo tags cannot drift apart.
+
+**A photo's text is its caption (ruling P2-R47).** When members type something about a photo, they write it for their relatives to read, not as hidden text for screen readers. The composer's field therefore asks for "a caption", and every post shows the text under its photo. Screen-reader users still need to know that a photo is there and whose it is, so the image's own alt says so ("a photo from <name>"). It does not repeat the caption, which the figure already announces.
+
 ## Agents draft and propose
 
 A member can connect an AI assistant to the site through the MCP tools ([agents as members](identity-model.md#agents-as-members)). The assistant acts with the member's access token, so it can never do more than the member could. The tool surface is built so that it does less.

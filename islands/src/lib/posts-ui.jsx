@@ -7,6 +7,7 @@ import { PostCard, useTimeline } from "@io-kit/content/react";
 import { api } from "./api.js";
 import { createHfyContentSource } from "./content-source.js";
 import { formatTime, watchTimeTitles } from "./time.js";
+import { authorHref } from "./person-name.jsx";
 
 export { formatTime };
 export const source = createHfyContentSource(api);
@@ -136,35 +137,35 @@ function ConfirmDelete({ onDelete, onKeep }) {
 }
 
 /**
- * The post as its card renders it: every image keeps the description its author typed, and one with none gets "a photo from
- * <name>" ("photo 2 of 3 from <name>" in a post with several) so a screen reader still hears that a photo is there, and from whom.
- * A photo-only post (HFY-TSK-315) is otherwise only a name and a time to assistive tech. Kit gap (@io-kit/content 0.3.1 PostCard
- * and ArticleView Media render `alt={a.alt ?? ""}`, which marks an undescribed photo decorative; record for the kit backlog):
- * upstream, an alt-fallback label on the card; then drop this. Render only: nothing is written back to the post.
+ * Each photo's img alt (PostCard / ArticleView `imageAlt`, @io-kit/content 0.3.2): "a photo from <name>", or "photo 2 of 3 from <name>"
+ * in a post with several, so a screen reader hears that a photo is there and from whom; a photo-only post (HFY-TSK-315) is otherwise
+ * only a name and a time to assistive tech. The text the author typed in the composer's "add a caption" field (stored as the
+ * attachment's `alt`) is the photo's visible caption (ruling P2-R47): the kit draws it as the <figure>'s <figcaption>, which names the
+ * figure, so it is never repeated as the alt and is not announced twice (HFY-TSK-323). `index` is the position in post.attachments, as
+ * the kit passes it; photos are counted among the images only. Render only: nothing is written back to the post.
  */
-export function withPhotoAlt(post) {
+export function photoAlt(attachment, index, post) {
   const all = Array.isArray(post?.attachments) ? post.attachments : [];
-  const described = (a) => typeof a.alt === "string" && a.alt.trim() !== "";
-  const images = all.filter((a) => a?.kind === "image");
-  if (images.every(described)) return post;
-  const who = String(post.author?.label || "").trim();
-  let n = 0;
-  const attachments = all.map((a) => {
-    if (a?.kind !== "image") return a;
-    n += 1;
-    if (described(a)) return a;
-    const what = images.length > 1 ? `photo ${n} of ${images.length}` : "a photo";
-    return { ...a, alt: who ? `${what} from ${who}` : what };
-  });
-  return { ...post, attachments };
+  const isImage = (a) => a?.kind === "image";
+  const total = all.filter(isImage).length;
+  const n = all.slice(0, index + 1).filter(isImage).length;
+  const what = total > 1 ? `photo ${n} of ${total}` : "a photo";
+  const who = String(post?.author?.label || "").trim();
+  return who ? `${what} from ${who}` : what;
 }
+
+/**
+ * What every PostCard and ArticleView gets: the HFY labels and time format, the author's name as a link to their person page (P2-R46,
+ * lib/person-name.jsx; a principal without a Gramps person id stays plain text) and the photo alts.
+ */
+export const CARD_PROPS = { labels: CARD_LABELS, formatTime, authorHref, imageAlt: photoAlt };
 
 /** The author's initial for the 32px avatar (DS Posts anatomy). */
 const initialOf = (label) => (String(label || "").trim().match(/\p{L}|\p{N}/u)?.[0] || "").toUpperCase();
 
 /**
  * One feed row, DS Posts anatomy: avatar 32 · name · time, the body, an optional photo, then ONE 44px footer row (comments, delete).
- * Kit gap (@io-kit/content PostCard, 0.1.1 through 0.3.1; record for the kit backlog): its Meta renders only the name and the time
+ * Kit gap (@io-kit/content PostCard, 0.1.1 through 0.3.2; record for the kit backlog): its Meta renders only the name and the time
  * (no avatar slot) and it has no footer slot, so its actions row cannot hold the comments link. HFY: the avatar is drawn beside the kit's
  * meta row (posts.css), and the row renders its own footer (the kit's delete is not wired, so its actions row stays empty and hidden).
  */
@@ -180,7 +181,7 @@ export function PostRow({ post, link, remove }) {
   return (
     <li className="hfy-posts__item hfy-posts__post">
       <span className="hfy-posts__avatar" aria-hidden="true">{initialOf(author)}</span>
-      <PostCard post={withPhotoAlt(post)} labels={CARD_LABELS} formatTime={formatTime} />
+      <PostCard post={post} {...CARD_PROPS} />
       {(link || canDelete) && (
         <div className="hfy-posts__footer" data-hfy-post-footer>
           {link && <a className="hfy-btn hfy-btn--quiet hfy-posts__open" href={postHref(post)} aria-label={author ? `comments on ${author}'s post` : undefined}>comments</a>}
