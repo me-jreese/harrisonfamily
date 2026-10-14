@@ -4,8 +4,8 @@
 // An SDN ("serial day number") is the Julian day number: the days elapsed since Monday, January 1, 4713 BC in the
 // proleptic Julian calendar. Gramps stores it in `Date.sortval`.
 //
-// PURE. No import of any kind, no clock: it runs under `node --test` and in a browser. Nothing calls it yet but
-// `semantics.js`, which no route reaches (its first caller is `edit-api-changes`).
+// PURE. No import of any kind, no clock: it runs under `node --test` and in a browser. Only
+// `semantics.js` calls it, and POST /api/changes (records/changes.js) runs that.
 //
 // Python's `//` and `%` floor, JavaScript's `/` and `%` truncate: `fdiv` and `fmod` keep the Python meaning, so a
 // negative year or month gives the same number as Gramps. Every value that Gramps shifts with `<<`/`>>` is done with

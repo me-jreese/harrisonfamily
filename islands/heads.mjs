@@ -39,6 +39,8 @@ export const PAGES = [
   "me/inbox/index.html",
   // the family tree page (familyViz, HFY-TSK-201)
   "tree/index.html",
+  // the record editor page (recordEdit, HFY-TSK-212)
+  "edit/index.html",
   "offline.html"
 ];
 

@@ -1,0 +1,424 @@
+{
+ "version": 1,
+ "rows": [
+  {
+   "cls": "Person",
+   "pointer": "/{_class,handle}",
+   "own": "derived",
+   "other": "derived",
+   "admin": "derived"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/change",
+   "own": "derived",
+   "other": "derived",
+   "admin": "derived"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/tag_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/media_list/*/rect/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/**/_class",
+   "own": "derived",
+   "other": "derived",
+   "admin": "derived"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/**/handle",
+   "own": "derived",
+   "other": "derived",
+   "admin": "derived"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/first_name",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/surname_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/{title,suffix,call,nick,famnick}",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/type/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/date/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/{citation_list,note_list}/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/first_name",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/surname_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/{title,suffix,call,nick,famnick}",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/type/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/date/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/{citation_list,note_list}/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/gender",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/parent_family_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/event_ref_list/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/event_ref_list/*/citation_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/attribute_list/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/note_list/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/media_list/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/media_list/*/citation_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/citation_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/urls/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/person_ref_list/**",
+   "own": "direct",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/person_ref_list/*/citation_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/address_list/**",
+   "own": "never",
+   "other": "never",
+   "admin": "never"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/attribute_list/**",
+   "own": "never",
+   "other": "never",
+   "admin": "never",
+   "when": [
+    "neverAttribute"
+   ]
+  },
+  {
+   "cls": "Person",
+   "pointer": "/urls/**",
+   "own": "never",
+   "other": "never",
+   "admin": "never",
+   "when": [
+    "emailUrl"
+   ]
+  },
+  {
+   "cls": "Person",
+   "pointer": "/urls/**",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "when": [
+    "nonLinkUrl"
+   ]
+  },
+  {
+   "cls": "Person",
+   "pointer": "/attribute_list/**",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "when": [
+    "mergedGid"
+   ],
+   "group": "desk-list"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/lds_ord_list/**",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "group": "desk-list"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/{gramps_id,private}",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "group": "desk-list"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/primary_name/{group_as,sort_as,display_as}",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "group": "desk-list"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/alternate_names/*/{group_as,sort_as,display_as}",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "group": "desk-list"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/**/private",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "group": "desk-list"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/{birth_ref_index,death_ref_index}",
+   "own": "derived",
+   "other": "derived",
+   "admin": "derived"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/family_list/**",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct",
+   "group": "spouse-children"
+  },
+  {
+   "cls": "Person",
+   "pointer": "/**/attribute_list/*",
+   "own": "never",
+   "other": "never",
+   "admin": "never",
+   "when": [
+    "neverAttribute"
+   ]
+  },
+  {
+   "cls": "Person",
+   "pointer": "/**/urls/*",
+   "own": "never",
+   "other": "never",
+   "admin": "never",
+   "when": [
+    "emailUrl"
+   ]
+  },
+  {
+   "cls": "Person",
+   "pointer": "/**/attribute_list/*",
+   "own": "desk",
+   "other": "desk",
+   "admin": "desk",
+   "when": [
+    "mergedGid"
+   ],
+   "group": "desk-list"
+  }
+ ],
+ "structure": [
+  {
+   "kind": "birth-structure",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "kind": "own-death-event",
+   "own": "proposal",
+   "other": "proposal",
+   "admin": "direct"
+  },
+  {
+   "kind": "custom-type-string",
+   "own": "admin",
+   "other": "admin",
+   "admin": "direct"
+  }
+ ],
+ "q2_15": [
+  {
+   "id": "spouse-children",
+   "label": "Spouse and children on the own record (R-24 relationship proposals)",
+   "answer": "default",
+   "alternatives": [
+    "owner-direct"
+   ]
+  },
+  {
+   "id": "own-death-event",
+   "label": "Adding, removing or retyping the own Death event (it changes the living classification, D2-08)",
+   "answer": "default",
+   "alternatives": [
+    "owner-direct"
+   ]
+  },
+  {
+   "id": "custom-type-string",
+   "label": "A new custom type string (members choose only existing ones, DEC-E10)",
+   "answer": "default",
+   "alternatives": [
+    "proposal"
+   ]
+  },
+  {
+   "id": "desk-list",
+   "label": "Desktop-only fields: Gramps IDs, private flags, LDS, group/sort/display-as, the place title (DEC-E8)",
+   "answer": "default",
+   "alternatives": [
+    "admin-web"
+   ]
+  }
+ ]
+}
