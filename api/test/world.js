@@ -1,4 +1,4 @@
-import { generateKeyPairSync, createPublicKey } from "node:crypto";
+import { generateKeyPairSync, createPublicKey, createHash } from "node:crypto";
 import { CommentError } from "@io-kit/comments";
 import { SignJWT, createLocalJWKSet } from "jose";
 import { createUlidFactory, ulidTime } from "@io-kit/feed";
@@ -53,24 +53,42 @@ export const signToken = (sub, { name = sub, exp = "1h", iss = ISSUER, aud = AUD
 /** A synthetic JPEG with no metadata at all (SOI, EOI): what a clean browser upload looks like to checkLocation. */
 export const CLEAN_JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
 
+/** The quoted ETag a real S3 returns for an object: here the MD5 of its bytes (what S3 uses for a single-part upload). */
+export const etagOf = (o) => `"${createHash("md5").update(o.bytes).digest("hex")}"`;
+
 /**
  * A fake S3 for checkLocation and headUpload: HeadObject (ContentLength is `size` when an object sets it) and GetObject over `objects` (key -> {bytes, contentType}). A Range (bytes=a-b, or the suffix form
  * bytes=-n) is honoured and answered with Content-Range "bytes a-b/<size>", as S3 does; a missing key answers like S3 without
- * s3:ListBucket (403 AccessDenied). `gets` records each GetObject input.
+ * s3:ListBucket (403 AccessDenied). `gets` records each GetObject input. HeadObject returns an ETag (etagOf) and CopyObject honours CopySourceIfMatch (412).
  */
 export function createFakeS3(objects = new Map()) {
   const gets = [];
   const heads = [];
+  const copies = []; // CopyObject inputs, in order
+  const calls = []; // every command name, in order (a test reads the order of GetObject and CopyObject)
   return {
     objects,
     gets,
     heads,
+    copies,
+    calls,
     async send(cmd) {
+      calls.push(cmd.constructor.name);
+      if (cmd.constructor.name === "CopyObjectCommand") {
+        // Same-bucket copy; the checksum S3 computes for ChecksumAlgorithm SHA256 is returned base64, as in the SDK.
+        const i = cmd.input;
+        copies.push(i);
+        const src = objects.get(i.CopySource.slice(i.CopySource.indexOf("/") + 1));
+        if (!src) throw Object.assign(new Error("Not Found"), { name: "NoSuchKey", $metadata: { httpStatusCode: 404 } });
+        if (i.CopySourceIfMatch !== undefined && i.CopySourceIfMatch !== etagOf(src)) throw Object.assign(new Error("Precondition Failed"), { name: "PreconditionFailed", $metadata: { httpStatusCode: 412 } });
+        objects.set(i.Key, { bytes: src.bytes, contentType: src.contentType });
+        return { CopyObjectResult: i.ChecksumAlgorithm === "SHA256" ? { ChecksumSHA256: createHash("sha256").update(src.bytes).digest("base64") } : {} };
+      }
       if (cmd.constructor.name === "HeadObjectCommand") {
         heads.push(cmd.input);
         const o = objects.get(cmd.input.Key);
         if (!o) throw Object.assign(new Error("Not Found"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
-        return { ContentType: o.contentType, ContentLength: o.size ?? o.bytes.length };
+        return { ContentType: o.contentType, ContentLength: o.size ?? o.bytes.length, ETag: etagOf(o) };
       }
       if (cmd.constructor.name !== "GetObjectCommand") throw new Error(`fake s3: unsupported ${cmd.constructor.name}`);
       const i = cmd.input;

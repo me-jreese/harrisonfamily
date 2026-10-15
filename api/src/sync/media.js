@@ -22,7 +22,9 @@ export const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 export const PRESIGN_EXPIRES_SECONDS = 300;
 /** How long a pending upload item lives (seconds): the time between the presign and the Media op that uses the blob. */
 export const UPLOAD_PENDING_SECONDS = 3600;
-export const STAGING_PREFIX = "media/.staging/";
+/** The key prefix of record media binaries (BRD2 D2-06, SYNC-11): media/<handle><ext>. Graduated comment photos land here too (graduate.js). */
+export const R_MEDIA_PREFIX = "media/";
+export const STAGING_PREFIX = `${R_MEDIA_PREFIX}.staging/`;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const MD5_HEX = /^[0-9a-f]{32}$/;
@@ -35,7 +37,7 @@ const bad = (field, message) => new HttpError(400, "validation", message ?? `${f
 const retryable = () => new HttpError(503, "retryable", "the blob store is busy; retry with the same Idempotency-Key");
 
 export const stagingKey = (handle, sha256Hex) => `${STAGING_PREFIX}${handle}/${sha256Hex}`;
-export const finalKey = (handle, contentType) => `media/${handle}${MEDIA_TYPES[contentType]}`;
+export const finalKey = (handle, contentType) => `${R_MEDIA_PREFIX}${handle}${MEDIA_TYPES[contentType]}`;
 export const b64OfHex = (hex) => Buffer.from(hex, "hex").toString("base64");
 export const hexOfB64 = (b64) => Buffer.from(b64, "base64").toString("hex");
 

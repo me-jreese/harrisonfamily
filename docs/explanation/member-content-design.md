@@ -48,9 +48,11 @@ The same reasoning keeps visibility author-only. Publishing or withdrawing a pos
 
 The comments under a post are part of what the author published. If withdrawing the post left its comments readable, withdrawal would hide the author's words but not the replies that quote and discuss them. So the API treats a `post:<ulid>` thread exactly as it treats the post (HFY-R58): a member who cannot see the post cannot list the thread, add to it, edit in it or react in it, and gets the same `404` as for the post itself. Comments on person records have no such parent and are unaffected.
 
-One action is deliberately left open. An author can always delete their own comment, and an admin can always remove one, even under a withdrawn post. Withdrawal must never trap words that their author wants gone.
+One action is deliberately left open. Withdrawing a post never stops an author deleting their own comment, or an admin removing one. Withdrawal must never trap words that their author wants gone.
 
 Deleting a post takes its discussion with it. A comment thread with no post above it has no context and no owner who can hide it, so the API removes every comment and reaction in the thread after the post's delete commits. Each removed comment gets its own audit record, attributed to the member who deleted the post, with the reason `post deleted`. The cleanup runs after the post delete and cannot undo it. If it fails part way, the post stays deleted and the remaining comments stay in the table, unreachable through any route.
+
+One thing makes a post delete wait: an admin adding a photo from its discussion to a family page. That graduation is several steps, and its last step writes the audit record and the author's credit onto the comment. If the cleanup took the comment in between, the photo would be on the family page with no record of where it came from and no credit for the member who took it. So the API refuses the delete until the graduation finishes, as it refuses a delete of the comment itself. A graduation that starts in the instant before the delete commits is still finished: the cleanup leaves that one comment, and the graduation removes it, with whatever else is left of the thread, once the photo is no longer under way.
 
 ## Every change carries its own audit record (D-15)
 

@@ -156,7 +156,7 @@ The tools are derived from the `MCP` map in [`routes.js`](../../api/src/routes.j
 | `hfy_posts_list` | `posts.list` | `GET /api/posts` | false | readOnly, idempotent | Newest first |
 | `hfy_posts_get` | `posts.get` | `GET /api/posts/:id` | false | readOnly, idempotent | |
 | `hfy_posts_create` | `posts.create` | `POST /api/posts` | true | none | Always a draft: the tool sets `visibility: "draft"` and has no visibility argument. Publishing is a person's action in the site. No `attachments` argument. |
-| `hfy_posts_delete` | `posts.delete` | `DELETE /api/posts/:id` | true | destructive, idempotent | Admin with a fresh step-up only. Also removes the post's comment thread. |
+| `hfy_posts_delete` | `posts.delete` | `DELETE /api/posts/:id` | true | destructive, idempotent | Admin with a fresh step-up only. Also removes the post's comment thread. Refused (`graduation_pending`) while a photo in that thread is being added to a family page. |
 | `hfy_records_get` | `edit.get` | `GET /api/edit/:cls/:ref` | false | readOnly, idempotent | The edit bundle, through `publishView` and `applyModOverlay`; `pending[]` lists only suggestions the caller may see. 404 while `HFY_EDITING` is off. |
 | `hfy_changes_submit` | `changes.post` | `POST /api/changes` | true | none | Submits EditOps. On this server a call without `mode` submits and needs an `idempotency_key`; with `mode: "dry_run"` it returns the route's plan and writes nothing (see [Editing tools](#editing-tools)). |
 | `hfy_proposals_list` | `proposals.list` | `GET /api/proposals` | false | readOnly, idempotent | Only suggestions the caller may see; `view=queue` is 403 for a non-admin. |

@@ -433,7 +433,8 @@ export async function checkLocation(bucket, key, { s3 } = {}) {
 export const HEAD_TIMEOUT_MS = 2000;
 
 /**
- * HeadObject of s3://bucket/key (hfy-comments-photos-desc-api): resolves `{ contentType, size }`.
+ * HeadObject of s3://bucket/key (hfy-comments-photos-desc-api): resolves `{ contentType, size, etag? }`. `etag` is S3's quoted ETag of the
+ * object as it was when read; graduation passes it as CopySourceIfMatch so the bytes it copies are the bytes it checked.
  *   400 upload_missing  no object (S3 answers 403 AccessDenied for a missing key without s3:ListBucket);
  *   503 unavailable     S3 failed or did not answer within `timeoutMs`.
  * `deps.s3` is injected by tests.
@@ -444,7 +445,10 @@ export async function headUpload(bucket, key, { s3, timeoutMs = HEAD_TIMEOUT_MS 
   const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new HttpError(503, "unavailable", "photos are unavailable, try again")), timeoutMs); });
   try {
     const r = await Promise.race([client.send(new HeadObjectCommand({ Bucket: bucket, Key: key })), late]);
-    return { contentType: typeof r.ContentType === "string" ? r.ContentType : undefined, size: typeof r.ContentLength === "number" ? r.ContentLength : undefined };
+    return {
+      contentType: typeof r.ContentType === "string" ? r.ContentType : undefined, size: typeof r.ContentLength === "number" ? r.ContentLength : undefined,
+      ...(typeof r.ETag === "string" && r.ETag !== "" ? { etag: r.ETag } : {}),
+    };
   } catch (e) {
     if (e instanceof HttpError) throw e;
     const status = e?.$metadata?.httpStatusCode;

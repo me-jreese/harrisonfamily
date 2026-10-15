@@ -599,7 +599,7 @@ The result has no EXIF, which removes GPS, a location and therefore contact-adja
 **Route** (task `hfy-graduate-api`):
 
 `POST /api/comments/:id/attachments/:aid/graduate`
-Request body: `{ subject:"person:<id>|post:<ulid>", person:"<gramps_id>", title?: string ≤ 200, description?: string ≤ 1000 }`
+Request body: `{ subject:"person:<id>|post:<ulid>", person:"<gramps_id>", title?: string ≤ 200, description?: string ≤ 500 }` (amended by HFY-TSK-214 from 1000: the description is a Gramps attribute value, which Gramps caps at 500)
 Response: `201 { media:{ handle, gramps_id? }, person, state:"done" }` for a new graduation, or `200` with the same body when it was already done for the same person (idempotent).
 
 **Phases.** Each phase is idempotent. The idempotency key is `graduate:<comment id>:<aid>`.

@@ -84,8 +84,10 @@ function checkSize(post) {
  * `checkUpload(key)` is upload-guard.js checkLocation bound to the media bucket: it resolves `{contentType}` or throws 400
  * photo_has_location / upload_missing. Without it, a post cannot take a new attachment (fail closed).
  * `via` is the origin stamped on a contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
+ * `beforeDelete(post)` runs after a delete is allowed and before anything is written; what it throws is the answer (handler.js: comments.js
+ * refusePendingGraduation, 409 graduation_pending while a photo in the post's thread is being added to a family page).
  */
-export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload, via = "ui" }) {
+export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload, via = "ui", beforeDelete }) {
   const base = String(mediaPublicBase ?? "").replace(/\/+$/, "");
   const requireActor = () => {
     if (!actor) throw new ContentError("forbidden", "sign in to write");
@@ -323,6 +325,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     async delete(id) {
       const current = await visible(id);
       if (!computeCan(current, actor).delete) throw new ContentError("forbidden", "not allowed to delete", { id });
+      if (beforeDelete) await beforeDelete(current);
       // Deletes revoke the credit, whoever deletes (an admin's delete takes it from the author): the event sits under the author.
       const event = current.contrib ? await getEvent({ ddb, cmds, table }, current.author.id, current.contrib.id) : undefined;
       await commit("delete", id, structuredClone(current), null, new Date(now()).toISOString(), event ? { ops: revokeOps(event) } : {});
