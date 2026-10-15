@@ -5,6 +5,7 @@
 # api:subscriptions.get, api:subscriptions.list, api:subscriptions.put and api:subscriptions.remove (/api/subscriptions, HFY-TSK-254) are session-only member-owned routes with no MCP tool, so they have no row here.
 # api:contributions.list, api:contributions.stats and api:contributions.site (GET /api/contributions and /api/contributions/stats, HFY-TSK-256) are session-only reads with no MCP tool, so they have no row here.
 # api:relationships.preview and api:relationships.post (POST /api/relationships/preview and /api/relationships, HFY-TSK-210) are session routes behind HFY_EDITING with no MCP tool, so they have no row here.
+# api:adminDeletes.post and api:adminDuplicates.list (POST /api/admin/deletes and GET /api/admin/duplicates, HFY-TSK-295) are admin-only session routes behind the adminDelete flag and HFY_EDITING with no MCP tool (deleting is a human action in the site UI), so they have no row here.
 # api:edit.schema (GET /api/edit/schema/:cls, HFY-TSK-182) is a session-only read behind HFY_EDITING with no MCP tool, so it has no row here.
 # api:edit.get, api:changes.post, api:proposals.list and api:proposals.get are the MCP tools hfy_records_get, hfy_changes_submit, hfy_proposals_list and hfy_proposals_get (HFY-TSK-211, editing.md 7.6). There is no tool for api:proposals.decide, api:proposals.amend or api:proposals.withdraw (DEC-E5): approving is a human action.
 surfaces:
