@@ -15,7 +15,9 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | Edge gate, [`edge-gate/test/`](../../edge-gate/test/) | Offline | In process only: RSA keys generated for the run, a stubbed JWKS fetch and a fixed clock. |
 | Gramps goldens, [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py) | Offline | Read the committed golden files ([semantics](../../api/test/records/fixtures/gramps-semantics.golden.json), [relationships](../../api/test/records/fixtures/gramps-relationships.golden.json)) only, with the standard library. They need no Gramps; regenerating the files does ([Regenerate the Gramps goldens](regenerate-the-gramps-goldens.md)). |
 | Gramps addon, [`gramps/tests/unit/test_addon_runtime.py`](../../gramps/tests/unit/test_addon_runtime.py) and [`test_addon_wrapper.py`](../../gramps/tests/unit/test_addon_wrapper.py) | Offline | In process and child processes, standard library only. A fake tree stands in for Gramps, a fake Gramps command for `Gramps -O <tree> -a tool`, and a temporary `HOME` and `GRAMPSHOME` hold every file; the build and install tests use a temporary plugins folder. Needs `bash` and `zip`. |
-| Gramps addon, Gramps lane, [`gramps/tests/gramps/test_addon_skeleton.py`](../../gramps/tests/gramps/test_addon_skeleton.py) | Local, on a Mac with Gramps 6.0.6 (`io-mac-gramps`) | Run `gramps/tests/gramps/run.sh test_addon_skeleton.py` (about one to three minutes). It installs the addon into a throwaway `GRAMPSHOME` and drives the real Gramps command line and the `hfy-sync` wrapper on copies of the synthetic fixture tree; the audit hook forbids the real Gramps and Pictures folders for the whole run. CI does not run it. See [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md). The task test plans call this lane `gramps/tests/e2e`; no such directory exists, and `gramps/tests/gramps` is the lane that stands in for it. |
+| Gramps addon, Gramps lane, [`gramps/tests/gramps/test_addon_skeleton.py`](../../gramps/tests/gramps/test_addon_skeleton.py) | Local, on a Mac with Gramps 6.0.6 (`io-mac-gramps`) | Run `gramps/tests/gramps/run.sh test_addon_skeleton.py` (about one to three minutes). It installs the addon into a throwaway `GRAMPSHOME` and drives the real Gramps command line and the `hfy-sync` wrapper on copies of the synthetic fixture tree; the audit hook forbids the real Gramps and Pictures folders for the whole run. CI does not run it. See [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md). |
+| Sync dev server, [`api/test/sync-dev-server.test.js`](../../api/test/sync-dev-server.test.js) | Offline | Part of the API suite (step 1). The real server, [`api/scripts/sync-dev-server.mjs`](../../api/scripts/sync-dev-server.mjs), started in process on an ephemeral `127.0.0.1` port and driven with `fetch`: the dev sign-in endpoints, the sync routes over the in-memory table, presigned uploads into a temporary directory, and the request log. Nothing leaves the machine. |
+| Sync end-to-end scenarios, [`gramps/tests/e2e/`](../../gramps/tests/e2e/) | Local, on a Mac with Gramps 6.0.6 (`io-mac-gramps`) | Step 15. The installed addon and the addon's own sign-in and transport against that dev server, on copies of the synthetic fixture tree, inside Gramps' bundled Python and under the same audit hook as the Gramps lane. CI does not run the scenarios; it runs their plumbing, [`test_e2e_support.py`](../../gramps/tests/unit/test_e2e_support.py), with a stub in place of the server. |
 | Render Lambda, [`gramps/tests/unit/test_render_lambda.py`](../../gramps/tests/unit/test_render_lambda.py) and its siblings `test_render_lambda_privacy.py`, `test_render_lambda_view.py` and `test_render_lambda_aws.py` | Offline | In process only: the real render pass over in-memory fakes of the table and the buckets (`render_lambda_support.py`), on the synthetic tree. Standard library only; the boto3 adapter tests use botocore's Stubber and skip when boto3 is not installed, and one test runs `node` on `api/src/records/semantics.js` when `node` is installed. No call reaches AWS. See [The render Lambda](../reference/sync-render.md). |
 | Graph builder, [`graph/test/`](../../graph/test/) | Offline | In process, plus child processes of the builder's own command line on synthetic input. One test runs the real `sqlite3` on a database it creates in a temporary directory; the others use a stub. Nothing is read from a real tree. |
 | Client scripts, [`tests/client/`](../../tests/client/) | Offline | In process only: the real `11ty/js/feature-flags.js` and `auth-v2.js` in a `vm` sandbox with stubbed `fetch`, storage and location. |
@@ -70,6 +72,7 @@ Run the steps that cover your change:
 | `scripts/ci/package-api.sh` | Step 1. |
 | `scripts/ci/package-edge-gate.sh` | Step 5. |
 | `scripts/ci/package-render.sh` | Step 5. |
+| `api/scripts/sync-dev-server.mjs`, or `gramps/tests/e2e/` | Step 1 (the server's own tests), and step 15. With `gramps/tests/e2e/e2e_support.py`, also `python3 -m unittest discover gramps/tests/unit -p test_e2e_support.py`. |
 | `lambda/hfy-sync-render/` or `gramps/hfygramps/render/` | Step 5, and `python3 -m unittest discover gramps/tests/unit` (the render Lambda's tests are `test_render_lambda*.py`). |
 | `scripts/ci/mcp-conformance.sh` | Steps 1 and 11. Step 1 runs `shellcheck` on it when `shellcheck` is installed. |
 | `scripts/mcp/token-smoke.sh` | Step 7. |
@@ -473,6 +476,35 @@ git config core.hooksPath scripts/git-hooks
 
 The [pre-commit hook](../../scripts/git-hooks/pre-commit) then runs the deployment sync check and this scan. It blocks the commit when the sync check fails, for example because `rsync` is missing or staged `11ty/` or `lambda/` files differ from their sources, when the scan finds something, or when `trufflehog` is not on `PATH`. [Repository operations](../reference/repository-operations.md#git-hook-scriptsgit-hookspre-commit) describes the sync check.
 
+### 15. Run the sync end-to-end scenarios (local, Gramps 6.0.6)
+
+The scenarios drive the installed addon and the addon's own sign-in and transport against a local copy of the sync server, on copies of the synthetic fixture tree. They need the Gramps 6.0.6 bundle at `/Applications/Gramps.app` (`HFY_GRAMPS_APP` names another), Node 22 or later, and the `api/` install from step 1 (the server runs from `api/node_modules`). From the repository root:
+
+```sh
+gramps/tests/e2e/run.sh --list                   # the scenario files
+gramps/tests/e2e/run.sh                          # all of them
+gramps/tests/e2e/run.sh scenario_smoke.py        # bind, status, the empty check, and the request-log greps
+```
+
+The smoke scenario's "empty check" reads the cloud's snapshot through the addon's transport and verifies it in the test, because the addon has no `check` command yet; the addon-pull-apply task replaces it with the addon's own `check` run against this server.
+
+`run.sh` is [the Gramps lane's runner](install-the-gramps-sync-addon.md) with this folder as the lane. It makes a throwaway `GRAMPSHOME` and `HOME`, imports the fixture once into a template tree, copies the template for each scenario file, and runs the file inside the bundled Python under the audit hook that forbids the real Gramps and Pictures folders. It exits `1` when any scenario or any of its negative controls fails. The login Keychain is never used: the scenarios sign in through a Keychain held in memory.
+
+Each scenario test starts its own server, [`api/scripts/sync-dev-server.mjs`](../../api/scripts/sync-dev-server.mjs), on an ephemeral `127.0.0.1` port and stops it at the end, so no test sees another's cloud state. The server serves the real `/api/sync/*` handler over an in-memory table, a temporary directory in place of S3, and a development sign-in server that issues short-lived tokens for a synthetic owner. To run it by hand:
+
+```sh
+node api/scripts/sync-dev-server.mjs --port 0         # prints one JSON line with the origin and the log file when it listens
+node api/scripts/sync-dev-server.mjs --help
+```
+
+It writes every request to `requests.jsonl` in its data directory (`--log-file` moves it) before it answers: one JSON object per line, a JSON body embedded as written, so a test can `grep` for `"dbid":"…"` and for the absence of a name. The `Authorization` header is never logged, and the sign-in endpoint's body is logged as field names only. Because bodies are logged as written, the "no tree content in the log" grep means something only for requests that carry ids and hashes, as the bind scenario's do. A scenario that pushes objects needs those redacted in the log first, or its negative grep moved to a redaction scenario. The credential grep holds for every scenario.
+
+`--data-dir DIR` keeps `DIR` and uses only a folder the server owns inside it, `DIR/hfy-sync-dev/`, whose `s3/` store it empties at every start (the table is in memory, so a leftover object would be an orphan). It never touches anything else in `DIR`, refuses an existing `hfy-sync-dev/` it did not make, and refuses a `--log-file` that names a file that already has content. With no `--data-dir` the server makes a temporary directory and removes it on exit.
+
+`/_dev/head` (`PATCH`) sets the store's switches (`writes_enabled`, `seeded`, `merges_enabled`, `min_client`) in place of `sync-admin`, and `/_dev/auth` (`PATCH`) sets the access-token lifetime or revokes every sign-in. These switches, the presigned `PUT`/`GET` store under `/_s3/` and the token-lifetime knob are reserved for the later scenarios (push conflicts, media, step-up, lost-response replay); the smoke and sign-in scenarios do not use them, and only the server's own vitest suite does.
+
+The server is a development tool: it binds loopback only, refuses a request whose `Host` is not its own address, and keeps nothing after it exits. Its `/auth/authorize` endpoint has no sign-in page and approves any well-formed sign-in request for the synthetic owner at once, for any loopback port, so any process on the machine can obtain an owner token for the synthetic data. Run it only on a machine you trust, and never point it at real data. It has no deployed route; [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) leaves `api/scripts/` out of the Lambda package.
+
 ### 14. Run the graph builder tests (offline)
 
 From the repository root:
@@ -500,6 +532,7 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | Site check (`check:islands`) | `<site> is up to date (<n> generated files)`. |
 | Infrastructure script tests | `scripts/infra tests: <n> passed, 0 failed`. Any line that ends with `skipped)`, such as `(cfn-lint not installed: skipped)`, names checks that did not run because a tool is missing. |
 | Infrastructure dry runs | Each script prints `no change` or `(dry-run) would …`, or ends with `(dry-run) no changes made`. In a live dry run, no `add-*` script printed a line that ends with `using a placeholder`. In an offline dry run, the placeholder lines listed at the end of step 12 are expected. `publish-append-index.sh` printed no `refusing` line and no `note: HFYAppendIndex is not associated …` line. |
+| Sync end-to-end scenarios | Every test line ends `ok`, each scenario file ends `OK`, and the last line reads `[PASS] <n> test file(s) on per-test copies; … none under the real Gramps or Pictures folder`. |
 | Secret scan | Exit `0`. |
 
 ## If a suite fails
@@ -536,6 +569,9 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | `add-mcp-behavior.sh` prints `Lambda@Edge version ARN not resolved; using a placeholder` | `hfy-mcp-edge401` is not deployed in `us-east-1`, or the credentials cannot read it | [Deploy the edge functions](deploy-the-edge-functions.md), or fix the credentials. |
 | `add-data-gate-behaviors.sh` stops with an error about `hfy-edge-gate` or `stack hfy-edge-gate has no output EdgeGateVersionArn` | The gate stack is not deployed in `us-east-1`, or the credentials cannot read it | [Deploy the edge functions](deploy-the-edge-functions.md), or fix the credentials. |
 | `publish-append-index.sh` stops with `refusing: cannot describe function HFYAppendIndex …` | The credentials lack `cloudfront:DescribeFunction`, or the function does not exist in this account. The script never creates it. | Fix the credentials. For a new environment, create the function once, as in [Stand up the static site](stand-up-the-static-site.md). |
+| `gramps/tests/e2e/run.sh` stops with `node 22 or later is needed` or `api/node_modules is missing` | The dev server runs under Node and from the `api/` install | Install Node 22, and `(cd api && npm ci)` with `CODEARTIFACT_AUTH_TOKEN` exported. |
+| A scenario fails with `the dev server was not ready` | The server exited at start-up or the machine is overloaded; its stderr is in the message | Run `node api/scripts/sync-dev-server.mjs --port 0` by hand and read its error; on a busy machine the wait is 30 seconds. |
+| A scenario fails with `D01` or exit 75 on `bind` | A Gramps window is in the process list | The scenarios replace the process list with a fixed one; if it still happens, the run did not go through `gramps/tests/e2e/run.sh`. |
 
 ## Related pages
 
