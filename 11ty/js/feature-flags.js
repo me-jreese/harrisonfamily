@@ -20,8 +20,8 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "9f69f617",
-        "css": "d8c9710c"
+        "js": "e2042f9c",
+        "css": "9e0815ba"
       },
       "family": {
         "js": "d36fbffd",
@@ -72,7 +72,7 @@
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "74ccc880",
+        "js": "3b2b6a27",
         "css": "6226b36b"
       },
       "photo-tags": {
@@ -84,8 +84,8 @@
         "css": "890fde1c"
       },
       "review": {
-        "js": "a7e28ae5",
-        "css": "d4074f34"
+        "js": "3aeb52a3",
+        "css": "f6c66152"
       },
       "search": {
         "js": "4d328c59",
