@@ -62,6 +62,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Roll back, or drill a rollback of, a site deploy](how-to/roll-back-a-site-deploy.md) — undo a release or rehearse it, checking `authV2` first while the gate is attached.
 - [Turn on editing](how-to/turn-on-editing.md) — name the approvers, set `HfyEditing`, try the editor and the relationship wizard in one tab, flip `proposalReview`, `recordEdit` and `relationshipWizard` in that order, and turn it off again.
 - [Review suggested changes](how-to/review-suggested-changes.md) — as an admin, open the queue and approve, ask for changes, decline or edit then approve.
+- [Delete a page and review possible duplicates](how-to/delete-a-page-and-review-duplicates.md) — as an admin, delete a person, family, event, place, source, citation or photo on the website, and read the list of people who may be in the tree twice.
 - [Turn a feature flag on or off, for one tab or for everyone](how-to/toggle-a-feature-flag.md) — preview a flag with the per-tab override, publish it in `flags.json`, and roll it back.
 - [Build and preview the React islands](how-to/build-and-preview-the-islands.md) — rebuild everything the islands build writes, check it against the source, and view it locally with a flag on.
 - [Change the theme or brand fonts](how-to/change-the-theme-or-brand-fonts.md) — change the colours, a theme partial or a font with the theme lint passing, and ship it.
