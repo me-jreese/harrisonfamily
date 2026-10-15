@@ -88,17 +88,20 @@ export const COPY = Object.freeze({
 
 // ---- the tabs --------------------------------------------------------------------------------------------------------
 /** The three tabs by the id the URL uses (`?tab=`); `review` is admins' only. */
-export const TAB_LABEL = Object.freeze({ review: "to review", mine: "my suggestions", about: "about my page" });
-export const TAB_IDS = Object.freeze(["review", "mine", "about"]);
+export const TAB_LABEL = Object.freeze({ review: "to review", mine: "my suggestions", about: "about my page", duplicates: "possible duplicates" });
+export const TAB_IDS = Object.freeze(["review", "mine", "about", "duplicates"]);
 
 /**
  * The tabs a viewer gets. "to review" needs an admin AND `proposalReview`: a member never has the tab, and no queue request is made for one
- * (the server enforces actor.admin whatever the flag says). "my suggestions" and "about my page" need `recordEdit`.
+ * (the server enforces actor.admin whatever the flag says). "my suggestions" and "about my page" need `recordEdit`. "possible duplicates" needs an admin
+ * AND `adminDelete` (the page bundle itself loads only with proposalReview or recordEdit, feature-flags.js).
  */
 export function tabsFor({ admin = false, flags = {} } = {}) {
   const out = [];
   if (admin === true && flags.proposalReview === true) out.push("review");
   if (flags.recordEdit === true) out.push("mine", "about");
+  // HFY-TSK-295 (Q2-15): the possible-duplicate queue for io's desktop merge, an admin's tab behind adminDelete.
+  if (admin === true && flags.adminDelete === true) out.push("duplicates");
   return out;
 }
 
