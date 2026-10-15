@@ -21,7 +21,7 @@
       },
       "editor": {
         "js": "9f69f617",
-        "css": "d8c9710c"
+        "css": "e2115fc6"
       },
       "family": {
         "js": "d36fbffd",

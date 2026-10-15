@@ -27,6 +27,7 @@ const PAGES = [
   "docs/reference/codebase-map.md",
   "docs/how-to/run-the-tests.md",
   "docs/reference/repository-operations.md",
+  "docs/reference/editing-d11-audit.md",
 ];
 
 describe("field-policy.md", () => {
