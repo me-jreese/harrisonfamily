@@ -201,6 +201,23 @@ The consumer of the render outbox ([API: Record-change fan-out](../reference/api
 
 **The access-request admin routes (HFY-TSK-141, RG-5).** They ship in the `hfy-api` zip and sit behind the `accessRequests` flag, not a stack switch. The mail to a requester (approved, declined, awaiting record) goes out through the Join SES identity and its own configuration set, the same `JoinSesIdentityArn`, `JoinFromAddress` and `JoinSesConfigurationSet` parameters the auth edge uses (HFY-TSK-331, P2-R61): the api role holds a second `ses:SendEmail` grant on them (`SendRequesterEmail`) and reads `JOIN_FROM_ADDRESS` and `JOIN_SES_CONFIGURATION_SET`. The member's second-email notice still uses the api role's general grant (`SesIdentityArn`, `SesFromAddress`, `SesConfigurationSet`, from `app-stack-sync-infra`). While the Join parameters are empty, a decision still commits and answers `emailSent: false`; requester mail never falls back to the general identity. HFY-TSK-331 also adds `POST /api/allow-grants/revoke`, which needs nothing new. Turn on `inboxV1` before `accessRequests`, or the admin inbox items do not appear. The route smoke after the execute is `GET /api/access-requests` with an admin session, which answers `404` while the flag is off for that session and `200` otherwise, and `403 not_admin` for a member with the flag on. Confirm that the `FunctionUrl` and `AuthFunctionUrl` outputs are unchanged after the execute.
 
+**The cloud ID policy (HFY-TSK-334, io's answer to Q2-03, gate HFY-TSK-102).** The `IdPolicy` parameter sets `HFY_ID_POLICY` on `hfy-api` (the auth edge and the renderers do not read it):
+
+| Parameter | Default | Allowed values | Env (`hfy-api`) | Effect |
+| --- | --- | --- | --- | --- |
+| `IdPolicy` | `mint` | `mint`, `assign` | `HFY_ID_POLICY` | `mint`: a web-origin create that leaves `gramps_id` empty gets one from the `<prefix>8000`-`<prefix>8999` block of its class, inside the write's own transaction, and the id is permanent. `assign` is the branch io declined. |
+
+`mint` is live config, not a feature switch: no route mints because of it. Every minting route stays dark behind its own flag, and turning one on is that flag's own flip:
+
+| Minting route | Its flag (default) |
+| --- | --- |
+| `POST /api/changes`, a create | `HfyEditing` stack parameter, env `HFY_EDITING` (`off`) |
+| Approval of a system `person.create` proposal (`POST /api/proposals/:id/decision`), the Person-create of an access request | `HfyEditing` (`off`); the access-request decision that files the proposal is also behind the `accessRequests` site flag (`false`) |
+| Graduation (`POST /api/comments/:id/attachments/:aid/graduate`) | `graduateV1` site flag (`false`) |
+| Sync push, a create (`/api/sync/*` sessions, batches and media) | `SyncApiEnabled` stack parameter, env `SYNC_API_ENABLED` (`0`) |
+
+The first change set that carries `IdPolicy` takes its default even on a stack that predates it (a new parameter has no previous value to reuse), so pass nothing for it; the review shows a `Modify` of `Function` for the new environment variable. Leave it at `mint`. A minted id is never released, so a later flip to `assign` gives none back. Any change is parameter-only (`--use-previous-template`, `UsePreviousValue` for every other parameter), and the stack refuses any value but `mint` or `assign`. With the flags above off, the usual route smoke is the whole check. The first graduation smoke after `graduateV1` is turned on must return `201` with a minted `gramps_id` (`O8000` and up), not `503 id_policy_not_mint` ([API: Graduating a comment photo](../reference/api.md#graduating-a-comment-photo)).
+
 `hfy-data-breakglass` can read and write all of `person/*`, `family/*`, `event/*`, `note/*`, `place/*` and `media/*`, which is wider than the `*.json` keys the later bucket-policy deny covers. The width is deliberate, for break-glass repair of binaries and shell files. Until the cutover task scopes the deny, `hfy-api` can also overwrite `media/*.json`, because its `media/*` binary grant cannot exclude a suffix.
 
 The review must show no `Remove` action and no `Replacement` for the table, `hfy-api`, `hfy-auth-edge`, the user pool or the two Function URLs beyond the `Conditional` ones above. The table gains a stream in place. Reserved concurrency of 1 on each of the two new functions needs the account to keep at least 10 unreserved executions.

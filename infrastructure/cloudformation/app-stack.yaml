@@ -18,6 +18,7 @@ Parameters:
   SessionJwksUrl: { Type: String, Default: "https://harrisonfamily.us/auth/.well-known/jwks.json", Description: Auth-edge JWKS the API verifies sessions with (HFY-R38; the API never holds the signing key) }
   SessionCookie: { Type: String, Default: io_id }
   GuardDob: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "HFY_GUARD_DOB (privacy-guard-existing-paths): on refuses dob_not_allowed (a birth day or month near a birth word) on posts, comments and their MCP tools. Stays off until io's answer to Q2-17 line 5 is recorded; contact info is refused either way. A flip is a parameter-only change set (UsePreviousValue for every other parameter)" }
+  IdPolicy: { Type: String, Default: "mint", AllowedValues: ["mint", "assign"], Description: "HFY_ID_POLICY, the cloud ID policy (api/src/sync/id-policy.js). io answered Q2-03 (gate HFY-TSK-102): mint, so a web-origin create gets its gramps_id from the <prefix>8000-<prefix>8999 block of its class inside the same transaction, and a minted id is permanent. assign leaves web creates ID-less for the desktop to assign. Live config only: every minting route stays dark behind its own flag (HfyEditing for POST /api/changes and the approval Person-create, graduateV1 for graduation, SyncApiEnabled for sync push). A change is parameter-only (UsePreviousValue for every other parameter)" }
   # --- auth edge (HFY-TSK-062) ---
   AuthFunctionName: { Type: String, Default: hfy-auth-edge }
   AuthCodeKey: { Type: String, Default: lambda/hfy-auth-edge.zip, Description: Key of hfy-auth-edge.zip in CodeBucket }
@@ -251,6 +252,7 @@ Resources:
           MEDIA_BUCKET: !Ref MediaBucket
           MEDIA_PUBLIC_BASE: !Ref MediaPublicBase
           HFY_GUARD_DOB: !Ref GuardDob
+          HFY_ID_POLICY: !Ref IdPolicy
           VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
           SYNC_API_ENABLED: !Ref SyncApiEnabled
           HFY_EDITING: !Ref HfyEditing
