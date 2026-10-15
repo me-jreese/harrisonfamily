@@ -21,6 +21,8 @@ import { circleIds, loadProposal, visibleProposal } from "./records/proposal-sto
 import { isPersonWithdrawn } from "./sync/store.js";
 import { createAccessRequests } from "./access-requests.js";
 import { createGraduation } from "./graduate.js";
+import { createChatService, serviceUnauthenticated } from "./chat.js";
+import { createCompositeMemberReader } from "./allowlist-store.js";
 
 export function createHandler(deps) {
   const { ddb, cmds, table, authenticate, ulid, now = () => Date.now(), log = console } = deps;
@@ -28,7 +30,14 @@ export function createHandler(deps) {
   const pushEnabled = Boolean(deps.webpush && deps.vapid);
   // HFY-TSK-238: the feature gate (src/features.js). index.js passes the deployed one; without it every feature is off and nobody is uat.
   const features = deps.features ?? currentFeatureGate();
-  const routes = deps.routes ?? ROUTES; // tests mount extra (gated) routes through routes.js defineRoutes
+  const routes = deps.routes ?? ROUTES;
+  // HFY-TSK-164: the chat service routes' sources (src/chat.js). Built once, because the directory caches its answer for 5 minutes. The composite allowlist
+  // reader (DynamoDB items over io's S3 file) decides who is a member; index.js passes the one it shares, a test passes readEntries and gets its own.
+  const chat = deps.chat ?? createChatService({
+    ddb, cmds, table, now, log, readEntries: deps.readEntries, resolveLabel: deps.resolveLabel,
+    memberReader: deps.memberReader ?? (deps.readEntries ? createCompositeMemberReader({ readEntries: deps.readEntries, ddb, cmds, table, now, log }) : undefined),
+    subscriptions: deps.subscriptions, preferences: deps.preferences, webpush: deps.webpush, vapid: deps.vapid,
+  }); // tests mount extra (gated) routes through routes.js defineRoutes
   // Persist first (BRD2 D2-15): with an inbox store wired (hfy-inbox-delivery-api) the producers run even without push.
   const notifyActive = pushEnabled || Boolean(deps.inbox);
   const inboxStore = deps.inbox; // the kit NotificationStore (index.js wires DynamoNotificationStore)
@@ -128,7 +137,7 @@ export function createHandler(deps) {
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { store, content, comments, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, content, comments, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**
@@ -176,6 +185,11 @@ export function createHandler(deps) {
         sync = await syncContext({ ctx: { ddb, cmds, table }, event, actor, route, now });
         // The push routes (HFY-TSK-173) also take the blob wiring (s3, presignPut, the media bucket) and applyBatch's hooks, id policy and test seams.
         sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid, log, s3: deps.s3, presignPut: deps.presignPut, presignGet: deps.presignGet, syncBucket: deps.syncBucket, mediaBucket, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts };
+      } else if (route.auth === "service") {
+        // HFY-TSK-164: /api/chat/* takes the chat Worker's ES256 service JWT and never the session cookie. Not wired => closed (401).
+        if (typeof deps.authenticateService !== "function") throw serviceUnauthenticated();
+        actor = await deps.authenticateService(event); // throws the 401
+        await features.check(route.gate, actor, { preview });
       } else {
         actor = await authenticate(event);
         // HFY-TSK-238: the gate runs before the 401, so a dark route is a 404 to a signed-out caller too and never reveals that it exists.

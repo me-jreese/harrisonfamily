@@ -18,6 +18,8 @@ import { guardDobFromEnv } from "./guard.js";
 import { createSyncAuthenticator } from "./sync/auth.js";
 import { createIdPolicy, idPolicyFromEnv } from "./sync/id-policy.js";
 import { createAccessRequests } from "./access-requests.js";
+import { createCompositeMemberReader } from "./allowlist-store.js";
+import { createServiceAuthenticator } from "./chat.js";
 import { createSesMailer } from "./mailer.js";
 import { logSafeError } from "./http.js";
 import { registerRecordContributor } from "./record-contributor.js";
@@ -173,6 +175,12 @@ try {
   console.error("id policy misconfigured", logSafeError(e));
 }
 
+// HFY-TSK-164 (hfy-chat-api-service-routes): /api/chat/* takes the chat Worker's ES256 service JWT (aud hfy-api/chat, exp <= 60 s), verified against the public
+// keys of the ChatServicePublicKeys stack parameter (env CHAT_SERVICE_PUBLIC_KEYS). RG-3 ships it empty, so every service call is a 401 until hfy-chat-worker-prod
+// sets it. The directory lists members through the composite allowlist reader (the DynamoDB items over io's S3 file) and labels them with resolveLabel.
+const authenticateService = createServiceAuthenticator({ getKeys: () => env.CHAT_SERVICE_PUBLIC_KEYS ?? "" });
+const memberReader = createCompositeMemberReader({ readEntries, ddb, cmds, table });
+
 // HFY-TSK-172: /api/sync/* takes the desktop client's bearer token (aud https://harrisonfamily.us/api/sync, client_id hfy-sync-desktop), authorized by the
 // gramps-owner group of the same cached, fail-closed groups.json read. The routes answer 404 not_enabled unless SYNC_API_ENABLED=1 (stack parameter SyncApiEnabled).
 const authenticateSync = createSyncAuthenticator({ issuer: env.SESSION_ISSUER ?? "https://harrisonfamily.us/auth", getJwks, getGroups });
@@ -210,7 +218,7 @@ export const handler = async (event, context) => {
   if (!inner) {
     const p = await loadPush();
     inner = createHandler({
-      ddb, cmds, table, authenticate, authenticateSync, ulid,
+      ddb, cmds, table, authenticate, authenticateSync, authenticateService, memberReader, resolveLabel, ulid,
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
