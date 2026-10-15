@@ -183,7 +183,9 @@ test("scenario 5: a phone number in a note is refused until it is removed", asyn
   await expect(sheet(page).locator("[data-hfy-problem]")).toHaveCount(0);
   await sheet(page).locator("[data-hfy-save]").click();
   await expect(page.locator("[data-hfy-toast]")).toBeVisible();
-  const saved = world.rows("PROP#").length > 0 || world.stored("Note", world.n1.handle).text.string.includes("edited");
-  expect(saved).toBe(true);
+  // a member's own note saves directly: the stored text changed, the version went 1 to 2, and no suggestion was made
+  expect(world.stored("Note", world.n1.handle).text.string).toBe("A synthetic note about the family, edited.");
+  expect(world.version("Note", world.n1.handle)).toBe(2);
+  expect(world.rows("PROP#")).toEqual([]);
   await ctx.close();
 });

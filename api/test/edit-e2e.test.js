@@ -1,7 +1,7 @@
 // HFY-TSK-282 (edit-e2e-d11-audit): the editing scenarios end to end through the real API over the fake store (edit-e2e-world.js).
 // The same five scenarios run through the real pages in islands/tests/edit-e2e.spec.mjs; this file is the contract those pages rely on.
 // Synthetic ids, placeholder names and years only.
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ADMIN, ADMIN2, ME, P, createEditWorld, key } from "./edit-e2e-world.js";
 
 const set = (o, path, base, value, id) => ({ id, op: "set", obj: key(o), path, base, value });
@@ -11,7 +11,7 @@ const PHONE = "212-555-0143";
 let w;
 let worlds = [];
 beforeEach(async () => { w = await createEditWorld(); worlds.push(w); });
-afterAll(() => { for (const x of worlds) x.dispose(); });
+afterEach(() => { for (const x of worlds) x.dispose(); worlds = []; });
 
 const bundle = async (who, ref = ME) => {
   const r = await w.call("GET", `/api/edit/Person/${ref}`, who);
@@ -67,6 +67,10 @@ describe("scenario 2: a given-name change becomes a proposal and an admin approv
     expect(after.version).toBe(2);
     expect(after.obj.primary_name.first_name).toBe("Aldric");
     expect(after.pending).toEqual([]);
+    expect(done.body.proposal.proposer).toMatchObject({ id: ME }); // the proposer stays credited after the admin decides
+    const audit = w.rows(`AUDIT#proposal:${r.body.proposal.id}`);
+    expect(audit.find((x) => x.op === "proposal.create").principal).toBe(ME); // the audit row names the proposer
+    expect(audit.map((x) => x.op)).toContain("proposal.decide");
   });
 });
 const OTHER_MEMBER = "I0002";
@@ -149,6 +153,9 @@ describe("scenario 5: a phone number in a note is refused until it is removed", 
 
     const ok = await post(ME, edit("A synthetic note about the family, edited."), "note-2");
     expect(ok.status, JSON.stringify(ok.body)).toBe(201);
-    expect(ok.body.applied || ok.body.proposal).toBeTruthy();
+    expect(ok.body.proposal).toBeNull(); // a member's own note saves directly
+    expect(ok.body.applied.versions).toEqual({ [key(w.n1)]: 2 });
+    expect(w.stored("Note", w.n1.handle).text.string).toBe("A synthetic note about the family, edited.");
+    expect(w.rows("PROP#")).toEqual([]);
   });
 });

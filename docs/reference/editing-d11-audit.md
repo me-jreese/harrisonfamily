@@ -11,10 +11,10 @@ Each state of each page is measured at 375 and 1024 px wide, by [`islands/tests/
 | Check | Passes when |
 |---|---|
 | 16 px inputs | every visible text field, text area and select computes to a font size of 16 px or more |
-| 44 px targets | every visible button, field, summary and link measures 44 by 44 px or more; a checkbox or radio counts as its label; a link inside a sentence is exempt (WCAG 2.5.8) |
-| One control height per row | buttons, selects and fields whose vertical centres sit within 3 px of each other differ in height by 1 px or less |
+| 44 px targets | every visible button, field, summary and link measures 44 by 44 px or more; a checkbox or radio counts as its label; a link inside a sentence is exempt (WCAG 2.5.8); on `/edit/family/` each choice also measures 56 px high or more |
+| One control height per row | buttons, selects and fields in the same flex or grid container whose vertical centres sit within 3 px of each other differ in height by 1 px or less |
 | No horizontal scroll | `scrollWidth` of the document is no wider than its `clientWidth` |
-| axe clean | axe-core reports no serious or critical violation |
+| axe clean | axe-core reports no serious or critical violation (minor and moderate findings are not gated) |
 
 The pages run for real: the browser talks to the actual API handler over the in-memory DynamoDB fake ([`api/test/edit-e2e-world.js`](../../api/test/edit-e2e-world.js)), seeded with a synthetic tree, so the states on screen are the ones the API produces. Only `/auth`, the flags file and the static people index are stubbed. All names, ids and years are placeholders.
 
@@ -41,7 +41,7 @@ All states pass at both widths. Every row below was measured on the rebuilt isla
 | `/me/review/` | a member's own suggestion | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-card-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-card-1024.png) | green | green |
 | `/me/review/` | editing one's own suggestion | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-edit-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-edit-1024.png) | green | green |
 
-The screenshots are full-page captures under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-282/`.
+The screenshots are full-page captures under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-282/`. The links are bucket paths, not web addresses: opening them needs AWS access to that bucket.
 
 ## What the audit found
 
@@ -50,6 +50,7 @@ One defect, fixed in this task: on `/edit/` for a person, the name line is a lin
 ## Not covered here
 
 - **The installed iPhone app.** The D-11 checklist ends with a pass in the installed PWA on a real phone. That is io's UAT inside `edit-flag-flip`; nothing in this task can stand in for it.
+- **Other states.** The `/edit/` audit covers a person, the change bar, the check sheet, the toast and a note; no event record, validation-error or empty-queue state is measured.
 - **Tagging.** `photoTagEdit` has its own audit (`tag-edit-e2e`) and its own flip.
 - **A live check.** The audit runs on localhost against the committed site. It says nothing about what production serves; check that before a flip ([Turn on editing](../how-to/turn-on-editing.md)).
 

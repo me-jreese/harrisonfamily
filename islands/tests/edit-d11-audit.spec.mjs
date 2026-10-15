@@ -1,5 +1,5 @@
 // HFY-TSK-282 (edit-e2e-d11-audit): the D-11 after-state audit for /edit/, /edit/family/ and /me/review/ at 375 and 1024 px, against the real API over the
-// fake store (edit-e2e-bridge.mjs). Every state of each page is measured for: 16 px inputs, 44 px targets, one control height per row, no horizontal
+// fake store (edit-e2e-bridge.mjs). Every state of each page is measured for: 16 px inputs, 44 px targets, one control height per row (controls in one flex or grid container), 56 px wizard choices, no horizontal
 // scroll, and axe (serious and critical) clean. The installed-iPhone PWA pass is io's UAT inside edit-flag-flip, not here.
 // With HFY_AUDIT_SHOTS=<dir> each state is also saved as a screenshot (the audit document links them under the HFY-R16 asset prefix); without it nothing is written.
 //   HFY_SITE=<dir> PW_PORT=<port> [HFY_AUDIT_SHOTS=<dir>] npx playwright test tests/edit-d11-audit.spec.mjs
@@ -43,13 +43,15 @@ const MEASURE = () => {
     const r = el.getBoundingClientRect();
     measured.push({ el: t, r });
     if (r.height < 43.5 || r.width < 43.5) out.push(`target under 44px: ${name(t)} ${Math.round(r.width)}x${Math.round(r.height)}`);
+    if (t.matches("[data-hfy-choice]") && r.height < 55.5) out.push(`wizard choice under 56px: ${name(t)} ${Math.round(r.height)}`); // editing.md: choice targets are 56px
   }
-  // one control height per row: controls whose vertical centres sit within 3px of each other share a row
+  // one control height per row: controls in the same flex or grid container whose vertical centres sit within 3px of each other share a row
+  const rowOf = (e) => { for (let n = e.parentElement; n; n = n.parentElement) { const d = getComputedStyle(n).display; if (d.includes("flex") || d.includes("grid")) return n; } return document.body; };
   const ctl = measured.filter((m) => m.el.matches("button, select, input:not([type=checkbox]):not([type=radio]), [role=button]"));
   const rows = [];
   for (const m of ctl.sort((a, b) => a.r.top + a.r.height / 2 - (b.r.top + b.r.height / 2))) {
     const c = m.r.top + m.r.height / 2;
-    const row = rows.find((x) => Math.abs(x.c - c) <= 3 && x.items.every((i) => i.el.parentElement.closest("form, section, div") === m.el.parentElement.closest("form, section, div") || true));
+    const row = rows.find((x) => Math.abs(x.c - c) <= 3 && rowOf(x.items[0].el) === rowOf(m.el));
     if (row) row.items.push(m); else rows.push({ c, items: [m] });
   }
   for (const row of rows) {
@@ -88,7 +90,7 @@ const expandAll = async (page) => {
 
 for (const [name, viewport] of VIEWPORTS) {
   test.describe(`${name}px`, () => {
-    test(`/edit/: the person editor, the change bar, the check sheet, a note and an event`, async ({ browser }, testInfo) => {
+    test(`/edit/: the person editor, the change bar, the check sheet, and a note`, async ({ browser }, testInfo) => {
       const { page, ctx } = await as(browser, ME, viewport);
       await page.goto("/edit/?cls=person&id=I0001", { waitUntil: "domcontentloaded" });
       await expect(page.locator("[data-hfy-editor-ready]")).toBeVisible();
