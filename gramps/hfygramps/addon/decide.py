@@ -172,7 +172,14 @@ def second_pass(first, decisions, local, base_rows, pins, again, policy, heads):
         r = second.results.get(h)
         second.commits[h] = r.local_obj if r is not None and r.local_obj is not None else obj
         if not any(p["handle"] == h for p in second.pulled_rows):
-            second.pulled_rows.append({"class": obj.get("_class", ""), "handle": h, "kind": "update", "prepull": plan_mod._plain(first.projected.get(h))})
+            prepull = plan_mod._plain(first.projected.get(h))
+            # `kept` as in plan._build_once (D47): the desktop's other unsent edits of this object are not reverted by the decided value; the
+            # decided paths are, so they stay out of it
+            paths = [d["path"] for d in decided if d["handle"] == h]
+            kept = []
+            if isinstance(prepull, dict) and isinstance(base_objs.get(h), dict):
+                kept = [k for k in M.diff_pointers(base_objs[h], prepull) if not any(plan_mod._overlaps(k, p) for p in paths)]
+            second.pulled_rows.append({"class": obj.get("_class", ""), "handle": h, "kind": "update", "prepull": prepull, "kept": kept})
         second.local_ids.setdefault(h, (obj.get("_class", ""), obj.get("gramps_id", "")))
     for h in removals:
         cls, gid = second.local_ids.get(h) or (local[h].get("_class", ""), local[h].get("gramps_id", ""))

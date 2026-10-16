@@ -196,6 +196,20 @@ class Decisions(Base):
         self.assertIn("Applied from the website: 0 new, 1 changed, 0 deleted.", banner["lines"])
         self.assertEqual(len(self.tree.undo), 1, "one Edit > Undo entry")
 
+    def test_a_decided_take_website_does_not_make_the_desktops_other_unsent_edit_a_revert(self):  # D47 beside the decisions
+        self.seed()
+        self.h = self.a_person()
+        self.tree.edit(self.h, lambda o: o["primary_name"].__setitem__("first_name", "Mine"))
+        self.tree.edit(self.h, lambda o: o["primary_name"]["surname_list"][0].__setitem__("surname", "Beforepull"))
+        self.cloud.edit(self.h, lambda o: o["primary_name"].__setitem__("first_name", "Theirs"))
+        fl = self.flow()
+        rv = fl.review()
+        cid = self.conflict_row(rv)["id"]
+        fl.apply(rv, {cid: {"choice": "take_website"}})
+        self.assertEqual(self.name_here(), "Theirs")
+        kept = json.loads(self.rows("SELECT kept_json FROM pulled WHERE handle = ?", self.h)[0][0] or "[]")
+        self.assertEqual(kept, ["/primary_name/surname_list/0/surname"], "the unsent surname edit is kept; the decided first name is not")
+
     def test_skip_leaves_the_conflict_open_and_both_sides_alone(self):  # AC1
         fl, rv = self.conflict()
         cid = self.conflict_row(rv)["id"]
