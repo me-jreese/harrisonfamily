@@ -573,6 +573,26 @@
         {
           "file": "gramps/tests/unit/test_sync_catalog_rows.py",
           "name": "test_d39_nothing_is_sent_for_an_object_whose_website_copy_has_a_field_the_addon_does_not_know"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_delta.py",
+          "name": "test_d39_a_cached_state_that_holds_an_unknown_class_is_not_a_base_so_the_delta_route_gives_the_snapshot_routes_run"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_delta.py",
+          "name": "test_d39_the_parked_class_never_makes_the_seventh_sync_verification_mismatch"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_delta.py",
+          "name": "test_d39_a_class_that_arrives_through_the_feed_is_a_fallback_and_the_snapshot_parks_it"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_delta.py",
+          "name": "test_d39_a_class_that_arrives_before_the_seventh_sync_is_inconclusive_not_a_mismatch"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_delta.py",
+          "name": "test_d39_load_refuses_a_cached_snapshot_with_a_parked_line_and_takes_one_without"
         }
       ]
     },
