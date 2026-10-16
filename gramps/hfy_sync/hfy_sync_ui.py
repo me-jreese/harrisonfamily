@@ -48,19 +48,6 @@ def describe(doc):
     return "\n".join(lines)
 
 
-def present(parent, doc, run_bind):
-    """Shows the status; for an unbound tree asks first whether to bind it. `run_bind()` runs the bind and returns its status."""
-    if doc.get("result") == "ok" and not (doc.get("tree") or {}).get("bound"):
-        ask = QuestionDialog2(
-            _("Bind this tree to the website?"),
-            _("The website keeps one family tree bound to it. Binding writes a small marker into this tree and creates the "
-              "sync state on this computer. Nothing is sent to the website."),
-            _("_Bind this tree"), _("_Not now"), parent=parent)
-        if ask.run():
-            doc = run_bind()
-    OkDialog(_TITLE, describe(doc), parent=parent)
-
-
 def describe_run(doc):
     """One run's result as dialog text: the counts, the refusal or attention message. No object content."""
     c = doc.get("counts") or {}

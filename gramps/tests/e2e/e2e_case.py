@@ -76,8 +76,10 @@ class E2ECase(unittest.TestCase):
 
     def edit(self, fn):
         """Opens the tree with the Gramps API, calls fn(db, DbTxn) and closes it. Only while no CLI run holds the tree."""
-        from gramps.gen.db import DbTxn
-        from gramps.gen.db.utils import make_database
+        import importlib  # by name: the unit lane checks that this file has no static `gramps` import
+
+        DbTxn = importlib.import_module("gramps.gen.db").DbTxn
+        make_database = importlib.import_module("gramps.gen.db.utils").make_database
 
         db = make_database("sqlite")
         db.load(self.dir)

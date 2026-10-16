@@ -171,8 +171,12 @@ def _run_gramps(environ, tp, tree_dir, tree_name, action, effective_dry, allow_d
     if environ.get("HFY_SYNC_TEST") == "1" and environ.get("HFY_SYNC_UI"):
         extra = ",ui=%s" % environ["HFY_SYNC_UI"]  # test seam: run as the GUI does (conflicts stay open instead of parked)
     cmd = shlex.split(environ.get("HFY_GRAMPS_CMD") or DEFAULT_GRAMPS) + ["-O", tree_name, "-a", "tool", "-p", options + extra]
+    # Gramps stores a Python set (child_refs, event_names...) in its metadata at close, so under a random string-hash seed a run that changed
+    # nothing still rewrites sqlite.db with another order. A fixed seed keeps a look-only run byte for byte (AC1: check leaves the file's sha256).
+    child_env = dict(os.environ)
+    child_env.setdefault("PYTHONHASHSEED", "0")
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False, env=child_env)
     except OSError as exc:
         print("hfy-sync: could not start Gramps (%s)" % type(exc).__name__, file=sys.stderr)
         return consts.EXIT_INTERNAL

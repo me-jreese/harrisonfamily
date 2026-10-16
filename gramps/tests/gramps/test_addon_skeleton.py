@@ -576,7 +576,7 @@ class GuiMode(AddonCase):
         tool, ui = self.load_modules()
         shown = []
         self.addCleanup(setattr, ui, "present", ui.present)
-        ui.present = lambda parent, doc, run_bind: shown.append((parent, doc, run_bind))
+        ui.present = lambda parent, doc, actions: shown.append((parent, doc, actions))
         # a Gramps window in the process list does not stop the tool inside that window
         ps = os.path.join(os.path.dirname(self.ps_file), "gui-ps.txt")
         with open(ps, "w", encoding="utf-8") as fh:
@@ -588,10 +588,10 @@ class GuiMode(AddonCase):
         def go(db, DbTxn):
             tool.HfySyncTool(SimpleNamespace(db=db), user, tool.HfySyncOptions, "hfy_sync", None)
             self.assertEqual(len(shown), 1)
-            parent, doc, run_bind = shown[0]
+            parent, doc, actions = shown[0]
             self.assertEqual(parent, "the-window")
             self.assertEqual((doc["mode"], doc["action"], doc["result"], doc["tree"]["bound"]), ("gui", "status", "ok", False))
-            bound = run_bind()
+            bound = actions["bind"]()
             self.assertEqual((bound["mode"], bound["action"], bound["result"], bound["tree"]["bound"]), ("gui", "bind", "ok", True))
 
         self.edit(go)

@@ -161,6 +161,14 @@ class PullE2E(C.E2ECase):
         """The first open of a tree rewrites sqlite.db once (Gramps' own metadata); take it before the digests that must not change."""
         self.hfy("status")
 
+    def local_edit_note(self, gid, text):
+        def edit(db, DbTxn):
+            note = next(n for n in (db.get_note_from_handle(h) for h in db.get_note_handles()) if n.get_gramps_id() == gid)
+            with DbTxn("e2e local edit", db) as trans:
+                note.set(text)
+                db.commit_note(note, trans)
+        self.edit(edit)
+
     def website_edit_note(self, gid="N0004", text="Edited on the website."):
         return self.cloud.edit(gid, lambda o: set_text(o, text))
 
@@ -325,6 +333,14 @@ class Faults(PullE2E):
         if step == "after_media":
             self.assertEqual([f for f in os.listdir(self.media_root)], [NEW_MEDIA_HANDLE + ".jpg"], "after_media: the file is down, the tree is not touched")
             self.assertEqual(os.listdir(backups), [], "after_media: the media come down before the backup")
+        if crash:
+            # a killed Gramps leaves its lock behind; the addon refuses to run on it (D01, and --force-unlock is D02) until Gramps
+            # itself breaks it (its own "break the lock" prompt on the next open), which the test does by removing the file
+            lock = os.path.join(self.dir, "lock")
+            self.assertTrue(os.path.exists(lock), "%s: the killed run left Gramps' lock" % tag)
+            stale, _ = self.hfy("pull", "--yes")
+            self.assertEqual(stale.returncode, 75, "%s: a stale lock is refused until it is cleared" % tag)
+            os.unlink(lock)
         done, doc2 = self.hfy("pull", "--yes")
         self.assertEqual((done.returncode, doc2["result"]), (0, "ok"), "%s: the next run converges: %s" % (tag, done.stdout + done.stderr + json.dumps(doc2["error"])))
         if step == "after_sidecar":
@@ -361,14 +377,6 @@ class Faults(PullE2E):
 
 class Conflicts(PullE2E):
     """AC4, AC5, AC7, AC10: a conflict pins its path, and what the website and the desktop disagree about is never decided by a run."""
-
-    def local_edit_note(self, gid, text):
-        def edit(db, DbTxn):
-            note = next(n for n in (db.get_note_from_handle(h) for h in db.get_note_handles()) if n.get_gramps_id() == gid)
-            with DbTxn("e2e local edit", db) as trans:
-                note.set(text)
-                db.commit_note(note, trans)
-        self.edit(edit)
 
     def conflict_setup(self):
         self.bring_up()
@@ -440,6 +448,29 @@ class Conflicts(PullE2E):
             self.assertIn(("delete_edit", "has desktop-only data"), [(c["kind"], c["reason"]) for c in self.preview(doc)["conflicts"]])
             event = self.local_objects()[birth["handle"]]
             self.assertEqual(event["date"]["dateval"][:3], birth["date"]["dateval"][:3], "the event and its day and month are still in the tree")
+
+
+class Reverts(PullE2E):
+    """AC9 (covers D43): a push that returns a pulled field to its pre-pull value is labelled, and the CLI parks it instead of sending it."""
+
+    def test_a_local_edit_back_to_the_pre_pull_value_is_labelled_a_revert_and_the_cli_parks_it(self):
+        self.bring_up()
+        self.settle()
+        original = self.local_note_text()
+        self.website_edit_note()
+        self.opened_once()
+        proc, doc = self.hfy("pull", "--yes")
+        self.assertEqual((proc.returncode, doc["result"]), (0, "ok"), proc.stdout + proc.stderr)
+        self.local_edit_note("N0004", original)  # Undo in Gramps, or a stale editor
+        before = self.cloud_digest()
+        proc, doc = self.hfy("check")
+        self.assertEqual(proc.returncode, 10, proc.stdout + proc.stderr)
+        pv = self.preview(doc)
+        self.assertEqual([(o["op"], o["label"], o["disposition"]) for o in pv["to_website"]], [("update", "reverts a website change (origin)", "parked")])
+        self.assertEqual(pv["planned_push"], {"create": 0, "update": 0, "delete": 0})
+        done, doc2 = self.hfy("sync", "--yes")
+        self.assertNotEqual(done.returncode, 0, "a parked revert is not a clean run")
+        self.assertEqual(self.cloud_digest(), before, "nothing was pushed")
 
 
 class Privacy(PullE2E):
@@ -525,6 +556,7 @@ class Restore(PullE2E):
         bad, _ = self.hfy("restore", "no-such-backup")
         self.assertEqual(bad.returncode, 64)
 
+        seq_before_restore = max([e["seq"] for e in self.server.entries()] or [0])
         proc, doc = self.hfy("restore", name)
         self.assertEqual(proc.returncode, 10, "the dry-run check after a restore finds the website change again: %s" % (proc.stdout + proc.stderr))
         self.assertEqual((doc["action"], doc["dry_run"], doc["result"]), ("check", True, "changes_pending"))
@@ -537,9 +569,8 @@ class Restore(PullE2E):
         aside = [d for d in os.listdir(self.dir) if d.startswith("pre-restore-")]
         self.assertEqual(len(aside), 1, "the files that were moved aside are kept")
         self.assertTrue(os.path.isfile(os.path.join(self.dir, aside[0], "sqlite.db")))
-        # nothing was written to the website by any of it
-        self.assertEqual([e for e in self.server.requests(method="POST", path="/api/sync/batches") if e["status"] == 200 and e["body"]["ops"][0]["op"] != "create"
-                          or e["status"] == 200 and e["body"].get("session_id") is None and e["body"]["client_run_id"].startswith("e2e") is False], [])
+        # nothing was written to the website by any of it: no push batch after the restore began
+        self.assertEqual([e["seq"] for e in self.server.requests(method="POST", path="/api/sync/batches") if e["seq"] > seq_before_restore], [])
 
 
 class ReviewedPlan(PullE2E):
