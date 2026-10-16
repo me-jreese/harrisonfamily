@@ -337,7 +337,7 @@ Never edit the head blocks, the family-voice copy, a `?v=` or an `hfy-asset-vers
    (cd islands && npm test)
    ```
 
-   [Run the tests](run-the-tests.md) covers the `api/` dependency and the Chrome requirement of the browser specs.
+   [Run the tests](run-the-tests.md) covers the `api/` dependency and the headless shell the browser specs need.
 
 ## If something fails
 

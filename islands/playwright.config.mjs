@@ -8,11 +8,12 @@ const site = resolve(process.env.HFY_SITE || "../11ty");
 const port = Number(process.env.PW_PORT || 8089);
 const origin = `http://127.0.0.1:${port}`;
 
+// Local runs share the machine with the person using it, so they launch Playwright's bundled headless shell (never the system
+// Chrome, which PW_CHANNEL=chrome still opts into) and run at most 2 workers, one spec file at a time per worker.
 export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   reporter: "list",
-  // Shared dev machine: default to the bundled headless shell (PW_CHANNEL=chrome is a one-off opt-in), and cap local parallelism.
   fullyParallel: false,
   workers: process.env.CI ? undefined : 2,
   use: { baseURL: origin, channel: process.env.PW_CHANNEL || "chromium-headless-shell", viewport: { width: 375, height: 812 } },

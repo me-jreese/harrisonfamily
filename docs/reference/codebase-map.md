@@ -32,6 +32,7 @@ Each capability has a section below with its paths, the facts that change how yo
 | [Retired legacy sign-in](#retired-legacy-sign-in) | None: its last code was deleted (HFY-TSK-325, HFY-TSK-326) | [Identity services](identity-services.md#retired-legacy-sign-in) |
 | [Infrastructure](#infrastructure) | `infrastructure/`, `scripts/infra/`, `cloudfront/` | [Architecture](architecture.md) |
 | [CI and repo operations](#ci-and-repo-operations) | `ci.manifest.yaml`, `.github/`, `scripts/ci/`, `scripts/git-hooks/`, the workspace helpers in `scripts/` | [Repository operations](repository-operations.md) |
+| [Plan orchestration tooling](#plan-orchestration-tooling) | `scripts/orchestration/`, `docs/design/hfy-pln-002/` | [Orchestration tooling README](../../scripts/orchestration/README.md) |
 | [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `gramps/tests/unit/`, `shared/*.test.mjs`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
 | [Sanitized samples](#sanitized-samples) | `allowlist/`, `harrisonfamily-frontend/`, `etl-output/`, `gramps_exports/`, `cloudfront/` | [Private data and secrets](private-data-and-secrets.md) |
 | [Outside the repository](#outside-the-repository) | `<eleventy-source>`, `<project>/scripts/`, `<project>/workspace-local/` | [Private data and secrets](private-data-and-secrets.md) |
@@ -518,6 +519,23 @@ Facts:
 - The hook runs only when `core.hooksPath` is `scripts/git-hooks`.
 - The workspace helpers treat the checkout's parent directory as `<project>`.
 
+## Plan orchestration tooling
+
+Paths:
+
+- [`scripts/orchestration/`](../../scripts/orchestration/README.md): the HFY-PLN-002 orchestrator's tools.
+  - `pln002-batch.js`, `ship.js`, `ship3.js` and `mergeship.js` are Workflow scripts: build a batch of tasks, ship built tasks, and merge then ship branches with source conflicts.
+  - `make_batch.py` writes a batch's task packs and cuts its worktrees.
+  - `catalog/` (`refresh_status.py`, `gen_board.py`, `sync.py`) keeps the plan catalog, DOC-981BF41F2443, current.
+  - `hfdesk.sh` and `automerge.sh` reach GitHub through the kit's `prdesk.sh`, and `mirror_sync.sh` mirrors the repository-owned `11ty/` files into `<eleventy-source>`.
+- [`docs/design/hfy-pln-002/`](../design/hfy-pln-002/README.md): the plan's design, and the task data the tools read: `tasks.json`, `tracker-idmap.json` and `addenda.json`.
+
+Facts:
+
+- The tools take the session ID, the SCI, the state directory and every local path as Workflow args or environment variables (`HFY_ORCH_STATE`, `HFY_ORCH_REPO`, `HFY_ORCH_WT`, `HFY_DROPBOX_SITE`). None is stored in the repository.
+- The state directory they write, with batch packs, worker reports, pull request files and the catalog's section files, stays outside the repository.
+- No workflow runs them. Nothing in `scripts/orchestration/` is deployed.
+
 ## Tests
 
 Paths:
@@ -556,13 +574,13 @@ Facts:
 - `passkeystore.test.js` uses `fake-table.js`, an in-memory table that reads the `hfy-app` key schema from `app-stack.yaml` and applies DynamoDB's sparse-index rule.
 - `edge.test.js` also covers the referrer policy, `font-src`, the stylesheet origin in the CSP, the `?v` on `cssUrl` and each HTML override.
 - `passkey.e2e.mjs` drives Chromium's virtual authenticator against the real edge app on `http://localhost`, with in-memory stores. It runs with `npm run e2e` in `auth/`, after `npx playwright install chromium`, and is not part of `npm test`.
-- `signin-theme.e2e.mjs` runs with `SITE=<scratch site> npm run e2e:theme` in `auth/`, where the scratch site is a copy of `11ty/` built with `node build.mjs --site`. It exits `2` without `SITE`. It serves the real edge pages, with their real CSP, on `http://localhost:$E2E_PORT` (default `4175`), serves `/css` and `/fonts` from `SITE`, and drives Chrome (`channel: chrome`) at 375 and 1024 px with test-only wiring and a synthetic allowlist. `E2E_SHOTS=<dir>` saves screenshots and `E2E_OFFLINE=1` blocks Google Identity Services. It is not part of `npm test`.
+- `signin-theme.e2e.mjs` runs with `SITE=<scratch site> npm run e2e:theme` in `auth/`, where the scratch site is a copy of `11ty/` built with `node build.mjs --site`. It exits `2` without `SITE`. It serves the real edge pages, with their real CSP, on `http://localhost:$E2E_PORT` (default `4175`), serves `/css` and `/fonts` from `SITE`, and drives Playwright's headless shell (`channel: chromium-headless-shell`; `PW_CHANNEL` names another) at 375 and 1024 px with test-only wiring and a synthetic allowlist. `E2E_SHOTS=<dir>` saves screenshots and `E2E_OFFLINE=1` blocks Google Identity Services. It is not part of `npm test`.
 - `edge-gate/` has no dependencies. `npm test` there runs `node --test`.
 - `tests/client` loads the real `11ty/js/feature-flags.js` into a `vm` sandbox with a stubbed `fetch`. It needs no install: `node --test tests/client/*.test.mjs` from the repository root. `auth-continuity.test.mjs` also covers the `/family-login/` redirect page's `?next=` hand-over to `returnTo`.
 - The islands content-contract test drives the real `api/` handler.
 - `bundle.test.mjs` checks that every build output is tracked, present and identical to a fresh build.
 - `npm run test:contract` in `islands/` runs every `node:test` suite there, the theme lint included. `npm test` runs those and then the Playwright specs.
-- The island Playwright specs run at 375 px width in Chrome (`PW_CHANNEL` names another channel) against `npx http-server <site> -p <port> -a 127.0.0.1 -s -c-1`. The site defaults to `../11ty` and the port to `8089`, so by default they use the committed bundles. `HFY_SITE=<dir>` and `PW_PORT=<port>` point them at a scratch build. `bundle`, `theme-delivery` and `asset-versions` honour `HFY_SITE` too.
+- The island Playwright specs run at 375 px width in Playwright's bundled headless shell (`PW_CHANNEL` names another channel, such as `chrome` for system Chrome), with at most 2 workers outside CI, against `npx http-server <site> -p <port> -a 127.0.0.1 -s -c-1`. The site defaults to `../11ty` and the port to `8089`, so by default they use the committed bundles. `HFY_SITE=<dir>` and `PW_PORT=<port>` point them at a scratch build. `bundle`, `theme-delivery` and `asset-versions` honour `HFY_SITE` too.
 - `/api`, `/auth` and the data files are stubbed per test. The `auth-continuity` spec models the gate as a 401 until `/auth/refresh` has succeeded.
 - `node --test scripts/cloudfront/test/*.test.mjs` runs the shared case table (`rewrite`, `deny` and `awsSamples` cases), checks that nothing shipped in `11ty/` outside `person/` is denied, pins the deny lists to the gate script and `11ty/person/`, and runs an ES5 guard. `run.sh` and `publish-append-index.sh` run it too.
 - `scripts/infra/test/run.sh` puts `stub/aws` first on `PATH` and never reaches AWS. It needs `bash`, `jq`, and `python3` with PyYAML.
@@ -660,7 +678,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `infrastructure/` | Infrastructure, including the us-east-1 stacks of the MCP server and the private data gate |
 | `islands/` | React islands; theme layer, fonts and asset versions |
 | `shared/` | Pure, zero-dependency ESM validators (relative imports only; `shared/shared.test.mjs` enforces it, run `node --test shared/`; `shared/package.json` must keep `main` pointing at the test file for that to work, or run `node --test shared/shared.test.mjs`; not CI-gated yet). `api/src/shared` and `auth/src/shared` are committed symlinks to `../../shared`; `scripts/ci/package-api.sh` and `package-auth.sh` stage `shared/*.mjs` as real files in `src/shared/`; the islands import them by relative path and esbuild bundles them. `shared/privacy-guard.mjs` is the one R-18 detector (`scanText`, `rejectContactInfo`, `BIRTHDAY_KEYWORDS`; HFY-PLN-002 D2-09); `shared/privacy-guard.vectors.json` holds the cases it and its Python port both pass, and `shared/shared.test.mjs` imports `privacy-guard.test.mjs` so `node --test shared/` runs them. `shared/allowlist-store.mjs` is the read side of the DynamoDB allowlist (`ALLOW#` keys, `readAllowEntry`, `listAllowBySub`, `createCompositeMemberReader`); it takes the DynamoDB client and command classes as arguments, so it still imports nothing (HFY-TSK-134). `shared/redaction-rules.mjs` is the JavaScript port of the redaction predicates (`isBirthLike` and the date, place, coordinate, attribute and rect helpers); it takes the parsed `gramps/redaction/redaction-v1.json` as an argument and is tested against the golden vectors by `api/test/redaction-rules.test.js` ([Redaction policy v1](redaction-policy.md)). `shared/profile-links.mjs` validates the profile links (`validateLink`, `validateLinks`; surfaces.md 6.2): per-platform hosts, path shapes and handles, canonical URLs, and a website field that refuses every platform host (R-17); its table is `shared/profile-links.cases.json`. `shared/legacy-form.mjs` is the join form's schema (`FIELDS`, `validateForm`, `mapToGramps`; surfaces.md 7.3): birth year only, male or female, place fields city and state only, every free-text field through the R-18 detector; `mapToGramps` takes `storeCurrentCity` (Q2-11(a)). `shared/emails.mjs` holds the plain-text system emails of the join flow (`renderEmail`; `code`, `already_member`, `already_requested`, `received`, `approved`, `awaiting_record`, `declined`, `admin_new`). `shared/canonical.mjs` is the JavaScript original of canonical JSON and the object hash (`canonicalJson`, `objectJson`, `objectHash`; keys sorted by code point, integers only); it and `gramps/hfygramps/canonical.py` pass `shared/canonical.vectors.json`, and `shared/shared.test.mjs` imports `canonical.test.mjs`. `api/src/sync/store.js` and `api/src/sync/apply.js` write `obj_json` and `blob` with its `canonicalJson`. It is not reachable from any deployed route yet. |
-| `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests, and the Gramps golden tooling (`scripts/records/`: the bundle shim, the generator and the standard-library check) |
+| `scripts/` | CI and repo operations, infrastructure, the CloudFront Function (`scripts/cloudfront/`), tests, the Gramps golden tooling (`scripts/records/`: the bundle shim, the generator and the standard-library check), and the HFY-PLN-002 orchestration tooling (`scripts/orchestration/`) |
 | `tests/` (`client/`, `login-flow/`) | Tests |
 
 ## Notes

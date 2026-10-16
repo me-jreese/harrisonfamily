@@ -9,8 +9,8 @@
 // chat-hub, `exp - iat <= 60 s`, `jti` present, signed by a key listed in CHAT_SERVICE_PUBLIC_KEYS (stack parameter ChatServicePublicKeys, a JSON
 // array of {kid, spki}). The session cookie is never read on these routes, and the service token opens no session route. With the parameter
 // empty (RG-3 ships it empty; hfy-chat-worker-prod sets it) no token can verify, so every call is the same 401 as a bad token.
-// HANDOFF (hfy-chat-worker): this is 401, not chat.md 14.2's 503 (AC7 evidence wording wins). The hub must treat a 401 from the directory as "chat
-// dormant / not yet keyed" and keep its snapshot, not as a fault in its own key. chat.md 14.2 and BRD2 11.5 still say 503: the orchestrator is asked to amend them.
+// HANDOFF (hfy-chat-worker): this is 401, not 503 (AC7 evidence wording wins; chat.md 14.2 and BRD2 11.5 are amended to say so). The hub must treat a 401
+// from the directory as "chat dormant / not yet keyed" and keep its snapshot, not as a fault in its own key.
 // There is no replay cache: the 60 s lifetime bounds replay and the three routes are idempotent (the hub dedupes a push by conv and seq), as chat.md 14.2 has it.
 import { createPublicKey } from "node:crypto";
 import { decodeProtectedHeader, jwtVerify } from "jose";
