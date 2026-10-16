@@ -25,3 +25,7 @@ Set `GraphRenderCodeKey` in the same change set that ships the `hfy-api` and `hf
 2. After the first live pass, check `SYNC#GRAPH` (`built_seq` equal to the pass's `seq`, no `last_error`), then fetch `person/graph.json` signed in and check that `source.kind` is `cloud`.
 3. A failed pass emits `RenderError`, so the renderer's own alarm fires; the previous graph stays. Read the code in `SYNC#GRAPH.last_error` (`GraphRenderError:<code>`; the codes are the builder's exit-code names such as `PRIVACY_VIOLATION` and `SIZE_BUDGET`, or an AWS error name). To rebuild after a fix: `aws lambda invoke --function-name hfy-graph-render --payload '{"force":true}' ...`.
 4. To roll back, set `GraphRenderCodeKey` to the previous key (or the placeholder `lambda/hfy-graph-render-placeholder.zip`, which does nothing and leaves the last graph in place).
+
+## Staleness window
+
+The graph converges within one 15-minute schedule tick of the sync renderer after any change: the tick re-invokes the graph function, which skips when `SYNC#GRAPH` already matches the head seq and the hidden-item digest. This covers a moderation hide or unhide that does not move the store seq, a pass skipped because a push session was young, and a failed invoke. An operator can force a rebuild with `{"force": true}`. A face pruned right after `graph.json` is replaced can 404 for a cached older page until it refreshes; this matches the sync renderer.

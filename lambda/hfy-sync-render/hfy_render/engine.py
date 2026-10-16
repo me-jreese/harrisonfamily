@@ -196,11 +196,17 @@ class Engine:
             return {"status": "skipped", "reason": "push_session_open", "mode": mode, "seq": seq}
 
         if not due and not reconcile_due:
+            # A moderation hide or unhide, or a graph pass that was skipped or failed earlier, does not move the store seq: the schedule
+            # tick re-invokes the (idempotent, self-debouncing) graph function so the graph converges within one schedule interval.
+            if req.source == "schedule":
+                self._trigger_graph(seq)
             return {"status": "skipped", "reason": "current", "mode": mode, "seq": seq}
 
         view = self._build_view(seq, None if first_pass else prev_seq)
         if not due:
             counts = self._reconcile(view, now)
+            if req.source == "schedule":
+                self._trigger_graph(seq)
             return {"status": "reconciled", "mode": mode, "seq": seq, **counts}
 
         result = self._render_and_apply(req, state, view, seq, prev_seq, first_pass, cursor, now)

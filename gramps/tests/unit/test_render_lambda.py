@@ -743,12 +743,22 @@ class GraphTrigger(unittest.TestCase):
         rig = sup.Rig("live", graph_trigger=trig)
         out = rig.run()
         self.assertEqual(trig.calls, [{"source": "render", "seq": out["seq"]}])
-        self.assertEqual(rig.run()["reason"], "current")
-        self.assertEqual(len(trig.calls), 1, "a pass with nothing new triggers nothing")
+        self.assertEqual(rig.run({"source": "stream"})["reason"], "current")
+        self.assertEqual(len(trig.calls), 1, "a stream pass with nothing new triggers nothing")
         edit(rig, "Note", handle_of("N0001"), set_note_text("A new sentence."))
         out = rig.run()
         self.assertEqual(trig.calls[-1], {"source": "render", "seq": out["seq"]})
         self.assertEqual(len(trig.calls), 2)
+
+    def test_a_schedule_tick_on_a_current_site_retriggers_the_graph(self):
+        trig = Trigger()
+        rig = sup.Rig("live", graph_trigger=trig)
+        out = rig.run()
+        self.assertEqual(len(trig.calls), 1)
+        again = rig.run({"source": "schedule"})
+        self.assertEqual(again["reason"], "current")
+        self.assertEqual(trig.calls[-1], {"source": "render", "seq": out["seq"]})
+        self.assertEqual(len(trig.calls), 2, "the idempotent graph function picks up a hide that moved no seq")
 
     def test_shadow_and_a_held_pass_never_trigger_it(self):
         trig = Trigger()

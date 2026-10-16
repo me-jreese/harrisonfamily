@@ -28,6 +28,7 @@ export async function loadStoreObjects(ctx) {
  * Read from the MODQ#open queue (GSI1). A row the index returns without its `hidden` flag is read again from the table, and a read
  * failure propagates: the pass fails, and the previous graph stays (fail closed).
  */
+// Public-viewer assumption: every viewer is treated as signed out, so owner/author visibility never un-hides an item in the public graph.
 export async function loadHiddenMods(ctx) {
   const mods = new Map();
   let start;
