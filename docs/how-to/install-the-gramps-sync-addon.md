@@ -145,9 +145,11 @@ A person's name in a row is a link to that person's page on the website. It has 
 **Apply 3 · Push 5** does the whole thing in one run, in this order:
 
 1. If any Gramps edit window is open (a person, family, event or any other editor), the window stops with "close open edit windows to sync". Close them and press the button again. Nothing was requested or changed.
-2. Each choice that needs a confirmation asks for it. Incoming deletes, a mass of them (more than 10 records or 5 % of the tree) and the outgoing deletes, reverts and merges each get a list with every record they cover; declining leaves them out.
+2. Each choice that needs a confirmation asks for it, then, if you chose anything other than **Skip for now** for a conflict, the window says how many conflicts it is about to decide and how many of them send your value over the website's (**Keep mine** is the default for a plain field, so pressing the button without touching a conflict decides it as keep mine; set **Skip for now** to leave one open). Incoming deletes, a mass of them (more than 10 records or 5 % of the tree) and the outgoing deletes, reverts and merges each get a list with every record they cover; declining leaves them out.
 3. The pull applies, with your decisions carried out in the same plan: a backup first, then one Gramps transaction, one **Edit > Undo** entry. If the website changed since the preview, nothing is applied and the window says to check again.
 4. If deletes are going out and the sign-in is older than five minutes, the window asks you to sign in again, then sends the delete batches first and the rest after, so the five-minute window cannot lapse during a long push.
+
+The window runs a check, an apply and a sign-in on Gramps's main thread, because the database handle must not leave it, so it does not repaint while a slow request runs (it shows "Checking the website..." or "Working..." first). **Open backups** opens the folder in Finder, and tells you the folder's path when the system cannot open it.
 5. A banner shows the counts, the backup path and the undo warning: undoing the sync will revert those changes on the website at the next sync.
 
 The window never stores a value it shows, and the command line never prints one: previews, `status.json` and logs hold ids, paths and counts, and the preview's values are projected (no local-only part).

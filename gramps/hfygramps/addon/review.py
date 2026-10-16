@@ -20,11 +20,12 @@ import calendar
 import json
 import os
 import time
+from urllib.parse import quote
 
 from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
-from . import consts, decide, paths, pull as pull_mod, runner, sidecar, status
+from . import consts, decide, paths, preflight, pull as pull_mod, runner, sidecar, status
 from . import plan as plan_mod
 
 SECTIONS = (("from_website", "From the website"), ("to_website", "To the website"), ("conflicts", "Conflicts"),
@@ -127,9 +128,40 @@ def person_name(obj):
 
 def person_url(server, cls, gid):
     """The website page of a person (design rule P2-R46: a person's name links to /person/?id=<gramps id>), None for anything else or with no id."""
-    if cls != "Person" or not gid or not server:
+    if cls != "Person" or not gid or not server or not safe_web_url(server):
         return None
-    return "%s/person/?id=%s" % (server.rstrip("/"), gid)
+    return "%s/person/?id=%s" % (server.rstrip("/"), quote(str(gid), safe=""))
+
+
+def safe_web_url(url):
+    """The URL when it is an http(s) address, else None: config.json is a file on this computer, and the window opens only web pages."""
+    if isinstance(url, str) and url.lower().startswith(("https://", "http://")) and len(url.split("://", 1)[1]) > 0:
+        return url
+    return None
+
+
+def folder_uri(path):
+    """A file:// URI for a folder, with the spaces of '~/Library/Application Support' (and any other reserved character) escaped."""
+    return "file://" + quote(os.path.abspath(path), safe="/")
+
+
+def decision_summary(decisions):
+    """The sentence the window asks before it applies, naming how many conflicts it is about to decide and how many of those send the
+    desktop value over the website's; None when none is decided (every conflict skipped)."""
+    chosen = [decide._normal(d)[0] for d in (decisions or {}).values()]
+    chosen = [c for c in chosen if c != decide.SKIP]
+    if not chosen:
+        return None
+    mine = sum(1 for c in chosen if c == decide.KEEP_MINE)
+    text = "%d conflict%s will be decided now" % (len(chosen), "" if len(chosen) == 1 else "s")
+    if mine:
+        text += ": %d keep%s the value in Gramps and replace%s the website's at this sync" % (mine, "s" if mine == 1 else "", "s" if mine == 1 else "")
+    return text + ". Conflicts you leave on Skip for now stay open."
+
+
+def mass_blocked(pull_pv):
+    """The incoming deletes held back as a mass delete (matched on the plan's rule code, not on its text)."""
+    return [b for b in (pull_pv or {}).get("blocked", []) if b.get("rule") == "mass_delete"]
 
 
 # ----------------------------------------------------------------------------------------------------------------------- model
@@ -339,7 +371,7 @@ def confirmations(pull_pv, push_pv, ctx):
     outgoing deletes, reverts and merges the push holds until the window confirms. [{id, title, text, objects[{title, name, note}]}]"""
     out = []
     incoming = [e for e in pull_pv.get("from_website", []) if e.get("action") == "delete_local"]
-    blocked_mass = [b for b in pull_pv.get("blocked", []) if b["reason"].startswith("mass delete")]
+    blocked_mass = mass_blocked(pull_pv)
     if incoming or blocked_mass:
         objs = [dict(_identity(ctx, e["class"], e["handle"], e.get("gramps_id", ""))) for e in incoming]
         objs += [dict(_identity(ctx, b["class"], b["handle"], b.get("gramps_id", ""))) for b in blocked_mass]
@@ -501,12 +533,17 @@ class Flow:
         return rv
 
     def release(self, handle):
-        """The person released an event's day and month (a confirmed answer)."""
-        con = sidecar.open_checked(self.tp.sidecar)
-        try:
-            sidecar.release_event(con, handle)
-        finally:
-            con.close()
+        """The person released an event's day and month (a confirmed answer). Takes the tree's run lock (the same one a run holds), so it
+        never writes the sidecar while a run does; it returns False, and writes nothing, when a run holds the lock."""
+        with preflight.StateLock(self.tp.lock) as lock:
+            if not lock.acquired:
+                return False
+            con = sidecar.open_checked(self.tp.sidecar)
+            try:
+                sidecar.release_event(con, handle)
+            finally:
+                con.close()
+        return True
 
     # ---- the apply
     def editors_refusal(self):
@@ -528,12 +565,13 @@ class Flow:
             return banner([refusal], undo=False)
         docs = []
         pv, push_pv = review.pull_pv or {}, review.push_pv or {}
-        decided = any(d.get("choice") not in (None, decide.SKIP) for d in decisions.values())
+        decisions = {cid: {"choice": c, "confirmed": ok} for cid, (c, ok) in ((cid, decide._normal(d)) for cid, d in decisions.items())}
+        decided = any(d["choice"] != decide.SKIP for d in decisions.values())
         incoming = [e for e in pv.get("from_website", []) if e.get("action") == "delete_local"]
-        mass_blocked = [b for b in pv.get("blocked", []) if b["reason"].startswith("mass delete")]
+        mass_held = mass_blocked(pv)
         # Always the pull, even with nothing to apply: it records the conflicts it leaves open, and the decisions and the confirmations ride on it.
         opts = dict(yes=True, plan=review.pull_run_id, decisions=decisions)
-        if incoming or mass_blocked:
+        if incoming or mass_held:
             opts["confirm_deletes"] = bool(confirmed.get("incoming_deletes"))
             opts["confirm_mass_delete"] = bool(confirmed.get("incoming_deletes")) and bool(pv.get("mass_delete"))
         pull_doc = self.run("pull", **opts)

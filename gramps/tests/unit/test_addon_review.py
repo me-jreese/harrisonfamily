@@ -168,6 +168,13 @@ class Decisions(Base):
         self.assertEqual(again.model["by_id"]["conflicts"]["count"], 0)
 
 
+    def test_a_decision_given_as_a_plain_string_is_understood(self):  # decide._normal accepts it, so apply must too
+        fl, rv = self.conflict()
+        cid = self.conflict_row(rv)["id"]
+        banner = fl.apply(rv, {cid: "keep_mine"})
+        self.assertEqual((self.name_here(), self.name_there()), ("Mine", "Mine"))
+        self.assertTrue(banner["ok"], banner)
+
     def test_take_website_applies_in_the_same_run_and_nothing_is_pushed(self):  # AC1
         fl, rv = self.conflict()
         cid = self.conflict_row(rv)["id"]
@@ -399,6 +406,18 @@ class Deletes(Base):
         fl.apply(rv, {}, {"incoming_deletes": True})
         self.assertFalse(any(h in self.tree.data for h in gone), "confirmed: the mass delete is applied")
 
+    def test_a_mass_delete_the_plan_holds_back_carries_a_rule_code_the_window_matches_on(self):
+        gone = self.victims(12)
+        self.website_deletes(gone)
+        fl = self.flow()
+        rv = fl.review()
+        doc = fl.run("pull", dry_run=True, confirm_deletes=True, confirm_mass_delete=False)
+        pv = fl._preview(doc)
+        held = review.mass_blocked(pv)
+        self.assertEqual(sorted(b["handle"] for b in held), sorted(gone), pv.get("blocked"))
+        self.assertTrue(all(b["rule"] == "mass_delete" and b["reason"].startswith("mass delete") for b in held))
+        self.assertEqual(review.mass_blocked({"blocked": [{"reason": "mass delete: look-alike text", "handle": "x"}]}), [])
+
     def edited_then_deleted(self):
         (h,) = self.victims(1)
         self.tree.edit(h, lambda o: o["text"].__setitem__("string", "Edited here after the website deleted it."))
@@ -484,6 +503,36 @@ class Deletes(Base):
         self.assertEqual(self.cloud.heads[other]["obj"]["primary_name"]["call"], "Cally")
         self.assertIn("Pushed to the website: 0 new, 1 changed, 1 deleted.", banner["lines"])
 
+    def test_a_delete_and_the_update_that_clears_its_reference_are_accepted_with_the_deletes_first(self):  # AC8, D07, SI-35 ordering risk
+        """The delete batch reaches the website before the update that drops the last reference to the deleted record. The website checks
+        references when the push session is completed (D25), not batch by batch, so the order is safe; this pins that, with the
+        website's fixture checking the same way."""
+        (note,) = self.victims(1)
+        person = self.a_person()
+        self.tree.edit(person, lambda o: o.__setitem__("note_list", [note]))
+        fl = self.flow()
+        first = fl.apply(fl.review(), {}, {})
+        self.assertIn(note, self.cloud.heads[person]["obj"]["note_list"], first["lines"])
+        del self.tree.data[note]
+        self.tree.edit(person, lambda o: o.__setitem__("note_list", []))
+        rv = fl.review()
+        sent = len(self.cloud.batches)
+        order = []
+        orig = self.cloud.post
+
+        def spy(path, body=None, idempotency_key=None):
+            if path == "/api/sync/batches":
+                order.append([o["op"] for o in body["ops"]])
+            return orig(path, body, idempotency_key)
+
+        self.cloud.post = spy
+        banner = fl.apply(rv, {}, {"outgoing": True}, step_up=self.step_up)
+        self.assertEqual(order, [["delete"], ["update"]], "the delete goes before the update that clears the reference")
+        self.assertEqual(len(self.cloud.batches) - sent, 2)
+        self.assertTrue(self.cloud.heads[note]["deleted"], banner)
+        self.assertEqual(self.cloud.heads[person]["obj"]["note_list"], [])
+        self.assertIsNone(self.cloud.open_session, "the session completed: the website found no dangling reference")
+
     def test_without_a_fresh_sign_in_the_deletes_stay_blocked_and_the_banner_says_what_to_do(self):  # D07
         (h,) = self.local_delete()
         fl = self.flow()
@@ -502,6 +551,31 @@ class Deletes(Base):
         fl.apply(rv, {}, {"outgoing": True}, step_up=self.step_up)
         self.assertTrue(all(self.cloud.heads[h]["deleted"] for h in gone))
         self.assertEqual(self.stepped_up_calls, 1)
+
+
+class LinksAndText(unittest.TestCase):
+    def test_a_gramps_id_is_escaped_in_the_person_link(self):
+        self.assertEqual(review.person_url("https://x.test/", "Person", "I0001"), "https://x.test/person/?id=I0001")
+        self.assertEqual(review.person_url("https://x.test", "Person", "I 1&x=2#f?"), "https://x.test/person/?id=I%201%26x%3D2%23f%3F")
+
+    def test_only_a_web_address_makes_a_link(self):
+        for bad in ("file:///etc/passwd", "javascript:alert(1)", "ftp://x.test", "x.test", "", None, "https://"):
+            self.assertIsNone(review.person_url(bad, "Person", "I0001"), bad)
+            self.assertIsNone(review.safe_web_url(bad), bad)
+        self.assertEqual(review.safe_web_url("http://localhost:8089"), "http://localhost:8089")
+
+    def test_the_backups_folder_uri_escapes_the_space_of_application_support(self):
+        uri = review.folder_uri("/Users/someone/Library/Application Support/hfy_sync/abc/backups")
+        self.assertEqual(uri, "file:///Users/someone/Library/Application%20Support/hfy_sync/abc/backups")
+        self.assertNotIn(" ", uri)
+
+    def test_the_decision_sentence_counts_the_conflicts_and_the_keep_mine_ones(self):
+        self.assertIsNone(review.decision_summary({}))
+        self.assertIsNone(review.decision_summary({"a": {"choice": "skip"}, "b": "skip"}))
+        text = review.decision_summary({"a": {"choice": "keep_mine"}, "b": "take_website", "c": {"choice": "keep_mine", "confirmed": True}, "d": {"choice": "skip"}})
+        self.assertIn("3 conflicts will be decided now", text)
+        self.assertIn("2 keep the value in Gramps and replace the website's", text)
+        self.assertIn("1 conflict will be decided now", review.decision_summary({"a": "take_website"}))
 
 
 class Banner(Base):
@@ -634,6 +708,19 @@ class StickyEvents(Base):
         self.assertFalse([r for r in self.sec_rows(rv, "held") if r["handle"] == self.h and r.get("release")])
         fl.apply(rv)
         self.assertEqual(self.cloud.heads[self.h]["obj"]["date"]["dateval"][:3], self.dv[:3], "released: the push publishes the date")
+
+    def test_a_release_waits_for_a_running_sync_instead_of_writing_beside_it(self):
+        from hfygramps.addon import preflight
+        fl = self.flow()
+        with preflight.StateLock(fl.tp.lock) as lock:
+            self.assertTrue(lock.acquired)
+            self.assertFalse(fl.release(self.h), "a run holds the lock: nothing is written")
+        con = self.sidecar()
+        try:
+            self.assertNotIn(self.h, sidecar.meta_json(con, "released", []))
+        finally:
+            con.close()
+        self.assertTrue(fl.release(self.h))
 
     def test_the_guard_looks_only_at_unreleased_sticky_events(self):
         op = {"class": "Event", "handle": "e1", "op": "update", "obj": {"date": {"_class": "Date", "dateval": [14, 2, 1840, False], "text": ""}}}

@@ -245,6 +245,33 @@ class GuiOnARealTree(AddonCase):
         self.assertEqual(lists, ["Send 1 change that needs your confirmation?"])
         self.assertEqual(asked, ["Sign in again to send the deletes?"], "asked once, just before the deletes")
 
+    def test_open_backups_escapes_the_space_in_application_support_and_says_when_it_cannot_open_the_folder(self):
+        if self.Gdk.Display.get_default() is None:
+            self.skipTest("needs a display")
+        opened, errors = [], []
+
+        def go(tree, flow, cloud, db):
+            folder = "/Users/someone/Library/Application Support/hfy_sync/abc/backups"
+            window = self.ui.SyncWindow(None, {"result": "ok", "tree": {"bound": True}}, {"flow": flow, "backups_dir": lambda: folder}, standalone=True)
+            self.addCleanup(setattr, self.ui, "_open_url", self.ui._open_url)
+            self.addCleanup(setattr, self.ui, "ErrorDialog", self.ui.ErrorDialog)
+            self.ui.ErrorDialog = lambda title, text, parent=None: errors.append(text)
+            self.ui._open_url = lambda url: opened.append(url) or True
+            window._on_backups()
+            self.assertEqual(opened, ["file:///Users/someone/Library/Application%20Support/hfy_sync/abc/backups"])
+            self.assertEqual(errors, [])
+            self.ui._open_url = lambda url: False
+            window._on_backups()
+            self.assertEqual(len(errors), 1)
+            self.assertIn(folder, errors[0])
+            return True
+
+        self.session(go)
+
+    def test_the_helper_refuses_anything_but_a_web_page_or_a_folder(self):
+        for bad in ("javascript:alert(1)", "file://relative", "ftp://x.test/", "", None):
+            self.assertFalse(self.ui._open_url(bad), bad)
+
     def test_screenshots_of_the_window_on_the_fixture_copy(self):  # AC3 (layout evidence; io's G-uat is the manual UAT)
         from gi.repository import Gtk
         from gramps.gen.db import DbTxn

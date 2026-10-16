@@ -233,7 +233,7 @@ class Plan:
         self.incidents = []      # {class, handle, gramps_id, rule, seq, offer}
         self.notices = []        # {class, handle, gramps_id, paths}
         self.media = []          # handles of Media whose file must be downloaded
-        self.blocked = []        # {class, handle, gramps_id, reason}
+        self.blocked = []        # {class, handle, gramps_id, reason}; a mass delete also has rule "mass_delete" (the window matches on it, not on the text)
         self.deferred = []       # {class, handle, gramps_id, reason} (media failures are added by the run)
         self.autos = []
         self.holds = []
@@ -413,7 +413,7 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
             if defer_deletes:
                 plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid, "reason": "incoming delete (not confirmed in this window)"})
             elif plan.mass_delete and not confirm_mass_delete:
-                plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid,
+                plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid, "rule": "mass_delete",
                                      "reason": "mass delete: more than %d objects or %d %% of the tree" % (MASS_DELETE_OBJECTS, MASS_DELETE_PERCENT)})
             else:
                 plan.removals.append(h)

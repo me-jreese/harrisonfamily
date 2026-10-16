@@ -27,6 +27,9 @@ confirmations, the one-run apply, the result banner), which has no Gtk in it and
     apply      refused while any Gramps edit window is open (D45); modals list every object an incoming or outgoing delete, a mass
                operation or a revert covers; the result banner shows the counts, the backup path and the undo warning
 
+Known limitation: a check, an apply and a sign-in run on the Gtk main thread (the Gramps database handle must not leave it), so the window
+does not repaint during a slow request. It shows "Checking the website..." / "Working..." first and Cancel works again when the run ends.
+
 Everything shown is read live for this window and never stored: the "yours" column of a conflict reads the database now, local-only part
 included, and nothing in this file writes it anywhere. A person's name links to the website's page for that person (design rule P2-R46):
 plain text, no underline in any state, the theme's text colour and weight, a focus ring; text only when the record has no Gramps ID.
@@ -35,6 +38,8 @@ from gramps.gen.const import GRAMPS_LOCALE as glocale
 from gi.repository import Gdk, GLib, Gtk, Pango
 
 from gramps.gui.dialog import ErrorDialog, OkDialog, QuestionDialog2
+
+from hfygramps.addon import review as review_mod     # hfy_sync_tool puts hfygramps on sys.path before it imports this file
 
 _ = glocale.translation.gettext
 
@@ -140,10 +145,13 @@ def _label(text, xalign=0.0, wrap=False, selectable=False, css=None, bold=False)
 
 
 def _open_url(url):
+    """Opens a web page (http or https only) or a file:// folder; True when the system accepted it."""
+    if not (url and (review_mod.safe_web_url(url) or url.startswith("file:///"))):
+        return False
     try:
-        Gtk.show_uri_on_window(None, url, Gdk.CURRENT_TIME)
+        return bool(Gtk.show_uri_on_window(None, url, Gdk.CURRENT_TIME))
     except GLib.Error:
-        pass
+        return False
 
 
 def _name_widget(row):
@@ -424,7 +432,8 @@ class SyncWindow:
 
     def _on_backups(self, _button=None):
         folder = self.actions["backups_dir"]()
-        _open_url("file://" + folder)
+        if not _open_url(review_mod.folder_uri(folder)):     # the folder sits under 'Application Support': the space is escaped in the URI
+            ErrorDialog(_TITLE, _("The backups folder could not be opened. It is: %s") % folder, parent=self._parent())
 
     def _on_log(self, _button=None):
         text = self.actions["latest_log"]() or _("There is no log yet.")
@@ -444,7 +453,9 @@ class SyncWindow:
 
     def _on_release(self, _button, release):
         if self._ask(_("Release this event?"), release["confirm"]):
-            self.flow.release(release["handle"])
+            if not self.flow.release(release["handle"]):
+                ErrorDialog(_TITLE, _("A sync is running in another window or from the command line. Try again when it is done."), parent=self._parent())
+                return
             self._on_check()
 
     def _on_restore(self, _item=None):
@@ -493,6 +504,9 @@ class SyncWindow:
             ErrorDialog(_TITLE, _("A Gramps edit window is open: close open edit windows to sync."), parent=self._parent())
             return
         decisions = self.collect_decisions()
+        summary = review_mod.decision_summary(decisions)
+        if summary and not self._ask(_("Decide these conflicts?"), summary):
+            return
         confirmed = {}
         for modal in self.review.model["confirmations"]:
             confirmed[modal["id"]] = self._confirm_list(modal)
