@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
+import { decodeServerFrame } from "@io-kit/chat";
 import { fakeNamespace, bundledHub, installShims, loadBundle, spyConsole } from "./helpers.mjs";
 
 const DM = "dm:I9001:I9002";
@@ -124,6 +125,72 @@ test("the hub refuses a malformed body, another method and an oversized body", a
   } finally {
     rig.close();
   }
+});
+
+test("a drain that will not settle: the route answers 503 {archive_busy} with Retry-After, nulls nothing, and the caller can retry", async () => {
+  const rig = await bundledHub({ env: { CHAT_ADMIN_TOKEN: TOKEN } });
+  try {
+    await talk(rig);
+    // every wait ends and another drain is already running: the loop is bounded by a count (the bundle has no timer)
+    let reads = 0;
+    Object.defineProperty(rig.hub.server, "archiving", { configurable: true, get: () => { reads++; return Promise.resolve(); } });
+    const res = await hubPost(rig, { conv: DM, seq: 2 });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: "archive_busy" });
+    assert.equal(res.headers.get("retry-after"), "5");
+    assert.ok(reads > 1 && reads < 100, `bounded wait (${reads} reads)`);
+    assert.ok(rowsOf(rig)[1].text.includes(SECRET_TEXT), "nothing was nulled, so nothing was reported as nulled");
+    // the same call once the drain is gone
+    delete rig.hub.server.archiving;
+    rig.hub.server.archiving = null;
+    assert.deepEqual(await (await hubPost(rig, { conv: DM, seq: 2 })).json(), { nulled: 1 });
+  } finally {
+    rig.close();
+  }
+});
+
+test("a drain that starts between the last wait and the update still stops the expunge (the check is inside the step)", async () => {
+  const rig = await bundledHub({ env: { CHAT_ADMIN_TOKEN: TOKEN } });
+  try {
+    await talk(rig);
+    // quiet for every read in the wait loop, busy at the one inside the synchronous step
+    let n = 0;
+    Object.defineProperty(rig.hub.server, "archiving", { configurable: true, get: () => (++n >= 3 ? Promise.resolve() : null) });
+    const res = await hubPost(rig, { conv: DM, seq: 2 });
+    assert.equal(res.status, 503);
+    assert.ok(rowsOf(rig)[1].text.includes(SECRET_TEXT));
+  } finally {
+    rig.close();
+  }
+});
+
+test("kit pin: server.archiving is falsy at rest and a thenable while a drain runs (what the expunge waits on)", async () => {
+  const rig = await bundledHub({ env: { CHAT_ADMIN_TOKEN: TOKEN } });
+  const realNow = Date.now;
+  try {
+    await talk(rig);
+    assert.ok(!rig.hub.server.archiving, "falsy at rest");
+    rig.api.modes.archive = "hold";
+    Date.now = () => realNow() + 11 * 60 * 1000;
+    const alarm = rig.hub.alarm();
+    for (let i = 0; i < 50 && rig.api.callsTo("/chat/archive").length === 0; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(typeof rig.hub.server.archiving?.then, "function", "a promise while the drain is in flight");
+    rig.api.release();
+    await alarm;
+    assert.ok(!rig.hub.server.archiving, "falsy again once it settled");
+  } finally {
+    Date.now = realNow;
+    rig.close();
+  }
+});
+
+test("kit pin: @io-kit/chat 0.1.6 rejects text:null in a history batch (the follow-up the runbook names). When this fails the kit accepts a removed message: delete the 'chat must be dark' warnings and make the client show 'message removed'", () => {
+  const msg = { t: "batch", conv: DM, rid: "r1", more: false, msgs: [{ conv: DM, seq: 2, cmid: "c2", from: "I9002", ts: 1, kind: "msg", text: null, expunged: true }] };
+  const res = decodeServerFrame(JSON.stringify(msg));
+  assert.equal(res.ok, false, "the pinned client decoder refuses text:null, so an expunge needs chat dark (chatV1 false) until the kit release");
+  assert.match(res.reason, /text/);
+  msg.msgs[0].text = "";
+  assert.equal(decodeServerFrame(JSON.stringify(msg)).ok, true, "the empty string is the only shape the 0.1.6 decoder takes");
 });
 
 // ------------------------------------------------------------------------------------------------------------ every copy, the read
@@ -293,6 +360,23 @@ test("the Worker checks the bearer token before the hub is reached, and forwards
   assert.equal(ns.calls.get.length, 1);
 });
 
+test("the Worker cuts a chunked body (no content-length) off at the cap instead of reading it whole", async () => {
+  const bundle = await loadBundle();
+  const ns = fakeNamespace(() => new Response('{"nulled":1}'));
+  const env = baseEnv(ns, { CHAT_ADMIN_TOKEN: TOKEN });
+  let pulled = 0;
+  let cancelled = false;
+  const chunk = new TextEncoder().encode("x".repeat(1000));
+  const body = new ReadableStream({ pull(c) { pulled++; if (pulled > 1000) c.close(); else c.enqueue(chunk); }, cancel() { cancelled = true; } });
+  const req = new Request(URL_ADMIN, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body, duplex: "half" });
+  assert.equal(req.headers.get("content-length"), null);
+  const res = await bundle.default.fetch(req, env, {});
+  assert.equal(res.status, 413);
+  assert.ok(pulled < 20, `stopped after ${pulled} chunks of 1000 bytes`);
+  assert.equal(cancelled, true);
+  assert.equal(ns.calls.get.length, 0);
+});
+
 test("with no CHAT_ADMIN_TOKEN (or a short one) the route does not exist: the request goes on to the origin; other methods always do", async () => {
   const bundle = await loadBundle();
   const realFetch = globalThis.fetch;
@@ -360,7 +444,7 @@ function fakeTable(items) {
 }
 
 test("privacy-expunge.mjs --chat --apply nulls the hub message through the Worker, then deletes the mirror row; a second run nulls nothing", async () => {
-  const { run, parseArgs, createHubClient } = await import("../../api/scripts/expunge.mjs");
+  const { run, parseArgs, createHubClient, CHAT_CLIENT_WARNING } = await import("../../api/scripts/expunge.mjs");
   const realFetch = globalThis.fetch;
   const rig = await bundledHub({ env: { CHAT_ADMIN_TOKEN: TOKEN } });
   const front = await serve(rig);
@@ -411,6 +495,11 @@ test("privacy-expunge.mjs --chat --apply nulls the hub message through the Worke
     assert.equal(table.rows.has(`${mirrorKey(3).PK}\u0000${mirrorKey(3).SK}`), true);
     assert.equal(rowsOf(rig)[2].text, "third message");
     assert.ok(!lines.join("\n").includes(SECRET_TEXT));
+    // every chat run (dry or applied) prints the client warning: 0.1.6 clients cannot load a history with a removed message
+    assert.ok(lines.some((l) => l === CHAT_CLIENT_WARNING && /dark/.test(l)));
+    // a busy hub (503) is a retry, not a success: the script stops before the mirror row is deleted
+    const busy = createHubClient({ url: "http://127.0.0.1:1/chat/v1", token: TOKEN, fetchImpl: async () => new Response('{"error":"archive_busy"}', { status: 503 }) });
+    await assert.rejects(busy.nullMessage({ conv: DM, seq: 2 }), /run the same command again/);
   } finally {
     globalThis.fetch = realFetch;
     await front.close();

@@ -2,7 +2,7 @@
 // front door that decides which requests belong to the chat Worker and which go on to CloudFront.
 import { HUB_LOCATION_HINT, HUB_NAME } from "@io-kit/chat/cloudflare";
 import { scanText } from "../../shared/privacy-guard.mjs";
-import { ADMIN_PATH, HUB_ADMIN_PATH, MAX_BODY_CHARS, adminConfigured, bearerOk, json } from "./admin.mjs";
+import { ADMIN_PATH, HUB_ADMIN_PATH, MAX_BODY_CHARS, adminConfigured, bearerOk, json, readCapped } from "./admin.mjs";
 
 export const WS_PATH = "/chat/ws";
 export const HEALTH_PATH = "/chat/v1/health";
@@ -35,10 +35,9 @@ function adminRequest(request, env) {
 
 async function handleAdmin(request, env) {
   if (!(await bearerOk(request, env))) return json(401, { error: "unauthorized" });
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_CHARS * 4) return json(413, { error: "too_large" });
-  const body = await request.text();
-  if (body.length > MAX_BODY_CHARS) return json(413, { error: "too_large" });
+  // Read with a cap on bytes, so a chunked body (no content-length) is cut off at the cap rather than read whole.
+  const body = await readCapped(request);
+  if (body === null || body.length > MAX_BODY_CHARS) return json(413, { error: "too_large" });
   const id = env.CHAT_HUB.idFromName(HUB_NAME);
   const hub = env.CHAT_HUB.get(id, { locationHint: env.CHAT_LOCATION_HINT ?? HUB_LOCATION_HINT });
   return hub.fetch(

@@ -3339,7 +3339,7 @@ var MIN_TOKEN_CHARS = 32;
 var MAX_BODY_CHARS = 1024;
 var CONV_RE = /^(?:dm:[A-Za-z0-9_-]{1,64}:[A-Za-z0-9_-]{1,64}|g:[A-Za-z0-9]{1,40})$/;
 var MAX_SEQ = 2147483647;
-var json3 = /* @__PURE__ */ __name((status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } }), "json");
+var json3 = /* @__PURE__ */ __name((status, body, extra = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...extra } }), "json");
 function adminConfigured(env) {
   return typeof env?.CHAT_ADMIN_TOKEN === "string" && env.CHAT_ADMIN_TOKEN.length >= MIN_TOKEN_CHARS;
 }
@@ -3358,6 +3358,33 @@ async function bearerOk(request, env) {
   return diff === 0;
 }
 __name(bearerOk, "bearerOk");
+async function readCapped(request) {
+  const cap = MAX_BODY_CHARS * 4;
+  if (Number(request.headers.get("content-length") ?? 0) > cap) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (; ; ) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {
+      });
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+__name(readCapped, "readCapped");
 function parseBody(text) {
   if (typeof text !== "string" || text.length === 0 || text.length > MAX_BODY_CHARS) return null;
   let v;
@@ -3395,10 +3422,8 @@ function adminRequest(request, env) {
 __name(adminRequest, "adminRequest");
 async function handleAdmin(request, env) {
   if (!await bearerOk(request, env)) return json3(401, { error: "unauthorized" });
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_CHARS * 4) return json3(413, { error: "too_large" });
-  const body = await request.text();
-  if (body.length > MAX_BODY_CHARS) return json3(413, { error: "too_large" });
+  const body = await readCapped(request);
+  if (body === null || body.length > MAX_BODY_CHARS) return json3(413, { error: "too_large" });
   const id = env.CHAT_HUB.idFromName(HUB_NAME);
   const hub = env.CHAT_HUB.get(id, { locationHint: env.CHAT_LOCATION_HINT ?? HUB_LOCATION_HINT });
   return hub.fetch(
@@ -3459,13 +3484,15 @@ function installReads(hub, sql) {
   core.toMsg = (row) => row.kind === "msg" && row.expunged === true ? { conv: row.conv, seq: row.seq, cmid: row.cmid, from: row.from, ts: row.ts, kind: "msg", text: null, expunged: true } : toMsg(row);
 }
 __name(installReads, "installReads");
+var SETTLE_ROUNDS = 20;
 async function settleArchive(server) {
-  for (let i = 0; i < 5 && server?.archiving; i++) {
+  for (let i = 0; i < SETTLE_ROUNDS && server?.archiving; i++) {
     try {
       await server.archiving;
     } catch {
     }
   }
+  return !server?.archiving;
 }
 __name(settleArchive, "settleArchive");
 function withExpunge(Base) {
@@ -3485,20 +3512,22 @@ function withExpunge(Base) {
     async #admin(request) {
       if (!await bearerOk(request, this.#env)) return adminConfigured(this.#env) ? json3(401, { error: "unauthorized" }) : json3(404, { error: "not_found" });
       if (request.method !== "POST") return json3(405, { error: "method_not_allowed" });
-      const text = await request.text();
-      if (text.length > MAX_BODY_CHARS) return json3(413, { error: "too_large" });
+      const text = await readCapped(request);
+      if (text === null || text.length > MAX_BODY_CHARS) return json3(413, { error: "too_large" });
       const ref = parseBody(text);
       if (!ref) return json3(400, { error: "bad_request" });
       await this.ready;
       await settleArchive(this.server);
       const sql = this.#ctx.storage.sql;
       const nulled = this.#ctx.storage.transactionSync(() => {
+        if (this.server?.archiving) return "busy";
         const row = sql.exec("SELECT kind, text FROM msg WHERE conv = ? AND seq = ?", ref.conv, ref.seq).toArray()[0];
         if (!row) return null;
         if (row.kind !== "msg" || row.text === null || row.text === void 0) return 0;
         sql.exec("UPDATE msg SET text = NULL WHERE conv = ? AND seq = ? AND kind = 'msg'", ref.conv, ref.seq);
         return 1;
       });
+      if (nulled === "busy") return json3(503, { error: "archive_busy" }, { "retry-after": "5" });
       return nulled === null ? json3(404, { error: "not_found" }) : json3(200, { nulled });
     }
   };

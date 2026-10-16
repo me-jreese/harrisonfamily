@@ -5,7 +5,8 @@
 //     does not exist: the request goes on to the origin like any other unowned request on /chat/v1/*.
 //   - The Worker checks the token before it wakes the Durable Object, and the hub checks it again before it touches a row, so
 //     the one party that holds the data never trusts the hop in front of it.
-//   - The answer carries counts only: 200 {nulled: 0|1}, 404 {error} for a message that does not exist, 401 for a bad or missing token.
+//   - The answer carries counts only: 200 {nulled: 0|1}, 404 {error} for a message that does not exist, 401 for a bad or missing token,
+//     503 {error: "archive_busy"} when an archive drain would not settle (nothing was nulled; run it again).
 export const ADMIN_PATH = "/chat/v1/admin/expunge";
 /** The path the Worker forwards to the hub object (the hub is reachable only through the Worker). */
 export const HUB_ADMIN_PATH = "/admin/expunge";
@@ -17,8 +18,8 @@ export const MAX_BODY_CHARS = 1024;
 export const CONV_RE = /^(?:dm:[A-Za-z0-9_-]{1,64}:[A-Za-z0-9_-]{1,64}|g:[A-Za-z0-9]{1,40})$/;
 export const MAX_SEQ = 2_147_483_647;
 
-export const json = (status, body) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+export const json = (status, body, extra = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...extra } });
 
 /** True when the environment holds a usable admin token. */
 export function adminConfigured(env) {
@@ -38,6 +39,37 @@ export async function bearerOk(request, env) {
   let diff = a.length ^ b.length;
   for (let i = 0; i < a.length && i < b.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
+}
+
+/**
+ * Reads a request body as text, at most `MAX_BODY_CHARS * 4` bytes (a body of MAX_BODY_CHARS characters is that many bytes at most in
+ * UTF-8). The stream is cancelled as soon as the cap is passed, so a chunked body with no content-length is never held whole.
+ * Returns the text, or null when the body is over the cap.
+ */
+export async function readCapped(request) {
+  const cap = MAX_BODY_CHARS * 4;
+  if (Number(request.headers.get("content-length") ?? 0) > cap) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
 }
 
 /** `{conv, seq}` or null: exactly those two members, a conversation id of the two known shapes, a positive integer seq. */

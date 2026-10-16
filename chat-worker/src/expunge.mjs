@@ -13,7 +13,7 @@
 //
 // The kit builds its history frames from `store.visible()` and `core.toMsg()`; both are patched on the instance here, because the
 // kit has no notion of a removed message (a follow-up for the kit: see docs/how-to/deploy-the-chat-worker.md).
-import { MAX_BODY_CHARS, HUB_ADMIN_PATH, adminConfigured, bearerOk, json, parseBody } from "./admin.mjs";
+import { MAX_BODY_CHARS, HUB_ADMIN_PATH, adminConfigured, bearerOk, json, parseBody, readCapped } from "./admin.mjs";
 
 /** Installs the read side on a hub: rows that were nulled come back from the store and out of the core as removed. */
 function installReads(hub, sql) {
@@ -55,15 +55,24 @@ function installReads(hub, sql) {
       : toMsg(row);
 }
 
-/** Wait (a few rounds at most) for the archive drain in flight, if any: its batch was read before this expunge and still holds the text. */
+/** How many drains one expunge waits for. A drain is single-flight and runs at most 50 rounds, so more than a couple is already odd. */
+const SETTLE_ROUNDS = 20;
+
+/**
+ * Wait for the archive drain in flight, if any: its batch was read before this expunge and still holds the text. Loops until none is
+ * running (a new one can start the moment one ends), at most SETTLE_ROUNDS drains: there is no timer in this bundle, so the bound is
+ * a count. Returns false when a drain is still running at the end, and the route answers 503 so the caller retries instead of being
+ * told "nulled" while a batch with the text may still be posted.
+ */
 async function settleArchive(server) {
-  for (let i = 0; i < 5 && server?.archiving; i++) {
+  for (let i = 0; i < SETTLE_ROUNDS && server?.archiving; i++) {
     try {
       await server.archiving;
     } catch {
       /* a failed drain is retried by the next alarm, from the table */
     }
   }
+  return !server?.archiving;
 }
 
 /**
@@ -90,8 +99,8 @@ export function withExpunge(Base) {
     async #admin(request) {
       if (!(await bearerOk(request, this.#env))) return adminConfigured(this.#env) ? json(401, { error: "unauthorized" }) : json(404, { error: "not_found" });
       if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
-      const text = await request.text();
-      if (text.length > MAX_BODY_CHARS) return json(413, { error: "too_large" });
+      const text = await readCapped(request);
+      if (text === null || text.length > MAX_BODY_CHARS) return json(413, { error: "too_large" });
       const ref = parseBody(text);
       if (!ref) return json(400, { error: "bad_request" });
       await this.ready;
@@ -99,12 +108,16 @@ export function withExpunge(Base) {
       // From here to the return there is no await: the read, the update and the answer are one step of the object.
       const sql = this.#ctx.storage.sql;
       const nulled = this.#ctx.storage.transactionSync(() => {
+        // A drain may have started between the last wait and this step; this check is the one that counts, because nothing can start one
+        // from here to the update. Busy: touch nothing, and the caller retries.
+        if (this.server?.archiving) return "busy";
         const row = sql.exec("SELECT kind, text FROM msg WHERE conv = ? AND seq = ?", ref.conv, ref.seq).toArray()[0];
         if (!row) return null;
         if (row.kind !== "msg" || row.text === null || row.text === undefined) return 0;
         sql.exec("UPDATE msg SET text = NULL WHERE conv = ? AND seq = ? AND kind = 'msg'", ref.conv, ref.seq);
         return 1;
       });
+      if (nulled === "busy") return json(503, { error: "archive_busy" }, { "retry-after": "5" });
       return nulled === null ? json(404, { error: "not_found" }) : json(200, { nulled });
     }
   };
