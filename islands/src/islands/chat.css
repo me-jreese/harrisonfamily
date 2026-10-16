@@ -113,3 +113,29 @@ html.hfy-chat-convo .hfy-content > main.hfy-page--chat { padding: 0; }
 html.hfy-chat-convo .hfy-content > main.hfy-page--chat ~ footer { display: none; }
 html.hfy-chat-convo .hfy-chat__page { border: 0; border-radius: 0; }
 html.hfy-chat-convo .io-chat-page[data-layout="stack"] .io-chat-composer { padding-block-end: calc(var(--io-chat-gap) + var(--io-shell-safe-bottom)); }
+
+/* ------------------------------------------------------------------------------------------------------------ profile presence */
+/* HFY-TSK-143 (chat.md 10.3): the dot, the state in words and a "chat" button, in the person hero's presence slot. The element carries
+   .io-chat so the --io-chat-* tokens above reach it; the kit's column layout and background are reset for an inline row. */
+.io-chat.hfy-presence {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-space-2);
+  margin: 0;
+  background: none;
+  color: var(--io-color-semantic-text-dim);
+}
+.hfy-presence__chat {
+  box-sizing: border-box;
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: thin solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-pill);
+  background: none;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
