@@ -4,6 +4,7 @@
 //   HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/person-page.spec.mjs
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { chatHub } from "./fixtures/chat-hub.mjs";
 
 const PERSON = JSON.parse(readFileSync(new URL("./fixtures/person-legacy.json", import.meta.url), "utf8"));
 const TREE = readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8");
@@ -15,9 +16,9 @@ const photo = (name) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="gray"/></svg>`;
 };
 
-async function stub(page, { shell = true, personV2 = false, familyViz = false, hold = null, status = 200, body = PERSON } = {}) {
+async function stub(page, { shell = true, personV2 = false, familyViz = false, chat = false, hold = null, status = 200, body = PERSON } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
-  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, familyViz } }));
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, familyViz, chatV1: chat } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9002", grampsId: "I9002", label: "Sam Example" } }));
   await page.route("**/api/comments**", (r) => r.fulfill({ json: { thread: { id: "person:I9001", topic: "comments", comments: [], reactions: {} } } }));
   await page.route("**/api/**", (r) => r.fallback());
@@ -421,4 +422,60 @@ test("tree-link slot: empty with familyViz off", async ({ page }) => {
   await expect(page.locator('[data-slot="tree-link"]')).toHaveCount(1);
   await expect(page.locator('[data-slot="tree-link"] a')).toHaveCount(0);
   await expect(page.locator('[data-slot="tree-link"]')).toBeEmpty();
+});
+
+// Profile presence (HFY-TSK-143, chatV1): the chat island fills only [data-slot="presence"] in the hero actions and nothing else on the page.
+// The hub's people are the eligible members (I9001 and I9002 here; I9003 has no account), the signed-in member is I9002.
+test.describe("profile presence (chatV1)", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+  const eligible = [{ id: "I9001", label: "Sam Example" }, { id: "I9002", label: "Pat Example" }];
+  async function withChat(page, { chat = true, id = "I9001" } = {}) {
+    const hub = chatHub({ people: eligible });
+    await stub(page, { chat });
+    await hub.attach(page, { uid: "I9002" });
+    await page.goto(`/person/?id=${id}`, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#person-hero h1")).toBeVisible();
+    return hub;
+  }
+
+  test("an eligible member's page shows the dot, the state in words and a chat button, in the presence slot; the state follows the hub", async ({ page }) => {
+    const hub = await withChat(page);
+    const p = page.locator('[data-slot="presence"] [data-hfy-presence="I9001"]');
+    await expect(p).toBeVisible();
+    await expect(p).toContainText("offline");
+    await expect(p.getByRole("img", { name: "offline" })).toBeVisible();
+    expect(await page.locator('[data-slot="hero-actions"]').evaluate((el) => [...el.children].map((c) => c.getAttribute("data-slot")))).toEqual(["edit", "follow", "presence"]);
+    const sam = hub.virtual("I9001");
+    await expect(p).toContainText("online");
+    const btn = p.getByRole("button", { name: "chat" });
+    expect((await btn.boundingBox()).height).toBeGreaterThanOrEqual(43.5);
+    await btn.click();
+    await expect(page.getByTestId("io-chat-mole")).toHaveCount(1);
+    sam.close();
+    hub.dispose();
+  });
+
+  test("a member without an account gets no presence, and nor does a page with the flag off", async ({ page }) => {
+    const hub = await withChat(page, { id: "I9003" });
+    await page.waitForTimeout(800); // the island has had time to connect and receive its people
+    await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
+    expect(await page.locator('[data-slot="presence"]').evaluate((el) => el.childElementCount)).toBe(0);
+    hub.dispose();
+    const off = await withChat(page, { chat: false });
+    await page.waitForTimeout(800);
+    await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
+    off.dispose();
+  });
+
+  test("your own page shows your state and no chat button; a page that is not a person page gets nothing", async ({ page }) => {
+    await page.route("**/person/I9002.json", (r) => r.fulfill({ json: PERSON }));
+    const hub = await withChat(page, { id: "I9002" });
+    const p = page.locator('[data-hfy-presence="I9002"]');
+    await expect(p).toBeVisible();
+    await expect(p.getByRole("button")).toHaveCount(0);
+    await page.goto("/about/", { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(800);
+    await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
+    hub.dispose();
+  });
 });
