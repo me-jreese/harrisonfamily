@@ -2,7 +2,7 @@
 
 The Harrison family site publishes a family archive to a small, closed audience. Most of what makes it worth visiting is private: records of real people, many of them alive, and things family members write and upload. This page explains what the project treats as private, how that data is kept out of git and away from the public, what can leave the family boundary and how, where the design is fragile, and why documents, fixtures and commits are held to the same rules as code.
 
-This is an explanation. For the inventory of private assets, secret names and placeholders, see [Private data and secrets](../reference/private-data-and-secrets.md). For the steps to publish new family data safely, see [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md).
+This is an explanation. For the inventory of private assets, secret names and placeholders, see [Private data and secrets](../reference/private-data-and-secrets.md). For the steps to publish new family data safely, see [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md). For why the tree and the cloud store both hold the data, see [Where the family data lives](family-data-source-of-truth.md).
 
 ## What counts as private
 
@@ -34,11 +34,25 @@ This split is why the repo's docs describe ETL scripts that the repo does not co
 
 ## Living people: classified at the source
 
-The ETL is the first line of defence for living people, because it is the only stage that sees the whole Gramps record. Its rule is deliberately blunt: **a person with no death event recorded is treated as living.** The rule errs toward privacy. Someone who died long ago but has no death record stays classified as living until a researcher adds the event. The opposite error, treating a living person as dead, is the one that matters, and the rule cannot make it.
+Living people are classified from the Gramps tree, because the tree is the only place that holds the whole record. Before the cutover to the cloud store, the ETL does that and is the first line of defence for living people. After the cutover, the desktop addon is the first line of defence ([What the cloud never receives](#what-the-cloud-never-receives-redaction-v1)), and the renderer classifies by the same rule. The rule is deliberately blunt: **a person with no death event recorded is treated as living.** The rule errs toward privacy. Someone who died long ago but has no death record stays classified as living until a researcher adds the event. The opposite error, treating a living person as dead, is the one that matters, and the rule cannot make it.
 
-The result is an `isLiving` flag. The ETL writes it on every person record and on every relative stub embedded in another person's record. The flag travels with the data, so every consumer can act on it without re-deriving it. Today the consumers use it to withhold death details and death years and to label people as living.
+The result is an `isLiving` flag. The ETL writes it on every person record and on every relative stub embedded in another person's record, and after the cutover the renderer writes it the same way. The flag travels with the data, so every consumer can act on it without re-deriving it. Today the consumers use it to withhold death details and death years and to label people as living.
 
-`isLiving` is a classification, not a redaction. A living person's record is still exported to the private prefixes. While the data gate is attached, it keeps the record from anyone without a member session (see [Gating the JSON](#gating-the-json)). Anything that must not reach even signed-in members, such as sensitive notes, has to be removed in Gramps or reviewed before export. [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md#before-you-start) lists that manual review. A Gramps user might expect the per-record private flag to do this job, but the ETL ignores Gramps's private flag, so removal or pre-export review is the only control. Nor does `isLiving` suppress sensitive notes, as older sample notes claimed.
+`isLiving` is a classification, not a redaction, before and after the cutover. A living person's record still goes to the private prefixes. While the data gate is attached, it keeps the record from anyone without a member session (see [Gating the JSON](#gating-the-json)). Before the cutover, anything that must not reach even signed-in members, such as sensitive notes, has to be removed in Gramps or reviewed before export. [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md#before-you-start) lists that manual review. A Gramps user might expect the per-record private flag to do this job, but the ETL ignores Gramps's private flag, so removal or pre-export review is the only control there. After the cutover the addon does that job: an object marked private never leaves the Mac, and the rest of redaction v1 applies. Nor does `isLiving` suppress sensitive notes, as older sample notes claimed.
+
+## What the cloud never receives (redaction v1)
+
+After the cutover to the cloud store, the desktop addon is the first line of defence, not the ETL. Before anything leaves io's Mac, the addon projects the tree through **redaction policy v1**, one declarative rule file that the Python projection, the server validator, the editing guard and the renderer all read ([Redaction policy v1](../reference/redaction-policy.md)). The policy is strict and applies to everyone, living or deceased:
+
+- **Birth-like events carry no day or month.** Birth, Baptism, Bless, Christen, Adult Christening, Stillbirth, custom types that look like a birth, and any event a person points at as their birth, keep the year only. Citations of those events and birth-name dates follow, and any date that equals a full date of birth held locally is reduced too.
+- **No contact data.** No addresses, no phone, e-mail or contact-channel URLs, no street-level or home-like places (a reference is re-pointed to the nearest kept ancestor), no postal codes below the administrative level, and coordinates rounded to two decimals.
+- **Gramps-private stays local.** An object marked private, and an object that only private objects refer to, never goes. A record that was synced before it was marked private is withdrawn, which hides it at once and removes its history after a 72-hour grace.
+- **Local-only fields.** LDS ordinances and SSN, ID, AGE and TIME attributes stay on the Mac.
+- **Free text is scanned.** A note that holds a contact detail or a date-of-birth pattern is held back, and the same heuristic runs on members' posts, comments and chat.
+- **Photos** with location data, photos tied to a birth event, and PDFs are held until io releases them.
+- **Other dates** are stored in full but published as a year only.
+
+Three layers enforce it: the addon before sending, the server on every write, and the renderer on every file it writes. A hit on the server is a refusal with a rule and a pointer, never the value. What reached the cloud by mistake is removed with the expunge ([Where the family data lives](family-data-source-of-truth.md#removing-something)); backups keep older copies for 35 days.
 
 ## One bucket for the site and the data
 
@@ -186,7 +200,7 @@ Writing about the system must not leak what the system protects, so docs, fixtur
 ## Further reading
 
 - [Private data and secrets](../reference/private-data-and-secrets.md): every private asset, where it lives, secret names and the placeholder forms.
-- [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md): running the ETL and syncing without deleting member uploads.
+- [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md): syncing the tree to the website, and the legacy ETL publish that runs without deleting member uploads before the cutover.
 - [Cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md): the flags-first order, attaching the gate to the data and the photos, the optional Cloudflare purge, the checks and the rollback.
 - [Publish a change to the HFYAppendIndex CloudFront Function](../how-to/publish-the-cloudfront-function.md): testing, dry-running and publishing `HFYAppendIndex` and its default-deny, checking that the variants answer 404, and rolling it back.
 - [Front end](../reference/front-end.md): every web-storage key the site writes, and what the service worker caches.
