@@ -198,6 +198,15 @@ def load_pulled(con, pull_n):
     return out
 
 
+def open_incidents(con):
+    """[{class, handle, gramps_id, rule, seq}] of the incidents still open: what `addon-push` turns into withdraw-and-expunge pushes
+    (`plan.incident_offer`). Handles and ids only, no object content."""
+    if not has_table(con, "incidents"):
+        return []
+    return [{"class": c, "handle": h, "gramps_id": g or "", "rule": r, "seq": q}
+            for c, h, g, r, q in con.execute("SELECT class, handle, gramps_id, rule, seq FROM incidents WHERE state = 'open' ORDER BY class, handle")]
+
+
 def load_expunge_holds(con):
     """{handle: [pointer]}: values a website scrub removed, which the push must not put back (sync.md 8.3, BRD2 11.1 inbound)."""
     out = {}

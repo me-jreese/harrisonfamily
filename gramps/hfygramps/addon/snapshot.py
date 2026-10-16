@@ -6,7 +6,7 @@ every further line is one head `{"class","handle","gramps_id","version","seq","d
 
 `parse` verifies the file the way step 3 says before anything reads an object: the gunzip stays under a size cap, the body hashes to
 the header's `body_sha256` (and to the route's), the header names this tree, the database schema and the redaction version the addon
-runs, the count matches, every line is well formed, and no handle or (class, handle) appears twice. A snapshot older than the last
+runs, the count matches, every line is well formed, every handle has the plain shape of consts.HANDLE_PATTERN, and no handle or (class, handle) appears twice. A snapshot older than the last
 one this tree pulled is refused (`snapshot_older`: rollback protection). Failures are `SnapshotError`, a code and a message with no
 object content.
 """
@@ -20,6 +20,7 @@ from .. import canonical
 
 MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024  # uncompressed; a bomb is stopped here
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_HANDLE = re.compile(consts.HANDLE_PATTERN)
 
 
 class SnapshotError(Exception):
@@ -112,6 +113,8 @@ def parse(raw_gz, expect=None, tree_id=None, schema=None, redaction=consts.REDAC
         cls, handle = row.get("class"), row.get("handle")
         if cls not in consts.CLASSES or not isinstance(handle, str) or not handle:
             raise _bad("a line has no usable class or handle")
+        if not _HANDLE.match(handle):  # a handle names a local file and a URL path: no separator, no dots, no escapes
+            raise _bad("a handle has an unusable shape")
         if handle in seen:
             raise _bad("a handle appears twice")
         seen.add(handle)

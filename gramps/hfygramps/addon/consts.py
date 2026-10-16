@@ -83,3 +83,7 @@ GRAMPS_LONGOPTS = ["action=", "class=", "config=", "debug=", "default=", "displa
                    "listname=", "oaf-activate-iid=", "oaf-ior-fd=", "oaf-private", "open=", "username=", "password=",
                    "create=", "options=", "safe", "screen=", "show", "sm-client-id=", "sm-config-prefix=", "sm-disable",
                    "sync", "remove=", "usage", "version", "yes", "quiet"]
+
+# A Media handle names a file on this disk (`media_root/<handle><ext>`) and sits in a URL path, so it is held to a strict shape wherever
+# it comes from the website: the snapshot parser and the media download both refuse anything else (no separator, no "..", no escapes).
+HANDLE_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"

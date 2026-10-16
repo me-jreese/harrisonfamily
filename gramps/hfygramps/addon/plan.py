@@ -48,6 +48,20 @@ def fingerprint(obj):
 # ---------------------------------------------------------------------------------------------------------------- inbound scan
 
 
+def incident_offer(cls, handle):
+    """The withdraw-and-expunge push an incident offers. `addon-push` (the task that sends pushes) builds the same op from the open rows
+    of the sidecar's `incidents` table (`sidecar.open_incidents`), so the offer does not have to be stored anywhere else; this build only
+    records it, in the preview file (`incidents[].offer`) and the table, and sends nothing."""
+    return {"op": "withdraw", "reason": "private", "expunge": True, "class": cls, "handle": handle}
+
+
+def sendable(op, confirmed=False):
+    """True when a planned push may be sent now. `send` always may; `confirm` (a GUI revert or delete) only with the person's explicit
+    confirmation; `parked` (a CLI revert) never, whatever the flag."""
+    d = op.get("disposition")
+    return d == "send" or (d == "confirm" and bool(confirmed))
+
+
 def _walk(node):
     if isinstance(node, dict):
         yield node
@@ -56,6 +70,42 @@ def _walk(node):
     elif isinstance(node, list):
         for v in node:
             yield from _walk(v)
+
+
+def references(obj, handles):
+    """True when any string value anywhere in `obj` is one of `handles` (a handle is a random token: a match is a reference)."""
+    if not handles:
+        return False
+    stack = [obj]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, str):
+            if node in handles:
+                return True
+        elif isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return False
+
+
+def drop_dependants(objs, seeds, exempt):
+    """Handles of `objs` ({handle: object}) that refer, directly or through each other, to a handle in `seeds`; the seeds themselves are
+    not included. The chain only passes through handles that are not in `exempt` (objects the tree already has: what refers to those
+    still has something to point at), so one missing new object takes its new dependants with it and nothing else."""
+    gone, cascade = set(), set(seeds)
+    changed = True
+    while changed:
+        changed = False
+        for h in sorted(objs):
+            if h in gone or h in seeds:
+                continue
+            if references(objs[h], cascade):
+                gone.add(h)
+                changed = True
+                if h not in exempt:
+                    cascade.add(h)
+    return gone
 
 
 def dob_index(local_objects, sticky, policy):
@@ -237,8 +287,21 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
             hit_handles.add(head.handle)
             plan.incidents.append({"class": head.cls, "handle": head.handle, "gramps_id": head.gramps_id, "rule": INBOUND_RULE,
                                    "seq": head.seq,
-                                   "offer": {"op": "withdraw", "reason": "private", "expunge": True, "class": head.cls, "handle": head.handle}})
-    for h in hit_handles:
+                                   "offer": incident_offer(head.cls, head.handle)})
+    # a pulled object that points at a withheld NEW object would dangle: it waits too (and what points at it), as a deferral, not an incident
+    pulled_objs = {}
+    for head in heads:
+        row = base_rows.get(head.handle)
+        changed = row is None or row["deleted"] or head.hash != row["hash"] or head.version != row["version"]
+        if not head.deleted and changed and head.handle not in hit_handles and head.handle not in {n["handle"] for n in plan.notices}:
+            pulled_objs[head.handle] = head.obj
+    withheld_new = {h for h in hit_handles if h not in local}
+    dependants = drop_dependants(pulled_objs, withheld_new, set(local)) if withheld_new else set()
+    for h in sorted(dependants):
+        head = head_by[h]
+        plan.deferred.append({"class": head.cls, "handle": h, "gramps_id": head.gramps_id, "reason": "refers to an object withheld for privacy"})
+    withheld = hit_handles | dependants
+    for h in withheld:
         if h in base_rows and not base_rows[h]["deleted"] and h in base:
             cloud[h] = base[h]
             versions[h] = base_rows[h]["version"]
@@ -275,7 +338,7 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
         head = head_by.get(h)
         gid = r.gramps_id or _gid(local.get(h), head, base.get(h))
         plan.local_ids[h] = (r.cls, gid)
-        if h in hit_handles:
+        if h in withheld:
             continue
         a = r.action
         if a in ("create_local", "update") and r.local_obj is not None:
@@ -359,7 +422,7 @@ def status_counts(plan):
         if row["handle"] in plan.commits or row["handle"] in plan.removals:
             pulled[row["kind"]] += 1
     return {"pulled": pulled, "pushed": {"create": 0, "update": 0, "delete": 0}, "conflicts_open": len(plan.conflicts),
-            "holds": len(plan.holds), "blocked": len(plan.blocked) + len(plan.parked), "media_up": 0, "media_down": 0,
+            "holds": len(plan.holds), "blocked": len(plan.blocked) + len(plan.parked) + len(plan.deferred), "media_up": 0, "media_down": 0,
             "privacy_incidents": len(plan.incidents), "push_pending": sum(plan.planned_push.values())}
 
 
@@ -378,6 +441,8 @@ def plan_hash(plan):
         rows.append(["notice", n["class"], n["handle"], n["paths"]])
     for b in plan.blocked:
         rows.append(["blocked", b["class"], b["handle"], b["reason"]])
+    for d in plan.deferred:
+        rows.append(["deferred", d["class"], d["handle"], d["reason"]])
     rows.append(["media", sorted(plan.media)])
     rows.sort(key=lambda r: json.dumps(r, sort_keys=True))
     return hashlib.sha256(json.dumps({"v": 1, "rows": rows}, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -435,7 +500,7 @@ def preview(plan, run_id, action, mode, snapshot, now):
         "snapshot": {"seq": snapshot.seq, "body_sha256": snapshot.body_sha256, "count": snapshot.header["count"]},
         "counts": plan.counts, "planned_push": plan.planned_push, "from_website": from_site, "to_website": to_site, "conflicts": conflicts,
         "held": [{"handle": x["handle"], "rule": x["rule"], "scope": x["scope"], "pointer": x["pointer"]} for x in plan.holds],
-        "blocked": plan.blocked, "media_to_download": sorted(plan.media),
+        "blocked": plan.blocked, "deferred": plan.deferred, "media_to_download": sorted(plan.media),
         "incidents": [{"class": i["class"], "handle": i["handle"], "gramps_id": i["gramps_id"], "rule": i["rule"], "offer": i["offer"]} for i in plan.incidents],
         "expunge_notices": plan.notices, "mass_delete": plan.mass_delete,
         "integrity": plan.integrity,

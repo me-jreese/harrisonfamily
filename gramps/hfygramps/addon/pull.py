@@ -20,6 +20,7 @@ import copy
 import json
 import os
 import shutil
+import urllib.parse
 
 from .. import merge as M
 from .. import projection as PR
@@ -58,7 +59,7 @@ class Cloud:
         return self.http.get_bytes(media.check_download_url(url))
 
     def media_download(self, handle):
-        body = self.client.post("/api/sync/media/%s/download" % handle, {}).body
+        body = self.client.post("/api/sync/media/%s/download" % urllib.parse.quote(handle, safe=""), {}).body
         if not isinstance(body, dict):
             raise transport.TransportError("bad_media_answer", consts.EXIT_INTERNAL, message="The media answer was not usable.")
         return body
@@ -187,7 +188,9 @@ def _run(ctx):
         if plan.media:
             got, failed = _media_down(ctx, cloud, plan)
             media_paths.update(got)
-            _defer_media(plan, failed)
+            if _defer_media(plan, failed):
+                _write_preview(ctx, plan)  # the preview file describes the plan that is applied
+                ctx.outcome["counts"] = plan.counts
             ctx.faults.hit("after_media")
         if plan.applies and bk is None:
             bk = backup_mod.make(tree.dbdir, tp, options.action, snap.seq, tp.sidecar)
@@ -213,17 +216,22 @@ def _run(ctx):
     # ---- apply (step 9)
     if plan.applies:
         pull_n = int(sidecar.meta(side).get("pull_n") or 0)
-        _record_pending(ctx, plan, pull_n + 1)
+        pending = _record_pending(ctx, plan, pull_n + 1)
         try:
             _apply(ctx, plan, media_paths)
         except errors.StaleTree:
+            _clear_pending(ctx, pull_n + 1, pending)
             log.line("stale inside the transaction")
             return _fail("changes_pending", consts.EXIT_DRY_RUN_CHANGES, "review_preview", "plan_changed",
                          "The tree changed while the changes were applied; nothing was applied. Review the new preview.")
         except errors.ApplyAborted as exc:
+            _clear_pending(ctx, pull_n + 1, pending)
             log.line("apply aborted: %s" % exc.code)
             return _fail("refused", consts.EXIT_SERVER_REFUSED, "review_preview", exc.code,
                          "A relationship or reference check failed inside the transaction; nothing was applied.")
+        except Exception:
+            _clear_pending(ctx, pull_n + 1, pending)  # the transaction rolled back whole (a crash that ends the process never gets here)
+            raise
         ctx.faults.hit("after_commit")
         log.line("applied %d, removed %d" % (len(plan.commits), len(plan.removals)))
 
@@ -253,9 +261,11 @@ def _snapshot(ctx, cloud, cloud_tree, last_pull_seq):
     try:
         os.makedirs(ctx.tp.cache, mode=0o700, exist_ok=True)
         cache = os.path.join(ctx.tp.cache, "snapshot-%d.jsonl.gz" % snap.seq)
-        with open(cache + ".tmp", "wb") as fh:
+        os.chmod(ctx.tp.cache, 0o700)  # makedirs leaves an existing folder as it was
+        fd = os.open(cache + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # private from the first byte, whatever the umask
+        with os.fdopen(fd, "wb") as fh:
             fh.write(raw)
-        os.chmod(cache + ".tmp", 0o600)
+        os.chmod(cache + ".tmp", 0o600)  # an older .tmp left by a crash keeps its mode through O_TRUNC
         os.replace(cache + ".tmp", cache)
         names = [f for f in os.listdir(ctx.tp.cache) if f.startswith("snapshot-") and f.endswith(".jsonl.gz")]
         names.sort(key=lambda f: int(f[len("snapshot-"):-len(".jsonl.gz")]) if f[len("snapshot-"):-len(".jsonl.gz")].isdigit() else -1)
@@ -335,21 +345,32 @@ def _media_down(ctx, cloud, plan):
 
 
 def _defer_media(plan, failed):
-    """A Media object whose file could not be fetched, and every object that refers to it, waits for the next run."""
+    """A Media object whose file could not be fetched, and everything that refers to it, waits for the next run.
+
+    Transitive: an object that refers to a dropped NEW object is dropped as well (and so on), so no commit is left pointing at
+    something that is not applied, which the in-transaction reference check would refuse for every run until the file arrives. The
+    plan hash is recomputed for the plan that will actually be applied. Returns True when the plan changed.
+    """
     if not failed:
-        return
+        return False
     bad = set(failed)
-    for h, obj in list(plan.commits.items()):
-        refs = {r.get("ref") for node in plan_mod._walk(obj) if isinstance(node, dict) for r in (node.get("media_list") or []) if isinstance(r, dict)}
-        if h in bad or refs & bad:
-            plan.deferred.append({"class": plan.local_ids[h][0], "handle": h, "gramps_id": plan.local_ids[h][1], "reason": "a media file is missing"})
-            del plan.commits[h]
-            bad.add(h)
+    local = plan.local or {}
+    direct = {h for h, obj in plan.commits.items() if h in bad or plan_mod.references(obj, bad)}
+    rest = {h: o for h, o in plan.commits.items() if h not in direct}
+    # the chain passes through the failed Media and through the dropped objects the tree does not have yet
+    exempt = set(local)
+    seeds = {h for h in bad | direct if h not in exempt}
+    gone = direct | plan_mod.drop_dependants(rest, seeds, exempt)
+    for h in sorted(gone):
+        plan.deferred.append({"class": plan.local_ids[h][0], "handle": h, "gramps_id": plan.local_ids[h][1], "reason": "a media file is missing"})
+        del plan.commits[h]
+    bad |= gone
     plan.pulled_rows = [r for r in plan.pulled_rows if r["handle"] not in bad]
     plan.base_ops = [b for b in plan.base_ops if b[2] not in bad]
     plan.media = [h for h in plan.media if h not in bad]
     plan.counts = plan_mod.status_counts(plan)
-    plan.counts["blocked"] += len(plan.deferred)
+    plan.plan_hash = plan_mod.plan_hash(plan)
+    return True
 
 
 def _stale(ctx, plan):
@@ -364,15 +385,32 @@ def _fp_planned(plan, h):
 
 
 def _record_pending(ctx, plan, run_n):
-    """The pre-pull values of this run, written before the Gramps commit so a crash right after it still leaves them (INSERT OR IGNORE)."""
+    """The pre-pull values of this run, written before the Gramps commit so a crash right after it still leaves them.
+
+    Returns the (class, handle) keys written. A row replaces an older one for the same object, so the values are always those of the
+    pull that is about to happen; `_clear_pending` removes exactly these rows when the run ends without committing, so a pull that
+    never happened leaves no history for the revert labelling to use.
+    """
     sidecar.ensure_pull_tables(ctx.side)
     now = status.utc_now()
+    keys = []
     with ctx.side:
         for row in plan.pulled_rows:
             if row["handle"] in plan.commits or row["handle"] in plan.removals:
-                ctx.side.execute("INSERT OR IGNORE INTO pulled (run_n, class, handle, kind, prepull_json, at) VALUES (?, ?, ?, ?, ?, ?)",
+                ctx.side.execute("INSERT OR REPLACE INTO pulled (run_n, class, handle, kind, prepull_json, at) VALUES (?, ?, ?, ?, ?, ?)",
                                  (run_n, row["class"], row["handle"], row["kind"],
                                   json.dumps(row["prepull"], sort_keys=True) if row["prepull"] is not None else None, now))
+                keys.append((row["class"], row["handle"]))
+    return keys
+
+
+def _clear_pending(ctx, run_n, keys):
+    try:
+        with ctx.side:
+            for cls, h in keys:
+                ctx.side.execute("DELETE FROM pulled WHERE run_n = ? AND class = ? AND handle = ?", (run_n, cls, h))
+    except Exception:  # noqa: BLE001 - cleanup must never hide the real outcome
+        pass
 
 
 def _apply(ctx, plan, media_paths):

@@ -7,13 +7,27 @@ a held or placeholder file) still syncs its metadata; it just has no local path.
 """
 import hashlib
 import os
+import re
 import tempfile
 import urllib.parse
 
 from . import consts, transport
 from .backup import sha256_file
 
+_HANDLE = re.compile(consts.HANDLE_PATTERN)
 EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/tiff": ".tif", "application/pdf": ".pdf"}
+
+
+def safe_path(media_root, handle, ext):
+    """`media_root/<handle><ext>` for a plain handle that stays under `media_root`; ValueError for anything else (a hostile handle)."""
+    if not isinstance(handle, str) or not _HANDLE.match(handle):
+        raise ValueError("the media handle is not a plain handle")
+    path = os.path.join(media_root, handle + ext)
+    root = os.path.realpath(media_root)
+    real = os.path.realpath(path)
+    if os.path.dirname(real) != root or os.path.basename(real) != handle + ext:  # also a symlink planted at the target stays inside
+        raise ValueError("the media path would leave the media folder")
+    return path
 
 
 def check_download_url(url):
@@ -65,6 +79,8 @@ def download(cloud, handle, media_root):
     Raises transport.TransportError for anything else (the caller defers the object) and ValueError when the bytes do not match the
     checksums the website announced (nothing is written).
     """
+    if not isinstance(handle, str) or not _HANDLE.match(handle):
+        raise ValueError("the media handle is not a plain handle")
     try:
         info = cloud.media_download(handle)
     except transport.TransportError as exc:
@@ -74,7 +90,7 @@ def download(cloud, handle, media_root):
     ext = EXTENSIONS.get(info.get("content_type"))
     if not ext or not isinstance(info.get("sha256"), str):
         raise ValueError("the website announced a file type the addon does not accept")
-    path = os.path.join(media_root, handle + ext)
+    path = safe_path(media_root, handle, ext)
     if os.path.isfile(path) and sha256_file(path) == info["sha256"]:
         return {"path": path, "sha256": info["sha256"], "md5": info.get("md5", ""), "size": os.path.getsize(path), "fresh": False}
     holder = {"info": info}
