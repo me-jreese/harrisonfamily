@@ -14,7 +14,8 @@ replays only the ops after that seq:
              or marker, a create is over no head or a tombstone and an update or delete over a live head, the version is exactly one more than
              the head's (a create over nothing is version 1), the object names the class and handle of its op, and the object hashes to the op's
              `hash`. An op the website marks `expunged` carries no object, so the cached head cannot be trusted either.
-    result   the heads after the replay, serialised the way the website builds a snapshot (class order, canonical JSON, the same header). The
+    result   the heads after the replay, serialised the way the website builds a snapshot (class order, canonical JSON, the same header; a head
+             privacy-expunge emptied keeps the `expunged: true` the cached snapshot gave it, because the flag is part of the body). The
              body hashes to the same body_sha256 a snapshot at that seq would carry, so the rest of the run (plan, preview, apply, sidecar) cannot
              tell the two apart: the plan of a delta pull is the plan of a snapshot pull of the same cloud state.
 
@@ -136,7 +137,8 @@ class Replica:
         """The snapshot body: one canonical JSON line per head, as api/src/sync/pull.js buildSnapshot writes it."""
         return "".join(canonical.canonical_json({
             "class": h.cls, "handle": h.handle, "gramps_id": h.gramps_id or "", "version": h.version, "seq": h.seq,
-            "deleted": bool(h.deleted), "obj": None if h.deleted else h.obj}) + "\n" for h in self.sorted_heads()).encode("utf-8")
+            "deleted": bool(h.deleted), **({"expunged": True} if h.expunged else {}),  # present only when true, as pull.js writes it (HFY-TSK-204)
+            "obj": None if h.deleted else h.obj}) + "\n" for h in self.sorted_heads()).encode("utf-8")
 
     def to_snapshot(self, schema, last_pull_seq=0):
         """The Snapshot a full download at this seq would give. Refuses a seq older than the last pull, like snapshot.parse does."""

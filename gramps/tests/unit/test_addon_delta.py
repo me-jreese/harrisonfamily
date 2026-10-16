@@ -450,6 +450,32 @@ class Verification(DeltaCase):
         _raw, sha, _n = server_snapshot_bytes(S.CLOUD_TREE, self.cloud.seq, list(self.cloud.heads.values()))
         self.assertEqual(self.env.state()["body_sha256"], sha)  # the cache was healed from the snapshot
 
+    def expunge_a_note(self):
+        """A whole-record privacy-expunge (HFY-TSK-204): the head is a tombstone that also says `expunged: true`, and the epoch moved."""
+        fresh = copy.deepcopy(by_gid({h: v["obj"] for h, v in self.cloud.heads.items() if not v["deleted"]}, "N0004"))
+        fresh.update(handle="e5" * 14, gramps_id="N8002")
+        set_text(fresh, "A note the owner had expunged.")
+        self.cloud.put(fresh)
+        self.cloud.tombstone(fresh["handle"])
+        self.cloud.heads[fresh["handle"]]["expunged"] = True
+        self.cloud.epoch = 1
+        self.cloud.marker()
+
+    def test_an_expunged_head_in_the_cloud_does_not_make_the_verification_mismatch(self):
+        self.expunge_a_note()
+        self.synced()
+        self.assertEqual(self.env.state()["expunge_epoch"], 1)
+        docs = self.run_syncs(7)
+        self.assertEqual([d["cloud"]["via"] for d in docs], ["delta"] * 6 + ["snapshot"])
+        log = self.env.log_text(docs[6])
+        self.assertIn("delta verify ok", log)
+        self.assertNotIn("MISMATCH", log)
+        _raw, sha, _n = server_snapshot_bytes(S.CLOUD_TREE, self.cloud.seq, list(self.cloud.heads.values()))
+        self.assertEqual(self.env.state()["body_sha256"], sha)
+        with open(delta.cache_file(self.env.tp, self.cloud.seq), "rb") as fh:
+            snap = snapshot.parse(fh.read(), tree_id=S.CLOUD_TREE, schema=21)
+        self.assertEqual([h.expunged for h in snap.heads if h.handle == "e5" * 14], [True])  # the cache keeps the flag the website wrote
+
     def test_a_verification_the_feed_cannot_serve_is_inconclusive_not_a_failure(self):
         self.synced()
         self.run_syncs(6)
@@ -461,9 +487,9 @@ class Verification(DeltaCase):
 
 
 class ReplicaRules(unittest.TestCase):
-    def head(self, cls="Note", handle="a1" * 14, version=1, seq=1, deleted=False, gid="N1", text="x"):
+    def head(self, cls="Note", handle="a1" * 14, version=1, seq=1, deleted=False, gid="N1", text="x", expunged=False):
         obj = None if deleted else {"_class": cls, "handle": handle, "gramps_id": gid, "text": {"string": text}}
-        return snapshot.Head(cls, handle, gid, version, seq, deleted, obj)
+        return snapshot.Head(cls, handle, gid, version, seq, deleted, obj, expunged)
 
     def op(self, kind, seq, version, handle="a1" * 14, cls="Note", gid="N1", text="y", **kw):
         obj = {"_class": cls, "handle": handle, "gramps_id": gid, "text": {"string": text}} if kind in ("create", "update") else None
@@ -514,6 +540,29 @@ class ReplicaRules(unittest.TestCase):
         self.assertEqual(snapshot.parse(snap.raw_gz, tree_id=S.CLOUD_TREE, schema=21).body_sha256, sha)  # and it parses like a download
         with self.assertRaises(snapshot.SnapshotError):
             r.to_snapshot(21, last_pull_seq=4)
+
+    def test_an_expunged_tombstone_keeps_its_flag_so_the_state_hashes_to_the_websites_snapshot(self):
+        live = self.head(handle="c3" * 14, gid="N3", seq=3)
+        gone = self.head(handle="d4" * 14, gid="N4", version=2, seq=4, deleted=True, expunged=True)
+
+        def rows(heads, flag=True):
+            return [{"class": h.cls, "handle": h.handle, "gramps_id": h.gramps_id, "version": h.version, "seq": h.seq, "deleted": h.deleted, "obj": h.obj,
+                     **({"expunged": True} if flag and h.expunged else {})} for h in heads]
+        raw, sha, count = server_snapshot_bytes(S.CLOUD_TREE, 4, rows([live, gone]))
+        self.assertNotEqual(sha, server_snapshot_bytes(S.CLOUD_TREE, 4, rows([live, gone], flag=False))[1])  # the flag is part of the body the website hashes
+        parsed = snapshot.parse(raw, tree_id=S.CLOUD_TREE, schema=21)
+        self.assertEqual([(h.handle, h.deleted, h.expunged) for h in parsed.heads], [(live.handle, False, False), (gone.handle, True, True)])
+        for heads in ([live, gone], parsed.heads):  # built by hand, and read back from a download: both give the website's bytes
+            snap = delta.Replica(S.CLOUD_TREE, 4, heads, 0).to_snapshot(21)
+            self.assertEqual((snap.body_sha256, snap.header["count"]), (sha, count))
+            self.assertEqual(snapshot.parse(snap.raw_gz, tree_id=S.CLOUD_TREE, schema=21).heads[1].expunged, True)
+        plain = delta.Replica(S.CLOUD_TREE, 4, [live, self.head(handle="d4" * 14, gid="N4", version=2, seq=4, deleted=True)], 0).to_snapshot(21)
+        self.assertNotEqual(plain.body_sha256, sha)  # a tombstone that was not expunged stays a different line
+
+    def test_a_create_over_an_expunged_tombstone_is_a_live_head_again(self):
+        r = delta.Replica("t", 1, [self.head(version=2, deleted=True, expunged=True)], 0)
+        r.apply(self.op("create", 2, 3), 2)
+        self.assertEqual((r.heads["a1" * 14].deleted, r.heads["a1" * 14].expunged), (False, False))
 
     def test_the_class_order_is_the_websites(self):
         here = os.path.dirname(os.path.abspath(__file__))

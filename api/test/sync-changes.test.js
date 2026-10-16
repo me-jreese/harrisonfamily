@@ -118,14 +118,17 @@ function readSnapshot(s3, seq) {
 const feed = (w, q = "") => w.call("GET", "/sync/changes", { query: Object.fromEntries(new URLSearchParams(q.replace(/^\?/, ""))) });
 const SAFE_KEYS = ["at", "class", "gramps_id", "handle", "hash", "obj", "op", "origin", "seq", "version"];
 
-/** The fold a client applies: what the add-on's delta module does, over {class#handle: head}. */
+/**
+ * The fold a client applies: what the add-on's delta module does, over {class#handle: head}. An entry the feed marks `expunged` is a tombstone that keeps
+ * the flag (the add-on's snapshot.Head.expunged, which a cache built from a snapshot after an expunge holds), because buildSnapshot writes it into the line.
+ */
 function fold(state, ops) {
   for (const o of ops) {
     if (o.op === "marker") continue;
     const k = `${o.class}#${o.handle}`;
     const old = state.get(k);
-    const live = (o.op === "create" || o.op === "update") && o.obj !== null;
-    state.set(k, { class: o.class, handle: o.handle, gramps_id: o.gramps_id || old?.gramps_id || "", version: o.version, seq: o.seq, deleted: !live, obj: live ? o.obj : null });
+    const live = (o.op === "create" || o.op === "update") && o.obj !== null && o.expunged !== true;
+    state.set(k, { class: o.class, handle: o.handle, gramps_id: o.gramps_id || old?.gramps_id || "", version: o.version, seq: o.seq, deleted: !live, ...(o.expunged === true ? { expunged: true } : {}), obj: live ? o.obj : null });
   }
   return state;
 }
@@ -334,13 +337,19 @@ describe("the page budget counts UTF-8 bytes, not characters", () => {
 });
 
 describe("a delta and a snapshot give the same state (AC3, server side)", () => {
-  it("folding the feed reproduces the snapshot byte for byte: creates, updates, a delete, a withdraw, a resurrect and a marker", async () => {
+  it("folding the feed reproduces the snapshot byte for byte: creates, updates, a delete, a withdraw, a resurrect, a marker and an expunged head", async () => {
     const w = world();
-    const [a, b, c] = [person(1), person(2), person(3)];
-    const open = await w.call("POST", "/sync/sessions", { body: { expected: [`Person#${a.handle}`, `Person#${b.handle}`, `Person#${c.handle}`, `Note#${h(2001)}`] } });
-    await w.call("POST", "/sync/batches", { idem: "k-a", body: { session_id: open.body.session_id, ops: [create(a), create(b), create(c), create(note(1))] } });
+    const [a, b, c, d] = [person(1), person(2), person(3), person(4)];
+    const open = await w.call("POST", "/sync/sessions", { body: { expected: [`Person#${a.handle}`, `Person#${b.handle}`, `Person#${c.handle}`, `Person#${d.handle}`, `Note#${h(2001)}`] } });
+    await w.call("POST", "/sync/batches", { idem: "k-a", body: { session_id: open.body.session_id, ops: [create(a), create(b), create(c), create(d), create(note(1))] } });
     await w.call("POST", `/sync/sessions/${open.body.session_id}/complete`, { body: {} });
+    // privacy-expunge empties one whole record (HFY-TSK-204): its log entry loses the value and says `expunged: true`, the epoch moves, and the head is a tombstone that says so
+    const gone = w.rows("SYNC#LOG").find((r) => r.handle === d.handle);
+    w.ddb.rows.set(`${gone.PK}\u0000${gone.SK}`, { ...gone, obj_json: null, expunged: true });
+    w.ddb.rows.set("SYNC#HEAD\u0000META", { ...w.row("SYNC#HEAD"), expunge_epoch: 1 });
+    w.reset();
     const mid = (await feed(w)).body;
+    expect(mid.ops.find((o) => o.handle === d.handle)).toMatchObject({ obj: null, expunged: true });
     expect(mid.next_since).toBe(mid.head_seq);
     const cached = fold(new Map(), mid.ops); // the client's cache at seq 6
     await w.push([{ op: "update", class: "Person", handle: a.handle, base_version: 1, obj: person(1, { gender: 0 }) }, del("Note", h(2001), 1)]);
@@ -353,6 +362,11 @@ describe("a delta and a snapshot give the same state (AC3, server side)", () => 
     const built = buildSnapshot({ treeId: TREE, seq: tail.next_since, heads: [...cached.values()] });
     expect(built.body_sha256).toBe(snap.body.body_sha256);
     expect(built.count).toBe(snap.body.count);
+    const expungedLine = readSnapshot(w.s3, tail.next_since).lines.find((l) => l.handle === d.handle);
+    expect(expungedLine).toMatchObject({ deleted: true, expunged: true, obj: null }); // the flag is in the snapshot line, and so in the hash
+    expect(readSnapshot(w.s3, tail.next_since).lines.filter((l) => "expunged" in l)).toHaveLength(1); // and only there
+    const dropped = [...cached.values()].map(({ expunged, ...rest }) => rest);
+    expect(buildSnapshot({ treeId: TREE, seq: tail.next_since, heads: dropped }).body_sha256).not.toBe(snap.body.body_sha256); // a replica that forgot it would not match
     const full = fold(new Map(), (await feed(w, "?since=0&limit=500")).body.ops);
     expect(buildSnapshot({ treeId: TREE, seq: tail.next_since, heads: [...full.values()] }).body_sha256).toBe(snap.body.body_sha256);
   });
