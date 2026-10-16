@@ -455,16 +455,44 @@ test.describe("profile presence (chatV1)", () => {
     hub.dispose();
   });
 
-  test("a member without an account gets no presence, and nor does a page with the flag off", async ({ page }) => {
+  // The island has connected and the hub has answered its hello (a positive signal), then one frame of settling for the people snapshot.
+  async function connected(page, hub) {
+    await expect.poll(() => hub.log.frames.some((f) => f.frame.t === "hello")).toBe(true);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 50))));
+  }
+
+  test("a member without an account (not in the hub's people, as a deceased or non-member page) gets no presence", async ({ page }) => {
     const hub = await withChat(page, { id: "I9003" });
-    await page.waitForTimeout(800); // the island has had time to connect and receive its people
+    await connected(page, hub);
     await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
     expect(await page.locator('[data-slot="presence"]').evaluate((el) => el.childElementCount)).toBe(0);
     hub.dispose();
-    const off = await withChat(page, { chat: false });
-    await page.waitForTimeout(800);
+  });
+
+  test("a page with the flag off gets no presence and the island never connects", async ({ page }) => {
+    const hub = await withChat(page, { chat: false });
+    await expect(page.locator("#person-hero h1")).toBeVisible();
     await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
-    off.dispose();
+    expect(hub.log.upgrades ?? 0).toBe(0);
+    hub.dispose();
+  });
+
+  test("a rebuilt hero keeps exactly one presence, in the new slot, and a switch to a non-member removes it", async ({ page }) => {
+    const hub = await withChat(page);
+    await expect(page.locator('[data-slot="presence"] [data-hfy-presence="I9001"]')).toBeVisible();
+    // The hero is drawn again (as a render does): the old slot is replaced by a fresh empty one, then the event fires.
+    await page.evaluate(() => {
+      const old = document.querySelector('[data-slot="presence"]');
+      const fresh = document.createElement(old.tagName);
+      fresh.setAttribute("data-slot", "presence");
+      old.replaceWith(fresh);
+      document.dispatchEvent(new CustomEvent("hfy:person-rendered", { detail: { personId: "I9001" } }));
+    });
+    await expect(page.locator('[data-slot="presence"] [data-hfy-presence="I9001"]')).toHaveCount(1);
+    await expect(page.locator("[data-hfy-presence]")).toHaveCount(1);
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent("hfy:person-rendered", { detail: { personId: "I9003" } })));
+    await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
+    hub.dispose();
   });
 
   test("your own page shows your state and no chat button; a page that is not a person page gets nothing", async ({ page }) => {
@@ -474,7 +502,7 @@ test.describe("profile presence (chatV1)", () => {
     await expect(p).toBeVisible();
     await expect(p.getByRole("button")).toHaveCount(0);
     await page.goto("/about/", { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(800);
+    await connected(page, hub);
     await expect(page.locator("[data-hfy-presence]")).toHaveCount(0);
     hub.dispose();
   });

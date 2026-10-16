@@ -89,7 +89,7 @@ function personStore() {
   let cur = null;
   const subs = new Set();
   const read = (id) => {
-    const host = document.querySelector('#person-hero [data-slot="presence"], [data-slot="presence"]');
+    const host = document.querySelector('#person-hero [data-slot="presence"]');
     const next = host && id ? { host, personId: id } : null;
     if (cur === next || (cur && next && cur.host === next.host && cur.personId === next.personId)) return;
     cur = next;
