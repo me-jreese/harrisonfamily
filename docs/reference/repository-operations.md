@@ -611,6 +611,8 @@ No workflow runs any of these. For the order to run them in, see [run the tests]
 
 [`api/test/edit-e2e.test.js`](../../api/test/edit-e2e.test.js) (in `cd api && npm test`) and [`islands/tests/edit-e2e.spec.mjs`](../../islands/tests/edit-e2e.spec.mjs) run five editing scenarios against the real API handler over the DynamoDB fake, [`api/test/edit-e2e-world.js`](../../api/test/edit-e2e-world.js): the browser spec routes the pages' `/api` calls to that handler ([`islands/tests/edit-e2e-bridge.mjs`](../../islands/tests/edit-e2e-bridge.mjs)), so it needs `api/` installed as well as `islands/`. [`islands/tests/edit-d11-audit.spec.mjs`](../../islands/tests/edit-d11-audit.spec.mjs) measures the D-11 checklist on the same stack; see [Editing: the D-11 audit](editing-d11-audit.md).
 
+Photo tagging has its own three scenarios on the same stack ([`api/test/tag-edit-e2e.test.js`](../../api/test/tag-edit-e2e.test.js), [`islands/tests/tag-edit-e2e.spec.mjs`](../../islands/tests/tag-edit-e2e.spec.mjs)) and its own audit ([`islands/tests/tag-edit-d11-audit.spec.mjs`](../../islands/tests/tag-edit-d11-audit.spec.mjs)); see [Photo tagging: the D-11 audit](tagging-d11-audit.md).
+
 ### Login-flow environment
 
 [`tests/login-flow/`](../../tests/login-flow/) has no lockfile, so it installs with `npm install`. [`playwright.config.ts`](../../tests/login-flow/playwright.config.ts) sets a 90 s test timeout and a 10 s `expect` timeout, an HTML reporter, video on failure and trace on first retry. No retries are configured, so traces are recorded only when a run passes `--retries`.
