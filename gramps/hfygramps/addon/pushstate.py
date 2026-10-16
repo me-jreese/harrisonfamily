@@ -12,7 +12,8 @@ only: the base is the cloud object at the last sync, never a raw Gramps object. 
               base.
     holds     what was kept back and why, replaced as a whole by every real run (`first_seen` survives for a hold that stays), except
               the pull's own `expunge.notice` rows: those say which values a website scrub removed, they are the pull's to write,
-              and a push neither replaces nor drops them (`sidecar.load_expunge_holds` hands them to the plan).
+              and a push neither replaces nor drops them (`sidecar.load_expunge_holds` hands them to the plan); and the rows of a
+              media file the pull's download held, which stay while that Media has no file (`sidecar.download_holds`).
     conflicts conflicts, pinned by their path (sync.md 6.7, BRD2 11.1): `parked` when the command line found them, `open` when the
               Gramps window did (the pull writes both the same way); `pins` hands both back to the merge.
 """
@@ -200,14 +201,18 @@ def ack_batch(con, key, request, response):
 # ----------------------------------------------------------------------------------------------------------------- holds
 
 
-def sync_holds(con, holds, now):
-    """Replaces the holds table with `holds` ([{class, handle, path, rule, detail}]); a hold that stays keeps its first_seen."""
+def sync_holds(con, holds, now, pathless=()):
+    """Replaces the holds table with `holds` ([{class, handle, path, rule, detail}]); a hold that stays keeps its first_seen.
+    `pathless` is the handles of the Media with no file path: the holds of a media file the pull's download held stay for them."""
     seen = {(c, h, p, r): f for c, h, p, r, f in con.execute("SELECT class, handle, path, rule, first_seen FROM holds WHERE rule != ?", (sidecar.EXPUNGE_RULE,))}
+    kept = sidecar.download_holds(con, pathless)
     con.execute("DELETE FROM holds WHERE rule != ?", (sidecar.EXPUNGE_RULE,))  # the pull's expunge notices stay: the push must not put those values back
     for x in holds:
         key = (x["class"], x["handle"], x.get("path", ""), x["rule"])
         con.execute("INSERT OR REPLACE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
                     key + (x.get("detail", ""), seen.get(key) or now))
+    for row in kept:
+        con.execute("INSERT OR IGNORE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)", row)
     con.commit()
 
 

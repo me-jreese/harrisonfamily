@@ -155,20 +155,34 @@ class GrampsTree(runner.TreeAccess):
 
 
 def _gui_actions(tree):
-    """The callables the Website sync menu runs (hfy_sync_ui.present)."""
-    from hfygramps.addon import backup, paths
+    """The callables the Website sync window runs (hfy_sync_ui.present). `flow` does the review and the one-run apply (review.Flow)."""
+    from hfygramps.addon import backup, paths, review
 
     def run(action, **kw):
         return runner.run(tree, "gui", runner.Options(action, **kw), argv=sys.argv)
 
     tp = paths.TreePaths(tree.dbid)
+
+    def latest_log():
+        # codes and step names only (sync.md 4.3): the newest run log of this tree
+        try:
+            names = sorted(n for n in os.listdir(tp.logs) if n.endswith(".log"))
+            if not names:
+                return ""
+            with open(os.path.join(tp.logs, names[-1]), encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
     return {
+        "flow": review.Flow(tree, argv=sys.argv),
         "bind": lambda: run("bind", yes=True),
-        "check": lambda: run("check", dry_run=True),
-        "apply": lambda preview_id: run("pull", yes=True, plan=preview_id or ""),
+        "login": lambda step_up=False: run("login", step_up=bool(step_up)),
         "rebase_check": lambda: run("rebase", dry_run=True),
         "rebase": lambda: run("rebase", yes=True),
         "backups": lambda: [n for n, _p in backup.list_backups(tp.backups)],
+        "backups_dir": lambda: tp.backups,
+        "latest_log": latest_log,
         "restore_hint": lambda name: "hfy-sync restore %s --tree \"%s\"" % (name, tree.name),
     }
 
