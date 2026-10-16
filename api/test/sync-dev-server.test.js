@@ -441,6 +441,26 @@ describe("the sync routes through the in-memory table and the directory store", 
     expect(JSON.stringify(logLines(dev))).toContain("[removed]"); // the dev log records the scrub request, as it records every request
   });
 
+  it("/_dev/conflicts opens a queue item that the real routes list, decide, reconcile and receipt (HFY-TSK-338)", async () => {
+    const dev = await server();
+    const tok = (await login(dev)).access_token;
+    const { tree_id: tree } = await (await api(dev, tok, "POST", "/sync/bind", { body: BIND })).json();
+    const post = (b) => fetch(`${dev.origin}/_dev/conflicts`, { method: "POST", body: JSON.stringify(b) });
+    for (const bad of [{}, { class: "Nope", handle: "a".repeat(28), paths: [{ path: "/x" }] }, { class: "Note", handle: "a".repeat(28), paths: [] }, { class: "Note", handle: "a".repeat(28), paths: ["x"] }]) {
+      expect((await post(bad)).status, JSON.stringify(bad)).toBe(400);
+    }
+    const made = await post({ class: "Note", handle: "a".repeat(28), gramps_id: "N0001", paths: [{ path: "/text", base: "one", cloud: "two", desktop: "three" }] });
+    expect(made.status).toBe(200);
+    const c = await made.json();
+    expect(c).toMatchObject({ class: "Note", state: "open", kind: "field", paths: [{ path: "/text", base: "one", cloud: "two", desktop: "three" }], history: [] });
+    expect(c.id).toMatch(/^[A-Za-z0-9]{26}$/);
+    expect((await (await fetch(`${dev.origin}/_dev/conflicts`)).json()).conflicts.map((x) => x.id)).toEqual([c.id]);
+    expect((await fetch(`${dev.origin}/_dev/conflicts?state=weird`)).status).toBe(400);
+    const listed = await (await api(dev, tok, "GET", "/sync/conflicts", { tree })).json();
+    expect(listed.conflicts.map((x) => x.id)).toEqual([c.id]);
+    expect((await api(dev, tok, "POST", "/sync/conflicts/reconcile", { tree, body: {} })).status).toBe(200);
+  });
+
   it("the head switches pause and resume writes, and refuse what they do not know", async () => {
     const dev = await server();
     const tok = (await login(dev)).access_token;

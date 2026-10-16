@@ -26,7 +26,7 @@ from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
 from . import backup as backup_mod
-from . import consts, delta, errors, faults, media, paths, sidecar, snapshot, status, transport
+from . import consts, decisions, delta, errors, faults, media, paths, sidecar, snapshot, status, transport
 from . import plan as plan_mod
 
 MAX_REPLANS = 3
@@ -62,6 +62,18 @@ class Cloud:
     def fetch(self, url):
         return self.http.get_bytes(media.check_download_url(url))
 
+    def reconcile_decisions(self, observed, dry=False):
+        """POST /api/sync/conflicts/reconcile (HFY-TSK-338): the website's decisions that still apply, and the ones it reopened (decisions.py)."""
+        body = {"observed": observed}
+        if dry:
+            body["dry"] = True
+        answer = self.client.post("/api/sync/conflicts/reconcile", body).body
+        return answer if isinstance(answer, dict) else None
+
+    def decision_applied(self, conflict_id, outcome):
+        """POST /api/sync/conflicts/:id/applied: the receipt for a decision that was applied (or found moot)."""
+        self.client.post("/api/sync/conflicts/%s/applied" % urllib.parse.quote(conflict_id, safe=""), {"outcome": outcome})
+
     def media_download(self, handle):
         body = self.client.post("/api/sync/media/%s/download" % urllib.parse.quote(handle, safe=""), {}).body
         if not isinstance(body, dict):
@@ -91,6 +103,7 @@ class Ctx:
         self.faults = services.get("faults") or faults.Faults(environ)
         self.dry = options.action == "check" or options.dry_run
         self.policy = R.load_policy()
+        self.decisions = None  # decisions.Outcome of this run (HFY-TSK-338), once the plan has been made without any
 
 
 def _refuse(code):
@@ -165,8 +178,8 @@ def _run(ctx):
     log.line("snapshot seq=%d count=%d" % (snap.seq, snap.header["count"]))
     ctx.faults.hit("after_snapshot")
 
-    # ---- plan (step 4) and preview (step 5)
-    plan = _plan(ctx)
+    # ---- plan (step 4), the website's conflict decisions (HFY-TSK-338), and preview (step 5)
+    plan = _decide(ctx, cloud, _plan(ctx))
     _write_preview(ctx, plan)
     ctx.outcome["counts"] = plan.counts
     log.line("plan hash=%s changes=%s" % (plan.plan_hash[:12], plan.has_changes))
@@ -241,6 +254,8 @@ def _run(ctx):
 
     # ---- base, conflicts, holds, incidents (step 10)
     _update_sidecar(ctx, plan, cloud_tree)
+    if ctx.decisions is not None:
+        decisions.acknowledge(ctx, cloud, ctx.decisions)
     ctx.faults.hit("after_sidecar")
     if bk is not None:
         backup_mod.prune(tp.backups)
@@ -338,22 +353,39 @@ def _snapshot(ctx, cloud, cloud_tree, last_pull_seq):
     return snap
 
 
+def _decide(ctx, cloud, plan):
+    """The website's conflict decisions (HFY-TSK-338, SI-30). `plan` was made with the sidecar's pins as they are; the website says which decisions
+    still apply, and the ones that do are applied by making the plan again with the decided pins' bases replaced (decisions.py). Nothing else
+    about the run changes: the same preview, backup, transaction and sidecar update apply them."""
+    ctx.decisions = decisions.collect(ctx, cloud, plan)
+    if not ctx.decisions.overrides:
+        return plan
+    plan = _plan(ctx)
+    return plan
+
+
 def _plan(ctx):
     """One planning pass over the tree as it is now."""
     side, tree = ctx.side, ctx.tree
     pull_n = int(sidecar.meta(side).get("pull_n") or 0)
     local = tree.objects()
+    pins = sidecar.load_pins(side)
+    if ctx.decisions is not None and ctx.decisions.overrides:
+        pins = ctx.decisions.pins(pins)
     plan = plan_mod.build(
-        local, sidecar.load_base(side), ctx.snap.heads, pins=sidecar.load_pins(side),
+        local, sidecar.load_base(side), ctx.snap.heads, pins=pins,
         sticky=set(sidecar.meta_json(side, "birthlike_sticky", [])), released=set(sidecar.meta_json(side, "released", [])),
         mode=ctx.mode, allow_deletes=ctx.options.allow_deletes, files=tree.media_files(), pulled=sidecar.load_pulled(side, pull_n),
         expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy, confirm_mass_delete=bool(ctx.services.get("confirm_mass_delete")))
     plan.local = local
+    if ctx.decisions is not None and ctx.decisions.overrides:
+        ctx.decisions.settle(plan)
     return plan
 
 
 def _write_preview(ctx, plan):
     doc = plan_mod.preview(plan, ctx.run_id, ctx.options.action, ctx.mode, ctx.snap, status.utc_now())
+    doc["decisions"] = ctx.decisions.preview() if ctx.decisions is not None else []
     paths.atomic_write_json(os.path.join(ctx.tp.previews, "%s.json" % ctx.run_id), doc)
 
 
@@ -557,6 +589,10 @@ def _update_sidecar(ctx, plan, cloud_tree):
         for (cid,) in side.execute("SELECT id FROM conflicts WHERE state IN ('open', 'parked')").fetchall():
             if cid not in current:
                 side.execute("UPDATE conflicts SET state = 'resolved', resolved_at = ? WHERE id = ?", (now, cid))
+
+        # the website's decisions (HFY-TSK-338): the desktop conflicts they closed, and the reopened and held ones, in the sidecar
+        if ctx.decisions is not None:
+            decisions.persist(side, ctx.decisions, now)
 
         # incidents (counts only leave this file)
         keep = {(i["class"], i["handle"]) for i in plan.incidents}

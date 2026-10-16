@@ -1,0 +1,366 @@
+{
+ "format": "conflict-decision-v1",
+ "note": "Written by the website's cloudValueHash, cloudValueAt and decisionStaleReason (api/src/sync/pull.js); gramps/hfygramps/addon/decisions.py must agree on every row. Synthetic values only.",
+ "hashes": [
+  {
+   "title": "one path, text",
+   "paths": [
+    {
+     "path": "/primary_name/first_name",
+     "cloud": "Birch"
+    }
+   ],
+   "hash": "a23941f3d009cd730ebeaa0885af1bdb68303aa3216d70e02a023190e5e65a19"
+  },
+  {
+   "title": "the desktop value is not part of the hash",
+   "paths": [
+    {
+     "path": "/text",
+     "cloud": "two",
+     "desktop": "three",
+     "base": "one"
+    }
+   ],
+   "hash": "e885e5cd624d0cdca49cdae65fde10d2304d6ef38b7f2823ccca0259fbb929f4"
+  },
+  {
+   "title": "two paths in order",
+   "paths": [
+    {
+     "path": "/a",
+     "cloud": 1
+    },
+    {
+     "path": "/b",
+     "cloud": [
+      1,
+      2,
+      {
+       "z": null,
+       "a": true
+      }
+     ]
+    }
+   ],
+   "hash": "8ab3cb276058ea4c645f200b236249294ff91cd22b41482fd708873a9d1a1800"
+  },
+  {
+   "title": "an absent cloud value reads null",
+   "paths": [
+    {
+     "path": "/gone"
+    }
+   ],
+   "hash": "b8a3d1deb959bbf441d36c1b7b83ad0f17b93e531698257bfbc5cff5377ca261"
+  },
+  {
+   "title": "non-ASCII text",
+   "paths": [
+    {
+     "path": "/text",
+     "cloud": "Zoë é中"
+    }
+   ],
+   "hash": "a5956e45ba4058f676195eb3eb9c2b1653cbf30f0a058f695f7a584f10d9eb44"
+  },
+  {
+   "title": "a StyledText value, keys sorted",
+   "paths": [
+    {
+     "path": "/text",
+     "cloud": {
+      "string": "x",
+      "_class": "StyledText",
+      "tags": []
+     }
+    }
+   ],
+   "hash": "f1c84787b14f2688ef9bb7202a4a5e1647456fb0ef3ec629c6196a1ed9eff580"
+  },
+  {
+   "title": "the whole object",
+   "paths": [
+    {
+     "path": "",
+     "cloud": {
+      "handle": "h",
+      "_class": "Note"
+     }
+    }
+   ],
+   "hash": "b056d506291df3616babf26c5e2161c647793f026887f381bbe7fcc993a8d672"
+  },
+  {
+   "title": "no paths",
+   "paths": [],
+   "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  }
+ ],
+ "pointers": {
+  "object": {
+   "a": {
+    "b": [
+     "z",
+     {
+      "c": 1
+     }
+    ]
+   },
+   "k/l": 2,
+   "t~u": 3,
+   "n": null
+  },
+  "cases": [
+   {
+    "path": "/a/b/1/c",
+    "unresolved": false,
+    "value": 1
+   },
+   {
+    "path": "/k~1l",
+    "unresolved": false,
+    "value": 2
+   },
+   {
+    "path": "/t~0u",
+    "unresolved": false,
+    "value": 3
+   },
+   {
+    "path": "/n",
+    "unresolved": false,
+    "value": null
+   },
+   {
+    "path": "/a/nothing/deeper",
+    "unresolved": false,
+    "value": null
+   },
+   {
+    "path": "/a/b/9",
+    "unresolved": false,
+    "value": null
+   },
+   {
+    "path": "/a/b/ref#0",
+    "unresolved": true,
+    "value": null
+   },
+   {
+    "path": "/_birth_ref",
+    "unresolved": true,
+    "value": null
+   },
+   {
+    "path": "",
+    "unresolved": false,
+    "value": {
+     "a": {
+      "b": [
+       "z",
+       {
+        "c": 1
+       }
+      ]
+     },
+     "k/l": 2,
+     "t~u": 3,
+     "n": null
+    }
+   },
+   {
+    "path": "no-slash",
+    "unresolved": true,
+    "value": null
+   },
+   {
+    "path": "/a/b/01",
+    "unresolved": true,
+    "value": null
+   }
+  ]
+ },
+ "stale": [
+  {
+   "title": "matches",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": 4,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": null
+  },
+  {
+   "title": "version mismatch",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": 5,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "version_changed"
+  },
+  {
+   "title": "head gone",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": null,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "version_changed"
+  },
+  {
+   "title": "hash mismatch",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": 4,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "two"
+     }
+    ]
+   },
+   "reason": "value_changed"
+  },
+  {
+   "title": "path mismatch",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": 4,
+    "paths": [
+     {
+      "path": "/y",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "value_changed"
+  },
+  {
+   "title": "missing hash",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": null
+   },
+   "current": {
+    "version": 4,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "no_hash"
+  },
+  {
+   "title": "malformed hash",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": 4,
+    "cloud_value_hash": "ABC"
+   },
+   "current": {
+    "version": 4,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "no_hash"
+  },
+  {
+   "title": "not resolved",
+   "decision": {
+    "state": "open",
+    "cloud_version": 4,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": 4,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "not_resolved"
+  },
+  {
+   "title": "no version stored, no head",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": null,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": null,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": null
+  },
+  {
+   "title": "no version stored, a head",
+   "decision": {
+    "state": "resolved",
+    "cloud_version": null,
+    "cloud_value_hash": "2cd23ea409c3c867a43600d7ad48a3758ad3b1dc17a1e9bab81453839e588216"
+   },
+   "current": {
+    "version": 1,
+    "paths": [
+     {
+      "path": "/x",
+      "cloud": "one"
+     }
+    ]
+   },
+   "reason": "version_changed"
+  }
+ ]
+}

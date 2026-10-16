@@ -252,6 +252,21 @@ class DevServer:
                              {"Content-Type": "application/json"})
         return status, (json.loads(body.decode("utf-8")) if body else None)
 
+    def open_conflict(self, cls, handle, paths, kind="field", gramps_id=""):
+        """Opens one conflict in the website's queue (POST /_dev/conflicts), as the desktop's mirror will; returns its wire shape."""
+        status, body = _call("POST", self.origin + "/_dev/conflicts", {"class": cls, "handle": handle, "paths": paths, "kind": kind, "gramps_id": gramps_id},
+                             {"Content-Type": "application/json"})
+        if status != 200:
+            raise DevServerError("the conflict was refused (%s)" % status)
+        return json.loads(body.decode("utf-8"))
+
+    def conflicts(self, state="open"):
+        """The website's conflict queue in `state`, in the wire shape of /api/sync/conflicts (GET /_dev/conflicts)."""
+        status, doc = self.get_json("/_dev/conflicts?" + urllib.parse.urlencode({"state": state}))
+        if status != 200:
+            raise DevServerError("the conflict list was refused (%s)" % status)
+        return doc["conflicts"]
+
     def items(self, prefix):
         """The keys ({PK, SK}) of the table items whose PK starts with `prefix`: never their contents."""
         status, doc = self.get_json("/_dev/items?" + urllib.parse.urlencode({"prefix": prefix}))

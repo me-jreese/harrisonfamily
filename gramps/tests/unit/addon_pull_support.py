@@ -184,6 +184,11 @@ class FakeCloud:
         self.fetch_errors = {}   # url suffix -> TransportError to raise once
         self.media_errors = {}   # handle -> exception
         self._files = {}
+        self.conflicts = []      # the website's conflict queue, as api/src/sync/pull.js conflictView shapes it (HFY-TSK-338)
+        self.reconcile_calls = []
+        self.receipts = []
+        self.reconcile_error = None   # a TransportError to raise from reconcile_decisions
+        self.force_apply = False      # a website that calls every pending decision valid
 
     def meta(self):
         self.calls.append("meta")
@@ -217,6 +222,58 @@ class FakeCloud:
         self._files[key] = blob["bytes"]
         return {"url": "https://files.example.org/%s" % key, "sha256": blob.get("sha256") or hashlib.sha256(blob["bytes"]).hexdigest(),
                 "md5": blob.get("md5") or hashlib.md5(blob["bytes"]).hexdigest(), "size": len(blob["bytes"]), "content_type": blob["content_type"]}
+
+    # ---- the website's conflict decisions (HFY-TSK-338)
+    def decide(self, cls, handle, paths, decision="keep_cloud", version="head", cloud_value_hash="paths", cid=None):
+        """An admin's decision on a conflict at `paths` ([{path, cloud}]). `version` is the cloud version it was made against ("head": the head's
+        now), `cloud_value_hash` is "paths" (the hash of these paths), or what to store (None for a decision stored without one)."""
+        from hfygramps.addon import decisions as D
+
+        head = self.heads.get(handle)
+        cid = cid or "%026d" % (len(self.conflicts) + 1)
+        item = {"id": cid, "class": cls, "handle": handle, "gramps_id": head.get("gramps_id", "") if head else "", "kind": "field",
+                "source": "desktop_parked", "paths": [dict({"base": None, "desktop": None}, **p) for p in paths], "state": "resolved",
+                "decision": decision, "opened_at": "2026-10-13T00:00:00.000Z", "resolved_at": "2026-10-14T00:00:00.000Z", "by": "owner",
+                "cloud_version": (head["version"] if head else None) if version == "head" else version,
+                "cloud_value_hash": D.cloud_value_hash(paths) if cloud_value_hash == "paths" else cloud_value_hash,
+                "reopened_at": None, "history": [], "applied_at": None}
+        self.conflicts.append(item)
+        return item
+
+    def reconcile_decisions(self, observed, dry=False):
+        """The website's reconcile route: checks each pending decision with its own rule (decisions.stale_reason, which the shared vectors pin to
+        the website's), reopens the stale ones unless `dry`."""
+        from hfygramps.addon import decisions as D
+
+        self.calls.append("reconcile")
+        self.reconcile_calls.append({"observed": copy.deepcopy(observed), "dry": dry})
+        if self.reconcile_error is not None:
+            raise self.reconcile_error
+        seen = {(o["class"], o["handle"], o["path"]): o["cloud"] for o in observed}
+        apply, reopened = [], []
+        for d in self.conflicts:
+            if d["state"] != "resolved" or d.get("applied_at") or d["decision"] not in D.APPLICABLE:
+                continue
+            head = self.heads.get(d["handle"])
+            paths = [{"path": p["path"], "cloud": seen.get((d["class"], d["handle"], p["path"]), p.get("cloud"))} for p in d["paths"]]
+            why = None if self.force_apply else D.stale_reason(d, head["version"] if head else None, paths)
+            if why is None:
+                apply.append(copy.deepcopy(d))
+                continue
+            if not dry:
+                d["history"].append({"decision": d["decision"], "cloud_version": d["cloud_version"], "reason": why})
+                for k in ("decision", "cloud_version", "cloud_value_hash", "resolved_at", "by"):
+                    d[k] = None
+                d["state"], d["reopened_at"] = "open", "2026-10-15T00:00:00.000Z"
+            reopened.append(dict(copy.deepcopy(d), reason=why))
+        return {"checked": len(apply) + len(reopened), "apply": apply, "reopened": reopened, "more": False, "dry": dry}
+
+    def decision_applied(self, cid, outcome):
+        self.calls.append("applied:%s" % outcome)
+        self.receipts.append((cid, outcome))
+        for d in self.conflicts:
+            if d["id"] == cid:
+                d["applied_at"] = "2026-10-15T00:00:00.000Z"
 
     # ---- website edits
     def put(self, obj, version=None, seq=None):
