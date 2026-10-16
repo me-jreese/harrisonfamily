@@ -29,6 +29,7 @@ Neutral descriptions of the machinery. Consult these; you don't read them front 
 - [Codebase map](reference/codebase-map.md) — each capability routed to the files that implement it, including the pieces outside the repository.
 - [System architecture](reference/architecture.md) — the deployed system: request routing, origins, buckets, compute, the identity store, the `hfy-app` table and the CloudFormation stacks.
 - [Family API (hfy-api)](reference/api.md) — the members-only API at `/api/*`: routes, permissions, audit records, notifications, uploads and configuration.
+- [Editing: the D-11 audit](reference/editing-d11-audit.md) — what was measured on `/edit/`, `/edit/family/` and `/me/review/` at 375 and 1024 px, the screenshots, what it does not cover, and the five end-to-end scenarios.
 - [Field policy](reference/field-policy.md) — who may change which field, on which record and how: the generated table, the Q2-15 switches and the withheld types. Checked against `field-policy.js` by a test.
 - [MCP server (/mcp)](reference/mcp-server.md) — the MCP endpoint that `hfy-api` serves: tools, policy, groups, step-up, audit and the conformance gate.
 - [Identity services](reference/identity-services.md) — the auth edge, the private data gate and the legacy sign-in path: routes, tokens, cookies, session refresh and configuration.

@@ -51,7 +51,7 @@ Use a test person or a synthetic page for the editor steps, and undo what you ch
 
 ### 4. Check the page audits
 
-Before the flip, confirm the editor (`/edit/`), the relationship wizard (`/edit/family/`) and the review page (`/me/review/`) meet the interface checks (16 px inputs, 44 px targets, no horizontal scroll at 375 px wide, and the installed phone app) as recorded by the end-to-end editing audit (`edit-e2e-core`, the D-11 checklist in the PLN-002 task list). This page does not repeat them.
+Before the flip, confirm the editor (`/edit/`), the relationship wizard (`/edit/family/`) and the review page (`/me/review/`) meet the interface checks (16 px inputs, 44 px targets, no horizontal scroll at 375 px wide, and the installed phone app) as recorded in [Editing: the D-11 audit](../reference/editing-d11-audit.md) (the end-to-end editing task, `edit-e2e-core` in the review). That page covers the pages at 375 and 1024 px; the installed phone app stays io's check before the flip. This page does not repeat the checks.
 
 ### 5. Flip the flags for everyone, in this order
 

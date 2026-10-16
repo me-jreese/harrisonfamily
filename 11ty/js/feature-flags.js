@@ -20,11 +20,11 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "0ab4ac98",
-        "css": "9e0815ba"
+        "js": "74b72411",
+        "css": "4cd750ae"
       },
       "family": {
-        "js": "d36fbffd",
+        "js": "e9838c51",
         "css": "e52fd206"
       },
       "family-entry": {
