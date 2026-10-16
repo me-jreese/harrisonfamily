@@ -139,7 +139,12 @@ A stored value can quote a date, a phone number or a note, and so can an excepti
 
 `SYNC#RENDERED` / `<seq_to, 12 digits>` (live passes only; the only source of record-change notifications, SI-20; TTL 400 days): `seq_from`, `seq_to`, `baseline`, `changed_people`, `changed_count`, `deleted_people`, `deleted_count`, `principals`, `origins`, `entries`, `truncated`, `at`, `ttl`. `changed_people` is the Gramps ID of every live person whose page a change in the range can alter, computed from the store's backrefs: a person maps to itself and to the people of the families that hold them; any other object maps through whatever references it until people are reached; people are terminal, so a change never spreads over the whole tree. `deleted_people` is the people whose last head is a delete or a withdraw. Each list is capped at 10 000 (`truncated`). The consumer ([API: Record-change fan-out](api.md#record-change-fan-out)) dedupes on `rec:<seq_to>:<subject>`, treats a baseline pass, a seed-origin range (one seed entry silences the whole range, on purpose) and an import-marked range as silent, and drops the people a withdraw alone changed.
 
-Metrics, namespace `HFY/SyncRender`, each a count the stack's alarms read: `RenderError`, `RenderPrivacyBlock`, `MassDeleteGuard`, `HeadMismatch`. `MassDeleteGuard` covers the refused-delete guard and any exempt delete; `RenderError` also covers an open session with no usable clock; `last_error` tells them apart.
+Metrics, namespace `HFY/SyncRender`, each a count the stack's alarms read: `RenderError`, `RenderPrivacyBlock`, `MassDeleteGuard`, `HeadMismatch`. `MassDeleteGuard` covers the refused-delete guard and any exempt delete; `RenderError` also covers an open session with no usable clock; `last_error` tells them apart. `HeadMismatch` is also raised, with a count, by every pass that reads a store which disagrees with itself (error catalog S13 and S15, [Sync error catalog and its tests](sync-error-catalog.md)):
+
+- **A log entry whose object does not hash to its own `hash`** is skipped when the view is folded. The object keeps the version the entry before it left (or has no file, if it was the first), the pass and the cursor go on, and a later good entry for the object, or `rebuild-heads`, ends the alarm.
+- **Two live heads of one class with one Gramps ID** render the first by (Gramps ID, handle) order, as before; the second has no file.
+
+The log line holds the two counts and nothing else.
 
 ## Daily reconcile
 

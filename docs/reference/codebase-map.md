@@ -529,6 +529,7 @@ Paths:
   - None is the manifest build command any more: it only echoes, because `11ty/` is committed output.
   - `build-islands.sh`, `package-api.sh`, `package-auth.sh`, `package-edge-gate.sh` and `package-render.sh` are local build scripts.
   - `mcp-conformance.sh` is the MCP conformance gate. See [MCP server](#mcp-server).
+  - `check-sync-catalog.mjs` and `sync-error-catalog.json` map every row of the sync error catalog to its named tests and fail CI on a gap (HFY-TSK-150). See [Sync error catalog and its tests](sync-error-catalog.md).
 - [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit): the pre-commit hook.
 - Workspace helpers: [`scripts/check-deployment-sync.sh`](../../scripts/check-deployment-sync.sh), [`scripts/promote_workspace_assets.sh`](../../scripts/promote_workspace_assets.sh), [`scripts/sync_sanitized_assets.py`](../../scripts/sync_sanitized_assets.py), [`scripts/validate_build.sh`](../../scripts/validate_build.sh).
 

@@ -486,6 +486,117 @@ class Verification(DeltaCase):
         self.assertIn("delta verify inconclusive", self.env.log_text(doc))
 
 
+class UnknownClass(DeltaCase):
+    """D39 on the delta route: an object of a class this addon does not know is parked by the snapshot route (listed under `deferred`, the run
+    ends partial, exit 20). A replica holds heads only, so it would drop that line from the body, the count and the plan; the route must never
+    serve a state that holds one, and the same cloud state must give the same run whichever route it takes."""
+
+    def setUp(self):
+        DeltaCase.setUp(self)
+        newer = mock.patch.object(delta, "SERVER_CLASS_ORDER", delta.SERVER_CLASS_ORDER + ("Widget",))  # a newer website's class list
+        newer.start()
+        self.addCleanup(newer.stop)
+        self.widget = "w" * 28
+
+    def add_widget(self, cloud):
+        cloud.put({"_class": "Widget", "handle": self.widget, "gramps_id": "W0001"})
+        cloud.marker()
+
+    def assert_parked(self, env, doc):
+        self.assertEqual((doc["result"], doc["exit_code"], doc["error"]["code"]), ("partial", 20, "blocked"), doc["error"])
+        deferred = env.preview(doc)["deferred"]
+        self.assertEqual([(d["class"], d["handle"], d["gramps_id"]) for d in deferred], [("Widget", self.widget, "W0001")])
+        self.assertIn("update the addon", deferred[0]["reason"])
+        self.assertNotIn(self.widget, env.tree.objects())
+
+    def test_d39_a_cached_state_that_holds_an_unknown_class_is_not_a_base_so_the_delta_route_gives_the_snapshot_routes_run(self):
+        other = FeedEnv(self)
+        other.cloud.feed_on = False  # this one always takes the full snapshot
+        for env in (self.env, other):
+            self.add_widget(env.cloud)
+        first = self.env.run("pull", yes=True)
+        self.assertEqual(first["cloud"]["via"], "snapshot")
+        self.assert_parked(self.env, first)
+        self.assert_parked(other, other.run("pull", yes=True))
+        for env in (self.env, other):
+            edit_site(env.cloud, "N0004", "A plain note, edited on the website.")
+            env.cloud.marker()
+        self.cloud.calls.clear()
+        a = self.env.run("pull", yes=True)
+        b = other.run("pull", yes=True)
+        self.assertEqual((a["cloud"]["via"], b["cloud"].get("via")), ("snapshot", None))
+        self.assertIn("delta fallback: unknown_class", self.env.log_text(a))
+        self.assertEqual(self.cloud.change_calls, [], "the feed was not even asked: the cache cannot be a base")
+        self.assert_parked(self.env, a)
+        self.assert_parked(other, b)
+        self.assertEqual(by_gid(self.env.tree.objects(), "N0004")["text"]["string"], "A plain note, edited on the website.")
+        self.assertEqual((a["result"], a["exit_code"], a["counts"]), (b["result"], b["exit_code"], b["counts"]))
+        pa, pb = self.env.preview(a), other.preview(b)
+        for p in (pa, pb):
+            p.pop("run_id"), p.pop("created_at")
+        self.assertEqual(pa, pb)
+        self.assertEqual(self.env.state()["streak"], 0, "a snapshot run leaves the count at zero")
+
+    def test_d39_the_parked_class_never_makes_the_seventh_sync_verification_mismatch(self):
+        self.add_widget(self.cloud)
+        self.assert_parked(self.env, self.env.run("pull", yes=True))
+        for i in range(9):
+            edit_site(self.cloud, "N0004", "Edit number %d." % (i + 1))
+            doc = self.env.run("pull", yes=True)
+            self.assert_parked(self.env, doc)
+            self.assertEqual(doc["cloud"]["via"], "snapshot", i)
+            log = self.env.log_text(doc)
+            self.assertIn("delta fallback: unknown_class", log, i)
+            self.assertNotIn("delta verify", log, i)
+        self.assertEqual(self.cloud.change_calls, [])
+
+    def test_d39_a_class_that_arrives_through_the_feed_is_a_fallback_and_the_snapshot_parks_it(self):
+        self.synced()
+        self.add_widget(self.cloud)
+        edit_site(self.cloud, "N0004", "Edited on the website.")
+        doc = self.env.run("pull", yes=True)
+        self.assertEqual(doc["cloud"]["via"], "snapshot")
+        self.assertIn("delta fallback: bad_op", self.env.log_text(doc))
+        self.assert_parked(self.env, doc)
+        self.assertEqual(by_gid(self.env.tree.objects(), "N0004")["text"]["string"], "Edited on the website.", "the rest of the pull applied")
+        self.assertEqual(self.env.state()["seq"], self.cloud.seq)
+        edit_site(self.cloud, "N0004", "Edited again.")
+        again = self.env.run("pull", yes=True)  # the snapshot that was cached holds the parked line: not a base
+        self.assertIn("delta fallback: unknown_class", self.env.log_text(again))
+        self.assert_parked(self.env, again)
+
+    def test_d39_a_class_that_arrives_before_the_seventh_sync_is_inconclusive_not_a_mismatch(self):
+        self.synced()
+        for i in range(6):
+            edit_site(self.cloud, "N0004", "Edit number %d." % (i + 1))
+            self.assertEqual(self.env.run("pull", yes=True)["cloud"]["via"], "delta")
+        self.add_widget(self.cloud)
+        doc = self.env.run("pull", yes=True)
+        self.assertEqual(doc["cloud"]["via"], "snapshot", "the 7th sync downloads the snapshot")
+        self.assert_parked(self.env, doc)
+        log = self.env.log_text(doc)
+        self.assertIn("delta verify inconclusive: bad_op", log)
+        self.assertNotIn("MISMATCH", log)
+        _raw, sha, _n = server_snapshot_bytes(S.CLOUD_TREE, self.cloud.seq, list(self.cloud.heads.values()))
+        self.assertEqual(self.env.state()["body_sha256"], sha, "the cache is the website's snapshot, parked line included")
+
+    def test_d39_load_refuses_a_cached_snapshot_with_a_parked_line_and_takes_one_without(self):
+        self.synced()
+        st = self.env.state()
+        replica = delta.load(self.env.tp, S.CLOUD_TREE, self.env.tree.schema_version, 0)
+        self.assertEqual((replica.seq, replica.streak), (st["seq"], st["streak"]))
+        self.add_widget(self.cloud)
+        raw, sha, _n = server_snapshot_bytes(S.CLOUD_TREE, self.cloud.seq, list(self.cloud.heads.values()))
+        self.assertEqual(len(snapshot.parse(raw).parked), 1)
+        with open(delta.cache_file(self.env.tp, self.cloud.seq), "wb") as fh:
+            fh.write(raw)
+        with open(delta.state_path(self.env.tp), "w", encoding="utf-8") as fh:
+            json.dump({"seq": self.cloud.seq, "body_sha256": sha, "expunge_epoch": 0, "streak": 0, "tree_id": S.CLOUD_TREE}, fh)
+        with self.assertRaises(delta.Fallback) as caught:
+            delta.load(self.env.tp, S.CLOUD_TREE, self.env.tree.schema_version, 0)
+        self.assertEqual(caught.exception.code, "unknown_class")
+
+
 class ReplicaRules(unittest.TestCase):
     def head(self, cls="Note", handle="a1" * 14, version=1, seq=1, deleted=False, gid="N1", text="x", expunged=False):
         obj = None if deleted else {"_class": cls, "handle": handle, "gramps_id": gid, "text": {"string": text}}
