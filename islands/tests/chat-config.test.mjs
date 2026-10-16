@@ -247,13 +247,13 @@ test("the island ships: the entry bundle and its stylesheet are built, and the b
   assert.doesNotMatch(css, /--io-chat-(bar|flash)(-fg)?:\s*#/, "the title bar and the flash are theme aliases, not literals");
 });
 
-test("islands/package.json pins @io-kit/chat exactly at 0.1.5 and the lockfile agrees (install discipline: no range, no lowered pin)", () => {
+test("islands/package.json pins @io-kit/chat exactly at 0.2.0 and the lockfile agrees (install discipline: no range, no lowered pin)", () => {
   const pkg = JSON.parse(read("islands", "package.json"));
-  assert.equal(pkg.dependencies["@io-kit/chat"], "0.1.5");
+  assert.equal(pkg.dependencies["@io-kit/chat"], "0.2.0");
   const lock = JSON.parse(read("islands", "package-lock.json"));
-  assert.equal(lock.packages["node_modules/@io-kit/chat"].version, "0.1.5");
-  assert.equal(lock.packages[""].dependencies["@io-kit/chat"], "0.1.5");
+  assert.equal(lock.packages["node_modules/@io-kit/chat"].version, "0.2.0");
+  assert.equal(lock.packages[""].dependencies["@io-kit/chat"], "0.2.0");
   for (const [name, range] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) assert.match(range, /^\d+\.\d+\.\d+$/, `${name} is an exact pin`);
   const installed = JSON.parse(readFileSync(join(islandsDir, "node_modules", "@io-kit", "chat", "package.json"), "utf8"));
-  assert.equal(installed.version, "0.1.5");
+  assert.equal(installed.version, "0.2.0");
 });
