@@ -48,7 +48,7 @@ Add a suite to CI only if it needs nothing from CodeArtifact: put its command in
 
 - **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
 - **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
-- **Google Chrome installed** for the island browser tests, unless you switch them to Playwright's Chromium (step 4), and for the sign-in pages end-to-end test, which always uses Chrome (step 10).
+- **Playwright's `chromium-headless-shell` installed** for the island browser tests (step 4), and **Google Chrome installed** for the sign-in pages end-to-end test, which always uses Chrome (step 10).
 - **Start each block from the repository root.** Every command below assumes it. Blocks that change directory do so inside parentheses, in a subshell, so your shell is back at the root when each block ends.
 
 ## Steps
@@ -167,11 +167,19 @@ The [test suites table](../reference/repository-operations.md#test-suites) lists
 
 The specs that measure the design system's look, `islands-look`, `legacy-pages`, `person-page`, `qa-fixes`, `qa2-fixes`, `shell` and `theme-foundation`, fail when the theme stylesheet or the fonts are stale, not only when a bundle is.
 
-The default browser channel is `chrome`, which needs Google Chrome installed. To use Playwright's bundled Chromium instead:
+The default browser channel is `chromium-headless-shell`, Playwright's bundled headless browser. It is not your installed Google Chrome, so a run does not open or clutter Chrome on a shared machine. Install it once:
 
 ```sh
-(cd islands && npx playwright install chromium && PW_CHANNEL=chromium npx playwright test)
+(cd islands && npx playwright install chromium-headless-shell)
 ```
+
+Locally the config runs at most 2 workers and `fullyParallel: false` (CI sets `CI` and lets Playwright choose). Run only the specs you changed, with one worker for a single spec, and leave the full suite to CI:
+
+```sh
+(cd islands && PW_PORT=<free-port> npx playwright test tests/<spec>.spec.mjs --workers=1)
+```
+
+Afterwards `pgrep -fl playwright_chromiumdev_profile` prints nothing; if it does, end the leftovers with `pkill -f playwright_chromiumdev_profile`, which touches only Playwright's throwaway browsers. For a one-off run in your own Chrome, opt in with `PW_CHANNEL=chrome`.
 
 Failure output goes to `islands/test-results/`, which is gitignored.
 
@@ -544,7 +552,7 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | `mcp-conformance.sh` fails after a change to the `api/` dependencies | It installs only when `api/node_modules` is missing, so it ran against the old install | `(cd api && npm ci)`, then run it again. |
 | The content contract cannot find a package | `api/` dependencies are not installed | `(cd api && npm ci)` |
 | The auth `edge` test fails on `theme.cssUrl` | The `?v=` in `auth/edge.manifest.json` is not the hash of the committed `11ty/css/auth-edge.css` | Rebuild the islands and commit both files ([Build and preview the islands](build-and-preview-the-islands.md)). The sign-in pages use the new stylesheet only after `hfy-auth-edge` is redeployed ([Deploy the app stack](deploy-the-app-stack.md)). |
-| Playwright cannot find the `chrome` distribution | Google Chrome is not installed | For the island specs, use `PW_CHANNEL=chromium`, as in step 4. The sign-in pages test always uses Chrome, so install it. |
+| Playwright cannot find `chromium-headless-shell` (or the `chrome` distribution) | The bundled browser is not installed, or you set `PW_CHANNEL=chrome` without Google Chrome | Run `npx playwright install chromium-headless-shell` from `islands/`. The sign-in pages test always uses Chrome, so install it for step 10. |
 | Island specs time out waiting for an island | The site is stale, or another server holds the port | Run `(cd islands && npm run check:islands)`; if it reports differences, rebuild with `(cd islands && npm run build)` and commit the result. Stop the other server, or set `PW_PORT`. |
 | The bundle test or `check:islands` fails | The site's build outputs do not match `islands/` | Rebuild and commit every output ([Build and preview the islands](build-and-preview-the-islands.md)). `stale auth/edge.manifest.json` means the sign-in stylesheet changed: commit the manifest and redeploy `hfy-auth-edge`. |
 | `theme-delivery` or `copy` fails after an Eleventy refresh | The refresh brought back pages without the head blocks or with the old copy | `(cd islands && npm run build)` and commit the pages ([Refresh the Eleventy output](refresh-the-eleventy-output.md)). |

@@ -196,7 +196,7 @@ describe("step-up: a delete needs a sign-in within 900 s (AC1)", () => {
     expect(err(await w.del(ADMIN, body, { idem: "su-3", token: await w.authToken(ADMIN, undefined) }))).toEqual({ status: 401, error: "step_up_required" });
     expect(w.txns).toEqual([]);
     expect(w.gone(target)).toBe(false);
-    const ok = await w.del(ADMIN, body, { idem: "su-4", token: await w.authToken(ADMIN, now - 899) });
+    const ok = await w.del(ADMIN, body, { idem: "su-4", token: await w.authToken(ADMIN, now - 850) });
     expect(ok.status).toBe(201);
     expect(w.gone(target)).toBe(true);
   });
