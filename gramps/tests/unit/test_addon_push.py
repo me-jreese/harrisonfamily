@@ -46,6 +46,7 @@ class PushCase(R.HomeCase):
     def setUp(self):
         R.HomeCase.setUp(self)
         self.tree = PS.PushTree(dbid="aa11bb22", full=self.full)
+        self.tree.attach_db(self.tmp)
         if self.pad:
             self.tree.pad(self.pad)
         doc = runner.run(self.tree, "cli", runner.Options("bind", yes=True), environ=self.env, argv=["gramps"])
@@ -58,6 +59,13 @@ class PushCase(R.HomeCase):
         opts.setdefault("yes", True)
         return runner.run(self.tree, mode, runner.Options("push", **opts), run_id="r%02d" % self.n, argv=["gramps"], environ=self.env,
                           services={"client": cloud or self.cloud})
+
+    def pull(self, action="pull", mode="cli", **opts):
+        """A pull-side run (`check`, `pull`, `sync`) against the same fake website."""
+        self.n += 1
+        opts.setdefault("yes", action != "check")
+        return runner.run(self.tree, mode, runner.Options(action, **opts), run_id="r%02d" % self.n, argv=["gramps"], environ=self.env,
+                          services={"cloud": PS.PullView(self.cloud)})
 
     def sidecar(self):
         return sidecar.open_checked(paths.TreePaths(self.tree.dbid, self.env).sidecar)
@@ -83,6 +91,15 @@ class PushCase(R.HomeCase):
 
     def exit_of(self, doc):
         return (doc["result"], doc["exit_code"], doc["next_action"])
+
+    def new_person(self, gramps_id, handle="newhandle0000000000000000a1"):
+        template = copy.deepcopy(next(o for o in PS.load_fixture().values() if o["_class"] == "Person" and o["gramps_id"] == "I0002"))
+        template.update({"handle": handle, "gramps_id": gramps_id, "event_ref_list": [], "family_list": [], "parent_family_list": [], "media_list": [],
+                         "citation_list": [], "note_list": [], "birth_ref_index": -1, "death_ref_index": -1, "address_list": [], "attribute_list": [],
+                         "person_ref_list": [], "tag_list": [], "lds_ord_list": [], "alternate_names": []})
+        template["primary_name"] = dict(template["primary_name"], first_name="Fresh", surname_list=[dict(template["primary_name"]["surname_list"][0], surname="Newperson")], date={"_class": "Date", "calendar": 0, "dateval": [0, 0, 0, False], "format": None, "modifier": 0, "newyear": 0, "quality": 0, "sortval": 0, "text": ""})
+        self.tree.data[handle] = template
+        return handle
 
 
 class Seed(PushCase):
@@ -122,6 +139,19 @@ class Seed(PushCase):
         sent = len(self.cloud.batches)
         self.push()
         self.assertEqual(len(self.cloud.batches), sent, "and the next run finds nothing to send")
+
+    def test_after_a_push_the_pull_agrees_that_nothing_is_waiting(self):
+        # The pull plans its own pending pushes from the same projection; if it kept the private ChildRef's back-link that the push
+        # drops (symmetric), `check` would list the person as waiting for ever and `sync` would say "run hfy-sync push" with 0 ops.
+        self.seed()
+        doc = self.pull("check")
+        self.assertEqual(self.exit_of(doc), ("ok", 0, "none"))
+        self.assertEqual(doc["counts"]["push_pending"], 0)
+        doc = self.pull("sync")
+        self.assertEqual(self.exit_of(doc), ("ok", 0, "none"))
+        sent = len(self.cloud.batches)
+        self.push()
+        self.assertEqual(len(self.cloud.batches), sent, "and the push agrees")
 
     def test_held_content_never_reaches_the_server(self):  # AC3
         self.seed()
@@ -601,15 +631,6 @@ class Merges(PushCase):
 class Identity(PushCase):
     pad = 30
 
-    def new_person(self, gramps_id, handle="newhandle0000000000000000a1"):
-        template = copy.deepcopy(next(o for o in PS.load_fixture().values() if o["_class"] == "Person" and o["gramps_id"] == "I0002"))
-        template.update({"handle": handle, "gramps_id": gramps_id, "event_ref_list": [], "family_list": [], "parent_family_list": [], "media_list": [],
-                         "citation_list": [], "note_list": [], "birth_ref_index": -1, "death_ref_index": -1, "address_list": [], "attribute_list": [],
-                         "person_ref_list": [], "tag_list": [], "lds_ord_list": [], "alternate_names": []})
-        template["primary_name"] = dict(template["primary_name"], first_name="Fresh", surname_list=[dict(template["primary_name"]["surname_list"][0], surname="Newperson")], date={"_class": "Date", "calendar": 0, "dateval": [0, 0, 0, False], "format": None, "modifier": 0, "newyear": 0, "quality": 0, "sortval": 0, "text": ""})
-        self.tree.data[handle] = template
-        return handle
-
     def test_a_desktop_create_in_the_8000_block_is_held_with_reserved_id_block(self):  # AC5
         self.seed()
         h = self.new_person("I8123")
@@ -827,6 +848,201 @@ class Sessions(PushCase):
         self.cloud._open({"expected": []})
         doc = self.push()
         self.assertEqual((doc["result"], doc["exit_code"], doc["error"]["code"]), ("failed", 75, "D48"))
+
+
+class IdCollisions(PushCase):
+    """The server refuses an ID that is taken, claimed twice or retired with `{class, gramps_id}` and no op (api/src/sync/apply.js
+    planGids); FakeCloud answers in that shape. The record that carries the ID is held, and the rest of the batch goes."""
+
+    pad = 30
+
+    def new_note(self, gramps_id, handle):
+        note = copy.deepcopy(next(o for o in PS.load_fixture().values() if o["_class"] == "Note" and o["text"]["string"] == "A plain note with nothing sensitive in it."))
+        note.update({"handle": handle, "gramps_id": gramps_id})
+        note["text"] = dict(note["text"], string="Fresh note %s." % gramps_id)
+        self.tree.data[handle] = note
+        return handle
+
+    def fresh_notes(self, n, start=7000):
+        return [self.new_note("N%d" % (start + i), "freshnote%018d" % i) for i in range(n)]
+
+    def held(self, handle):
+        return self.rows("SELECT rule, detail FROM holds WHERE handle = ?", handle)
+
+    def holds_of(self, rule):
+        return [r[0] for r in self.rows("SELECT handle FROM holds WHERE rule = ?", rule)]
+
+    def test_one_taken_id_holds_that_record_and_the_other_five_reach_the_cloud(self):
+        self.seed()
+        taken = next(hd["gramps_id"] for _h, hd in sorted(self.cloud.heads.items()) if hd["class"] == "Note")
+        fresh = self.fresh_notes(5)
+        dup = self.new_note(taken, "dupnote0000000000000000001")
+        for run in range(2):
+            doc = self.push()
+            self.assertTrue(all(h in self.cloud.heads for h in fresh), "run %d: the five valid records are in the cloud" % run)
+            self.assertNotIn(dup, self.cloud.heads, "and the one that reuses the ID is not")
+            self.assertEqual(self.held(dup), [("gramps_id_taken", consts.HOLD_MESSAGES["gramps_id_taken"])])
+            self.assertEqual([r[0] for r in self.rows("SELECT handle FROM holds WHERE rule = 'gramps_id_taken'")], [dup], "nobody else is held")
+            self.assertEqual(self.exit_of(doc), ("partial", 20, "none"))
+        self.assertEqual(self.cloud.pushed_ops().count(None), 0)
+        self.assertEqual(sum(1 for o in self.cloud.pushed_ops() if o["handle"] in fresh), 5, "the five were sent once")
+
+    def test_several_collisions_in_one_batch_do_not_use_up_the_retry_budget(self):
+        # The server names one ID per answer. More collisions than the budget allows must not strand the valid records behind them.
+        self.seed()
+        taken = [hd["gramps_id"] for _h, hd in sorted(self.cloud.heads.items()) if hd["class"] == "Note"][:1 + consts.MAX_DEAD_BATCH_RETRIES + 1]
+        self.assertEqual(len(taken), 1 + consts.MAX_DEAD_BATCH_RETRIES + 1, "the fixture has enough notes")
+        dups = [self.new_note(gid, "dupnote%019d" % i) for i, gid in enumerate(taken)]
+        fresh = self.fresh_notes(3)
+        refused = len([r for r in self.cloud.requests if r[1] == "/api/sync/batches"])
+        doc = self.push()
+        self.assertTrue(all(h in self.cloud.heads for h in fresh))
+        self.assertFalse(any(h in self.cloud.heads for h in dups))
+        self.assertEqual(sorted(self.holds_of("gramps_id_taken")), sorted(dups))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM holds WHERE rule = 'server_refused'")[0][0], 0, "nothing was held for running out of retries")
+        self.assertGreater(len([r for r in self.cloud.requests if r[1] == "/api/sync/batches"]) - refused, 1 + consts.MAX_DEAD_BATCH_RETRIES)
+        self.assertEqual(self.exit_of(doc)[:2], ("partial", 20))
+
+    def test_a_taken_id_in_a_batch_with_edits_holds_only_the_new_record(self):
+        self.seed()
+        taken = next(hd["gramps_id"] for _h, hd in sorted(self.cloud.heads.items()) if hd["class"] == "Note")
+        person = self.a_person()
+        self.tree.edit(person, lambda o: o["primary_name"].__setitem__("first_name", "Edited"))
+        dup = self.new_note(taken, "dupnote0000000000000000001")
+        self.push()
+        self.assertEqual(self.cloud.heads[person]["obj"]["primary_name"]["first_name"], "Edited")
+        self.assertEqual([r[0] for r in self.held(dup)], ["gramps_id_taken"])
+
+    def test_two_new_records_that_claim_one_id_are_both_held_and_the_rest_goes(self):   # gid_conflict
+        self.seed()
+        fresh = self.fresh_notes(3)
+        twins = [self.new_note("N7777", "twinnote000000000000000001"), self.new_note("N7777", "twinnote000000000000000002")]
+        doc = self.push()
+        self.assertTrue(all(h in self.cloud.heads for h in fresh))
+        for h in twins:
+            self.assertNotIn(h, self.cloud.heads)
+            self.assertEqual([r[0] for r in self.held(h)], ["gramps_id_taken"])
+        self.assertEqual(self.exit_of(doc)[:2], ("partial", 20))
+
+    def test_a_retired_id_in_the_shape_applybatch_uses_holds_that_person_alone(self):   # gramps_id_retired with {class, gramps_id}
+        self.seed()
+        first = self.new_person("I7001", "newperson00000000000000a1")
+        second = self.new_person("I7002", "newperson00000000000000a2")
+        self.cloud.fail_with = [("/api/sync/batches", PS.err(409, "gramps_id_retired", {"class": "Person", "gramps_id": "I7001"}))]
+        self.push()
+        self.assertNotIn(first, self.cloud.heads)
+        self.assertIn(second, self.cloud.heads, "the other new person was sent again without it")
+        self.assertEqual([r[0] for r in self.held(first)], ["gramps_id_retired"])
+        self.assertEqual(self.held(second), [])
+
+    def test_a_refusal_that_names_nothing_still_holds_the_whole_batch(self):
+        self.seed()
+        fresh = self.fresh_notes(2)
+        self.cloud.fail_with = [("/api/sync/batches", PS.err(409, "gramps_id_taken", {}))]
+        self.push()
+        self.assertTrue(all(h not in self.cloud.heads for h in fresh))
+        self.assertEqual({self.held(h)[0][0] for h in fresh}, {"gramps_id_taken"})
+
+
+class RevertGuard(PushCase):
+    """D47: a push that puts back a value a recent pull replaced is labelled "reverts a website change (origin)". The command line parks
+    it (it is never sent, with or without --yes); the Gramps window sends it only with the person's confirmation."""
+
+    def pulled_edit(self):
+        """The website renames a person, a pull takes it, and the desktop is put back as it was (Edit > Undo). Returns (handle, old name)."""
+        self.seed()
+        h = self.a_person()
+        old = self.tree.data[h]["primary_name"]["first_name"]
+        self.cloud.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Webname"))
+        before = copy.deepcopy(self.tree.data)
+        doc = self.pull()
+        self.assertEqual(self.exit_of(doc), ("ok", 0, "none"), doc)
+        self.assertEqual(self.tree.data[h]["primary_name"]["first_name"], "Webname", "the pull applied it")
+        self.tree.data = before
+        return h, old
+
+    def name(self, h):
+        return self.cloud.heads[h]["obj"]["primary_name"]["first_name"]
+
+    def test_the_command_line_parks_a_push_that_puts_the_old_value_back(self):
+        h, old = self.pulled_edit()
+        sent = len(self.cloud.batches)
+        for opts in ({"yes": True}, {"yes": True, "allow_deletes": True}, {"yes": False, "dry_run": True}):
+            doc = self.push(**opts)
+            self.assertEqual(self.exit_of(doc), ("partial", 20, "none"), opts)
+            self.assertEqual(len(self.cloud.batches), sent, "nothing is sent")
+            self.assertEqual(self.name(h), "Webname")
+        self.push()
+        row = self.rows("SELECT rule, detail FROM holds WHERE handle = ?", h)
+        self.assertEqual(row, [("revert_parked", consts.HOLD_MESSAGES["revert_parked"])])
+        self.assertIn("reverts a website change (origin)", row[0][1])
+        self.assertEqual(self.tree.data[h]["primary_name"]["first_name"], old, "the desktop keeps its value")
+
+    def test_the_status_counts_and_the_preview_say_what_was_parked(self):
+        h, _old = self.pulled_edit()
+        doc = self.push(dry_run=True)
+        self.assertEqual((doc["counts"]["blocked"], doc["counts"]["pushed"]), (1, {"create": 0, "update": 0, "delete": 0}))
+        preview = paths.read_json(os.path.join(paths.TreePaths(self.tree.dbid, self.env).previews, "r%02d.json" % self.n))
+        self.assertEqual([(b["handle"], b["rule"]) for b in preview["blocked"]], [(h, "revert_parked")])
+        self.assertEqual(preview["ops"], [])
+
+    def test_the_gramps_window_sends_it_only_with_the_confirmation(self):
+        h, old = self.pulled_edit()
+        sent = len(self.cloud.batches)
+        doc = self.push(mode="gui", yes=False)
+        self.assertEqual((doc["exit_code"], len(self.cloud.batches)), (20, sent))
+        doc = self.push(mode="gui", yes=True)
+        self.assertEqual(doc["counts"]["pushed"]["update"], 1)
+        self.assertEqual(self.name(h), old)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM holds WHERE rule = 'revert_parked'")[0][0], 0)
+
+    def test_an_edit_of_another_field_of_a_pulled_object_is_not_a_revert(self):
+        self.seed()
+        h = self.a_person()
+        self.cloud.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Webname"))
+        self.assertEqual(self.exit_of(self.pull()), ("ok", 0, "none"))
+        self.tree.edit(h, lambda o: o["primary_name"]["surname_list"][0].__setitem__("surname", "Reedited"))
+        doc = self.push()
+        self.assertEqual(doc["counts"]["pushed"]["update"], 1)
+        self.assertEqual((self.name(h), self.cloud.heads[h]["obj"]["primary_name"]["surname_list"][0]["surname"]), ("Webname", "Reedited"))
+
+    def test_a_pull_older_than_the_last_five_runs_no_longer_counts(self):
+        h, old = self.pulled_edit()
+        con = self.sidecar()
+        try:
+            n = int(sidecar.meta(con)["pull_n"])
+            sidecar.set_meta(con, "pull_n", n + sidecar.PULL_WINDOW)
+            con.commit()
+        finally:
+            con.close()
+        self.push()
+        self.assertEqual(self.name(h), old)
+
+    def test_deleting_what_a_pull_created_is_a_revert_and_the_command_line_never_sends_it(self):
+        self.seed()
+        self.tree.pad(30)
+        self.push()
+        note = copy.deepcopy(next(hd["obj"] for _h, hd in sorted(self.cloud.heads.items()) if hd["class"] == "Note"))
+        handle = "webnote000000000000000001"
+        note.update({"handle": handle, "gramps_id": "N8001"})
+        self.cloud.seq += 1
+        self.cloud.heads[handle] = {"class": "Note", "version": 1, "seq": self.cloud.seq, "deleted": False, "gramps_id": "N8001", "obj": note}
+        self.assertEqual(self.exit_of(self.pull()), ("ok", 0, "none"))
+        self.assertIn(handle, self.tree.data, "the pull created it")
+        del self.tree.data[handle]
+        self.stepped_up()
+        sent = len(self.cloud.batches)
+        for opts in ({"allow_deletes": True}, {}):
+            doc = self.push(**opts)
+            self.assertEqual(self.exit_of(doc)[:2], ("partial", 20), opts)
+            self.assertEqual(self.rows("SELECT rule FROM holds WHERE handle = ?", handle), [("revert_parked",)], "not delete_parked: --allow-deletes does not help")
+        self.assertEqual(len(self.cloud.batches), sent)
+        self.assertFalse(self.cloud.heads[handle]["deleted"])
+        self.push(mode="gui", yes=False)
+        self.assertFalse(self.cloud.heads[handle]["deleted"], "the window needs the confirmation too")
+        doc = self.push(mode="gui", yes=True)
+        self.assertEqual(doc["counts"]["pushed"]["delete"], 1)
+        self.assertTrue(self.cloud.heads[handle]["deleted"])
 
 
 class Planning(unittest.TestCase):

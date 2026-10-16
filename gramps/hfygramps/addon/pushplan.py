@@ -7,7 +7,8 @@ Pure: no network, no sqlite, no Gramps. `build_plan` takes the raw local objects
     push op         ``obj = P(lift(M, L))`` with ``base_version = C.version`` (the merge engine's own push, sync.md 8.3 step 12)
     hold            the content or the object stays on the desktop (a projection hold, a reserved or retired ID, a too-large object, a
                     merge that cannot go yet): nothing is sent for it and the sidecar says why
-    blocked         a change the addon never pushes (a person renumber, a delete without step-up, a mass delete)
+    blocked         a change the addon never pushes (a person renumber, a delete without step-up, a mass delete, and a change that
+                    reverts a website change a recent pull made: D47, the command line parks it and the Gramps window confirms it)
     pull pending    the website changed the object too and the local apply (pull) has not happened: the merged object is pushed, and its
                     base row is left as it was (so the website's edit is still to be taken, never read as a desktop revert)
     base advance    the local and the cloud object agree (converged): the base row follows the cloud head, nothing is sent
@@ -110,7 +111,7 @@ def _hold(cls, handle, rule, path="", detail=None):
 
 
 def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes=False, step_up=False, sticky=(), pins=None, unreadable=(),
-               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None):
+               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None, pulled=None):
     """The plan.
 
     local        {handle: raw Gramps object}
@@ -125,9 +126,13 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     sticky       the sidecar's ``birthlike_sticky`` handles; pins {handle: [{"path", "base_json"}]} the open and parked conflicts
     expunge_holds  {handle: [pointer]} the values a website scrub removed (the pull's ``expunge.notice`` holds, ``sidecar.load_expunge_holds``):
                  an update never puts the desktop's value back at those pointers, and is not sent when they were all that differed
+    pulled       {handle: [{"kind", "prepull", ...}]} what the last pull runs changed (``sidecar.load_pulled``): a create, update or delete
+                 that puts back what a pull replaced is a revert (D47, ``plan.revert_paths``); it is blocked unless `mode` is "gui" and
+                 `yes` is the person's confirmation
     """
     plan = Plan()
     meta = meta or {}
+    pulled = pulled or {}
     max_obj_bytes = max_obj_bytes or (meta.get("limits") or {}).get("max_obj_bytes") or consts.PUSH_MAX_OBJ_BYTES
     base_objs = {h: r["obj"] for h, r in base.items() if not r["deleted"] and r["obj"] is not None}
     plan.live_base = len(base_objs)
@@ -197,6 +202,10 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
             if guard:
                 plan.holds.append(_hold(cls, handle, guard))
                 continue
+            reverts = pullplan.revert_paths(op, cloud_obj, pulled.get(handle))
+            if reverts and not _confirmed(mode, yes):
+                plan.blocked.append(_hold(cls, handle, "revert_parked", reverts[0]))
+                continue
             creates.append(op)
         elif act == "push_delete":
             deletes.append(r)
@@ -215,34 +224,14 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     plan.ops = [dict(o) for o in creates]
 
     _destructive(plan, deletes, withdraws, local, base, meta, mode=mode, allow_deletes=allow_deletes, yes=yes, step_up=step_up,
-                 members=members, merges_enabled=merges_enabled)
+                 members=members, merges_enabled=merges_enabled, pulled=pulled)
     plan.holds = _unique(plan.holds)
     plan.blocked = _unique(plan.blocked)
     return plan
 
 
-def symmetric(projected, holds=()):
-    """``projected`` with every person's back-links made to agree with the projected families. The projection removes a private
-    ChildRef from its family but leaves the child's ``parent_family_list`` pointing at that family, and the website refuses a session
-    whose people and families disagree (422 ``integrity.symmetry.child`` at completion). A person's link to a family that does not
-    list the person is dropped from the projected person (never the other way round, so no content is lost; the lift brings the link
-    back, because the local object still has it). The dropped link would also have shown that the private relationship exists.
-    Objects the projection holds whole keep their cloud copy untouched."""
-    held = {x["handle"] for x in holds if x.get("scope") == "object"}
-    out = dict(projected)
-    for h, o in projected.items():
-        if not isinstance(o, dict) or o.get("_class") != "Person" or h in held:
-            continue
-        fixed = dict(o)
-        for key, listed in (("parent_family_list", lambda f: h in [c.get("ref") for c in f.get("child_ref_list") or ()]),
-                            ("family_list", lambda f: h in (f.get("father_handle"), f.get("mother_handle")))):
-            keep = [fh for fh in o.get(key) or () if not isinstance(projected.get(fh), dict) or projected[fh].get("_class") != "Family"
-                    or listed(projected[fh])]
-            if keep != list(o.get(key) or ()):
-                fixed[key] = keep
-        if fixed != o:
-            out[h] = fixed
-    return out
+# The pull's pending-push planning needs the same step (``plan.symmetric``), so it lives there.
+symmetric = pullplan.symmetric
 
 
 def _unique(rows):
@@ -282,8 +271,14 @@ def _wire(push):
     return {k: v for k, v in push.items() if k != "obj"}
 
 
-def _destructive(plan, deletes, withdraws, local, base, meta, *, mode, allow_deletes, yes, step_up, members, merges_enabled):
-    """Sorts the deletes and withdraws into pushed, held, blocked and parked (D07, D35 to D37, D51)."""
+def _confirmed(mode, yes):
+    """True when the person has confirmed what the command line never sends on its own: only the Gramps window, with `yes`."""
+    return mode == "gui" and bool(yes)
+
+
+def _destructive(plan, deletes, withdraws, local, base, meta, *, mode, allow_deletes, yes, step_up, members, merges_enabled, pulled=None):
+    """Sorts the deletes and withdraws into pushed, held, blocked and parked (D07, D35 to D37, D47, D51)."""
+    pulled = pulled or {}
     persons = {h: o for h, o in local.items() if o.get("_class") == "Person"}
     plain, merges = [], []
     held_survivors = set()
@@ -304,7 +299,8 @@ def _destructive(plan, deletes, withdraws, local, base, meta, *, mode, allow_del
         else:
             merges.append((r, survivor, gone["gramps_id"]))
 
-    # --- merges (sync.md 8.4, D36, D51)
+    # --- merges (sync.md 8.4, D36, D51). A merge is only ever pushed from the Gramps window, with `yes` and a fresh step-up: that is its
+    # own confirmation, so the revert check (D47) does not apply to it.
     # A merge that is not pushed this run must still be recognised the next run, and it is recognised only while the survivor's 'Merged
     # Gramps ID' attribute is new relative to base. So the survivor's base row stays where it is (the survivor may still be pushed; the
     # push then leaves its base row alone) until the merge itself goes.
@@ -336,6 +332,8 @@ def _destructive(plan, deletes, withdraws, local, base, meta, *, mode, allow_del
     for r in plain:
         if plan.mass_delete and not (mode == "gui" and yes):
             rule = "mass_delete"                          # D37: never pushed without the GUI's confirmation, never by the CLI
+        elif pullplan.revert_paths(r.push, None, pulled.get(r.handle)) and not _confirmed(mode, yes):
+            rule = "revert_parked"                        # D47: a delete of what a pull created; --allow-deletes does not release it
         elif mode == "cli" and not allow_deletes:
             rule = "delete_parked"
         elif mode == "gui" and not yes:

@@ -12,23 +12,28 @@ fixture tree, with the dev server's request log greped for what must never be in
     ids           a desktop create in the 8000-8999 block is held; a create that reuses a retired Person ID is held before sending (D44);
                   with Q2-03 declined the first local assignment of an ID to a cloud-created person is accepted once
     converge      disjoint website and desktop edits to one person converge in one run with no 409
+    with pull     the real pull and the real push on one tree: a pushed tree has nothing waiting for the pull to report; a pulled website
+                  edit that is undone on the desktop is parked by the command line (D47); one gramps_id collision holds that record only
 
 The push needs only to READ the Gramps tree, so these scenarios call the addon's runner in this process with the real
 hfy_sync_tool.GrampsTree over the real database (the same code the Gramps tool runs), a sign-in made by the real PKCE login against the
 dev server, and a Keychain held in memory. Local edits are made through the Gramps API. STAND-IN: the pull has its own scenarios (scenario_pull.py), so
-where a scenario here needs the pull's local apply of a website change it makes that edit in the tree itself and says so. Fictional data only.
+where a scenario here needs the pull's local apply of a website change it makes that edit in the tree itself and says so; the scenarios of
+"with pull" run the real pull through the installed wrapper instead. Fictional data only.
 """
 import copy
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import e2e_case as C  # noqa: E402
 import e2e_support as E  # noqa: E402
-from hfygramps.addon import consts, pushstate, runner, sidecar, status, transport  # noqa: E402
+from hfygramps.addon import consts, keychain, pushstate, runner, sidecar, status, transport  # noqa: E402
 
 FIXTURE_JSONL = os.path.join(HERE, "..", "fixtures", "synthetic-tree.jsonl")
 PLANTED = ["555-0100", "555-0101", "555-0142", "555-0143", "laurel@example.org", "fixture.contact@example.org", "123 Example Street",
@@ -553,6 +558,110 @@ class AssignedIds(PushCase):
         self.push()
         self.assertEqual(len(self.server.requests(method="POST", path="/api/sync/batches")), sent, "a second change is a renumber and never sent")
         self.assertEqual(self.heads()[handle]["gramps_id"], "I0888")
+
+
+class WithThePull(PushCase):
+    """The real pull and the real push on one tree and one dev server, both through the installed wrapper the way io runs them. The addon's
+    own sign-in is a refresh token in a file (HFY_SYNC_TEST only), as in scenario_pull.py."""
+
+    def setUp(self):
+        PushCase.setUp(self)
+        self.keys_dir = tempfile.mkdtemp(prefix="hfy-e2e-keys-")
+        self.addCleanup(shutil.rmtree, self.keys_dir, True)
+        desk = E.sign_in(self.server)
+        self.keyfile = os.path.join(self.keys_dir, "refresh-token")
+        keychain.FileKeychain(self.keyfile).store(desk.keychain.token)
+        self.env = {"HFY_SYNC_KEYCHAIN_FILE": self.keyfile}
+
+    def hfy(self, *args):
+        """Runs `hfy-sync <args>` and returns (CompletedProcess, status.json document)."""
+        proc = self.wrapper(*args, env=self.env)
+        try:
+            doc = C.S.read_status(self.dbid)
+        except (OSError, ValueError):
+            doc = None
+        return proc, doc
+
+    def settle(self):
+        """The seed push through the wrapper, then the first pull: both sides agree and the pull's window is empty."""
+        proc, doc = self.hfy("push", "--yes")
+        self.assertEqual(doc["action"], "push")
+        self.assertIn(doc["exit_code"], (0, 20), proc.stdout + proc.stderr)
+        proc, doc = self.hfy("pull", "--yes")
+        self.assertEqual((proc.returncode, doc["result"]), (0, "ok"), proc.stdout + proc.stderr + json.dumps(doc["error"]))
+
+    def note(self, gid):
+        return next(o for o in self.local_objects().values() if o["_class"] == "Note" and o["gramps_id"] == gid)
+
+    def holds_of(self, rule):
+        return [r[0] for r in self.rows("SELECT handle FROM holds WHERE rule = ? ORDER BY handle", rule)]
+
+    def test_a_pushed_tree_has_nothing_waiting_for_the_pull_to_report(self):
+        # The fixture's private ChildRef: the push drops the child's back-link from the projected person, and the pull must plan the
+        # pushes it reports from the same projection, or `check` exits 10 for ever and `sync` says "run hfy-sync push" with 0 ops.
+        proc, doc = self.hfy("push", "--yes")
+        self.assertIn(doc["exit_code"], (0, 20), proc.stdout + proc.stderr)
+        proc, doc = self.hfy("check")
+        self.assertEqual((proc.returncode, doc["counts"]["push_pending"]), (0, 0), proc.stdout + proc.stderr + json.dumps(doc["counts"]))
+        proc, doc = self.hfy("sync", "--yes")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc, doc = self.hfy("push", "--yes")
+        self.assertEqual(doc["counts"]["pushed"], {"create": 0, "update": 0, "delete": 0})
+
+    def test_a_pulled_website_edit_that_is_undone_is_not_pushed_back_by_the_command_line(self):  # D47
+        self.settle()
+        note = self.note("N0004")
+        handle, original = note["handle"], note["text"]["string"]
+        self.web_edit(handle, lambda o: o["text"].__setitem__("string", "Edited on the website."), "w-undo")
+        proc, doc = self.hfy("pull", "--yes")
+        self.assertEqual(doc["counts"]["pulled"]["update"], 1, proc.stdout + proc.stderr)
+
+        def undo(db, DbTxn):                                                 # Edit > Undo of the pull, as io would do it in the window
+            n = db.get_note_from_handle(handle)
+            with DbTxn("undo", db) as trans:
+                n.set(original)
+                db.commit_note(n, trans)
+        self.edit(undo)
+        sent = len(self.server.requests(method="POST", path="/api/sync/batches"))
+        for _ in range(2):
+            proc, doc = self.hfy("push", "--yes")
+            self.assertEqual((proc.returncode, doc["result"], doc["counts"]["blocked"]), (20, "partial", 1), proc.stdout + proc.stderr)
+            self.assertEqual(doc["counts"]["pushed"], {"create": 0, "update": 0, "delete": 0})
+        self.assertEqual(len(self.server.requests(method="POST", path="/api/sync/batches")), sent, "nothing was sent")
+        self.assertEqual(self.heads()[handle]["obj"]["text"]["string"], "Edited on the website.")
+        self.assertEqual(self.holds_of("revert_parked"), [handle])
+        self.assertEqual(self.note("N0004")["text"]["string"], original, "the desktop keeps its value")
+
+    def test_one_gramps_id_collision_holds_that_record_and_the_rest_of_its_batch_goes(self):
+        self.settle()
+        taken = self.note("N0004")
+
+        def add(db, DbTxn):
+            from gramps.gen.lib import Note
+            out = []
+            with DbTxn("add notes", db) as trans:
+                for i in range(5):
+                    n = Note()
+                    n.set("Fictional note %d." % i)
+                    n.set_gramps_id("N07%02d" % i)
+                    out.append(db.add_note(n, trans))
+                dup = Note()
+                dup.set("A fictional note that reuses an ID the website already holds for another note.")
+                dup.set_gramps_id(taken["gramps_id"])
+                out.append(db.add_note(dup, trans))
+            return out
+        handles = self.edit(add)
+        fresh, dup = handles[:5], handles[5]
+        for run in (1, 2):
+            proc, doc = self.hfy("push", "--yes")
+            heads = self.heads()
+            self.assertEqual(([h in heads for h in fresh], dup in heads), ([True] * 5, False), "run %d: %s" % (run, proc.stdout + proc.stderr))
+            self.assertEqual(self.holds_of("gramps_id_taken"), [dup], "only the record that reuses the ID is held")
+            self.assertEqual((proc.returncode, doc["result"]), (20, "partial"))
+        stored = [o["handle"] for b in self.server.requests(method="POST", path="/api/sync/batches") if b["status"] == 200 for o in b["body"]["ops"]]
+        self.assertEqual(sorted(h for h in stored if h in fresh), sorted(fresh), "each valid record was stored once")
+        refused = [b["status"] for b in self.server.requests(method="POST", path="/api/sync/batches") if b["status"] != 200]
+        self.assertEqual(refused, [409, 409], "and each run met the one collision once")
 
 
 if __name__ == "__main__":

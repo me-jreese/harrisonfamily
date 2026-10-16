@@ -6,7 +6,8 @@ the local tree's changes go to the website as ops, through sessions and an outbo
     outbox         a `sent` row left by an earlier run is replayed with its own Idempotency-Key: a 2xx or `Idempotent-Replayed` advances
                    the base; a 409, 422 or 410 marks the row `rejected` for good; a `pending` row is discarded (D49).
     snapshot       GET /api/sync/snapshot, verified like the pull will (gzip, header, tree, schema, redaction, count, hash, no older seq).
-    plan           ``pushplan.build_plan`` over the raw local tree, the sidecar base and the snapshot's heads.
+    plan           ``pushplan.build_plan`` over the raw local tree, the sidecar base, the snapshot's heads and the pull's `pulled` window (a
+                   change that puts back what a recent pull replaced is parked by the command line: D47).
     preview        a dry run writes ``previews/<run_id>.json`` (pointers, never values), changes nothing, and exits 10 when there is
                    something to push.
     push           batches of at most 24 ops in dependency order, deletes last; a session when there is more than one batch (or the store
@@ -83,6 +84,29 @@ def _detail_list(exc, key):
 
 def _safe_rule(rule, default):
     return rule if isinstance(rule, str) and _RULE.match(rule) else default
+
+
+ID_REFUSALS = ("gramps_id_taken", "gid_conflict", "gramps_id_retired")
+
+
+def _id_hits(exc, batch):
+    """The ops that an ID refusal names by value. api/src/sync/apply.js answers `gramps_id_taken`, `gid_conflict` and `gramps_id_retired`
+    with ``{class, gramps_id}`` and no op (the validator's own refusals carry ``conflicts`` with an ``op_id``), so the culprits are the
+    creates and updates of that class that claim that ID: one record for a taken or retired ID, both of two that claim one ID."""
+    if exc.code not in ID_REFUSALS:
+        return []
+    details = exc.details if isinstance(exc.details, dict) else {}
+    cls, gid = details.get("class"), details.get("gramps_id")
+    if not isinstance(cls, str) or not isinstance(gid, str) or not gid:
+        return []
+    return [{"class": o["class"], "handle": o["handle"]} for o in batch
+            if o["class"] == cls and o["op"] in ("create", "update") and isinstance(o.get("obj"), dict) and o["obj"].get("gramps_id") == gid]
+
+
+def _pulled_window(con):
+    """The pull's `pulled` rows (sidecar.load_pulled) for the last pull runs, or {} when no pull has applied anything yet."""
+    raw = sidecar.meta(con).get("pull_n")
+    return sidecar.load_pulled(con, int(raw) if str(raw).isdigit() else 0)
 
 
 class Snapshot:
@@ -204,6 +228,7 @@ class _Push:
         self.serial = 0
         self.limits = {}
         self.replayed = 0
+        self.id_named = False        # the last refusal dropped ops that the server named by ID (it names one ID per answer)
 
     # ------------------------------------------------------------------------------------------------------- the client
 
@@ -246,7 +271,7 @@ class _Push:
         self.plan = pushplan.build_plan(
             local, base, snap.heads, meta=self.meta, members=self._members(), mode=self.mode, allow_deletes=self.options.allow_deletes, yes=self.options.yes,
             step_up=step_up, sticky=sticky, pins=pushstate.pins(con), max_obj_bytes=self.limits.get("max_obj_bytes"),
-            files=self.tree.media_files(), expunge_holds=sidecar.load_expunge_holds(con))
+            files=self.tree.media_files(), expunge_holds=sidecar.load_expunge_holds(con), pulled=_pulled_window(con))
         plan = self.plan
         self.log.line("push: plan %s ops=%d destructive=%d holds=%d blocked=%d conflicts=%d pull_pending=%d" % (
             snap.seq, len(plan.ops), len(plan.destructive), len(plan.holds), len(plan.blocked), len(plan.conflicts), len(plan.pull_pending)))
@@ -426,7 +451,9 @@ class _Push:
     def _send(self, batch, work):
         con = self.side
         destructive = batch[0]["op"] in ("delete", "withdraw")
-        for _attempt in range(1 + consts.MAX_DEAD_BATCH_RETRIES):
+        attempts = 1 + consts.MAX_DEAD_BATCH_RETRIES
+        while attempts > 0:
+            attempts -= 1
             if not batch:
                 return "ok"
             if destructive and self.no_step_up:
@@ -448,6 +475,8 @@ class _Push:
                     return "stop"
                 if rest == "split":
                     return "ok"
+                if self.id_named:
+                    attempts += 1                           # the server names one ID per answer and each answer drops its records: progress, not a retry
                 batch = rest
                 continue
             pushstate.ack_batch(con, key, request, resp.body)
@@ -470,6 +499,7 @@ class _Push:
         """What to do with a batch the server refused. Returns the ops to send again, "split" (work was queued) or "stop";
         raises for anything that ends the run (the row is then `rejected`, or stays `sent` when the answer may have been lost)."""
         con = self.side
+        self.id_named = False
         lost = exc.status is None or exc.status >= 500 or exc.status == 401
         if lost:
             raise exc                                       # the batch may have committed: the row stays `sent` and is replayed next run
@@ -505,6 +535,9 @@ class _Push:
         known = (exc.status == 409 and code in mapping) or (exc.status in (422, 400) and code in refused_content)
         if known:
             hits = _detail_list(exc, "conflicts") or _detail_list(exc, "violations")
+            if not hits:
+                hits = _id_hits(exc, batch)
+                self.id_named = bool(hits)
             by_handle = {(o["class"], o["handle"]): o for o in batch}
             dropped = {}
             for item in hits:

@@ -4,7 +4,9 @@
                   (409 version_conflict), the reserved ID block, retired Person IDs, renumbers, merges, step-up for deletes and the
                   destructive budget, idempotent replay of a batch key, sessions, the seeded gate and the snapshot file. It also logs every
                   request body as JSON text, so a test can grep it the way the dev-server request log is greped.
-    PushTree      a runner.TreeAccess over a dict of raw Gramps objects (the synthetic fixture tree).
+    PushTree      a runner.TreeAccess over a dict of raw Gramps objects (the synthetic fixture tree). After `attach_db` it also takes a
+                  pull: `apply` is one transaction over the dict, and a sqlite.db in a temporary folder gives the backup something to copy.
+    PullView      the pull's five-method Cloud over a FakeCloud, so one fake website serves both halves of a sync.
     make_token    an unsigned JWT-shaped access token with the claims the addon reads (amr, auth_time).
 
 Standard library only. Every value is the synthetic fixture's. Python 3.9 compatible.
@@ -16,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 
@@ -288,8 +291,7 @@ class FakeCloud:
         privacy = [o for o in ops if (o["handle"] in self.refuse_privacy or o["handle"] == each) and o["op"] in ("create", "update")]
         if privacy:
             raise err(422, "privacy_violation", {"violations": [{"rule": "privacy.test_rule", "class": o["class"], "handle": o["handle"], "pointer": "/x", "op_id": o["op_id"]} for o in privacy]})
-        conflicts, bad_block, bad_retired, bad_renumber, bad_merge, bad_taken = [], [], [], [], [], []
-        used_ids = {(h["class"], h["gramps_id"]): hd for hd, h in self.heads.items() if not h["deleted"]}
+        conflicts, bad_block, bad_retired, bad_renumber, bad_merge = [], [], [], [], []
         retired = self.retired | {h["gramps_id"] for h in self.heads.values() if h["class"] == "Person" and h["deleted"]}
         for o in ops:
             head = self.heads.get(o["handle"])
@@ -310,15 +312,14 @@ class FakeCloud:
                     bad_retired.append(ref)
                 if o["class"] == "Person" and live and head["gramps_id"] not in ("", gid):       # "" -> id is the one-time assignment (Q2-03 declined)
                     bad_renumber.append(ref)
-                other = used_ids.get((o["class"], gid))
-                if other is not None and other != o["handle"]:
-                    bad_taken.append(ref)
             if o["op"] == "delete" and o.get("reason") == "merge" and not self.merges_enabled:
                 bad_merge.append(ref)
-        for code, lst in (("gramps_id_retired", bad_retired), ("renumber_blocked", bad_renumber), ("reserved_id_block", bad_block),
-                          ("gramps_id_taken", bad_taken), ("merges_disabled", bad_merge)):
+        for code, lst in (("gramps_id_retired", bad_retired), ("renumber_blocked", bad_renumber), ("reserved_id_block", bad_block)):
             if lst:
-                raise err(409, code, {"conflicts": lst})
+                raise err(409, code, {"conflicts": lst})                  # the validator's shape: the ops are named
+        self._plan_gids(ops)                                              # applyBatch's shape: {class, gramps_id}, the first offender only
+        if bad_merge:
+            raise err(409, "merges_disabled", {"conflicts": bad_merge})
         if conflicts:
             raise err(409, "version_conflict", {"conflicts": conflicts})
         results = []
@@ -343,6 +344,33 @@ class FakeCloud:
             self.lose_response -= 1
             raise transport.TransportError("network", consts.EXIT_TEMPORARY, "retry", message="The network call failed.")
         return _Resp(200, response)
+
+    def _plan_gids(self, ops):
+        """api/src/sync/apply.js planGids, for the refusals that name no op: its errors carry `{class, gramps_id}` and nothing else, and
+        it throws at the first offender (two ops of the batch claiming one ID), then, once every op has been read, at the first ID
+        another live object holds. (The validator answers a retired Person ID, and a create over a deleted Person, first, naming the ops.)"""
+        claims = {}
+        for o in ops:
+            if o["class"] == "Tag":
+                continue
+            head = self.heads.get(o["handle"])
+            if o["op"] not in ("create", "update"):
+                continue
+            gid = o["obj"].get("gramps_id") or ""
+            if not gid or (head is not None and not head["deleted"] and head["gramps_id"] == gid):
+                continue
+            other = claims.get((o["class"], gid))
+            if other is not None and other != o["handle"]:
+                raise err(409, "gid_conflict", {"class": o["class"], "gramps_id": gid})
+            claims[(o["class"], gid)] = o["handle"]
+        freed = {(self.heads[o["handle"]]["class"], self.heads[o["handle"]]["gramps_id"]) for o in ops
+                 if o["handle"] in self.heads and not self.heads[o["handle"]]["deleted"] and o["class"] not in ("Person", "Tag")
+                 and (o["op"] in ("delete", "withdraw") or (o["op"] == "update" and o["obj"].get("gramps_id") != self.heads[o["handle"]]["gramps_id"]))}
+        held = {(h["class"], h["gramps_id"]): hd for hd, h in self.heads.items() if not h["deleted"] and h["gramps_id"]}
+        for (cls, gid), handle in claims.items():
+            holder = held.get((cls, gid))
+            if holder is not None and holder != handle and (cls, gid) not in freed:
+                raise err(409, "gramps_id_taken", {"class": cls, "gramps_id": gid})
 
     # ------------------------------------------------------------------------------------------------------------- test hooks
 
@@ -425,6 +453,35 @@ class PushTree(R.FakeTree):
     def objects(self):
         return copy.deepcopy(self.data)
 
+    # a pull applies through these (see the pull tests' FakeTree): one transaction over `data`, swapped in on success
+    def attach_db(self, root):
+        """A folder with a small sqlite.db, so the pull's backup has a file to copy."""
+        self.dbdir = os.path.join(root, "grampsdb", self.dbid)
+        os.makedirs(self.dbdir, exist_ok=True)
+        con = sqlite3.connect(os.path.join(self.dbdir, "sqlite.db"))
+        con.execute("CREATE TABLE objects (handle TEXT PRIMARY KEY, json TEXT NOT NULL)")
+        con.commit()
+        con.close()
+        self.undo = []
+        self.applies = 0
+
+    def editors_open(self):
+        return False
+
+    def apply(self, label, commits, removals, precheck=None, verify=None, hook=None):
+        working = copy.deepcopy(self.data)
+        if precheck is not None:
+            precheck(lambda cls, h: copy.deepcopy(self.data.get(h)))
+        for _h, o in sorted(commits.items()):
+            working[o["handle"]] = copy.deepcopy(o)
+        for _cls, h in removals:
+            working.pop(h, None)
+        if verify is not None:
+            verify(copy.deepcopy(working))
+        self.data = working
+        self.undo.append(label)
+        self.applies += 1
+
     def pad(self, n):
         """Adds n plain, unreferenced notes: a bigger tree, so a mass delete stays under the 90 percent similarity line (D03)."""
         template = copy.deepcopy(next(o for o in load_fixture().values() if o["_class"] == "Note" and o["text"]["string"] == "A plain note with nothing sensitive in it."))
@@ -448,3 +505,22 @@ class PushTree(R.FakeTree):
 
     def by_id(self, cls, gramps_id):
         return next(o for o in self.data.values() if o["_class"] == cls and o.get("gramps_id") == gramps_id)
+
+
+class PullView:
+    """The pull's Cloud (meta, snapshot_info, fetch, media_download) over a FakeCloud: one fake website for both halves of a sync."""
+
+    def __init__(self, cloud):
+        self.cloud = cloud
+
+    def meta(self):
+        return self.cloud.meta()
+
+    def snapshot_info(self):
+        return self.cloud.get("/api/sync/snapshot").body
+
+    def fetch(self, url):
+        return self.cloud.snapshot_files[url]
+
+    def media_download(self, handle):
+        raise err(404, "not_found")

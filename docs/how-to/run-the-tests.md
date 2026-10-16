@@ -495,7 +495,7 @@ The scenarios drive the installed addon and the addon's own sign-in and transpor
 gramps/tests/e2e/run.sh --list                   # the scenario files
 gramps/tests/e2e/run.sh                          # all of them
 gramps/tests/e2e/run.sh scenario_smoke.py        # bind, status, the empty check, and the request-log greps
-gramps/tests/e2e/run.sh scenario_push.py         # the push: seed, edits, replay, 409, deletes, merges, ids, and the privacy greps
+gramps/tests/e2e/run.sh scenario_push.py         # the push: seed, edits, replay, 409, deletes, merges, ids, the privacy greps, and the pull and push together
 gramps/tests/e2e/run.sh scenario_pull.py         # the pull: check, apply, faults, conflicts, privacy, expunge, restore, reviewed plan (about 4 minutes)
 ```
 

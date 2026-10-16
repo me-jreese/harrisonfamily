@@ -110,6 +110,8 @@ HOLD_MESSAGES = {
     "merge_unverified": "The website did not say which people are signed-in members, so a merge cannot be checked. Nothing was sent for it.",
     "merge_gui_only": "A person merge is only pushed from the Gramps window, with a fresh sign-in. Nothing was sent for it.",
     "delete_parked": "A delete is only pushed with --allow-deletes. Nothing was sent for it.",
+    "revert_parked": "This change reverts a website change (origin): it puts back a value that a recent pull replaced. The command line never sends it. "
+                     "Keep the website's value in Gramps, or send it from the Gramps window after confirming.",
     "step_up_required": "A delete needs a fresh sign-in (hfy-sync login --step-up). Nothing was sent for it.",
     "mass_delete": "Too many deletes at once (more than 10, or more than 5 percent of the synced records). Nothing was sent; do it from the Gramps window.",
     "privacy_violation": "The website refused this record's content (a rule differs between the addon and the website). Nothing of it is stored.",
