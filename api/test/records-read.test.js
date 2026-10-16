@@ -54,6 +54,45 @@ async function world() {
   return { ...w, apply, get, me, other, ownDeath, otherDeath, shared, n1, n2, m1, m2, mod };
 }
 
+describe("merged-person alias (merge-alias-redirect)", () => {
+  const alias = (w, old, current, extra = {}) => w.ddb.rows.set(`IDALIAS#Person#${old}\u0000META`, { PK: `IDALIAS#Person#${old}`, SK: "META", entity: "idalias", class: "Person", old_gramps_id: old, handle: h(900), current_gramps_id: current, reason: "merge", ...extra });
+
+  it("answers {mergedInto} for an old id whose alias names a live person", async () => {
+    const w = await world();
+    alias(w, "I0777", OTHER);
+    const r = await w.get("/api/records/Person/by-id/I0777", ME);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ mergedInto: OTHER });
+  });
+
+  it("answers an admin the same, and a member only when the gate lets them in", async () => {
+    const w = await world();
+    alias(w, "I0777", OTHER);
+    expect((await w.get("/api/records/Person/by-id/I0777", ADMIN)).body).toEqual({ mergedInto: OTHER });
+    process.env.HFY_EDITING = "off";
+    expect((await w.get("/api/records/Person/by-id/I0777", ME)).status).toBe(404); // not the member's own id
+    expect((await w.get("/api/records/Person/by-id/I0777")).status).toBe(404); // signed out
+  });
+
+  it("is 404 when there is no alias, the survivor is not live, the alias points at itself or has no survivor", async () => {
+    const w = await world();
+    alias(w, "I0778", "I5555"); // no such person
+    alias(w, "I0779", "I0779");
+    alias(w, "I0780", null);
+    for (const id of ["I0778", "I0779", "I0780", "I0781"]) {
+      const r = await w.get(`/api/records/Person/by-id/${id}`, ME);
+      expect(r.status).toBe(404);
+    }
+  });
+
+  it("a live person with the id wins over an alias", async () => {
+    const w = await world();
+    alias(w, OTHER, ME);
+    const r = await w.get(`/api/records/Person/by-id/${OTHER}`, ME);
+    expect(r.body.handle).toBe(w.other.handle);
+  });
+});
+
 describe("shape and lookup (AC1, AC2)", () => {
   it("returns {class, handle, gramps_id, version, obj} with ETag v<version> to a signed-in member, by handle and by gramps_id", async () => {
     const w = await world();

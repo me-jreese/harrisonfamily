@@ -672,6 +672,81 @@ class NoGrampsId(unittest.TestCase):
         self.assertIn("I9999", json.dumps(json.loads(files["person/search-index.json"])))
 
 
+class MergeAlias(unittest.TestCase):
+    """merge-alias-redirect (SYNC-10): an IDALIAS item makes person/<old>.json = {"mergedInto": <new>}; deleting it removes the file."""
+
+    OLD = "I9101"
+
+    def alias(self, rig, old=None, new="I0001", reason="merge", gsi=True):
+        old = old or self.OLD
+        item = {"PK": f"IDALIAS#Person#{old}", "SK": "META", "entity": "idalias", "class": "Person", "old_gramps_id": old,
+                "handle": "feedfacefeedfacefeedface", "current_gramps_id": new, "reason": reason, "batch_id": "b1", "at": "2026-10-14T12:00:00Z"}
+        rig.table.items[(item["PK"], "META")] = item
+        return item
+
+    def stub(self, rig, old=None):
+        raw = rig.site_files().get(f"person/{old or self.OLD}.json")
+        return None if raw is None else json.loads(raw.decode())
+
+    def test_an_alias_writes_the_stub_and_deleting_it_removes_the_file(self):
+        rig = sup.Rig("live")
+        rig.run()
+        self.assertIsNone(self.stub(rig))
+        self.alias(rig)
+        rig.store.marker()
+        self.assertEqual(rig.run()["status"], "rendered")
+        self.assertEqual(self.stub(rig), {"mergedInto": "I0001"})
+        self.assertIn(f"person/{self.OLD}.json", rig.manifest())
+        del rig.table.items[(f"IDALIAS#Person#{self.OLD}", "META")]
+        rig.store.marker()
+        rig.run()
+        self.assertIsNone(self.stub(rig))
+        self.assertNotIn(f"person/{self.OLD}.json", rig.manifest())
+
+    def test_the_stub_is_written_on_a_first_pass_and_is_stable(self):
+        rig = sup.Rig("live")
+        self.alias(rig)
+        rig.run()
+        self.assertEqual(self.stub(rig), {"mergedInto": "I0001"})
+        before = len(rig.site.puts)
+        rig.store.marker()
+        rig.run()
+        self.assertNotIn(f"person/{self.OLD}.json", rig.site.puts[before:])
+
+    def test_a_merge_delete_in_the_view_finds_its_alias_without_the_index(self):
+        rig = sup.Rig("live")
+        rig.run()
+        item = self.alias(rig)
+        rig.table.query_aliases = lambda cls: iter(())  # the index has not caught up
+        victim = rs.p_fixture()
+        gone = next(o for o in victim if o["_class"] == "Person" and o["gramps_id"] == "I0005")
+        item2 = self.alias(rig, old="I0005")
+        rig.store.remove("Person", gone["handle"], reason="merge")
+        rig.run()
+        self.assertEqual(self.stub(rig, "I0005"), {"mergedInto": "I0001"})
+        self.assertIsNone(self.stub(rig), "an alias the view does not name is the index's business")
+        self.assertEqual(item["old_gramps_id"], self.OLD)
+        self.assertEqual(item2["old_gramps_id"], "I0005")
+
+    def test_no_stub_for_a_live_old_id_a_missing_survivor_a_self_alias_or_a_bad_id(self):
+        rig = sup.Rig("live")
+        self.alias(rig, old="I0002", new="I0001")  # I0002 is a live person: a stub never shadows a real page
+        self.alias(rig, old="I9102", new="I9999")  # the survivor has no page
+        self.alias(rig, old="I9103", new="I9103")
+        self.alias(rig, old="I9104", new="../x")
+        rig.run()
+        files = rig.site_files()
+        for old in ("I9102", "I9103", "I9104"):
+            self.assertNotIn(f"person/{old}.json", files)
+        self.assertNotEqual(json.loads(files["person/I0002.json"].decode()).get("mergedInto"), "I0001")
+
+    def test_a_renumber_alias_gets_a_stub_too(self):
+        rig = sup.Rig("live")
+        self.alias(rig, reason="renumber")
+        rig.run()
+        self.assertEqual(self.stub(rig), {"mergedInto": "I0001"})
+
+
 class Reconcile(unittest.TestCase):
     def test_a_matching_store_raises_nothing(self):
         rig = sup.Rig("live")

@@ -5,6 +5,7 @@ import { userContentPolicy } from "@io-kit/comments";
 import { Comments } from "../lib/comments-ui.jsx";
 import { mountAt } from "../lib/mount.jsx";
 import { mountTreeLink } from "../lib/tree-link.js";
+import { mergedRedirect } from "../lib/merged-person.js";
 
 // The Notes card stays the legacy person-page.js note markup (.card > .card-body inside .notes-panel), so the legacy theme
 // partials style the island's notes and the no-JS / flag-off notes identically.
@@ -20,19 +21,36 @@ const waitFor = (test) => new Promise((resolve) => {
   mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
 });
 
+// A merged-away person's JSON is the stub {mergedInto} (merge-alias-redirect): follow it to the new id. The page's own hook does the same;
+// both go to the same address, so whichever runs first wins. Returns true when this page is leaving.
+function followMerged(person, id) {
+  const go = mergedRedirect(location.href, person, id);
+  if (!go?.url) return false;
+  location.replace(go.url);
+  return true;
+}
+
 async function init() {
   const id = new URLSearchParams(location.search).get("id");
   const content = document.getElementById("person-content");
   if (!id || !content) return;
+  const flags = window.HFYFeatureFlags;
+  const url = `/person/${encodeURIComponent(id)}.json`;
+  const init = { credentials: "same-origin" }; // the io_id cookie is the credential at the edge data gate (HFY-TSK-080)
+  let person = null;
+  const loading = (async () => {
+    try {
+      // HFY-R66: refresh + one retry on a gate 401; background load (the legacy page already rendered), so it never redirects.
+      const res = await (flags?.dataFetch ? flags.dataFetch(url, init, { interactive: false }) : fetch(url, init));
+      person = res.ok ? await res.json() : null;
+    } catch { person = null; }
+    return person;
+  })();
+  // A stub never renders a page, so the redirect cannot wait for the notes panel.
+  if (followMerged(await loading, id)) return;
   await waitFor(() => !content.classList.contains("d-none") && content.querySelector(".notes-panel"));
   const panel = content.querySelector(".notes-panel");
   try {
-    const flags = window.HFYFeatureFlags;
-    const url = `/person/${encodeURIComponent(id)}.json`;
-    const init = { credentials: "same-origin" }; // the io_id cookie is the credential at the edge data gate (HFY-TSK-080)
-    // HFY-R66: refresh + one retry on a gate 401; background load (the legacy page already rendered), so it never redirects.
-    const res = await (flags?.dataFetch ? flags.dataFetch(url, init, { interactive: false }) : fetch(url, init));
-    const person = res.ok ? await res.json() : null;
     const notes = (person?.notes || []).filter((n) => n && typeof n.raw === "string" && n.raw.trim());
     if (notes.length) {
       Array.from(panel.children).forEach((el) => { if (el.tagName !== "H2") el.remove(); });

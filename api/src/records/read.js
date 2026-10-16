@@ -15,7 +15,7 @@
 // record reach them; everyone else gets 404 not_found.
 import { HttpError, json } from "../http.js";
 import { serverSwitch } from "../features.js";
-import { CLASSES } from "../sync/store.js";
+import { CLASSES, getAlias } from "../sync/store.js";
 import { backrefs, byGrampsId, get } from "./index.js";
 import { applyModOverlay, collectModTargets, recordHidden } from "./mod-overlay.js";
 
@@ -169,13 +169,26 @@ async function readOne(ctx, actor, cls, handle) {
 /** GET /api/records/:class/:handle */
 export const recordGet = async (c) => readOne(store(c), c.actor, c.params.class, c.params.handle);
 
+/**
+ * An old id that a merge (or an allowed renumber) retired answers {mergedInto: <new id>} (SYNC-10, merge-alias-redirect), the API twin of the
+ * `person/<old>.json` stub the renderer writes. The new id must be a live person's, so a withdrawn survivor is never named; anything else is
+ * 404 not_found. The body holds the id only.
+ */
+async function mergedStub(ctx, oldId) {
+  const alias = await getAlias(ctx, "Person", oldId);
+  const target = alias?.current_gramps_id;
+  if (typeof target !== "string" || target === oldId || !GID_RE.test(target)) throw notFound();
+  if ((await byGrampsId(ctx, "Person", target)).length === 0) throw notFound();
+  return json(200, { mergedInto: target }, { vary: "Cookie" });
+}
+
 /** GET /api/records/Person/by-id/:gramps_id: a gramps_id is not unique in Gramps, so two live holders answer 409 ambiguous_gramps_id. */
 export async function recordByGrampsId(c) {
   const gid = c.params.gramps_id;
   if (!GID_RE.test(gid)) throw notFound();
   const ctx = store(c);
   const hits = await byGrampsId(ctx, "Person", gid);
-  if (hits.length === 0) throw notFound();
+  if (hits.length === 0) return mergedStub(ctx, gid);
   if (hits.length > 1 && c.actor?.admin !== true) throw notFound(); // no duplicate oracle for members
   if (hits.length > 1) throw new HttpError(409, "ambiguous_gramps_id", "more than one person has this id");
   return readOne(ctx, c.actor, "Person", hits[0].handle);

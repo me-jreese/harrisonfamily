@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -37,6 +38,9 @@ OUTBOX_LIST_CAP = 10_000
 MANIFEST_SAVE_EVERY = 250
 BUDGET_MARGIN_MS = 20_000
 REPORT_LIST_CAP = 2_000
+
+#: The id shape a stub may carry: the site's redirect hook follows only this (11ty/js/person-page.js, the mergedInto hook).
+ALIAS_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}\Z")
 
 log = logging.getLogger("hfy.render")
 
@@ -300,7 +304,10 @@ class Engine:
         # The privacy re-check: a failing file is not written and not deleted (the site keeps the last good copy).
         blocked: Dict[str, List[str]] = {}
         bodies: Dict[str, bytes] = {}
-        for key, body in rendered.files.items():
+        files = dict(rendered.files)
+        for key, body in self._alias_stubs(view, objects).items():
+            files.setdefault(key, body)
+        for key, body in files.items():
             if not is_owned_key(key):
                 blocked[key] = [errors.RULE_KEY_UNOWNED]
                 continue
@@ -433,6 +440,34 @@ class Engine:
         d.table.commit_pass(cursor, fields, remove, outbox)
         self._trigger_graph(seq)
         return {"status": "rendered", "mode": mode, "seq": seq, **counts}
+
+    def _alias_stubs(self, view: StoreView, objects: Dict[Tuple[str, str], Dict[str, Any]]) -> Dict[str, bytes]:
+        """``person/<old id>.json = {"mergedInto": "<new id>"}`` for every Person ``IDALIAS#`` item (merge-alias-redirect, SYNC-10).
+
+        The site redirects an old id to the new one from this stub. A stub is written only while the new id is a live person's page
+        and the old id is not (a retired id is never reused, but a stub never shadows a real page). When the alias item is gone, or
+        the survivor is, the key leaves the desired set and the normal diff removes the file. The aliases come from GSI1, and also
+        from a consistent read for each merge delete in the view, so a pass never misses an alias the index has not caught up with."""
+
+        live = {(o.get("gramps_id") or "").strip() for k, o in objects.items() if k[0] == "Person"}
+        aliases: Dict[str, str] = {}
+        for item in self.d.table.query_aliases("Person"):
+            old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
+            if isinstance(old, str) and isinstance(new, str):
+                aliases[old] = new
+        merged = [h.gramps_id for h in view.heads.values() if h.cls == "Person" and h.deleted and h.op == "delete" and h.reason == "merge" and h.gramps_id]
+        if merged:
+            got = self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in merged])
+            for item in got.values():
+                old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
+                if isinstance(old, str) and isinstance(new, str):
+                    aliases[old] = new
+        stubs: Dict[str, bytes] = {}
+        for old, new in sorted(aliases.items()):
+            if old == new or old in live or new not in live or not ALIAS_ID.match(old) or not ALIAS_ID.match(new):
+                continue
+            stubs[f"person/{old}.json"] = json.dumps({"mergedInto": new}, indent=2, sort_keys=True).encode("utf-8")
+        return stubs
 
     def _trigger_graph(self, seq: int) -> None:
         """After a successful live pass, starts hfy-graph-render asynchronously (it debounces, and skips a seq it has already built).
