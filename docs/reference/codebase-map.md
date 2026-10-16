@@ -27,13 +27,14 @@ Each capability has a section below with its paths, the facts that change how yo
 | [MCP server](#mcp-server) | `api/src/mcp.js`, `api/src/policy.js`, `api/src/labels.js`, `api/src/mcp-caps.js`, `api/parity/`, `scripts/ci/mcp-conformance.sh`, `infrastructure/mcp-edge401.us-east-1.yaml`, `scripts/infra/add-mcp-behavior.sh` | [MCP server](mcp-server.md) |
 | [Auth edge and MCP authorization server](#auth-edge-and-mcp-authorization-server) | `auth/` | [Identity services](identity-services.md) |
 | [Private data gate](#private-data-gate) | `edge-gate/`, `infrastructure/cloudformation/edge-gate-stack.yaml`, `scripts/ci/package-edge-gate.sh`, `scripts/infra/add-data-gate-behaviors.sh` | [Identity services](identity-services.md#private-data-gate-hfy-edge-gate), [Architecture](architecture.md#hfy-edge-gate) |
+| [Chat Worker](#chat-worker) | `chat-worker/` | [Build, test and stage the chat Worker](../how-to/deploy-the-chat-worker.md) |
 | [Family graph builder](#family-graph-builder) | `graph/` | [Graph builder README](../../graph/README.md) |
 | [CloudFront Function](#cloudfront-function) | `scripts/cloudfront/`, `scripts/infra/publish-append-index.sh` | [Architecture](architecture.md#hfyappendindex) |
 | [Retired legacy sign-in](#retired-legacy-sign-in) | None: its last code was deleted (HFY-TSK-325, HFY-TSK-326) | [Identity services](identity-services.md#retired-legacy-sign-in) |
 | [Infrastructure](#infrastructure) | `infrastructure/`, `scripts/infra/`, `cloudfront/` | [Architecture](architecture.md) |
 | [CI and repo operations](#ci-and-repo-operations) | `ci.manifest.yaml`, `.github/`, `scripts/ci/`, `scripts/git-hooks/`, the workspace helpers in `scripts/` | [Repository operations](repository-operations.md) |
 | [Plan orchestration tooling](#plan-orchestration-tooling) | `scripts/orchestration/`, `docs/design/hfy-pln-002/` | [Orchestration tooling README](../../scripts/orchestration/README.md) |
-| [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `graph/test/`, `gramps/tests/unit/`, `shared/*.test.mjs`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
+| [Tests](#tests) | `api/test/`, `auth/test/`, `auth/e2e/`, `edge-gate/test/`, `chat-worker/test/`, `graph/test/`, `gramps/tests/unit/`, `shared/*.test.mjs`, `islands/tests/`, `scripts/cloudfront/test/`, `scripts/infra/test/`, `tests/client/`, `tests/login-flow/`, `scripts/mcp/` | [Repository operations](repository-operations.md) |
 | [Sanitized samples](#sanitized-samples) | `allowlist/`, `harrisonfamily-frontend/`, `etl-output/`, `gramps_exports/`, `cloudfront/` | [Private data and secrets](private-data-and-secrets.md) |
 | [Outside the repository](#outside-the-repository) | `<eleventy-source>`, `<project>/scripts/`, `<project>/workspace-local/` | [Private data and secrets](private-data-and-secrets.md) |
 
@@ -367,6 +368,27 @@ Facts:
 - While the gate is attached, an automatic rollback or a revert that restores a `flags.json` with `authV2` false, or any change that sets `authV2` false, locks visitors out of the family data: the client then never refreshes the `io_id` cookie that the gate checks, and nothing else opens the data. Remove the gate first: `add-data-gate-behaviors.sh --remove --app-stack <app-stack>`, with `us-west-2` as the CLI's region, or with `--restore-uploads-policy-id`. For what `--remove` changes, see [Infrastructure](#infrastructure); for what the data paths answer afterwards, see [CloudFront Function](#cloudfront-function).
 - No workflow builds, deploys or attaches the gate. Building, validating and deploying it: [How to deploy and update the Lambda@Edge functions in us-east-1](../how-to/deploy-the-edge-functions.md). Why it exists: [Gating the JSON](../explanation/family-data-privacy.md#gating-the-json).
 
+## Chat Worker
+
+Paths:
+
+- [`chat-worker/wrangler.toml`](../../chat-worker/wrangler.toml): the `ChatHub` Durable Object binding, migration `v1` (`new_sqlite_classes`), the two routes (`<site>/chat/ws*` and `<site>/chat/v1/*`), the vars, observability off, and `[env.staging]`.
+- [`chat-worker/src/index.mjs`](../../chat-worker/src/index.mjs): the production entry. It wires `@io-kit/chat/cloudflare` (`chatHubClass`, `createChatWorker`) with [`shared/privacy-guard.mjs`](../../shared/privacy-guard.mjs) as the hub's `contactGuard`.
+- [`chat-worker/src/common.mjs`](../../chat-worker/src/common.mjs): the guard adapter and the front door that answers only the upgrade on `/chat/ws` and `GET /chat/v1/health`, and sends everything else on with `fetch(request)`.
+- [`chat-worker/src/staging.mjs`](../../chat-worker/src/staging.mjs): the staging entry only (a test JWKS and a stand-in API). It is not part of `dist/`.
+- [`chat-worker/dist/`](../../chat-worker/dist/): the committed bundle (`index.js`) and `deploy.json` (bindings, migration, compatibility date, vars, routes) that the `cloudflare-worker` target of `@io-kit/ci` uploads.
+- [`chat-worker/scripts/`](../../chat-worker/scripts/): `build.mjs` (build and `--check`), `staging-keys.mjs` and `staging-deploy.mjs`.
+- [`chat-worker/test/`](../../chat-worker/test/): the `node:test` suites and `smoke.mjs`. See [Tests](#tests).
+- [`chat-worker/package.json`](../../chat-worker/package.json), `package-lock.json`, `.npmrc`: exact pins of `@io-kit/chat` and `wrangler`, a lockfile generated with a CodeArtifact token.
+
+Facts:
+
+- `dist/` is committed build output (HFY-R58). CI cannot install `@io-kit/chat` (HFY-R62) and installs no npm package (HFY-R14), so you build with `npm run build` and `npm run check` fails when it is stale.
+- The Worker forwards to the Durable Object a new `Request` with `x-chat-uid` and `x-chat-exp` and the handshake headers only, never the `Cookie`. The hub object is created with `locationHint` `wnam`.
+- The only paths that leave CloudFront are the two routes. They are created once by the orchestrator, not by this repository's pipeline.
+- Chat ships dark: `CHAT_OPEN_TO` is `uat` with an empty `CHAT_UAT_SUBJECTS`, and the island flag is `chatV1: false`. Whether a Worker is deployed is not recorded in the repository: check the live state, for example `curl -s https://<site>/chat/v1/health`.
+- No workflow builds, tests or deploys `chat-worker/` yet. See [Build, test and stage the chat Worker](../how-to/deploy-the-chat-worker.md).
+
 ## Family graph builder
 
 Paths:
@@ -547,6 +569,7 @@ Paths:
 - [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs): a Playwright end-to-end passkey test.
 - [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs): a Playwright end-to-end test of the styled sign-in pages.
 - [`edge-gate/test/gate.test.mjs`](../../edge-gate/test/gate.test.mjs): `node:test`.
+- [`chat-worker/test/`](../../chat-worker/test/): `node:test` suites `bundle`, `worker`, `hub` and `guard` over the committed `dist/index.js`, `helpers.mjs`, and `smoke.mjs` (real sockets against `wrangler dev` or a staging Worker; run by hand).
 - [`tests/client/`](../../tests/client/): `node:test` suites `auth-continuity.test.mjs` and `data-fetch.test.mjs`.
 - [`islands/tests/`](../../islands/tests/):
   - `node:test` suites: `asset-versions`, `bundle`, `content-contract`, `contract`, `copy`, `feed-conformance`, `kit-aliases`, `theme-delivery`, `theme-lint`, `time` and `uploads-gate`.
@@ -672,6 +695,7 @@ The reverse lookup: from a directory to the capability sections above.
 | `auth/` | Auth edge and MCP authorization server |
 | `cloudfront/` | Infrastructure (sample distribution), sanitized samples |
 | `docs/`, `AGENTS.md` | This documentation. `AGENTS.md` is the entry point for automated agents. |
+| `chat-worker/` | Chat Worker |
 | `edge-gate/` | Private data gate |
 | `lambda/` | Infrastructure: `lambda/hfy-sync-render/` is the render Lambda (HFY-TSK-176; [The render Lambda](sync-render.md)), built into a zip by `scripts/ci/package-render.sh` and shipped through the `RenderCodeKey` parameter; `lambda/placeholders/` holds the no-op packages for the app stack's `hfy-graph-render` and `hfy-sync-render` (HFY-TSK-247). The legacy `lambda/hfy-check-allowed/` was deleted (HFY-TSK-326). |
 | `graph/` | Family graph builder |
