@@ -80,7 +80,7 @@
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "bab9fd1f",
+        "js": "87c0cb53",
         "css": "7bf60ae7"
       },
       "photo-tags": {

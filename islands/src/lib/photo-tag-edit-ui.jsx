@@ -232,7 +232,7 @@ function TagEditor({ detail, me, person }) {
   const [rev, setRev] = useState(0);
   const [sel, setSel] = useState(null);
   const [status, setStatus] = useState("");
-  const [toast, setToast] = useState(null); // { text, undo, undoUntil, target, before, working, undoKey, id }
+  const [toast, setToast] = useState(null); // { text, undo, undoUntil, target, before, after, working, undoKey, id }
   const say = (text) => setToast(text ? { text, undo: null, undoUntil: 0, id: Date.now() } : null);
   const [settled, setSettled] = useState(0); // bumped when a drag ends, so the box's new place is announced
   const geometry = useImageBox(img, box);
@@ -249,9 +249,10 @@ function TagEditor({ detail, me, person }) {
     if (applied) {
       const before = Array.isArray(media.tags) ? media.tags.slice() : media.tags;
       media.tags = applyToTags(media.tags, change, rect);
+      const after = media.tags;
       document.dispatchEvent(new CustomEvent("hfy:tags-edited", { detail }));
       setRev((n) => n + 1);
-      setToast({ text: change.kind === "remove" ? TAG_COPY.removedDirect : TAG_COPY.savedDirect, undo: undo || null, undoUntil: undo ? undoUntil : 0, target, before, id: Date.now() });
+      setToast({ text: change.kind === "remove" ? TAG_COPY.removedDirect : TAG_COPY.savedDirect, undo: undo || null, undoUntil: undo ? undoUntil : 0, target, before, after, id: Date.now() });
     } else {
       say(sent ? TAG_COPY.savedReview : TAG_COPY.nochange);
     }
@@ -267,10 +268,10 @@ function TagEditor({ detail, me, person }) {
     setToast({ ...t, working: true, undoKey });
     try {
       await api.post("/changes", undoBody({ target: t.target, undo: t.undo }), { headers: { "Idempotency-Key": undoKey } });
-      media.tags = t.before;
+      if (media.tags === t.after) media.tags = t.before; // only when nothing else changed the tags since; otherwise the page's copy stays as it is
       document.dispatchEvent(new CustomEvent("hfy:tags-edited", { detail }));
       setRev((n) => n + 1);
-      setSel(null);
+      setSel((s) => (s && s.kind === "existing" ? null : s)); // a draft the member has started is left alone
       say(TAG_COPY.undone);
       requestAnimationFrame(() => { if (addRef.current) addRef.current.focus(); });
     } catch (e) {
@@ -438,8 +439,7 @@ function TagEditor({ detail, me, person }) {
         <h3 className="photo-tag-edit__h" id={headingId}>{TAG_COPY.heading}</h3>
         {toast && (
           <div className="photo-tag-edit__toastbox">
-            <p className="photo-tag-edit__toast" id={`${headingId}-toast`} role="status" data-hfy-tag-toast>{toast.text}</p>
-            {toast.note && <p className="photo-tag-edit__hint" role="status">{toast.note}</p>}
+            <p className="photo-tag-edit__toast" id={`${headingId}-toast`} role="status" data-hfy-tag-toast>{toast.text}{toast.note ? ` ${toast.note}` : ""}</p>
             {undoLeftMs(toast) > 0 && (
               <button type="button" className="photo-tag-edit__undo" onClick={undo} disabled={toast.working === true} aria-describedby={`${headingId}-toast`} data-hfy-tag-undo>{TAG_COPY.undo}</button>
             )}

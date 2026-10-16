@@ -365,4 +365,22 @@ describe("the toast's undo (HFY-TSK-345)", () => {
     assert.deepEqual(body.ops, undo.ops);
     assert.deepEqual(Object.keys(body).sort(), ["base_versions", "ops", "target"]);
   });
+  it("the undo window ends after its 10 minutes and with no undo at all", async () => {
+    const { undoLeftMs } = await import("../src/lib/editor-save.js");
+    const t0 = 1_000_000;
+    const toast = { undo: { ops: [] }, undoUntil: t0 + 600_000 };
+    assert.equal(undoLeftMs(toast, t0), 600_000);
+    assert.equal(undoLeftMs(toast, t0 + 599_999), 1);
+    assert.equal(undoLeftMs(toast, t0 + 600_000), 0);
+    assert.equal(undoLeftMs(toast, t0 + 900_000), 0);
+    assert.equal(undoLeftMs({ undo: null, undoUntil: t0 + 5 }, t0), 0);
+    assert.equal(undoLeftMs(null, t0), 0);
+  });
+  it("a failed undo is a conflict, a refusal or a transient error the member can retry", async () => {
+    const { problemFor } = await import("../src/lib/editor-save.js");
+    assert.equal(problemFor({ status: 409, code: "version_conflict" }, {}).conflict, true);
+    assert.equal(problemFor({ status: 503 }, {}).transient, true);
+    assert.equal(problemFor({ status: 429 }, {}).transient, true);
+    assert.equal(problemFor({ status: 422, code: "validation" }, {}).transient, false);
+  });
 });
