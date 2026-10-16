@@ -69,6 +69,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Change the theme or brand fonts](how-to/change-the-theme-or-brand-fonts.md) — change the colours, a theme partial or a font with the theme lint passing, and ship it.
 - [Refresh `11ty/` from the Eleventy source without losing E5 files](how-to/refresh-the-eleventy-output.md) — promote new Eleventy output while keeping the repo-owned files, then rebuild the islands over it.
 - [Publish a change to the HFYAppendIndex CloudFront Function](how-to/publish-the-cloudfront-function.md) — test, dry-run, publish and roll back `scripts/cloudfront/append-index.js`.
+- [Build, test and stage the chat Worker](how-to/deploy-the-chat-worker.md) — rebuild the committed `chat-worker/dist/` bundle, run its checks and tests, smoke it with real sockets in `workerd` and on a staging Worker; production deploy and CI are separate tasks.
 - [Run the test suites](how-to/run-the-tests.md) — run each suite with its prerequisites, and know which ones reach production.
 - [Regenerate the Gramps goldens](how-to/regenerate-the-gramps-goldens.md) — rebuild the values Gramps 6.0.6 computes for dates, birth and death indexes, and the relationship scenarios, compare them byte for byte, and check them without Gramps.
 - [Install and run the Gramps sync addon](how-to/install-the-gramps-sync-addon.md) — put the `hfy_sync` addon into Gramps, check it from the command line, bind the tree, and read its exit codes.

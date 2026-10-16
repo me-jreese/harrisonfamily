@@ -13,6 +13,7 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | Passkey end to end, [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs) | Local | The real auth edge app, served in process at `http://localhost:<E2E_PORT>` (default `4173`) with test-only wiring and synthetic data, driven by Playwright's Chromium with a virtual authenticator. The login page still requests Google's sign-in script. |
 | Sign-in pages end to end, [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) | Local | The real auth edge pages, with their real CSP, served in process at `http://localhost:<E2E_PORT>` (default `4175`) with test-only wiring and a synthetic allowlist, plus `/css` and `/fonts` from the scratch site that `SITE` names. Playwright's bundled headless shell drives them. The login page requests Google's sign-in script unless `E2E_OFFLINE=1`. |
 | Edge gate, [`edge-gate/test/`](../../edge-gate/test/) | Offline | In process only: RSA keys generated for the run, a stubbed JWKS fetch and a fixed clock. |
+| Chat Worker, [`chat-worker/test/`](../../chat-worker/test/) | Offline; needs `CODEARTIFACT_AUTH_TOKEN` to install | `npm run check` and `npm test` run the committed `dist/index.js` in process: a fake Durable Object state over `node:sqlite`, a fake namespace, stubbed `fetch` and a console spy, with generated RSA and ES256 keys and synthetic ids. `test/smoke.mjs --local` and `--local-prod` also start `wrangler dev` (workerd) on `127.0.0.1` with a local JWKS and API stand-in; nothing is deployed. |
 | Gramps goldens, [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py) | Offline | Read the committed golden files ([semantics](../../api/test/records/fixtures/gramps-semantics.golden.json), [relationships](../../api/test/records/fixtures/gramps-relationships.golden.json)) only, with the standard library. They need no Gramps; regenerating the files does ([Regenerate the Gramps goldens](regenerate-the-gramps-goldens.md)). |
 | Gramps addon pull, [`test_addon_pull.py`](../../gramps/tests/unit/test_addon_pull.py), [`test_addon_pull_safety.py`](../../gramps/tests/unit/test_addon_pull_safety.py), [`test_addon_media.py`](../../gramps/tests/unit/test_addon_media.py) and [`test_addon_restore.py`](../../gramps/tests/unit/test_addon_restore.py) | Offline | In process, standard library only, over the synthetic fixture: a fake tree with a real transaction semantics, a fake cloud that builds snapshots the way `api/src/sync/pull.js` does, and a temporary `HOME`. They cover snapshot verification, the plan and the preview, the backup and its retention, media down, fault injection at every step boundary (raised and killed), the stale check, open conflicts over three more runs, the inbound privacy scan, reverts, expunge notices, the reviewed plan and the restore. |
 | Gramps addon, [`gramps/tests/unit/test_addon_runtime.py`](../../gramps/tests/unit/test_addon_runtime.py) and [`test_addon_wrapper.py`](../../gramps/tests/unit/test_addon_wrapper.py) | Offline | In process and child processes, standard library only. A fake tree stands in for Gramps, a fake Gramps command for `Gramps -O <tree> -a tool`, and a temporary `HOME` and `GRAMPSHOME` hold every file; the build and install tests use a temporary plugins folder. Needs `bash` and `zip`. |
@@ -47,8 +48,8 @@ Add a suite to CI only if it needs nothing from CodeArtifact: put its command in
 
 ## Before you start
 
-- **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
-- **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
+- **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `chat-worker/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
+- **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/`, `chat-worker/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
 - **Playwright's headless shell installed** for the island browser tests (step 4) and the sign-in pages end-to-end test (step 10). Neither needs Google Chrome: they launch the bundled `chromium-headless-shell` unless `PW_CHANNEL` names another channel.
 - **Start each block from the repository root.** Every command below assumes it. Blocks that change directory do so inside parentheses, in a subshell, so your shell is back at the root when each block ends.
 
@@ -63,6 +64,7 @@ Run the steps that cover your change:
 | The sign-in pages' styling (`islands/src/auth-edge/`) or `auth/edge.manifest.json` | Steps 2, 3 and 5, and the sign-in pages test in step 10. |
 | `islands/`, a theme partial or an `11ty/` page | Steps 3 and 4. |
 | `edge-gate/` | Step 8. |
+| `chat-worker/`, or `shared/privacy-guard.mjs` | Step 16. |
 | `graph/` | Step 14. |
 | `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js` or `11ty/family-login/index.html` | Step 9. |
 | `scripts/infra/`, `scripts/cloudfront/`, or a file under `11ty/person/` | Step 5. |
@@ -596,3 +598,19 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 - [MCP server](../reference/mcp-server.md): the MCP server and its conformance gate.
 - [Release model](../explanation/release-model.md): why live checks run against production rather than a staging copy.
 - [Build and preview the islands](build-and-preview-the-islands.md), [Change the theme or brand fonts](change-the-theme-or-brand-fonts.md), [Deploy a site change](deploy-a-site-change.md), [Deploy the app stack](deploy-the-app-stack.md), [Deploy the edge functions](deploy-the-edge-functions.md), [Publish the CloudFront function](publish-the-cloudfront-function.md), [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md), [Connect an MCP client](connect-an-mcp-client.md), [Rotate the origin-verify secret](rotate-the-origin-verify-secret.md), [Toggle a feature flag](toggle-a-feature-flag.md).
+
+### 16. Run the chat Worker suites (offline, and local workerd)
+
+```sh
+(cd chat-worker && npm ci && npm run check && npm test)
+```
+
+`npm run check` rebuilds the bundle in a temporary directory and exits `1` when `chat-worker/dist/` is missing, stale or extra. `npm test` runs `node --test test/*.test.mjs` over the committed bundle: the `wrangler.toml` and `deploy.json` declarations, the Durable Object rules (no timers, a tagged `acceptWebSocket`, a registered auto-response), the request the Worker hands the hub (only `x-chat-uid` and `x-chat-exp`, never the `Cookie`), the pass-through of other requests, the console staying free of headers and frame text, and the shared R-18 vectors on the bundled guard. See [Build, test and stage the chat Worker](deploy-the-chat-worker.md).
+
+To exercise real sockets, add (needs the `workerd` binary that `npm ci` installs, and no login):
+
+```sh
+(cd chat-worker && npm run smoke -- --local && npm run smoke -- --local-prod)
+```
+
+Afterwards `pgrep -fl workerd` prints nothing. CI does not run these: the install needs CodeArtifact.
