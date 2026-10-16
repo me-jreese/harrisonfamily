@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InMemoryNotificationStore } from "@io-kit/notify/server";
 import { cmds, etagOf, makeApi, signToken, TABLE } from "./world.js";
 import { SOME_LAT, SOME_LON, jpeg, tiff } from "./photo-fixtures.js";
@@ -15,6 +15,7 @@ import { buildCaps, ROUTES } from "../src/routes.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 import { PHASES, R_MEDIA_PREFIX, classifySyncError, createGraduation, graduationKey, parseRequest } from "../src/graduate.js";
 import { syncMediaDownload } from "../src/sync/pull.js";
+import { createIdPolicy, idPolicyFromEnv, policyOf } from "../src/sync/id-policy.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -169,6 +170,34 @@ describe("the cloud ID policy", () => {
       expect(mediaHeads()).toHaveLength(0);
     });
   }
+
+  // HFY-TSK-334: app-stack.yaml sets HFY_ID_POLICY from IdPolicy (default mint, io's Q2-03 answer, gate HFY-TSK-102). With that env and graduateV1
+  // on, the route mints instead of answering 503 id_policy_not_mint: once read from the env by policyOf (no ctx.idPolicy), once as index.js wires it.
+  describe("HFY_ID_POLICY=mint, the stack default", () => {
+    let envBefore;
+    beforeEach(() => { envBefore = process.env.HFY_ID_POLICY; process.env.HFY_ID_POLICY = "mint"; });
+    afterEach(() => { if (envBefore === undefined) delete process.env.HFY_ID_POLICY; else process.env.HFY_ID_POLICY = envBefore; });
+
+    it("resolves to the mint policy", () => {
+      expect(idPolicyFromEnv().mode).toBe("mint");
+      expect(createIdPolicy({ mode: idPolicyFromEnv(process.env).mode }).mode).toBe("mint");
+      expect(policyOf({}).mode).toBe("mint");
+    });
+
+    for (const [label, idPolicy] of [["read by policyOf", null], ["wired as index.js does", () => createIdPolicy({ mode: idPolicyFromEnv(process.env).mode })]]) {
+      it(`${label}: the graduation mints (201), not 503 id_policy_not_mint`, async () => {
+        w = await world({ idPolicy: idPolicy ? idPolicy() : null });
+        [author, admin] = await Promise.all([AUTHOR, ADMIN].map((s) => signToken(s)));
+        const c = await photoComment();
+        const r = await grad(c);
+        expect(r.body.error).not.toBe("id_policy_not_mint");
+        expect(r.status, JSON.stringify(r.body)).toBe(201);
+        expect(r.body.media.gramps_id).toMatch(/^O8\d{3}$/);
+        expect(marker(c)).toMatchObject({ state: "done" });
+        expect(mediaHeads()).toHaveLength(1);
+      });
+    }
+  });
 });
 
 describe("a graduation", () => {

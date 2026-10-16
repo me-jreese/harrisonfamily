@@ -434,6 +434,7 @@ Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/
 | `SessionJwksUrl` | `https://<site>/auth/.well-known/jwks.json` | `SESSION_JWKS_URL` |
 | `SessionCookie` | `io_id` | `SESSION_COOKIE` |
 | `GuardDob` | `off` (`off` or `on`) | `HFY_GUARD_DOB`: `on` makes the API refuse `dob_not_allowed` on posts and comments ([API: Contact-information guard](api.md#contact-information-guard)) |
+| `IdPolicy` | `mint` (`mint` or `assign`) | `HFY_ID_POLICY` on `hfy-api`, the cloud ID policy: io's answer to Q2-03 (gate HFY-TSK-102) is `mint`, so the cloud mints ids from the `8000`-`8999` block of each class inside the write's transaction, and they are permanent. Live config only: every minting route stays dark behind its own flag ([API: The cloud ID policy](api.md#the-cloud-id-policy)) |
 | `AuthFunctionName` | `hfy-auth-edge` | Edge function, log group and role names |
 | `AuthCodeKey` | `lambda/hfy-auth-edge.zip` | Edge package key. Deploys pass `lambda/hfy-auth-edge-<sha>.zip` |
 | `UserPoolName` | `hfy-users` | User pool name |

@@ -159,6 +159,20 @@ class AppStack(unittest.TestCase):
         self.assertEqual(p["AllowedValues"], ["off", "on"])
         self.assertEqual(self.r["Function"]["Properties"]["Environment"]["Variables"]["HFY_GUARD_DOB"], {"Ref": "GuardDob"})
 
+    # HFY-TSK-334: io answered Q2-03 (gate HFY-TSK-102) mint, so the cloud ID policy is live config on hfy-api, default mint. The minting
+    # routes stay dark behind their own flags; only hfy-api reads it.
+    def test_id_policy_parameter_defaults_to_mint_and_reaches_the_api(self):
+        p = self.t["Parameters"]["IdPolicy"]
+        self.assertEqual(p["Type"], "String")
+        self.assertEqual(p["Default"], "mint")
+        self.assertEqual(p["AllowedValues"], ["mint", "assign"])
+        for ref in ("Q2-03", "HFY-TSK-102"):
+            self.assertIn(ref, p["Description"])
+        self.assertEqual(self.r["Function"]["Properties"]["Environment"]["Variables"]["HFY_ID_POLICY"], {"Ref": "IdPolicy"})
+        for name, res in self.r.items():
+            if name != "Function" and res["Type"] == "AWS::Lambda::Function":
+                self.assertNotIn("HFY_ID_POLICY", res["Properties"].get("Environment", {}).get("Variables", {}), name)
+
     def test_uploads_response_headers_policy(self):
         cfg = self.r["UploadsResponseHeadersPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
         sec = cfg["SecurityHeadersConfig"]
