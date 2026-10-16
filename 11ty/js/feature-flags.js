@@ -60,7 +60,7 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "8579e28d",
+        "js": "25b0e38f",
         "css": "be703fb4"
       },
       "person": {

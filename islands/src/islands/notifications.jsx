@@ -1,12 +1,12 @@
 // /me/notifications: per-type preferences + push opt-in on @io-kit/notify (0.4.0 when built, 0.6.0 since HFY-TSK-185; HFY-TSK-068, BRD D-08). DS components/Notifications.
 import "@io-kit/notify/notify.css";
 import "./notifications.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NotificationSettings, PushNudge } from "@io-kit/notify/react";
 import { mountIsland } from "../lib/mount.jsx";
 import { edgeSignedOut } from "../lib/api.js";
 import { notifyApi } from "../lib/notify-api.js";
-import { CATALOG, catalogFor } from "../lib/notify-catalog.js";
+import { CATALOG, catalogFor, withDefaultOff, withoutHiddenDefaults } from "../lib/notify-catalog.js";
 import { getMe } from "../lib/me.js";
 import { FollowedPages } from "../lib/followed-pages.jsx";
 
@@ -66,11 +66,15 @@ function useFlag(name) {
 
 function Settings({ onSignedOut }) {
   const follows = useFlag("recordSubsV1");
+  const chat = useFlag("chatV1"); // the chat toggle appears only while chat is on (default off, HFY-R8)
+  const chatShown = useRef(false);
+  chatShown.current = chat;
   // The kit swallows a failed preferences load (it renders defaults); the island says so in a danger banner.
   const [loadError, setLoadError] = useState(null);
   const watched = useMemo(() => ({
     ...api,
-    getPreferences: () => api.getPreferences().then((p) => { setLoadError(null); return p; }, (e) => {
+    putPreferences: (p) => api.putPreferences(withoutHiddenDefaults(p, chatShown.current)),
+    getPreferences: () => api.getPreferences().then((p) => { setLoadError(null); return withDefaultOff(p); }, (e) => {
       if (/: 401$/.test(String(e?.message))) onSignedOut();
       else setLoadError(LOAD_FAILED);
       throw e;
@@ -83,7 +87,7 @@ function Settings({ onSignedOut }) {
     getMe().then((me) => { if (live) setAdmin(me.admin === true); });
     return () => { live = false; };
   }, []);
-  const catalog = useMemo(() => (admin === null ? null : catalogFor({ admin })), [admin]);
+  const catalog = useMemo(() => (admin === null ? null : catalogFor({ admin, chat })), [admin, chat]);
   return (
     <>
       <PushNudge api={api} dismissKey="hfy:notify-nudge" labels={LABELS} />

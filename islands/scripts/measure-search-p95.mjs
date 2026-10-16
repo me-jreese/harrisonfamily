@@ -108,7 +108,8 @@ async function oneRun(browser, runNo) {
 const server = await serve();
 let out;
 try {
-  const browser = await chromium.launch({ channel: process.env.PW_CHANNEL || "chrome" });
+  const channel = process.env.PW_CHANNEL || "chromium-headless-shell";
+  const browser = await chromium.launch({ channel });
   const runs = [];
   for (let i = 1; i <= RUNS; i += 1) runs.push(await oneRun(browser, i));
   const browserVersion = browser.version();
@@ -120,7 +121,7 @@ try {
     measure: "search 1.0 keystroke-to-paint",
     package: "@io-kit/search 1.0.1 + @io-kit/search-ui 1.0.10 (local tier, searchV2)",
     viewport: "375x812 @2x",
-    browser: `chrome (${browserVersion})`,
+    browser: `${channel} (${browserVersion})`,
     corpusPeople: CORPUS_SIZE,
     runs: per,
     pooled: { n: all.length, p50: round(percentile(all, 50)), p95: round(percentile(all, 95)), p99: round(percentile(all, 99)), max: round(Math.max(...all)) },

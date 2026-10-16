@@ -71,8 +71,26 @@ class E2ECase(unittest.TestCase):
 
     # ---------------------------------------------------------------------------------------------------------- the addon
 
-    def wrapper(self, *args):
-        return S.run_wrapper(list(args) + ["--tree", self.name])
+    def wrapper(self, *args, env=None):
+        return S.run_wrapper(list(args) + ["--tree", self.name], env_extra=env)
+
+    def edit(self, fn):
+        """Opens the tree with the Gramps API, calls fn(db, DbTxn) and closes it. Only while no CLI run holds the tree."""
+        import importlib  # by name: the unit lane checks that this file has no static `gramps` import
+
+        DbTxn = importlib.import_module("gramps.gen.db").DbTxn
+        make_database = importlib.import_module("gramps.gen.db.utils").make_database
+
+        db = make_database("sqlite")
+        db.load(self.dir)
+        try:
+            return fn(db, DbTxn)
+        finally:
+            db.close()
+
+    def local_objects(self):
+        """{handle: json_data} of every object in the tree, read with sqlite3 only (the tree must not be open for writing)."""
+        return {h: o for (_t, h), o in ft.json_objects(self.dir).items()}
 
     def bind_local(self):
         """`hfy-sync bind --yes` on the tree copy; returns the sidecar meta (tree_id, dbid, fingerprint, ...)."""

@@ -29,8 +29,9 @@ KEYCHAIN_SERVICE = "us.harrisonfamily.hfy_sync"  # sync.md 6
 KEYCHAIN_ACCOUNT_OWNER = "owner"
 KEYCHAIN_ACCOUNT = DEFAULT_SERVER + "/auth|" + KEYCHAIN_ACCOUNT_OWNER
 
-ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind")
-IMPLEMENTED_ACTIONS = ("status", "bind", "login")  # the rest wait for addon-pull-apply and addon-push
+ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind", "restore")
+IMPLEMENTED_ACTIONS = ("status", "bind", "login", "check", "pull", "sync", "restore")  # `push` waits for addon-push; `sync` is its pull half until then
+PULL_ACTIONS = ("check", "pull", "sync")  # the actions that run the pull side (sync.md 8.3 steps 3 to 11)
 # Gramps classes in the order a push sends them (sync.md 8.3 step 12); the sidecar `base.class` column uses these names.
 CLASSES = ("Tag", "Place", "Note", "Source", "Repository", "Citation", "Media", "Event", "Person", "Family")
 
@@ -40,7 +41,7 @@ RESULTS = (OK, CHANGES_PENDING, PARTIAL, REFUSED, FAILED)
 
 # status.json "next_action": sync.md 4.3, plus `bind` and `rebase` (BRD2 D50) for the two binding recoveries
 NEXT_ACTIONS = ("none", "login", "step_up", "resolve_conflicts", "retry", "update_addon", "open_bound_tree", "close_gramps",
-                "bind", "rebase")
+                "bind", "rebase", "review_incidents", "review_preview")
 
 # Exit codes of the wrapper (sync.md 8.7)
 EXIT_OK = 0
@@ -65,9 +66,14 @@ REFUSALS = {
     "D13": (EXIT_CONFIG, "rebase", "The sync state for this tree is damaged or from a newer addon. Rebase it from the Gramps window."),
     "D14": (EXIT_TEMPORARY, "retry", "Another website sync run is in progress. Wait for it to finish."),
 }
-NOT_ENABLED = (EXIT_NOT_ENABLED, "none", "This build of the addon has no network sync yet; only status and bind are available.")
+NOT_ENABLED = (EXIT_NOT_ENABLED, "none", "This build of the addon cannot push to the website yet; status, bind, login, check, pull, sync (the pull half) and restore are available.")
 REFUSALS["config_unreadable"] = (EXIT_CONFIG, "none", "config.json is unreadable. Fix or remove it, then bind the tree again; the tree and the website are untouched.")
-REFUSALS["usage"] = (EXIT_USAGE, "none", "Unknown action or option. Use status or bind in this build.")
+REFUSALS["usage"] = (EXIT_USAGE, "none", "Unknown action or option. See hfy-sync for the list of actions.")
+REFUSALS["unbound"] = (EXIT_CONFIG, "bind", "This tree is not bound to the website yet. Bind it first (hfy-sync bind --yes); nothing was read or sent.")
+REFUSALS["D45"] = (EXIT_TEMPORARY, "retry", "A Gramps edit window is open. Close the open edit windows to sync, then apply again.")
+REFUSALS["D50"] = (EXIT_CONFIG, "rebase", "The website's store is a different cloud tree than the one this tree last synced with (a re-seed or recovery). Rebase it from the Gramps window; nothing is sent automatically.")
+REFUSALS["disk_space"] = (EXIT_TEMPORARY, "none", "Not enough free disk space for the backup (three times the database plus 100 MB). Free some space and run again; nothing was changed.")
+REFUSALS["restore_open"] = (EXIT_TEMPORARY, "close_gramps", "A restore needs the tree closed. Close Gramps and run hfy-sync restore from the command line.")
 
 # Gramps' own option tables (gramps/gen/const.py, 6.0.6), for the --force-unlock check by getopt's own rules.
 GRAMPS_SHORTOPTS = "O:U:P:C:i:e:f:a:p:d:c:r:lLthuv?syqSD:"
@@ -77,3 +83,7 @@ GRAMPS_LONGOPTS = ["action=", "class=", "config=", "debug=", "default=", "displa
                    "listname=", "oaf-activate-iid=", "oaf-ior-fd=", "oaf-private", "open=", "username=", "password=",
                    "create=", "options=", "safe", "screen=", "show", "sm-client-id=", "sm-config-prefix=", "sm-disable",
                    "sync", "remove=", "usage", "version", "yes", "quiet"]
+
+# A Media handle names a file on this disk (`media_root/<handle><ext>`) and sits in a URL path, so it is held to a strict shape wherever
+# it comes from the website: the snapshot parser and the media download both refuse anything else (no separator, no "..", no escapes).
+HANDLE_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"

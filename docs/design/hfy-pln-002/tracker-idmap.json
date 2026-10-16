@@ -219,5 +219,10 @@
 "viz-v2-bigtree-nav": "HFY-TSK-309",
 "viz-v3-csp-worker": "HFY-TSK-310",
 "viz-v3-journeys-places": "HFY-TSK-311",
-"viz-v3-journeys-chapters": "HFY-TSK-312"
+"viz-v3-journeys-chapters": "HFY-TSK-312",
+"surf-links-followups": "HFY-TSK-329",
+"proposal-amend-intent-fix": "HFY-TSK-330",
+"surf-access-followups": "HFY-TSK-331",
+"surf-access-admin-ui-revoke": "HFY-TSK-333",
+"id-policy-wiring": "HFY-TSK-334"
 }

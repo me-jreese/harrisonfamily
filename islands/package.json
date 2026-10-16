@@ -16,6 +16,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@io-kit/chat": "0.1.5",
     "@io-kit/comments": "0.3.1",
     "@io-kit/content": "0.3.2",
     "@io-kit/gates": "0.1.2",

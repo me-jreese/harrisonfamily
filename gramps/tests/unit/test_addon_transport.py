@@ -1018,8 +1018,8 @@ class WrapperStepUp(unittest.TestCase):
         from importlib.machinery import SourceFileLoader
         wrapper = SourceFileLoader("hfy_sync_wrapper", os.path.join(GRAMPS, "bin", "hfy-sync")).load_module()
         parsed = wrapper.parse(["login", "--step-up", "--tree", "T"])
-        self.assertEqual((parsed[0], parsed[1], parsed[-1]), ("login", "T", True))
-        self.assertFalse(wrapper.parse(["login"])[-1])
+        self.assertEqual((parsed[0], parsed[1], parsed[7]), ("login", "T", True))
+        self.assertFalse(wrapper.parse(["login"])[7])
 
 
 class Constants(unittest.TestCase):

@@ -93,7 +93,7 @@ export async function listAllowBySub(ddb, cmds, table, sub) {
  *     Sign-in uses a strongly consistent GetItem and sees it at once.
  *   - On a DynamoDB failure the file alone decides, so a revoked email still listed in the file is a member again until the table recovers.
  */
-export function createCompositeMemberReader({ readEntries, ddb, cmds, table, ttlMs = 60_000, now = () => Date.now(), log = console, maxSubs = 2000 }) {
+export function createCompositeMemberReader({ readEntries, ddb, cmds, table, ttlMs = 60_000, now = () => Date.now(), log = console, maxSubs = 2000, strict = false }) {
   let file = { at: -Infinity, bySub: new Map() };
   const items = new Map(); // sub -> { at, list }
 
@@ -126,6 +126,7 @@ export function createCompositeMemberReader({ readEntries, ddb, cmds, table, ttl
       return list;
     } catch (e) {
       log.error?.("allowlist table unavailable (the file decides)", e instanceof Error ? e.name : "error");
+      if (strict) throw e; // strict (the chat directory): a failed table read is never answered from the file, so a revoked grant is not listed
       return undefined;
     }
   }

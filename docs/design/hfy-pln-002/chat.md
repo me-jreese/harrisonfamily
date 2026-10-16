@@ -652,14 +652,14 @@ When all three hold, the hub enqueues a `push_outbox` row and sets `notified_seq
 - Retries come after 1 min, 5 min and 30 min. After that the item is dropped and logged as `chat.push.dropped` (conversation id and seq only).
 - Unread state is rebuilt from `readpos` on the next `welcome`, so a lost push loses nothing.
 
-**Server push.** It goes through the existing `createNotifier().notify` (`api/src/notify.js:36-56`), with the new type **`chat_message`**:
-- `TEMPLATE_REGISTRY` (`notify.js:5-15`): `{ title: "Harrison Family", level0: "you have a new chat message.", level1: "{actor} sent you a chat message." }`.
-- `navigate`: `/chat/?c=<encoded conv id>`.
+**Server push.** Chat push is **default OFF** (CHAT-D12, BRD2 11.5) and is built and sent by `api/src/chat.js`, not through `createNotifier().notify` (which sends to a feature the recipient has not turned off):
+- `buildChatPush` builds the Declarative Web Push payload from the `chat_message` entry of `TEMPLATE_REGISTRY` (`notify.js:5-15`): `{ title: "Harrison Family", level0: "you have a new chat message.", level1: "{actor} sent you a chat message." }`. It returns nothing, so nothing is sent, unless the recipient's stored preference has `features.chat_message.enabled === true`. A recipient who never saved a choice, or who chose off, gets no push.
+- `sendToPrincipal` (`@io-kit/notify/server`) sends it to each of that recipient's devices. It is not `createNotifier().notify`, whose default is on for a type the member never touched.
+- `navigate`: `/chat/?c=<encoded conv id>`. `data` carries `conv` and `seq` only, for the client's dedupe.
 - No message text, ever, at any level. This matches the "notifications carry no content by default" posture in `docs/explanation/family-data-privacy.md`.
 - No `app_badge`; the notifications domain owns the badge.
-- The type is enabled by default, as `featurePref` defaults to enabled (`iokit packages/notify/src/server.ts:114-117`).
-- **Kept in sync by hand:** the islands `CATALOG` in `islands/src/islands/notifications.jsx:13-21` gains the entry `chat_message: { group: "family", label: "someone sends me a chat message", desc: "a chat message while you're away from the site.", title, generic, detailed }`.
-- Without VAPID the notifier is a no-op (`notify.js:26,37`), and the route returns `{sent: 0, disabled: true}`.
+- **Kept in sync by hand:** the islands `CATALOG` in `islands/src/lib/notify-catalog.js` has the entry `chat_message: { group: "family", label: "someone sends me a chat message", desc: "a chat message while you're away from the site.", title, generic, detailed }`, shown only while `chatV1` is on, and the settings page shows it off until the member turns it on (`CHAT_DEFAULT_OFF`). A test compares the strings with the registry's.
+- Without VAPID or the subscription and preference stores, the route returns `{sent: 0, skipped: n, disabled: true}`.
 
 **Coming back.** On reconnect, the `welcome` summaries show unread state:
 - the roster shows the person or group in bold;
@@ -701,7 +701,7 @@ A JWT signed with ES256:
 - **claims:** `{iss: "hfy-chat", aud: "hfy-api/chat", sub: "chat-hub", iat, exp <= iat + 60, jti: <ULID>}`;
 - **sent as** `Authorization: Bearer <jwt>`. The `/api/*` behavior forwards every viewer header (`AllViewerExceptHostHeader`, `docs/reference/architecture.md:59`).
 
-**Verification.** The API verifies with the public key(s) from a new app-stack parameter, `ChatServicePublicKeys`. It is a JSON array of `{kid, spki}`; it is public, so it is not a secret and adds no Secrets Manager line. Two entries allow rotation without downtime. When the parameter is empty, the routes answer 503 `unavailable`.
+**Verification.** The API verifies with the public key(s) from a new app-stack parameter, `ChatServicePublicKeys`. It is a JSON array of `{kid, spki}`; it is public, so it is not a secret and adds no Secrets Manager line. Two entries allow rotation without downtime. When the parameter is empty, no token can verify, so every service route answers the same 401 `unauthenticated` as a bad token (not 503). This holds before `hfy-chat-worker` starts: RG-3 ships the parameter empty, the routes stay dormant, and the hub treats a 401 from the directory as "chat not yet keyed" and keeps its snapshot.
 
 **Replay.** The 60 s lifetime bounds it. Every route is idempotent: directory reads, archive puts, and pushes that are rare and content-free.
 
@@ -716,11 +716,16 @@ A JWT signed with ES256:
 
 | name | method, path | body | 2xx | errors |
 |---|---|---|---|---|
-| `chat.directory` | `GET /api/chat/directory` | — | 200 `{version: 1, generated_at, members: [{id, label}]}`. The ids are the unique allowlist values matching `^[A-Za-z0-9_-]{1,64}$`; labels come from `resolveLabel`. Cached in memory for 5 min. | 401 `unauthenticated` (bad, expired or wrong-`aud` token), 503 `unavailable` (allowlist unreadable: fail closed; the hub keeps its snapshot) |
+| `chat.directory` | `GET /api/chat/directory` | — | 200 `{version: 1, generated_at, members: [{id, label}]}`. The ids are the unique allowlist values matching `^[A-Za-z0-9_-]{1,64}$`; labels come from `resolveLabel`. Cached in memory for 5 min. | 401 `unauthenticated` (empty key list, bad, expired or wrong-`aud` token), 503 `unavailable` (allowlist unreadable, or the scan hit its 200-page cap: fail closed; the hub keeps its snapshot) |
 | `chat.push` | `POST /api/chat/push` | `{items: [{recipient, conv, seq, actor}]}`, 1 to 50 items | 200 `{sent, skipped, disabled?}` | 400 `validation` (bad shape, a recipient or actor not id-shaped, more than 50 items), 401 |
-| `chat.archive` | `POST /api/chat/archive` | `{conv: {id, kind, name, creator, policy, created_at, last_seq}, members: [{uid, epoch, join_seq, left_seq, invited_by}], msgs: [{seq, cmid, from, kind, text?, sys?, ts}]}`, at most 100 messages | 200 `{stored, through_seq}` | 400 `validation` (an id not shaped `dm:…`/`g:…`, text over 4,000 bytes, a `seq` that is not an integer), 401, 503 |
+| `chat.archive` | `POST /api/chat/archive` | `{conv: {id, kind, name, creator, policy, created_at, last_seq}, members: [{uid, epoch, join_seq, left_seq, invited_by}], msgs: [{seq, cmid, from, kind, text?, sys?, ts}]}`, at most 100 messages | 200 exactly `{stored, through_seq}` (`stored` counts the messages newly written; `through_seq` is the highest `seq` in the batch) | 400 `validation` (an id not shaped `dm:…`/`g:…`, text over 4,000 bytes, a `seq` that is not an integer, a message `seq` above `conv.last_seq`), 401, 503 |
 
 `api/src/routes.js` also documents the three routes in `docs/reference/api.md`. A new module `api/src/chat.js` holds the handlers, `authenticateService` and the key functions. `api/src/notify.js` gains `chat_message`.
+
+**Directory source (ruling).** The directory lists members through a filtered `Scan` of the allowlist items (`PK` begins with `ALLOW#`, projected to `PK` and `sub`), merged with io's S3 file and decided by the composite allowlist reader (`createCompositeMemberReader`, strict: a failed table read is a 503, never the file's answer). The scan is capped at 200 pages; reaching the cap throws, and the directory answers 503 rather than serve a truncated list. BRD2 forbids a new GSI (section 1.2, "No new storage structures"; D2-29), and no existing index lists every `ALLOW#` item (GSI1 is keyed per principal), so the Scan is accepted. It runs once per directory cache miss per Lambda container. **Staleness bound:** a revoked member can stay listed for up to 5 minutes (the directory cache) plus 60 seconds (the composite reader's cache), so up to 6 minutes; the hub's own refresh (CH-31) then drops them.
+
+**Archive head.** `CHAT#<conv>/META.last_seq` is the hub's conversation head, not an archived-through mark: a batch carries at most 100 messages, so after a partial batch the head is ahead of the messages mirrored. The worker uses the route's `through_seq` as the archived-through mark (`archive_cursor`). The mirror writes members and messages first and `META` last, so a failure part-way leaves the previous `META`.
+
 
 ## 15. UX: Gmail Chat fidelity spec
 
@@ -1053,7 +1058,7 @@ At least three iOS versions (one ≥ 18.4), as an installed PWA and in Safari, p
 
 1. **Intake and spike.** No standing production change; the spike route is removed afterwards. The transport is decided. io decides CHAT-D5.
 2. **Kit.** `@io-kit/chat` publishes in order: protocol → core → client → Cloudflare adapter → UI → load harness. Each is a PR with a changeset. `@io-kit/ci` gains the `cloudflare-worker` target.
-3. **API service routes** deploy through an app-stack change set (io go-ahead). They are dormant: without `ChatServicePublicKeys` they answer 503; with it, only the Worker can call them.
+3. **API service routes** deploy through an app-stack change set (io go-ahead). They are dormant: without `ChatServicePublicKeys` every call answers 401; with it, only the Worker can call them.
 4. **Worker deploy.** The first deploy is `hfy-chat-worker`, run by the orchestrator with a local wrangler and io's go-ahead; it creates the Durable Object class and the route. From `hfy-chat-worker-ci` on, every deploy goes through the CI target with the scoped token. It starts with `CHAT_OPEN_TO=uat` and `CHAT_UAT_SUBJECTS` set to io and the testers. Evidence:
    - `GET /chat/v1/health` returns 200;
    - signed-out `/person/index.json` is still 401 and `/` is still 200 (CloudFront paths unaffected).
@@ -1089,8 +1094,8 @@ Data is never rolled back: the hub and the archive keep everything. A rollback n
 | `BAD_FRAME` | hub | schema violation | log locally; three in a row → 4400 | `chat.badframe` |
 | `SERVER_ERROR` | hub | store exception | keep pending, retry the same `cmid` after reconnect | `chat.error` (stack, no text) |
 | close 4401 / 4403 / 4409 / 4429 / 4503 / 4408 / 4010 | Worker or hub | §6.5 | §6.5 | `chat.close` (code, uid) |
-| HTTP 401 `unauthenticated` | hfy-api service routes | bad service token | the hub retries with a fresh token once, then backs off | `chat.service.auth` |
-| HTTP 503 `unavailable` | hfy-api | key parameter empty, allowlist unreadable | hub: keep the snapshot or outbox, retry | logged by the API (`errorResponse`, `api/src/http.js:24-32`) |
+| HTTP 401 `unauthenticated` | hfy-api service routes | bad service token, or `ChatServicePublicKeys` empty (before `hfy-chat-worker` starts) | the hub retries with a fresh token once, then backs off | `chat.service.auth` |
+| HTTP 503 `unavailable` | hfy-api | allowlist unreadable (or the scan cap), archive write failed | hub: keep the snapshot or outbox, retry | logged by the API (`errorResponse`, `api/src/http.js:24-32`) |
 | HTTP 400 `validation` | hfy-api | malformed push or archive batch | the hub drops that batch and logs it (a bug) | `chat.archive.rejected` |
 
 Logs never carry message text, group names or labels: ids, sequence numbers, codes and sizes only.
@@ -1124,7 +1129,7 @@ The Workers Paid limits also remove the Free plan's hard daily request cap. That
 | CHAT-D9 | Retention | Visible 30 days, server-enforced on every read path. Stored indefinitely in hub SQLite plus a DynamoDB `CHAT#` archive (no `ttl`). Access past 30 days is an operator export under io's go-ahead only. | no |
 | CHAT-D10 | Group mechanics | The creator names and renames, and sets and changes private/open. Invites add at once (no accept step). Cap of 50. DMs are fixed pairs and cannot be left. "add people" from a DM creates a new group. A private group whose creator has left is invite-locked. | no |
 | CHAT-D11 | What a re-invited member sees | The union of their membership epochs (what was said while they were in), never the gap | no |
-| CHAT-D12 | Offline delivery | Push type `chat_message`: content-free by default, at most the actor's label at level 1, never message text. One push per conversation per unread run, only when the recipient has no live socket. No app badge. | no |
+| CHAT-D12 | Offline delivery | Push type `chat_message`: **default OFF** (sent only when `features.chat_message.enabled === true`), content-free, at most the actor's label at level 1, never message text. One push per conversation per unread run, only when the recipient has no live socket. No app badge. | no |
 | CHAT-D13 | Desktop and mobile layout | Desktop: roster panel bottom-left (Gmail 2006 position; the design system has no sidebar), moles bottom-right, `/chat/` two-pane. Phone: a top-bar entry icon and full-screen `/chat/`. | no (the D-11 design approval covers the look) |
 | CHAT-D14 | Fidelity extras | Default on: moles, pop-out, Enter sends, `me:` runs, the sparse "sent at" line, the typing strings, emoticon rendering, the title flash, `q`. Optional and off: sounds, busy, status text, block, history search. Never: invisible, off the record, receipts, last seen. | no |
 | CHAT-D15 | Roster contents and visibility | Groups, then family (online first, then your own recent contacts, 40 rows). Search reaches every eligible member. Every eligible member sees every other member's presence. | no |

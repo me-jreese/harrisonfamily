@@ -3,7 +3,8 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt, requireFeature } from "./features.js";
+import { describeGate, gateExempt, requireFeature, serverSwitch } from "./features.js";
+import { CHAT_AUDIENCE, CHAT_ISSUER, CHAT_MAX_LIFETIME_SECONDS, CHAT_SUBJECT } from "./chat.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
@@ -95,6 +96,8 @@ const need = (v, field) => {
   if (v === undefined || v === null || v === "") throw new HttpError(400, "validation", `${field} is required`);
   return v;
 };
+
+const CHAT_GATE = serverSwitch("CHAT_SERVICE_AUTH", ({ actor }) => actor?.service === true, { rule: "the caller is the chat service actor (a valid ES256 service JWT for aud hfy-api/chat); ChatServicePublicKeys empty refuses every token" });
 
 /**
  * HFY-TSK-238 (api-feature-gate AC3): every PLN-002 route carries `gate`: requireFeature(flag) or serverSwitch(name, check) from
@@ -250,6 +253,21 @@ export const ROUTES = defineRoutes([
   { name: "notifications.preferences.put", method: "PUT", path: "/notifications/preferences", summary: "Save notification preferences", handler: (c) => c.notifyHandler() },
   // The desktop sync API (HFY-TSK-172; sync.md 7): bearer auth, gramps-owner, behind SYNC_API_ENABLED. Defined in src/sync/routes.js; the push and pull routes join it.
   ...SYNC_ROUTES,
+  // The chat service routes (HFY-TSK-164; chat.md 14.3): `auth: "service"`, the chat Worker's ES256 service JWT and never the session cookie (src/chat.js).
+  // No `mcp` member and no policy row, so none is an MCP tool. The switch's check only asks for the service actor: the stack gate is the key list itself
+  // (ChatServicePublicKeys), and an empty list refuses every token with the 401 of a bad one.
+  {
+    name: "chat.directory", method: "GET", path: "/chat/directory", auth: "service", summary: "Service only: the chat directory {version, generated_at, members: [{id, label}]} (allowlist members, labels never emails; cached 5 minutes); 401 without a valid service token, 503 when the allowlist is unreadable",
+    gate: CHAT_GATE, handler: async (c) => ok(await c.chat.directory()),
+  },
+  {
+    name: "chat.push", method: "POST", path: "/chat/push", auth: "service", summary: "Service only: {items: [{recipient, conv, seq, actor}]} (1 to 50): one notification each, with a title and a navigate URL, never message text, only for recipients who turned chat texts on; 200 {sent, skipped, disabled?}",
+    gate: CHAT_GATE, handler: async (c) => ok(await c.chat.push(c.body)),
+  },
+  {
+    name: "chat.archive", method: "POST", path: "/chat/archive", auth: "service", summary: "Service only: mirror a conversation {conv, members, msgs} (at most 100 messages) into CHAT#<conv> items, idempotently and without a ttl; 200 {stored (newly written), received, through_seq}; seq above conv.last_seq is 400",
+    gate: CHAT_GATE, handler: async (c) => ok(await c.chat.archive(c.body)),
+  },
   // The read-only records API (HFY-TSK-175; sync.md 7.2, BRD2 D2-34): the stored, redacted object through publishView and applyModOverlay, behind
   // the HFY_EDITING switch (admins and a member's own record excepted). No `mcp` member. by-id is listed first.
   {
@@ -394,6 +412,8 @@ export function buildCaps() {
       // Routes with auth "sync-bearer" (/api/sync/*) take the desktop client's access token instead of the cookie (src/sync/auth.js).
       sync_bearer: { scheme: "bearer", issuer: SYNC_ISSUER, audience: SYNC_AUDIENCE, client_id: SYNC_CLIENT_ID, group: "gramps-owner", step_up: { amr: "mfa", max_age_seconds: 300 } },
     },
+    // Routes with auth "service" (/api/chat/*) take the chat Worker's ES256 service JWT (src/chat.js); keys come from ChatServicePublicKeys.
+    service: { scheme: "bearer", alg: "ES256", issuer: CHAT_ISSUER, audience: CHAT_AUDIENCE, subject: CHAT_SUBJECT, max_lifetime_seconds: CHAT_MAX_LIFETIME_SECONDS, keys_env: "CHAT_SERVICE_PUBLIC_KEYS" },
     sync: {
       api_version: 1, enabled_by: "SYNC_API_ENABLED", min_client: DEFAULT_MIN_CLIENT, accepted: { gramps: [...ACCEPTED_GRAMPS], schema: [...DEFAULT_ACCEPTED_SCHEMA] },
       handshake_headers: Object.values(HEADERS), limits: { ...LIMITS },

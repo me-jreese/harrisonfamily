@@ -94,3 +94,23 @@ test("the page lists the catalog's types for a member: about me, family, and no 
   await expect(root.getByRole("heading", { name: "family" })).toBeVisible();
   await expect(root.getByRole("heading", { name: "for moderators" })).toHaveCount(0);
 });
+
+// HFY-TSK-164 (CHAT-D12): the chat toggle is dark until chatV1 is on, starts OFF for a member who never chose, and is the only type the server
+// sends after an explicit opt-in. The real handler stores the choice; the chat push route reads the same record (api/test/chat.test.js).
+test("chat_message: hidden while chatV1 is off, shown OFF with it on, and stored only after the member turns it on", async ({ page }) => {
+  const { w, puts } = await wire(page);
+  const root = await open(page);
+  await expect(root.locator('[data-type="chat_message"]')).toHaveCount(0);
+  await root.locator('[data-type="mention"] [role=switch]').click();
+  await expect.poll(() => puts.length).toBeGreaterThan(0);
+  expect(puts.at(-1).types.chat_message, "a toggle nobody can see saves nothing").toBeUndefined();
+
+  await page.goto("/me/notifications/?hfy_flags=notifyV2,chatV1", { waitUntil: "domcontentloaded" });
+  const chat = page.locator('.hfy-notify [data-type="chat_message"]');
+  await expect(chat).toBeVisible();
+  await expect(chat.locator("[role=switch]")).toHaveAttribute("aria-checked", "false");
+  expect((await w.preferences.get(ME)).features?.chat_message).toBeUndefined();
+  await chat.locator("[role=switch]").click();
+  await expect.poll(async () => (await w.preferences.get(ME)).features?.chat_message?.enabled).toBe(true);
+  expect(puts.at(-1).types.chat_message).toEqual({ enabled: true, level: 0 });
+});
