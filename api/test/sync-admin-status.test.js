@@ -27,7 +27,7 @@ const conflictRow = (n, extra = {}) => ({
 
 function world() {
   const w = makeApi({ clock: () => NOW, admins: [ADMIN], extraDeps: { isOwner: async (sub) => sub === OWNER, txnOpts: { sleep: async () => {} } } });
-  w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 12, seeded: true, writes_enabled: true, tree_id: "00000000-0000-4000-8000-000000000001", bound: { dbid: "db-synthetic-1" } });
+  w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 12, seeded: true, writes_enabled: true, tree_id: "00000000-0000-4000-8000-000000000001" });
   w.ddb.rows.set("SYNC#RENDER\u0000STATE", { PK: "SYNC#RENDER", SK: "STATE", rendered_seq: 9, mode: "live", last_error: "RenderFailed pass.failed", last_error_at: "2026-10-14T11:00:00.000Z" });
   w.ddb.rows.set("SYNC#CLIENT#instance-0001\u0000META", {
     PK: "SYNC#CLIENT#instance-0001", SK: "META", GSI1PK: "SYNCCLIENT", GSI1SK: "2026-10-14T11:59:30.000Z#instance-0001", entity: "syncclient", client_instance_id: "instance-0001", dbid: "db-synthetic-1", fingerprint: "fp-0123456789abcdef",

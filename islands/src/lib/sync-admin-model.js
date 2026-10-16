@@ -97,6 +97,7 @@ export function normalizeStatus(body) {
       paused: w.writes_enabled === false, seeded: w.seeded === true, bound: w.bound === true,
     },
     conflicts: (Array.isArray(b.conflicts) ? b.conflicts : []).filter((c) => isObj(c) && typeof c.id === "string"),
+    conflictsMore: b.conflicts_more === true,
     batches: (Array.isArray(b.batches) ? b.batches : []).filter(isObj).map((x) => ({ id: String(x.id ?? ""), at: x.at ?? null, by: x.by ?? null, origin: x.origin ?? null, ops: int(x.ops) ?? 0, from: int(x.seq_from), to: int(x.seq_to) })),
   };
 }

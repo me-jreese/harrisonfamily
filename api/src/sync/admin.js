@@ -6,7 +6,9 @@
 // (pull.js), which takes the gramps-owner's session plus a sign-in at most 300 s old. The page shows no member-facing data beyond the admin's own tree.
 //   desktop    one entry per SYNC#CLIENT# heartbeat, newest first: addon and Gramps versions, the last run (result, counts, time).
 //   website    head seq, rendered seq and the lag, the render mode, the last render error text, whether writes are paused and the store is seeded.
-//   conflicts  the open queue (oldest first, up to 50) in the wire shape of conflictView, plus `owner`: whether this caller may decide.
+//   conflicts  the open queue (oldest first, up to 50) in the wire shape of conflictView, plus `owner`: whether this caller may decide, and `conflicts_more` when more than 50 are open.
+//   `bound` is true once the head holds a tree_id. Desktop entries come from GSI1 (SYNCCLIENT), which only heartbeats written after HFY-TSK-279 carry, so a desktop appears after its next run.
+//   The browser decision rides the session cookie (no tree-id handshake); Content-Type JSON (415 otherwise) is its CSRF guard, as for the other cookie POST routes. `manual` is add-on only.
 //   batches    the ten newest push receipts: when, who (the principal), origin, the op count and the seq range. No ops, no object bodies.
 import { HttpError } from "../http.js";
 import { conflictView } from "./pull.js";
@@ -42,19 +44,20 @@ export async function syncAdminStatus(c) {
   const get = async (Key) => (await store.ddb.send(new store.cmds.GetCommand({ TableName: store.table, Key, ConsistentRead: true }))).Item;
   const [head, render, clients, conflicts, batches] = await Promise.all([
     get({ PK: "SYNC#HEAD", SK: "META" }), get({ PK: "SYNC#RENDER", SK: "STATE" }),
-    newest(store, "SYNCCLIENT", CLIENTS_SHOWN), newest(store, "SYNCCONFLICT#open", CONFLICTS_SHOWN, true), newest(store, "SYNCBATCH", BATCHES_SHOWN),
+    newest(store, "SYNCCLIENT", CLIENTS_SHOWN), newest(store, "SYNCCONFLICT#open", CONFLICTS_SHOWN + 1, true), newest(store, "SYNCBATCH", BATCHES_SHOWN),
   ]);
   const headSeq = int(head?.seq) ?? 0;
   const rendered = int(render?.rendered_seq) ?? 0;
+  const openRows = conflicts.filter((it) => it.PK?.startsWith("SYNC#CONFLICT#"));
   return ok({
     owner,
     desktop: clients.filter((it) => it.PK?.startsWith("SYNC#CLIENT#")).map(clientView),
     website: {
       head_seq: headSeq, rendered_seq: rendered, render_lag: Math.max(0, headSeq - rendered), render_mode: render?.mode ?? null,
-      last_render_error: typeof render?.last_error === "string" ? render.last_error.slice(0, 300) : null, last_render_error_at: render?.last_error_at ?? null,
-      writes_enabled: head?.writes_enabled !== false, seeded: head?.seeded === true, bound: Boolean(head?.bound),
+      last_render_error: typeof render?.last_error === "string" ? render.last_error.slice(0, 300) : null,
+      writes_enabled: head?.writes_enabled !== false, seeded: head?.seeded === true, bound: Boolean(head?.tree_id),
     },
-    conflicts: conflicts.filter((it) => it.PK?.startsWith("SYNC#CONFLICT#")).map(conflictView),
+    conflicts: openRows.slice(0, CONFLICTS_SHOWN).map(conflictView), conflicts_more: openRows.length > CONFLICTS_SHOWN,
     batches: batches.filter((it) => it.PK?.startsWith("SYNC#BATCH#")).map(batchView),
   });
 }

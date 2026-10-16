@@ -160,9 +160,10 @@ function Status() {
         <Card title="recent batches" id="hfy-sync-batches"><Batches batches={s.batches} /></Card>
       </div>
       <div className="hfy-syncadmin__col">
-        <Card title={`conflicts (${s.conflicts.length})`} id="hfy-sync-conflicts">
+        <Card title={`conflicts (${s.conflicts.length}${s.conflictsMore ? "+" : ""})`} id="hfy-sync-conflicts">
           {result && <p className="hfy-syncadmin__ok" role="status" data-hfy-result>{result}</p>}
           <Problem problem={problem} />
+          {s.conflictsMore && <p className="hfy-syncadmin__note" data-hfy-more>and more. decide these and the rest will show.</p>}
           {!s.conflicts.length && <p className="hfy-syncadmin__note" data-hfy-empty="conflicts">{COPY.noConflicts}</p>}
           {s.conflicts.length > 0 && (
             <ul className="hfy-syncadmin__list" data-hfy-conflicts>
