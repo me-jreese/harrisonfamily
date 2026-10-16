@@ -2,7 +2,7 @@
 
 Pause the cloud record store, resume it, switch the change feed on or off, force the renderer to run, bring back the records of a mistaken delete or withdraw, and recover the store itself when its heads or its log are damaged. The tool is `api/scripts/sync-admin.mjs` (HFY-TSK-177, and HFY-TSK-275 for the recovery). It is an operator script: it is never deployed, and no workflow runs it.
 
-**io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume`, `feed-on`, `feed-off`, `resurrect`, `rebuild-heads`, `copy-back` and `bump-tree-id` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
+**io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume`, `feed-on`, `feed-off`, `merges-on`, `merges-off`, `rekey`, `resurrect`, `rebuild-heads`, `copy-back` and `bump-tree-id` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
 
 ## Before you start
 
@@ -35,6 +35,21 @@ node scripts/sync-admin.mjs feed-off --apply --by <your-name> --table <app-table
 ```
 
 Each change is pinned to the value it read and writes one `AUDIT#sync-admin:` item, like `pause`. Flip it on only after the `hfy-api` release that holds the route has executed (the route is `404 not_enabled` while the switch is off, and a build without the route answers `404 not_found`). A desktop that cannot use the feed (an old add-on, a `410`) falls back to snapshots by itself, so switching it off is never needed to keep the desktop working.
+
+## Open person merges
+
+Desktop Person merges are held (`409 merges_disabled`) until `SYNC#HEAD.merges_enabled` is `true` (HFY-TSK-294, identity-merge-rekey). After a merge commits, the `afterCommit` hook in `api/src/identity-rekey.js` moves the person-id-keyed social data to the survivor: the `THREAD#person:<old>` comments and reactions, the `RSUB#`/`RECSUB#` follows (deduplicated), the hidden on-this-day birth id in `OTD#HIDDEN`, and the posts' `IDX#SUBJECT` copies. Member-principal items (`PLINKS#`, `CONTRIB#`, `INBOX#`, `ALLOW#`, the member list) are never moved: an alias whose old id is a member principal is marked `refused` in `REKEY#Person#<old>` and nothing moves. Progress lives in that `REKEY#` item (`done`, `partial`, `refused`), never in the `IDALIAS#` item.
+
+```sh
+cd api
+node scripts/sync-admin.mjs rekey --dry-run --table <app-table> --region <region>   # counts the aliases not done
+node scripts/sync-admin.mjs rekey --apply --table <app-table> --region <region>     # the manual retry of the hook
+node scripts/sync-admin.mjs merges-on --dry-run --table <app-table> --region <region>
+node scripts/sync-admin.mjs merges-on --apply --by <your-name> --table <app-table> --region <region>
+node scripts/sync-admin.mjs merges-off --apply --by <your-name> --table <app-table> --region <region>
+```
+
+`merges-on --apply` is refused while any merge alias has an unfinished re-key. Flip it on only after the `hfy-api` release that holds the re-key job and the merge-alias redirect has executed (RG-7); `GET /api/sync/meta` then reports `merges_enabled: true`, which lets the add-on push merges.
 
 ## Force a render
 
