@@ -12,7 +12,7 @@ import sys
 import time
 import webbrowser
 
-from . import binding, consts, keychain, oauth, paths, preflight, pull, sidecar, status, transport
+from . import binding, consts, keychain, oauth, paths, preflight, pull, rebase, sidecar, status, transport
 
 
 class TreeAccess:
@@ -203,6 +203,11 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
             return _bind(tree, mode, options, tp, log, config, outcome)
         if options.action == "login":
             return _login(options, config, log, services, environ)
+        if options.action == "rebase":
+            if not outcome["bound"]:
+                log.line("refused: not bound")
+                return _refused("unbound")
+            return rebase.run(tree, mode, options, tp, log, config, outcome.get("side"), outcome, services, outcome["run_id"], environ)
         if options.action in consts.PULL_ACTIONS and not outcome["bound"]:
             log.line("refused: not bound")
             return _refused("unbound")

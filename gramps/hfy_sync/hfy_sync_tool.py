@@ -150,6 +150,8 @@ def _gui_actions(tree):
         "bind": lambda: run("bind", yes=True),
         "check": lambda: run("check", dry_run=True),
         "apply": lambda preview_id: run("pull", yes=True, plan=preview_id or ""),
+        "rebase_check": lambda: run("rebase", dry_run=True),
+        "rebase": lambda: run("rebase", yes=True),
         "backups": lambda: [n for n, _p in backup.list_backups(tp.backups)],
         "restore_hint": lambda name: "hfy-sync restore %s --tree \"%s\"" % (name, tree.name),
     }
@@ -162,7 +164,7 @@ class HfySyncOptions(tool.ToolOptions):
         tool.ToolOptions.__init__(self, name, person_id)
         self.options_dict = {"action": "status", "dry_run": 0, "allow_deletes": 0, "yes": 0, "step_up": 0, "run_id": "", "plan": "", "ui": ""}
         self.options_help = {
-            "action": ("=ACTION", "What to do", ["status", "login", "check", "pull", "push", "sync", "bind"], False),
+            "action": ("=ACTION", "What to do", ["status", "login", "check", "pull", "push", "sync", "bind", "rebase"], False),
             "dry_run": ("=0/1", "Report what would change; write nothing to the tree or the website", ["No", "Yes"], True),
             "allow_deletes": ("=0/1", "Allow deletes (never mass deletes)", ["No", "Yes"], True),
             "yes": ("=0/1", "Do not stop at the preview", ["No", "Yes"], True),

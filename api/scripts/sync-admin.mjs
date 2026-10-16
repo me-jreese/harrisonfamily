@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 // Operator tooling for the cloud record store and its renderer (HFY-TSK-177; BRD2 D2-05, D2-33, 19.7; review DL-15, DL-28).
 //
-//   node scripts/sync-admin.mjs pause    --dry-run|--apply [--by <name>]
-//   node scripts/sync-admin.mjs resume   --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs pause    --all --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs resume   --all --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs render   --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
 //   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
+//   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs copy-back  --from-table <side-table> --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs bump-tree-id [--reseed] --dry-run|--apply [--by <name>]
 //   common: [--table hfy-app] [--region us-west-2]
 //
-//   pause      sets SYNC#HEAD.writes_enabled to false: applyBatch() then refuses every origin with 503 sync_paused.
+//   pause      sets SYNC#HEAD.writes_enabled to false: applyBatch() then refuses every origin (desktop, seed, web edits, proposals,
+//              graduation, moderation, tagging) with 503 sync_paused, and the desktop's push routes answer the same. `--all` names that
+//              store-wide scope; the SYNC_API_ENABLED environment switch is the separate, desktop-only stop.
 //   resume     sets it back to true.
+//   rebuild-heads, copy-back, bump-tree-id   the store-scoped recovery (HFY-TSK-275, review SI-04; src/sync/refold.js, scripts/sync-recovery.mjs,
+//              docs/how-to/operate-the-sync-store.md). They never swap TABLE_NAME and touch only REC#, SYNC#, GID# and IDALIAS# items;
+//              every --apply needs the store paused first.
 //   render     invokes the hfy-sync-render Lambda with an operator payload. --full forces a full pass although the cursor is current;
 //              --allow-mass-delete adds {"allow_mass_delete": true} (lets one pass delete more than the guard's limit, after review);
 //              --prune-foreign adds {"prune_foreign": true} (deletes renderer-shaped keys under the data prefixes that the renderer
@@ -41,6 +49,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
 import { batchKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
+import { RecoveryError, bumpTreeId, copyBack, rebuildHeads } from "./sync-recovery.mjs";
 
 export const GRACE_MS = 72 * 3600 * 1000;
 export const CHUNK = 20; // 2 fixed items + 3 per object stays far under the 100-item transaction limit
@@ -347,24 +356,30 @@ export { resurrect };
 export const HELP = `sync-admin.mjs: operator tooling for the cloud record store and its renderer.
 
 Usage:
-  node scripts/sync-admin.mjs pause     --dry-run|--apply [--by <name>]
-  node scripts/sync-admin.mjs resume    --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs pause     --all --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs resume    --all --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs render    --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
+  node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs copy-back --from-table <side-table> --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs bump-tree-id [--reseed] --dry-run|--apply [--by <name>]
 Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --apply is required (once).
-On pause and resume, --all is accepted and changes nothing (the switch is store-wide). -h/--help prints this.
+pause --all stops every writer of the store at once (the switch is store-wide); the recovery commands (rebuild-heads, copy-back, bump-tree-id)
+refuse --apply until the store is paused, and never swap TABLE_NAME. -h/--help prints this.
 
 IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume and resurrect) or makes the renderer write and
 delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
 (AGENTS.md; review DL-28). Always run --dry-run first. See docs/how-to/operate-the-sync-store.md.
 `;
 
+const COMMANDS = ["pause", "resume", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
+
 export function parseArgs(argv) {
   const out = { command: undefined, apply: undefined, table: process.env.TABLE_NAME ?? "hfy-app", region: process.env.AWS_REGION ?? "us-west-2" };
   const rest = [...argv];
   if (rest.includes("-h") || rest.includes("--help")) return { help: true };
   out.command = rest.shift();
-  if (!["pause", "resume", "render", "resurrect"].includes(out.command)) throw new AdminError(`unknown or missing command ${out.command ?? ""} (pause, resume, render, resurrect)`);
+  if (!COMMANDS.includes(out.command)) throw new AdminError(`unknown or missing command ${out.command ?? ""} (${COMMANDS.join(", ")})`);
   const modes = { dry: 0, apply: 0 };
   const value = (flag, i) => {
     if (rest[i + 1] === undefined || rest[i + 1].startsWith("--")) throw new AdminError(`${flag} needs a value`);
@@ -379,6 +394,9 @@ export function parseArgs(argv) {
     else if (a === "--by") out.by = value(a, i++);
     else if (a === "--batch") out.batch = value(a, i++);
     else if (a === "--function") out.functionName = value(a, i++);
+    else if (a === "--to-seq") out.toSeq = value(a, i++);
+    else if (a === "--from-table") out.fromTable = value(a, i++);
+    else if (a === "--reseed") out.reseed = true;
     else if (a === "--all") out.all = true;
     else if (a === "--include-withdrawn") out.includeWithdrawn = true;
     else if (a === "--full") out.full = true;
@@ -393,10 +411,15 @@ export function parseArgs(argv) {
     resume: ["by", "all"],
     render: ["full", "allowMassDelete", "pruneForeign", "functionName"],
     resurrect: ["by", "batch", "includeWithdrawn"],
+    "rebuild-heads": ["by", "toSeq"],
+    "copy-back": ["by", "fromTable"],
+    "bump-tree-id": ["by", "reseed"],
   }[out.command];
-  for (const k of ["by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName"]) {
+  for (const k of ["by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName", "toSeq", "fromTable", "reseed"]) {
     if (out[k] !== undefined && !allowed.includes(k)) throw new AdminError(`--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`).replace("function-name", "function")} does not apply to ${out.command}`);
   }
+  if (out.command === "rebuild-heads" && out.toSeq === undefined) throw new AdminError("rebuild-heads needs --to-seq <N> (or head for the log's last seq)");
+  if (out.command === "copy-back" && out.fromTable === undefined) throw new AdminError("copy-back needs --from-table <side-table>");
   if (!out.table || !out.region) throw new AdminError("--table and --region need a value");
   return out;
 }
@@ -412,6 +435,12 @@ export async function run(args, ctx) {
       return render(ctx, args);
     case "resurrect":
       return resurrect(ctx, args);
+    case "rebuild-heads":
+      return rebuildHeads(ctx, args);
+    case "copy-back":
+      return copyBack(ctx, args);
+    case "bump-tree-id":
+      return bumpTreeId(ctx, args);
     default:
       throw new AdminError(`unknown command ${args.command}`);
   }
@@ -425,7 +454,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else {
       const [{ DynamoDBClient }, lib] = await Promise.all([import("@aws-sdk/client-dynamodb"), import("@aws-sdk/lib-dynamodb")]);
       const ddb = lib.DynamoDBDocumentClient.from(new DynamoDBClient({ region: args.region }), { marshallOptions: { removeUndefinedValues: true } });
-      const cmds = { GetCommand: lib.GetCommand, QueryCommand: lib.QueryCommand, TransactWriteCommand: lib.TransactWriteCommand };
+      const cmds = { GetCommand: lib.GetCommand, QueryCommand: lib.QueryCommand, ScanCommand: lib.ScanCommand, TransactWriteCommand: lib.TransactWriteCommand };
       await run(args, { ddb, cmds, table: args.table, log: console.log, now: () => Date.now() });
     }
   } catch (e) {
@@ -433,3 +462,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exitCode = 1;
   }
 }
+export { RecoveryError };

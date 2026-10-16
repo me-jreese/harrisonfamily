@@ -111,7 +111,7 @@ The wrapper exits with the `exit_code` in `~/Library/Application Support/hfy_syn
 | `70` | An internal error, or `status.json` is missing or belongs to another run (D41) | Read the newest file in `<dbid>/logs/`; if a pull stopped halfway, run it again: every step is safe to repeat |
 | `75` | The tree is open in Gramps (D01), a Gramps edit window is open (D45), another run holds `state.lock` (D14), there is not enough disk space for the backup, or the network or the website was unavailable after three retries | Close Gramps (and its edit windows) and run again, or wait for the other run or the network |
 | `77` | You are not signed in, the sign-in was reused, revoked or expired, a fresh sign-in is needed (`step_up`), or the Keychain is locked (D42) | `gramps/bin/hfy-sync login` (add `--step-up` when `next_action` says `step_up`); unlock the Keychain |
-| `78` | Wrong tree (D03), the website holds another tree (D50), unsupported schema or Gramps version (D04), sync state missing (D12) or damaged (D13), the addon is too old for the website (`update_addon`), or the website's certificate could not be verified | See below |
+| `78` | Wrong tree (D03), the website holds another cloud tree (D50: run `rebase`), unsupported schema or Gramps version (D04), sync state missing (D12) or damaged (D13), the addon is too old for the website (`update_addon`), or the website's certificate could not be verified | See below |
 
 If Gramps is closed and the command still says the tree is open, the `lock` file is left over from a crash. Open the tree once in the Gramps window and close it normally. Never use `Gramps -u` or `--force-unlock`: the wrapper and the tool both refuse it.
 
@@ -121,12 +121,33 @@ The addon follows one tree. It checks that the tree's folder name, a marker stor
 
 Open the bound tree and run again. To make the website follow the new tree on purpose, the rebind goes through a fresh sign-in, a new sidecar, rebase mode (objects equal to the website's copy are re-based, everything else becomes a conflict that you resolve in the Gramps window) and the mass-delete guard. Those steps arrive with later tasks (`addon-push` for the step-up, `addon-gui-preview` for the new sidecar and rebase mode; the pull side's mass-delete guard is in this build); until then the addon only refuses. D12 and D13 are the same family: the sync state for the tree is gone or damaged, and rebasing it is a Gramps-window action that sends nothing by itself.
 
+## When the website's store was recovered (D50)
+
+After a recovery of the website's record store (an operator ran `bump-tree-id`, see [Operate the sync store](operate-the-sync-store.md#recover-the-store)) the website is a different cloud tree than the one this tree last synced with. Every version and base copy in the sync state belongs to the old one, so `pull`, `check` and `sync` stop at the handshake with exit `78`, error `D50` and `next_action: rebase`. The server's `403 tree_mismatch` on a push means the same. Nothing was changed.
+
+With Gramps closed:
+
+```sh
+gramps/bin/hfy-sync rebase --tree "<tree name>"          # look only: exit 10, counts, nothing changed
+gramps/bin/hfy-sync rebase --yes --tree "<tree name>"    # re-base
+```
+
+(In the Gramps window, Tools > Family Tree Processing > Website sync > "Rebase after a recovery...".) The rebase downloads the new store's snapshot (the guard against an older snapshot is waived, because a recovered store may be at a lower seq), then, object by object, with no common base:
+
+- the desktop and the website hold equal copies: **re-based** (the new base);
+- they differ: a **conflict**, parked on the command line and open in the window, with both sides left as they are;
+- the object exists only on the website, or only in this tree: left for the next `pull` (website only) or the later push (desktop only).
+
+It takes a verified backup first, closes the conflicts of the old tree, rejects unsent push entries addressed to it, and moves the sync state to the new tree. **It writes nothing to the Gramps tree and sends nothing to the website.** Exit `20` with `next_action: resolve_conflicts` means conflicts are open; `0` means every shared object agreed. Then run `hfy-sync pull`, which brings in the website-only objects through the usual preview. A second `rebase` finds nothing to do.
+
+If the sync state itself is missing or damaged (D12, D13) the same `next_action` is shown; this build's `rebase` handles the changed cloud tree (D50) only, so recover the sync state by restoring a backup ([Restore from a backup](#8-restore-from-a-backup)) first.
+
 ## Run the addon's tests
 
 ```sh
 python3 -m unittest discover gramps/tests/unit          # anywhere: the runtime, the wrapper, the pull, the restore, the build and the installer
 gramps/tests/gramps/run.sh test_addon_skeleton.py test_addon_pull.py   # a Mac with Gramps 6.0.6: the real Gramps on copies of the fixture tree
-gramps/tests/e2e/run.sh scenario_pull.py                # the same, against the local sync dev server (needs node 22 and api/node_modules)
+gramps/tests/e2e/run.sh scenario_pull.py scenario_rebase.py   # the same, against the local sync dev server (needs node 22 and api/node_modules)
 ```
 
 The second command makes a throwaway Gramps home, installs the addon into it, and drives the Gramps command line and the wrapper on copies of the synthetic fixture tree. It never opens your real trees or the real `~/Library/Application Support` folders. Add `test_addon_skeleton.py` to a `run.sh` call to run only it; with no argument `run.sh` runs every Gramps test.

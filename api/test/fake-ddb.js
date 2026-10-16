@@ -241,6 +241,14 @@ export function createFakeDdb() {
         case "ScanCommand": {
           const allow = i.ExpressionAttributeValues?.[":allow"]; // the chat directory's ALLOW# scan: whole items (the real call projects PK and sub)
           if (allow !== undefined) return { Items: [...rows.values()].filter((r) => r.PK.startsWith(allow)).map((r) => structuredClone(r)) };
+          if (i.ExpressionAttributeValues?.[":p0"] !== undefined) {
+            // The recovery tool's scan: whole items whose PK begins with any of :p0, :p1, ... (FilterExpression of begins_with() ORs), paged by Limit.
+            const prefixes = Object.entries(i.ExpressionAttributeValues).filter(([k]) => /^:p\d+$/.test(k)).map(([, v]) => v);
+            let hits = [...rows.values()].filter((r) => prefixes.some((x) => r.PK.startsWith(x))).sort((a, b) => (kk(a) < kk(b) ? -1 : 1));
+            if (i.ExclusiveStartKey) hits = hits.slice(hits.findIndex((r) => kk(r) === kk(i.ExclusiveStartKey)) + 1);
+            const page = hits.slice(0, i.Limit ?? Infinity);
+            return { Items: structuredClone(page), ...(hits.length > page.length ? { LastEvaluatedKey: { PK: page.at(-1).PK, SK: page.at(-1).SK } } : {}) };
+          }
           const p = i.ExpressionAttributeValues?.[":p"];
           const items = [...rows.values()].filter((r) => (p === undefined ? true : r.PK.startsWith(p)));
           return { Items: items.map((r) => ({ PK: r.PK })) };

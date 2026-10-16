@@ -29,8 +29,8 @@ KEYCHAIN_SERVICE = "us.harrisonfamily.hfy_sync"  # sync.md 6
 KEYCHAIN_ACCOUNT_OWNER = "owner"
 KEYCHAIN_ACCOUNT = DEFAULT_SERVER + "/auth|" + KEYCHAIN_ACCOUNT_OWNER
 
-ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind", "restore")
-IMPLEMENTED_ACTIONS = ("status", "bind", "login", "check", "pull", "sync", "restore")  # `push` waits for addon-push; `sync` is its pull half until then
+ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind", "rebase", "restore")
+IMPLEMENTED_ACTIONS = ("status", "bind", "login", "check", "pull", "sync", "rebase", "restore")  # `push` waits for addon-push; `sync` is its pull half until then
 PULL_ACTIONS = ("check", "pull", "sync")  # the actions that run the pull side (sync.md 8.3 steps 3 to 11)
 # Gramps classes in the order a push sends them (sync.md 8.3 step 12); the sidecar `base.class` column uses these names.
 CLASSES = ("Tag", "Place", "Note", "Source", "Repository", "Citation", "Media", "Event", "Person", "Family")

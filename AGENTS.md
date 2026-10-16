@@ -103,7 +103,7 @@ Some family-voice UI strings name a family contact by initial: in the islands, `
 - A Cloudflare purge or Cache Rule change.
 - Writing or deleting items in the app table by hand, for example deleting a `PASSKEY#` credential or writing the `FAMILY#` records that sign a member out on every device.
 - Running the live login-flow suites against production.
-- Any real (non `--dry-run`) run of `api/scripts/sync-admin.mjs` (`pause`, `resume`, `render`, `resurrect`) and of `api/scripts/contrib-backfill.mjs`. Each writes app-table items or makes the renderer write site files. Record io's go-ahead verbatim in the worklog with the dry-run output ([Operate the sync store](docs/how-to/operate-the-sync-store.md)).
+- Any real (non `--dry-run`) run of `api/scripts/sync-admin.mjs` (`pause`, `resume`, `render`, `resurrect`, `rebuild-heads`, `copy-back`, `bump-tree-id`) and of `api/scripts/contrib-backfill.mjs`. Each writes app-table items or makes the renderer write site files. Record io's go-ahead verbatim in the worklog with the dry-run output ([Operate the sync store](docs/how-to/operate-the-sync-store.md)).
 
 ## Operations that need io's G-prod approval
 

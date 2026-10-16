@@ -80,6 +80,8 @@ const HEAD_FIELDS = Object.freeze({
   accepted_schema: (v) => Array.isArray(v) && v.length > 0 && v.every(Number.isInteger),
   redaction_version: (v) => Number.isInteger(v),
   expunge_epoch: (v) => Number.isInteger(v) && v >= 0,
+  // Stands in for `sync-admin bump-tree-id` (HFY-TSK-275): the desktop then meets another cloud tree (D50) and rebases.
+  tree_id: (v) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v),
 });
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const sha256Hex = (buf) => createHash("sha256").update(buf).digest("hex");
