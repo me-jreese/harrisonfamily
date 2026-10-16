@@ -100,6 +100,7 @@ if [ "$needs_eleventy_check" -eq 1 ]; then
     --exclude 'tree/' \
     --exclude 'edit/' \
     --exclude 'join/' \
+    --exclude 'chat/' \
     --exclude 'admin/'
   # The excludes after .DS_Store are repo-owned files the Eleventy workspace does not produce (11ty/README.md, HFY-R46/R58).
   # js/person-page.js carries the authV2 data-gate path (HFY-TSK-080) that the workspace copy lacks. family-login/ is the static

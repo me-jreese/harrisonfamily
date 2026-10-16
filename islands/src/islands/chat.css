@@ -1,0 +1,115 @@
+/* The chat island's skin (HFY-TSK-142): @io-kit/chat 0.1.5 draws everything and reads only --io-chat-* custom properties, which are
+   defined here as aliases of the harrisonfamily theme (design-system tokens; theme-lint forbids a literal). Presence, the title bar and the
+   new-message flash are the three places the kit's neutral system colours must be replaced (kit README, "Known limitations").
+
+   The tokens are set on .io-chat: the kit declares its defaults on :where(.io-chat) (specificity 0), so these always win, whatever the
+   order of the two sheets. The kit's own sizes stay (its px values are the HFY-R30 floors: the 16px input and the 44px coarse control). */
+.io-chat {
+  --io-chat-fg: var(--io-color-semantic-text);
+  --io-chat-fg-muted: var(--io-color-semantic-text-dim);
+  --io-chat-bg: var(--io-color-semantic-surface);
+  --io-chat-surface: var(--io-color-semantic-surface-raised);
+  --io-chat-border: var(--io-color-semantic-border-strong);
+  --io-chat-accent: var(--io-color-semantic-accent);
+  --io-chat-accent-fg: var(--io-color-semantic-accent-text);
+  --io-chat-emoji: var(--io-color-semantic-link);
+  --io-chat-focus: var(--io-color-semantic-focus);
+  --io-chat-danger: var(--io-color-semantic-danger);
+  --io-chat-mark: var(--io-color-semantic-accent-secondary);
+  --io-chat-mark-fg: var(--io-color-semantic-text-inverse);
+  /* Presence (FV-70, the verified original): green active, yellow idle, grey offline. The accessible names tell the states apart too. */
+  --io-chat-presence-active: var(--io-color-semantic-success);
+  --io-chat-presence-idle: var(--io-color-semantic-accent-secondary);
+  --io-chat-presence-offline: var(--io-color-semantic-border-strong);
+  --io-chat-font: var(--io-typography-font-ui);
+  --io-chat-radius: var(--io-radius-sm);
+  --io-chat-gap: var(--io-space-3);
+  --io-chat-gap-sm: var(--io-space-2);
+  --io-chat-indent: var(--io-space-5);
+  --io-chat-strong: var(--io-typography-weight-semibold);
+  --io-chat-dock-margin: var(--io-space-6);
+  /* The title bar is the accent pair (the verified original is a light blue bar), and a new message turns it to the secondary accent
+     (the original turns it orange): each is a foreground/background pair of the theme, so the bar's text keeps its contrast in both
+     schemes. tests/chat.spec.mjs measures both in the real browser (the 4.5:1 text floor). */
+  --io-chat-bar: var(--io-color-semantic-accent);
+  --io-chat-bar-fg: var(--io-color-semantic-accent-text);
+  --io-chat-flash: var(--io-color-semantic-accent-secondary);
+  --io-chat-flash-fg: var(--io-color-semantic-text-inverse);
+}
+
+/* The reboot and the shell give bare buttons and links their own colour and underline; the kit's controls read as the kit draws them. */
+.io-chat a, .io-chat a:hover { text-decoration: none; }
+.io-chat .io-chat-link, .io-chat .io-chat-link:hover { text-decoration: underline; }
+.io-chat button { font-family: inherit; }
+
+/* The chat entry in the bar's chat slot: a 44px target like the gear and the account control, the bar's text colour, the unread dot on
+   the icon. It is a link to /chat/. */
+.hfy-bar__slot[data-slot="chat"] .io-chat-entry { color: var(--io-shell-text); border-radius: var(--io-shell-radius-pill); background: none; }
+.hfy-bar__slot[data-slot="chat"] .io-chat-entry:hover { color: var(--io-shell-link-hover); }
+.hfy-bar__slot[data-slot="chat"] .io-chat-entry-dot { border: var(--io-shell-focus-ring) solid var(--io-shell-surface); box-sizing: content-box; }
+
+/* The dock and the panel sit above the page and below the shell's sheets and palette. */
+.io-chat-dock, .io-chat-panel { --io-chat-layer: 20; }
+
+/* The theme's heading colour reaches the kit's title <h2>; a title bar's text is the bar's own foreground (the accent pair). */
+.io-chat .io-chat-bar-heading { color: inherit; font-family: inherit; font-size: inherit; line-height: inherit; }
+.io-chat-bar > .io-chat-bar-btn:first-child { padding-inline: var(--io-chat-gap-sm); }
+.io-chat-page-main > .io-chat-bar > .io-chat-dot { margin-inline: var(--io-chat-gap-sm); flex: none; }
+/* A presence dot on the accent bar (a title bar, the selected row) is ringed in the bar's text colour, so green on blue stays visible. */
+.io-chat-bar .io-chat-dot, .io-chat-person[aria-current="true"] .io-chat-dot { outline: thin solid var(--io-chat-bar-fg); }
+/* A one-line placeholder: the narrow mole would otherwise grow the box to three lines of hint. The box takes the row's width (the
+   hint never sizes it) and keeps growing taller with the text (the kit's field-sizing). */
+.io-chat-field > .io-chat-input { flex: 1 1 0; width: 0; min-width: 0; }
+.io-chat-input::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ----------------------------------------------------------------------------------------------------------------------------- /chat/ */
+/* The page fills the shell's scroller: main grows to the content area (the shell sets .hfy-content to at least the scroller's height),
+   and the chat takes what the heading and the lines leave. The footer follows below it. */
+html.hfy-shell-v2 .hfy-content:has(> .hfy-page--chat) { display: flex; flex-direction: column; }
+html.hfy-shell-v2 .hfy-content > main.hfy-page--chat { flex: 1 0 auto; display: flex; flex-direction: column; }
+/* The page's own heading stays for the page without the island (and for assistive technology); with the island running it is spoken
+   but not drawn, because the chat is the page. */
+.hfy-page--chat:has([data-hfy-chat-page]) > h1,
+.hfy-page--chat:has([data-hfy-chat-gate]) > h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.hfy-page--chat > [data-island="chat"] { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.hfy-chat__page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: calc(var(--io-chat-mole-max-height) + var(--io-chat-control-height));
+  border: thin solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  overflow: hidden;
+}
+.hfy-chat__page > .io-chat-page { flex: 1 1 auto; min-height: 0; }
+.hfy-chat__line, .hfy-chat__gate { margin: 0 0 var(--io-space-3); color: var(--io-color-semantic-text-dim); }
+.hfy-chat__gate p { margin: 0 0 var(--io-space-3); }
+.hfy-chat__signin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: thin solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-pill);
+  color: var(--io-color-semantic-text);
+  text-decoration: none;
+}
+
+/* Phone (chat.md 15.4): the roster and the conversation take turns at full width. While a conversation is open the shell's compact
+   bottom bar steps aside (html.hfy-chat-convo, set by the island) and so do the page's padding and footer: the conversation is the
+   screen, the keyboard and the composer have the room, and the composer stays above the home indicator. */
+html.hfy-chat-convo .io-shell__bar { display: none; }
+html.hfy-chat-convo .hfy-content > main.hfy-page--chat { padding: 0; }
+html.hfy-chat-convo .hfy-content > main.hfy-page--chat ~ footer { display: none; }
+html.hfy-chat-convo .hfy-chat__page { border: 0; border-radius: 0; }
+html.hfy-chat-convo .io-chat-page[data-layout="stack"] .io-chat-composer { padding-block-end: calc(var(--io-chat-gap) + var(--io-shell-safe-bottom)); }

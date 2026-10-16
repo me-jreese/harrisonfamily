@@ -8,27 +8,31 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "83b3d815",
+        "js": "9614428e",
         "css": "11377c0e"
       },
       "access-requests": {
-        "js": "5174de29",
+        "js": "57140198",
         "css": "ed4e0505"
       },
       "admin-sync": {
-        "js": "3d4b0246",
+        "js": "86e857f7",
         "css": "e9be417d"
+      },
+      "chat": {
+        "js": "2070e098",
+        "css": "afca4af7"
       },
       "edit-entry": {
         "js": "fd4c177e",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "3b50d6fe",
+        "js": "7c9a4197",
         "css": "4cd750ae"
       },
       "family": {
-        "js": "d0d9afc0",
+        "js": "5fefd75a",
         "css": "e52fd206"
       },
       "family-entry": {
@@ -40,11 +44,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "e7a4f6b0",
+        "js": "43811e6e",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "8abb18ee",
+        "js": "de3ff38e",
         "css": "38a33f05"
       },
       "join": {
@@ -52,11 +56,11 @@
         "css": "88b160fb"
       },
       "join-entry": {
-        "js": "4890d79a",
+        "js": "21158723",
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "aca820d9",
+        "js": "6ed42a5f",
         "css": "a475a3dd"
       },
       "my-posts": {
@@ -64,7 +68,7 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "ff1305ca",
+        "js": "ea5afbca",
         "css": "be703fb4"
       },
       "person": {
@@ -88,7 +92,7 @@
         "css": "890fde1c"
       },
       "review": {
-        "js": "e29c83cc",
+        "js": "d4668abc",
         "css": "f6c66152"
       },
       "search": {
@@ -96,11 +100,11 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "808147b4",
+        "js": "bde265fb",
         "css": "be4f0b90"
       },
       "shell": {
-        "js": "0e3434f5",
+        "js": "ba33538b",
         "css": "f6871411"
       },
       "timeline": {
@@ -108,13 +112,13 @@
         "css": "8f618380"
       },
       "tree": {
-        "js": "9450e07c",
+        "js": "9cd13531",
         "css": "373d5410"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "dff105dd"
+    "sw": "355e34c1"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -451,6 +455,38 @@
   }
   purgeRetiredKeys();
 
+  // HFY-TSK-142 (chat): chat is private, so no conversation text or queued unsent message outlives a session on a shared device. The chat
+  // island keeps a per-user snapshot (sessionStorage hfy:chat:v1:<uid>), the shell's panel and mole state (localStorage / sessionStorage
+  // hfy:chat:panel and hfy:chat:moles) and a per-user outbox (IndexedDB hfy:chat:outbox:<uid>). Sign-out (forgetEdgeSession) and the
+  // island's own signed-out path call this. The "hfy:signout" event lets a running chat client erase its snapshot and outbox itself
+  // (ChatClient.signOut) before the page leaves; the sweep below covers every page the island is not running on.
+  const CHAT_KEY_PREFIX = "hfy:chat:";
+  const CHAT_OUTBOX_PREFIX = "hfy:chat:outbox:";
+  function purgeChatState() {
+    ["localStorage", "sessionStorage"].forEach((store) => {
+      try {
+        const area = window[store];
+        const keys = [];
+        for (let i = 0; i < area.length; i += 1) {
+          const k = area.key(i);
+          if (k && k.indexOf(CHAT_KEY_PREFIX) === 0) keys.push(k);
+        }
+        keys.forEach((k) => area.removeItem(k));
+      } catch (error) { /* storage blocked */ }
+    });
+    try { window.dispatchEvent(new Event("hfy:signout")); } catch (error) { /* no events */ }
+    try {
+      const idb = window.indexedDB;
+      if (idb && typeof idb.databases === "function") {
+        idb.databases().then((list) => {
+          (list || []).forEach((db) => {
+            if (db && db.name && db.name.indexOf(CHAT_OUTBOX_PREFIX) === 0) idb.deleteDatabase(db.name);
+          });
+        }).catch(() => {});
+      }
+    } catch (error) { /* IndexedDB blocked */ }
+  }
+
   function getSessionJSON() {
     return fetch(SESSION_URL, { credentials: "same-origin", cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -523,9 +559,25 @@
     });
   }
   featureAPI.edgeSession = edgeSession;
+  // HFY-TSK-142 (chat): the page's single-flight refresh for a long-lived caller (the chat client rotates its socket's session before io_id
+  // expires). Resolves {exp} (epoch seconds of the refreshed session) or rejects when the session cannot be refreshed; the shared edge
+  // session is replaced with the fresh answer so later edgeSession() callers see the new expiry.
+  featureAPI.refreshSession = function refreshEdgeSession() {
+    return refreshSession().then((ok) => {
+      if (!ok) throw new Error("session refresh failed");
+      return getSessionJSON();
+    }).then((s) => {
+      if (!s || s.authenticated !== true) throw new Error("not signed in");
+      edgeSessionPromise = Promise.resolve(s);
+      const at = expiresAtMs(s);
+      return at === null ? {} : { exp: Math.floor(at / 1000) };
+    });
+  };
   featureAPI.purgeRetiredKeys = purgeRetiredKeys;
+  featureAPI.purgeChatState = purgeChatState;
   // Sign-out: drop the overlay and the "had an edge session" marker so later pages do not try to refresh.
   featureAPI.forgetEdgeSession = function forgetEdgeSession() {
+    purgeChatState();
     storageSet("localStorage", EDGE_SEEN_KEY, null);
     edgeOverlay = null;
     applyFeatureVisibility();
@@ -914,6 +966,21 @@
     } else if (/^\/edit\/family\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("family", { onError() { /* the page keeps its "not available yet" note */ } });
     }
+  });
+
+  // HFY-TSK-142: chatV1 loads the chat island (the roster panel and the docked chats, the chat entry in the bar's chat slot, and on /chat/ the
+  // page). The island needs a signed-in member: on every page the bundle is requested only for a signed-in session, and the static /chat/
+  // page requests it always so that a signed-out visitor gets "sign in to chat." from the island. With the flag off nothing is requested and
+  // no socket opens (HFY-R8); /chat/ keeps its "isn't turned on yet" text. The server decides who may connect (CHAT_OPEN_TO), not this flag.
+  resolveFlags().then((flags) => {
+    if (flags.chatV1 !== true) return;
+    if (/^\/chat\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("chat", { onError() { /* the page keeps its "isn't turned on yet" text */ } });
+      return;
+    }
+    edgeSession().then((session) => {
+      if (session && session.authenticated === true && session.sub) loadIsland("chat", { onError() { /* the site stands without chat */ } });
+    }, () => {});
   });
 
   onReady(applyFeatureVisibility);

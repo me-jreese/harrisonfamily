@@ -52,7 +52,7 @@ Never mirror `js/islands/`, `css/hfy-theme.css`, `css/auth-edge.css` or `fonts/`
 for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/person-page.js \
          sw.js manifest.webmanifest offline.html \
          images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-         posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html me/review/index.html me/requests/index.html admin/sync/index.html tree/index.html edit/index.html edit/family/index.html join/index.html family-login/index.html; do
+         posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html me/review/index.html me/requests/index.html admin/sync/index.html tree/index.html edit/index.html edit/family/index.html join/index.html chat/index.html family-login/index.html; do
   cmp -s "11ty/$f" "$SRC/public/$f" && echo "mirrored: $f" || echo "missing or different: $f"
 done
 grep -c 'src="/js/auth-v2.js"' "$SRC/src/_includes/layouts/base.njk"
@@ -60,18 +60,18 @@ grep -rlE 'gsi/client|/api/check-allowed|/js/auth\.js|/js/search-navbar\.js|/js/
 for f in js/auth.js js/search-navbar.js js/search-results.js js/islands; do test ! -e "$SRC/public/$f" || echo "remove $SRC/public/$f"; done
 ```
 
-The mirror is done when the loop prints `mirrored` for all 22 files, the first `grep` prints `1`, and nothing else is printed: the second `grep` lists no source template that still names a retired script or endpoint, and no `remove` line appears. Otherwise, do only the parts that are missing:
+The mirror is done when the loop prints `mirrored` for all 24 files, the first `grep` prints `1`, and nothing else is printed: the second `grep` lists no source template that still names a retired script or endpoint, and no `remove` line appears. Otherwise, do only the parts that are missing:
 
 - A file reported as `missing or different`: mirror steps 1 and 2 below.
 - A `grep` count of `0`, or a file listed by the second `grep`: mirror step 3.
 - A `remove` line for `js/islands`: mirror step 4.
 - A `remove` line for `js/auth.js`, `js/search-navbar.js` or `js/search-results.js`: mirror step 5.
 
-The islands build rewrites sixteen of the mirrored files whenever a file they reference changes, so they drift from the source's copies:
+The islands build rewrites eighteen of the mirrored files whenever a file they reference changes, so they drift from the source's copies:
 
 - `js/feature-flags.js` and `sw.js`, through their `hfy-asset-versions` blocks;
 - `manifest.webmanifest`, through its colours;
-- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `me/review/index.html`, `me/requests/index.html`, `admin/sync/index.html`, `tree/index.html`, `edit/index.html`, `edit/family/index.html` and `join/index.html`, through their head blocks and `?v=` versions.
+- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `me/review/index.html`, `me/requests/index.html`, `admin/sync/index.html`, `tree/index.html`, `edit/index.html`, `edit/family/index.html`, `join/index.html` and `chat/index.html`, through their head blocks and `?v=` versions.
 
 For these, `missing or different` usually means only that a build has changed them since the last copy. Copy them again with mirror steps 1 and 2.
 
@@ -100,6 +100,7 @@ For these, `missing or different` usually means only that a build has changed th
 | `11ty/edit/index.html` | `public/edit/index.html` | The record editor page (`recordEdit`, HFY-TSK-212). Standalone, like the notifications page. |
 | `11ty/edit/family/index.html` | `public/edit/family/index.html` | The relationship wizard page (`relationshipWizard`, HFY-TSK-158, HFY-R46). Standalone, like the editor page. `edit/` is already in the refresh's rsync excludes, so the refresh never deletes it. |
 | `11ty/join/index.html` | `public/join/index.html` | The join page (`accessRequests`, HFY-TSK-140). Standalone, like the notifications page. |
+| `11ty/chat/index.html` | `public/chat/index.html` | The chat page (`chatV1`, HFY-TSK-142). Standalone, like the notifications page. `chat/` is in the refresh's rsync excludes (below), so the refresh never deletes it. |
 
 These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#steps). Do only those the check pointed you to.
 
@@ -128,7 +129,7 @@ These are mirror steps 1 to 5, numbered separately from the refresh's [steps](#s
    for f in _data/flags.json js/auth-v2.js js/feature-flags.js js/person-page.js \
             sw.js manifest.webmanifest offline.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html me/review/index.html me/requests/index.html admin/sync/index.html tree/index.html edit/index.html edit/family/index.html join/index.html family-login/index.html; do
+            posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html me/review/index.html me/requests/index.html admin/sync/index.html tree/index.html edit/index.html edit/family/index.html join/index.html chat/index.html family-login/index.html; do
      mkdir -p "$SRC/public/$(dirname "$f")"
      cp "11ty/$f" "$SRC/public/$f"
    done
@@ -208,7 +209,7 @@ rsync -ainc --delete --omit-dir-times \
   --exclude 'js/feature-flags.js' --exclude 'js/person-page.js' --exclude 'family-login/' \
   --exclude 'css/auth-edge.css' --exclude 'css/hfy-theme.css' --exclude 'fonts/' \
   --exclude 'sw.js' --exclude 'manifest.webmanifest' --exclude 'offline.html' \
-  --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' --exclude 'tree/' --exclude 'edit/' --exclude 'join/' --exclude 'admin/' \
+  --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' --exclude 'tree/' --exclude 'edit/' --exclude 'join/' --exclude 'chat/' --exclude 'admin/' \
   "$SRC/_site/" 11ty/
 ```
 
@@ -247,7 +248,7 @@ If rsync warns that it cannot delete `_data` because the directory is not empty,
      --exclude 'js/feature-flags.js' --exclude 'js/person-page.js' --exclude 'family-login/' \
      --exclude 'css/auth-edge.css' --exclude 'css/hfy-theme.css' --exclude 'fonts/' \
      --exclude 'sw.js' --exclude 'manifest.webmanifest' --exclude 'offline.html' \
-     --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' --exclude 'tree/' --exclude 'edit/' --exclude 'join/' --exclude 'admin/' \
+     --exclude 'images/pwa-*.png' --exclude 'posts/' --exclude 'me/' --exclude 'tree/' --exclude 'edit/' --exclude 'join/' --exclude 'chat/' --exclude 'admin/' \
      "$SRC/_site/" 11ty/
    ```
 
@@ -306,7 +307,7 @@ Never edit the head blocks, the family-voice copy, a `?v=` or an `hfy-asset-vers
    ```sh
    for f in _data/flags.json js/auth-v2.js sw.js manifest.webmanifest offline.html family-login/index.html \
             images/pwa-192.png images/pwa-512.png images/pwa-maskable-512.png \
-            posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html me/review/index.html me/requests/index.html admin/sync/index.html tree/index.html edit/index.html edit/family/index.html join/index.html; do
+            posts/index.html me/index.html me/notifications/index.html me/links/index.html me/inbox/index.html me/review/index.html me/requests/index.html admin/sync/index.html tree/index.html edit/index.html edit/family/index.html join/index.html chat/index.html; do
      test -f "11ty/$f" || echo "missing: $f"
    done
    ```
