@@ -5,7 +5,7 @@
 //   SYNC#HEAD                     META   seq counter, writes_enabled, seeded, tree_id, merges_enabled
 //   SYNC#BATCH#<batch_id>         META   receipt + idempotency record, kept forever     GSI1 SYNCBATCH / <at>#<batch_id>
 //   GID#<Class>#<gramps_id>       META   gramps_id uniqueness guard (see "GID lifecycle" below)
-//   IDALIAS#<Class>#<old_id>      META   merge / renumber alias, never deleted
+//   IDALIAS#<Class>#<old_id>      META   merge / renumber alias, never deleted     GSI1 IDALIAS#<Class> / <old_id>
 //   AUDIT#records:<batch_id>      one audit item per batch (built with auditItem())
 //   SYNC#BUDGET#<yyyymmddhh>      META  count of delete and withdraw ops committed in that UTC hour (validator-js's destructive budget)
 //   SYNC#SESSION#<session_id>     META  a multi-batch push session (sync-push-routes, HFY-TSK-173); SYNC#HEAD.open_session names the open one
@@ -216,6 +216,9 @@ export const aliasItem = (cls, oldId, f) => ({
   reason: f.reason,
   batch_id: f.batch_id,
   at: f.at,
+  // GSI1 lists every alias of a class, so the renderer can write a `mergedInto` stub for each (merge-alias-redirect).
+  GSI1PK: `IDALIAS#${cls}`,
+  GSI1SK: oldId,
 });
 
 /** A withdraw's scheduled expunge: due EXPUNGE_GRACE_MS after the withdraw. Holds ids and times only, never object text. */

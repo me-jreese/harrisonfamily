@@ -7,6 +7,7 @@
 // `wrangler.toml` points only [env.staging] at this file. It is never part of dist/, so production cannot reach it.
 import { ChatHub as KitHub, createChatWorker } from "@io-kit/chat/cloudflare";
 import { contactGuard, makeHandler } from "./common.mjs";
+import { withExpunge } from "./expunge.mjs";
 
 const ok = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -29,7 +30,7 @@ export function stagingApi(env) {
   };
 }
 
-export class ChatHub extends KitHub {
+export class ChatHub extends withExpunge(KitHub) {
   constructor(ctx, env) {
     super(ctx, env, { contactGuard, fetch: stagingApi(env) });
   }

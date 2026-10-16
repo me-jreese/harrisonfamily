@@ -12,6 +12,7 @@ import "./tree.css";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
+import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
@@ -51,6 +52,8 @@ class ChartBoundary extends Component {
 }
 
 /** The graph fetch: the page's session-aware dataFetch when feature-flags.js is there (refresh once on a 401, then sign in with returnTo). */
+// The alias probe is a background read: a refusal never sends the visitor to sign in (the graph already loaded).
+const quietFetcher = (url, init) => (window.HFYFeatureFlags?.dataFetch ? window.HFYFeatureFlags.dataFetch(url, init, { interactive: false }) : fetch(url, init));
 const fetcher = (url, init) => (window.HFYFeatureFlags?.dataFetch ? window.HFYFeatureFlags.dataFetch(url, init) : fetch(url, init));
 
 function State({ children, action }) {
@@ -254,7 +257,20 @@ export function TreeApp() {
   const graph = result?.state === "ready" ? result.graph : null;
   // The session probe resolves after the graph on some loads; hold the first paint until it has, so the viewer's own page is not flashed
   // as the default person. (A null session, authV2 off or unreachable, is "settled": undefined is the only pending value.)
-  const resolved = useMemo(() => (graph && session !== undefined ? resolveFocus(graph, { focus, sub }) : null), [graph, session, focus, sub]);
+  // merge-alias-redirect: a ?focus= that is not in the graph may be a merged-away id. Its person JSON is the stub {mergedInto}; follow it
+  // (lib/merged-person.js) and centre on the new id. Until that is known the page holds its loading state, so the "not found" notice is
+  // not flashed for an id that is about to resolve.
+  const [alias, setAlias] = useState(null); // {from, to}: the answer for one ?focus value, `to` null when it is not an alias
+  const unknownFocus = Boolean(graph && focus && !graph.has(focus));
+  useEffect(() => {
+    if (!unknownFocus || alias?.from === focus) return undefined;
+    const ctl = new AbortController();
+    resolveMerged(quietFetcher, focus, { signal: ctl.signal }).then((to) => { if (!ctl.signal.aborted) setAlias({ from: focus, to }); });
+    return () => ctl.abort();
+  }, [unknownFocus, focus, alias?.from]);
+  const aliasPending = unknownFocus && alias?.from !== focus;
+  const focusNow = unknownFocus && alias?.from === focus && alias.to && graph.has(alias.to) ? alias.to : focus;
+  const resolved = useMemo(() => (graph && session !== undefined && !aliasPending ? resolveFocus(graph, { focus: focusNow, sub }) : null), [graph, session, aliasPending, focusNow, sub]);
   const onFocus = useCallback((id, from = "list") => {
     via.current = from;
     history.pushState(null, "", focusUrl(location, id));

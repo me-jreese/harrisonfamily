@@ -15,7 +15,7 @@
 // record reach them; everyone else gets 404 not_found.
 import { HttpError, json } from "../http.js";
 import { serverSwitch } from "../features.js";
-import { CLASSES } from "../sync/store.js";
+import { CLASSES, getAlias } from "../sync/store.js";
 import { backrefs, byGrampsId, get } from "./index.js";
 import { applyModOverlay, collectModTargets, recordHidden } from "./mod-overlay.js";
 
@@ -169,13 +169,42 @@ async function readOne(ctx, actor, cls, handle) {
 /** GET /api/records/:class/:handle */
 export const recordGet = async (c) => readOne(store(c), c.actor, c.params.class, c.params.handle);
 
+/** Alias links followed from an old id to the live person that now holds it (a chain A to B to C is two links). The renderer's MAX_ALIAS_HOPS is the same number. */
+const MAX_ALIAS_HOPS = 8;
+
+/**
+ * An old id that a merge (or an allowed renumber) retired answers {mergedInto: <new id>} (SYNC-10, merge-alias-redirect), the API twin of the
+ * `person/<old>.json` stub the renderer writes. The new id must be a live person's that this actor may view, so a withdrawn or hidden survivor is never named; anything else is
+ * 404 not_found. A chain (A merged into B, B merged into C) is followed to the live person at its end, at most MAX_ALIAS_HOPS links, so the answer
+ * for A names C; a cycle, a dead end and a longer chain are 404. The body holds the id only.
+ */
+async function mergedStub(ctx, actor, oldId) {
+  const seen = new Set([oldId]);
+  let id = oldId;
+  for (let hop = 0; hop < MAX_ALIAS_HOPS; hop++) {
+    const alias = await getAlias(ctx, "Person", id);
+    const target = alias?.current_gramps_id;
+    if (typeof target !== "string" || seen.has(target) || !GID_RE.test(target)) throw notFound();
+    seen.add(target);
+    const live = await byGrampsId(ctx, "Person", target);
+    if (live.length > 1) throw notFound();
+    if (live.length === 0) { id = target; continue; } // the survivor was retired too: follow its own alias
+    // The survivor goes through the same view as a direct read, so a person that view hides is not named to someone who could not open them.
+    const head = await get(ctx, "Person", live[0].handle);
+    if (!head) throw notFound();
+    if (!(await viewRecord(ctx, actor, { class: "Person", handle: live[0].handle, gramps_id: target, version: head.version, obj: head.obj }))) throw notFound();
+    return json(200, { mergedInto: target }, { vary: "Cookie" });
+  }
+  throw notFound();
+}
+
 /** GET /api/records/Person/by-id/:gramps_id: a gramps_id is not unique in Gramps, so two live holders answer 409 ambiguous_gramps_id. */
 export async function recordByGrampsId(c) {
   const gid = c.params.gramps_id;
   if (!GID_RE.test(gid)) throw notFound();
   const ctx = store(c);
   const hits = await byGrampsId(ctx, "Person", gid);
-  if (hits.length === 0) throw notFound();
+  if (hits.length === 0) return mergedStub(ctx, c.actor, gid);
   if (hits.length > 1 && c.actor?.admin !== true) throw notFound(); // no duplicate oracle for members
   if (hits.length > 1) throw new HttpError(409, "ambiguous_gramps_id", "more than one person has this id");
   return readOne(ctx, c.actor, "Person", hits[0].handle);
