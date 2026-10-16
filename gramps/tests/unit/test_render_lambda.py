@@ -760,6 +760,120 @@ class MergeAlias(unittest.TestCase):
         rig.run()
         self.assertIsNone(self.stub(rig))
 
+    def test_no_stub_names_a_survivor_that_has_no_page(self):
+        rig = sup.Rig("live")
+        edit(rig, "Person", handle_of("I0003"), lambda o: o.update(private=True))
+        self.alias(rig, new="I0003")
+        out = rig.run()
+        files = rig.site_files()
+        self.assertNotIn("person/I0003.json", files, "the survivor is private: the site publishes no page for it")
+        self.assertNotIn(f"person/{self.OLD}.json", files, "so the old id must not redirect to, or name, that id")
+        self.assertNotIn(f"person/{self.OLD}.json", rig.manifest())
+        self.assertEqual(out["blocked"], 0)
+        # The survivor becomes public: the stub follows its page. It goes private again: the stub leaves with the page.
+        edit(rig, "Person", handle_of("I0003"), lambda o: o.update(private=False))
+        rig.run()
+        self.assertEqual(self.stub(rig), {"mergedInto": "I0003"})
+        edit(rig, "Person", handle_of("I0003"), lambda o: o.update(private=True))
+        rig.run()
+        self.assertNotIn("person/I0003.json", rig.site_files())
+        self.assertIsNone(self.stub(rig))
+
+    def test_a_chain_is_followed_to_the_last_live_survivor(self):
+        rig = sup.Rig("live")
+        self.alias(rig, old="I9101", new="I9102")  # I9101 was merged into I9102, which was merged into I0001
+        self.alias(rig, old="I9102", new="I0001")
+        rig.run()
+        self.assertEqual(self.stub(rig, "I9101"), {"mergedInto": "I0001"})
+        self.assertEqual(self.stub(rig, "I9102"), {"mergedInto": "I0001"})
+
+    def test_a_chain_stops_at_a_live_person_and_is_dropped_at_a_dead_end(self):
+        rig = sup.Rig("live")
+        self.alias(rig, old="I9101", new="I9102")
+        self.alias(rig, old="I9102", new="I0002")
+        edit(rig, "Person", handle_of("I0003"), lambda o: o.update(private=True))
+        self.alias(rig, old="I9111", new="I9112")  # ends at a private person: no page to go to
+        self.alias(rig, old="I9112", new="I0003")
+        self.alias(rig, old="I9121", new="I9122")  # a cycle
+        self.alias(rig, old="I9122", new="I9121")
+        self.alias(rig, old="I9131", new="I9999")  # ends at an id that nothing holds
+        rig.run()
+        files = rig.site_files()
+        self.assertEqual(self.stub(rig, "I9101"), {"mergedInto": "I0002"})
+        for old in ("I9111", "I9112", "I9121", "I9122", "I9131"):
+            self.assertNotIn(f"person/{old}.json", files)
+
+    def test_a_chain_longer_than_the_hop_cap_is_not_followed(self):
+        rig = sup.Rig("live")
+        ids = [f"I93{i:02d}" for i in range(engine.MAX_ALIAS_HOPS + 1)]
+        for old, new in zip(ids, ids[1:] + ["I0001"]):  # MAX_ALIAS_HOPS + 1 links from ids[0] to I0001
+            self.alias(rig, old=old, new=new)
+        rig.run()
+        self.assertIsNone(self.stub(rig, ids[0]))
+        self.assertEqual(self.stub(rig, ids[1]), {"mergedInto": "I0001"}, "MAX_ALIAS_HOPS links still resolve")
+
+    def test_a_chain_link_the_index_has_not_shown_is_read_back(self):
+        rig = sup.Rig("live")
+        first = self.alias(rig, old="I9101", new="I9102")
+        self.alias(rig, old="I9102", new="I0001")
+        rig.table.query_aliases = lambda cls: iter([copy.deepcopy(first)])  # GSI1 lags on the second link
+        rig.run()
+        self.assertEqual(self.stub(rig, "I9101"), {"mergedInto": "I0001"})
+        self.assertEqual(self.stub(rig, "I9102"), {"mergedInto": "I0001"})
+
+    def test_an_old_id_that_is_not_a_key_the_renderer_owns_gets_no_stub_and_blocks_nothing(self):
+        rig = sup.Rig("live")
+        for old in ("_X1", "-X2"):
+            self.alias(rig, old=old)
+        out = rig.run()
+        self.assertEqual(out["blocked"], 0)
+        self.assertEqual(rig.metrics.count("RenderPrivacyBlock"), 0)
+        self.assertNotIn("last_error", rig.state())
+        self.assertFalse([k for k in rig.site_files() if "_X1" in k or "-X2" in k])
+
+    def test_a_stub_never_replaces_the_index_files(self):
+        rig = sup.Rig("live")
+        self.alias(rig, old="index")
+        self.alias(rig, old="search-index")
+        rig.run()
+        self.assertEqual(rig.site_files(), rs.rendered())
+
+    def alias_reads(self, rig):
+        reads = []
+        real = rig.table.batch_get
+
+        def spy(keys):
+            keys = list(keys)
+            reads.extend(pk for pk, _sk in keys if pk.startswith("IDALIAS#"))
+            return real(keys)
+
+        rig.table.batch_get = spy
+        return reads
+
+    def test_a_pass_with_no_aliases_reads_no_alias_item(self):
+        rig = sup.Rig("live")
+        reads = self.alias_reads(rig)
+        rig.run()
+        self.assertGreater(len(rig.manifest()), 30, "the manifest holds every person file")
+        rig.store.marker()
+        rig.run()
+        self.assertEqual(reads, [], "no alias, no merge delete: nothing to read, however many person files the manifest holds")
+
+    def test_the_consistent_read_covers_only_stubs_the_index_did_not_show(self):
+        rig = sup.Rig("live")
+        self.alias(rig)
+        reads = self.alias_reads(rig)
+        rig.run()
+        rig.store.marker()
+        rig.run()
+        self.assertEqual(reads, [], "GSI1 shows the alias: the stub in the manifest needs no second read")
+        shown = rig.table.query_aliases
+        rig.table.query_aliases = lambda cls: iter(())
+        rig.store.marker()
+        rig.run()
+        self.assertEqual(reads, [f"IDALIAS#Person#{self.OLD}"], "the index lags: exactly the stub's own alias is read, not each person file")
+        rig.table.query_aliases = shown
+
     def test_dynamo_query_aliases_pages_gsi1_and_decodes(self):
         from hfy_render.aws import DynamoTable
         from boto3.dynamodb.types import TypeSerializer

@@ -27,8 +27,8 @@ beforeEach(() => { envBefore = process.env.HFY_EDITING; process.env.HFY_EDITING 
 afterEach(() => { if (envBefore === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = envBefore; });
 
 /** An API over a seeded store. Tree: ME (own death event, a shared residence, a note, a photo), OTHER (a death event with a full date). */
-async function world() {
-  const w = makeApi({ log: q });
+async function world(apiOpts = {}) {
+  const w = makeApi({ log: q, ...apiOpts });
   w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 0, seeded: true, writes_enabled: true });
   let t = Date.parse("2026-10-14T00:00:00Z");
   let u = 0;
@@ -90,6 +90,59 @@ describe("merged-person alias (merge-alias-redirect)", () => {
     alias(w, OTHER, ME);
     const r = await w.get(`/api/records/Person/by-id/${OTHER}`, ME);
     expect(r.body.handle).toBe(w.other.handle);
+  });
+
+  it("follows a chain to the live person at its end, and each link in it answers the same", async () => {
+    const w = await world();
+    alias(w, "I0777", "I0778"); // I0777 was merged into I0778, which was merged into OTHER
+    alias(w, "I0778", OTHER);
+    expect((await w.get("/api/records/Person/by-id/I0777", ME)).body).toEqual({ mergedInto: OTHER });
+    expect((await w.get("/api/records/Person/by-id/I0778", ME)).body).toEqual({ mergedInto: OTHER });
+  });
+
+  it("stops at the first live person on the chain", async () => {
+    const w = await world();
+    alias(w, "I0777", OTHER);
+    alias(w, OTHER, ME); // a live person's own id wins: this alias is never read for I0777
+    expect((await w.get("/api/records/Person/by-id/I0777", ME)).body).toEqual({ mergedInto: OTHER });
+  });
+
+  it("is 404 for a cycle, a chain that ends where nobody lives, and a chain through a missing link", async () => {
+    const w = await world();
+    alias(w, "I0781", "I0782"); alias(w, "I0782", "I0781"); // cycle
+    alias(w, "I0783", "I0784"); // I0784 has no alias and no person
+    alias(w, "I0785", "I0786"); alias(w, "I0786", null); // a link with no survivor
+    for (const id of ["I0781", "I0782", "I0783", "I0785", "I0786"]) {
+      const r = await w.get(`/api/records/Person/by-id/${id}`, ME);
+      expect([id, r.status]).toEqual([id, 404]);
+    }
+  });
+
+  it("follows at most 8 links", async () => {
+    const w = await world();
+    const ids = Array.from({ length: 9 }, (_, i) => `I08${String(i).padStart(2, "0")}`);
+    ids.forEach((id, i) => alias(w, id, i + 1 < ids.length ? ids[i + 1] : OTHER)); // ids[0] is 9 links from OTHER, ids[1] is 8
+    expect((await w.get(`/api/records/Person/by-id/${ids[0]}`, ME)).status).toBe(404);
+    expect((await w.get(`/api/records/Person/by-id/${ids[1]}`, ME)).body).toEqual({ mergedInto: OTHER });
+  });
+
+  it("names no survivor that was deleted afterwards, even through a chain", async () => {
+    const w = await world();
+    alias(w, "I0777", "I0778");
+    alias(w, "I0778", OTHER);
+    await w.apply([del("Person", w.other.handle, 1)]);
+    for (const id of ["I0777", "I0778"]) expect((await w.get(`/api/records/Person/by-id/${id}`, ME)).status).toBe(404);
+  });
+
+  it("reads the survivor through the same view as a direct read, and fails closed when that read fails", async () => {
+    let broken = false;
+    const w = await world({ intercept: (cmd) => { if (broken && cmd.constructor.name === "GetCommand" && String(cmd.input.Key?.PK).startsWith("MOD#")) throw new Error("boom"); } });
+    alias(w, "I0777", OTHER);
+    expect((await w.get("/api/records/Person/by-id/I0777", ME)).status).toBe(200);
+    broken = true; // OTHER holds a note, so its view reads the MOD# items
+    const r = await w.get("/api/records/Person/by-id/I0777", ME);
+    expect(r.status).toBe(500);
+    expect(JSON.stringify(r.body)).not.toContain(OTHER);
   });
 });
 

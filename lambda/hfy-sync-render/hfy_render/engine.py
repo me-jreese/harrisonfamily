@@ -18,7 +18,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from . import RENDERER_VERSION, errors
 from .aws import HEAD_PK, seq_key
@@ -39,8 +39,11 @@ MANIFEST_SAVE_EVERY = 250
 BUDGET_MARGIN_MS = 20_000
 REPORT_LIST_CAP = 2_000
 
-#: The id shape a stub may carry: the site's redirect hook follows only this (11ty/js/person-page.js, the mergedInto hook).
-ALIAS_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}\Z")
+#: The id shape a stub may carry: the site's redirect hook follows only this (11ty/js/person-page.js, the mergedInto hook). The first
+#: character follows ``keys.is_owned_key`` (a letter or a digit), so a stub the renderer writes is always a key it owns.
+ALIAS_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}\Z")
+#: Alias links followed from an old id to the person page that now answers for it (a chain A to B to C is two links). Matches the API twin.
+MAX_ALIAS_HOPS = 8
 
 log = logging.getLogger("hfy.render")
 
@@ -305,7 +308,7 @@ class Engine:
         blocked: Dict[str, List[str]] = {}
         bodies: Dict[str, bytes] = {}
         files = dict(rendered.files)
-        for key, body in self._alias_stubs(view, objects).items():
+        for key, body in self._alias_stubs(view, objects, rendered.files).items():
             files.setdefault(key, body)
         for key, body in files.items():
             if not is_owned_key(key):
@@ -441,49 +444,83 @@ class Engine:
         self._trigger_graph(seq)
         return {"status": "rendered", "mode": mode, "seq": seq, **counts}
 
-    def _alias_stubs(self, view: StoreView, objects: Dict[Tuple[str, str], Dict[str, Any]]) -> Dict[str, bytes]:
+    def _alias_stubs(self, view: StoreView, objects: Dict[Tuple[str, str], Dict[str, Any]], pages: Dict[str, bytes]) -> Dict[str, bytes]:
         """``person/<old id>.json = {"mergedInto": "<new id>"}`` for every Person ``IDALIAS#`` item (merge-alias-redirect, SYNC-10).
 
-        The site redirects an old id to the new one from this stub. A stub is written only while the new id is a live person's page
-        and the old id is not (a retired id is never reused, but a stub never shadows a real page). When the alias item is gone, or
-        the survivor is, the key leaves the desired set and the normal diff removes the file. The aliases come from GSI1, and also
-        from a consistent read for each merge delete in the view, so a pass never misses an alias the index has not caught up with. The same consistent read covers every stub the previous manifest
-        holds, so a renumber alias that the index lags on keeps its stub instead of flapping."""
+        ``pages`` is the render's own output. The site redirects an old id to the id that now answers for it, so a stub names only an id
+        whose ``person/<id>.json`` this pass renders: a private person, or one without a usable name, has no page and is never named.
+        An alias chain (A merged into B, B merged into C) is followed to its last link, up to MAX_ALIAS_HOPS, so the stub for A names C.
+        A stub is never written over a page (a live person's, ``index``, ``search-index``) and never for the id of a live person, rendered
+        or not. When the alias item is gone, or the survivor has no page, the key leaves the desired set and the normal diff removes the file.
+
+        The aliases come from GSI1, and also from a consistent read for each merge delete in the view, so a pass never misses an alias the
+        index has not caught up with. The same consistent read covers every stub the previous manifest holds, so a renumber alias that the
+        index lags on keeps its stub instead of flapping, and the link of a chain that leads to an id with no page and no known alias."""
 
         live = {(o.get("gramps_id") or "").strip() for k, o in objects.items() if k[0] == "Person"}
         aliases: Dict[str, str] = {}
-        for item in self.d.table.query_aliases("Person"):
-            old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
-            if isinstance(old, str) and isinstance(new, str):
-                aliases[old] = new
-        merged = [h.gramps_id for h in view.heads.values() if h.cls == "Person" and h.deleted and h.op == "delete" and h.reason == "merge" and h.gramps_id]
-        if merged:
-            got = self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in merged])
-            for item in got.values():
+
+        def has_page(gid: str) -> bool:
+            return f"person/{gid}.json" in pages
+
+        def take(items: Iterable[Dict[str, Any]]) -> None:
+            for item in items:
                 old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
                 if isinstance(old, str) and isinstance(new, str):
                     aliases[old] = new
+
+        take(self.d.table.query_aliases("Person"))
+        merged = [h.gramps_id for h in view.heads.values() if h.cls == "Person" and h.deleted and h.op == "delete" and h.reason == "merge" and h.gramps_id]
+        if merged:
+            take(self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in merged]).values())
         # GSI1 is eventually consistent: an alias the index has not shown this pass would drop its stub and a later pass would write it
         # again (the site flaps). So the aliases behind the stubs the last manifest already holds are read back strongly consistent.
+        # A live person's file, index.json and search-index.json are in the manifest too, and none of them is ever a stub: skip them.
         try:
             prior, _ = self._load_manifest(self.d.mode)
         except Exception:  # noqa: BLE001 - an unreadable manifest only costs the extra read
             prior = {}
         again = []
         for key in prior:
-            if key.startswith("person/") and key.endswith(".json"):
+            if key.startswith("person/") and key.endswith(".json") and is_owned_key(key):
                 name = key[len("person/"):-len(".json")]
-                if name not in aliases and ALIAS_ID.match(name):
+                if name not in aliases and name not in live and not has_page(name) and ALIAS_ID.match(name):
                     again.append(name)
         if again:
-            got = self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in again])
-            for item in got.values():
-                old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
-                if isinstance(old, str) and isinstance(new, str):
-                    aliases[old] = new
+            take(self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in again]).values())
+        # A chain may lead to an id the index has not shown yet (a link that was just written). Read each id that has no page, is not a live
+        # person and has no known alias once, strongly consistent; a dangling survivor costs one read, a tree with no aliases none.
+        asked: Set[str] = set()
+        for _hop in range(MAX_ALIAS_HOPS - 1):
+            dangling = sorted({
+                new for new in aliases.values()
+                if new not in aliases and new not in live and new not in asked and not has_page(new) and ALIAS_ID.match(new)
+            })
+            if not dangling:
+                break
+            asked.update(dangling)
+            take(self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in dangling]).values())
+
+        def survivor(old: str) -> Optional[str]:
+            seen = {old}
+            target = aliases.get(old)
+            for _hop in range(MAX_ALIAS_HOPS):
+                if target is None or target in seen or not ALIAS_ID.match(target):
+                    return None
+                if has_page(target):
+                    return target
+                if target in live:  # a person with this id exists and has no page: nothing to redirect to
+                    return None
+                seen.add(target)
+                target = aliases.get(target)
+            return None
+
         stubs: Dict[str, bytes] = {}
-        for old, new in sorted(aliases.items()):
-            if old == new or old in live or new not in live or not ALIAS_ID.match(old) or not ALIAS_ID.match(new):
+        for old in sorted(aliases):
+            if old in live or has_page(old) or not ALIAS_ID.match(old):
+                continue
+            new = survivor(old)
+            if new is None:
                 continue
             stubs[f"person/{old}.json"] = json.dumps({"mergedInto": new}, indent=2, sort_keys=True).encode("utf-8")
         return stubs
