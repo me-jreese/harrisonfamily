@@ -160,6 +160,15 @@
   border-inline-start: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
   font-weight: var(--io-typography-weight-semibold);
 }
+.photo-tag-edit__toastbox { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--io-space-2) var(--io-space-3); min-inline-size: 0; }
+.photo-tag-edit__toastbox .photo-tag-edit__toast { flex: 1 1 auto; min-inline-size: 0; }
+.photo-tag-edit__undo {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0 var(--io-space-3);
+  min-block-size: var(--io-control-tap-min); min-inline-size: var(--io-control-tap-min);
+  border: 0; background: transparent; color: var(--io-color-semantic-link); font: inherit; font-weight: var(--io-typography-weight-semibold); text-decoration: underline; cursor: pointer;
+}
+.photo-tag-edit__undo:disabled { color: var(--io-color-semantic-text-dim); cursor: default; }
+.photo-tag-edit__undo:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
 .photo-tag-edit__problem {
   padding: var(--io-space-2) var(--io-space-3);
   border-inline-start: var(--io-control-focus-ring) solid var(--io-color-semantic-danger);
