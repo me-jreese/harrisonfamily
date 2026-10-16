@@ -222,6 +222,16 @@ class StatusFile(HomeCase):
         self.assertIn("exit 78", line)
         self.assertIn("next: open_bound_tree", line)
 
+    def test_a_pull_summary_line_names_the_run_and_carries_counts_only(self):
+        counts = status.zero_counts()
+        counts["pulled"] = {"create": 1, "update": 2, "delete": 0}
+        doc = status.build("01ARZ3NDEKTSV4RRFFQ69G5FAV", "check", "cli", "d", True, "changes_pending", 10, "", "", counts=counts,
+                           next_action="review_preview")
+        line = status.summary_line(doc)
+        self.assertIn("run 01ARZ3NDEKTSV4RRFFQ69G5FAV", line)
+        self.assertIn("1 new, 2 changed, 0 deleted", line)
+        self.assertNotIn("run ", status.summary_line(status.build("R1", "status", "cli", "d", False, "ok", 0, "", "")))
+
 
 class Sidecar(HomeCase):
     def make(self, **meta):
@@ -451,9 +461,16 @@ class RunnerRefusals(HomeCase):
         self.assertNotIn("boom", str(doc), "no message text from the exception")
         self.assertEqual(paths.read_json(self.tp(tree).status)["exit_code"], 70)
 
-    def test_actions_without_a_build_yet_are_69(self):
-        for action in ("check", "pull", "push", "sync"):
-            self.assert_refused(self.run_tool(FakeTree(), action=action), "not_enabled", 69, "none")
+    def test_push_is_not_in_this_build_and_69(self):
+        self.assert_refused(self.run_tool(FakeTree(), action="push"), "not_enabled", 69, "none")
+        self.assert_refused(self.run_tool(self.bound_tree(), action="push"), "not_enabled", 69, "none")
+
+    def test_the_pull_actions_on_an_unbound_tree_say_bind_first(self):
+        for action in ("check", "pull", "sync"):
+            self.assert_refused(self.run_tool(FakeTree(), action=action), "unbound", 78, "bind")
+
+    def test_restore_through_the_tool_is_refused_because_the_tree_is_open(self):
+        self.assert_refused(self.run_tool(self.bound_tree(), action="restore"), "restore_open", 75, "close_gramps")
 
 
 class RunnerBinding(HomeCase):
