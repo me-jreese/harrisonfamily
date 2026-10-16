@@ -63,6 +63,20 @@ export function fakeTable() {
     putAll(objects) {
       for (const o of objects) store.put(o);
     },
+    /**
+     * What api/scripts/expunge.mjs leaves behind: every SYNC#LOG row of `handle` rewritten in place (`edit(obj)` changes the parsed object),
+     * and SYNC#HEAD.expunge_epoch up by one. The seq does not move.
+     */
+    scrub(handle, edit) {
+      for (const [key, row] of rows) {
+        if (row.PK !== 'SYNC#LOG' || row.handle !== handle || row.obj_json == null) continue;
+        const obj = JSON.parse(row.obj_json);
+        edit(obj);
+        rows.set(key, { ...row, obj_json: JSON.stringify(obj) });
+      }
+      const head = rows.get(k('SYNC#HEAD', 'META'));
+      rows.set(k('SYNC#HEAD', 'META'), { ...head, expunge_epoch: (Number.isInteger(head.expunge_epoch) ? head.expunge_epoch : 0) + 1 });
+    },
     /** An open MOD# item (hidden by default). */
     hide(target, extra = {}) {
       rows.set(k(`MOD#${target}`, 'META'), { PK: `MOD#${target}`, SK: 'META', GSI1PK: 'MODQ#open', GSI1SK: `2026-01-01T00:00:00Z#${target}`, hidden: true, open: true, ...extra });

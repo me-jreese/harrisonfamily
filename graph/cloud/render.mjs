@@ -1,9 +1,9 @@
 // One graph pass of hfy-graph-render (HFY-TSK-274, viz.md section 5.7, BRD2 sections 8 and 11.6).
 //
-//   read SYNC#HEAD  ->  skip when SYNC#GRAPH.built_seq is already there (the debounce), or a push session is open
+//   read SYNC#HEAD  ->  skip when SYNC#GRAPH already covers the head's seq, the hidden-item digest and expunge_epoch (the debounce), or a push session is open
 //   store view + MOD# overlay  ->  buildFamilyGraph()  ->  face crops (S3 photos, new files held in memory)
 //   verify()  ->  upload the NEW faces  ->  person/graph.json (only when its content digest changed)  ->  prune unreferenced faces
-//   SYNC#GRAPH.built_seq
+//   SYNC#GRAPH (built_seq, mods, expunge_epoch)
 //
 // Nothing is written before verify() passes, so a failure leaves the previous graph.json and faces in place and raises the
 // renderer's RenderError alarm (the metric the sync renderer's own alarm watches). Only an error code is ever logged or stored:
@@ -69,6 +69,12 @@ function sessionYoung(session, now) {
   return now.getTime() - opened < SESSION_QUIET_SECONDS * 1000;
 }
 
+/**
+ * SYNC#HEAD.expunge_epoch (absent = 0), the rule of the api's store view and snapshot cache. api/scripts/expunge.mjs rewrites log entries and
+ * heads in place and raises the epoch WITHOUT moving seq, so a graph built under another epoch may still name the removed value, whatever seq says.
+ */
+export const epochOf = (head) => (Number.isInteger(head?.expunge_epoch) ? head.expunge_epoch : 0);
+
 /** A digest of the hidden targets (not the targets: the marker is not a place to list what was hidden). */
 export function modsDigest(mods) {
   return createHash('sha256').update(JSON.stringify([...mods.keys()].sort())).digest('hex').slice(0, 16);
@@ -103,9 +109,12 @@ export async function renderGraph(deps, event = {}) {
     let head = await getSyncHead(ctx);
     let seq = Number(head?.seq ?? 0);
     if (!(seq > 0)) return { status: 'skipped', reason: 'empty_store' };
-    // A MOD# hide or unhide may not move the store seq, so the marker also records which items were hidden when the graph was built.
+    // A MOD# hide or unhide may not move the store seq, so the marker also records which items were hidden when the graph was built. An expunge
+    // does not move it either (it raises SYNC#HEAD.expunge_epoch), so the marker records the epoch too: any difference rebuilds, a marker from
+    // before the field existed reads as epoch 0.
+    let epoch = epochOf(head);
     let mods = await loadHiddenMods(ctx);
-    const current = (state) => !force && state && Number(state.built_seq) >= seq && state.mods === modsDigest(mods);
+    const current = (state) => !force && state && Number(state.built_seq) >= seq && state.mods === modsDigest(mods) && epochOf(state) === epoch;
     let state = await readState(ctx);
     if (current(state)) return { status: 'skipped', reason: 'current', seq };
     // Debounce: wait once for a burst of passes to settle, then read the head again. Every invocation queued behind this one finds the
@@ -115,6 +124,7 @@ export async function renderGraph(deps, event = {}) {
       await (deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(wait);
       head = await getSyncHead(ctx);
       seq = Number(head?.seq ?? 0);
+      epoch = epochOf(head);
       mods = await loadHiddenMods(ctx);
       state = await readState(ctx);
       if (current(state)) return { status: 'skipped', reason: 'current', seq };
@@ -167,7 +177,7 @@ export async function renderGraph(deps, event = {}) {
     };
     await ctx.ddb.send(new ctx.cmds.PutCommand({
       TableName: ctx.table,
-      Item: { ...STATE_KEY, built_seq: builtSeq, built_at: clock().toISOString(), snapshot: graph.source.snapshot, mods: modsDigest(mods), people: graph.counts.people, faces: graph.counts.faces },
+      Item: { ...STATE_KEY, built_seq: builtSeq, built_at: clock().toISOString(), snapshot: graph.source.snapshot, mods: modsDigest(mods), expunge_epoch: epoch, people: graph.counts.people, faces: graph.counts.faces },
     }));
     log.info?.(`graph render ${JSON.stringify({ ...result, elapsed_ms: clock().getTime() - started.getTime() })}`);
     return result;

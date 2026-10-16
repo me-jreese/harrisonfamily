@@ -290,6 +290,7 @@ describe("record mode (whole record)", () => {
     w.s3.seed(SITE, `person/${p.gramps_id}.json`, { marker: true });
     w.s3.seed(SITE, "person/index.json");
     w.s3.seed(SITE, "person/index.json");
+    for (let i = 0; i < 3; i += 1) w.s3.seed(SITE, "person/graph.json"); // the graph renderer's file: two noncurrent versions and the current one
     w.s3.seed(SYNC, "snapshots/6.jsonl.gz");
     w.s3.seed(SYNC, "snapshots/6.jsonl.gz");
     w.s3.seed(SYNC, "snapshots/4.jsonl.gz");
@@ -327,6 +328,9 @@ describe("record mode (whole record)", () => {
     expect(w.s3.versions(SITE, `person/${p.gramps_id}.json`)).toHaveLength(1);
     expect(w.s3.versions(SITE, `person/${p.gramps_id}.json`)[0]).toMatchObject({ marker: true, latest: true });
     expect(w.s3.versions(SITE, "person/index.json")).toHaveLength(1);
+    // person/graph.json carries the person's names in every version the graph renderer wrote: the noncurrent ones go, the live file stays
+    expect(w.s3.versions(SITE, "person/graph.json")).toHaveLength(1);
+    expect(w.s3.versions(SITE, "person/graph.json")[0]).toMatchObject({ latest: true });
     // snapshots: every old version is gone, a rebuilt snapshot and its checkpoint remain, one version each
     const snaps = w.s3.keys(SYNC, "snapshots/");
     expect(snaps).toEqual([`snapshots/${head.seq}.jsonl.gz`, "snapshots/latest.json"]);
@@ -516,9 +520,22 @@ describe("which rendered files carry a record", () => {
     const other = person(2);
     await w.batch([create(n), create(place), create(ev), create(p), create(other)]);
     const view = await storeView({ ddb: w.ddb, cmds, table: T, now: w.ctx.now });
-    expect(renderedKeys(view, { class: "Note", handle: n.handle, gramps_id: n.gramps_id })).toEqual([`event/${ev.handle}.json`, `note/${n.handle}.json`, "person/I0001.json", "person/index.json", "person/search-index.json"]);
-    expect(renderedKeys(view, { class: "Person", handle: other.handle, gramps_id: "I0002" })).toEqual(["person/I0002.json", "person/index.json", "person/search-index.json"]);
-    expect(renderedKeys(view, { class: "Place", handle: place.handle, gramps_id: "P0001" })).toContain("place/index.json");
+    expect(renderedKeys(view, { class: "Note", handle: n.handle, gramps_id: n.gramps_id })).toEqual([`event/${ev.handle}.json`, `note/${n.handle}.json`, "person/I0001.json", "person/graph.json", "person/index.json", "person/search-index.json"]);
+    expect(renderedKeys(view, { class: "Person", handle: other.handle, gramps_id: "I0002" })).toEqual(["person/I0002.json", "person/graph.json", "person/index.json", "person/search-index.json"]);
+    expect(renderedKeys(view, { class: "Place", handle: place.handle, gramps_id: "P0001" })).toEqual(expect.arrayContaining(["place/index.json", "person/graph.json"]));
+  });
+
+  it("includes person/graph.json for every class the graph reads, even when no Person page embeds the record, and for a Note nothing else reaches", async () => {
+    const w = world();
+    const n = note(1);
+    const place = { _class: "Place", handle: h(3000), gramps_id: "P0001", change: 1, private: false, name: { value: "x" } };
+    const ev = { _class: "Event", handle: h(4000), gramps_id: "E0001", change: 1, private: false };
+    const fam = family(1, {});
+    const media = { _class: "Media", handle: h(5000), gramps_id: "O0001", change: 1, private: false, path: "/x.jpg", mime: "image/jpeg" };
+    await w.batch([create(n), create(place), create(ev), create(fam), create(media)]);
+    const view = await storeView({ ddb: w.ddb, cmds, table: T, now: w.ctx.now });
+    for (const t of [place, ev, fam, media]) expect(renderedKeys(view, { class: t._class, handle: t.handle, gramps_id: t.gramps_id })).toContain("person/graph.json");
+    expect(renderedKeys(view, { class: "Note", handle: n.handle, gramps_id: n.gramps_id })).toEqual([`note/${n.handle}.json`]); // the graph never reads a Note
   });
 });
 
@@ -753,7 +770,7 @@ describe("pages that embedded the record in an earlier version", () => {
     const target = { class: "Note", handle: n.handle, gramps_id: n.gramps_id };
     expect(renderedKeys(view, target)).toEqual([`note/${n.handle}.json`]);
     const history = await referenceHistory(storeCtx(w));
-    expect(renderedKeys(view, target, history)).toEqual([`note/${n.handle}.json`, `person/${p.gramps_id}.json`, "person/index.json", "person/search-index.json"]);
+    expect(renderedKeys(view, target, history)).toEqual([`note/${n.handle}.json`, `person/${p.gramps_id}.json`, "person/graph.json", "person/index.json", "person/search-index.json"]);
   });
 
   it("a Person delete with its family cleaned still reaches the family page and the spouse's page, a deleted family's page included", async () => {
@@ -766,7 +783,7 @@ describe("pages that embedded the record in an earlier version", () => {
     await w.batch([del(dad, 2)]);
     const view = await storeView(storeCtx(w));
     const target = { class: "Person", handle: dad.handle, gramps_id: dad.gramps_id };
-    expect(renderedKeys(view, target)).toEqual(["person/I0001.json", "person/index.json", "person/search-index.json"]);
+    expect(renderedKeys(view, target)).toEqual(["person/I0001.json", "person/graph.json", "person/index.json", "person/search-index.json"]);
     const keys = renderedKeys(view, target, await referenceHistory(storeCtx(w)));
     expect(keys).toEqual(expect.arrayContaining([`family/${fam.handle}.json`, "person/I0002.json", "person/I0001.json"]));
     // and when the family is deleted too, its file still keeps noncurrent versions

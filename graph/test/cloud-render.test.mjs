@@ -139,6 +139,73 @@ describe('a pass over the cloud store', () => {
   });
 });
 
+describe('an expunge does not move the seq, so the marker also holds SYNC#HEAD.expunge_epoch', () => {
+  // The scrubbed name stands in for the value `api/scripts/expunge.mjs --path` removed from a live record.
+  const scrubName = (w) => w.table.scrub('h_I0001', (o) => void (o.primary_name.first_name = 'Scrubbed'));
+  const named = (w, name) => w.site.files.get(GRAPH_KEY).toString('utf8').includes(name);
+
+  it('rebuilds after an expunge that left the seq alone, and no longer names the removed value', async () => {
+    const w = await world();
+    await w.run({ source: 'render' });
+    assert.ok(named(w, 'Ada'));
+    assert.equal(w.table.state().expunge_epoch, 0, 'a store that was never expunged is epoch 0');
+    const seq = w.table.seq;
+    scrubName(w);
+    assert.equal(w.table.seq, seq);
+    const out = await w.run({ source: 'render', seq });
+    assert.equal(out.status, 'rendered');
+    assert.equal(out.graph_written, true);
+    assert.ok(!named(w, 'Ada'), 'the removed value is gone from person/graph.json');
+    assert.ok(named(w, 'Scrubbed'));
+    assert.equal(w.table.state().expunge_epoch, 1);
+    assert.deepEqual(await w.run({ source: 'render', seq }), { status: 'skipped', reason: 'current', seq }, 'the epoch it built is current');
+  });
+
+  it('rebuilds for the schedule tick and the operator render too: neither carries force', async () => {
+    const w = await world();
+    await w.run({ source: 'render', seq: w.table.seq });
+    scrubName(w);
+    assert.equal((await w.run({ source: 'render', seq: w.table.seq })).status, 'rendered');
+    scrubName(w);
+    assert.equal((await w.run({})).status, 'rendered');
+    assert.equal(w.table.state().expunge_epoch, 2);
+  });
+
+  it('builds the epoch it finds after the debounce wait, not the one it saw first', async () => {
+    const w = await world({ debounceMs: 5000 });
+    await w.run({ force: true });
+    scrubName(w); // epoch 1: the first check finds the marker behind, so the pass waits
+    w.deps.sleep = async () => w.table.scrub('h_I0001', (o) => void (o.primary_name.first_name = 'Scrubbed twice'));
+    const out = await w.run({ source: 'render', seq: w.table.seq });
+    assert.equal(out.status, 'rendered');
+    assert.ok(named(w, 'Scrubbed twice') && !named(w, 'Ada'));
+    assert.equal(w.table.state().expunge_epoch, 2);
+    assert.equal((await w.run({ source: 'render', seq: w.table.seq })).reason, 'current');
+  });
+
+  it('reads a marker from before the field existed as epoch 0', async () => {
+    const w = await world();
+    await w.run();
+    const marker = w.table.rows.get('SYNC#GRAPH\u0000META');
+    delete marker.expunge_epoch;
+    assert.equal((await w.run({ source: 'render' })).reason, 'current', 'an unexpunged store is still current');
+    scrubName(w);
+    assert.equal((await w.run({ source: 'render' })).status, 'rendered', 'the first expunge rebuilds a marker without the field');
+    assert.equal(w.table.state().expunge_epoch, 1);
+  });
+
+  it('a lower epoch than the marker (a restored table) rebuilds as well', async () => {
+    const w = await world();
+    scrubName(w);
+    await w.run();
+    assert.equal(w.table.state().expunge_epoch, 1);
+    const head = w.table.rows.get('SYNC#HEAD\u0000META');
+    delete head.expunge_epoch;
+    assert.equal((await w.run({ source: 'render' })).status, 'rendered');
+    assert.equal(w.table.state().expunge_epoch, 0);
+  });
+});
+
 describe('moderation (MOD# overlay): hidden items never reach the graph or the faces', () => {
   it('a hidden primary Media gives face null, no crop is uploaded, and the old face is pruned', async () => {
     const w = await world();
