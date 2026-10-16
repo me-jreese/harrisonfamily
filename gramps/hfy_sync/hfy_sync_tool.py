@@ -42,7 +42,8 @@ from gramps.gen.lib.json_utils import data_to_object, object_to_dict  # noqa: E4
 from gramps.gui.plug import tool  # noqa: E402
 
 import hfy_sync_ui  # noqa: E402
-from hfygramps.addon import consts, runner  # noqa: E402
+from gramps.gen.utils.file import media_path  # noqa: E402
+from hfygramps.addon import consts, mediafile, runner  # noqa: E402
 
 _ = glocale.translation.gettext
 LOG = logging.getLogger("hfy_sync")
@@ -97,6 +98,16 @@ class GrampsTree(runner.TreeAccess):
                 if data is not None:
                     out[handle] = data
         return out
+
+    def media_files(self):
+        """{media handle: mediafile.inspect(...)} for every Media object: what the bytes on disk are (sync.md 5.5, 9).
+
+        A Media path is read as Gramps reads it: absolute as it is, else under the tree's base media path (`Tools > Media Manager`'s
+        base path, `db.get_mediapath()`; GLib's Pictures folder when the tree has none). `Media.path` stays on this Mac. The files are
+        only read, never changed; a placeholder is detected without reading it."""
+        base = media_path(self.db)
+        raw = (self.db.get_raw_media_data(h) for h in self.db.iter_media_handles())
+        return mediafile.collect([m for m in raw if m is not None], base)
 
     def _read(self, cls, handle):
         # Gramps raises HandleError for a handle that is not there (a create the plan is about to make), where the fakes return None.

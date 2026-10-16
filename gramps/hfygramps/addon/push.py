@@ -14,7 +14,11 @@ the local tree's changes go to the website as ops, through sessions and an outbo
                    is not seeded yet); every batch is written to the outbox (`pending`, then `sent`) BEFORE it goes on the wire; the base
                    advances only from the acknowledgement; the session is completed at the end.
 
-What this action never does: apply a website change to the Gramps database (that is the pull), upload a blob (addon-media), or print
+    media          a Media op carries its blob (``mediaup``): the file is hashed on disk (the checksum the website gets is that MD5), uploaded
+                   to the staging key with a signed SHA-256 just before the batch that names it, and the website moves it into place after the
+                   op commits. A file that cannot go (missing, empty, online-only, GPS) is held with guidance; the metadata still syncs.
+
+What this action never does: apply a website change to the Gramps database (that is the pull), write to a served media key, or print
 a field value. Standard library only; Python 3.9 compatible.
 """
 import base64
@@ -28,7 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import consts, oauth, keychain, pushplan, pushstate, sidecar, status, transport
+from . import consts, mediaup, oauth, keychain, plan as pullplan, pushplan, pushstate, sidecar, status, transport
 from .. import canonical, merge as M
 
 _RULE = re.compile(r"^[a-z][a-z0-9_.]{0,63}$")
@@ -229,6 +233,11 @@ class _Push:
         self.limits = {}
         self.replayed = 0
         self.id_named = False        # the last refusal dropped ops that the server named by ID (it names one ID per answer)
+        self.files = {}              # {Media handle: mediafile.inspect dict}: the bytes on disk, read once per run
+        self.staged = set()          # (handle, sha256) already at their staging key in this run
+        self.deferred_media = set()  # new Media whose upload failed: what refers to them waits for the next run
+        self.blob_retries = {}       # Media handle -> how many times the website could not find its staged blob this run
+        self.base_handles = set()
 
     # ------------------------------------------------------------------------------------------------------- the client
 
@@ -257,6 +266,7 @@ class _Push:
         except keychain.KeychainError:
             raise PushStop(refused("D42", consts.EXIT_SIGN_IN, "login", "The Keychain is locked or unavailable. Unlock it and run again."))
         self._handshake()
+        self.files = self.tree.media_files() or {}
         if not self.dry:
             discarded = pushstate.outbox_discard_pending(con)
             if discarded:
@@ -265,16 +275,20 @@ class _Push:
         snap = self._snapshot()
         local = self.tree.objects()
         base = pushstate.base_rows(con)
+        self.base_handles = {h for h, r in base.items() if not r["deleted"]}
         sticky = pushstate.get_json(con, "birthlike_sticky", [])
         token = self.client.token_provider()
         step_up = step_up_fresh(token)
         self.plan = pushplan.build_plan(
             local, base, snap.heads, meta=self.meta, members=self._members(), mode=self.mode, allow_deletes=self.options.allow_deletes, yes=self.options.yes,
             step_up=step_up, sticky=sticky, pins=pushstate.pins(con), max_obj_bytes=self.limits.get("max_obj_bytes"),
-            files=self.tree.media_files(), expunge_holds=sidecar.load_expunge_holds(con), pulled=_pulled_window(con))
+            files=self.files, unreadable=[h for h, f in self.files.items() if not f.get("readable")], blobs=mediaup.load_rows(con),
+            expunge_holds=sidecar.load_expunge_holds(con), pulled=_pulled_window(con))
         plan = self.plan
-        self.log.line("push: plan %s ops=%d destructive=%d holds=%d blocked=%d conflicts=%d pull_pending=%d" % (
-            snap.seq, len(plan.ops), len(plan.destructive), len(plan.holds), len(plan.blocked), len(plan.conflicts), len(plan.pull_pending)))
+        for w in plan.warnings:
+            self.log.line("push: warning %s %s" % (w["rule"], w["handle"][:6]))
+        self.log.line("push: plan %s ops=%d destructive=%d holds=%d blocked=%d conflicts=%d pull_pending=%d media_up=%d" % (
+            snap.seq, len(plan.ops), len(plan.destructive), len(plan.holds), len(plan.blocked), len(plan.conflicts), len(plan.pull_pending), plan.media_up))
         if self.dry:
             return self._preview(snap)
 
@@ -350,6 +364,7 @@ class _Push:
             if resp.headers.get("idempotent-replayed") == "true":
                 self.replayed += 1
             self._count_pushed(row["request"]["body"]["ops"])
+            self._record_uploads(row["request"]["body"]["ops"])
             self.log.line("push: outbox %s acked (%d ops)" % (row["key"][:12], n))
 
     def _count_pushed(self, ops):
@@ -400,7 +415,7 @@ class _Push:
                 o["gramps_id"] = gid
         doc = {
             "schema": 1, "run_id": self.run_id, "action": "push", "created_at": self.now(), "cloud_seq": snap.seq,
-            "counts": plan.counts(), "ops": ops, "holds": plan.holds, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
+            "counts": dict(plan.counts(), media_up=plan.media_up), "ops": ops, "holds": plan.holds, "warnings": plan.warnings, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
             "conflicts": [{"id": c["id"], "class": c["class"], "handle": c["handle"], "path": c["path"], "kind": c["kind"]} for c in plan.conflicts],
             "plan_sha256": hashlib.sha256(json.dumps(ops, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
         }
@@ -409,6 +424,7 @@ class _Push:
         from . import paths as paths_
         paths_.atomic_write_json(path, doc)
         self.counts["pushed"] = plan.counts()
+        self.counts["media_up"] = plan.media_up
         self.counts["conflicts_open"] = len(plan.conflicts)
         self.counts["holds"] = len(plan.holds)
         self.counts["blocked"] = len(plan.blocked)
@@ -459,6 +475,9 @@ class _Push:
             if destructive and self.no_step_up:
                 self._park(batch, "step_up_required")
                 return "ok"
+            batch = self._stage_blobs(batch)
+            if not batch:
+                return "ok"
             body = self._body(batch)
             key = self._key(body)
             request = {"body": body}
@@ -481,10 +500,69 @@ class _Push:
                 continue
             pushstate.ack_batch(con, key, request, resp.body)
             self._count_pushed(body["ops"])
+            self._record_uploads(body["ops"])
             return "ok"
         for op in batch:                                    # the retry budget ran out with ops still unsent: hold them, so the verdict is partial
             self._hold(op, "server_refused")
         return "ok"
+
+    # ---------------------------------------------------------------------------------------------------------------- media
+
+    def _stage_blobs(self, batch):
+        """Uploads the blob of every Media op in the batch to its staging key and returns the ops that can go. An op whose blob cannot be
+        uploaded this run is held (and so is what refers to a new Media of that kind, so no op points at something the website will not
+        have); the website moves a staged blob into place itself, after the op commits, so nothing here touches a served key."""
+        out = []
+        for op in batch:
+            if op["op"] in ("create", "update") and self.deferred_media and pullplan.references(op.get("obj"), self.deferred_media):
+                self._defer(op, "media_dependency_deferred")
+                continue
+            blob = op.get("blob")
+            if op["class"] == "Media" and op["op"] in ("create", "update") and isinstance(blob, dict) and blob.get("state") != "missing":
+                info = self.plan.uploads.get(op["handle"])
+                if info is not None and (op["handle"], info["sha256"]) not in self.staged:
+                    try:
+                        mediaup.upload(self.client, op["handle"], info)
+                    except mediaup.Deferred as exc:
+                        self.log.line("push: media %s deferred (%s)" % (op["handle"][:6], exc.rule))
+                        self._defer(op, exc.rule)
+                        continue
+                    self.staged.add((op["handle"], info["sha256"]))
+                    self.log.line("push: media %s staged" % op["handle"][:6])
+            out.append(op)
+        return out
+
+    def _blob_refused(self, exc, batch):
+        """The website did not find the staged blob a Media op names (a pending upload that expired, an object it could not verify): the blob
+        is uploaded again and the batch re-sent, once per Media; a second refusal defers that Media (D31)."""
+        handle = (exc.details or {}).get("handle")
+        hit = [o for o in batch if isinstance(handle, str) and o["handle"] == handle and isinstance(o.get("blob"), dict) and o["blob"].get("state") != "missing"]
+        if not hit:
+            raise exc
+        self.staged = {x for x in self.staged if x[0] != handle}
+        self.blob_retries[handle] = self.blob_retries.get(handle, 0) + 1
+        self.log.line("push: media %s refused (%s)" % (handle[:6], exc.code))
+        if self.blob_retries[handle] <= 1:
+            return batch
+        for o in hit:
+            self._defer(o, "media_upload_failed")
+        return [o for o in batch if o not in hit]
+
+    def _defer(self, op, rule):
+        self._hold(op, rule, path="/blob" if op["class"] == "Media" else "")
+        if op["op"] == "create" or op["handle"] not in self.base_handles:
+            self.deferred_media.add(op["handle"])
+
+    def _record_uploads(self, ops):
+        """An acknowledged Media op that named a blob: the website now holds those bytes, so the next plan does not upload them again."""
+        for op in ops:
+            blob = op.get("blob")
+            if op["class"] != "Media" or op["op"] not in ("create", "update") or not isinstance(blob, dict) or blob.get("state") == "missing":
+                continue
+            info = self.plan.uploads.get(op["handle"]) if self.plan is not None else None
+            path = (info or self.files.get(op["handle"]) or {}).get("path") or ""
+            mediaup.record(self.side, op["handle"], path, blob["md5"], blob["sha256"], blob["size"], origin="up")
+            self.counts["media_up"] += 1
 
     def _hold(self, op, rule, blocked=False, path=""):
         row = {"class": op["class"], "handle": op["handle"], "path": path, "rule": rule,
@@ -528,6 +606,8 @@ class _Push:
             return "split"
         if exc.status == 422 and code == "idempotency_key_reused":
             return batch                                    # D28: a new key, the same plan
+        if exc.status == 422 and code in ("blob_not_uploaded", "blob_mismatch"):
+            return self._blob_refused(exc, batch)           # the staged object is gone or is not the claimed one: upload it again, once
         mapping = {"gid_conflict": "gramps_id_taken", "merges_disabled": "merge_held", "assign_desktop_only": "gramps_id_taken",
                    "reserved_id_block": "reserved_id_block", "gramps_id_taken": "gramps_id_taken", "gramps_id_retired": "gramps_id_retired",
                    "renumber_blocked": "renumber_blocked"}

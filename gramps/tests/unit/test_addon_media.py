@@ -5,13 +5,19 @@ import os
 import unittest
 
 import addon_pull_support as S
-from hfygramps.addon import consts, faults, media, transport
+from hfygramps.addon import consts, faults, media, mediafile, transport
 
 from test_addon_pull import by_gid, load_cloud_objs
 from test_addon_pull_safety import fault
 
 JPEG = b"\xff\xd8\xff\xe0synthetic-bytes-one\xff\xd9"
 JPEG2 = b"\xff\xd8\xff\xe0synthetic-bytes-two\xff\xd9"
+FIXTURE_MEDIA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "media")
+
+
+def fixture_bytes(name):
+    with open(os.path.join(FIXTURE_MEDIA, name), "rb") as fh:
+        return fh.read()
 
 
 def new_media(env, handle="f" * 28, gid="O8001", blob=JPEG):
@@ -139,6 +145,64 @@ class MediaDown(S.PullCase):
         self.assertEqual(e.tree.objects()[m["handle"]]["path"], os.path.join(self.media_root(), m["handle"] + ".jpg"))
         new_calls = e.cloud.calls[len(before):]
         self.assertEqual(new_calls.count("fetch"), 1, "only the snapshot was fetched again")
+
+    def test_a_cloud_photo_with_a_gps_position_is_held_on_download_and_never_written(self):  # EXIF check on download
+        e = self.env
+        gps = fixture_bytes("synthetic-photo-gps.jpg")
+        self.assertTrue(mediafile.exif_gps(gps))
+        m = new_media(e, blob=gps)
+        e.cloud.blobs[m["handle"]] = {"bytes": gps, "content_type": "image/jpeg"}
+        baseline = e.run("check")["counts"]["holds"]
+        e.cloud.put(m)
+        doc = e.run("pull", yes=True)
+        self.assertEqual((doc["result"], doc["exit_code"]), ("partial", 20), doc["error"])
+        self.assertEqual(doc["error"]["code"], "blocked")
+        self.assertEqual(doc["counts"]["media_down"], 0)
+        self.assertEqual(doc["counts"]["holds"], baseline + 1)
+        self.assertEqual(os.listdir(self.media_root()) if os.path.isdir(self.media_root()) else [], [], "nothing with a location reaches the disk")
+        self.assertEqual(e.tree.objects()[m["handle"]]["path"], "", "the metadata is applied, with no local path")
+        con = e.side()
+        try:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM media_local WHERE handle = ?", (m["handle"],)).fetchone()[0], 0)
+            row = con.execute("SELECT class, rule, path, detail FROM holds WHERE handle = ?", (m["handle"],)).fetchone()
+        finally:
+            con.close()
+        self.assertEqual(row[:3], ("Media", "media.exif_gps.hold", "/blob"))
+        self.assertIn("location", row[3], "the hold says what to do")
+        self.assertIn(("media.exif_gps.hold", "download"), [(x["rule"], x["scope"]) for x in e.preview(doc)["held"]])
+
+    def test_a_graduated_comment_photo_is_downloaded_exif_checked_and_linked_in_the_same_transaction(self):
+        e = self.env
+        photo = fixture_bytes("synthetic-photo-plain.jpg")
+        m = new_media(e, handle="d" * 28, gid="O8002", blob=photo)
+        m["desc"] = "A graduated comment photo (fictional)"
+        e.cloud.blobs[m["handle"]] = {"bytes": photo, "content_type": "image/jpeg"}
+        e.cloud.put(m)
+        doc = e.run("pull", yes=True)
+        self.assertEqual((doc["result"], doc["counts"]["media_down"]), ("ok", 1))
+        path = os.path.join(self.media_root(), m["handle"] + ".jpg")
+        self.assertEqual(e.tree.objects()[m["handle"]]["path"], path)
+        self.assertEqual(len(e.tree.undo), 1, "the object and its Media.path went in one transaction")
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), photo)
+
+    def test_a_held_download_does_not_touch_a_good_local_file(self):
+        e = self.env
+        good = fixture_bytes("synthetic-photo-plain.jpg")
+        m = new_media(e, blob=good)
+        path = os.path.join(self.media_root(), m["handle"] + ".jpg")
+        os.makedirs(self.media_root())
+        with open(path, "wb") as fh:
+            fh.write(good)
+        gps = fixture_bytes("synthetic-photo-gps.jpg")
+        e.cloud.blobs[m["handle"]] = {"bytes": gps, "content_type": "image/jpeg"}
+        e.cloud.put(m)
+        e.run("pull", yes=True)
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), good, "the held bytes were not written over it")
+
+    def test_an_empty_download_is_held(self):
+        self.assertEqual(media.mediafile.hold_for_bytes(b""), "media_blob_empty")
 
     def test_download_urls_must_be_https_or_loopback_http(self):
         self.assertTrue(media.check_download_url("https://s3.example.org/x?sig=1"))
