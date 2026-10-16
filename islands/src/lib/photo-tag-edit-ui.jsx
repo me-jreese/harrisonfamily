@@ -16,7 +16,7 @@ import { api } from "./api.js";
 import { getMe } from "./me.js";
 import { PersonName } from "./person-name.jsx";
 import { ConfirmSheet } from "./editor-save-ui.jsx";
-import { baseVersionsFor, changesBody, newIdempotencyKey, planGroups, problemFor, savedToast } from "./editor-save.js";
+import { baseVersionsFor, changesBody, newIdempotencyKey, planGroups, problemFor, savedToast, undoBody, undoLeftMs } from "./editor-save.js";
 import { containedRect, regionBox, tagView } from "./photo-tags.js";
 import {
   BIG_STEP, CORNERS, DEFAULT_RECT, EDGES, STEP, TAG_COPY, applyToTags, buildTagOps, canRemoveTag, canUseTagEditor, dragCorner, expectedRoute, isDrawn,
@@ -198,7 +198,7 @@ function useTagFlow({ me, onDone }) {
       const body = await api.post("/changes", changesBody({ target: c.bundle.key, version: c.bundle.version, ops: c.built.ops, note, baseVersions: baseVersionsFor(c.bundle, c.built.ops) }), { headers: { "Idempotency-Key": keyFor(c, note) } });
       const t = savedToast(body);
       put(null);
-      if (live.current) onDone({ change: c.change, rect: c.built.rect, applied: t.saved, sent: t.sent });
+      if (live.current) onDone({ change: c.change, rect: c.built.rect, applied: t.saved, sent: t.sent, undo: t.undo, undoUntil: t.undoUntil, target: c.bundle.key });
     } catch (e) {
       const problem = problemFor(e, { labels: c.built.labels, ops: c.built.ops });
       if (problem.retryKey && !retried) { keyRef.current = { sig: "", key: "" }; await save(true); return; }
@@ -232,7 +232,8 @@ function TagEditor({ detail, me, person }) {
   const [rev, setRev] = useState(0);
   const [sel, setSel] = useState(null);
   const [status, setStatus] = useState("");
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState(null); // { text, undo, undoUntil, target, before, working, undoKey, id }
+  const say = (text) => setToast(text ? { text, undo: null, undoUntil: 0, id: Date.now() } : null);
   const [settled, setSettled] = useState(0); // bumped when a drag ends, so the box's new place is announced
   const geometry = useImageBox(img, box);
   const layerRef = useRef(null);
@@ -244,30 +245,58 @@ function TagEditor({ detail, me, person }) {
   const rawTags = Array.isArray(media.tags) ? media.tags : [];
   const items = useMemo(() => rawTags.map((t, i) => ({ i, view: tagView(t, person), nth: nthOf(rawTags, i) })).filter((x) => x.view), [rev, media, person]);
 
-  const done = useCallback(({ change, rect, applied, sent }) => {
+  const done = useCallback(({ change, rect, applied, sent, undo, undoUntil, target }) => {
     if (applied) {
+      const before = Array.isArray(media.tags) ? media.tags.slice() : media.tags;
       media.tags = applyToTags(media.tags, change, rect);
       document.dispatchEvent(new CustomEvent("hfy:tags-edited", { detail }));
       setRev((n) => n + 1);
-      setToast(change.kind === "remove" ? TAG_COPY.removedDirect : TAG_COPY.savedDirect);
+      setToast({ text: change.kind === "remove" ? TAG_COPY.removedDirect : TAG_COPY.savedDirect, undo: undo || null, undoUntil: undo ? undoUntil : 0, target, before, id: Date.now() });
     } else {
-      setToast(sent ? TAG_COPY.savedReview : TAG_COPY.nochange);
+      say(sent ? TAG_COPY.savedReview : TAG_COPY.nochange);
     }
     setSel(null);
     requestAnimationFrame(() => { if (addRef.current) addRef.current.focus(); });
   }, [media, detail]);
+
+  // Undo: the inverse ops the save returned, sent as they are (nothing is built from user text), then the page's copy of the tags goes back.
+  const undo = async () => {
+    const t = toast;
+    if (!t || !t.undo || t.working || undoLeftMs(t) === 0) return;
+    const undoKey = t.undoKey || newIdempotencyKey(); // one key per undo, kept across a retry
+    setToast({ ...t, working: true, undoKey });
+    try {
+      await api.post("/changes", undoBody({ target: t.target, undo: t.undo }), { headers: { "Idempotency-Key": undoKey } });
+      media.tags = t.before;
+      document.dispatchEvent(new CustomEvent("hfy:tags-edited", { detail }));
+      setRev((n) => n + 1);
+      setSel(null);
+      say(TAG_COPY.undone);
+      requestAnimationFrame(() => { if (addRef.current) addRef.current.focus(); });
+    } catch (e) {
+      const p = problemFor(e, {});
+      if (p.transient) { setToast({ ...t, working: false, undoKey, note: p.text }); return; }
+      say(p.conflict ? TAG_COPY.undoConflict : e && (e.status === 400 || e.status === 403 || e.status === 422) ? TAG_COPY.undoFailed : p.text);
+    }
+  };
+  // The undo goes away when its 10 minutes are over.
+  useEffect(() => {
+    if (!toast || !toast.undo) return undefined;
+    const timer = setTimeout(() => setToast((cur) => (cur && cur.id === toast.id ? { ...cur, undo: null } : cur)), undoLeftMs(toast));
+    return () => clearTimeout(timer);
+  }, [toast]);
   const { flow, start } = useTagFlow({ me, onDone: done });
 
   // The box being changed: the new draft or the existing tag, with its working rect in percent of the photo (floats while dragging).
   const setRect = useCallback((rect) => setSel((s) => (s ? { ...s, rect, dirty: s.kind === "new" ? true : !sameRect(toGrampsRect(rect), toGrampsRect(s.from)) } : s)), []);
   const pick = (item) => {
-    setToast("");
+    setToast(null);
     const v = item.view;
     // A tag without a box starts as the default box and is dirty at once: saving it gives the tag its place.
     setSel({ kind: "existing", id: item.i, grampsId: v.grampsId, name: v.name, from: v.rect, nth: item.nth, rect: v.rect ? v.rect.slice() : [...DEFAULT_RECT], dirty: !v.rect });
   };
   const addNew = (person0 = null) => {
-    setToast("");
+    setToast(null);
     setSel({ kind: "new", rect: [...DEFAULT_RECT], person: person0, dirty: true });
   };
 
@@ -293,7 +322,7 @@ function TagEditor({ detail, me, person }) {
   const onLayerDown = (e) => {
     if (e.target !== e.currentTarget) return;
     // A real draw replaces the selection, so one with an unsaved change is not drawn over: finish or cancel it first.
-    if (sel && sel.kind === "existing" && sel.dirty) { setToast(TAG_COPY.finishFirst); return; }
+    if (sel && sel.kind === "existing" && sel.dirty) { say(TAG_COPY.finishFirst); return; }
     begin(e, "draw");
   };
   const onMove = (e) => {
@@ -313,7 +342,7 @@ function TagEditor({ detail, me, person }) {
     if (d.mode === "draw") {
       const p = pctAt(e);
       if (e.type === "pointercancel" || !p || !isDrawn(d.start, p)) { setSel(d.prev || null); return; } // a tap on empty ground: nothing was drawn
-      setToast("");
+      setToast(null);
       setSel((s) => (s && s.kind === "new" ? { ...s, drawing: false } : s));
     }
     setSettled((n) => n + 1); // lets the "where it is now" announcement run
@@ -407,7 +436,15 @@ function TagEditor({ detail, me, person }) {
     <div className="photo-tag-edit" onKeyDown={guardSheet}>
       <section className="photo-tag-edit__panel" aria-labelledby={headingId} data-hfy-tag-panel>
         <h3 className="photo-tag-edit__h" id={headingId}>{TAG_COPY.heading}</h3>
-        {toast && <p className="photo-tag-edit__toast" role="status" data-hfy-tag-toast>{toast}</p>}
+        {toast && (
+          <div className="photo-tag-edit__toastbox">
+            <p className="photo-tag-edit__toast" id={`${headingId}-toast`} role="status" data-hfy-tag-toast>{toast.text}</p>
+            {toast.note && <p className="photo-tag-edit__hint" role="status">{toast.note}</p>}
+            {undoLeftMs(toast) > 0 && (
+              <button type="button" className="photo-tag-edit__undo" onClick={undo} disabled={toast.working === true} aria-describedby={`${headingId}-toast`} data-hfy-tag-undo>{TAG_COPY.undo}</button>
+            )}
+          </div>
+        )}
         <p className="photo-tag-edit__sr" role="status" aria-live="polite">{status}</p>
         {!sel && (
           <>

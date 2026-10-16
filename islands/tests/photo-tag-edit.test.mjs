@@ -356,3 +356,13 @@ describe("copy", () => {
     assert.equal(sameRect(null, [1, 2, 3, 4]), false);
   });
 });
+
+describe("the toast's undo (HFY-TSK-345)", () => {
+  it("sends the returned inverse ops as they are, so it writes no text the save did not write", async () => {
+    const { undoBody } = await import("../src/lib/editor-save.js");
+    const undo = { base_versions: { "Person/x": 2 }, ops: [{ id: "inv:1", op: "remove", obj: "Person/x", path: "/media_list/0" }] };
+    const body = undoBody({ target: "Person/x", undo });
+    assert.deepEqual(body.ops, undo.ops);
+    assert.deepEqual(Object.keys(body).sort(), ["base_versions", "ops", "target"]);
+  });
+});

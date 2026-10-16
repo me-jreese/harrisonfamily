@@ -295,7 +295,11 @@ export const TAG_COPY = Object.freeze({
   savedReview: "sent for review. you can change or withdraw it until an admin looks.",
   removedDirect: "the tag is removed.",
   tagsChanged: "this photo's tags just changed — please check your edits.",
-  seeSuggestions: "see your suggestions"
+  seeSuggestions: "see your suggestions",
+  undo: "undo",
+  undone: "undone. the tags are as they were.",
+  undoConflict: "this photo's tags changed since, so the undo was not applied. please check them.",
+  undoFailed: "we couldn't undo that. the change stays."
 });
 
 /** The sentence the confirmation sheet shows for one op, in plain words. `name` is the tagged person's name. */
