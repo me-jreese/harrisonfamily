@@ -1,0 +1,55 @@
+/* /admin/sync/: the admin-sync island (admin-sync.jsx; HFY-TSK-279). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*, --io-radius-* and
+   --io-typography-* (theme-lint no-literal-token-values). Under 64rem one column of cards, 44px full-width buttons, values that wrap (no sideways scroll).
+   From 64rem two columns: the desktop, website and batches cards on the left, the conflicts on the right. Inputs: none. State is never told by colour alone. */
+.hfy-syncadmin, .hfy-syncadmin__grid, .hfy-syncadmin__col {
+  box-sizing: border-box;
+  min-width: 0;
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  line-height: var(--io-typography-leading-normal);
+}
+.hfy-syncadmin__grid { display: grid; gap: var(--io-space-4); }
+.hfy-syncadmin__col { display: grid; gap: var(--io-space-4); align-content: start; }
+.hfy-syncadmin__skeleton { min-height: calc(3 * var(--io-control-h-lg)); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); }
+.hfy-syncadmin__card { display: grid; gap: var(--io-space-3); min-width: 0; padding: var(--io-space-4); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); }
+.hfy-syncadmin__h2 { margin: 0; font-size: var(--io-typography-size-lg); overflow-wrap: anywhere; }
+.hfy-syncadmin__note, .hfy-syncadmin__meta { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-syncadmin__strong { margin: 0; font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-syncadmin__ok { margin: 0; padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-success); font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-syncadmin__bad, .hfy-syncadmin__problem { margin: 0; padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-danger); overflow-wrap: anywhere; }
+.hfy-syncadmin__problem { display: grid; gap: var(--io-space-2); }
+.hfy-syncadmin__problem p { margin: 0; }
+.hfy-syncadmin__gate { display: grid; gap: var(--io-space-3); justify-items: start; }
+.hfy-syncadmin__gate p { margin: 0; }
+
+.hfy-syncadmin__facts, .hfy-syncadmin__pair { margin: 0; display: grid; gap: var(--io-space-2); min-width: 0; }
+.hfy-syncadmin__facts > div, .hfy-syncadmin__pair > div { display: flex; flex-wrap: wrap; gap: var(--io-space-1) var(--io-space-2); min-width: 0; }
+.hfy-syncadmin dt { color: var(--io-color-semantic-text-dim); }
+.hfy-syncadmin dd { margin: 0; font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; min-width: 0; }
+.hfy-syncadmin__path { display: grid; gap: var(--io-space-1); min-width: 0; }
+.hfy-syncadmin__field { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+
+.hfy-syncadmin__list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--io-space-3); }
+.hfy-syncadmin__row, .hfy-syncadmin__conflict { display: grid; gap: var(--io-space-2); min-width: 0; padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); }
+.hfy-syncadmin__pair { padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-border-strong); }
+.hfy-syncadmin__confirm { display: grid; gap: var(--io-space-3); min-width: 0; padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); }
+.hfy-syncadmin__ask { margin: 0; font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-syncadmin__actions { display: grid; gap: var(--io-space-2); min-width: 0; }
+
+.hfy-syncadmin .hfy-syncadmin__btn, .hfy-syncadmin a.hfy-syncadmin__signin, .hfy-syncadmin__signin {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: transparent; color: var(--io-color-semantic-text);
+  font: inherit; font-weight: var(--io-typography-weight-semibold); text-decoration: none; cursor: pointer;
+}
+.hfy-syncadmin .hfy-syncadmin__btn--primary { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-accent); color: var(--io-color-semantic-accent-text); }
+.hfy-syncadmin .hfy-syncadmin__btn:disabled { opacity: 1; border-color: var(--io-color-semantic-border); background: var(--io-color-semantic-surface-sunken); color: var(--io-color-semantic-text-dim); cursor: default; }
+.hfy-syncadmin a:focus-visible, .hfy-syncadmin button:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset);
+}
+
+@media (min-width: 64rem) {
+  .hfy-syncadmin__grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); column-gap: var(--io-space-6); align-items: start; }
+  .hfy-syncadmin .hfy-syncadmin__btn { width: auto; justify-self: start; }
+  .hfy-syncadmin__actions { display: flex; flex-wrap: wrap; gap: var(--io-space-2) var(--io-space-3); }
+}

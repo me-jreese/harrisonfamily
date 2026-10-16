@@ -13,6 +13,7 @@ import { BLOCK_PREFIX } from "./validator.js";
 import { headKey } from "./store.js";
 import { batchesPush, sessionsAbort, sessionsComplete, sessionsOpen } from "./push.js";
 import { syncMediaPresign } from "./media.js";
+import { syncAdminStatus } from "./admin.js";
 import { syncChanges } from "./changes.js";
 import { syncConflictDecision, syncConflictsList, syncMediaDownload, syncSnapshot, syncStatus } from "./pull.js";
 
@@ -157,5 +158,7 @@ export const SYNC_ROUTES = [
   { ...SYNC_ROUTE_BASE, name: "sync.media.download", method: "POST", path: "/sync/media/:handle/download", pausedOk: true, summary: "Blob download: {url (presigned GET, 300 s), sha256, md5, size, content_type}; 404 no_blob when the Media head holds no present blob (sync bearer, gramps-owner; no MCP tool)", handler: syncMediaDownload },
   { ...SYNC_ROUTE_BASE, name: "sync.status", method: "POST", path: "/sync/status", pausedOk: true, summary: "The desktop's heartbeat after each run {client_instance_id, dbid, fingerprint, addon_version, gramps_version, schema, last_run}: 204 (sync bearer, gramps-owner; no MCP tool)", handler: syncStatus },
   { ...SYNC_ROUTE_BASE, name: "sync.conflicts.list", method: "GET", path: "/sync/conflicts", summary: "The conflict queue ?state=open|resolved|dismissed&limit&cursor: {state, conflicts, next_cursor} (sync bearer, gramps-owner; no MCP tool)", handler: syncConflictsList },
-  { ...SYNC_ROUTE_BASE, name: "sync.conflicts.decision", method: "POST", path: "/sync/conflicts/:id/decision", pausedOk: true, summary: "Record a decision {decision: keep_cloud|keep_desktop|manual}: gramps-owner plus step-up (auth_time within 300 s; an hfy-admin cookie alone is refused); stores {cloud_version, cloud_value_hash}; 409 already_resolved (sync bearer; no MCP tool)", handler: syncConflictDecision },
+  { ...SYNC_ROUTE_BASE, name: "sync.conflicts.decision", method: "POST", path: "/sync/conflicts/:id/decision", pausedOk: true, cookieOwner: true, summary: "Record a decision {decision: keep_cloud|keep_desktop|manual}: gramps-owner plus step-up (auth_time within 300 s; an hfy-admin cookie alone is refused); stores {cloud_version, cloud_value_hash}; 409 already_resolved (sync bearer; no MCP tool)", handler: syncConflictDecision },
+  // HFY-TSK-279 (sync-admin-status-page): the cookie side of /admin/sync/. Session auth (no bearer): hfy-admin or gramps-owner reads it; the decision route above also takes the gramps-owner's session plus step-up.
+  { name: "sync.admin.status", method: "GET", path: "/sync/admin/status", gate: syncGate(), summary: "The admin sync page's read {desktop, website, conflicts, batches} (session cookie; hfy-admin or gramps-owner, else 403 not_allowed; no MCP tool)", handler: syncAdminStatus },
 ];

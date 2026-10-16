@@ -12,19 +12,23 @@
         "css": "11377c0e"
       },
       "access-requests": {
-        "js": "2c570c5b",
+        "js": "5174de29",
         "css": "ed4e0505"
+      },
+      "admin-sync": {
+        "js": "3d4b0246",
+        "css": "e9be417d"
       },
       "edit-entry": {
         "js": "fd4c177e",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "74b72411",
+        "js": "3b50d6fe",
         "css": "4cd750ae"
       },
       "family": {
-        "js": "e9838c51",
+        "js": "d0d9afc0",
         "css": "e52fd206"
       },
       "family-entry": {
@@ -36,11 +40,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "e1dd5250",
+        "js": "e7a4f6b0",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "07422ec5",
+        "js": "8abb18ee",
         "css": "38a33f05"
       },
       "join": {
@@ -52,19 +56,19 @@
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "9636d593",
+        "js": "aca820d9",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "c19a5513",
+        "js": "fc770820",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "25b0e38f",
+        "js": "ff1305ca",
         "css": "be703fb4"
       },
       "person": {
-        "js": "536938a3",
+        "js": "5d573114",
         "css": "92f22fd0"
       },
       "person-links": {
@@ -80,11 +84,11 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "37d8b20a",
+        "js": "8d5b6a7f",
         "css": "890fde1c"
       },
       "review": {
-        "js": "108b2aae",
+        "js": "e29c83cc",
         "css": "f6c66152"
       },
       "search": {
@@ -92,15 +96,15 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "56348826",
+        "js": "808147b4",
         "css": "be4f0b90"
       },
       "shell": {
-        "js": "ef806cea",
+        "js": "0e3434f5",
         "css": "f6871411"
       },
       "timeline": {
-        "js": "2007e2f8",
+        "js": "8f0e6288",
         "css": "8f618380"
       },
       "tree": {
@@ -110,7 +114,7 @@
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "09742779"
+    "sw": "dff105dd"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -887,6 +891,15 @@
     if (flags.accessRequests !== true) return;
     if (/^\/me\/requests\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("access-requests", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-279: the admin-sync island fills the static /admin/sync/ page (sync status and conflict decisions for hfy-admin and gramps-owner). With syncStatusV1
+  // off the bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island shows anyone else the standard not-allowed line.
+  resolveFlags().then((flags) => {
+    if (flags.syncStatusV1 !== true) return;
+    if (/^\/admin\/sync\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("admin-sync", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 

@@ -103,6 +103,16 @@ export function requireStepUp(actor, nowMs = Date.now(), reason) {
  * pass the actor of the request, and a cookie actor carries no `sync` member, so it is not_owner whatever its admin flag says.
  */
 export function requireConflictDecision(actor, nowMs = Date.now()) {
+  // HFY-TSK-279: the admin page decides from the browser. The handler marks a session actor `web: {owner}` after the gramps-owner group check; the
+  // sign-in must be at most 300 s old (auth_time, never renewed by a refresh), else 401 step_up_required, which the page answers with a fresh sign-in.
+  if (actor?.web?.owner === true) {
+    const t = actor.authTime;
+    const age = typeof t === "number" && Number.isFinite(t) && t > 0 ? nowMs / 1000 - t : Infinity;
+    if (!(age >= -FUTURE_SKEW_SECONDS && age <= STEP_UP_MAX_AGE_SECONDS)) {
+      throw new HttpError(401, "step_up_required", "this action needs a fresh sign-in", { max_age_seconds: STEP_UP_MAX_AGE_SECONDS, reason: "conflict_decision" });
+    }
+    return;
+  }
   requireOwner(actor);
   requireStepUp(actor, nowMs, "conflict_decision");
 }

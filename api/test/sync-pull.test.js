@@ -125,7 +125,7 @@ const conflictRow = (n, extra = {}) => ({
 
 describe("the pull routes exist on the sync-bearer middleware with caps.json (AC2)", () => {
   it("caps.json lists snapshot, media download, status, conflicts and the decision as sync-bearer routes behind SYNC_API_ENABLED, with no MCP tool", () => {
-    const sync = buildCaps().actions.filter((a) => a.path.startsWith("/api/sync/"));
+    const sync = buildCaps().actions.filter((a) => a.path.startsWith("/api/sync/") && a.name !== "sync.admin.status");
     const by = Object.fromEntries(sync.map((a) => [a.name, `${a.method} ${a.path}`]));
     expect(by).toMatchObject({
       "sync.snapshot": "GET /api/sync/snapshot", "sync.media.download": "POST /api/sync/media/:handle/download", "sync.status": "POST /api/sync/status",
@@ -441,10 +441,11 @@ describe("POST /api/sync/conflicts/:id/decision (AC3)", () => {
     expect(w.row(`SYNC#CONFLICT#${CID(1)}`).state).toBe("open");
     expect((await decide(w, CID(1), { decision: "keep_cloud" }, { tok: await token({ authTime: nowS - 299 }) })).status).toBe(200); // just inside the window
   });
-  it("an hfy-admin cookie alone is refused: no bearer is 401, an admin bearer is 403 not_owner; requireConflictDecision refuses a cookie actor", async () => {
+  it("an hfy-admin cookie alone is refused: an admin session is 403 not_owner (the owner's session is HFY-TSK-279), no credentials is 401, an admin bearer is 403 not_owner; requireConflictDecision refuses a cookie actor", async () => {
     const w = world();
     await seedOne(w);
-    expect(err(await decide(w, CID(1), { decision: "keep_cloud" }, { tok: "", token: await signToken("I0099") }))).toEqual({ status: 401, error: "unauthenticated" });
+    expect(err(await decide(w, CID(1), { decision: "keep_cloud" }, { tok: "", token: await signToken("I0099") }))).toEqual({ status: 403, error: "not_owner" });
+    expect(err(await decide(w, CID(1), { decision: "keep_cloud" }, { tok: "" }))).toEqual({ status: 401, error: "unauthenticated" });
     expect(err(await decide(w, CID(1), { decision: "keep_cloud" }, { tok: await token({ sub: "I0099" }) }))).toEqual({ status: 403, error: "not_owner" });
     expect(w.row(`SYNC#CONFLICT#${CID(1)}`).state).toBe("open");
     const cookieAdmin = { id: "I0099", label: "I0099", admin: true };
