@@ -26,7 +26,7 @@ What the 1024 px images show. The 375 px images show each state as the table des
 
 Open before the flip, the 1024 px images: recapture `tag-selected`, `tag-picker` and `tag-sent` at 1024 px as viewport captures (not full-page) with the panel scrolled into view, then upload them over the three links (a separate step from this change, since it writes to the bucket). Whether a person can scroll the panel and the picker list into view in the lightbox at 1024 by 768 px has not been checked by hand; the DOM checks pass wherever the elements sit, so they do not answer it.
 
-Open before the flip, the toast: the tag editor has no Undo control on its toast, which editing.md describes, so browser scenario 2 removes the tag through the UI and the API test replays the inverse ops as the undo proof; a follow-up against `tag-editor-ui` should add it, then the scenario can click it.
+The toast's Undo (HFY-TSK-345): a tag that saves now shows an "undo" button on the toast (a 44 px target, a real button so the keyboard reaches it, its label visible and read with the toast text). The audit spec saves a tag of oneself, checks the button is 44 px at 375 and 1024 and runs axe on it (`tag-saved-undo`). The button sends the inverse ops the save returned and nothing else, so an undo writes no text the save did not write (the tag ops carry only ids and whole-percent boxes). It goes away after 10 minutes or at the next edit. Browser scenario 2 now clicks it.
 
 Not covered: the installed iPhone app (io's UAT inside `tag-edit-flip`), and anything a live site serves; the audit runs on localhost against the committed site.
 
@@ -35,7 +35,7 @@ Not covered: the installed iPhone app (io's UAT inside `tag-edit-flip`), and any
 The same three scenarios run as API requests ([`api/test/tag-edit-e2e.test.js`](../../api/test/tag-edit-e2e.test.js), `cd api && npm test`) and through the real lightbox ([`islands/tests/tag-edit-e2e.spec.mjs`](../../islands/tests/tag-edit-e2e.spec.mjs)), over the editing fake store with a photo (`createEditWorld({ photo: true })` in [`api/test/edit-e2e-world.js`](../../api/test/edit-e2e-world.js)). The browser spec's helpers are in [`islands/tests/tag-e2e-bridge.mjs`](../../islands/tests/tag-e2e-bridge.mjs); its person page lists the tags the way the site's build would from the store, so an approved tag shows on the next load. That stand-in proves the helper reads the store, not that the real build output includes an approved tag.
 
 1. A tag drawn on another person becomes a suggestion and changes nothing; an admin approves it in the review queue; the record carries it with a whole-percent box and the overlay shows it.
-2. A tag of oneself, on one's own record, saves now with nothing sent to review; removing it takes it off again (at the API, the undo the save returned does the same).
+2. A tag of oneself, on one's own record, saves now with nothing sent to review; the toast's undo button takes it off again (at the API, the undo the save returned does the same).
 3. (Browser: the editor's own planning catches the stale key before any request, so the server's 409 is asserted only in the API test; together they cover it.) A tag key that went stale, because the tag changed after the page was built, is a conflict: nothing is sent from the page, the API refuses an old key even at a fresh version, and the changed box is never moved.
 
 All ids and names are synthetic. Run the browser specs with `cd islands && PW_PORT=<free port> npx playwright test tests/tag-edit-e2e.spec.mjs tests/tag-edit-d11-audit.spec.mjs`.
