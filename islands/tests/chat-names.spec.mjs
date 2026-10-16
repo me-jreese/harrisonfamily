@@ -37,6 +37,14 @@ async function expectNameLink(link, id) {
   expect(s.weight).toBe(s.parentWeight);
 }
 
+/** The id of the group conversation, as the hub's frames to a member name it (a group id is not a dm: id). */
+const groupConv = (peer) => {
+  for (const f of peer.received) {
+    for (const c of [f.conv, f.id, ...(Array.isArray(f.convs) ? f.convs.map((x) => x.id) : [])]) if (typeof c === "string" && !c.startsWith("dm:")) return c;
+  }
+  return null;
+};
+
 const noPersonHref = (page, scope, name) => scope.getByText(name, { exact: false }).evaluateAll((els) => els.every((e) => !e.closest("a[href^='/person/']")));
 
 for (const scheme of ["light", "dark"]) {
@@ -82,11 +90,11 @@ for (const scheme of ["light", "dark"]) {
       });
 
       if (label === "1280") {
-        test("the panel, the docked title bar and a group: names link in the transcript, stay plain text in buttons (roster, title bar, picker); axe clean", async ({ page, context }) => {
+        test("the panel, the docked title bar and a group (mapped member links, label-only member plain): names link in the transcript, stay plain text in buttons (roster, title bar, picker); axe clean", async ({ page, context }) => {
           const hub = chatHub({ people });
           const pat = hub.virtual(PAT);
           hub.virtual("I9003");
-          hub.virtual(LABEL_ONLY);
+          const guest = hub.virtual(LABEL_ONLY);
           await wire(context, hub);
           await page.goto("/contact/", { waitUntil: "domcontentloaded" });
           const panel = page.getByTestId("io-chat-panel");
@@ -110,6 +118,16 @@ for (const scheme of ["light", "dark"]) {
           const group = page.getByTestId("io-chat-mole").filter({ has: page.locator(".io-chat-bar-name", { hasText: "Cousins" }) });
           await expect(group).toBeVisible();
           expect(await noPersonHref(page, group.locator(".io-chat-bar"), "Cousins")).toBe(true);
+          // the group's id is read off the frames the hub sent a member, then both members speak in it
+          await expect.poll(() => groupConv(pat)).toBeTruthy();
+          const conv = groupConv(pat);
+          pat.say(conv, "group hello from pat");
+          guest.say(conv, "group hello from the guest");
+          const pline = group.locator(".io-chat-row").filter({ hasText: "group hello from pat" });
+          await expectNameLink(pline.getByRole("link", { name: "Pat Example" }), PAT);
+          const gline = group.locator(".io-chat-row").filter({ hasText: "group hello from the guest" });
+          await expect(gline).toContainText("Guest Example");
+          await expect(gline.locator("a")).toHaveCount(0);
           await calm(page);
           expect(await axeViolations(page)).toEqual([]);
           expect(await noHScroll(page)).toBe(true);
