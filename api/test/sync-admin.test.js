@@ -183,6 +183,9 @@ describe("resurrect", () => {
     expect(w.row("GID#Note#N0001", "META")).toBeUndefined();
     const headBefore = w.row("SYNC#HEAD", "META");
     const snap = w.snapshot();
+    // the withdraw scheduled its expunge (privacy-expunge); the deletes did not
+    expect(w.row(`EXPUNGE#Person#${p1.handle}`, "META")).toMatchObject({ entity: "expunge_due", GSI1PK: "EXPUNGEQ#pending" });
+    expect(w.row(`EXPUNGE#Person#${p2.handle}`, "META")).toBeUndefined();
 
     w.clock.advance(3600 * 1000);
     await run(args(["resurrect", "--batch", r.batch_id, "--dry-run"]), w.ctx);
@@ -197,6 +200,7 @@ describe("resurrect", () => {
 
     await run(args(["resurrect", "--batch", r.batch_id, "--apply", "--include-withdrawn", "--by", "operator-a"]), w.ctx);
     const head = w.row(`REC#Person#${p1.handle}`, "HEAD");
+    expect(w.row(`EXPUNGE#Person#${p1.handle}`, "META")).toBeUndefined(); // the resurrect cancelled the scheduled expunge
     expect(head).toMatchObject({ deleted: false, version: 4, origin: "admin", updated_by: "operator:sync-admin", gramps_id: "I0001" });
     expect(JSON.parse(head.obj_json)).toMatchObject({ gender: 0 }); // the latest live version (v2), not v1
     expect(head.hash).toBe(w.row("SYNC#LOG", seqKey(head.seq)).hash);
@@ -297,8 +301,8 @@ describe("resurrect", () => {
     w.ctx.ddb = { send: async (c) => (c.constructor.name === "TransactWriteCommand" && sent.push(c.input.TransactItems.length), real(c)) };
     await run(args(["resurrect", "--batch", r.batch_id, "--apply"]), w.ctx);
     expect(sent).toHaveLength(2);
-    expect(sent[0]).toBe(1 + 3 * 20 + 1); // head update + 20 x (head, log, gid) + audit
-    expect(sent[1]).toBe(1 + 3 * 4 + 1);
+    expect(sent[0]).toBe(1 + 4 * 20 + 1); // head update + 20 x (head, log, gid, cancelled expunge) + audit
+    expect(sent[1]).toBe(1 + 4 * 4 + 1);
     expect(w.ddb.all().filter((x) => x.entity === "rec" && x.deleted === false)).toHaveLength(24);
   });
 

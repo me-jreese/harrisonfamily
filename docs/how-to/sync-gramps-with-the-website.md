@@ -32,7 +32,7 @@ Before you start:
 
 ### Deny first
 
-The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/apply-data-write-guard.sh). It denies `s3:PutObject` and `s3:DeleteObject` on `person/*.json`, `family/*`, `event/*`, `note/*`, `place/*` and `media/*.json`, and `s3:DeleteObject` on `media/*`, for every principal except `hfy-sync-render`, `hfy-graph-render`, `hfy-data-breakglass` and, for media binaries only, `hfy-api`. `hfy-api` is not an exception for the `*.json` keys. `person/index.html`, the person page shell, stays outside the deny, so the CI deploy keeps working: the deploy role still puts `person/index.html` and cannot put `person/<id>.json`.
+The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/apply-data-write-guard.sh). It denies `s3:PutObject`, `s3:DeleteObject` and `s3:DeleteObjectVersion` on `person/*.json`, `family/*`, `event/*`, `note/*`, `place/*` and `media/*.json`, and `s3:DeleteObject` and `s3:DeleteObjectVersion` on `media/*`, for every principal except `hfy-sync-render`, `hfy-graph-render`, `hfy-data-breakglass` and, for media binaries only, `hfy-api`. `hfy-api` is not an exception for the `*.json` keys. `person/index.html`, the person page shell, stays outside the deny, so the CI deploy keeps working: the deploy role still puts `person/index.html` and cannot put `person/<id>.json`.
 
 1. Look first. This prints the merged policy and changes nothing:
 
