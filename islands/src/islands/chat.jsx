@@ -20,6 +20,7 @@ import { ChatClient, browserPageEnv, dmConvId, indexedDbOutbox, webStorageSnapsh
 import { ChatEntryButton, ChatPage, ChatProvider, MoleDock, PresenceDot, RosterPanel, resolveCopy, useChat } from "@io-kit/chat/react";
 import { barSlots } from "../lib/bar-slots.js";
 import { memberSub } from "../lib/edge-session.js";
+import { personHref } from "../lib/person-name.jsx";
 import { contactGuard } from "../lib/chat-guard.js";
 import {
   CHAT_PAGE, CLIENT_OPTIONS, convFromSearch, copyFor, expSeconds, isMobileAgent, isPopout, noticeLine, outboxName, shellOptionsFor, signInHref, snapshotKey,
@@ -190,13 +191,22 @@ function Chrome({ slot, person, pageHost, popout }) {
   );
 }
 
+/**
+ * P2-R46: a participant's name links to their page. The kit hands the host the opaque chat user id (the member's Gramps id, the edge
+ * session's sub) and the directory label; `personHref` is PersonName's rule (lib/person-name.jsx): /person/?id=<id> for a Gramps person
+ * id, null (plain text) for anything else. Only the id is read: no email and no name ever enters a URL. The kit applies it where an
+ * anchor is valid (transcript, system rows, the typing and pacing lines, the page heading) and keeps roster rows, docked title bars and
+ * picker rows plain, since a link inside a button is invalid HTML (@io-kit/chat 0.2.0, NameSlots).
+ */
+const chatPersonHref = (participant) => personHref(participant && participant.id);
+
 function App({ client, slot, person, pageHost, popout }) {
   const narrow = !useQuery(PHONE_UP);
   const medium = !useQuery(WIDE_UP);
   const options = useMemo(() => shellOptionsFor({ narrow, medium, navigate: (url) => window.location.assign(url) }), [narrow, medium]);
   const copy = useMemo(() => copyFor({ narrow }), [narrow]);
   return (
-    <ChatProvider client={client} options={options} copy={copy}>
+    <ChatProvider client={client} options={options} copy={copy} personHref={chatPersonHref}>
       <Chrome slot={slot} person={person} pageHost={pageHost} popout={popout} />
     </ChatProvider>
   );
