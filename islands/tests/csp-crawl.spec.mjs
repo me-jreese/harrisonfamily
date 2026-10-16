@@ -113,3 +113,26 @@ test("control: /join/ loads Turnstile with zero violations, and still reports an
   await page.waitForTimeout(400);
   expect((await violations(page)).map((x) => x.directive)).toEqual(["img-src"]);
 });
+
+test("control: a same-origin module worker is allowed (worker-src 'self'), a blob: worker is reported (HFY-TSK-310)", async ({ page }) => {
+  await harness(page, { signedIn: false });
+  await page.route("**/csp-probe-worker.js", (r) => r.fulfill({ contentType: "text/javascript", body: "postMessage('ok');" }));
+  await page.goto("/about/", { waitUntil: "domcontentloaded" });
+  await settle(page);
+  const ran = await page.evaluate(() => new Promise((res) => {
+    const w = new Worker("/csp-probe-worker.js", { type: "module" });
+    w.onmessage = (e) => res(e.data);
+    w.onerror = () => res("error");
+    setTimeout(() => res("timeout"), 5000);
+  }));
+  expect(ran, "the same-origin module worker actually ran").toBe("ok");
+  expect(await violations(page), "a same-origin module worker is not a violation").toEqual([]);
+  await page.evaluate(() => new Promise((res) => {
+    document.addEventListener("securitypolicyviolation", () => res(), { once: true });
+    try { new Worker(URL.createObjectURL(new Blob(["1"], { type: "text/javascript" }))); } catch { res(); }
+    setTimeout(res, 3000);
+  }));
+  const v = await violations(page);
+  expect(v.map((x) => x.directive)).toEqual(["worker-src"]);
+  expect(v[0].disposition).toBe("report");
+});

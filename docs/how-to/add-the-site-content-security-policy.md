@@ -71,4 +71,13 @@ This takes the policy and the `/join/` function off the default behavior, and th
 
 ## When a page needs a new source
 
-Change [`site-csp.json`](../../scripts/cloudfront/site-csp.json), the two policy strings in `app-stack.yaml` and the `JOIN_CSP` string in `join-csp.js` together; `site-csp.test.mjs` and `test_app_stack.py` fail until they agree. Then run the crawl, update the stack, and step through report-only again. The v3 map's `worker-src 'self'` goes in the same way (`viz-v3-csp-worker`).
+Change [`site-csp.json`](../../scripts/cloudfront/site-csp.json), the two policy strings in `app-stack.yaml` and the `JOIN_CSP` string in `join-csp.js` together; `site-csp.test.mjs` and `test_app_stack.py` fail until they agree. Then run the crawl, update the stack, and step through report-only again. The v3 map's `worker-src 'self'` went in this way (`viz-v3-csp-worker`).
+
+## The worker-src stage (HFY-TSK-310, viz-v3-csp-worker)
+
+`worker-src 'self'` is in `site-csp.json`, both policies in `app-stack.yaml` and `join-csp.js`. It reaches production in two steps, both under gate G-csp:
+
+1. **Report-only.** Update the app stack (the report-only policy now carries the directive), attach it with `add-csp-headers.sh --mode report-only`, and probe: `curl -sSI "https://<site>/?csp=1" | grep -i '^content-security-policy-report-only'` shows `worker-src 'self'`. The crawl (`tests/csp-crawl.spec.mjs`) must stay at zero violations, and its worker control shows a same-origin module worker passes while a `blob:` worker is reported. Soak with the console open on the map view once the flag is on.
+2. **Enforce.** Only with io's go-ahead, recorded verbatim in the task: `add-csp-headers.sh --mode enforce --site-url https://<site>`, then `curl -sSI "https://<site>/?csp=1" | grep -i '^content-security-policy:'` must show `worker-src 'self'`.
+
+**Rollback** (record it in the PR body): `add-csp-headers.sh --mode detach` removes the policy from the default behavior; to return to the previous header policy instead, revert the commit, update the app stack, and re-run the attach for the stage that was live. The pre-change distribution config backup also restores it.
