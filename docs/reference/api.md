@@ -1336,7 +1336,7 @@ A state change rewrites META and every copy in one transaction. `GET /api/edit/:
 
 ## The sync API
 
-`/api/sync/*` is the desktop add-on's door into the cloud record store (HFY-TSK-172; design: HFY-PLN-002 sync.md section 7, BRD2 section 11.1). Its routes have `auth: "sync-bearer"` in `ROUTES` and `caps.json`. This page covers the shared middleware, the handshake routes, `GET /api/sync/meta` and `POST /api/sync/bind`, [the push routes](#the-push-routes) (`sessions`, `batches`, `media/presign`, HFY-TSK-173) and [the pull routes](#the-pull-routes) (`snapshot`, `media/:handle/download`, `status`, `conflicts`, HFY-TSK-174) and the admin page's `admin/status` read (HFY-TSK-279). Every one is an entry in `SYNC_ROUTES` ([`sync/routes.js`](../../api/src/sync/routes.js)) and goes through every step below. The change feed, `GET /api/sync/changes`, is phase B (`changes-feed`) and has no route yet.
+`/api/sync/*` is the desktop add-on's door into the cloud record store (HFY-TSK-172; design: HFY-PLN-002 sync.md section 7, BRD2 section 11.1). Its routes have `auth: "sync-bearer"` in `ROUTES` and `caps.json`. This page covers the shared middleware, the handshake routes, `GET /api/sync/meta` and `POST /api/sync/bind`, [the push routes](#the-push-routes) (`sessions`, `batches`, `media/presign`, HFY-TSK-173) and [the pull routes](#the-pull-routes) (`snapshot`, `media/:handle/download`, `status`, `conflicts`, HFY-TSK-174) and the admin page's `admin/status` read (HFY-TSK-279). Every one is an entry in `SYNC_ROUTES` ([`sync/routes.js`](../../api/src/sync/routes.js)) and goes through every step below. [The change feed](#the-change-feed), `GET /api/sync/changes` (HFY-TSK-277), is the ARCH-B delta pull and ships dark.
 
 ### What a sync request goes through
 
@@ -1382,9 +1382,10 @@ A `426` carries `details: {reason, min_client, accepted: {gramps, schema}, redac
 
 ### `GET /api/sync/meta`
 
-Owner bearer, any state of the store. Returns `{api_version: 1, min_client, accepted: {gramps, schema}, redaction_version, tree_id, bound: {dbid, fingerprint} | null, head_seq, rendered_seq, writes_enabled, seeded, merges_enabled, limits: {max_ops, max_obj_bytes, max_body_bytes}, id_block, retired_person_ids}`.
+Owner bearer, any state of the store. Returns `{api_version: 1, min_client, accepted: {gramps, schema}, redaction_version, tree_id, bound: {dbid, fingerprint} | null, head_seq, rendered_seq, writes_enabled, seeded, merges_enabled, changes_feed, expunge_epoch, limits: {max_ops, max_obj_bytes, max_body_bytes}, id_block, retired_person_ids}`.
 
 - `merges_enabled` is `true` only when `SYNC#HEAD.merges_enabled` is literally `true`; it stays `false` until `identity-merge-rekey` ships.
+- `changes_feed` is `true` only when `SYNC#HEAD.changes_feed` is literally `true` (default off): the add-on pulls deltas only while it says so, and `GET /api/sync/changes` is `404 not_enabled` otherwise. `expunge_epoch` is `SYNC#HEAD.expunge_epoch` (absent = `0`); see [The change feed](#the-change-feed).
 - `retired_person_ids` lists every Person id whose head is a tombstone (deleted, withdrawn or merged away), sorted, from the `RECS#Person` index. The add-on holds a local create that reuses one (D44); the server refuses it anyway with `409 gramps_id_retired`. The index is eventually consistent and the server stays the authority. Renumbers are blocked in this release; when they ship, the list must also read retired `GID#` items.
 - `id_block` is the range the cloud mints from (`I8000-I8999` and the other classes' prefixes); a desktop create may not use it. Under `HFY_ID_POLICY=assign` nothing is minted and the validator does not reserve the block ([The cloud ID policy](#the-cloud-id-policy)); the handshake still reports it, so the add-on holds ids in it either way.
 - `bound` never includes the tree-name hash. `rendered_seq` is `SYNC#RENDER.rendered_seq`, `0` before the first render.
@@ -1450,7 +1451,7 @@ Notes for the clients (`addon-media`, the sync dev harness):
 
 ## The pull routes
 
-HFY-TSK-174 (design: HFY-PLN-002 sync.md sections 4.2 and 7.2, BRD2 section 11.1, reviews SI-30 and PS-22). Code: [`sync/pull.js`](../../api/src/sync/pull.js). Each route is a `sync-bearer` route in `SYNC_ROUTES`, so [every step of the sync middleware](#what-a-sync-request-goes-through) applies. The change feed, `GET /api/sync/changes`, is phase B (`changes-feed`) and is not here. A paused store (`writes_enabled` false) still serves every pull route: the POST routes set `pausedOk`.
+HFY-TSK-174 (design: HFY-PLN-002 sync.md sections 4.2 and 7.2, BRD2 section 11.1, reviews SI-30 and PS-22). Code: [`sync/pull.js`](../../api/src/sync/pull.js). Each route is a `sync-bearer` route in `SYNC_ROUTES`, so [every step of the sync middleware](#what-a-sync-request-goes-through) applies. The change feed, `GET /api/sync/changes`, has [its own section](#the-change-feed). A paused store (`writes_enabled` false) still serves every pull route: the POST routes set `pausedOk`.
 
 | Route | Success | Errors besides the middleware's |
 | --- | --- | --- |
@@ -1472,6 +1473,33 @@ HFY-TSK-174 (design: HFY-PLN-002 sync.md sections 4.2 and 7.2, BRD2 section 11.1
 **Admin status (HFY-TSK-279).** `GET /api/sync/admin/status` ([`sync/admin.js`](../../api/src/sync/admin.js)) is the read behind `/admin/sync/` (flag `syncStatusV1`). It is a session route, behind `SYNC_API_ENABLED`, for an `hfy-admin` or the `gramps-owner`; anyone else is `403 not_allowed`. It returns `owner` (may this caller decide), `desktop` (the ten newest `SYNC#CLIENT#` heartbeats through GSI1 `SYNCCLIENT`: add-on and Gramps versions, the last run; no dbid and no fingerprint), `website` (head seq, rendered seq, the lag, render mode, the last render error text, paused, seeded, bound), `conflicts` (the open queue, up to 50, in the wire shape) and `batches` (the ten newest push receipts through `SYNCBATCH`: time, principal, origin, op count, seq range; no ops).
 
 **Operations.** The `hfy-api` role reads and writes `snapshots/*` in the sync bucket (the `SyncSnapshots` statement in [`app-stack.yaml`](../../infrastructure/cloudformation/app-stack.yaml)), and the stack sets `SYNC_BUCKET`. The routes answer `404 not_enabled` until `SYNC_API_ENABLED` is `1`.
+
+
+## The change feed
+
+HFY-TSK-277 (`changes-feed`; design: HFY-PLN-002 sync.md sections 7.2 and 14, BRD2 section 11.1 and review PS-05). Code: [`sync/changes.js`](../../api/src/sync/changes.js); the add-on side is [`gramps/hfygramps/addon/delta.py`](../../gramps/hfygramps/addon/delta.py). This is the ARCH-B pull: instead of a full snapshot every sync, the add-on keeps its last cloud state and replays only the log entries after it. `sync.changes` is a `sync-bearer` route in `SYNC_ROUTES`, so [every step of the sync middleware](#what-a-sync-request-goes-through) applies. A paused store still serves it.
+
+**The switch.** `SYNC#HEAD.changes_feed`, default off and true only when it is literally `true`. While it is not, the route answers `404 not_enabled` (after the `SYNC_API_ENABLED` stop) and `GET /api/sync/meta` reports `changes_feed: false`, which keeps the add-on on snapshots. Flip it with `node scripts/sync-admin.mjs feed-on --apply` and back with `feed-off` ([Operate the sync store](../how-to/operate-the-sync-store.md#switch-the-change-feed-on-or-off)); io's go-ahead is required.
+
+| Route | Success | Errors besides the middleware's |
+| --- | --- | --- |
+| `GET /api/sync/changes?since=<seq>&limit=<1..500>` | `200 {ops, head_seq, next_since, dense: true, expunge_epoch}` | `400 bad_cursor` (`since` is beyond the head; the details carry `head_seq`), `400 validation` (`since` or `limit` is not a whole number in range), `404 not_enabled`, `410 gap_too_large`, `503 retryable` |
+
+`since` defaults to `0` and `limit` to `200`.
+
+**An op.** `{seq, op, class, handle, gramps_id, version, hash, obj, at, origin}` plus `expunged: true` on a scrubbed entry. `op` is `create`, `update`, `delete`, `withdraw` or `marker`. A create or update carries the redacted canonical object in `obj` and the entry's sha256 of it in `hash`. A delete or withdraw is a tombstone: `obj` and `hash` are `null`, and `version` and `gramps_id` are the tombstone's (the id of the head it replaced). A marker (a push session's close) has a `null` class, handle, version and object: it is in the feed so the seqs stay dense. The principal, the batch id and the on-behalf-of subject are never returned.
+
+**Dense.** Every seq in `(since, next_since]` is in `ops`, in order. The route reads `SYNC#LOG` with a consistent range query from `since + 1` and answers `410 gap_too_large` when the range has a hole (the log is kept forever, so a hole is damage, not retention). A page holds at most `limit` ops and about 3 MB (UTF-8 bytes) of object text, and always at least one op; `next_since` is the seq of its last op, or `since` when there are none, and a client pages until `next_since` equals `head_seq`.
+
+**History.** The feed serves the object each `create` or `update` log entry holds, including those of records since deleted or withdrawn: the snapshot shows only current heads, the feed replays the log. The route is owner-only (the Gramps owner's bearer). A withdraw does not scrub earlier log versions; `privacy-expunge` is the scrub path, and the entries it scrubs come back as below.
+
+**Expunged entries.** Every entry is serialised through `entryView()` (`api/src/sync/store.js`, the same reader the expunge script's tests use). An entry `privacy-expunge` has emptied whole (`obj_json` null, `expunged: true` on the log item) keeps its seq, version and hash and returns `obj: null, expunged: true`: the value never leaves the store again. A client that reads one must not trust its cached head either, and takes a snapshot. A `--path` scrub sets no flag: it rewrites the object inside the entry and the entry's hash, so the entry comes back as an ordinary op whose `obj` hashes to its `hash`, and `meta` and every feed response carry a higher `expunge_epoch`, which is how a cached client notices.
+
+**The expunge epoch.** An expunge rewrites log entries and heads without advancing `seq`, so a cache at an unchanged seq can still hold the old value. `expunge_epoch` (`SYNC#HEAD.expunge_epoch`, which `privacy-expunge` must raise in the same transaction as the rewrite, see [The pull routes](#the-pull-routes)) is in the feed answer and in `GET /api/sync/meta`; the add-on discards its cache when the epoch is not the one the cache was taken under.
+
+**The add-on.** The server is the switch (BRD2 section 11.1 overrides the sync.md flags row, which had an add-on config flag too). With `changes_feed` on in `meta` (and `"changes_feed": false` not set in `config.json`), step 3 of a pull rebuilds the cloud state from the cache plus the feed instead of downloading a snapshot, and writes it in the snapshot format, so the rest of the run cannot tell the two apart: a delta pull and a snapshot pull of the same cloud state give the same preview and plan hash. Any gap, version that does not follow, object that does not hash, expunged op, changed epoch, damaged cache, `400`, `404` or `410` from the feed, or a `429` or `5xx` that outlasts the transport's retries falls back to a full snapshot for that run, and every 7th sync downloads the snapshot anyway and checks the replay against it. `status.json` `cloud.via` says `delta` or `snapshot` while the feed is on. See [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md).
+
+**Operations.** No new IAM, bucket or stack parameter: the route reads `SYNC#LOG` and `SYNC#HEAD` of the app table like the other sync routes, so shipping it is a `hfy-api` code deploy (a change set on the app stack, [Deploy the app stack](../how-to/deploy-the-app-stack.md)).
 
 ## Environment
 

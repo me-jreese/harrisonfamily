@@ -84,7 +84,7 @@ const MAX_API_BODY = 6 * 1024 * 1024; // the Lambda payload limit
 const MAX_BLOB_BODY = 26 * 1024 * 1024; // MAX_MEDIA_BYTES (25 MiB) plus slack
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const HEAD_FIELDS = Object.freeze({
-  writes_enabled: (v) => typeof v === "boolean", seeded: (v) => typeof v === "boolean", merges_enabled: (v) => typeof v === "boolean",
+  writes_enabled: (v) => typeof v === "boolean", seeded: (v) => typeof v === "boolean", merges_enabled: (v) => typeof v === "boolean", changes_feed: (v) => typeof v === "boolean",
   min_client: (v) => typeof v === "string" && /^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(v),
   accepted_schema: (v) => Array.isArray(v) && v.length > 0 && v.every(Number.isInteger),
   redaction_version: (v) => Number.isInteger(v),

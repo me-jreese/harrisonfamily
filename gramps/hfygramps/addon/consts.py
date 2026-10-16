@@ -12,6 +12,7 @@ TREE_MARKER_KEY = "hfy_sync_tree_id"  # Gramps metadata key written into the tre
 SIMILARITY_MIN_PERCENT = 90  # at least this share of the sidecar base handles must exist locally, else D03
 DEFAULT_SERVER = "https://harrisonfamily.us"
 DEFAULT_MEDIA_ROOT = "~/Pictures/hfy-sync-media"
+DELTA_VERIFY_EVERY = 7  # ARCH-B (delta.py): every 7th sync downloads the full snapshot and checks the delta replay against it
 
 # Transport and sign-in (sync.md 7.1, 8.1, 8.5; HFY-TSK-180)
 SYSTEM_CA_FILE = "/etc/ssl/cert.pem"  # the fallback when Gramps' bundled Python has an empty default trust store (R2-08)
