@@ -25,7 +25,7 @@ from urllib.parse import quote
 from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
-from . import consts, decide, paths, preflight, pull as pull_mod, runner, sidecar, status
+from . import consts, decide, paths, preflight, pull as pull_mod, pushplan, runner, sidecar, status
 from . import plan as plan_mod
 
 SECTIONS = (("from_website", "From the website"), ("to_website", "To the website"), ("conflicts", "Conflicts"),
@@ -181,7 +181,9 @@ class Context:
     def projected(self):
         if self._projected is None:
             base = {h: r["obj"] for h, r in self.base_rows.items() if not r["deleted"] and r["obj"] is not None}
-            proj = PR.project(list(self.local.values()), base=base, files=self.files, released=self.released, sticky=self.sticky, policy=self.policy)
+            # The same view of the tree as the push's plan: a Media whose bytes are a GPS photo or a PDF is held by the mime those bytes admit to.
+            view = pushplan.byte_view(self.local, self.files)
+            proj = PR.project(list(view.values()), base=base, files=self.files, released=self.released, sticky=self.sticky, policy=self.policy)
             self._projected = plan_mod.symmetric(proj.projected, proj.holds)
         return self._projected
 
@@ -311,10 +313,12 @@ def build_model(pull_pv, push_pv, ctx, header=None):
         if key in seen or any(k[0] == x["handle"] and k[2] == x["rule"] for k in seen):
             continue
         cls = (ctx.local.get(x["handle"]) or {}).get("_class", "")
-        try:
-            note = PR.hold_reason(x["rule"])
-        except (KeyError, ValueError):
-            note = x["rule"]
+        note = consts.HOLD_MESSAGES.get(x["rule"])       # a media file's own words (HFY-TSK-207), else the policy rule's summary
+        if not note:
+            try:
+                note = PR.hold_reason(x["rule"])
+            except (KeyError, ValueError):
+                note = x["rule"]
         rows.append(dict(_identity(ctx, cls, x["handle"]), badge="held", rule=x["rule"], path=x.get("pointer", ""),
                          note="%s Edit it in Gramps to publish." % note if cls != "Media" else note, label=pretty_path(x.get("pointer", ""))))
     for s in pull_pv.get("sticky_held", []):

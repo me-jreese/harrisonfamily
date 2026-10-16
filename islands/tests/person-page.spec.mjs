@@ -149,6 +149,14 @@ test("mergedInto: a stub person JSON redirects to the new id and renders nothing
   expect(page.url()).not.toContain("I9001");
 });
 
+test("mergedInto: the personV2 island follows the stub too (merge-alias-redirect)", async ({ page }) => {
+  await stub(page, { personV2: true, body: { mergedInto: "I9003" } });
+  await page.goto(URL_PATH, { waitUntil: "domcontentloaded" });
+  await page.waitForURL(/id=I9003/);
+  expect(new URL(page.url()).searchParams.get("merged")).toBe("1");
+  await expect(page.locator("#person-hero h1")).toHaveText("Merged Target (synthetic)");
+});
+
 test("mergedInto: a self-pointing stub is not followed (no redirect loop)", async ({ page }) => {
   await stub(page, { body: { mergedInto: "I9001" } });
   await page.goto(URL_PATH, { waitUntil: "domcontentloaded" });

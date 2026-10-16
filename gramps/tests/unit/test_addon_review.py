@@ -578,6 +578,35 @@ class LinksAndText(unittest.TestCase):
         self.assertIn("1 conflict will be decided now", review.decision_summary({"a": "take_website"}))
 
 
+class ProjectionView(Base):
+    full = True
+
+    def test_the_models_projection_holds_a_pdf_by_its_bytes_like_the_push_plan(self):  # HFY-TSK-207 and 208 together
+        self.seed()
+        template = self.tree.person_by_id("I0003")["media_list"][0]
+        photo = copy.deepcopy(next(o for o in self.tree.objects().values() if o.get("_class") == "Media"))
+        handle = "e%026d" % 1
+        photo.update(handle=handle, gramps_id="O0100", path="new/photo.jpg", mime="image/jpeg", desc="A new synthetic photo", private=False)
+        self.tree.data[handle] = photo
+        owner = self.tree.person_by_id("I0002")
+        owner["media_list"] = owner["media_list"] + [dict(copy.deepcopy(template), ref=handle, rect=None, private=False)]
+        local = self.tree.objects()
+        info = {handle: {"state": "ok", "content_type": "application/pdf", "readable": True, "exif_gps": False, "md5": "0" * 32}}
+        self.assertIsNotNone(review.Context(local, {}, None, files={}).projected().get(handle), "the stored mime alone: a photo, sent")
+        self.assertIsNone(review.Context(local, {}, None, files=info).projected().get(handle), "the bytes say PDF, so it is held whole, as the plan holds it")
+
+
+    def test_a_media_file_the_download_held_is_listed_in_the_plain_words_of_its_rule(self):  # HFY-TSK-207 and 208 together
+        self.seed()
+        media = next(o for o in self.tree.objects().values() if o.get("_class") == "Media")
+        pull_pv = {"held": [{"handle": media["handle"], "rule": "media_blob_empty", "scope": "download", "pointer": "/blob"}]}
+        model = review.build_model(pull_pv, {}, review.Context(self.tree.objects(), {}, None))
+        rows = model["by_id"]["held"]["rows"]
+        self.assertEqual([r["rule"] for r in rows], ["media_blob_empty"])
+        self.assertEqual(rows[0]["note"], consts.HOLD_MESSAGES["media_blob_empty"])
+        self.assertNotIn("media_blob_empty", rows[0]["note"], "a rule id never reaches the window as its text")
+
+
 class Banner(Base):
     def test_the_banner_has_the_counts_the_backup_path_and_the_undo_warning(self):  # AC2
         self.seed()

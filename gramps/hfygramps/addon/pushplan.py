@@ -22,7 +22,7 @@ import re
 from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
-from . import consts
+from . import consts, mediaup
 from . import plan as pullplan
 
 # The Gramps ID prefixes of the block the website mints from (api/src/sync/validator.js BLOCK_PREFIX); the handshake's `id_block` wins.
@@ -94,6 +94,9 @@ class Plan:
         self.mass_delete = False
         self.live_base = 0
         self.actions = {}
+        self.uploads = {}         # {Media handle: mediafile.inspect dict}: the blobs this push uploads before the ops that name them
+        self.warnings = []        # {"class", "handle", "rule", "detail"}: things to tell io that hold nothing back (a stale Gramps checksum)
+        self.media_up = 0
 
     def counts(self):
         out = {"create": 0, "update": 0, "delete": 0}
@@ -112,7 +115,7 @@ def _hold(cls, handle, rule, path="", detail=None):
 
 
 def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes=False, step_up=False, sticky=(), pins=None, unreadable=(),
-               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None, pulled=None, released=()):
+               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None, pulled=None, blobs=None, released=()):
     """The plan.
 
     local        {handle: raw Gramps object}
@@ -129,6 +132,9 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     sticky       the sidecar's ``birthlike_sticky`` handles; pins {handle: [{"path", "base_json"}]} the open and parked conflicts
     expunge_holds  {handle: [pointer]} the values a website scrub removed (the pull's ``expunge.notice`` holds, ``sidecar.load_expunge_holds``):
                  an update never puts the desktop's value back at those pointers, and is not sent when they were all that differed
+    files        {media handle: ``mediafile.inspect`` dict}: the projection reads ``exif_gps``, ``md5`` and ``readable``, and ``mediaup.annotate``
+                 the rest (the blob of every Media op, the blob-only updates, the holds for a file that cannot go)
+    blobs        {handle: ``media_local`` row}: the bytes the website already holds (``mediaup.load_rows``)
     pulled       {handle: [{"kind", "prepull", ...}]} what the last pull runs changed (``sidecar.load_pulled``): a create, update or delete
                  that puts back what a pull replaced is a revert (D47, ``plan.revert_paths``); it is blocked unless `mode` is "gui" and
                  `yes` is the person's confirmation
@@ -146,7 +152,10 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
         classes.setdefault(h, r["class"])
 
     released = frozenset(released or ())
-    proj = PR.project(list(local.values()), base=base_objs, files=files, released=released, sticky=sticky, policy=policy)
+    # The projection holds a Media by its mime; the bytes decide here (a GPS photo or a PDF with a blank or wrong mime), so the projection
+    # sees the mime the bytes admit to and strips every reference to a Media it holds, like any other object it holds.
+    view = byte_view(local, files)
+    proj = PR.project(list(view.values()), base=base_objs, files=files, released=released, sticky=sticky, policy=policy)
     projected_all = symmetric(proj.projected, proj.holds)
     plan.sticky = frozenset(M.update_baseline(sticky, list(local.values()), base_objs, released, policy=policy))
     for x in proj.holds:
@@ -159,7 +168,7 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
         mine = local.get(obj["handle"])
         if mine is not None and M.strip_change(obj) == M.strip_change(mine) and projected_all.get(obj["handle"]) is not None:
             return projected_all[obj["handle"]]
-        tree = dict(local)
+        tree = dict(view)
         tree[obj["handle"]] = obj
         again = PR.project(list(tree.values()), base=base_objs, files=files, released=released, sticky=sticky, policy=policy)
         return symmetric(again.projected, again.holds).get(obj["handle"])
@@ -233,9 +242,29 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
 
     _destructive(plan, deletes, withdraws, local, base, meta, mode=mode, allow_deletes=allow_deletes, yes=yes, step_up=step_up,
                  members=members, merges_enabled=merges_enabled, pulled=pulled)
+    if files:
+        mediaup.annotate(plan, files, blobs or {}, local, cloud, {h: r.action for h, r in tree.results.items()})
     plan.holds = _unique(plan.holds)
     plan.blocked = _unique(plan.blocked)
     return plan
+
+
+def byte_view(local, files):
+    """``local`` with the mime of every Media whose bytes are a GPS photo or a PDF set to the one those bytes are, so the projection
+    (which reads the mime) holds it whole and strips the references to it from the objects that name it. Only the copies the
+    projection reads are changed; the objects that are sent come from the projection and the merge, never from this view."""
+    if not files:
+        return local
+    out = dict(local)
+    for handle, info in files.items():
+        obj = local.get(handle)
+        if obj is None or obj.get("_class") != "Media" or not isinstance(info, dict):
+            continue
+        ct = info.get("content_type")
+        if (info.get("state") == "gps" and ct != obj.get("mime")) or (info.get("state") == "ok" and ct == "application/pdf"
+                                                                       and obj.get("mime") != ct):
+            out[handle] = dict(obj, mime=ct)
+    return out
 
 
 # The pull's pending-push planning needs the same step (``plan.symmetric``), so it lives there.

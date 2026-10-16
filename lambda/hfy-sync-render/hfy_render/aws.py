@@ -123,6 +123,24 @@ class DynamoTable:
             if not start:
                 return
 
+    def query_aliases(self, cls: str) -> Iterator[Dict[str, Any]]:
+        """Every ``IDALIAS#<cls>#<old id>`` item, from GSI1 (``IDALIAS#<cls>``)."""
+
+        start: Optional[Dict[str, Any]] = None
+        while True:
+            args: Dict[str, Any] = dict(
+                TableName=self._t, IndexName="GSI1", KeyConditionExpression="GSI1PK = :pk",
+                ExpressionAttributeValues=self._enc({":pk": f"IDALIAS#{cls}"}),
+            )
+            if start:
+                args["ExclusiveStartKey"] = start
+            res = self._c.query(**args)
+            for item in res.get("Items", []):
+                yield self._dec(item)
+            start = res.get("LastEvaluatedKey")
+            if not start:
+                return
+
     def read_state(self) -> Optional[Dict[str, Any]]:
         return self.get(*STATE_KEY, consistent=True)
 

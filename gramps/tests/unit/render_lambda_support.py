@@ -135,6 +135,11 @@ class FakeTable:
             if sk == "HEAD" and pk.startswith(f"REC#{cls}#"):
                 yield copy.deepcopy(item)
 
+    def query_aliases(self, cls):
+        for (pk, sk), item in sorted(self.items.items()):
+            if pk.startswith(f"IDALIAS#{cls}#") and sk == "META":
+                yield copy.deepcopy(item)
+
     def read_state(self):
         return self.get("SYNC#RENDER", "STATE")
 

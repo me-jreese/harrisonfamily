@@ -41,11 +41,12 @@ class PushCase(R.HomeCase):
     """A bound PushTree over a slice of the fixture (`full = True`: all of it), a FakeCloud bound to it, and `push()` to run the action."""
 
     full = False
+    tree_class = PS.PushTree
     pad = 0      # plain unreferenced notes added to the tree: a bigger base keeps deletes over the 90 percent similarity line (D03)
 
     def setUp(self):
         R.HomeCase.setUp(self)
-        self.tree = PS.PushTree(dbid="aa11bb22", full=self.full)
+        self.tree = self.tree_class(dbid="aa11bb22", full=self.full)
         self.tree.attach_db(self.tmp)
         if self.pad:
             self.tree.pad(self.pad)

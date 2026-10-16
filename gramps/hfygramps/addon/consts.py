@@ -125,6 +125,21 @@ HOLD_MESSAGES = {
 # The blocks a person can lift in the Gramps window by confirming (the window runs the push with `yes`): the command line never does.
 CONFIRMABLE_RULES = ("delete_parked", "mass_delete", "revert_parked", "merge_gui_only")
 
+# Media files (HFY-TSK-207, mediaup.py, mediafile.py): plain words, no path and no content (error catalog D29, D31, D33).
+HOLD_MESSAGES.update({
+    "media_blob_missing": "The file for this photo or document is not at its path in Gramps, so only its details were sent. Fix the path in Gramps, then sync again.",
+    "media_blob_unreadable": "The file for this photo or document cannot be read, so only its details were sent. Check the file's permissions, then sync again.",
+    "media_blob_empty": "The file for this photo or document is empty (0 bytes), so only its details were sent. Make the folder available offline, then sync again.",
+    "media_blob_placeholder": "The file for this photo or document is online-only in Dropbox, so only its details were sent. Make the folder available offline, then sync again.",
+    "media_blob_too_large": "The file for this photo or document is over 25 MB, so only its details were sent.",
+    "media_blob_unsupported": "The website takes JPEG, PNG, GIF, TIFF and PDF files; this file is another type, so only its details were sent.",
+    "media_upload_failed": "The file for this photo or document could not be uploaded, so it was not sent. Run the push again.",
+    "media_upload_refused": "The website refused the file for this photo or document, so it was not sent.",
+    "media_file_changed": "The file for this photo or document changed while the sync ran, so it was not sent. Run the push again.",
+    "media_cloud_copy_differs": "The file for this photo or document changed on this Mac and can no longer be sent, so the website keeps the copy it has. Check the file, then sync again.",
+    "media_dependency_deferred": "This record refers to a photo or document whose file could not be uploaded, so it was not sent. Run the push again.",
+})
+
 # A Media handle names a file on this disk (`media_root/<handle><ext>`) and sits in a URL path, so it is held to a strict shape wherever
 # it comes from the website: the snapshot parser and the media download both refuse anything else (no separator, no "..", no escapes).
 HANDLE_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"

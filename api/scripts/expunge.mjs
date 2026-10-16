@@ -708,12 +708,17 @@ export function createHubClient({ url, token, fetchImpl = globalThis.fetch }) {
         method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ conv, seq }),
       });
       if (r.status === 404) return { nulled: 0 };
+      if (r.status === 503) throw new ExpungeError("the chat hub is busy archiving and nulled nothing: run the same command again in a minute");
       if (!r.ok) throw new ExpungeError(`the chat hub answered ${r.status}`);
       const body = await r.json().catch(() => ({}));
       return { nulled: body?.nulled === 0 ? 0 : 1 };
     },
   };
 }
+
+/** Printed on every chat run: the pinned chat client cannot yet decode a history that holds a removed message (docs/how-to/deploy-the-chat-worker.md). */
+export const CHAT_CLIENT_WARNING =
+  "chat: WARNING: @io-kit/chat 0.1.6 clients reject a history batch that holds a removed message (text null), so after --apply that conversation's history will not load for them. Run it only while chat is dark (chatV1 flag off, UAT only) until the kit release that shows 'message removed' is pinned.";
 
 async function expungeChat(ctx, { ref, apply, who }) {
   const { log } = ctx;
@@ -722,6 +727,7 @@ async function expungeChat(ctx, { ref, apply, who }) {
   const row = await get(ctx, key);
   const counts = { mirror_rows: row ? 1 : 0, hub_messages: 0 };
   log(`chat: ${plural(counts.mirror_rows, "mirror row")} to delete; the hub message is nulled through its admin route when applied`);
+  log(CHAT_CLIENT_WARNING);
   if (!apply) return { counts };
   if (!ctx.hub) throw new ExpungeError("the chat hub is not configured: set CHAT_HUB_ADMIN_URL and CHAT_HUB_ADMIN_TOKEN");
   counts.hub_messages = (await ctx.hub.nullMessage({ conv, seq })).nulled;

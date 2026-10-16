@@ -69,9 +69,9 @@ class GuiOnARealTree(AddonCase):
         self.env = dict(os.environ, HFY_SYNC_PS_CMD="true")
 
     # ---- the website: a seeded fake holding exactly what the fixture projects
-    def website(self, objects):
+    def website(self, objects, files=None):
         cloud = PS.FakeCloud(self.dbid)
-        proj = UP.project_all(objects)
+        proj = UP.project_all(objects, files=files)      # a push sends the projection that knows the files (the disk MD5 is the checksum, HFY-TSK-207)
         cloud.heads = {h: {"class": o["_class"], "version": 1, "seq": 1, "deleted": False, "gramps_id": o.get("gramps_id", ""), "obj": o}
                        for h, o in proj.items()}
         cloud.seq, cloud.seeded = 1, True
@@ -82,7 +82,7 @@ class GuiOnARealTree(AddonCase):
         def run(db, DbTxn):
             uistate = SimpleNamespace(gwm=SimpleNamespace(id2item={}), window=None)
             tree = self.tool.GrampsTree(db, uistate)
-            cloud = self.website(tree.objects())
+            cloud = self.website(tree.objects(), tree.media_files())
             services = {"cloud": PS.PullView(cloud), "client": cloud}
             doc = self.runner.run(tree, "gui", self.runner.Options("pull", yes=True), argv=["gramps"], environ=self.env, services=services)
             self.assertEqual((doc["result"], doc["exit_code"]), ("ok", 0), doc["error"])
@@ -180,18 +180,23 @@ class GuiOnARealTree(AddonCase):
                 db.commit_person(data_to_object(mine), trans)
                 db.commit_person(data_to_object(other), trans)
             window = self.ui.SyncWindow(None, {"result": "ok", "tree": {"bound": True}}, {"flow": flow}, standalone=True)
-            window.load(flow.review())
+            rv = flow.review()
+            window.load(rv)
             all_widgets = widgets(window.root)
             labels = [w.get_text() for w in all_widgets if isinstance(w, Gtk.Label)]
             expanders = [w.get_label() for w in all_widgets if isinstance(w, Gtk.Expander)]
-            for title in ("From the website (1)", "To the website (1)", "Conflicts (1)", "Held back", "Blocked (0)"):
+            # To the website: the edited person and the fixture's photo, whose file the website does not hold yet (HFY-TSK-207: the push
+            # sends the blob in an update of its own)
+            to_rows = [(r["class"], r["gramps_id"]) for r in rv.model["by_id"]["to_website"]["rows"]]
+            self.assertEqual(to_rows, [("Media", "O0001"), ("Person", "I0006")])
+            for title in ("From the website (1)", "To the website (2)", "Conflicts (1)", "Held back", "Blocked (0)"):
                 self.assertTrue(any(e.startswith(title) for e in expanders), (title, expanders))
             self.assertTrue(any(t.startswith("Tree: ") and "harrisonfamily.us" in t and "Signed in as: I9001" in t for t in labels), labels[:6])
             self.assertTrue(any(t.startswith("Last sync: ") for t in labels))
             radios = [w.get_label() for w in all_widgets if isinstance(w, Gtk.RadioButton)]
             self.assertEqual(radios, ["Keep mine", "Take website", "Skip for now"])
             self.assertEqual(sum(1 for w in all_widgets if isinstance(w, Gtk.RadioButton) and w.get_active()), 1)
-            self.assertEqual(window.apply_button.get_label(), "Apply 1 · Push 1")
+            self.assertEqual(window.apply_button.get_label(), "Apply 1 · Push 2")
             self.assertTrue(window.apply_button.get_sensitive())
             self.assertIn("Mine", labels, "the yours column is read live from the database")
             self.assertIn("Theirs", labels)
