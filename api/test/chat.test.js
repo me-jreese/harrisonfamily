@@ -238,6 +238,28 @@ describe("POST /api/chat/push (AC2, AC3)", () => {
     expect(w.sent[0].payload.notification.app_badge).toBeUndefined(); // no badge: the notifications domain owns it
     expect(r.headers["cache-control"]).toBe("no-store");
   });
+  it("de-duplicates (recipient, conv, seq) within a batch so a hub retry cannot double-notify", async () => {
+    const w = world();
+    await subscribe(w, PEER);
+    await prefs(w, PEER, true);
+    const r = await w.svc("POST", "/api/chat/push", { body: { items: [item(), item(), item({ seq: 8 })] } });
+    expect(r.body.sent).toBe(2);
+    expect(w.sent).toHaveLength(2);
+  });
+  it("contract: the settings page's PUT shape (types/level) reaches the server check (features/detail)", async () => {
+    const w = world();
+    const token = await signToken(PEER);
+    await subscribe(w, PEER);
+    await w.svc("POST", "/api/chat/push", { body: { items: [item()] } });
+    expect(w.sent).toHaveLength(0); // default off
+    const put = await w.call("PUT", "/api/notifications/preferences", { token, body: { enabled: true, types: { chat_message: { enabled: true, level: 1 } } } });
+    expect(put.status).toBe(200);
+    const stored = await w.preferences.get(PEER);
+    expect(stored.features.chat_message).toMatchObject({ enabled: true, detail: 1 });
+    const r = await w.svc("POST", "/api/chat/push", { body: { items: [item()] } });
+    expect(r.body.sent).toBe(1);
+    expect(w.sent[0].payload.notification.body).toBe("Alex Example sent you a chat message.");
+  });
   it("level 1 names the actor by label, still no message text", async () => {
     const w = world();
     await subscribe(w, PEER);
@@ -365,7 +387,7 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
     const w = world();
     const r = await w.svc("POST", "/api/chat/archive", { body: body() });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ stored: 3, received: 3, through_seq: 3 });
+    expect(r.body).toEqual({ stored: 3, through_seq: 3 });
     const rows = rowsOf(w);
     expect(rows.map((x) => x.SK).sort()).toEqual([`E#${MEMBER}#0001`, `E#${PEER}#0001`, `E#${PEER}#0002`, "M#0000000001", "M#0000000002", "M#0000000003", "META"].sort());
     expect(new Set(rows.map((x) => x.PK))).toEqual(new Set([`CHAT#${GROUP}`]));
@@ -385,7 +407,7 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
     await w.svc("POST", "/api/chat/archive", { body: body() });
     const before = JSON.stringify(rowsOf(w).map((x) => ({ ...x, archived_at: 0 })).sort((a, b) => a.SK.localeCompare(b.SK)));
     const again = await w.svc("POST", "/api/chat/archive", { body: body() });
-    expect(again.body).toEqual({ stored: 0, received: 3, through_seq: 3 }); // M# is write-once: the count is what was written
+    expect(again.body).toEqual({ stored: 0, through_seq: 3 }); // M# is write-once: the count is what was written
     expect(JSON.stringify(rowsOf(w).map((x) => ({ ...x, archived_at: 0 })).sort((a, b) => a.SK.localeCompare(b.SK)))).toBe(before);
     // a stale retry from before the member left
     await w.svc("POST", "/api/chat/archive", { body: body({ conv: { last_seq: 1, name: "old name" }, members: [{ uid: PEER, epoch: 1, join_seq: 1, left_seq: null, invited_by: MEMBER }], msgs: [] }) });
@@ -408,7 +430,7 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
   it("a DM archives under its canonical id, and a batch with no messages reports through_seq 0", async () => {
     const w = world();
     const r = await w.svc("POST", "/api/chat/archive", { body: { conv: { id: DM, kind: "dm", name: null, creator: MEMBER, policy: null, created_at: 1760000000000, last_seq: 0 }, members: [], msgs: [] } });
-    expect(r.body).toEqual({ stored: 0, received: 0, through_seq: 0 });
+    expect(r.body).toEqual({ stored: 0, through_seq: 0 });
     expect(rowsOf(w).map((x) => x.PK)).toEqual([`CHAT#${DM}`]);
   });
   it("is 400 for a member whose left_seq is below join_seq", async () => {
@@ -449,8 +471,17 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
     const full = body({ msgs: Array.from({ length: 100 }, (_, i) => msg({ seq: i + 1, cmid: `c${i}` })) });
     full.conv.last_seq = 100;
     const ok = await w.svc("POST", "/api/chat/archive", { body: full });
-    expect(ok.body).toEqual({ stored: 100, received: 100, through_seq: 100 });
+    expect(ok.body).toEqual({ stored: 100, through_seq: 100 });
     expect(parseArchive(body()).msgs).toHaveLength(3);
+  });
+  it("a partial batch: META.last_seq is the conversation head, through_seq is the archived-through mark", async () => {
+    const w = world();
+    const msg = (o) => ({ seq: 1, cmid: "01JCCMID01", from: MEMBER, kind: "msg", text: "x", ts: 1, ...o });
+    const part = body({ msgs: [msg({ seq: 1, cmid: "c1" }), msg({ seq: 2, cmid: "c2" })] });
+    part.conv.last_seq = 500;
+    const r = await w.svc("POST", "/api/chat/archive", { body: part });
+    expect(r.body).toEqual({ stored: 2, through_seq: 2 });
+    expect(rowsOf(w).find((x) => x.SK === "META").last_seq).toBe(500);
   });
   it("accepts text of exactly 4,000 bytes", async () => {
     const w = world();

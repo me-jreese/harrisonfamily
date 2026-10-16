@@ -258,7 +258,9 @@ function parsePushItems(body) {
 export function createChatPush({ subscriptions, preferences, webpush, vapid, resolveLabel, memberReader, log = console }) {
   const enabled = Boolean(subscriptions && preferences && webpush && vapid);
   return async function push(body) {
-    const items = parsePushItems(body);
+    const seen = new Set();
+    // A hub retry must not double-notify: one send per (recipient, conv, seq) within a batch.
+    const items = parsePushItems(body).filter((it) => { const k = `${it.recipient}\n${it.conv}\n${it.seq}`; return seen.has(k) ? false : (seen.add(k), true); });
     if (!enabled) return { sent: 0, skipped: items.length, disabled: true };
     let sent = 0;
     let next = 0;
@@ -377,8 +379,9 @@ export function createArchive({ ddb, cmds, table, now = () => Date.now(), log = 
     const PK = `CHAT#${conv.id}`;
     let written = 0;
     try {
-      // Members and messages first, META last: a failure part-way leaves a META that still says the older last_seq, so last_seq is never ahead of the
-      // messages that exist. Bounded concurrency keeps a full batch (500 members, 100 messages) inside the Lambda's time limit. Not BatchWriteItem
+      // Members and messages first, META last, so a failure part-way leaves the previous META. META.last_seq is the hub's conversation head, NOT an
+      // archived-through mark: a batch carries at most 100 messages, so after a partial batch the head can be ahead of the messages mirrored. The
+      // route's `through_seq` is the only archived-through marker; do not read META.last_seq as one. Bounded concurrency keeps a full batch (500 members, 100 messages) inside the Lambda's time limit. Not BatchWriteItem
       // (chat.md 7.2): these are conditional PutItems, which BatchWriteItem cannot express, and each one is idempotent so a retry repeats safely.
       await pool(8, members, (m) => put(
         { PK, SK: `E#${m.uid}#${pad(m.epoch, 4)}`, entity: "chat_member", uid: m.uid, epoch: m.epoch, join_seq: m.join_seq, ...(m.left_seq !== null ? { left_seq: m.left_seq } : {}), ...(m.invited_by !== null ? { invited_by: m.invited_by } : {}) },
@@ -398,7 +401,7 @@ export function createArchive({ ddb, cmds, table, now = () => Date.now(), log = 
       log.error?.("chat archive failed", logSafeError(e));
       throw unavailable("the archive could not be written");
     }
-    return { stored: written, received: msgs.length, through_seq: msgs.reduce((hi, m) => Math.max(hi, m.seq), 0) };
+    return { stored: written, through_seq: msgs.reduce((hi, m) => Math.max(hi, m.seq), 0) };
   };
 }
 
