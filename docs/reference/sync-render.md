@@ -69,7 +69,7 @@ The renderer owns exactly these keys, and its writer and deleter refuse any othe
 - `person/<gramps_id>.json`, `person/index.json`, `person/search-index.json`;
 - `family|event|note|place|media/<handle>.json`, `place/index.json`, `media/index.json`.
 
-Never touched: `person/index.html` and every other shell file, `person/graph.json` and `person/search-store.json` (the graph builder's), media binaries (`media/<handle><ext>`), `media/faces/*`, `media/tree_*.svg`, `media/.staging/*` and `uploads/*`. A tampered manifest listing such a key is ignored, and the key is dropped from the manifest on the next save.
+Never touched: `person/index.html` and every other shell file, `person/graph.json` and `person/search-store.json` (the graph builder's), media binaries (`media/<handle><ext>`; only `api/scripts/expunge.mjs --record Media:<handle>` deletes one, with the record's history), `media/faces/*`, `media/tree_*.svg`, `media/.staging/*` and `uploads/*`. A tampered manifest listing such a key is ignored, and the key is dropped from the manifest on the next save.
 
 ## Guards
 
