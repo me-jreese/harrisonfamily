@@ -16,7 +16,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 
 | Path | What it is |
 | --- | --- |
-| `_data/flags.json` | The build-time feature flags `accessRequests`, `authV2`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `recordSubsV1`, `searchV2` and `shellV2`. |
+| `_data/flags.json` | The build-time feature flags `accessRequests`, `authV2`, `chatV1`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `recordSubsV1`, `searchV2` and `shellV2`. |
 | `js/islands/**` | Committed build output of `islands/` (HFY-R58). Rebuild with `scripts/ci/build-islands.sh` or `cd islands && npm run build`, and commit; `npm run check:islands` fails when it is stale. |
 | `css/hfy-theme.css` | Build output: the design-system theme layer, built from `islands/src/theme/` and `@io-kit/tokens`. Every page links it render-blocking, right after `css/main.css` where the page has one; `main.css` itself is never edited. |
 | `css/auth-edge.css` | Build output: the sign-in stylesheet, built from `islands/src/auth-edge/auth-edge.css` (HFY-TSK-069). `auth/edge.manifest.json` `theme.cssUrl` names it with `?v=<sha8 of this file>`, which the build stamps; the sign-in page links the new URL once `hfy-auth-edge` is redeployed. It must be served from `https://<site>`, the stylesheet origin the sign-in page's CSP allows. |
@@ -27,6 +27,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `family-login/index.html` | A redirect page to `/auth/login` (HFY-TSK-317), carrying `?next=<path>` over as `returnTo`, so old bookmarks of the retired Google sign-in page still work. The source's page is the Google sign-in, which the refresh must not bring back. |
 | `sw.js`, `manifest.webmanifest`, `offline.html`, `images/pwa-*.png` | The PWA shell (HFY-TSK-064). Every islands build rewrites the `hfy-asset-versions` block in `sw.js` and the colours in `manifest.webmanifest`. The worker is registered at `/sw.js?v=<sha8 of sw.js>` and names its cache after that hash. |
 | `tree/` | The page of the `tree` island (`familyViz`, HFY-TSK-201): `main.hfy-page`, the heading "family", the island host and a no-JavaScript line. Public and static; the graph it shows is gated. |
+| `chat/` | The page of the `chat` island (`chatV1`, HFY-TSK-142): `main.hfy-page`, the heading "chat", a static "chat isn't turned on yet." line the island removes, the island host and a no-JavaScript line. Public and static; the chat itself is the chat Worker's `/chat/ws` socket, which refuses everyone but the members `CHAT_OPEN_TO` lets in. The same island also draws the roster panel and the docked chats on every other page, and the chat entry in the top bar's chat slot. |
 | `join/` | The page of the `join` island (`accessRequests`, HFY-TSK-140): `main.hfy-page`, the heading "ask to join the family site", a static "isn't open yet" note the island removes, the island host and a no-JavaScript line. Public and static; the three steps talk to the edge's anonymous `/auth/access-request/*` routes, which answer `503 closed` while `ACCESS_REQUESTS` is off. |
 | `edit/` | The page of the `editor` island (`recordEdit`, HFY-TSK-212): `main.hfy-page`, the heading "edit", the island host and a no-JavaScript line. Public and static; the record it edits comes from the gated `/api/edit/` routes, which answer `404` while `HFY_EDITING` is off. |
 | `me/review/` | The page of the `review` island (`proposalReview`, `recordEdit` and `adminDelete`, HFY-TSK-259 and HFY-TSK-295): `main.hfy-page`, the heading "suggestions", the island host and a no-JavaScript line. Public and static; the suggestions it lists come from the gated `/api/proposals` routes, which answer `404` while `HFY_EDITING` is off. It sits under `me/`, which the refresh already excludes. |
@@ -73,6 +74,6 @@ rsync -a --delete -n -i \
   --exclude css/hfy-theme.css --exclude fonts/ \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \
   --exclude 'images/pwa-*.png' \
-  --exclude posts/ --exclude me/ --exclude tree/ --exclude edit/ --exclude join/ --exclude uploads/ \
+  --exclude posts/ --exclude me/ --exclude tree/ --exclude edit/ --exclude join/ --exclude chat/ --exclude uploads/ \
   <eleventy-source>/_site/ <repo>/11ty/
 ```

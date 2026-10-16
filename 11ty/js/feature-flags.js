@@ -8,23 +8,27 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "83b3d815",
+        "js": "9614428e",
         "css": "11377c0e"
       },
       "access-requests": {
-        "js": "2c570c5b",
+        "js": "57140198",
         "css": "ed4e0505"
+      },
+      "chat": {
+        "js": "d5bf47d2",
+        "css": "afca4af7"
       },
       "edit-entry": {
         "js": "fd4c177e",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "0ab4ac98",
+        "js": "764ac5b3",
         "css": "9e0815ba"
       },
       "family": {
-        "js": "d36fbffd",
+        "js": "a24014c3",
         "css": "e52fd206"
       },
       "family-entry": {
@@ -36,11 +40,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "e1dd5250",
+        "js": "43811e6e",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "07422ec5",
+        "js": "de3ff38e",
         "css": "38a33f05"
       },
       "join": {
@@ -48,23 +52,23 @@
         "css": "88b160fb"
       },
       "join-entry": {
-        "js": "4890d79a",
+        "js": "21158723",
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "9636d593",
+        "js": "6ed42a5f",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "c19a5513",
+        "js": "fc770820",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "25b0e38f",
+        "js": "ff1305ca",
         "css": "be703fb4"
       },
       "person": {
-        "js": "536938a3",
+        "js": "5d573114",
         "css": "92f22fd0"
       },
       "person-links": {
@@ -80,11 +84,11 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "37d8b20a",
+        "js": "8d5b6a7f",
         "css": "890fde1c"
       },
       "review": {
-        "js": "108b2aae",
+        "js": "d4668abc",
         "css": "f6c66152"
       },
       "search": {
@@ -92,25 +96,25 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "56348826",
+        "js": "bde265fb",
         "css": "be4f0b90"
       },
       "shell": {
-        "js": "ef806cea",
+        "js": "ba33538b",
         "css": "f6871411"
       },
       "timeline": {
-        "js": "2007e2f8",
+        "js": "8f0e6288",
         "css": "8f618380"
       },
       "tree": {
-        "js": "9450e07c",
+        "js": "9cd13531",
         "css": "373d5410"
       }
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "09742779"
+    "sw": "355e34c1"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
@@ -519,6 +523,20 @@
     });
   }
   featureAPI.edgeSession = edgeSession;
+  // HFY-TSK-142 (chat): the page's single-flight refresh for a long-lived caller (the chat client rotates its socket's session before io_id
+  // expires). Resolves {exp} (epoch seconds of the refreshed session) or rejects when the session cannot be refreshed; the shared edge
+  // session is replaced with the fresh answer so later edgeSession() callers see the new expiry.
+  featureAPI.refreshSession = function refreshEdgeSession() {
+    return refreshSession().then((ok) => {
+      if (!ok) throw new Error("session refresh failed");
+      return getSessionJSON();
+    }).then((s) => {
+      if (!s || s.authenticated !== true) throw new Error("not signed in");
+      edgeSessionPromise = Promise.resolve(s);
+      const at = expiresAtMs(s);
+      return at === null ? {} : { exp: Math.floor(at / 1000) };
+    });
+  };
   featureAPI.purgeRetiredKeys = purgeRetiredKeys;
   // Sign-out: drop the overlay and the "had an edge session" marker so later pages do not try to refresh.
   featureAPI.forgetEdgeSession = function forgetEdgeSession() {
@@ -901,6 +919,21 @@
     } else if (/^\/edit\/family\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("family", { onError() { /* the page keeps its "not available yet" note */ } });
     }
+  });
+
+  // HFY-TSK-142: chatV1 loads the chat island (the roster panel and the docked chats, the chat entry in the bar's chat slot, and on /chat/ the
+  // page). The island needs a signed-in member: on every page the bundle is requested only for a signed-in session, and the static /chat/
+  // page requests it always so that a signed-out visitor gets "sign in to chat." from the island. With the flag off nothing is requested and
+  // no socket opens (HFY-R8); /chat/ keeps its "isn't turned on yet" text. The server decides who may connect (CHAT_OPEN_TO), not this flag.
+  resolveFlags().then((flags) => {
+    if (flags.chatV1 !== true) return;
+    if (/^\/chat\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("chat", { onError() { /* the page keeps its "isn't turned on yet" text */ } });
+      return;
+    }
+    edgeSession().then((session) => {
+      if (session && session.authenticated === true && session.sub) loadIsland("chat", { onError() { /* the site stands without chat */ } });
+    }, () => {});
   });
 
   onReady(applyFeatureVisibility);

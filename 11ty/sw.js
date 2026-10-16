@@ -7,7 +7,7 @@ const ASSET_V = {
   "theme": "f103422b",
   "manifest": "c0f9b5fc",
   "shell": {
-    "js": "ef806cea",
+    "js": "ba33538b",
     "css": "f6871411"
   },
   "notify": "9a3183f2"
@@ -90,7 +90,9 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin || /^\/(auth|api)(\/|$)/.test(url.pathname)) return;
+  // HFY-TSK-142: /chat/ws and /chat/v1/ belong to the chat Worker (a route ahead of CloudFront). They are network-only, never touched here;
+  // /chat/ itself (the page) is an ordinary navigation. A WebSocket never reaches a service worker, so this guards the HTTP routes.
+  if (url.origin !== location.origin || /^\/(auth|api)(\/|$)/.test(url.pathname) || /^\/chat\/(ws|v1)(\/|$)/.test(url.pathname)) return;
   if (req.mode === "navigate") {
     event.respondWith(fetch(req).catch(() => caches.match("/offline.html")));
     return;

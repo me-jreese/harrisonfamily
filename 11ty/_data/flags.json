@@ -3,6 +3,7 @@
   "accessRequests": false,
   "adminDelete": false,
   "authV2": true,
+  "chatV1": false,
   "commentPhotosV1": false,
   "contribV1": false,
   "graduateV1": false,
