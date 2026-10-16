@@ -131,6 +131,7 @@ HOLD_MESSAGES.update({
     "media_upload_failed": "The file for this photo or document could not be uploaded, so it was not sent. Run the push again.",
     "media_upload_refused": "The website refused the file for this photo or document, so it was not sent.",
     "media_file_changed": "The file for this photo or document changed while the sync ran, so it was not sent. Run the push again.",
+    "media_cloud_copy_differs": "The file for this photo or document changed on this Mac and can no longer be sent, so the website keeps the copy it has. Check the file, then sync again.",
     "media_dependency_deferred": "This record refers to a photo or document whose file could not be uploaded, so it was not sent. Run the push again.",
 })
 

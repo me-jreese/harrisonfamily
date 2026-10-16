@@ -10,8 +10,8 @@ The push sends a Media object's metadata as an op and its blob beside it. Two ha
                   held     the file is missing, unreadable, 0 bytes, a Dropbox online-only placeholder, over 25 MB or a type the website does
                            not take: the metadata syncs, the op carries ``blob = {state: "missing"}`` (the website keeps any blob it has: a
                            good cloud blob is never replaced by an empty one) and a ``holds`` row says what to do.
-                  gps      EXIF GPS in the bytes (the projection holds it by mime; this holds it by the bytes, whatever the mime says): the
-                           Media is not sent at all.
+                  gps      EXIF GPS in the bytes, or a PDF (the projection holds them by mime; ``pushplan.byte_view`` hands it the mime the
+                           bytes admit to, so a blank or wrong mime is held too): the Media is not sent, and neither is any reference to it.
               A Gramps checksum that is not the disk's MD5 is only a warning: the projection already sends the disk MD5.
     upload    ``upload`` (the push calls it just before each batch): presign (the signed ``x-amz-checksum-sha256``), PUT to the staging key
               ``media/.staging/<handle>/<sha256>``, one retry with a new presign (D31). The Media op then names the blob; the website checks
@@ -94,7 +94,6 @@ def annotate(plan, files, rows, local, cloud, actions):
     plan.uploads, plan.warnings = {}, []
     ops = {o["handle"]: o for o in plan.ops if o["class"] == CLASS}
     whole_held = {x["handle"] for x in plan.holds + plan.blocked if x["class"] == CLASS}
-    drop = set()
     for handle, obj in sorted(local.items()):
         if obj.get("_class") != CLASS or handle not in files or handle in whole_held:
             continue
@@ -109,13 +108,11 @@ def annotate(plan, files, rows, local, cloud, actions):
                                   "detail": "Gramps has an old checksum for this file; the file's own MD5 is sent instead."})
         op = ops.get(handle)
         state = info.get("state")
-        if state == "gps":
-            # the projection holds a GPS photo by its mime; a wrong or empty mime is caught here, by the bytes
-            drop.add(handle)
-            plan.holds.append(_hold(handle, GPS_RULE, ""))
-        elif state == "ok" and info.get("content_type") == "application/pdf" and obj.get("mime") != "application/pdf":
-            drop.add(handle)  # a PDF the mime does not say is one (scanned certificates stay on the desktop until io releases them)
-            plan.holds.append(_hold(handle, "media.pdf.hold", ""))
+        if state == "gps" or (state == "ok" and info.get("content_type") == "application/pdf" and obj.get("mime") != "application/pdf"):
+            # Held by its bytes: ``pushplan.byte_view`` gave the projection the mime the bytes admit to, so the projection has held the Media
+            # whole (and stripped every reference to it) and it is in ``whole_held`` above. A Media is never dropped from the ops here: that
+            # would leave the Person, Family or Event that names it pointing at a Media the website never receives.
+            continue
         elif state == "ok":
             if matches(row, info):
                 continue
@@ -129,13 +126,15 @@ def annotate(plan, files, rows, local, cloud, actions):
             op["blob"] = descriptor(info)
             plan.uploads[handle] = info
         elif row is None:
-            # The file cannot go: the metadata does and the blob is held. (When the website already holds bytes for this handle there
-            # is nothing to tell io: the file was evicted or emptied after it synced, and the cloud copy is good and stays.)
+            # The file cannot go: the metadata does and the blob is held.
             plan.holds.append(_hold(handle, mediafile.HOLD_RULES.get(state, "media_blob_unreadable")))
             if op is not None:
                 op["blob"] = {"state": "missing"}
-    if drop:
-        plan.ops = [o for o in plan.ops if not (o["class"] == CLASS and o["handle"] in drop)]
+        elif info.get("md5") != row.get("md5") or info.get("size") != row.get("size"):
+            # The website already holds bytes for this handle and the file went bad after it synced (evicted, emptied, too large, another
+            # type). The cloud copy is good and stays, nothing is held and no blob is sent; this only tells io the two no longer match.
+            plan.warnings.append({"class": CLASS, "handle": handle, "rule": "media_cloud_copy_differs",
+                                  "detail": consts.HOLD_MESSAGES["media_cloud_copy_differs"]})
     plan.ops.sort(key=lambda o: (consts.CLASSES.index(o["class"]) if o["class"] in consts.CLASSES else len(consts.CLASSES), o["handle"]))
     plan.media_up = len(plan.uploads)
 

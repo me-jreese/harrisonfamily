@@ -148,7 +148,10 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     for h, r in cloud.items():
         classes.setdefault(h, r["class"])
 
-    proj = PR.project(list(local.values()), base=base_objs, files=files, sticky=sticky, policy=policy)
+    # The projection holds a Media by its mime; the bytes decide here (a GPS photo or a PDF with a blank or wrong mime), so the projection
+    # sees the mime the bytes admit to and strips every reference to a Media it holds, like any other object it holds.
+    view = byte_view(local, files)
+    proj = PR.project(list(view.values()), base=base_objs, files=files, sticky=sticky, policy=policy)
     projected_all = symmetric(proj.projected, proj.holds)
     plan.sticky = frozenset(M.update_baseline(sticky, list(local.values()), base_objs, policy=policy))
     for x in proj.holds:
@@ -161,7 +164,7 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
         mine = local.get(obj["handle"])
         if mine is not None and M.strip_change(obj) == M.strip_change(mine) and projected_all.get(obj["handle"]) is not None:
             return projected_all[obj["handle"]]
-        tree = dict(local)
+        tree = dict(view)
         tree[obj["handle"]] = obj
         again = PR.project(list(tree.values()), base=base_objs, files=files, sticky=sticky, policy=policy)
         return symmetric(again.projected, again.holds).get(obj["handle"])
@@ -236,6 +239,24 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     plan.holds = _unique(plan.holds)
     plan.blocked = _unique(plan.blocked)
     return plan
+
+
+def byte_view(local, files):
+    """``local`` with the mime of every Media whose bytes are a GPS photo or a PDF set to the one those bytes are, so the projection
+    (which reads the mime) holds it whole and strips the references to it from the objects that name it. Only the copies the
+    projection reads are changed; the objects that are sent come from the projection and the merge, never from this view."""
+    if not files:
+        return local
+    out = dict(local)
+    for handle, info in files.items():
+        obj = local.get(handle)
+        if obj is None or obj.get("_class") != "Media" or not isinstance(info, dict):
+            continue
+        ct = info.get("content_type")
+        if (info.get("state") == "gps" and ct != obj.get("mime")) or (info.get("state") == "ok" and ct == "application/pdf"
+                                                                       and obj.get("mime") != ct):
+            out[handle] = dict(obj, mime=ct)
+    return out
 
 
 # The pull's pending-push planning needs the same step (``plan.symmetric``), so it lives there.

@@ -218,6 +218,12 @@ class MediaPush(PushCase):
         owner["media_list"] = owner["media_list"] + [ref]
         return handle
 
+    def assertNoReferenceTo(self, media_handle):
+        """No object the website holds names a Media it does not have (the person that tagged the held photo was still pushed)."""
+        person = self.cloud.heads[self.tree.person_by_id("I0002")["handle"]]["obj"]
+        self.assertNotIn(media_handle, json.dumps(person), "the pushed person has no reference to the held Media")
+        self.assertNotIn(media_handle, json.dumps([h["obj"] for h in self.cloud.heads.values() if h.get("obj")]))
+
     def heads_media(self):
         return {h: hd for h, hd in self.cloud.heads.items() if hd["class"] == "Media" and not hd["deleted"]}
 
@@ -338,6 +344,18 @@ class MediaPush(PushCase):
                          "nothing about the blob was sent: the website keeps what it has")
         self.assertNotIn((handle, "media_blob_empty", "/blob"), self.holds(), "the cloud copy is good, so there is nothing for io to fix")
 
+    def test_a_file_that_went_bad_after_it_synced_is_a_warning_not_a_hold(self):
+        self.seed()
+        handle = self.add_photo(jpeg("six2"))
+        self.push()
+        open(self.file_of(self.tree.data[handle]), "wb").close()
+        self.tree.edit(handle, lambda m: m.update(desc="Changed once more"))
+        doc = self.push(dry_run=True)
+        with open(self.preview_path(doc), encoding="utf-8") as fh:
+            preview = json.load(fh)
+        self.assertEqual([(w["rule"], w["handle"]) for w in preview["warnings"]], [("media_cloud_copy_differs", handle)])
+        self.assertNotIn((handle, "media_blob_empty", "/blob"), self.holds())
+
     def test_a_file_that_is_missing_or_unsupported_is_held(self):
         self.seed()
         gone = self.add_photo(jpeg("seven"), gid="O0101")
@@ -356,6 +374,7 @@ class MediaPush(PushCase):
         self.assertNotIn(handle, self.cloud.heads)
         self.assertIn((handle, "media.exif_gps.hold", ""), self.holds())
         self.assertEqual([p for p in self.cloud.puts if handle in p[0]], [])
+        self.assertNoReferenceTo(handle)
 
     def test_a_pdf_the_mime_does_not_admit_to_is_held_by_its_bytes(self):
         self.seed()
@@ -363,6 +382,7 @@ class MediaPush(PushCase):
         self.push()
         self.assertNotIn(handle, self.cloud.heads)
         self.assertIn((handle, "media.pdf.hold", ""), self.holds())
+        self.assertNoReferenceTo(handle)
 
     # ---- AC 4: checksums --------------------------------------------------------------------------------------------------------
 
