@@ -11,7 +11,7 @@ import { api } from "../lib/api.js";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
 import {
-  COPY, ago, confirmAsk, conflictRows, countsLine, decidedLine, decisionBody, describeError, lagLine, normalizeStatus, recordLabel, stamp,
+  COPY, ago, confirmAsk, conflictRows, countsLine, decidedLine, decisionBody, describeError, lagLine, normalizeStatus, recordLabel, reopenedNote, stamp,
 } from "../lib/sync-admin-model.js";
 
 /** The sign-in link: a fresh one (prompt=login) for a step-up, back to this page. */
@@ -83,9 +83,13 @@ function Batches({ batches }) {
 function ConflictItem({ conflict, owner, busy, onDecide }) {
   const [choice, setChoice] = useState(null);
   const rows = conflictRows(conflict);
+  const reopened = reopenedNote(conflict);
   return (
     <li className="hfy-syncadmin__conflict" data-hfy-conflict={conflict.id}>
       <p className="hfy-syncadmin__strong">{recordLabel(conflict)}</p>
+      {reopened && (
+        <p className="hfy-syncadmin__meta" data-hfy-reopened>{reopened.text}{reopened.was ? ` earlier decision: ${reopened.was}.` : ""}</p>
+      )}
       {rows.map((r, i) => (
         <div className="hfy-syncadmin__path" key={i}>
           <p className="hfy-syncadmin__field">{r.label}</p>

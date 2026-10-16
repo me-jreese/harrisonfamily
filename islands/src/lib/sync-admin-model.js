@@ -14,6 +14,8 @@ export const COPY = {
   keepWebsite: "keep website",
   keepDesktop: "keep desktop",
   confirmHelp: "the add-on applies this only if the website's value is still the one shown. if it changed, the conflict opens again.",
+  reopenedChanged: "cloud value changed. the website's value moved after the last decision, so the decision was not applied and this is open again.",
+  reopenedUnchecked: "the last decision could not be checked against the website's value, so it was not applied and this is open again.",
 };
 
 export const DECISIONS = Object.freeze({ keep_cloud: "keep_website", keep_desktop: "keep_desktop" });
@@ -65,6 +67,18 @@ export function recordLabel(conflict) {
   const cls = typeof conflict?.class === "string" && conflict.class ? conflict.class.toLowerCase() : "record";
   const id = typeof conflict?.gramps_id === "string" && conflict.gramps_id ? ` ${conflict.gramps_id}` : "";
   return `${cls}${id}`;
+}
+
+/**
+ * The note on a conflict that was decided and then reopened because the website's value moved (HFY-TSK-338, SI-30), or null for one that never was.
+ * The conflict reads as open: the old decision is only history. Returns {text, was}: the words and the decision it replaced ("keep website" / "keep desktop").
+ */
+export function reopenedNote(conflict) {
+  const history = Array.isArray(conflict?.history) ? conflict.history.filter(isObj) : [];
+  if (conflict?.state !== "open" || !history.length) return null;
+  const last = history[history.length - 1];
+  const was = last.decision === "keep_cloud" ? COPY.keepWebsite : last.decision === "keep_desktop" ? COPY.keepDesktop : null;
+  return { text: last.reason === "no_hash" ? COPY.reopenedUnchecked : COPY.reopenedChanged, was };
 }
 
 /** The decision body for a button: "keep_website" -> keep_cloud (the API's word), "keep_desktop" -> keep_desktop. */

@@ -16,7 +16,7 @@
         "css": "ed4e0505"
       },
       "admin-sync": {
-        "js": "86e857f7",
+        "js": "88c84b43",
         "css": "e9be417d"
       },
       "chat": {
