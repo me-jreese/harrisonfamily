@@ -14,11 +14,11 @@ import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
 import { createSubscriptions } from "./subscriptions.js";
 import { createContribReader } from "./contrib-read.js";
-import { unauthenticated } from "./sync/auth.js";
+import { bearerOf, unauthenticated } from "./sync/auth.js";
 import { syncContext } from "./sync/guard.js";
 import { editingOn } from "./records/edit-bundle.js";
 import { circleIds, loadProposal, visibleProposal } from "./records/proposal-store.js";
-import { isPersonWithdrawn } from "./sync/store.js";
+import { getSyncHead, isPersonWithdrawn } from "./sync/store.js";
 import { createAccessRequests } from "./access-requests.js";
 import { createGraduation } from "./graduate.js";
 import { createChatService, serviceUnauthenticated } from "./chat.js";
@@ -145,7 +145,8 @@ export function createHandler(deps) {
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
-    return { chat, store, content, comments, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
+    return { chat, store, isOwner, content, comments, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**
@@ -183,16 +184,25 @@ export function createHandler(deps) {
       ctx.route = route.name;
       // HFY-TSK-172: a `sync-bearer` route (/api/sync/*) takes the desktop client's bearer token and never the session cookie. Its switch
       // (SYNC_API_ENABLED) runs before the token is looked at, so a disabled API answers 404 not_enabled to everyone.
-      const bearer = route.auth === "sync-bearer";
+      // HFY-TSK-279: a route marked `cookieOwner` (the conflict decision) also takes the gramps-owner's session when no bearer is sent; no session either is the same 401.
+      const cookieActor = route.auth === "sync-bearer" && route.cookieOwner === true && !bearerOf(event) ? await authenticate(event) : null;
+      const bearer = route.auth === "sync-bearer" && !cookieActor;
       let actor;
       let sync;
-      if (bearer) {
+      const syncStore = () => ({ ddb, cmds, table, now, uid, uuid: deps.uuid, log, s3: deps.s3, presignPut: deps.presignPut, presignGet: deps.presignGet, syncBucket: deps.syncBucket, mediaBucket, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts });
+      if (cookieActor) {
+        await features.check(route.gate, cookieActor, { preview });
+        const owner = typeof deps.isOwner === "function" ? await deps.isOwner(cookieActor.id).catch(() => false) : false;
+        actor = { ...cookieActor, web: { owner: owner === true } };
+        const head = await getSyncHead({ ddb, cmds, table });
+        sync = { head, writesEnabled: head?.writes_enabled !== false, checkTree() {}, store: syncStore() };
+      } else if (bearer) {
         await features.check(route.gate, undefined, { preview });
         if (typeof deps.authenticateSync !== "function") throw unauthenticated(); // not wired: closed
         actor = await deps.authenticateSync(event); // throws the 401
         sync = await syncContext({ ctx: { ddb, cmds, table }, event, actor, route, now });
         // The push routes (HFY-TSK-173) also take the blob wiring (s3, presignPut, the media bucket) and applyBatch's hooks, id policy and test seams.
-        sync.store = { ddb, cmds, table, now, uid, uuid: deps.uuid, log, s3: deps.s3, presignPut: deps.presignPut, presignGet: deps.presignGet, syncBucket: deps.syncBucket, mediaBucket, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts };
+        sync.store = syncStore();
       } else if (route.auth === "service") {
         // HFY-TSK-164: /api/chat/* takes the chat Worker's ES256 service JWT and never the session cookie. Not wired => closed (401).
         if (typeof deps.authenticateService !== "function") throw serviceUnauthenticated();

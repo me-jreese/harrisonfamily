@@ -197,7 +197,7 @@ export async function syncStatus(c) {
   const at = new Date(store.now()).toISOString();
   await store.ddb.send(new store.cmds.PutCommand({
     TableName: store.table,
-    Item: { ...clientKey(instance), entity: "syncclient", client_instance_id: instance, ...rest, principal: c.actor.id, updated_at: at },
+    Item: { ...clientKey(instance), GSI1PK: "SYNCCLIENT", GSI1SK: `${at}#${instance}`, entity: "syncclient", client_instance_id: instance, ...rest, principal: c.actor.id, updated_at: at },
     ConditionExpression: "attribute_not_exists(PK) OR principal = :p", ExpressionAttributeValues: { ":p": c.actor.id },
   })).catch((e) => {
     if (e?.name === "ConditionalCheckFailedException") throw new HttpError(409, "conflict", "this client instance belongs to another principal");
@@ -252,6 +252,14 @@ export async function syncConflictsList(c) {
 
 /** The hash a decision is tied to: the cloud values at the conflict's paths, as the queue showed them (SI-30). */
 export const cloudValueHash = (paths) => sha256(canonicalJson((Array.isArray(paths) ? paths : []).map((p) => ({ path: String(p?.path ?? ""), cloud: p?.cloud === undefined ? null : p.cloud }))));
+
+/**
+ * Does a stored decision still apply (SI-30)? True only while the cloud head is the version the decision was made against and the cloud values at the
+ * conflict's paths hash the same. The add-on applies a decision only then; otherwise it reopens the conflict. `paths` are the conflict's paths with the
+ * CURRENT cloud values.
+ */
+export const decisionStillApplies = (conflict, { version, paths }) =>
+  conflict?.state === "resolved" && (conflict.cloud_version ?? null) === (Number.isInteger(version) ? version : null) && conflict.cloud_value_hash === cloudValueHash(paths);
 
 /**
  * POST /api/sync/conflicts/:id/decision {decision}. gramps-owner plus step-up within 300 s (PS-22), checked before the item is read, so a stale

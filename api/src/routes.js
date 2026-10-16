@@ -419,7 +419,7 @@ export function buildCaps() {
       handshake_headers: Object.values(HEADERS), limits: { ...LIMITS },
     },
     subjects: SUBJECT_FORMATS,
-    actions: ROUTES.map((r) => ({ name: r.name, method: r.method, path: `${BASE_PATH}${r.path}`, auth: r.auth, write: r.write, summary: r.summary, ...(r.gate ? { gate: describeGate(r.gate) } : {}) })),
+    actions: ROUTES.map((r) => ({ name: r.name, method: r.method, path: `${BASE_PATH}${r.path}`, auth: r.auth, write: r.write, summary: r.summary, ...(r.gate ? { gate: describeGate(r.gate) } : {}), ...(r.cookieOwner ? { cookie: "gramps-owner" } : {}) })),
     content: { source: "posts", capabilities: CONTENT_CAPABILITIES, post_types: ["post", "article", "document"], visibilities: ["draft", "published", "withdrawn"] },
     comments: { reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param: "required on PATCH/DELETE/react (query or body)" },
     mcp: { resource: MCP_RESOURCE, tools: ROUTES.filter((r) => r.mcp).map((r) => ({ name: r.mcp.tool, action: r.name, write: r.write })) },

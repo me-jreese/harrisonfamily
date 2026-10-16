@@ -16,7 +16,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 
 | Path | What it is |
 | --- | --- |
-| `_data/flags.json` | The build-time feature flags `accessRequests`, `authV2`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `recordSubsV1`, `searchV2` and `shellV2`. |
+| `_data/flags.json` | The build-time feature flags `accessRequests`, `authV2`, `inboxV1`, `navMe`, `notifyV2`, `personV2`, `postsV2`, `profileLinks`, `recordSubsV1`, `searchV2`, `shellV2` and `syncStatusV1`. |
 | `js/islands/**` | Committed build output of `islands/` (HFY-R58). Rebuild with `scripts/ci/build-islands.sh` or `cd islands && npm run build`, and commit; `npm run check:islands` fails when it is stale. |
 | `css/hfy-theme.css` | Build output: the design-system theme layer, built from `islands/src/theme/` and `@io-kit/tokens`. Every page links it render-blocking, right after `css/main.css` where the page has one; `main.css` itself is never edited. |
 | `css/auth-edge.css` | Build output: the sign-in stylesheet, built from `islands/src/auth-edge/auth-edge.css` (HFY-TSK-069). `auth/edge.manifest.json` `theme.cssUrl` names it with `?v=<sha8 of this file>`, which the build stamps; the sign-in page links the new URL once `hfy-auth-edge` is redeployed. It must be served from `https://<site>`, the stylesheet origin the sign-in page's CSP allows. |
@@ -32,6 +32,7 @@ The refresh excludes these, so it never deletes or overwrites them, whatever the
 | `me/review/` | The page of the `review` island (`proposalReview`, `recordEdit` and `adminDelete`, HFY-TSK-259 and HFY-TSK-295): `main.hfy-page`, the heading "suggestions", the island host and a no-JavaScript line. Public and static; the suggestions it lists come from the gated `/api/proposals` routes, which answer `404` while `HFY_EDITING` is off. It sits under `me/`, which the refresh already excludes. |
 | `edit/family/` | The page of the `family` island (`relationshipWizard`, HFY-TSK-158): `main.hfy-page`, the heading "add or fix family connections", a static "aren't available yet" note the island removes, the island host and a no-JavaScript line. Public and static; what it sends goes to the gated `/api/relationships` routes, which answer `404` while `HFY_EDITING` is off. It sits under `edit/`, which the refresh's `rsync` already excludes (HFY-R46). |
 | `me/requests/` | The page of the `access-requests` island (`accessRequests`, HFY-TSK-264): `main.hfy-page`, the heading "family requests", a static "isn't available yet" line the island removes, the island host and a no-JavaScript line. Public and static; the requests it lists come from the admin-only `/api/access-requests` routes, which answer `404` while the flag is off. It sits under `me/`, which the refresh already excludes (HFY-R46). |
+| `admin/sync/` | The page of the `admin-sync` island (`syncStatusV1`, HFY-TSK-279): `main.hfy-page`, the heading "sync status", a static "isn't available yet" line the island removes, the island host and a no-JavaScript line. Public and static; what it lists comes from `GET /api/sync/admin/status`, which answers `403` to anyone but an `hfy-admin` or the `gramps-owner`, and `404` while `SYNC_API_ENABLED` is off. `admin/` is a new top-level directory in the refresh's rsync excludes (HFY-R46). |
 | `posts/`, `me/` | The pages for the `postsV2` and `notifyV2` islands (HFY-TSK-067, HFY-TSK-068), and `me/index.html`, the settings hub of the `navMe` island `settings` (HFY-TSK-091), `me/links/index.html`, the profile links editor of the `profileLinks` island `links-editor` (HFY-TSK-217), and `me/inbox/index.html`, the notification inbox page of the `inboxV1` island `inbox-page` (HFY-TSK-185). |
 | `private/index.html` | The route of the shell's own-page tab: "me" since the `navMe` flip (HFY-TSK-223), "family" with `navMe` off (HFY-TSK-091). Its title is "your page" (`islands/copy.mjs`). It is a redirect page with no person data. Signed in, it sends the visitor to their own page, `/person/?id=<gramps id>`; signed out, to the edge sign-in, which returns to `/private/`. It replaced the 2025 "Person Directory" dev scaffold. It is not `/family/`, which is a gated data prefix. The refresh excludes `private/`; the source's matching page is `src/private/index.njk`. |
 | `README.md` | This file. |
@@ -73,6 +74,6 @@ rsync -a --delete -n -i \
   --exclude css/hfy-theme.css --exclude fonts/ \
   --exclude sw.js --exclude manifest.webmanifest --exclude offline.html \
   --exclude 'images/pwa-*.png' \
-  --exclude posts/ --exclude me/ --exclude tree/ --exclude edit/ --exclude join/ --exclude uploads/ \
+  --exclude posts/ --exclude me/ --exclude tree/ --exclude edit/ --exclude join/ --exclude admin/ --exclude uploads/ \
   <eleventy-source>/_site/ <repo>/11ty/
 ```
