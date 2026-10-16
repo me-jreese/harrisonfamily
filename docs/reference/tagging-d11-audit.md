@@ -6,7 +6,7 @@ The audit of the tagging lightbox (flag `photoTagEdit`) before its flag flips, a
 
 Each state is measured at 375 and 1024 px wide by [`islands/tests/tag-edit-d11-audit.spec.mjs`](../../islands/tests/tag-edit-d11-audit.spec.mjs), with the same measurements as the editing audit ([`islands/tests/d11-measure.mjs`](../../islands/tests/d11-measure.mjs)): 16 px inputs, 44 px targets, one control height per row, no horizontal scroll, axe clean (serious and critical). Two tagging checks are explicit: the four corner handles of a selected box and all twelve nudge buttons measure 44 by 44 px or more, and each has a name.
 
-| State | What is on screen | 375 px | 1024 px | Checklist at 375 | Checklist at 1024 |
+| State | What the state is | 375 px | 1024 px | Checklist at 375 | Checklist at 1024 |
 |---|---|---|---|---|---|
 | `tag-layer` | tagging switched on, the page's tags as boxes | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-layer-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-layer-1024.png) | green | green |
 | `tag-selected` | an existing tag selected: four handles, the panel, the nudge buttons | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-selected-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-selected-1024.png) | green | green |
@@ -14,9 +14,19 @@ Each state is measured at 375 and 1024 px wide by [`islands/tests/tag-edit-d11-a
 | `tag-sheet` | the confirmation sheet for a tag that goes to review | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sheet-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sheet-1024.png) | green | green |
 | `tag-sent` | the toast after sending | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sent-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sent-1024.png) | green | green |
 
-All five states pass at both widths. The screenshots are full-page captures written by running the spec with `HFY_AUDIT_SHOTS=<dir>`, named `<state>-<width>.png`, under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-283/`. Every image was checked by eye before the upload: it shows only the synthetic fixture world (placeholder names and ids, the "Test Person (synthetic)" page and a gray stand-in photo). The links are bucket paths, not web addresses: opening them needs AWS access to that bucket. All 10 files were listed in the bucket on 2026-10-16 and match the links in the table.
+All five states pass at both widths. The checks read the page's DOM (sizes, names, axe), not what is inside the viewport, so a green 1024 px column does not mean the 1024 px image shows the state. The screenshots are full-page captures written by running the spec with `HFY_AUDIT_SHOTS=<dir>`, named `<state>-<width>.png`, under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-283/`. Every image was checked by eye before the upload for one thing: it shows only the synthetic fixture world (placeholder names and ids, the "Test Person (synthetic)" page and a gray stand-in photo). The links are bucket paths, not web addresses: opening them needs AWS access to that bucket. All 10 files were listed in the bucket on 2026-10-16 and match the links in the table.
 
-Open before the flip: the tag editor has no Undo control on its toast, which editing.md describes, so browser scenario 2 removes the tag through the UI and the API test replays the inverse ops as the undo proof; a follow-up against `tag-editor-ui` should add it, then the scenario can click it.
+What the 1024 px images show. The 375 px images show each state as the table describes it, panel and toast included. The 1024 px ones do not, because the lightbox is a layer fixed to the 768 px viewport and the panel (and so the nudge buttons and the toast) sits at or below that layer's bottom edge, outside the frame:
+
+- `tag-layer-1024`: the lightbox with the page's existing tag box, as described.
+- `tag-selected-1024`: the box with its four handles. The panel and the nudge buttons are not in the image.
+- `tag-picker-1024`: the new box and the start of the picker; the list of matches is cut off at the bottom edge.
+- `tag-sheet-1024`: the confirmation sheet, as described.
+- `tag-sent-1024`: the lightbox with the existing tag box and no toast and no selection. It is byte-identical to `tag-layer-1024` (same ETag, `74e68e03ce96e9e49c385629e375cd6d`), so it is not evidence of the toast. At 1024 px the toast is covered by the spec's text assertion only; the 375 px image is the one that shows it.
+
+Open before the flip, the 1024 px images: recapture `tag-selected`, `tag-picker` and `tag-sent` at 1024 px as viewport captures (not full-page) with the panel scrolled into view, then upload them over the three links (a separate step from this change, since it writes to the bucket). Whether a person can scroll the panel and the picker list into view in the lightbox at 1024 by 768 px has not been checked by hand; the DOM checks pass wherever the elements sit, so they do not answer it.
+
+Open before the flip, the toast: the tag editor has no Undo control on its toast, which editing.md describes, so browser scenario 2 removes the tag through the UI and the API test replays the inverse ops as the undo proof; a follow-up against `tag-editor-ui` should add it, then the scenario can click it.
 
 Not covered: the installed iPhone app (io's UAT inside `tag-edit-flip`), and anything a live site serves; the audit runs on localhost against the committed site.
 
