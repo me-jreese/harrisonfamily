@@ -19,7 +19,7 @@ OUT="$GRAMPS/dist/hfy_sync-$VERSION"
 rm -rf "$OUT" "$OUT.zip"
 mkdir -p "$OUT/redaction"
 
-for f in hfy_sync.gpr.py hfy_sync_tool.py hfy_sync_ui.py; do
+for f in hfy_sync.gpr.py hfy_sync_tool.py hfy_sync_ui.py hfy_sync_gramplet.py; do
   cp "$GRAMPS/hfy_sync/$f" "$OUT/$f"
 done
 mkdir "$OUT/hfygramps"

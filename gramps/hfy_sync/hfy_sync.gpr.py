@@ -32,3 +32,20 @@ register(
     optionclass="HfySyncOptions",
     tool_modes=[TOOL_MODE_GUI, TOOL_MODE_CLI],
 )
+
+# The sidebar gramplet (HFY-TSK-278): last sync, website changes waiting, a Sync button. It writes nothing.
+register(
+    GRAMPLET,
+    id="hfy_sync_gramplet",
+    name=_("Website sync"),
+    description=_("Shows when this tree last synced with harrisonfamily.us and how many website changes are waiting."),
+    version="0.1.0",
+    gramps_target_version="6.0",
+    status=STABLE,
+    fname="hfy_sync_gramplet.py",
+    authors=["harrisonfamily.us"],
+    height=110,
+    gramplet="HfySyncGramplet",
+    gramplet_title=_("Website sync"),
+    navtypes=["Person", "Family", "Event", "Place", "Source", "Citation", "Repository", "Media", "Note"],
+)

@@ -204,3 +204,7 @@ The second command makes a throwaway Gramps home, installs the addon into it, an
 
 - [`gramps/README.md`](../../gramps/README.md#the-desktop-addon-skeleton): the files, the binding rules, the push and `status.json`.
 - [Run the test suites](run-the-tests.md)
+
+## The sidebar gramplet
+
+The addon also registers a **Website sync** gramplet (HFY-TSK-278). After installing or updating the addon, restart Gramps, then right-click a sidebar or bottom bar and choose Add a gramplet > Website sync. It shows the website changes waiting and the last sync, and its **Sync...** button opens the same dialog as Tools > Family Tree Processing > Website sync.... It asks the website at most every 5 minutes and only while it is on screen. If you have not signed in it says so; run `hfy-sync login`. It never changes the tree, the sync state or the website.
