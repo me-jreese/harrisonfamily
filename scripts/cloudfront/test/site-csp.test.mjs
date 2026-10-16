@@ -28,13 +28,14 @@ test("base policy: no third party anywhere, same-origin images and connections, 
   assert.deepEqual(d["img-src"], ["'self'", "data:", "blob:"]);
   assert.deepEqual(d["connect-src"], ["'self'"]);
   assert.deepEqual(d["frame-ancestors"], ["'none'"]);
+  assert.deepEqual(d["worker-src"], ["'self'"], "MapLibre's module worker is same-origin; blob: is not allowed (HFY-TSK-310)");
   assert.equal(CSP.base.includes("http"), false, "no origin is named in the base policy");
   assert.equal(/\*/.test(CSP.base), false, "no wildcard source");
 });
 
 test("join policy: the base policy plus Turnstile (script, frame, connect) and nothing else", () => {
   const b = directives(CSP.base), j = directives(CSP.join);
-  for (const k of ["img-src", "frame-ancestors", "style-src", "default-src"]) assert.deepEqual(j[k], b[k], k);
+  for (const k of ["img-src", "frame-ancestors", "style-src", "default-src", "worker-src"]) assert.deepEqual(j[k], b[k], k);
   assert.deepEqual(j["script-src"], [...b["script-src"], TURNSTILE]);
   assert.deepEqual(j["connect-src"], [...b["connect-src"], TURNSTILE]);
   assert.deepEqual(j["frame-src"], ["'self'", TURNSTILE]);

@@ -113,3 +113,18 @@ test("control: /join/ loads Turnstile with zero violations, and still reports an
   await page.waitForTimeout(400);
   expect((await violations(page)).map((x) => x.directive)).toEqual(["img-src"]);
 });
+
+test("control: a same-origin module worker is allowed (worker-src 'self'), a blob: worker is reported (HFY-TSK-310)", async ({ page }) => {
+  await harness(page, { signedIn: false });
+  await page.route("**/csp-probe-worker.js", (r) => r.fulfill({ contentType: "text/javascript", body: "postMessage('ok');" }));
+  await page.goto("/about/", { waitUntil: "domcontentloaded" });
+  await settle(page);
+  await page.evaluate(() => { const w = new Worker("/csp-probe-worker.js", { type: "module" }); w.onerror = () => {}; });
+  await page.waitForTimeout(400);
+  expect(await violations(page), "a same-origin module worker is not a violation").toEqual([]);
+  await page.evaluate(() => { try { new Worker(URL.createObjectURL(new Blob(["1"], { type: "text/javascript" }))); } catch {} });
+  await page.waitForTimeout(400);
+  const v = await violations(page);
+  expect(v.map((x) => x.directive)).toEqual(["worker-src"]);
+  expect(v[0].disposition).toBe("report");
+});
