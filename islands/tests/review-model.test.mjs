@@ -21,7 +21,17 @@ describe("tabs (AC4)", () => {
   });
 
   it("the tab words are the design's", () => {
-    assert.deepEqual(TAB_LABEL, { review: "to review", mine: "my suggestions", about: "about my page" });
+    assert.deepEqual(TAB_LABEL, { review: "to review", mine: "my suggestions", about: "about my page", duplicates: "possible duplicates" });
+  });
+
+  it("'possible duplicates' (HFY-TSK-295) is an admin's tab behind adminDelete, after the others; a member never has it", () => {
+    assert.deepEqual(tabsFor({ admin: true, flags: { proposalReview: true, recordEdit: true, adminDelete: true } }), ["review", "mine", "about", "duplicates"]);
+    assert.deepEqual(tabsFor({ admin: true, flags: { recordEdit: true, adminDelete: true } }), ["mine", "about", "duplicates"]);
+    assert.deepEqual(tabsFor({ admin: true, flags: { recordEdit: true, adminDelete: false } }), ["mine", "about"]);
+    assert.deepEqual(tabsFor({ admin: false, flags: { recordEdit: true, adminDelete: true } }), ["mine", "about"]);
+    assert.deepEqual(tabsFor({ admin: "yes", flags: { adminDelete: true } }), [], "only admin === true");
+    assert.deepEqual(parseLocation("?tab=duplicates"), { tab: "duplicates", id: null });
+    assert.equal(pickTab(["mine", "duplicates"], "duplicates"), "duplicates");
   });
 
   it("the URL: ?tab and ?p round-trip; unknown tabs and non-ULID ids are dropped", () => {

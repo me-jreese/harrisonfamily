@@ -161,6 +161,82 @@ export function findDuplicates(stubs, people, opts = {}) {
   return out;
 }
 
+// ---- the possible-duplicate queue (HFY-TSK-295, edit-admin-delete) ---------------------------------------------------------------
+// Pairs of people in the tree who may be one person, for an admin to look at and for io to merge on the desktop (a merge stays a desktop
+// operation). It reads the same summaries and the same `score` as findDuplicates, so the queue and the relationship wizard agree on who
+// "looks like" whom, and it writes nothing: there is no "flagged" state to store. The tree is not compared all against all. People are
+// blocked first, by the first two and the last two letters of each surname word (a single slip leaves one end intact) and, when a block is
+// large, by the first letter of the given name too. A pair that shares no block is never scored, which can miss a slip in a given name's
+// first letter inside a big block; the wizard's per-stub search has no such limit. A small tree (SMALL_TREE people or fewer) is compared all
+// against all instead, so the blocking's blind spots (a surname with no word of 3 letters or more, a slip at both ends of a surname) only
+// exist in a large tree; the tests pin both.
+//
+// PRIVACY. The pair rows carry a `lifespan`. Scoring reads the raw years on the server (a year gap rules a pair out), but `opts.showYears(summary)`
+// decides whether a person's lifespan is printed: the admin queue passes a predicate that blanks it for a living or unknown-status person, so a
+// listing of the whole tree never carries a year the record API would withhold.
+const GENDER_WORD = { 0: "female", 1: "male" };
+const MAX_BLOCK = 300;
+export const SMALL_TREE = 250;
+
+/**
+ * people: an iterable of summaries (summarizePerson). opts.minScore (default 3: an exact part and a close one, or two exact parts).
+ * opts.showYears(summary) -> boolean: false blanks that person's `lifespan` in the output (default: shown). Scoring is unaffected.
+ * -> [{ a: {handle, displayName, lifespan}, b: {...}, score }], best first, then by handle. A pair appears once.
+ */
+export function findDuplicatePairs(people, opts = {}) {
+  const minScore = opts.minScore ?? 3;
+  const showYears = typeof opts.showYears === "function" ? opts.showYears : () => true;
+  const list = [...(people || [])].filter((p) => p && p.handle);
+  const blocks = new Map();
+  const put = (key, i) => { (blocks.get(key) ?? blocks.set(key, new Set()).get(key)).add(i); };
+  list.forEach((p, i) => {
+    for (const n of p.names || []) {
+      const initial = foldName(n.given).slice(0, 1);
+      for (const w of words(foldName(n.surname))) {
+        if (w.length < 3) continue;
+        put(`p:${w.slice(0, 2)}`, i);
+        put(`s:${w.slice(-2)}`, i);
+        put(`p:${w.slice(0, 2)}|${initial}`, i);
+        put(`s:${w.slice(-2)}|${initial}`, i);
+      }
+    }
+  });
+  const seen = new Set();
+  const out = [];
+  const consider = (i, j) => {
+    const [x, y] = i < j ? [i, j] : [j, i];
+    const k = `${x}|${y}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    const a = list[x];
+    const b = list[y];
+    let best = 0;
+    for (const [from, to] of [[a, b], [b, a]]) { // the score is read from either side: "Tom" for "Thomas" only counts one way
+      for (const n of from.names || []) {
+        best = Math.max(best, score({ given: n.given, surname: n.surname, gender: GENDER_WORD[from.gender] ?? "unknown", birthYear: from.birthYear }, to));
+      }
+    }
+    if (best >= minScore) {
+      const [first, second] = String(a.handle) <= String(b.handle) ? [a, b] : [b, a];
+      const view = (p) => ({ handle: p.handle, displayName: displayName((p.names || [])[0] || {}), lifespan: showYears(p) ? lifespan(p) : "" });
+      out.push({ a: view(first), b: view(second), score: best });
+    }
+  };
+  if (list.length <= SMALL_TREE) {
+    for (let m = 0; m < list.length; m += 1) for (let n = m + 1; n < list.length; n += 1) consider(m, n);
+    return sortPairs(out);
+  }
+  for (const [key, set] of blocks) {
+    // A big block is compared only through its given-initial sub-blocks (the plain block of the same end is skipped).
+    if (!key.includes("|") && set.size > MAX_BLOCK) continue;
+    const ids = [...set];
+    for (let m = 0; m < ids.length; m += 1) for (let n = m + 1; n < ids.length; n += 1) consider(ids[m], ids[n]);
+  }
+  return sortPairs(out);
+}
+
+const sortPairs = (out) => out.sort((p, q) => q.score - p.score || (p.a.handle < q.a.handle ? -1 : p.a.handle > q.a.handle ? 1 : p.b.handle < q.b.handle ? -1 : p.b.handle > q.b.handle ? 1 : 0));
+
 // The `new:n` ids that have candidates and were not listed in confirmDistinct.
 export function unconfirmedDuplicates(duplicates, confirmDistinct) {
   const ok = new Set(Array.isArray(confirmDistinct) ? confirmDistinct : []);

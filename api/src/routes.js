@@ -9,6 +9,7 @@ import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
+import { adminDeletesPost, adminDuplicatesList } from "./records/admin-delete.js";
 import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
 import { proposalsDecide } from "./records/proposal-decision.js";
@@ -292,6 +293,17 @@ export const ROUTES = defineRoutes([
   {
     name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (MCP tool hfy_changes_submit)",
     gate: editingGate(), handler: changesPost,
+  },
+  // Admin web deletes and the possible-duplicate queue (HFY-TSK-295; Q2-15 per the decision-sheet default, pending io's recorded answer; review IF-03). Dark until the adminDelete flag is on (or the caller is uat) AND
+  // HFY_EDITING is on; then a member is 403 not_allowed. A delete is compiled to EditOps and takes the /api/changes pipeline (step-up within 900 s, the
+  // delete/withdraw budget, ID retirement). The queue is read-only. No MCP tool: deleting is a human action in the site UI.
+  {
+    name: "adminDeletes.post", method: "POST", path: "/admin/deletes", summary: "Delete records, admins only: {targets: [Class:handle] (Person, Family, Event, Place, Source, Citation or Media, up to 10), base_versions, remove_references?: boolean, dry_run?} with an Idempotency-Key header (not for dry_run): a Source takes its Citations, a Person or Family takes an Event nothing else uses and a Person takes a Family left empty; other records that point at the deleted ones are cleaned in the same batch when remove_references is true, else 409 still_referenced {referrers}; 201 {applied: {versions, deleted}, proposal: null, summary}, or 200 {plan: {delete, update, retired_ids, objects}, budget, summary, warnings} for dry_run; 403 not_allowed (a member), 401 step_up_required (sign in within 900 s), 403 delete_budget (more than 10 deletes, or 5 % of the records, in 24 hours: a hard cap on the web), 409 cannot_delete_account_person (the admin's own person, or any member's or admin's), 409 version_conflict, 413 too_large (more than 24 records); a Person's gramps_id is retired for ever (no MCP tool)",
+    gate: requireFeature("adminDelete"), handler: adminDeletesPost,
+  },
+  {
+    name: "adminDuplicates.list", method: "GET", path: "/admin/duplicates", summary: "The possible-duplicate queue, admins only: pairs of people the duplicate matcher thinks may be one person, best first, for a merge in Gramps on the desktop: ?limit=1-100 (default 50), cursor: {items: [{a, b, score}], cursor, total}, each side {key, gramps_id, displayName, lifespan}; read-only, writes no record (no MCP tool)",
+    gate: requireFeature("adminDelete"), handler: adminDuplicatesList,
   },
   // The relationship wizard's routes (HFY-TSK-210; editing.md 8.2): an intent is compiled to EditOps. Preview writes nothing; a submit is a proposal of
   // kind "relationship" for a member and, for an admin on route auto, applied through applyBatch(). Behind HFY_EDITING. No MCP tool.

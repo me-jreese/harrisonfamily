@@ -1,9 +1,9 @@
-// /me/review/: the review island (HFY-TSK-259, flags proposalReview and recordEdit; HFY-PLN-002 editing.md section 9.2, BRD2 R-06 and R-07).
+// /me/review/: the review island (HFY-TSK-259, flags proposalReview and recordEdit, and adminDelete for the duplicates tab, HFY-TSK-295; HFY-PLN-002 editing.md section 9.2, BRD2 R-06 and R-07).
 // Three tabs: "to review" (admins with proposalReview: the approval queue, oldest first, on the kit's `useGateInbox` over the proposal gate source),
 // "my suggestions" and "about my page" (everyone, with recordEdit). A list and a detail card: from 64rem a 40/60 split, under it the list and the
 // card are two views (the card has a back link and its actions in a sticky footer). The server enforces actor.admin on the queue whatever the flag
 // says; here a member never gets the tab, and no queue request is made for them. The static page keeps its "not available yet" note until this
-// bundle runs, and feature-flags.js loads the bundle only with one of the two flags on, so with both off nothing here is requested (HFY-R8).
+// bundle runs, and feature-flags.js loads the bundle with one of the two flags (or adminDelete, for the duplicates tab) on, so with both off nothing here is requested (HFY-R8).
 import "./review.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGateInbox } from "@io-kit/gates/react";
@@ -11,26 +11,13 @@ import { api } from "../lib/api.js";
 import { getMe } from "../lib/me.js";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
+import { useFlags } from "../lib/use-flags.js";
+import { DuplicatesTab } from "../lib/admin-delete-ui.jsx";
 import { createProposalGateSource, proposalToCard } from "../lib/proposal-gate-source.js";
 import { CHIPS, COPY, TAB_LABEL, VIEW_OF, locationFor, parseLocation, pickCard, pickTab, tabsFor } from "../lib/review-model.js";
 import { Chips, ProposalCard, ProposalRow, usePersonNames } from "../lib/review-ui.jsx";
 
 export const signInHref = () => `/auth/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
-
-/** The flags once resolved ({} until then, or when feature-flags.js is missing). */
-function useFlags() {
-  const [flags, setFlags] = useState(undefined);
-  useEffect(() => {
-    let live = true;
-    const resolve = window.HFYFeatureFlags?.resolveFlags;
-    Promise.resolve(typeof resolve === "function" ? resolve() : {}).then(
-      (f) => { if (live) setFlags(f && typeof f === "object" ? f : {}); },
-      () => { if (live) setFlags({}); },
-    );
-    return () => { live = false; };
-  }, []);
-  return flags;
-}
 
 const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 64rem)").matches;
 function useWide() {
@@ -45,6 +32,7 @@ function useWide() {
   return isWide;
 }
 
+const NO_CHIP = Object.freeze({ id: "none", states: [], empty: "" });
 const FILTER = Object.freeze({}); // the gates `state` filter is ignored: each chip names its own proposal states
 
 function Review({ tabs }) {
@@ -61,10 +49,12 @@ function Review({ tabs }) {
   const listRef = useRef(null);
   const moved = useRef(false);
 
+  // The "possible duplicates" tab (admins with adminDelete, HFY-TSK-295) is not a list of suggestions: it has no chips and no gate source.
+  const dupTab = tab === "duplicates";
   const chips = CHIPS[tab] || [];
-  const chip = chips.find((c) => c.id === chipId) || chips[0];
-  const source = useMemo(() => createProposalGateSource(api, { view: VIEW_OF[tab], states: chip.states, keep: chip.keep, onTruncated: setTruncated }), [tab, chip]);
-  const sources = useMemo(() => [source], [source]);
+  const chip = chips.find((c) => c.id === chipId) || chips[0] || NO_CHIP;
+  const source = useMemo(() => (dupTab ? null : createProposalGateSource(api, { view: VIEW_OF[tab], states: chip.states, keep: chip.keep, onTruncated: setTruncated })), [tab, chip, dupTab]);
+  const sources = useMemo(() => (source ? [source] : []), [source]);
   const inbox = useGateInbox(sources, FILTER);
 
   // The history: a tab or a chip replaces the entry, a card pushes one, so the phone's back button goes from the card to the list.
@@ -141,7 +131,8 @@ function Review({ tabs }) {
             onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); pickTabId(t); }}>{TAB_LABEL[t]}</a>
         ))}
       </nav>
-      <div className="hfy-review__split">
+      {dupTab && <DuplicatesTab />}
+      {!dupTab && <div className="hfy-review__split">
         {showList && (
           <section className="hfy-review__list" aria-label={COPY.list} ref={listRef} data-hfy-list>
             <Chips chips={chips} active={chip.id} onPick={pickChip} label={COPY.filters} />
@@ -165,7 +156,7 @@ function Review({ tabs }) {
             {!selectedId && <p className="hfy-review__note" data-hfy-pick>{COPY.pickOne}</p>}
           </section>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

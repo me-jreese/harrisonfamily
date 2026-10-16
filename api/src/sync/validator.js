@@ -147,19 +147,28 @@ export const defaultValidate = (view) => (shared ??= createValidator())(view);
 
 // ---- step-up and the destructive budget --------------------------------------------------------------------------------
 
+/**
+ * The budget rule, in one place so a dry run can say what the commit will do: `rolling` objects were destructively removed in the last 24 hours
+ * and `adding` more are proposed. Returns null when it passes, else the reason: "budget" (more than 10, or more than 5 % of the live heads) or
+ * "heads_unknown" (the live-head count is unusable on a tree that has taken writes: fail closed).
+ */
+export function budgetVerdict({ rolling, adding, heads, seq }) {
+  const total = rolling + adding;
+  if (total > DESTRUCTIVE_LIMIT) return "budget";
+  // The 5 % share needs the real count of live heads. On a tree that has taken writes (seq > 0) an unusable count fails closed.
+  if (Number.isInteger(heads) && heads >= 0) {
+    if (heads > 0 && total > heads * DESTRUCTIVE_SHARE) return "budget";
+  } else if ((seq ?? 0) > 0) return "heads_unknown";
+  return null;
+}
+
 async function checkBudget(view, ops) {
   const destructive = ops.filter((op) => op.op === "delete" || op.op === "withdraw");
   if (!destructive.length || view.stepUp === true) return;
   const need = (reason) => new SyncError(403, "step_up_required", "this change needs a fresh step-up", { reason });
   if (view.origin === "desktop" && destructive.some((op) => op.op === "delete")) throw need("delete");
-  const rolling = await view.store.destructiveRolling();
-  const total = rolling + destructive.length;
-  if (total > DESTRUCTIVE_LIMIT) throw need("budget");
-  // The 5 % share needs the real count of live heads. On a tree that has taken writes (seq > 0) an unusable count fails closed.
-  const heads = view.sync_head?.live_heads;
-  if (Number.isInteger(heads) && heads >= 0) {
-    if (heads > 0 && total > heads * DESTRUCTIVE_SHARE) throw need("budget");
-  } else if ((view.sync_head?.seq ?? 0) > 0) throw need("heads_unknown");
+  const reason = budgetVerdict({ rolling: await view.store.destructiveRolling(), adding: destructive.length, heads: view.sync_head?.live_heads, seq: view.sync_head?.seq });
+  if (reason) throw need(reason);
 }
 
 // ---- ids -------------------------------------------------------------------------------------------------------------

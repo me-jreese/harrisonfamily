@@ -1,4 +1,4 @@
-// HFY-TSK-259 (review-island; flags proposalReview and recordEdit): /me/review/ at 375 and 1280, axe clean. Tabs by viewer, the admin queue
+// HFY-TSK-259 (review-island; flags proposalReview and recordEdit, and adminDelete for the duplicates tab): /me/review/ at 375 and 1280, axe clean. Tabs by viewer, the admin queue
 // (oldest first, filter chips), the detail card (before -> after, word diff, conflict rows), approve / ask for changes / decline with If-Match and an
 // Idempotency-Key, a 412 re-rendering the fresh card, the stale card and "edit then approve", the proposer's edit, withdraw and reply, and the
 // 40/60 split from 64rem. Synthetic people only; /auth, /api, the flags file and the people index are stubbed by route interception.
