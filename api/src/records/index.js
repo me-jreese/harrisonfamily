@@ -9,7 +9,7 @@
 // The store view holds every head in memory. Cold start = the latest snapshot (ctx.snapshot, optional) plus a fold of SYNC#LOG since
 // its seq; warm = a consistent GetItem of SYNC#HEAD, then a fold of the log since the cached seq. GSI reads are never used for the
 // view. `ctx` is the applyBatch store context: { ddb, cmds, table, now? }.
-import { HttpError } from "../http.js";
+import { HttpError } from "../http-error.js";
 import { collectRefs } from "./semantics.js";
 import { CLASSES, getRecord, getSyncHead, logKey, seqKey } from "../sync/store.js";
 

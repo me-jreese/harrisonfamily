@@ -113,6 +113,7 @@ class Deps:
     workers: int = 8
     remaining_ms: Callable[[], int] = lambda: 10 ** 9
     checker: PrivacyChecker = field(default_factory=PrivacyChecker)
+    graph_trigger: Any = None  # hfy-graph-render (HFY-TSK-274): .invoke(payload) after a successful live pass; None leaves the graph alone
 
 
 @dataclass
@@ -195,11 +196,17 @@ class Engine:
             return {"status": "skipped", "reason": "push_session_open", "mode": mode, "seq": seq}
 
         if not due and not reconcile_due:
+            # A moderation hide or unhide, or a graph pass that was skipped or failed earlier, does not move the store seq: the schedule
+            # tick re-invokes the (idempotent, self-debouncing) graph function so the graph converges within one schedule interval.
+            if req.source == "schedule":
+                self._trigger_graph(seq)
             return {"status": "skipped", "reason": "current", "mode": mode, "seq": seq}
 
         view = self._build_view(seq, None if first_pass else prev_seq)
         if not due:
             counts = self._reconcile(view, now)
+            if req.source == "schedule":
+                self._trigger_graph(seq)
             return {"status": "reconciled", "mode": mode, "seq": seq, **counts}
 
         result = self._render_and_apply(req, state, view, seq, prev_seq, first_pass, cursor, now)
@@ -424,7 +431,26 @@ class Engine:
             remove.append("last_error")
             remove.append("last_error_at")
         d.table.commit_pass(cursor, fields, remove, outbox)
+        self._trigger_graph(seq)
         return {"status": "rendered", "mode": mode, "seq": seq, **counts}
+
+    def _trigger_graph(self, seq: int) -> None:
+        """After a successful live pass, starts hfy-graph-render asynchronously (it debounces, and skips a seq it has already built).
+        Shadow passes never trigger it. A failed invoke never fails the pass (the cursor has moved and the site is rendered): it raises
+        the RenderError alarm and the next live pass, or an operator invoke, rebuilds the graph."""
+
+        d = self.d
+        if d.mode != "live" or d.graph_trigger is None:
+            return
+        try:
+            d.graph_trigger.invoke({"source": "render", "seq": seq})
+        except Exception as exc:  # noqa: BLE001 - never its message
+            cls, _ = errors.describe(exc)
+            log.error("render graph trigger failed class=%s", cls)
+            try:
+                d.metrics.emit("RenderError", 1)
+            except Exception:  # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------------------------------------------------------- plan
     def _limit(self, base: Dict[str, Any]) -> float:

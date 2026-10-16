@@ -19,7 +19,9 @@
 //                             versions are deleted and the snapshot is rebuilt. (c) the render-shadow copies of the record's rendered files, of the
 //                             pages that embedded it (now or in any stored version of them: a delete that cleaned a reference away does not hide
 //                             the page) and of the index files are deleted with their versions, and, when the site bucket is versioned, the
-//                             noncurrent versions of those keys there. (d) a Media record's photo: every version of media/<handle>.<ext> and of
+//                             noncurrent versions of those keys there. person/graph.json, the graph renderer's aggregate of a Person, Family,
+//                             Event, Place or Media, is one of those keys; it has no shadow copy, and its current version is the graph renderer's
+//                             to rewrite (it does so on the epoch below), so run the sweep after that pass. (d) a Media record's photo: every version of media/<handle>.<ext> and of
 //                             media/.staging/<handle>/* (the renderer never writes or deletes a binary, and the tombstone no longer names the
 //                             file, so the keys come from the handle).
 //                             The open and decided sync conflicts of the handle lose their values. SYNC#HEAD.expunge_epoch rises by one in the same
@@ -264,7 +266,19 @@ export function scrubAt(obj, tokens, replacement = "") {
 
 // ---- which rendered files carry a record ---------------------------------------------------------------------------------------
 const FILE_DIR = { Family: "family", Event: "event", Note: "note", Place: "place", Media: "media" };
-const INDEX_FILES = { Person: ["person/index.json", "person/search-index.json"], Place: ["place/index.json"], Media: ["media/index.json"] };
+/**
+ * person/graph.json is the graph renderer's one aggregate file (hfy-graph-render, HFY-TSK-274). It is built from every class the graph reads
+ * (graph/src/project.mjs READ_CLASSES: Person, Family, Event, Place, Media; never a Note), so an expunge of any of them reaches it, and the
+ * renderer writes a new version of it on every content change. It has no render-shadow copy, so only its noncurrent site versions are swept.
+ */
+const GRAPH_FILE = "person/graph.json";
+const INDEX_FILES = {
+  Person: ["person/index.json", "person/search-index.json", GRAPH_FILE],
+  Family: [GRAPH_FILE],
+  Event: [GRAPH_FILE],
+  Place: ["place/index.json", GRAPH_FILE],
+  Media: ["media/index.json", GRAPH_FILE],
+};
 
 const fileOf = (h) => {
   if (h.class === "Person") return h.gramps_id ? `person/${h.gramps_id}.json` : null;

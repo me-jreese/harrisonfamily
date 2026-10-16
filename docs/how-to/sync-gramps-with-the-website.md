@@ -212,6 +212,8 @@ The script logs `Generated tree_<gramps-id>.svg` for each person and ends with `
 
 ### 2b. Build the family graph
 
+> **After the cutover this step is not yours.** Once the renderer is `live` and the write guard is on, your role is denied `person/graph.json` and `media/faces/`: `hfy-graph-render` rebuilds them from the cloud store after each live pass ([Deploy the graph renderer](deploy-the-graph-renderer.md)). Use this step before the cutover, and to compare a build from a Gramps copy with the cloud graph.
+
 The graph is the one static file, `person/graph.json`, that the family-tree page will read, plus the face crops it shows. Nothing reads it yet, so publishing it changes nothing a member sees. The builder is in the checkout, not in `<project>/scripts/`, and it runs after steps 1 and 2 because it crops faces from the media files that step 1 staged. Run it from `<project>` with a fresh copy of the Gramps tree (see [Before you start](#before-you-start)):
 
 ```sh
