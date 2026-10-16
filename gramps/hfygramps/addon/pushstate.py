@@ -172,8 +172,9 @@ OWN_PUSHES_DDL = "CREATE TABLE IF NOT EXISTS own_pushes (seq INTEGER PRIMARY KEY
 
 
 def record_own_seq(con, seq):
-    """Remembers a seq the website gave one of the desktop's own acknowledged pushes. `base` keeps only the newest seq of each object, so a
-    second push of the same object would otherwise hide the first; the gramplet's 'changes waiting' count reads this table instead."""
+    """Remembers a seq the website gave one of the desktop's own acknowledged pushes: an op's (`ack_batch`) or the marker of a completed push
+    session (push.py `_complete_session`). `base` keeps only the newest seq of each object, so a second push of the same object would otherwise
+    hide the first; the gramplet's 'changes waiting' count reads this table instead. The rebase empties it (a re-seeded store restarts its seqs)."""
     con.execute(OWN_PUSHES_DDL)
     con.execute("INSERT OR IGNORE INTO own_pushes (seq) VALUES (?)", (int(seq),))
 

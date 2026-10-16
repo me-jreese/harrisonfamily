@@ -3,8 +3,9 @@
 The gramplet is read-only with ONE disclosed exception. It reads the sidecar's `last_pull_seq` (opened
 read-only, so SQLite cannot create or change a file), its `own_pushes` and `runs` tables the same way, and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes
 waiting is the changes after `last_pull_seq` up to `head_seq` that the desktop did not make itself: each seq the website gave one of the desktop's own acknowledged
-pushes is kept in the sidecar's `own_pushes` table (`base` holds only an object's newest seq, so it cannot be counted), so those seqs are taken off (never below zero). A push of two
-updates with no website edit therefore shows none waiting. "Last sync" is the newest real `pull`, `push` or `sync` row of the
+pushes is kept in the sidecar's `own_pushes` table (`base` holds only an object's newest seq, so it cannot be counted), so those seqs are taken off (never below zero). That is
+the seq of every acknowledged op and the seq of the marker the website writes when a push session completes; a rebase empties the table, because the re-seeded store hands the same
+numbers to website edits. A push of two updates with no website edit therefore shows none waiting, and neither does a first push or any push of several batches. "Last sync" is the newest real `pull`, `push` or `sync` row of the
 sidecar's `runs` table (a failed or partial real run counts too); bind, status and check are other actions, and a dry pull or push is marked dry in its row, so none of them moves it, and status.json,
 which every run rewrites, is not used. It writes no status.json, no sidecar row, no tree object, no log and creates no
 Keychain item. The exception: the website rotates the refresh token on every refresh, so when the access token has expired (about once

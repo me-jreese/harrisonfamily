@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", ".."))
@@ -563,10 +564,14 @@ class GrampletGtk(unittest.TestCase):
 
     def test_no_worker_is_started_once_the_gramplet_is_gone(self):
         started = []
-        self.mod.threading.Thread = lambda *a, **k: started.append(k) or type("T", (), {"start": lambda self: None})()
-        self.g.box.top = None
-        self.g._on_timer()
+        real = self.mod.threading.Thread
+        # `self.mod.threading` is the real threading module: patch it for this block only, or every later Thread(...).start() in the
+        # process does nothing (the transport test server then never serves and its shutdown blocks forever).
+        with mock.patch.object(self.mod.threading, "Thread", lambda *a, **k: started.append(k) or type("T", (), {"start": lambda self: None})()):
+            self.g.box.top = None
+            self.g._on_timer()
         self.assertEqual(started, [])
+        self.assertIs(self.mod.threading.Thread, real, "the patch is undone when the block ends")
 
     def test_db_changed_and_main_restart_the_timer_once(self):
         self.in_window()
