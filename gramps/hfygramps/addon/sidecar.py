@@ -108,12 +108,14 @@ def base_handles(con):
 
 
 def record_run(con, doc):
-    """Appends a status document to the `runs` table (counts and codes only)."""
+    """Appends a status document to the `runs` table (counts and codes only). A dry run (a `check`, or a pull or push with --dry-run)
+    is marked by `"dry_run": true` in its counts_json, so a reader of the log (the gramplet's "Last sync") can leave it out."""
+    counts = dict(doc["counts"], dry_run=True) if doc.get("dry_run") else doc["counts"]
     con.execute(
         "INSERT OR REPLACE INTO runs (run_id, action, mode, started_at, finished_at, result, exit_code, counts_json, error_json, backup_path) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (doc["run_id"], doc["action"], doc["mode"], doc["started_at"], doc["finished_at"], doc["result"], doc["exit_code"],
-         json.dumps(doc["counts"], sort_keys=True), json.dumps(doc["error"], sort_keys=True) if doc["error"] else None, doc["backup"]),
+         json.dumps(counts, sort_keys=True), json.dumps(doc["error"], sort_keys=True) if doc["error"] else None, doc["backup"]),
     )
     con.commit()
 

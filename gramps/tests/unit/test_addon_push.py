@@ -19,7 +19,7 @@ sys.path.insert(0, HERE)
 import push_support as PS  # noqa: E402
 import test_addon_runtime as R  # noqa: E402
 from hfygramps import canonical, merge as M  # noqa: E402
-from hfygramps.addon import consts, paths, push, pushplan, pushstate, runner, sidecar, transport  # noqa: E402
+from hfygramps.addon import consts, gramplet_model, paths, push, pushplan, pushstate, runner, sidecar, transport  # noqa: E402
 
 PLANTED = ["555-0100", "555-0101", "555-0142", "555-0143", "laurel@example.org", "fixture.contact@example.org", "123 Example Street",
            "999 Private Lane", "100 Example Street"]
@@ -83,6 +83,17 @@ class PushCase(R.HomeCase):
         self.assertTrue(self.cloud.seeded, doc)
         return doc
 
+    def own_seqs(self):
+        return {r[0] for r in self.rows("SELECT seq FROM own_pushes")}
+
+    def assert_no_phantom_change(self):
+        """HFY-TSK-343: every seq the website has given so far was the desktop's own push (the batches' and the session markers'), so the
+        gramplet, asked right after, counts no website change waiting."""
+        self.assertEqual(self.own_seqs(), set(range(1, self.cloud.seq + 1)), "the batches' seqs and the session marker's seq")
+        model = gramplet_model.Model(self.tree.dbid, lambda: self.cloud, self.env)
+        model.refresh(True)
+        self.assertEqual(model.waiting(), 0)
+
     def a_person(self, not_in=()):
         """A pushed (non-excluded) person of the fixture whose handle is not in `not_in`."""
         return next(h for h, hd in sorted(self.cloud.heads.items()) if hd["class"] == "Person" and not hd["deleted"] and h not in not_in)
@@ -120,6 +131,11 @@ class Seed(PushCase):
         self.assertEqual(self.rows("SELECT value FROM meta WHERE key = 'open_session'"), [], "the session is closed")
         self.assertEqual(self.rows("SELECT COUNT(*) FROM outbox WHERE state = 'acked'")[0][0], len(self.cloud.batches))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM outbox WHERE state != 'acked'")[0][0], 0)
+
+    def test_the_session_marker_s_seq_is_the_desktop_s_own_so_the_first_push_leaves_no_change_waiting(self):  # HFY-TSK-343
+        self.seed()
+        self.assertEqual(self.cloud.seq, len(self.cloud.heads) + 1, "one seq per create, one for the session's marker")
+        self.assert_no_phantom_change()
 
     def test_ops_go_in_dependency_order_and_every_object_is_a_create_at_version_one(self):
         self.seed()
@@ -453,6 +469,20 @@ class Destructive(PushCase):
         last = self.cloud.batches[-1]
         self.assertEqual({o["op"] for o in last["ops"]}, {"delete"})
         self.assertEqual({r[0] for r in self.rows("SELECT deleted FROM base WHERE handle = ?", gone[0])}, {1})
+
+    def test_an_update_and_a_delete_open_a_session_and_its_marker_is_the_desktop_s_own(self):  # HFY-TSK-343
+        gone = self.delete_pads(1)
+        h = self.a_person()
+        self.tree.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Edited"))
+        self.stepped_up()
+        seq_before = self.cloud.seq
+        sessions_before = len(self.cloud.sessions)
+        doc = self.push(allow_deletes=True)
+        self.assertEqual(doc["counts"]["pushed"], {"create": 0, "update": 1, "delete": 1})
+        self.assertTrue(self.cloud.heads[gone[0]]["deleted"])
+        self.assertEqual(len(self.cloud.sessions), sessions_before + 1, "two batches: a session was opened and completed")
+        self.assertEqual(self.cloud.seq, seq_before + 3, "the update, the delete and the session marker")
+        self.assert_no_phantom_change()
 
     def test_the_cli_does_not_delete_without_allow_deletes(self):
         self.seed()
@@ -823,6 +853,7 @@ class Sessions(PushCase):
         self.assertTrue(self.cloud.seeded)
         self.assertEqual(self.rows("SELECT value FROM meta WHERE key = 'open_session'"), [])
         self.assertEqual(len([h for h in self.cloud.heads]), len(self.rows("SELECT * FROM base WHERE deleted = 0")))
+        self.assert_no_phantom_change()   # the run that completed the session records the marker's seq too (HFY-TSK-343)
 
     def test_a_session_that_cannot_complete_keeps_its_dependants_held_and_is_retried(self):  # D25
         def dangle():

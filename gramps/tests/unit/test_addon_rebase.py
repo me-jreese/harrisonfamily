@@ -10,7 +10,7 @@ import os
 import unittest
 
 import addon_pull_support as S
-from hfygramps.addon import backup, consts, runner, sidecar, status, transport
+from hfygramps.addon import backup, consts, gramplet_model, pushstate, runner, sidecar, status, transport
 
 NEW_TREE = "99999999-aaaa-4bbb-8ccc-dddddddddddd"
 EXTRA_NOTE = "ee" * 14
@@ -176,6 +176,32 @@ class Apply(RebaseCase):
             return con.execute("SELECT %s FROM %s" % (cols, name)).fetchall()
         finally:
             con.close()
+
+    def test_the_old_store_s_own_push_seqs_are_forgotten_so_they_cannot_hide_the_new_store_s_edits(self):  # HFY-TSK-343
+        e = self.env
+        self.prepare()
+        new_head = e.cloud.seq
+        old_own = (new_head + 1, new_head + 2, new_head + 3)   # seqs of the old timeline that the new store will hand to website edits
+        con = e.side()
+        for seq in old_own:
+            pushstate.record_own_seq(con, seq)
+        con.commit()
+        con.close()
+        doc = e.run("rebase", yes=True)
+        self.assertEqual(doc["exit_code"], 20, doc)
+        self.assertEqual(self.table_rows("own_pushes", "seq"), [], "the push history belonged to the old store")
+        model = gramplet_model.Model(e.tree.dbid, lambda: type("C", (), {"meta": lambda self: {"api_version": 1, "head_seq": new_head + 3}})(), e.environ)
+        model.refresh(True)
+        self.assertEqual(model.waiting(), 3, "three website edits since the rebase, none of them the desktop's")
+
+    def test_a_rebase_of_a_sidecar_with_no_push_history_still_works(self):
+        e = self.env
+        self.prepare()
+        con = e.side()
+        con.execute("DROP TABLE IF EXISTS own_pushes")   # a sidecar from before the table existed
+        con.commit()
+        con.close()
+        self.assertEqual(e.run("rebase", yes=True)["exit_code"], 20)
 
     def test_an_object_deleted_in_this_tree_since_the_last_sync_is_counted_apart_not_as_only_on_the_website(self):
         e = self.env
