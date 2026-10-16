@@ -10,12 +10,15 @@ only: the base is the cloud object at the last sync, never a raw Gramps object. 
               before the send and is discarded; a `sent` row is replayed with its own Idempotency-Key; the answer 409, 422 or 410 to a
               replay marks the row `rejected` and it is never sent again; only a 2xx or an `Idempotent-Replayed` answer advances the
               base.
-    holds     what was kept back and why, replaced as a whole by every real run (`first_seen` survives for a hold that stays).
-    conflicts parked conflicts, pinned by their path (sync.md 6.7, BRD2 11.1); `pins` hands the open ones back to the merge.
+    holds     what was kept back and why, replaced as a whole by every real run (`first_seen` survives for a hold that stays), except
+              the pull's own `expunge.notice` rows: those say which values a website scrub removed, they are the pull's to write,
+              and a push neither replaces nor drops them (`sidecar.load_expunge_holds` hands them to the plan).
+    conflicts conflicts, pinned by their path (sync.md 6.7, BRD2 11.1): `parked` when the command line found them, `open` when the
+              Gramps window did (the pull writes both the same way); `pins` hands both back to the merge.
 """
 import json
 
-from . import consts
+from . import consts, sidecar
 from .. import canonical
 
 
@@ -199,8 +202,8 @@ def ack_batch(con, key, request, response):
 
 def sync_holds(con, holds, now):
     """Replaces the holds table with `holds` ([{class, handle, path, rule, detail}]); a hold that stays keeps its first_seen."""
-    seen = {(c, h, p, r): f for c, h, p, r, f in con.execute("SELECT class, handle, path, rule, first_seen FROM holds")}
-    con.execute("DELETE FROM holds")
+    seen = {(c, h, p, r): f for c, h, p, r, f in con.execute("SELECT class, handle, path, rule, first_seen FROM holds WHERE rule != ?", (sidecar.EXPUNGE_RULE,))}
+    con.execute("DELETE FROM holds WHERE rule != ?", (sidecar.EXPUNGE_RULE,))  # the pull's expunge notices stay: the push must not put those values back
     for x in holds:
         key = (x["class"], x["handle"], x.get("path", ""), x["rule"])
         con.execute("INSERT OR REPLACE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
@@ -217,21 +220,24 @@ def hold_rows(con):
 
 
 def open_conflicts(con):
+    """The conflicts that still pin their path: `open` (the Gramps window) and `parked` (the command line), as the pull treats them."""
     return [{"id": i, "class": c, "handle": h, "path": p, "kind": k, "base_json": b, "cloud_json": cl, "local_json": lo, "state": st}
             for i, c, h, p, k, b, cl, lo, st in con.execute(
-                "SELECT id, class, handle, path, kind, base_json, cloud_json, local_json, state FROM conflicts WHERE state = 'open' ORDER BY id")]
+                "SELECT id, class, handle, path, kind, base_json, cloud_json, local_json, state FROM conflicts WHERE state IN (%s) ORDER BY id"
+                % ",".join("?" * len(sidecar.OPEN_CONFLICT_STATES)), sidecar.OPEN_CONFLICT_STATES)]
 
 
 def pins(con):
-    """{handle: [{"path", "base_json"}]} for the merge: an open conflict pins its path (sync.md 6.7)."""
+    """{handle: [{"path", "base_json"}]} for the merge: an open or parked conflict pins its path (sync.md 6.7)."""
     out = {}
     for c in open_conflicts(con):
         out.setdefault(c["handle"], []).append({"path": c["path"] or "", "base_json": c["base_json"]})
     return out
 
 
-def record_conflicts(con, found, closed_ids, now):
-    """Stores the run's conflicts as `open` (the same conflict keeps its `detected_at`) and resolves the ones the merge found closed.
+def record_conflicts(con, found, closed_ids, now, state="open"):
+    """Stores the run's conflicts as `state` (`parked` for the command line, `open` for the Gramps window; the same conflict keeps its
+    `detected_at`) and resolves the ones the merge found closed.
 
     `found` are the merge's conflict dicts (each with ``id``, ``class``, ``handle``, ``path``, ``kind``, ``base_json``, ``cloud_json``,
     ``local_json``); `closed_ids` the ids of the pins a run found resolved by itself (the path converged or became one-sided).
@@ -240,9 +246,9 @@ def record_conflicts(con, found, closed_ids, now):
     for c in found:
         con.execute(
             "INSERT INTO conflicts (id, class, handle, path, kind, base_json, cloud_json, local_json, state, decision, cloud_conflict_id, detected_at, resolved_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, NULL) "
-            "ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, cloud_json = excluded.cloud_json, local_json = excluded.local_json, state = 'open', resolved_at = NULL",
-            (c["id"], c["class"], c["handle"], c["path"], c["kind"], c["base_json"], c["cloud_json"], c["local_json"], old.get(c["id"]) or now))
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL) "
+            "ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, cloud_json = excluded.cloud_json, local_json = excluded.local_json, state = excluded.state, resolved_at = NULL",
+            (c["id"], c["class"], c["handle"], c["path"], c["kind"], c["base_json"], c["cloud_json"], c["local_json"], state, old.get(c["id"]) or now))
     for cid in closed_ids:
-        con.execute("UPDATE conflicts SET state = 'resolved', decision = COALESCE(decision, 'converged'), resolved_at = ? WHERE id = ? AND state = 'open'", (now, cid))
+        con.execute("UPDATE conflicts SET state = 'resolved', decision = COALESCE(decision, 'converged'), resolved_at = ? WHERE id = ? AND state IN ('open', 'parked')", (now, cid))
     con.commit()

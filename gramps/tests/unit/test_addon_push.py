@@ -187,7 +187,8 @@ class FullFixture(PushCase):
             self.assertNotIn(needle, after)
         self.assertEqual(self.cloud.heads[birth["handle"]]["obj"]["type"]["value"], 42, "the website's value stands")
         conflicts = self.rows("SELECT handle, kind, state FROM conflicts")
-        self.assertEqual([(h, k, s) for h, k, s in conflicts if h == birth["handle"]], [(birth["handle"], "composite", "open")])
+        self.assertEqual([(h, k, s) for h, k, s in conflicts if h == birth["handle"]], [(birth["handle"], "composite", "parked")],
+                         "the command line parks it, as the pull does; the Gramps window leaves it open")
         # three more runs with no edits: the conflict stays open and the cloud is not touched
         before = (len(self.cloud.batches), copy.deepcopy(self.cloud.heads))
         for _ in range(3):

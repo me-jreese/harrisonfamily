@@ -63,6 +63,16 @@ The HFY-PLN-001 coding-task catalog, document DOC-5BB4A7956A88, holds the ruling
 - The workspace helper scripts in `scripts/` assume the `<project>/repo` layout and misbehave in worktrees. Set `SKIP_DEPLOYMENT_SYNC_CHECK=1` only with the reason recorded in the worklog.
 - Family data stays out of Git by rule (D-03). `.gitignore` ignores `etl-output/`, `harrisonfamily-frontend/`, `workspace/`, `workspace-local/`, `gramps_exports/`, `graph/out/`, `*.gazetteer/` and every `*.gramps`, `*.sqlite`, `*.db` and `graph/**/*.jsonl` file except the tracked synthetic samples (listed in `scripts/ci/data-sample-allowlist.txt`, which includes the Gramps fixture goldens), and `scripts/ci/check-no-family-data.sh` (run by `scripts/git-hooks/pre-commit`) fails on any other tracked file there. A new synthetic sample needs a `.gitignore` negation and a line in `scripts/ci/data-sample-allowlist.txt`. The old `export_workspace_samples.sh` is removed; edit samples in the repository.
 
+## Local Playwright (shared machine)
+
+Agent sessions run on io's daily-driver Mac, so a browser run stays small. The island config defaults to the bundled headless shell with at most 2 workers outside CI.
+
+- Headless shell only (`chromium-headless-shell`, the default). Never set `PW_CHANNEL=chrome`, which launches system Google Chrome windows, without io's go-ahead.
+- At most 2 workers, and 1 (`--workers=1`) for a single spec file.
+- Run only the specs you changed, by file name. A full run (`npm test`, or `npx playwright test` with no file) is io's call: no workflow runs the island specs (see "What no workflow does").
+- No `--ui`, watch mode or relaunch loops. Fix, then run once.
+- Afterwards `pgrep -fl playwright_chromiumdev_profile` prints nothing. If it lists browsers you started, `pkill -f playwright_chromiumdev_profile`. The pattern matches every session's browsers, so read the list before you kill.
+
 ## No-PII and no-secrets rule (hard)
 
 Never write any of the following into code, docs, commits, PR bodies, worklogs or test fixtures:
@@ -111,10 +121,10 @@ Out-of-repo code (the Gramps ETL, the allowlist publisher, the test-token mint h
 
 - Run the suites for the components you touched, and record the results as acceptance evidence:
   - `api/`: `npm test`. For MCP changes, also `scripts/ci/mcp-conformance.sh blocking`.
-  - `auth/`: `npm test`. For passkey changes, also `npx playwright install chromium && npm run e2e`. For a sign-in styling or `edge.manifest.json` change, also `SITE=<scratch-site> npm run e2e:theme` (Chrome), where `<scratch-site>` is an absolute path, outside the repository, to a scratch copy of `11ty/` (`cp -R 11ty <scratch-site>`) rebuilt with `node build.mjs --site <scratch-site>` in `islands/`.
+  - `auth/`: `npm test`. For passkey changes, also `npx playwright install chromium && npm run e2e`. For a sign-in styling or `edge.manifest.json` change, also `SITE=<scratch-site> npm run e2e:theme` (the headless shell), where `<scratch-site>` is an absolute path, outside the repository, to a scratch copy of `11ty/` (`cp -R 11ty <scratch-site>`) rebuilt with `node build.mjs --site <scratch-site>` in `islands/`.
   - `edge-gate/`: `npm test`.
-  - `islands/`, the theme, or an Eleventy page: `npm run check:islands`, `npm run test:contract` (which includes the theme lint, `npm run lint:css`) and `npm test`. `HFY_SITE` and `PW_PORT` point the tests at a scratch `--site` build.
-  - `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js` or the `/family-login/` redirect page: `node --test tests/client/*.test.mjs` from the repository root, and `npm test` in `islands/`, whose browser specs load these scripts.
+  - `islands/`, the theme, or an Eleventy page: `npm run check:islands`, `npm run test:contract` (which includes the theme lint, `npm run lint:css`) and the island specs you changed, `npx playwright test tests/<spec>.spec.mjs --workers=1` ([Local Playwright](#local-playwright-shared-machine)). `HFY_SITE` and `PW_PORT` point the tests at a scratch `--site` build.
+  - `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js` or the `/family-login/` redirect page: `node --test tests/client/*.test.mjs` from the repository root, and the `islands/` specs that load these scripts, run by file name as above.
   - `scripts/cloudfront/`: `node --test scripts/cloudfront/test/*.test.mjs` from the repository root. `scripts/infra/test/run.sh` runs it too.
   - `scripts/infra/`: `scripts/infra/test/run.sh`. Besides bash, `jq` and python3 with PyYAML, it wants node, `zip`, `openssl`, `rsync`, `git` and `shasum`.
   - The pipeline: `node .github/actions/io-kit-ci/parity-report/check.cjs` prints no `pipeline_drift`.

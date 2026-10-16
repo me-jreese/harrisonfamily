@@ -15,8 +15,8 @@ fixture tree, with the dev server's request log greped for what must never be in
 
 The push needs only to READ the Gramps tree, so these scenarios call the addon's runner in this process with the real
 hfy_sync_tool.GrampsTree over the real database (the same code the Gramps tool runs), a sign-in made by the real PKCE login against the
-dev server, and a Keychain held in memory. Local edits are made through the Gramps API. STAND-IN: addon-pull-apply is a separate task, so
-where a scenario needs the pull's local apply of a website change it makes that edit in the tree itself and says so. Fictional data only.
+dev server, and a Keychain held in memory. Local edits are made through the Gramps API. STAND-IN: the pull has its own scenarios (scenario_pull.py), so
+where a scenario here needs the pull's local apply of a website change it makes that edit in the tree itself and says so. Fictional data only.
 """
 import copy
 import json
@@ -141,16 +141,6 @@ class PushCase(C.E2ECase):
         self.assertIn(doc["result"], ("ok", "partial"), doc)
         self.assertEqual(doc["exit_code"] in (0, 20), True, doc)
         return doc
-
-    def edit(self, fn):
-        """Opens the tree with the Gramps API, calls fn(db, DbTxn) and closes it."""
-        DbTxn, make_database = gramps()
-        db = make_database("sqlite")
-        db.load(self.dir)
-        try:
-            return fn(db, DbTxn)
-        finally:
-            db.close()
 
     def heads(self):
         return E.snapshot_heads(self.reader)
@@ -317,11 +307,11 @@ class Privacy(PushCase):
         heads_before = self.heads()
         doc = self.push()                                                    # "pull, then push": the push meets the changed type
         self.assertEqual((doc["result"], doc["exit_code"], doc["next_action"]), ("partial", 20, "resolve_conflicts"))
-        self.assertEqual([(r[0], r[1]) for r in self.rows("SELECT handle, kind FROM conflicts WHERE state = 'open'") if r[0] == birth["handle"]],
+        self.assertEqual([(r[0], r[1]) for r in self.rows("SELECT handle, kind FROM conflicts WHERE state = 'parked'") if r[0] == birth["handle"]],
                          [(birth["handle"], "composite")])
         self.log_has_none_of(['"dateval":[%d,%d,%d' % tuple(full[:3])] + birth_needles(self.data), since=mark)
         self.assertEqual(self.server.grep('"dateval":[%d,%d,' % tuple(full[:2])), [])
-        for _ in range(3):                                                   # the conflict stays open, nothing moves
+        for _ in range(3):                                                   # the conflict stays parked, nothing moves
             again = self.push()
             self.assertEqual((again["result"], again["exit_code"], again["next_action"]), ("partial", 20, "resolve_conflicts"))
         self.assertEqual({k: v["version"] for k, v in self.heads().items() if k != birth["handle"]},

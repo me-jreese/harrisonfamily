@@ -21,6 +21,7 @@ import re
 from .. import merge as M
 from .. import projection as PR
 from . import consts
+from . import plan as pullplan
 
 # The Gramps ID prefixes of the block the website mints from (api/src/sync/validator.js BLOCK_PREFIX); the handshake's `id_block` wins.
 DEFAULT_BLOCK_PREFIX = {"Person": "I", "Family": "F", "Event": "E", "Place": "P", "Media": "O", "Note": "N", "Source": "S", "Citation": "C",
@@ -109,7 +110,7 @@ def _hold(cls, handle, rule, path="", detail=None):
 
 
 def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes=False, step_up=False, sticky=(), pins=None, unreadable=(),
-               policy=None, max_obj_bytes=None, files=None, members=None):
+               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None):
     """The plan.
 
     local        {handle: raw Gramps object}
@@ -121,7 +122,9 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     mode         "cli" (conflicts are parked, deletes need allow_deletes, a merge is parked) or "gui"
     allow_deletes, yes  the CLI flag; in the GUI `yes` is the confirmation
     step_up      the token carries a fresh step-up (amr mfa within 300 s)
-    sticky       the sidecar's ``birthlike_sticky`` handles; pins {handle: [{"path", "base_json"}]} the open conflicts
+    sticky       the sidecar's ``birthlike_sticky`` handles; pins {handle: [{"path", "base_json"}]} the open and parked conflicts
+    expunge_holds  {handle: [pointer]} the values a website scrub removed (the pull's ``expunge.notice`` holds, ``sidecar.load_expunge_holds``):
+                 an update never puts the desktop's value back at those pointers, and is not sent when they were all that differed
     """
     plan = Plan()
     meta = meta or {}
@@ -181,6 +184,12 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
                 # desktop last agreed on), so the next run takes the website's edit and finds the desktop's own edit converged.
                 plan.pull_pending.append({"class": cls, "handle": handle, "gramps_id": r.gramps_id})
                 plan.keep_base.add(handle)
+            held = (expunge_holds or {}).get(handle)
+            cloud_obj = None if cloud.get(handle, {}).get("deleted") else cloud.get(handle, {}).get("obj")
+            if held and op.get("obj") is not None and cloud_obj is not None:
+                op = dict(op, obj=pullplan.hold_back(op["obj"], cloud_obj, held))
+                if op["obj"] == cloud_obj:
+                    continue  # the scrubbed values were all that differed: nothing to send, and the base row already is the website's copy
             guard = _guard(op, local.get(handle), base.get(handle), ranges, retired, max_obj_bytes)
             if guard == "renumber_blocked":
                 plan.blocked.append(_hold(cls, handle, guard, "/gramps_id"))

@@ -171,9 +171,9 @@ def download(client, url):
 # ------------------------------------------------------------------------------------------------------------------- run
 
 
-def run(tree, mode, options, tp, side, config, log, outcome, services, run_id, now=None):
+def run(tree, mode, options, tp, side, config, log, outcome, services, run_id, now=None, environ=None):
     """Runs one push. Returns (result, exit_code, next_action, error); fills outcome["counts"]. Never writes status.json."""
-    runner_ = _Push(tree, mode, options, tp, side, config, log, outcome, services, run_id, now or status.utc_now)
+    runner_ = _Push(tree, mode, options, tp, side, config, log, outcome, services, run_id, now or status.utc_now, environ)
     try:
         return runner_.run()
     except PushStop as stop:
@@ -184,8 +184,9 @@ def run(tree, mode, options, tp, side, config, log, outcome, services, run_id, n
 
 
 class _Push:
-    def __init__(self, tree, mode, options, tp, side, config, log, outcome, services, run_id, now):
+    def __init__(self, tree, mode, options, tp, side, config, log, outcome, services, run_id, now, environ=None):
         self.tree, self.mode, self.options, self.tp, self.side = tree, mode, options, tp, side
+        self.environ = environ
         self.config, self.log, self.outcome, self.services, self.run_id, self.now = config or {}, log, outcome, services, run_id, now
         self.dry = bool(options.dry_run)
         self.client = None
@@ -214,7 +215,7 @@ class _Push:
             server = transport.check_server(server)
         except ValueError:
             raise PushStop(refused("config_unreadable", consts.EXIT_CONFIG, "none", "The server in config.json is not an https URL. Fix or remove it."))
-        kc = self.services.get("keychain") or keychain.Keychain(account=keychain.account_for(server))
+        kc = self.services.get("keychain") or keychain.open_for(server, self.environ)  # the file seam under HFY_SYNC_TEST=1, as the pull uses it
         http = self.services.get("http")
         tokens = oauth.TokenManager(server, kc, http=http)
         versions = transport.Versions(self.tree.gramps_version, self.tree.schema_version)
@@ -244,7 +245,8 @@ class _Push:
         step_up = step_up_fresh(token)
         self.plan = pushplan.build_plan(
             local, base, snap.heads, meta=self.meta, members=self._members(), mode=self.mode, allow_deletes=self.options.allow_deletes, yes=self.options.yes,
-            step_up=step_up, sticky=sticky, pins=pushstate.pins(con), max_obj_bytes=self.limits.get("max_obj_bytes"))
+            step_up=step_up, sticky=sticky, pins=pushstate.pins(con), max_obj_bytes=self.limits.get("max_obj_bytes"),
+            files=self.tree.media_files(), expunge_holds=sidecar.load_expunge_holds(con))
         plan = self.plan
         self.log.line("push: plan %s ops=%d destructive=%d holds=%d blocked=%d conflicts=%d pull_pending=%d" % (
             snap.seq, len(plan.ops), len(plan.destructive), len(plan.holds), len(plan.blocked), len(plan.conflicts), len(plan.pull_pending)))
@@ -253,7 +255,7 @@ class _Push:
 
         # Real run: what the plan decided about the sidecar goes in first (all of it can be derived again), then the pushes.
         now = self.now()
-        pushstate.record_conflicts(con, plan.conflicts, plan.closed, now)
+        pushstate.record_conflicts(con, plan.conflicts, plan.closed, now, state="parked" if self.mode == "cli" else "open")
         pushstate.set_json(con, "birthlike_sticky", sorted(plan.sticky))
         self._advance_base(snap, base)
         self.session_id = pushstate.get_text(con, "open_session")

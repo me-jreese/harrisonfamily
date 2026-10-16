@@ -105,3 +105,47 @@ class Keychain:
         proc = self._call(["delete-generic-password", "-s", self.service, "-a", self.account])
         if proc.returncode not in (0, ITEM_NOT_FOUND):
             raise KeychainError("The Keychain item could not be removed (security exit %d)." % proc.returncode, locked=self._looks_locked(proc))
+
+
+class FileKeychain:
+    """A test seam: the refresh token in a file instead of the login Keychain (owner-only, one line).
+
+    Used only when `HFY_SYNC_TEST=1` and `HFY_SYNC_KEYCHAIN_FILE` names a file (see `open_for`), so the end-to-end scenarios can sign
+    a Gramps subprocess in to the local dev server without touching the real Keychain. Outside a test nothing can select it.
+    """
+
+    def __init__(self, path):
+        self.path = path
+
+    def store(self, token, recreate=False):
+        if not isinstance(token, str) or not _SAFE.match(token):
+            raise KeychainError("The token is not in a form the Keychain command accepts.")
+        directory = os.path.dirname(os.path.abspath(self.path))
+        tmp = os.path.join(directory, ".%s.tmp" % os.path.basename(self.path))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+        os.replace(tmp, self.path)
+
+    def read(self):
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                return fh.read().strip() or None
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise KeychainError("The test keychain file could not be read (%s)." % type(exc).__name__)
+
+    def delete(self):
+        try:
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+
+
+def open_for(server, environ=None):
+    """The Keychain for `server`: the real one, or the file seam under `HFY_SYNC_TEST=1`."""
+    environ = os.environ if environ is None else environ
+    if environ.get("HFY_SYNC_TEST") == "1" and environ.get("HFY_SYNC_KEYCHAIN_FILE"):
+        return FileKeychain(environ["HFY_SYNC_KEYCHAIN_FILE"])
+    return Keychain(account=account_for(server))

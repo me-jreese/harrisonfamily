@@ -8489,8 +8489,7 @@
   ],
   "depends_on": [
    "tag-edit-e2e",
-   "edit-flag-flip",
-   "privacy-terms-publish"
+   "edit-flag-flip"
   ],
   "acceptance_criteria": [
    "The D-11 audit evidence for photoTagEdit (16 px inputs, 44 px targets, one control height per row, no horizontal scroll at 375, axe clean, installed iPhone PWA) is linked, with screenshots under the task asset prefix (HFY-R16), and io's UAT approval is recorded verbatim.",
@@ -8543,8 +8542,7 @@
    "cutover-live-render",
    "q2-01-approvers",
    "log-hygiene-suite",
-   "site-csp-headers",
-   "privacy-terms-publish"
+   "site-csp-headers"
   ],
   "acceptance_criteria": [
    "config/admins.json still holds the moderators io named (Q2-01), re-verified through GET /api/me.",
@@ -9497,5 +9495,99 @@
   "effort": "medium",
   "notes": "Split from viz-v3-journeys (ADR 9.2, 1-2 d; ADR 4.6 for the gated storage). docs/how-to/refresh-the-family-data.md step 2b gains the --chapters flag only once io approves a list. Components comp-hfy-eleventy-site and comp-hfy-graph. Rewire: viz-v3-flip depends on viz-v3-journeys-chapters instead of viz-v3-journeys.",
   "origin": "viz (re-cut by the 2026-10-13 intake)"
+ },
+ {
+  "key": "surf-links-followups",
+  "repo": "harrisonfamily",
+  "model": "sonnet",
+  "effort": "medium",
+  "title": "Admin clear-only control for profile links (surfaces 6.3) and the desktop-only rule for non-link URL types (editing.md 3.2)",
+  "acceptance_criteria": [
+   "UI admin clear-only control on the person links section (hfy-admin only, confirmation, PUT null, profileLinks, tokens, 44 px, Playwright)",
+   "API: web edits refuse non-link Gramps Url types (editing.md 3.2), and e-mail stays refused; structured error codes in the catalog; unit tests; R-18 guard and feature gate intact",
+   "Docs plus the merge train; closure is the deploy run green, and the API ships dark (P2-R37)"
+  ],
+  "notes": "Ruling P2-R52. API: HFY-TSK-193 (admin clear returns 200, admin non-null set returns 403). Seven link kinds from surf-links-api / shared/profile-links.mjs.",
+  "depends_on": [
+   "surf-links-ui",
+   "surf-links-api",
+   "edit-field-policy"
+  ],
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge"
+ },
+ {
+  "key": "proposal-amend-intent-fix",
+  "repo": "harrisonfamily",
+  "model": "sonnet",
+  "effort": "medium",
+  "title": "Admin amend at decision resets a relationship proposal's intent and read_versions",
+  "acceptance_criteria": [
+   "effectiveProposal recomputes intent and read_versions on an admin amend; a reproduction test (a member's spouse proposal amended at approval) passes; api npm test is green",
+   "Closure: the deploy run is green and it ships dark in the next change set"
+  ],
+  "notes": "From the HFY-TSK-210 review (probe-approve). See proposal-decision.js effectiveProposal and proposals.js newProposal intent/read_versions.",
+  "depends_on": [
+   "proposal-decision-api",
+   "relationship-api"
+  ],
+  "deploy_target": "app-stack-change-set",
+  "release_group": "RG-5"
+ },
+ {
+  "key": "surf-access-followups",
+  "repo": "harrisonfamily",
+  "model": "sonnet",
+  "effort": "medium",
+  "title": "Revoke by ALLOW# entry; requester mail through the Join SES identity (P2-R60/R61)",
+  "acceptance_criteria": [
+   "Revoke by ALLOW# (sub or gramps_id) works after the 30-day request TTL; step-up; audit; tests",
+   "Requester mail via the Join identity and hfy-access-request config set; tests; IAM; docs",
+   "Closure: deploy run green; ships dark in the next change set"
+  ],
+  "notes": "From HFY-TSK-141's open items. Rulings P2-R60 and P2-R61. Keep ACCESSREQ# retention at 30 days. Q2-09 (approved default): access-request mail uses its own config set and MAIL FROM subdomain.",
+  "depends_on": [
+   "surf-access-admin-api"
+  ],
+  "deploy_target": "app-stack-change-set",
+  "release_group": "RG-5"
+ },
+ {
+  "key": "surf-access-admin-ui-revoke",
+  "repo": "harrisonfamily",
+  "model": "sonnet",
+  "effort": "medium",
+  "title": "/me/requests/ revoke uses the ALLOW# route; step-up keeps preview edits",
+  "acceptance_criteria": [
+   "Revoke calls POST /api/allow-grants/revoke; copy for each error; Playwright; axe",
+   "Step-up keeps preview edits (sessionStorage); Playwright",
+   "Islands merge train; deploy green"
+  ],
+  "notes": "From HFY-TSK-264 (TODO HFY-TSK-331 in islands/src/islands/access-requests.jsx). Route shape: see api/src/access-requests.js on main (HFY-TSK-331). Ruling P2-R60.",
+  "depends_on": [
+   "surf-access-admin-ui",
+   "surf-access-followups"
+  ],
+  "deploy_target": "site-ci",
+  "release_group": "ci-on-merge"
+ },
+ {
+  "key": "id-policy-wiring",
+  "repo": "harrisonfamily",
+  "model": "sonnet",
+  "effort": "medium",
+  "title": "Wire HFY_ID_POLICY=mint on hfy-api (Q2-03 answered)",
+  "acceptance_criteria": [
+   "app-stack.yaml sets HFY_ID_POLICY (IdPolicy param, default mint); test_app_stack asserts; docs",
+   "api test: mint resolves; graduation no longer id_policy_not_mint with flag on",
+   "Closure: deploy green; next change set"
+  ],
+  "notes": "Gate HFY-TSK-102 closed (io default: mint, 8000-8999). Closes HFY-TSK-246 AC3's wiring half.",
+  "depends_on": [
+   "store-id-policy",
+   "hfy-graduate-api"
+  ],
+  "deploy_target": "app-stack-change-set",
+  "release_group": "RG-5"
  }
 ]
