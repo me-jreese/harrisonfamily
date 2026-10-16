@@ -724,5 +724,68 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(rig.run({"source": "schedule"})["reconcile_mismatches"], 0, "the base-table read finds it intact")
 
 
+class Trigger:
+    def __init__(self, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def invoke(self, payload):
+        self.calls.append(payload)
+        if self.fail:
+            raise RuntimeError("secret detail that must not be logged")
+
+
+class GraphTrigger(unittest.TestCase):
+    """HFY-TSK-274: a successful live pass starts hfy-graph-render, asynchronously, with the seq it rendered."""
+
+    def test_a_live_pass_triggers_the_graph_render_once_with_its_seq(self):
+        trig = Trigger()
+        rig = sup.Rig("live", graph_trigger=trig)
+        out = rig.run()
+        self.assertEqual(trig.calls, [{"source": "render", "seq": out["seq"]}])
+        self.assertEqual(rig.run({"source": "stream"})["reason"], "current")
+        self.assertEqual(len(trig.calls), 1, "a stream pass with nothing new triggers nothing")
+        edit(rig, "Note", handle_of("N0001"), set_note_text("A new sentence."))
+        out = rig.run()
+        self.assertEqual(trig.calls[-1], {"source": "render", "seq": out["seq"]})
+        self.assertEqual(len(trig.calls), 2)
+
+    def test_a_schedule_tick_on_a_current_site_retriggers_the_graph(self):
+        trig = Trigger()
+        rig = sup.Rig("live", graph_trigger=trig)
+        out = rig.run()
+        self.assertEqual(len(trig.calls), 1)
+        again = rig.run({"source": "schedule"})
+        self.assertEqual(again["reason"], "current")
+        self.assertEqual(trig.calls[-1], {"source": "render", "seq": out["seq"]})
+        self.assertEqual(len(trig.calls), 2, "the idempotent graph function picks up a hide that moved no seq")
+
+    def test_shadow_and_a_held_pass_never_trigger_it(self):
+        trig = Trigger()
+        sup.Rig("shadow", graph_trigger=trig).run()
+        self.assertEqual(trig.calls, [])
+        rig = sup.Rig("live", graph_trigger=trig)
+        rig.run()
+        trig.calls.clear()
+        rig.table.items[("SYNC#HEAD", "META")]["open_session"] = "s1"
+        rig.table.items[("SYNC#SESSION#s1", "META")] = {"state": "open", "opened_at": rig.clock().strftime("%Y-%m-%dT%H:%M:%SZ")}
+        edit(rig, "Note", handle_of("N0001"), set_note_text("Held."))
+        self.assertEqual(rig.run()["reason"], "push_session_open")
+        self.assertEqual(trig.calls, [])
+
+    def test_a_failed_invoke_does_not_fail_the_pass_but_raises_the_alarm(self):
+        trig = Trigger(fail=True)
+        rig = sup.Rig("live", graph_trigger=trig)
+        out = rig.run()
+        self.assertEqual(out["status"], "rendered")
+        self.assertEqual(rig.state()["rendered_seq"], rig.table.head_seq(), "the cursor moved")
+        self.assertEqual(rig.metrics.count("RenderError"), 1)
+
+    def test_no_trigger_configured_is_a_plain_pass(self):
+        rig = sup.Rig("live")
+        self.assertEqual(rig.run()["status"], "rendered")
+        self.assertEqual(rig.metrics.count("RenderError"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

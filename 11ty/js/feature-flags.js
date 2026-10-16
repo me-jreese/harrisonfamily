@@ -24,11 +24,11 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "5d49bb81",
-        "css": "9e0815ba"
+        "js": "3b50d6fe",
+        "css": "4cd750ae"
       },
       "family": {
-        "js": "fee06306",
+        "js": "d0d9afc0",
         "css": "e52fd206"
       },
       "family-entry": {

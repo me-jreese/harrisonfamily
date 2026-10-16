@@ -272,7 +272,7 @@ def fixture_store(table=None):
 class Rig:
     """A store, buckets, metrics and an engine for one mode."""
 
-    def __init__(self, mode="live", store=None, workers=1, overlay=None, text_gate=None, remaining_ms=None, clock=None):
+    def __init__(self, mode="live", store=None, workers=1, overlay=None, text_gate=None, remaining_ms=None, clock=None, graph_trigger=None):
         self.store = store or fixture_store()
         self.table = self.store.table
         self.sync_store = {}
@@ -286,6 +286,7 @@ class Rig:
         self.overlay = overlay
         self.text_gate = text_gate
         self.remaining_ms = remaining_ms
+        self.graph_trigger = graph_trigger
 
     def engine(self, mode=None):
         kwargs = {}
@@ -293,7 +294,7 @@ class Rig:
             kwargs["remaining_ms"] = self.remaining_ms
         return engine.Engine(engine.Deps(
             table=self.table, sync_root=self.sync, live_bucket=self.site, shadow_bucket=self.shadow, metrics=self.metrics,
-            mode=mode or self.mode, clock=self.clock, overlay=self.overlay, text_gate=self.text_gate, workers=self.workers, **kwargs,
+            mode=mode or self.mode, clock=self.clock, overlay=self.overlay, text_gate=self.text_gate, workers=self.workers, graph_trigger=self.graph_trigger, **kwargs,
         ))
 
     def run(self, event=None, mode=None):

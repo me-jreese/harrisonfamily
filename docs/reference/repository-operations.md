@@ -607,6 +607,10 @@ No workflow runs any of these. For the order to run them in, see [run the tests]
 | MCP token smoke | bash + Node (`jose`) | `MCP_TOKEN=<access-token> scripts/mcp/token-smoke.sh` | Live auth edge | `npm ci` in `auth/`; a valid access token | Console only |
 | Site bucket CORS | bash + `curl` | `scripts/infra/check-site-bucket-cors.sh` | Live: the site bucket's S3 endpoint, by unauthenticated preflights ([details](#check-site-bucket-corssh)) | `curl`, `jq`; no credentials | Console only. `post-deploy-checks.yml` runs it after every successful deploy run. |
 
+### Editing end to end
+
+[`api/test/edit-e2e.test.js`](../../api/test/edit-e2e.test.js) (in `cd api && npm test`) and [`islands/tests/edit-e2e.spec.mjs`](../../islands/tests/edit-e2e.spec.mjs) run five editing scenarios against the real API handler over the DynamoDB fake, [`api/test/edit-e2e-world.js`](../../api/test/edit-e2e-world.js): the browser spec routes the pages' `/api` calls to that handler ([`islands/tests/edit-e2e-bridge.mjs`](../../islands/tests/edit-e2e-bridge.mjs)), so it needs `api/` installed as well as `islands/`. [`islands/tests/edit-d11-audit.spec.mjs`](../../islands/tests/edit-d11-audit.spec.mjs) measures the D-11 checklist on the same stack; see [Editing: the D-11 audit](editing-d11-audit.md).
+
 ### Login-flow environment
 
 [`tests/login-flow/`](../../tests/login-flow/) has no lockfile, so it installs with `npm install`. [`playwright.config.ts`](../../tests/login-flow/playwright.config.ts) sets a 90 s test timeout and a 10 s `expect` timeout, an HTML reporter, video on failure and trace on first retry. No retries are configured, so traces are recorded only when a run passes `--retries`.

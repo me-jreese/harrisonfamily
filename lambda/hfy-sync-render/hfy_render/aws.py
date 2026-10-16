@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
@@ -236,3 +237,15 @@ class CloudWatchMetrics:
         except Exception as exc:
             if self._log is not None:
                 self._log.warning("metric %s not emitted: %s", name, errors.describe(exc)[0])
+
+
+class LambdaInvoker:
+    """``invoke(payload)`` starts another function asynchronously (``InvocationType=Event``): the call returns when Lambda has queued the event,
+    not when the function has run. Used for hfy-graph-render after a live pass; a failure raises, and the caller decides what it costs."""
+
+    def __init__(self, client: Any, function_name: str) -> None:
+        self._c = client
+        self._f = function_name
+
+    def invoke(self, payload: Dict[str, Any]) -> None:
+        self._c.invoke(FunctionName=self._f, InvocationType="Event", Payload=json.dumps(payload, sort_keys=True).encode("utf-8"))

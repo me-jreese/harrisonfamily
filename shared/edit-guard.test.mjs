@@ -27,3 +27,14 @@ test("every finding is {opId, obj, path, pointer, code, kind, span} with a point
   assert.deepEqual(Object.keys(f).sort(), ["code", "kind", "obj", "opId", "path", "pointer", "span"]);
   assert.equal(f.pointer, "/Note:n1/text/string");
 });
+
+test("handle fields that hold a long digit run are identifiers, never a phone number", () => {
+  const long = "1234567890123456789012345678";
+  const guard = make({ dob: false });
+  const objects = {
+    [`Family:${long}`]: { _class: "Family", handle: long, father_handle: long, mother_handle: long, child_ref_list: [{ _class: "ChildRef", ref: long }], note_list: [long] },
+    [`Event:e1`]: { _class: "Event", handle: "e1", place: long, citation_list: [long] },
+    [`Citation:c1`]: { _class: "Citation", handle: "c1", source_handle: long },
+  };
+  assert.deepEqual(guard.checkObjects(objects), []);
+});

@@ -32,7 +32,7 @@ Before you start:
 
 ### Deny first
 
-The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/apply-data-write-guard.sh). It denies `s3:PutObject` and `s3:DeleteObject` on `person/*.json`, `family/*`, `event/*`, `note/*`, `place/*` and `media/*.json`, and `s3:DeleteObject` on `media/*`, for every principal except `hfy-sync-render`, `hfy-graph-render`, `hfy-data-breakglass` and, for media binaries only, `hfy-api`. `hfy-api` is not an exception for the `*.json` keys. `person/index.html`, the person page shell, stays outside the deny, so the CI deploy keeps working: the deploy role still puts `person/index.html` and cannot put `person/<id>.json`.
+The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/apply-data-write-guard.sh). It denies `s3:PutObject`, `s3:DeleteObject` and `s3:DeleteObjectVersion` on `person/*.json`, `family/*`, `event/*`, `note/*`, `place/*` and `media/*.json`, and `s3:DeleteObject` and `s3:DeleteObjectVersion` on `media/*`, for every principal except `hfy-sync-render`, `hfy-graph-render`, `hfy-data-breakglass` and, for media binaries only, `hfy-api`. `hfy-api` is not an exception for the `*.json` keys. `person/index.html`, the person page shell, stays outside the deny, so the CI deploy keeps working: the deploy role still puts `person/index.html` and cannot put `person/<id>.json`.
 
 1. Look first. This prints the merged policy and changes nothing:
 
@@ -211,6 +211,8 @@ Always pass both directories. Their defaults point at `<project>/workspace/harri
 The script logs `Generated tree_<gramps-id>.svg` for each person and ends with `Rendered <n> SVG tree(s).`. That count should equal the number of people. A Graphviz failure for one person logs an `[ERROR]` line and the run moves on, so a lower count means some trees are missing.
 
 ### 2b. Build the family graph
+
+> **After the cutover this step is not yours.** Once the renderer is `live` and the write guard is on, your role is denied `person/graph.json` and `media/faces/`: `hfy-graph-render` rebuilds them from the cloud store after each live pass ([Deploy the graph renderer](deploy-the-graph-renderer.md)). Use this step before the cutover, and to compare a build from a Gramps copy with the cloud graph.
 
 The graph is the one static file, `person/graph.json`, that the family-tree page will read, plus the face crops it shows. Nothing reads it yet, so publishing it changes nothing a member sees. The builder is in the checkout, not in `<project>/scripts/`, and it runs after steps 1 and 2 because it crops faces from the media files that step 1 staged. Run it from `<project>` with a fresh copy of the Gramps tree (see [Before you start](#before-you-start)):
 

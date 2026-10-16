@@ -43,7 +43,7 @@ Parameters:
   SyncApiEnabled: { Type: String, Default: "0", AllowedValues: ["0", "1"], Description: "Desktop-only stop for /api/sync/* (env SYNC_API_ENABLED). 0 answers 404 not_enabled" }
   RenderMode: { Type: String, Default: "off", AllowedValues: ["off", "shadow", "live"], Description: "hfy-sync-render mode (env RENDER_MODE). off is the primary rollback" }
   RenderCodeKey: { Type: String, Default: lambda/hfy-sync-render-placeholder.zip, Description: "Key of the hfy-sync-render package in CodeBucket. The placeholder is a no-op under RENDER_MODE=off" }
-  GraphRenderCodeKey: { Type: String, Default: lambda/hfy-graph-render-placeholder.zip, Description: "Key of the hfy-graph-render package in CodeBucket. The placeholder is a no-op that nothing invokes (review DL-34)" }
+  GraphRenderCodeKey: { Type: String, Default: lambda/hfy-graph-render-placeholder.zip, Description: "Key of the hfy-graph-render package in CodeBucket. The placeholder is a no-op (review DL-34); hfy-sync-render starts the function only after a live pass, so nothing runs it before the real package ships (HFY-TSK-274)" }
   HfyEditing: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Editing routes switch (env HFY_EDITING). While off they answer 404 not_found" }
   AccessRequests: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Access-request intake kill switch on the auth edge (env ACCESS_REQUESTS)" }
   FirstPassword: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "First password through the forgot-password code for allowlisted members with no Cognito user (env FIRST_PASSWORD; SURF-D18, io Q2-12). While off, POST /auth/password/forgot creates no Cognito user" }
@@ -644,6 +644,11 @@ Resources:
                 Action: cloudwatch:PutMetricData
                 Resource: "*"
                 Condition: { StringEquals: { "cloudwatch:namespace": HFY/SyncRender } }
+              # HFY-TSK-274: the one function a live pass starts. Built from the name, not GetAtt, so the role does not depend on the function.
+              - Sid: GraphInvoke
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${GraphRenderFunctionName}
 
   # No-op under RENDER_MODE=off until render-lambda ships a real package under the same key parameter.
   RenderFunction:
@@ -666,6 +671,8 @@ Resources:
           SITE_BUCKET: !Ref MediaBucket
           RENDER_MODE: !Ref RenderMode
           METRICS_NAMESPACE: HFY/SyncRender
+          # HFY-TSK-274: a successful live pass starts hfy-graph-render asynchronously (shadow and off never do).
+          GRAPH_RENDER_FUNCTION: !Ref GraphRenderFunctionName
 
   RenderStreamMapping:
     Type: AWS::Lambda::EventSourceMapping
@@ -773,8 +780,10 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
 
-  # Review DL-34: the graph renderer's function, role and code-key parameter land now (placeholder package, nothing invokes it) so the
-  # RG-6 change set that ships the real package is parameter-only.
+  # HFY-TSK-274 (viz-graph-cloud-source): hfy-graph-render regenerates person/graph.json and media/faces/ from the cloud store after each
+  # live render pass. The function, role and code-key parameter landed in the RG-3 change set with a no-op package (review DL-34); the RG-6
+  # change set swaps the package through GraphRenderCodeKey. The role is also an exception of the data-prefix write guard
+  # (scripts/infra/apply-data-write-guard.sh, role name hfy-graph-render-role).
   GraphRenderLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -798,7 +807,42 @@ Resources:
                 Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${GraphRenderFunctionName}:*
-              # Placeholder: logs only. viz-graph-cloud-source widens this (table read, photo reads, graph outputs) with the real package.
+              # The store view (SYNC#HEAD, SYNC#LOG, REC# heads, SYNC#SESSION#) and the MOD# overlay (the MODQ#open queue on GSI1): read only.
+              - Sid: TableRead
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query]
+                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+              # Its own marker (built_seq, last_error) and nothing else; REC# heads and the append-only SYNC#LOG are read-only to it.
+              - Sid: TableWrite
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt Table.Arn
+                Condition:
+                  ForAllValues:StringEquals: { "dynamodb:LeadingKeys": ["SYNC#GRAPH"] }
+              # The photo binaries it crops faces from (media/<handle><ext>); it never writes them.
+              - Sid: PhotoRead
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
+              # Its outputs: the graph and the face crops. Nothing else in the bucket is writable.
+              - Sid: GraphOutputs
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/graph.json
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/faces/*
+              - Sid: FacesList
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
+                Condition:
+                  StringLike: { "s3:prefix": ["media/faces/*"] }
+              # A failure raises the renderer's own RenderError alarm (same namespace and metric).
+              - Sid: Metrics
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition: { StringEquals: { "cloudwatch:namespace": HFY/SyncRender } }
 
   GraphRenderFunction:
     Type: AWS::Lambda::Function
@@ -807,7 +851,7 @@ Resources:
       FunctionName: !Ref GraphRenderFunctionName
       Runtime: nodejs22.x
       Architectures: [arm64]
-      MemorySize: 1024
+      MemorySize: 1536
       Timeout: 300
       ReservedConcurrentExecutions: 1
       Handler: src/index.handler
@@ -817,8 +861,27 @@ Resources:
         Variables:
           TABLE_NAME: !Ref TableName
           SITE_BUCKET: !Ref MediaBucket
+          METRICS_NAMESPACE: HFY/SyncRender
+          GRAPH_DEBOUNCE_SECONDS: "15"
+
+  # hfy-sync-render invokes it asynchronously. One retry is enough: every later live pass starts it again, and a failed attempt has
+  # already raised RenderError.
+  GraphRenderInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref GraphRenderFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 1
+      MaximumEventAgeInSeconds: 3600
 
   # Break-glass writer for the data prefixes once the bucket-policy deny is on (BRD2 11.4, PS-05, SI-15). io only, MFA required, one hour.
+  # It also lists and deletes object versions on those prefixes (HFY-TSK-204, D2-33). The data-prefix write guard
+  # (scripts/infra/apply-data-write-guard.sh) denies s3:PutObject, s3:DeleteObject and s3:DeleteObjectVersion on person/*.json, family/*, event/*,
+  # note/*, place/* and media/*.json, and s3:DeleteObject and s3:DeleteObjectVersion on media/* (the photos), to every principal but the renderers
+  # and this role (and, for media/* only, hfy-api). Once it is applied, io's usual administrator credentials cannot remove a noncurrent version
+  # there or a photo, so api/scripts/expunge.mjs makes its site-bucket calls with a session of this role (EXPUNGE_SITE_AWS_* in its environment)
+  # and its table and sync-bucket calls with the usual credentials in the same process. This role does not reach uploads/, the sync bucket
+  # (snapshots, render-shadow) or the table.
   BreakGlassRole:
     Type: AWS::IAM::Role
     Properties:
@@ -840,7 +903,7 @@ Resources:
             Statement:
               - Sid: DataPrefixes
                 Effect: Allow
-                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:GetObjectVersion, s3:DeleteObjectVersion]
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/family/*
@@ -850,11 +913,15 @@ Resources:
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
               - Sid: DataPrefixList
                 Effect: Allow
-                Action: s3:ListBucket
+                Action: [s3:ListBucket, s3:ListBucketVersions]
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
                 Condition:
                   StringLike:
                     "s3:prefix": ["person/*", "family/*", "event/*", "note/*", "place/*", "media/*"]
+              - Sid: VersioningStatus
+                Effect: Allow
+                Action: s3:GetBucketVersioning
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
 
 Outputs:
   FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }

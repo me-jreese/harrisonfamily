@@ -219,6 +219,29 @@ class MetricsAdapter(unittest.TestCase):
         stub.assert_no_pending_responses()
 
 
+@unittest.skipUnless(HAVE_BOTO, "boto3 is not installed")
+class LambdaInvokerAdapter(unittest.TestCase):
+    def test_invoke_is_asynchronous_and_carries_the_payload(self):
+        from hfy_render import aws
+
+        client = boto3.client("lambda", region_name="us-west-2", aws_access_key_id="x", aws_secret_access_key="y")
+        stub = Stubber(client)
+        stub.activate()
+        stub.add_response("invoke", {"StatusCode": 202}, {"FunctionName": "hfy-graph-render", "InvocationType": "Event", "Payload": b'{"seq": 7, "source": "render"}'})
+        aws.LambdaInvoker(client, "hfy-graph-render").invoke({"source": "render", "seq": 7})
+        stub.assert_no_pending_responses()
+
+    def test_a_failure_raises(self):
+        from hfy_render import aws
+
+        client = boto3.client("lambda", region_name="us-west-2", aws_access_key_id="x", aws_secret_access_key="y")
+        stub = Stubber(client)
+        stub.activate()
+        stub.add_client_error("invoke", service_error_code="TooManyRequestsException")
+        with self.assertRaises(Exception):
+            aws.LambdaInvoker(client, "hfy-graph-render").invoke({"seq": 1})
+
+
 STACK = os.path.join(sup.REPO, "infrastructure", "cloudformation", "app-stack.yaml")
 
 
@@ -250,7 +273,7 @@ class StackContract(unittest.TestCase):
         with open(os.path.join(sup.LAMBDA, "handler.py"), encoding="utf-8") as fh:
             code = fh.read()
         used = set(re.findall(r'env(?:iron)?(?:\.get\(|\[)"([A-Z_]+)"', code))
-        self.assertEqual(used, {"RENDER_MODE", "SYNC_BUCKET", "SITE_BUCKET", "TABLE_NAME", "METRICS_NAMESPACE"})
+        self.assertEqual(used, {"RENDER_MODE", "SYNC_BUCKET", "SITE_BUCKET", "TABLE_NAME", "METRICS_NAMESPACE", "GRAPH_RENDER_FUNCTION"})
         self.assertTrue(used <= env, used - env)
 
     def test_the_role_can_do_what_the_engine_does_and_no_more(self):
