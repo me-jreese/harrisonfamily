@@ -136,7 +136,8 @@ gramps/bin/hfy-sync rebase --yes --tree "<tree name>"    # re-base
 
 - the desktop and the website hold equal copies: **re-based** (the new base);
 - they differ: a **conflict**, parked on the command line and open in the window, with both sides left as they are;
-- the object exists only on the website, or only in this tree: left for the next `pull` (website only) or the later push (desktop only).
+- the object exists only on the website, or only in this tree: left for the next `pull` (website only) or the later push (desktop only);
+- the website holds it, and this tree **deleted it since the last sync**: counted apart ("deleted on the desktop but still on the website"). The rebase drops the old sync state, which is where the pending delete was remembered, so the next `pull` would bring the object back. Delete it on the website first if it should stay gone.
 
 It takes a verified backup first, closes the conflicts of the old tree, rejects unsent push entries addressed to it, and moves the sync state to the new tree. **It writes nothing to the Gramps tree and sends nothing to the website.** Exit `20` with `next_action: resolve_conflicts` means conflicts are open; `0` means every shared object agreed. Then run `hfy-sync pull`, which brings in the website-only objects through the usual preview. A second `rebase` finds nothing to do.
 

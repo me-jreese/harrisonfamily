@@ -16,7 +16,9 @@ against the new store without touching the tree and without sending anything:
 
 Nothing is written to the Gramps tree and nothing is sent to the website: the plan's local commits, deletes and push ops are
 counted for the summary and then dropped. The next `pull` brings the website-only objects in through the usual preview, and conflicts
-wait for a person (parked on the command line, open in the window). A dry run (the command line without --yes) stops after the
+wait for a person (parked on the command line, open in the window). An object this tree deleted since its last sync, which the new store
+still holds, is counted apart (`deleted_on_desktop`): the dropped base no longer remembers the delete, so the next pull would bring it back,
+and the person is told so before it happens. A dry run (the command line without --yes) stops after the
 classification and changes nothing, the sidecar included. Counts only in status.json and the run log; no object content anywhere.
 """
 import json
@@ -28,13 +30,23 @@ from . import plan as plan_mod
 SETTLED = ("converged", "unchanged")
 
 
-def _summary(plan):
-    """Counts of what the classification found. `cloud_only` and `desktop_only` are what the next pull and push will handle."""
+def _deleted_on_desktop(plan, base, local):
+    """Handles this tree deleted since its last sync (the old base holds them, the tree no longer does) that the new store still holds live.
+
+    The rebase drops the old base, so without a base the next pull would see each of these as an object only the website has and bring
+    it back. Naming them lets the person decide (delete them again on the website) instead of losing the pending delete unseen."""
+    return sorted(h for h, b in base.items() if not b["deleted"] and h not in local and h in plan.results and plan.results[h].action == "create_local")
+
+
+def _summary(plan, base=None, local=None):
+    """Counts of what the classification found. `cloud_only` and `desktop_only` are what the next pull and push will handle;
+    `deleted_on_desktop` are the website-only objects that this tree had deleted since its last sync (they are not in `cloud_only`)."""
+    gone = set(_deleted_on_desktop(plan, base or {}, local or {}))
     rebased = [h for h, r in plan.results.items() if r.action in SETTLED]
-    cloud_only = [h for h, r in plan.results.items() if r.action == "create_local"]
+    cloud_only = [h for h, r in plan.results.items() if r.action == "create_local" and h not in gone]
     desktop_only = [o for o in plan.push_ops if o.get("op") in ("create", "update")]
     return {"rebased": len(rebased), "conflicts": len({c.get("handle") for c in plan.conflicts}), "cloud_only": len(cloud_only),
-            "desktop_only": len(desktop_only)}
+            "desktop_only": len(desktop_only), "deleted_on_desktop": len(gone)}
 
 
 def run(tree, mode, options, tp, log, config, side, outcome, services, run_id, environ):
@@ -90,8 +102,9 @@ def _run(ctx, dry):
         local, {}, snap.heads, pins={}, sticky=set(sidecar.meta_json(side, "birthlike_sticky", [])),
         released=set(sidecar.meta_json(side, "released", [])), mode=ctx.mode, allow_deletes=False, files=tree.media_files(), pulled={},
         expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy)
-    summary = _summary(plan)
-    log.line("classified rebased=%(rebased)d conflicts=%(conflicts)d cloud_only=%(cloud_only)d desktop_only=%(desktop_only)d" % summary)
+    summary = _summary(plan, sidecar.load_base(side), local)
+    log.line("classified rebased=%(rebased)d conflicts=%(conflicts)d cloud_only=%(cloud_only)d desktop_only=%(desktop_only)d "
+             "deleted_on_desktop=%(deleted_on_desktop)d" % summary)
     ctx.outcome["counts"] = dict(status.zero_counts(), conflicts_open=len(plan.conflicts), rebase=dict(summary, needed=True))
     if dry:
         log.line("rebase: dry run; nothing changed")

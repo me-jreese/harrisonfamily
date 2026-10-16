@@ -11,7 +11,7 @@ import { ORIGINS, headKey, seqKey } from "../src/sync/store.js";
 import { canonicalJson } from "../src/shared/canonical.mjs";
 import { SYNC_PREFIXES, checkLog, foldLog, isSyncPartition } from "../src/sync/refold.js";
 import { AdminError, HELP, parseArgs, run } from "../scripts/sync-admin.mjs";
-import { RecoveryError, chunkOps, parseToSeq } from "../scripts/sync-recovery.mjs";
+import { RecoveryError, chunkLog, chunkOps, parseToSeq } from "../scripts/sync-recovery.mjs";
 
 const T = "hfy-app";
 const SIDE = "hfy-app-pitr-test";
@@ -65,6 +65,7 @@ function addOutsiders(ddb) {
     { PK: "CHAT#room-1", SK: "M#1", entity: "chat", text: "Synthetic chat" },
     { PK: "MOD#Person#I0002", SK: "META", entity: "mod", hidden: true },
     { PK: "RSUB#I0001", SK: "u1", entity: "rsub" },
+    { PK: "RECFAN#000000000016", SK: "person:I0001", entity: "recfan", done: true }, // a notification claim: outside the sync partitions, so a copy-back leaves it
   ];
   for (const i of items) ddb.rows.set(`${i.PK}\u0000${i.SK}`, i);
   return items.length;
@@ -358,6 +359,49 @@ describe("rebuild-heads (AC2)", () => {
     expect(w.text()).toMatch(/plan: nothing to change/);
   });
 
+  it("an object a privacy erasure expunged is left as it is by a rollback: no live entry without text is ever appended", async () => {
+    const w = world();
+    await history(w);
+    await w.batch([create(person(6))]); // seq 16
+    await w.batch([create(person(7))]); // seq 17
+    await w.batch([del(person(6), 1, { reason: "cleanup" })]); // seq 18: [expunged create, delete] for object 6
+    await w.batch([update({ ...person(7), gender: 0 }, 1)]); // seq 19: object 7 changes after its create (seq 17) is expunged
+    for (const seq of [16, 17]) Object.assign(w.ddb.rows.get(`SYNC#LOG\u0000${seqKey(seq)}`), { expunged: true, obj_json: null, hash: null });
+    const dry = await admin(w, ["rebuild-heads", "--to-seq", "16", "--dry-run"]);
+    expect(dry.plan.skipped).toEqual([`Person#${h(6)}`]); // the target entry is expunged and the tail is a delete: nothing can be restored
+    expect(dry.plan.rollback.some((e) => e.handle === h(6))).toBe(false);
+    expect(dry.plan.rollback.every((e) => typeof e.obj_json === "string" || e.op === "delete")).toBe(true);
+    expect(w.text()).toMatch(/expunged: left as is/);
+    const dry2 = await admin(w, ["rebuild-heads", "--to-seq", "17", "--dry-run"]);
+    expect(dry2.plan.skipped).toEqual([`Person#${h(6)}`, `Person#${h(7)}`]); // object 7: expunged at seq 17 but updated at seq 19, so it cannot be restored either
+    expect(dry2.plan.rollback.some((e) => e.handle === h(7))).toBe(false);
+    for (const to of ["16", "12"]) {
+      await pause(w);
+      await admin(w, ["rebuild-heads", "--to-seq", to, "--apply"]);
+      const log = w.ddb.all().filter((i) => i.PK === "SYNC#LOG").sort((a, b) => a.seq - b.seq);
+      expect(checkLog(log, w.row("SYNC#HEAD").seq)).toEqual({ ok: true, problems: [] });
+      expect(log.filter((e) => (e.op === "create" || e.op === "update") && e.expunged !== true && e.obj_json == null)).toEqual([]);
+      expect((await admin(w, ["rebuild-heads", "--to-seq", "head", "--dry-run"])).plan.writes).toBe(0);
+      await admin(w, ["resume", "--all", "--apply"]);
+    }
+  });
+
+  it("a Media head rolled back to different text keeps its newest blob, and the plan says to check it", async () => {
+    const w = world();
+    await history(w);
+    const m = media(2);
+    await w.batch([create(m, { blob: BLOB })]); // seq 16
+    await w.batch([update({ ...m, path: "b.jpg", change: 2 }, 1, { blob: { ...BLOB, sha256: "c".repeat(64), size: 99 } })]); // seq 17: new text and a new blob
+    const dry = await admin(w, ["rebuild-heads", "--to-seq", "16", "--dry-run"]);
+    expect(dry.plan.media).toEqual([`Media#${h(4002)}`]);
+    expect(w.text()).toMatch(/1 live Media head\(s\) go back to older text but keep their newest blob/);
+    await pause(w);
+    await admin(w, ["rebuild-heads", "--to-seq", "16", "--apply"]);
+    const head = w.row(`REC#Media#${h(4002)}`, "HEAD");
+    expect(JSON.parse(head.obj_json).path).toBe("a.jpg");
+    expect(head.blob).toMatchObject({ sha256: "c".repeat(64), size: 99 }); // not the blob that belongs to the older text
+  });
+
   it("--to-seq 0 puts every object in a tombstone; a seq past the tail is refused", async () => {
     const w = world();
     await history(w);
@@ -396,6 +440,7 @@ describe("copy-back (AC3)", () => {
     expect(dry.plan.puts).toBeGreaterThan(0);
     expect(t.w.text()).toMatch(/dry run: nothing written/);
     expect(t.w.text()).toMatch(/no other partition is read for writing or touched/);
+    expect(t.w.text()).toMatch(/seq 16 will be used again.*RECFAN#.*can be dropped/); // the restore is behind the live log: say what that does to notifications
     expect(dump(t.w.ddb.all())).toBe(before);
     await expect(t.run(["copy-back", "--from-table", SIDE, "--apply"])).rejects.toThrow(/writes are not paused/);
     expect(dump(t.w.ddb.all())).toBe(before);
@@ -460,6 +505,14 @@ describe("copy-back (AC3)", () => {
     const big = Array.from({ length: 10 }, (_, i) => ({ put: { PK: `REC#Note#${i}`, SK: "HEAD", obj_json: "x".repeat(900_000) } }));
     expect(chunkOps(big).map((c) => c.length)).toEqual([3, 3, 3, 1]);
     expect(chunkOps([])).toEqual([]);
+  });
+
+  it("splits appended log entries into transactions of at most 20 entries and about 3 MB, so a rollback of large objects stays under the 4 MB cap", () => {
+    const small = Array.from({ length: 45 }, (_, i) => ({ PK: "SYNC#LOG", SK: seqKey(i + 1) }));
+    expect(chunkLog(small).map((c) => c.length)).toEqual([20, 20, 5]);
+    const big = Array.from({ length: 10 }, (_, i) => ({ PK: "SYNC#LOG", SK: seqKey(i + 1), obj_json: "x".repeat(900_000) }));
+    expect(chunkLog(big).map((c) => c.length)).toEqual([3, 3, 3, 1]);
+    expect(chunkLog([])).toEqual([]);
   });
 });
 
@@ -528,5 +581,25 @@ describe("re-seed sessions are silent (AC5)", () => {
     expect(done.status).toBe(200);
     expect(w.ddb.all().filter((r) => r.PK === "SYNC#LOG").at(-1)).toMatchObject({ op: "marker", origin: "seed" });
     expect(w.head().seeded).toBe(true);
+  });
+});
+
+describe("--reseed over a store that is not empty", () => {
+  it("leaves every head alone; the seed session's creates for handles that already have heads are refused 409 exists, so --reseed is for an emptied store only", async () => {
+    const w = apiWorld();
+    expect((await w.push([create(person(1)), create(note(1))])).status).toBe(200);
+    const headsBefore = dump(w.ddb.all().filter((r) => /^(REC|GID|IDALIAS)#/.test(r.PK)));
+    await run(args(["pause", "--all", "--apply"]), w.ctx);
+    await run(args(["bump-tree-id", "--reseed", "--apply"]), { ...w.ctx, uuid: () => "22222222-2222-4222-8222-222222222222" });
+    await run(args(["resume", "--all", "--apply"]), w.ctx);
+    expect(dump(w.ddb.all().filter((r) => /^(REC|GID|IDALIAS)#/.test(r.PK)))).toBe(headsBefore); // the heads are not touched
+    const T2 = "22222222-2222-4222-8222-222222222222";
+    const s = await w.call("POST", "/sync/sessions", { body: {}, tree: T2 });
+    expect([s.status, s.body.seed]).toEqual([201, true]);
+    const again = await w.push([create(person(1))], { session: s.body.session_id, call: { tree: T2 } });
+    expect(status(again)).toEqual([409, "exists"]); // the seed cannot re-create a handle that has a head
+    expect(w.ddb.all().filter((r) => r.PK === "SYNC#LOG")).toHaveLength(2); // nothing was appended
+    const fresh = await w.push([create(person(2))], { session: s.body.session_id, call: { tree: T2 } });
+    expect(fresh.status).toBe(200); // handles that have no head are seeded as normal
   });
 });

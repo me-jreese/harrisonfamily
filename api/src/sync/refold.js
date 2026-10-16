@@ -162,25 +162,38 @@ export function foldLog(entries, { toSeq = Infinity, blobs = new Map(), aliases:
  * The log entries that make the store's current state equal its state at `toSeq`, appended after the log's tail so the log stays
  * append-only (seqs, versions and history are never rewritten): for every object whose state differs between `toSeq` and the tail, a
  * delete (the object did not exist then), an update back to the older text, or a create over a tombstone. They carry origin `admin`,
- * principal operator:sync-admin and one batch id, like `resurrect`. Returns [] when toSeq is the tail or nothing differs.
+ * principal operator:sync-admin and one batch id, like `resurrect`.
+ *
+ * Returns { entries, skipped, media }:
+ *   entries  the appended log entries ([] when toSeq is the tail or nothing differs)
+ *   skipped  the "Class#handle" keys left as they are because privacy-expunge rewrote the entry at `toSeq` or at the tail (its object text
+ *            is gone on purpose, so a rollback could neither restore it nor tell what it was, and must not write a live entry without it)
+ *   media    the Media "Class#handle" keys rolled back to different text while live: the blob descriptor lives on the head, not in the log,
+ *            so such a head keeps its newest blob, which may no longer match the older text
  */
 export function planRollback(entries, toSeq, { at, batchId }) {
   const tailSeq = entries.length;
-  if (toSeq >= tailSeq) return [];
+  const out = { entries: [], skipped: [], media: [] };
+  if (toSeq >= tailSeq) return out;
   const tail = foldLog(entries).state;
   const target = foldLog(entries, { toSeq }).state;
-  const out = [];
   const keys = [...tail.keys()].sort((a, b) => (CLASSES.indexOf(a.split("#")[0]) - CLASSES.indexOf(b.split("#")[0])) || (a < b ? -1 : 1));
   for (const key of keys) {
     const cur = tail.get(key);
     const was = target.get(key);
+    if (cur.entry.expunged === true || was?.entry.expunged === true) {
+      out.skipped.push(key);
+      continue;
+    }
     const wasLive = was && !was.deleted;
     const sameState = wasLive ? !cur.deleted && cur.entry.obj_json === was.entry.obj_json && cur.entry.gramps_id === was.entry.gramps_id : cur.deleted;
     if (sameState) continue;
-    const seq = tailSeq + out.length + 1;
+    const seq = tailSeq + out.entries.length + 1;
     const base = { seq, batch_id: batchId, class: cur.entry.class, handle: cur.entry.handle, version: cur.entry.version + 1, base_version: cur.entry.version, principal: PRINCIPAL, origin: "admin", at };
-    if (wasLive) out.push(logItem({ ...base, op: cur.deleted ? "create" : "update", gramps_id: was.entry.gramps_id, objJson: was.entry.obj_json }));
-    else out.push(logItem({ ...base, op: "delete", gramps_id: cur.entry.gramps_id, reason: "rollback" }));
+    if (wasLive) {
+      out.entries.push(logItem({ ...base, op: cur.deleted ? "create" : "update", gramps_id: was.entry.gramps_id, objJson: was.entry.obj_json }));
+      if (cur.entry.class === "Media" && !cur.deleted && cur.entry.obj_json !== was.entry.obj_json) out.media.push(key);
+    } else out.entries.push(logItem({ ...base, op: "delete", gramps_id: cur.entry.gramps_id, reason: "rollback" }));
   }
   return out;
 }

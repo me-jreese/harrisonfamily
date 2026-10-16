@@ -175,6 +175,21 @@ class Apply(RebaseCase):
         finally:
             con.close()
 
+    def test_an_object_deleted_in_this_tree_since_the_last_sync_is_counted_apart_not_as_only_on_the_website(self):
+        e = self.env
+        gone = by_gid(e.tree.objects(), "N0004")["handle"]
+        e.tree.remove(gone)  # deleted on the desktop, not yet pushed
+        self.recover()  # the recovered store still holds it
+        objects_before = e.tree.objects()
+        for opt in ({}, {"yes": True}):
+            doc = e.run("rebase", **opt)
+            r = doc["counts"]["rebase"]
+            self.assertEqual((r["cloud_only"], r["deleted_on_desktop"], r["conflicts"]), (0, 1, 0), opt)
+            self.assertEqual(e.tree.objects(), objects_before)
+        self.assertRegex(status.summary_line(doc), r"only on the website: 0, only on the desktop: 0, deleted on the desktop but still on the website: 1")
+        self.assertNotIn(gone, {row[1] for row in self.table("base")})  # the base forgot it, as the dialog says
+        self.assertEqual(self.meta()["cloud_tree_id"], NEW_TREE)
+
     def test_after_the_rebase_a_pull_works_brings_in_what_only_the_website_has_and_keeps_the_conflict(self):
         e = self.env
         self.prepare()

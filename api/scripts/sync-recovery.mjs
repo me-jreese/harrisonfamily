@@ -55,24 +55,30 @@ export async function readSync(ctx, table) {
 }
 const byPrefix = (items, prefix) => new Map(items.filter((i) => i.PK.startsWith(prefix)).map((i) => [itemPk(i), i]));
 
-/** Splits write operations into transactions of at most 25 items and about 3 MB. */
-export function chunkOps(ops) {
+/** Splits `list` into chunks of at most `maxItems` items and about `maxBytes` bytes (`sizeOf` gives an item's size). */
+function chunkSized(list, sizeOf, maxItems, maxBytes = CHUNK_BYTES) {
   const chunks = [];
   let cur = [];
   let size = 0;
-  for (const op of ops) {
-    const b = op.put ? bytes(op.put) : 200;
-    if (cur.length >= CHUNK_ITEMS || (cur.length > 0 && size + b > CHUNK_BYTES)) {
+  for (const x of list) {
+    const b = sizeOf(x);
+    if (cur.length >= maxItems || (cur.length > 0 && size + b > maxBytes)) {
       chunks.push(cur);
       cur = [];
       size = 0;
     }
-    cur.push(op);
+    cur.push(x);
     size += b;
   }
   if (cur.length) chunks.push(cur);
   return chunks;
 }
+
+/** Splits write operations into transactions of at most 25 items and about 3 MB. */
+export const chunkOps = (ops) => chunkSized(ops, (op) => (op.put ? bytes(op.put) : 200), CHUNK_ITEMS);
+
+/** Splits appended log entries into transactions of at most 20 entries (one more slot goes to the SYNC#HEAD update) and about 3 MB. */
+export const chunkLog = (entries) => chunkSized(entries, bytes, LOG_CHUNK);
 
 const guard = (table, seq) => ({
   ConditionCheck: {
@@ -127,7 +133,7 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
     throw new RecoveryError(`the log is damaged (${check.problems.length}${check.problems.length >= 50 ? "+" : ""} problem(s)), so the heads cannot be refolded from it: restore a side table and use copy-back (docs/how-to/operate-the-sync-store.md)`);
   }
   const at = iso(ctx.now);
-  const rollback = planRollback(entries, target, { at, batchId: `rebuild:${target}:${headSeq}` });
+  const { entries: rollback, skipped, media: mediaRolled } = planRollback(entries, target, { at, batchId: `rebuild:${target}:${headSeq}` });
   const stored = await readSync(ctx, table);
   const storedHeads = byPrefix(stored, "REC#");
   const blobs = new Map([...storedHeads.values()].filter((i) => i.class === "Media" && i.deleted !== true && i.blob !== undefined).map((i) => [`${i.class}#${i.handle}`, i.blob]));
@@ -146,14 +152,19 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
   log(`gid:     ${dGids.unchanged} match, ${dGids.puts.length} to write, ${dGids.deletes.length} to delete`);
   log(`idalias: ${dAliases.unchanged} match, ${dAliases.puts.length} to write, ${dAliases.deletes.length} to delete`);
   log(`live_heads: ${countable ? (liveFix ? `stored ${liveFix.from}, folded ${liveFix.to}: will be corrected` : `${folded.live}, correct`) : "not counted; left as it is"}`);
+  if (skipped.length) log(`note: ${skipped.length} object(s) were expunged by a privacy erasure at or after seq ${target}; their text is gone from the log, so they are left as they are (expunged: left as is)`);
+  if (mediaRolled.length) log(`note: ${mediaRolled.length} live Media head(s) go back to older text but keep their newest blob descriptor (it is not in the log); check each file's sha256 and size afterwards`);
+  const mediaRewritten = dHeads.puts.filter((p) => p.item.class === "Media" && p.item.deleted !== true && p.item.blob !== undefined).length;
+  if (mediaRewritten && !mediaRolled.length) log(`note: ${mediaRewritten} live Media head(s) are rewritten with the blob descriptor the store holds; check each file's sha256 and size afterwards`);
   if (folded.blobsUnknown) log(`note: ${folded.blobsUnknown} live Media head(s) have no blob descriptor in the store; the log does not hold it, so they are written without one`);
   if (folded.mergeAliasesUnknown) log(`note: ${folded.mergeAliasesUnknown} merge alias(es) have no survivor id in the store or the log; written with none`);
+  listLines(log, "expunged", skipped.map((k) => `left as is ${k.split("#")[0]} ${k.slice(k.indexOf("#") + 1)}`));
   listLines(log, "rollback", rollback.map((e) => `${e.op} ${e.class} ${e.handle} v${e.version} (seq ${e.seq})`));
   listLines(log, "head   ", [...dHeads.puts.map((p) => `put ${p.item.class} ${p.item.handle} v${p.item.version} (${fieldNote(p)})`), ...dHeads.deletes.map((d) => `delete ${d.item.class} ${d.item.handle}`)]);
   listLines(log, "gid    ", [...dGids.puts.map((p) => `put ${p.item.class} (${fieldNote(p)})`), ...dGids.deletes.map((d) => `delete ${d.item.class}`)]);
   listLines(log, "idalias", [...dAliases.puts.map((p) => `put ${p.item.class} (${fieldNote(p)})`), ...dAliases.deletes.map((d) => `delete ${d.item.class}`)]);
   const writes = dHeads.puts.length + dHeads.deletes.length + dGids.puts.length + dGids.deletes.length + dAliases.puts.length + dAliases.deletes.length + rollback.length + (liveFix ? 1 : 0);
-  const plan = { target, headSeq, finalSeq, rollback, heads: dHeads, gids: dGids, aliases: dAliases, liveFix, writes };
+  const plan = { target, headSeq, finalSeq, rollback, skipped, media: mediaRolled, heads: dHeads, gids: dGids, aliases: dAliases, liveFix, writes };
   log(`plan: ${writes === 0 ? "nothing to change: the heads already equal the log" : `${writes} write(s)`}`);
   if (!apply) {
     log("dry run: nothing written");
@@ -163,8 +174,7 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
 
   // Phase A: the appended entries, in transactions that also move SYNC#HEAD.seq (pinned to the seq read and to the pause).
   let seq = headSeq;
-  for (let i = 0; i < rollback.length; i += LOG_CHUNK) {
-    const chunk = rollback.slice(i, i + LOG_CHUNK);
+  for (const chunk of chunkLog(rollback)) {
     const to = seq + chunk.length;
     await send(ctx, [
       {
@@ -237,6 +247,11 @@ export async function copyBack(ctx, { apply, fromTable, by = "operator" }) {
     log(`${p.padEnd(9)} ${c.puts} to write, ${c.deletes} to delete`);
   }
   log(`${d.unchanged} item(s) already match; no other partition is read for writing or touched`);
+  const liveSeq = Number.isInteger(tgtHead?.seq) ? tgtHead.seq : 0;
+  const restoredSeq = Number.isInteger(srcHead.seq) ? srcHead.seq : 0;
+  if (restoredSeq < liveSeq) {
+    log(`note: the live log reached seq ${liveSeq} and the restore holds ${restoredSeq}, so ${liveSeq > restoredSeq + 1 ? `seqs ${restoredSeq + 1}..${liveSeq} will` : `seq ${liveSeq} will`} be used again by new writes. The notification claims (RECFAN#) of ${liveSeq > restoredSeq + 1 ? "those seqs are" : "that seq are"} outside the sync partitions and stay: notifications for the reused seq(s) can be dropped as already sent (docs/how-to/operate-the-sync-store.md)`);
+  }
   log(`SYNC#HEAD: written with writes_enabled false${tgtHead?.tree_id !== srcHead.tree_id ? "; its tree_id differs from the live table's" : ""}`);
   const what = (item) => [`${item.PK.split("#")[0]}#`, item.class, item.PK.startsWith("REC#") ? item.handle : undefined].filter(Boolean).join(" ");
   listLines(log, "write ", d.puts.map((p) => `${what(p.item)} (${fieldNote(p)})`));

@@ -76,6 +76,9 @@ def describe_rebase(doc):
         lines.append(_("Same on both sides: %(n)d. Different on both sides (conflicts): %(c)d.") % {"n": c.get("rebased", 0), "c": c.get("conflicts", 0)})
         lines.append(_("Only on the website: %(w)d. Only in this tree: %(d)d. A later sync brings these across.") % {
             "w": c.get("cloud_only", 0), "d": c.get("desktop_only", 0)})
+        if c.get("deleted_on_desktop", 0):
+            lines.append(_("Deleted in this tree but still on the website: %(n)d. The rebase forgets those deletes, so a later sync would bring "
+                           "them back. Delete them on the website first if they should stay gone.") % {"n": c["deleted_on_desktop"]})
     error = doc.get("error") or {}
     if error:
         lines.append("%s: %s" % (error.get("code", ""), error.get("message", "")))
