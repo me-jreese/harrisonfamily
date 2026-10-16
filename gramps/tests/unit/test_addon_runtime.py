@@ -222,6 +222,16 @@ class StatusFile(HomeCase):
         self.assertIn("exit 78", line)
         self.assertIn("next: open_bound_tree", line)
 
+    def test_a_pull_summary_line_names_the_run_and_carries_counts_only(self):
+        counts = status.zero_counts()
+        counts["pulled"] = {"create": 1, "update": 2, "delete": 0}
+        doc = status.build("01ARZ3NDEKTSV4RRFFQ69G5FAV", "check", "cli", "d", True, "changes_pending", 10, "", "", counts=counts,
+                           next_action="review_preview")
+        line = status.summary_line(doc)
+        self.assertIn("run 01ARZ3NDEKTSV4RRFFQ69G5FAV", line)
+        self.assertIn("1 new, 2 changed, 0 deleted", line)
+        self.assertNotIn("run ", status.summary_line(status.build("R1", "status", "cli", "d", False, "ok", 0, "", "")))
+
 
 class Sidecar(HomeCase):
     def make(self, **meta):

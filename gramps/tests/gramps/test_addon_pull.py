@@ -72,12 +72,17 @@ class PullApply(AddonCase):
         fresh.pop("change", None)  # a created object arrives without Gramps' change stamp
         gone = unreferenced({h: o for h, o in before.items() if h != note["handle"]})
         self.assertIsNotNone(gone)
+        seen = []
+
+        def precheck(read):
+            seen.append(read("Note", note["handle"])["text"]["string"])
+            # Gramps raises HandleError for a handle that is not there; the tree's read turns it into None (a create the plan will make)
+            self.assertIsNone(read("Note", fresh["handle"]))
 
         def run(db, DbTxn):
             tree = self.tool.GrampsTree(db)
-            seen = []
             tree.apply("Website sync: pull seq 7", {note["handle"]: note, fresh["handle"]: fresh}, [gone],
-                       precheck=lambda read: seen.append(read("Note", note["handle"])["text"]["string"]),
+                       precheck=precheck,
                        verify=lambda now: seen.append(len(now)), hook=lambda step: seen.append(step))
             self.assertEqual(seen[0], before[note["handle"]]["text"]["string"], "precheck reads the tree as it was")
             self.assertEqual(seen[1], "mid_apply")

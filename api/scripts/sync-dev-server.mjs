@@ -19,7 +19,10 @@
 //                            Content-Type, Content-Length and x-amz-checksum-sha256 it was signed for arrive with matching bytes.
 //   /_dev/*                  health, state, the SYNC#HEAD switches (writes_enabled, seeded, merges_enabled, min_client, ...) and the auth knobs.
 //                            These switches, the presigned PUT/GET store and the token-lifetime knob are reserved for the later scenarios (push
-//                            conflicts, media, step-up, lost-response replay: addon-push, addon-media); the scenarios of this task do not use them.
+//                            conflicts, media, step-up, lost-response replay: addon-push, addon-media). POST /_dev/scrub {class, handle, obj}
+//                            (HFY-TSK-205) stands in for privacy-expunge's --path mode until that task lands: it rewrites one live head's object
+//                            (and its log entry) in place at the SAME version and seq and raises SYNC#HEAD.expunge_epoch by one, which is what
+//                            an expunge does, so the addon's expunge-notice path (a changed hash at an unchanged version) runs end to end.
 //
 // REQUEST LOG. Every request is appended to <data-dir>/requests.jsonl (--log-file) BEFORE its response is sent, so a test that has the response can
 // grep the log for the request: one JSON object per line with method, path, query, status, the error code, byte counts, the body's sha256 and the
@@ -57,7 +60,8 @@ import { createHandler } from "../src/handler.js";
 import { createGroupResolver } from "../src/policy.js";
 import { createSyncAuthenticator, SYNC_CLIENT_ID } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
-import { headKey } from "../src/sync/store.js";
+import { CLASSES, headKey, logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
+import { resetStoreView } from "../src/records/index.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 
 export const DEV_OWNER_SUB = "I9001"; // synthetic; the gramps-owner of the dev groups config
@@ -568,6 +572,25 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       }
       if (b.revoke_all === true) auth.revokeAll();
       return json(200, { access_ttl_seconds: auth.state.accessTtlSeconds });
+    }
+    if (path === "/_dev/scrub" && method === "POST") {
+      const b = parsed();
+      const obj = b?.obj;
+      if (!b || !CLASSES.includes(b.class) || typeof b.handle !== "string" || obj === null || typeof obj !== "object" || Array.isArray(obj) || obj.handle !== b.handle || obj._class !== b.class) {
+        return json(400, { error: "validation", message: "send {class, handle, obj} with obj the scrubbed object of that class and handle" });
+      }
+      const item = (await ddb.send(new cmds.GetCommand({ TableName: DEV_TABLE, Key: recKey(b.class, b.handle), ConsistentRead: true }))).Item;
+      if (!item || item.deleted === true) return json(404, { error: "not_found", message: "no live head with that class and handle" });
+      const objJson = objectJson(obj);
+      const hash = sha256(objJson);
+      await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...item, obj_json: objJson, hash } }));
+      const entry = (await ddb.send(new cmds.GetCommand({ TableName: DEV_TABLE, Key: logKey(item.seq), ConsistentRead: true }))).Item;
+      if (entry && entry.handle === b.handle && entry.class === b.class) await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...entry, obj_json: objJson, hash } }));
+      const head = (await getHead()) ?? { ...headKey() };
+      const epoch = (Number.isInteger(head.expunge_epoch) ? head.expunge_epoch : 0) + 1;
+      await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...head, expunge_epoch: epoch, updated_at: new Date(now()).toISOString() } }));
+      resetStoreView({ ddb, table: DEV_TABLE });
+      return json(200, { class: b.class, handle: b.handle, version: item.version, seq: item.seq, hash, expunge_epoch: epoch });
     }
     return json(404, { error: "not_found", message: "no such dev route" });
   }

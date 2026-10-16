@@ -37,6 +37,7 @@ import time  # noqa: E402
 from gramps.gen.const import GRAMPS_LOCALE as glocale  # noqa: E402
 from gramps.gen.const import VERSION, VERSION_TUPLE  # noqa: E402
 from gramps.gen.db import DbTxn  # noqa: E402
+from gramps.gen.errors import HandleError  # noqa: E402
 from gramps.gen.lib.json_utils import data_to_object, object_to_dict  # noqa: E402
 from gramps.gui.plug import tool  # noqa: E402
 
@@ -93,7 +94,11 @@ class GrampsTree(runner.TreeAccess):
         return out
 
     def _read(self, cls, handle):
-        obj = getattr(self.db, _GETTER[cls])(handle)
+        # Gramps raises HandleError for a handle that is not there (a create the plan is about to make), where the fakes return None.
+        try:
+            obj = getattr(self.db, _GETTER[cls])(handle)
+        except HandleError:
+            return None
         return None if obj is None else object_to_dict(obj)
 
     def editors_open(self):

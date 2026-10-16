@@ -206,7 +206,7 @@ python3 -m coverage report -m                                            # 100 %
 
 ## The desktop addon skeleton
 
-HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. It has three real actions, `status`, `bind` and `login` (the transport and sign-in section below). `check`, `pull`, `push` and `sync` are registered and answer exit `69` (not enabled) until the pull-apply and push tasks fill them in. The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
+HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. Its first real actions were `status`, `bind` and `login` (the transport and sign-in section below). HFY-TSK-205 adds the pull side: `check`, `pull`, the pull half of `sync`, and `restore` (the pull section below). `push` is registered and answers exit `69` (not enabled) until `addon-push` fills it in. The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
 
 | Path | What it is |
 | --- | --- |
@@ -219,7 +219,7 @@ HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): reg
 | `scripts/install-addon.sh` | Builds, then replaces `<plugins>/hfy_sync`: `--dest`, else `$GRAMPSHOME/gramps/gramps60/plugins`, else `~/Library/Application Support/gramps/gramps60/plugins`. Nothing but the `hfy_sync` folder is touched. |
 | `tests/unit/test_addon_runtime.py`, `test_addon_wrapper.py`, `test_addon_transport.py` | CI: the runtime against a fake tree, the wrapper against a fake Gramps command, the build and the installer in a temporary folder. |
 | `tests/gramps/test_addon_skeleton.py`, `addon_support.py` | The Gramps lane (`io-mac-gramps`): installs the addon into the throwaway `GRAMPSHOME` and drives the real Gramps CLI and the wrapper on copies of the fixture tree. |
-| `tests/e2e/` | The end-to-end lane (HFY-TSK-181): `run.sh` (the Gramps lane's runner with this folder as the lane), `scenario_smoke.py`, `scenario_signin.py`, and the support modules. Each test starts `api/scripts/sync-dev-server.mjs` and drives the installed addon and its transport against it on fixture-tree copies. CI runs `tests/unit/test_e2e_support.py` only. See [Run the test suites, step 15](../docs/how-to/run-the-tests.md#15-run-the-sync-end-to-end-scenarios-local-gramps-606). |
+| `tests/e2e/` | The end-to-end lane (HFY-TSK-181): `run.sh` (the Gramps lane's runner with this folder as the lane), `scenario_smoke.py`, `scenario_signin.py`, `scenario_pull.py` (HFY-TSK-205), and the support modules. Each test starts `api/scripts/sync-dev-server.mjs` and drives the installed addon and its transport against it on fixture-tree copies. CI runs `tests/unit/test_e2e_support.py` only. See [Run the test suites, step 15](../docs/how-to/run-the-tests.md#15-run-the-sync-end-to-end-scenarios-local-gramps-606). |
 
 The sync state lives outside Dropbox and git, under `~/Library/Application Support/hfy_sync/` (`config.json`, then `<dbid>/` with `state.sqlite`, `state.lock`, `status.json`, `previews/`, `backups/`, `logs/`, `cache/`), all owner-only. The `<dbid>` is the tree's folder name under Gramps' `grampsdb` (`db.get_dbid()`). The tests point `HOME` and `GRAMPSHOME` at a temporary directory, so they never read or write the real one; the wrapper and the tool read `HOME` and `GRAMPSHOME` only.
 
@@ -253,6 +253,30 @@ HFY-TSK-180 adds the network layer the later actions call, and the one action th
 
 **The Cloudflare probe (DL-31).** `gramps/tests/gramps/gramps-shim.sh --script gramps/scripts/probe-cloudflare.py` sends one `GET /api/sync/meta` from the bundled Python with no token. On 2026-10-14, from Python 3.13.2 in Gramps 6.0.6: default store roots `0`, fallback used, `CERT_REQUIRED`; with the addon's agent the answer was the origin's house-format error (`404`, `not_found`, no sync route deployed yet) with no `cf-mitigated` header; with urllib's default agent it was Cloudflare's own `403`, `error code: 1010`. Run it again after the sync routes are live (the answer should then be `401`) and before the seed; a WAF skip rule for `/api/sync/*` stays the fallback if Cloudflare ever challenges the named agent too.
 
+### The pull
+
+HFY-TSK-205 (sync.md 8.3 steps 3 to 11, BRD2 section 11.1) is everything between the handshake and the push. `check` is a dry run of it; `pull` and the pull half of `sync` run all of it. The module docstrings carry the rules; this table is the map.
+
+| Path | What it is |
+| --- | --- |
+| `hfygramps/addon/pull.py` | The run: handshake (the website's tree must be this tree's, and the same cloud tree as the last pull: D03, D50), snapshot, plan, preview, media down, backup, stale check, the apply, the sidecar update. `Cloud` is the five calls a pull makes; tests pass a fake as `services["cloud"]`. |
+| `hfygramps/addon/snapshot.py` | Verifies the snapshot file of step 3: a capped gunzip, the body's sha256 against the header and the route, the tree id, the database schema, the redaction version, the count, every line, no handle twice, and `seq` not older than the last pull (`snapshot_older`, rollback protection). |
+| `hfygramps/addon/plan.py` | Pure planning over L (the tree), B (the sidecar's base) and C (the snapshot), on top of `merge.merge_tree`: the inbound `dob_exact` scan, expunge notices, revert labelling, the mass-delete guard, the preview document and the plan hash. It reads no file and opens no database. |
+| `hfygramps/addon/backup.py` | The online-backup-API copy of `sqlite.db` and of the sidecar (`<name>.sqlite`, `<name>.sidecar.sqlite`, `<name>.sha256`), `PRAGMA integrity_check`, retention (the last 20, plus the newest of each day for 30 days), and `restore`. |
+| `hfygramps/addon/media.py` | Media files down: a presigned GET to `https` (or a loopback `http`), sha256, md5 and size checked before anything is written, one retry for an expired URL (D52), a file already there with the right sha256 is not fetched twice. |
+| `hfygramps/addon/faults.py` | Fault injection: `HFY_SYNC_FAULT=<step>` raises, `crash:<step>` ends the process at once. Honoured only while `HFY_SYNC_TEST=1`. |
+| `hfy_sync/hfy_sync_tool.py` | `GrampsTree.objects()` (every object as `object_to_dict`), `editors_open()` (D45) and `apply()`: ONE non-batch `DbTxn` named "Website sync: pull seq N", so one Edit > Undo entry; the precheck, the commits, the removals and the relationship check all run inside it, and any exception rolls all of it back. |
+
+**What a run does with a change.** The merge decides per path (sync.md 6.3). A conflict pins its path in the sidecar: it stays open, with both sides unchanged, on every later run until the two sides agree or a person decides it. The command line parks it; the Gramps window keeps it open to decide. A composite conflict (a website change to the year of a birth held with a local day and month), and a website delete of an object that holds desktop-only data, are never applied. An incoming object that shows a local date of birth is not applied (a privacy incident, counts only). A head with the same version and another hash is a scrub in place (an expunge notice): the base follows the website, and the local value is held so a push never restores it.
+
+**Crash safety.** Everything after the Gramps commit is repeatable. A crash between the commit and the sidecar update leaves a tree that already equals the website's copy, which the merge reads as `converged` and re-bases. A crash before the commit is rolled back by SQLite's journal. The fault tests exercise every boundary and check that the next clean run converges with nothing lost and nothing applied twice.
+
+**The sidecar tables added here.** `pulled` (the pre-pull value of every object a pull changed in the last 5 pull runs, which is how a push that returns a field to that value is labelled "reverts a website change (origin)": the GUI confirms it, the CLI parks it) and `incidents`; both are created by the first apply, never by a read. An expunge notice's hold is a `holds` row with the rule `expunge.notice`.
+
+**Restore.** `bin/hfy-sync restore <backup>` does not start Gramps. It refuses while Gramps is open or `<dbdir>/lock` exists, verifies the sha256 of the database copy and the sidecar copy, takes `state.lock`, moves `sqlite.db`, `-journal`, `-wal`, `-shm` and `lock` to `pre-restore-<time>/`, copies the backup in, runs `PRAGMA integrity_check`, puts the sidecar saved with the backup back, and then runs `check`. A backup without its sidecar copy is not restored: the next push would otherwise return everything the website changed since to its old values.
+
+**Tests.** `tests/unit/test_addon_pull.py`, `test_addon_pull_safety.py`, `test_addon_media.py` and `test_addon_restore.py` (CI, over `addon_pull_support.py`'s fake tree and fake cloud); `tests/gramps/test_addon_pull.py` (the apply against a real database); `tests/e2e/scenario_pull.py` (real processes against the dev server, with `e2e_cloud.py` as the website).
+
 ### The tree binding
 
 A run proceeds only when three things agree (BRD2 section 11, SI-06):
@@ -280,4 +304,4 @@ D12 (sidecar missing) and D13 (sidecar damaged, or written by a newer addon) are
 
 ### Test seams
 
-`HFY_GRAMPS_CMD` (the wrapper: the Gramps command to run, default the app bundle's executable) and `HFY_SYNC_PS_CMD` (the process list the GUI scan reads, default `ps -axo command=`) exist so tests do not depend on what is running on the machine. Neither is set in use. `HFY_SYNC_PS_CMD` is honoured only while `HFY_SYNC_TEST=1` is also set, so a stray variable cannot switch the GUI-process half of D01 off; the tree's `lock` file protects the tree either way.
+`HFY_GRAMPS_CMD` (the wrapper: the Gramps command to run, default the app bundle's executable) and `HFY_SYNC_PS_CMD` (the process list the GUI scan reads, default `ps -axo command=`) exist so tests do not depend on what is running on the machine. Neither is set in use. `HFY_SYNC_PS_CMD` is honoured only while `HFY_SYNC_TEST=1` is also set, so a stray variable cannot switch the GUI-process half of D01 off; the tree's `lock` file protects the tree either way. The pull adds three more under the same rule: `HFY_SYNC_FAULT` (a step name, or `crash:<step>`), `HFY_SYNC_KEYCHAIN_FILE` (the refresh token in a file instead of the login Keychain, so the end-to-end scenarios can sign a Gramps subprocess in to the dev server) and `HFY_SYNC_UI=sim` (run as the Gramps window does, so a conflict stays open instead of parked).
