@@ -19,6 +19,8 @@ GATE_ARN="arn:aws:lambda:us-east-1:123456789012:function:hfy-edge-gate:7"
 NOSTORE_RHP="aaaaaaaa-0000-4000-8000-000000000001" # the id the aws stub gives the first response headers policy it creates
 UPRIVATE_RHP="aaaaaaaa-0000-4000-8000-000000000002" # ...and the second one (hfy-uploads-private, created right after hfy-private-no-store)
 UP_FIXTURE="$HERE/fixtures/live-with-uploads.json" # live-like plus the ungated /uploads/* behavior add-uploads-behavior.sh creates
+CSP_RO_RHP="bbbbbbbb-0000-4000-8000-000000000001"; CSP_RHP="bbbbbbbb-0000-4000-8000-000000000002"
+JOIN_FN_ARN="arn:aws:cloudfront::123456789012:function/hfy-app-join-csp"
 PASS=0; FAILED=0; CURRENT=""
 unset ORIGIN_VERIFY
 
@@ -39,6 +41,9 @@ new_stub() { # [GET_FIXTURE]
   echo "$AUTH_FURL" > "$STUB_DIR/stack-AuthFunctionUrl"
   echo "$RHP_ID" > "$STUB_DIR/stack-UploadsResponseHeadersPolicyId"
   echo "$GATE_ARN" > "$STUB_DIR/stack-EdgeGateVersionArn"
+  echo "$CSP_RO_RHP" > "$STUB_DIR/stack-SiteCspReportOnlyPolicyId"
+  echo "$CSP_RHP" > "$STUB_DIR/stack-SiteCspPolicyId"
+  echo "$JOIN_FN_ARN" > "$STUB_DIR/stack-JoinCspFunctionArn"
   cp "${1:-$FIXTURE}" "$STUB_DIR/get.json"
 }
 run() { # SCRIPT ARGS... -> OUT, RC; the secret must never reach stdout/stderr
@@ -220,6 +225,102 @@ jq '(.DistributionConfig.CacheBehaviors.Items[] | select(.PathPattern == "/uploa
 new_stub "$CHANGED"; run add-uploads-behavior.sh
 eq "a drifted policy id is put back" "$(jq -r '.CacheBehaviors.Items[] | select(.PathPattern == "/uploads/*") | .ResponseHeadersPolicyId' "$(last_update)")" "$RHP_ID"
 eq "in place" "$(patterns "$(last_update)")" '["/person/*","/api/*","/uploads/*"]'
+
+# ---------------------------------------------------------------------------------------------------------------------
+CURRENT="site CSP: add-csp-headers.sh attaches report-only, then enforcing, then detaches (HFY-TSK-149)"
+dflt() { jq -c "$2" "$1"; } # FILE JQ -> over the DEFAULT behavior of a config
+# A curl double for the /join/ gate of --mode enforce: prints $STUB_DIR/join-headers (default: the Turnstile variant in report-only).
+mkdir -p "$T/csp-curl"
+cat > "$T/csp-curl/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/csp-curl.log"
+if [ -f "$STUB_DIR/join-headers" ]; then cat "$STUB_DIR/join-headers"; exit 0; fi
+printf 'HTTP/2 200\r\ncontent-security-policy-report-only: default-src %s; script-src %s https://challenges.cloudflare.com\r\n\r\n' "'self'" "'self'"
+STUB
+chmod +x "$T/csp-curl/curl"
+OLD_PATH=$PATH; PATH="$T/csp-curl:$PATH"
+SITE="https://site.example"
+new_stub
+run add-csp-headers.sh
+eq "no --mode is refused" "$RC" 2
+eq "...and changes nothing" "$(updates)" 0
+run add-csp-headers.sh --mode sideways
+eq "an unknown --mode is refused" "$RC" 2
+run add-csp-headers.sh --mode report-only
+eq "report-only: exit code" "$RC" 0
+eq "report-only: one update, with the fetched ETag" "$(updates):$(cat "$STUB_DIR/update-1.etag")" "1:E1LIVEETAG"
+U=$(last_update)
+eq "report-only policy on the default behavior" "$(dflt "$U" '.DefaultCacheBehavior.ResponseHeadersPolicyId')" "\"$CSP_RO_RHP\""
+eq "HFYAppendIndex stays the viewer-request function and the /join/ function is the viewer-response one" \
+  "$(dflt "$U" '.DefaultCacheBehavior.FunctionAssociations | [.Quantity, [.Items[] | [.EventType, (.FunctionARN | sub(".*function/"; ""))]]]')" '[2,[["viewer-request","HFYAppendIndex"],["viewer-response","hfy-app-join-csp"]]]'
+eq "no behavior or origin was added or changed" "$(jq -c --slurpfile f "$FIXTURE" '[.CacheBehaviors, .Origins] == [$f[0].DistributionConfig.CacheBehaviors, $f[0].DistributionConfig.Origins]' "$U")" true
+eq "nothing else on the default behavior changed" "$(jq -c --slurpfile f "$FIXTURE" '.DefaultCacheBehavior | del(.ResponseHeadersPolicyId, .FunctionAssociations) == ($f[0].DistributionConfig.DefaultCacheBehavior | del(.ResponseHeadersPolicyId, .FunctionAssociations))' "$U")" true
+check "the pre-change config was saved for rollback" test -s "$(find "$STUB_DIR/backups" -name 'E2JCDK3QLQNNYB-*-before.json' | head -1)"
+contains "the rollback is named" "$OUT" "roll back with: aws cloudfront update-distribution"
+echo_last; run add-csp-headers.sh --mode report-only
+eq "report-only rerun is a true no-op" "$(updates)" 1
+contains "...and says so" "$OUT" "no change"
+run add-csp-headers.sh --mode enforce
+eq "enforce without --site-url is refused (the /join/ gate)" "$RC:$(updates)" "2:1"
+contains "...and says what it needs" "$OUT" "--site-url"
+printf 'HTTP/2 200\r\ncontent-security-policy-report-only: default-src %s\r\n\r\n' "'self'" > "$STUB_DIR/join-headers"
+run add-csp-headers.sh --mode enforce --site-url "$SITE"
+eq "enforce is refused when /join/ still shows the base policy" "$RC:$(updates)" "1:1"
+contains "...with the gate message" "$OUT" "GATE:"
+printf 'HTTP/2 200\r\ncontent-security-policy: default-src %s; script-src https://challenges.cloudflare.com\r\n\r\n' "'self'" > "$STUB_DIR/join-headers"
+run add-csp-headers.sh --mode enforce --site-url "$SITE"
+eq "...and when only an enforcing header (not report-only) carries it" "$RC:$(updates)" "1:1"
+rm "$STUB_DIR/join-headers"
+run add-csp-headers.sh --mode enforce --site-url "http://$SITE"
+eq "a non-https --site-url is refused" "$RC" 2
+run add-csp-headers.sh --mode enforce --site-url "$SITE"
+contains "enforce proceeds once /join/ shows the Turnstile variant" "$OUT" "gate passed"
+eq "enforce: switches the policy in place" "$(updates):$(dflt "$(last_update)" '.DefaultCacheBehavior.ResponseHeadersPolicyId')" "2:\"$CSP_RHP\""
+eq "enforce: the /join/ function is associated once" "$(dflt "$(last_update)" '[.DefaultCacheBehavior.FunctionAssociations.Items[] | select(.EventType == "viewer-response")] | length')" 1
+echo_last; run add-csp-headers.sh --mode enforce --site-url "$SITE"
+eq "enforce rerun is a true no-op" "$(updates)" 2
+run add-csp-headers.sh --mode detach
+eq "detach (the rollback): no policy on the default behavior" "$(updates):$(dflt "$(last_update)" '.DefaultCacheBehavior | has("ResponseHeadersPolicyId")')" "3:false"
+eq "detach: only the /join/ function leaves; HFYAppendIndex stays" "$(dflt "$(last_update)" '.DefaultCacheBehavior.FunctionAssociations | [.Quantity, [.Items[].EventType]]')" '[1,["viewer-request"]]'
+eq "detach restores the original distribution exactly" "$(cfg -S -c 'include "cf"; norm' "$(last_update)")" "$(cfg -S -c 'include "cf"; .DistributionConfig | norm' "$FIXTURE")"
+echo_last; run add-csp-headers.sh --mode detach
+eq "detach rerun is a true no-op" "$(updates)" 3
+
+new_stub
+run add-csp-headers.sh --mode report-only --dry-run
+eq "dry run: exit 0, no update" "$RC:$(updates)" "0:0"
+contains "dry run shows the policy it would attach" "$OUT" "$CSP_RO_RHP"
+contains "dry run says nothing changed" "$OUT" "(dry-run) no changes made"
+new_stub
+run add-csp-headers.sh --mode enforce --report-only-policy-id ro-x --enforce-policy-id en-x --function-arn arn:aws:cloudfront::1:function/f --dry-run
+contains "a dry run without --site-url notes the gate" "$OUT" "needs --site-url"
+contains "explicit ids win over the stack outputs" "$OUT" "policy en-x"
+check "...and describe-stacks is never called" bash -c "! grep -q describe-stacks '$STUB_DIR/calls.log'"
+new_stub
+run add-csp-headers.sh --mode report-only --function-arn not-an-arn
+eq "a malformed function ARN is refused before anything is read" "$RC:$(updates)" "2:0"
+run add-csp-headers.sh --mode report-only --config-file "$FIXTURE"
+eq "--config-file without --dry-run is refused" "$RC:$(updates)" "2:0"
+new_stub
+run add-csp-headers.sh --mode report-only --dry-run --config-file "$FIXTURE"
+eq "--config-file --dry-run exits 0" "$RC" 0
+check "...and makes no AWS call at all" test ! -e "$STUB_DIR/calls.log"
+contains "...and uses placeholders" "$OUT" "<hfy-app SiteCspReportOnlyPolicyId>"
+OTHER="$T/other-rhp.json"
+jq '.DistributionConfig.DefaultCacheBehavior.ResponseHeadersPolicyId = "someone-elses-policy"' "$FIXTURE" > "$OTHER"
+new_stub "$OTHER"
+run add-csp-headers.sh --mode report-only
+eq "a response headers policy that is not ours is never replaced" "$RC:$(updates)" "1:0"
+contains "...and the script says why" "$OUT" "not one of the site CSP policies"
+run add-csp-headers.sh --mode detach
+eq "...nor removed by detach" "$RC:$(updates)" "1:0"
+FOREIGN_FN="$T/foreign-fn.json"
+jq '.DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Items += [{FunctionARN: "arn:aws:cloudfront::123456789012:function/other-viewer-response", EventType: "viewer-response"}] | .DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Quantity += 1' "$FIXTURE" > "$FOREIGN_FN"
+new_stub "$FOREIGN_FN"
+run add-csp-headers.sh --mode report-only
+eq "another viewer-response function on the default behavior is refused up front" "$RC:$(updates)" "1:0"
+contains "...and the script says why" "$OUT" "another viewer-response function"
+PATH=$OLD_PATH
 
 # ---------------------------------------------------------------------------------------------------------------------
 CURRENT="data gate: HFY-TSK-080 behaviors with the Lambda@Edge association"

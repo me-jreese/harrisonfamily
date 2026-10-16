@@ -216,7 +216,7 @@ The eight scripts that change AWS are idempotent, accept `--dry-run`, exit 2 on 
 |---|---|
 | [`create-session-key.sh`](../../scripts/infra/create-session-key.sh) | AWS CLI, `openssl`, `jq` |
 | [`create-origin-verify.sh`](../../scripts/infra/create-origin-verify.sh) | AWS CLI, `openssl` |
-| [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh), [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh), [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh) | AWS CLI, `jq`, and the shared helpers in [`scripts/infra/lib/`](../../scripts/infra/lib/) |
+| [`add-api-behavior.sh`](../../scripts/infra/add-api-behavior.sh), [`add-auth-behavior.sh`](../../scripts/infra/add-auth-behavior.sh), [`add-uploads-behavior.sh`](../../scripts/infra/add-uploads-behavior.sh), [`add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`add-data-gate-behaviors.sh`](../../scripts/infra/add-data-gate-behaviors.sh), [`add-csp-headers.sh`](../../scripts/infra/add-csp-headers.sh) (the site CSP, report-only then enforced: [Add the site CSP](../how-to/add-the-site-content-security-policy.md)) | AWS CLI, `jq`, and the shared helpers in [`scripts/infra/lib/`](../../scripts/infra/lib/) |
 | [`publish-append-index.sh`](../../scripts/infra/publish-append-index.sh) | AWS CLI, `jq`, `cmp`, `diff` and the shared helpers; `node` for the local unit tests, which are skipped without it |
 | [`check-site-bucket-cors.sh`](../../scripts/infra/check-site-bucket-cors.sh) | `curl`, `jq`; no credentials |
 
