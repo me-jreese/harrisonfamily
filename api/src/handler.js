@@ -30,14 +30,15 @@ export function createHandler(deps) {
   const pushEnabled = Boolean(deps.webpush && deps.vapid);
   // HFY-TSK-238: the feature gate (src/features.js). index.js passes the deployed one; without it every feature is off and nobody is uat.
   const features = deps.features ?? currentFeatureGate();
-  const routes = deps.routes ?? ROUTES;
+  const routes = deps.routes ?? ROUTES; // tests mount extra (gated) routes through routes.js defineRoutes
   // HFY-TSK-164: the chat service routes' sources (src/chat.js). Built once, because the directory caches its answer for 5 minutes. The composite allowlist
   // reader (DynamoDB items over io's S3 file) decides who is a member; index.js passes the one it shares, a test passes readEntries and gets its own.
   const chat = deps.chat ?? createChatService({
     ddb, cmds, table, now, log, readEntries: deps.readEntries, resolveLabel: deps.resolveLabel,
-    memberReader: deps.memberReader ?? (deps.readEntries ? createCompositeMemberReader({ readEntries: deps.readEntries, ddb, cmds, table, now, log }) : undefined),
+    // the directory reads strictly: a failed table read is a 503, never the file's answer, so a revoked grant is not listed (the hub keeps its snapshot)
+    memberReader: deps.directoryMemberReader ?? (deps.readEntries && ddb ? createCompositeMemberReader({ readEntries: deps.readEntries, ddb, cmds, table, now, log, strict: true }) : deps.memberReader),
     subscriptions: deps.subscriptions, preferences: deps.preferences, webpush: deps.webpush, vapid: deps.vapid,
-  }); // tests mount extra (gated) routes through routes.js defineRoutes
+  });
   // Persist first (BRD2 D2-15): with an inbox store wired (hfy-inbox-delivery-api) the producers run even without push.
   const notifyActive = pushEnabled || Boolean(deps.inbox);
   const inboxStore = deps.inbox; // the kit NotificationStore (index.js wires DynamoNotificationStore)

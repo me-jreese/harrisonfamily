@@ -264,7 +264,7 @@ export const ROUTES = defineRoutes([
     gate: CHAT_GATE, handler: async (c) => ok(await c.chat.push(c.body)),
   },
   {
-    name: "chat.archive", method: "POST", path: "/chat/archive", auth: "service", summary: "Service only: mirror a conversation {conv, members, msgs} (at most 100 messages) into CHAT#<conv> items, idempotently and without a ttl; 200 {stored, through_seq}",
+    name: "chat.archive", method: "POST", path: "/chat/archive", auth: "service", summary: "Service only: mirror a conversation {conv, members, msgs} (at most 100 messages) into CHAT#<conv> items, idempotently and without a ttl; 200 {stored (newly written), received, through_seq}; seq above conv.last_seq is 400",
     gate: CHAT_GATE, handler: async (c) => ok(await c.chat.archive(c.body)),
   },
   // The read-only records API (HFY-TSK-175; sync.md 7.2, BRD2 D2-34): the stored, redacted object through publishView and applyModOverlay, behind

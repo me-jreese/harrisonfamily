@@ -25,7 +25,8 @@ const main = await keypair();
 const other = await keypair();
 const KEYS = JSON.stringify([{ kid: "hfy-chat-1", spki: main.spki }]);
 
-function serviceToken({ key = main.privateKey, kid = "hfy-chat-1", alg = "ES256", iss = CHAT_ISSUER, aud = CHAT_AUDIENCE, sub = CHAT_SUBJECT, iat = Math.floor(Date.now() / 1000), life = 60, exp, jti = "01JCTESTJTI" } = {}) {
+let jtiN = 0;
+function serviceToken({ key = main.privateKey, kid = "hfy-chat-1", alg = "ES256", iss = CHAT_ISSUER, aud = CHAT_AUDIENCE, sub = CHAT_SUBJECT, iat = Math.floor(Date.now() / 1000), life = 60, exp, jti = `01JCTESTJTI${++jtiN}` } = {}) {
   const t = new SignJWT({}).setProtectedHeader({ alg, kid, typ: "JWT" }).setIssuer(iss).setAudience(aud).setSubject(sub).setIssuedAt(iat).setExpirationTime(exp ?? iat + life);
   if (jti) t.setJti(jti);
   return t.sign(key);
@@ -36,6 +37,7 @@ const ENTRIES = new Map([
   ["a@example.test", { sub: MEMBER }],
   ["b@example.test", { sub: PEER }],
   ["c@example.test", { sub: "I9003" }],
+  ["d@example.test", { sub: "I9004" }],
   ["bad@example.test", { sub: "has space" }],
 ]);
 const LABELS = { [MEMBER]: "Alex Example", [PEER]: "Blake Example", I9003: "a.person@example.test" }; // an email-shaped label must never come out
@@ -78,7 +80,7 @@ describe("routes: auth service, excluded from MCP and POLICY_ROWS, in caps (AC1)
 });
 
 describe("service authentication (AC1, AC7)", () => {
-  it("accepts a valid token, and the 405 on a wrong method is not an auth bypass", async () => {
+  it("accepts a valid token, and a wrong method on a chat path is a 404 (a session caller never sees a service route), not an auth bypass", async () => {
     const w = world();
     expect((await w.svc("GET", "/api/chat/directory")).status).toBe(200);
     expect((await w.svc("DELETE", "/api/chat/directory", { token: null })).status).toBe(404);
@@ -121,6 +123,33 @@ describe("service authentication (AC1, AC7)", () => {
       expect((await w.svc("POST", "/api/chat/archive", { body: {} })).status).toBe(401);
     }
   });
+  it("a future iat is refused, and a token is not single-use (replay is bounded by its 60 s life, as chat.md 14.2 has it)", async () => {
+    const w = world();
+    const token = await serviceToken();
+    const push = () => w.svc("POST", "/api/chat/push", { token, body: { items: [{ recipient: PEER, conv: DM, seq: 1, actor: MEMBER }] } });
+    expect((await push()).status).toBe(200);
+    expect((await push()).status).toBe(200); // no replay cache: the hub retries safely and dedupes a push by (conv, seq)
+    const future = await serviceToken({ iat: Math.floor(Date.now() / 1000) + 30 });
+    expect((await w.svc("GET", "/api/chat/directory", { token: future })).status).toBe(401);
+  });
+  it("a malformed ChatServicePublicKeys value is a 401 and never a throw", async () => {
+    for (const keys of ["not json", "{}", '[{"kid":"hfy-chat-1","spki":"AAAA"}]', '[{"kid":1}]']) {
+      const w = world({ keys });
+      expect((await w.svc("GET", "/api/chat/directory")).status).toBe(401);
+    }
+  });
+  it("the directory fails closed when the ALLOW# scan hits its bound, and a strict reader throws on a table failure", async () => {
+    const { scanAllowSubs } = await import("../src/chat.js");
+    const { createCompositeMemberReader } = await import("../src/allowlist-store.js");
+    const ddb = { send: async () => ({ Items: [], LastEvaluatedKey: { PK: "x" } }) };
+    await expect(scanAllowSubs(ddb, { ScanCommand: class { constructor(i) { Object.assign(this, i); } } }, "t")).rejects.toThrow(/bound/);
+    const down = { send: async () => { throw new Error("boom"); } };
+    const cmds = { QueryCommand: class { constructor(i) { Object.assign(this, i); } } };
+    const quiet = { error() {} };
+    const read = async () => new Map([["a@example.test", { sub: MEMBER }]]);
+    expect(await createCompositeMemberReader({ readEntries: read, ddb: down, cmds, table: "t", log: quiet })(MEMBER)).not.toBeNull();
+    await expect(createCompositeMemberReader({ readEntries: read, ddb: down, cmds, table: "t", log: quiet, strict: true })(MEMBER)).rejects.toThrow("boom");
+  });
   it("two keys allow rotation: either signs", async () => {
     const both = JSON.stringify([{ kid: "hfy-chat-1", spki: main.spki }, { kid: "hfy-chat-2", spki: other.spki }]);
     const w = world({ keys: both });
@@ -153,7 +182,7 @@ describe("GET /api/chat/directory (AC4)", () => {
     expect(r.headers["cache-control"]).toBe("no-store");
     expect(r.body.version).toBe(1);
     expect(Number.isNaN(Date.parse(r.body.generated_at))).toBe(false);
-    expect(r.body.members).toEqual([{ id: MEMBER, label: "Alex Example" }, { id: PEER, label: "Blake Example" }, { id: "I9003", label: "I9003" }]);
+    expect(r.body.members).toEqual([{ id: MEMBER, label: "Alex Example" }, { id: PEER, label: "Blake Example" }, { id: "I9003", label: "I9003" }, { id: "I9004", label: "I9004" }]);
     expect(JSON.stringify(r.body)).not.toMatch(/@/);
   });
   it("goes through the composite reader: a DynamoDB revoke removes a file member and a DynamoDB grant adds one", async () => {
@@ -227,6 +256,14 @@ describe("POST /api/chat/push (AC2, AC3)", () => {
     expect(r.body).toEqual({ sent: 0, skipped: 3 });
     expect(w.sent).toEqual([]);
     expect((await w.svc("POST", "/api/chat/push", { body: { items: [item({ recipient: "I9004" })] } })).body.sent).toBe(1);
+  });
+  it("skips a recipient the allowlist no longer counts, even with chat texts on", async () => {
+    const w = world({ entries: new Map([["a@example.test", { sub: MEMBER }]]) });
+    await subscribe(w, PEER);
+    await prefs(w, PEER, true);
+    const r = await w.svc("POST", "/api/chat/push", { body: { items: [item()] } });
+    expect(r.body).toEqual({ sent: 0, skipped: 1 });
+    expect(w.sent).toEqual([]);
   });
   it("never writes an inbox item (inbox:false) and skips an item whose recipient is its own actor", async () => {
     const w = world();
@@ -328,7 +365,7 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
     const w = world();
     const r = await w.svc("POST", "/api/chat/archive", { body: body() });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ stored: 3, through_seq: 3 });
+    expect(r.body).toEqual({ stored: 3, received: 3, through_seq: 3 });
     const rows = rowsOf(w);
     expect(rows.map((x) => x.SK).sort()).toEqual([`E#${MEMBER}#0001`, `E#${PEER}#0001`, `E#${PEER}#0002`, "M#0000000001", "M#0000000002", "M#0000000003", "META"].sort());
     expect(new Set(rows.map((x) => x.PK))).toEqual(new Set([`CHAT#${GROUP}`]));
@@ -348,7 +385,7 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
     await w.svc("POST", "/api/chat/archive", { body: body() });
     const before = JSON.stringify(rowsOf(w).map((x) => ({ ...x, archived_at: 0 })).sort((a, b) => a.SK.localeCompare(b.SK)));
     const again = await w.svc("POST", "/api/chat/archive", { body: body() });
-    expect(again.body).toEqual({ stored: 3, through_seq: 3 });
+    expect(again.body).toEqual({ stored: 0, received: 3, through_seq: 3 }); // M# is write-once: the count is what was written
     expect(JSON.stringify(rowsOf(w).map((x) => ({ ...x, archived_at: 0 })).sort((a, b) => a.SK.localeCompare(b.SK)))).toBe(before);
     // a stale retry from before the member left
     await w.svc("POST", "/api/chat/archive", { body: body({ conv: { last_seq: 1, name: "old name" }, members: [{ uid: PEER, epoch: 1, join_seq: 1, left_seq: null, invited_by: MEMBER }], msgs: [] }) });
@@ -371,8 +408,26 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
   it("a DM archives under its canonical id, and a batch with no messages reports through_seq 0", async () => {
     const w = world();
     const r = await w.svc("POST", "/api/chat/archive", { body: { conv: { id: DM, kind: "dm", name: null, creator: MEMBER, policy: null, created_at: 1760000000000, last_seq: 0 }, members: [], msgs: [] } });
-    expect(r.body).toEqual({ stored: 0, through_seq: 0 });
+    expect(r.body).toEqual({ stored: 0, received: 0, through_seq: 0 });
     expect(rowsOf(w).map((x) => x.PK)).toEqual([`CHAT#${DM}`]);
+  });
+  it("is 400 for a member whose left_seq is below join_seq", async () => {
+    const w = world();
+    const r = await w.svc("POST", "/api/chat/archive", { body: body({ members: [{ uid: PEER, epoch: 1, join_seq: 5, left_seq: 2, invited_by: null }] }) });
+    expect(r.status).toBe(400);
+  });
+  it("writes META last, so a failure part-way never leaves last_seq ahead of the messages", async () => {
+    const w = world();
+    const real = w.ddb.send.bind(w.ddb);
+    const order = [];
+    w.ddb.send = async (c) => { if (c.input?.Item) order.push(c.input.Item.SK); return real(c); };
+    expect((await w.svc("POST", "/api/chat/archive", { body: body() })).status).toBe(200);
+    expect(order[order.length - 1]).toBe("META");
+  });
+  it("is 400 for a message seq above conv.last_seq", async () => {
+    const w = world();
+    const r = await w.svc("POST", "/api/chat/archive", { body: body({ conv: { last_seq: 2 } }) });
+    expect(r.status).toBe(400);
   });
   it("is 400 validation for an id not shaped dm:/g:, a kind that disagrees, text over 4,000 bytes, a non-integer seq and more than 100 messages", async () => {
     const w = world();
@@ -394,7 +449,7 @@ describe("POST /api/chat/archive (AC1, AC6)", () => {
     const full = body({ msgs: Array.from({ length: 100 }, (_, i) => msg({ seq: i + 1, cmid: `c${i}` })) });
     full.conv.last_seq = 100;
     const ok = await w.svc("POST", "/api/chat/archive", { body: full });
-    expect(ok.body).toEqual({ stored: 100, through_seq: 100 });
+    expect(ok.body).toEqual({ stored: 100, received: 100, through_seq: 100 });
     expect(parseArchive(body()).msgs).toHaveLength(3);
   });
   it("accepts text of exactly 4,000 bytes", async () => {

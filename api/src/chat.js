@@ -9,6 +9,9 @@
 // chat-hub, `exp - iat <= 60 s`, `jti` present, signed by a key listed in CHAT_SERVICE_PUBLIC_KEYS (stack parameter ChatServicePublicKeys, a JSON
 // array of {kid, spki}). The session cookie is never read on these routes, and the service token opens no session route. With the parameter
 // empty (RG-3 ships it empty; hfy-chat-worker-prod sets it) no token can verify, so every call is the same 401 as a bad token.
+// HANDOFF (hfy-chat-worker): this is 401, not chat.md 14.2's 503 (AC7 evidence wording wins). The hub must treat a 401 from the directory as "chat
+// dormant / not yet keyed" and keep its snapshot, not as a fault in its own key. chat.md 14.2 and BRD2 11.5 still say 503: the orchestrator is asked to amend them.
+// There is no replay cache: the 60 s lifetime bounds replay and the three routes are idempotent (the hub dedupes a push by conv and seq), as chat.md 14.2 has it.
 import { createPublicKey } from "node:crypto";
 import { decodeProtectedHeader, jwtVerify } from "jose";
 import { buildDeclarativePush, sendToPrincipal } from "@io-kit/notify/server";
@@ -107,6 +110,7 @@ export function createServiceAuthenticator({ getKeys, now = () => Date.now(), lo
         requiredClaims: ["exp", "iat", "sub", "jti"], clockTolerance: CLOCK_TOLERANCE_SECONDS, currentDate: new Date(now()),
       });
       if (typeof payload.jti !== "string" || payload.jti === "" || !Number.isFinite(payload.iat) || payload.exp - payload.iat > CHAT_MAX_LIFETIME_SECONDS) throw new Error("claims");
+      if (payload.iat > now() / 1000 + CLOCK_TOLERANCE_SECONDS) throw new Error("iat in the future");
     } catch (e) {
       log.warn?.("chat service token rejected", { name: typeof e?.code === "string" && /^[\w.-]{1,64}$/.test(e.code) ? e.code : "ChatTokenRejected" });
       throw serviceUnauthenticated();
@@ -121,7 +125,12 @@ export function createServiceAuthenticator({ getKeys, now = () => Date.now(), lo
 
 /**
  * Every ALLOW# item's principal (DynamoDB grants, active or revoked), by one filtered Scan, so a member granted in the table and absent from io's
- * S3 file is listed. The composite reader then decides who is a member now. Bounded at 200 pages.
+ * S3 file is listed. The composite reader then decides who is a member now. Bounded at 200 pages; hitting the bound throws (the directory answers
+ * 503) so a truncated list is never served as authoritative.
+ *
+ * Cost note (deliberate choice, io to confirm): the table has no index that lists every ALLOW# item (GSI1 is keyed per principal), so this is a
+ * filtered Scan, billed for every item it reads (including SYNC#LOG and CHAT#). It runs once per 5-minute directory cache miss per Lambda container,
+ * and is a candidate for a dedicated listing partition if the table grows large.
  */
 export async function scanAllowSubs(ddb, cmds, table) {
   const subs = new Set();
@@ -133,9 +142,9 @@ export async function scanAllowSubs(ddb, cmds, table) {
     }));
     for (const it of r.Items ?? []) if (typeof it.sub === "string") subs.add(it.sub);
     key = r.LastEvaluatedKey;
-    if (!key) break;
+    if (!key) return subs;
   }
-  return subs;
+  throw new Error("ALLOW# scan exceeded its page bound");
 }
 
 /**
@@ -222,6 +231,13 @@ export function buildChatPush({ prefs, conv, seq, actorLabel }) {
   return assertShowsNotification(payload);
 }
 
+const SEND_TIMEOUT_MS = 8000;
+/** Rejects after `ms` so one slow push endpoint cannot hold the Lambda to its own limit. */
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([promise, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("push send timed out")), ms); })]).finally(() => clearTimeout(timer));
+}
+
 function parsePushItems(body) {
   const items = body?.items;
   if (!Array.isArray(items) || items.length < 1 || items.length > MAX_PUSH_ITEMS) throw bad(`items must hold 1 to ${MAX_PUSH_ITEMS} entries`);
@@ -239,7 +255,7 @@ function parsePushItems(body) {
  * deps: { subscriptions, preferences, webpush, vapid, resolveLabel, log }. Without VAPID or the stores the route answers {sent:0, skipped:n, disabled:true}.
  * `sent` counts items that reached at least one device; `skipped` the rest (the recipient has chat texts off, has no device, or a send failed).
  */
-export function createChatPush({ subscriptions, preferences, webpush, vapid, resolveLabel, log = console }) {
+export function createChatPush({ subscriptions, preferences, webpush, vapid, resolveLabel, memberReader, log = console }) {
   const enabled = Boolean(subscriptions && preferences && webpush && vapid);
   return async function push(body) {
     const items = parsePushItems(body);
@@ -251,12 +267,14 @@ export function createChatPush({ subscriptions, preferences, webpush, vapid, res
         const it = items[next++];
         try {
           if (it.recipient === it.actor) continue;
+          // The hub is trusted, but a revoked member's device must not get a push naming a conversation: skip a recipient the allowlist no longer counts.
+          if (memberReader && (await memberReader(it.recipient)) === null) continue;
           const prefs = await preferences.get(it.recipient).catch(() => null);
           const level1 = prefs?.features?.[PUSH_FEATURE]?.detail === 1;
           const actorLabel = level1 ? cleanLabel(await Promise.resolve(resolveLabel?.({ sub: it.actor })).catch(() => undefined), it.actor) ?? undefined : undefined;
           const payload = buildChatPush({ prefs, conv: it.conv, seq: it.seq, actorLabel });
           if (!payload) continue;
-          const r = await sendToPrincipal({ store: subscriptions, webpush, vapid, principal: it.recipient, payload });
+          const r = await withTimeout(sendToPrincipal({ store: subscriptions, webpush, vapid, principal: it.recipient, payload }), SEND_TIMEOUT_MS);
           if (r.sent > 0) sent += 1;
         } catch (e) {
           log.error?.("chat push failed", logSafeError(e));
@@ -299,6 +317,7 @@ export function parseArchive(body) {
     if (!isInt(m.epoch, 1) || m.epoch > 9999) throw bad(`members[${i}].epoch must be an integer from 1 to 9999`);
     if (!isInt(m.join_seq, 1)) throw bad(`members[${i}].join_seq must be an integer`);
     if (m.left_seq !== undefined && m.left_seq !== null && !isInt(m.left_seq, 1)) throw bad(`members[${i}].left_seq must be an integer`);
+    if (m.left_seq !== undefined && m.left_seq !== null && m.left_seq < m.join_seq) throw bad(`members[${i}].left_seq is below join_seq`);
     return { uid: m.uid, epoch: m.epoch, join_seq: m.join_seq, left_seq: m.left_seq ?? null, invited_by: optId(m.invited_by, `members[${i}].invited_by`) ?? null };
   });
   const msgs = body.msgs.map((m, i) => {
@@ -308,6 +327,7 @@ export function parseArchive(body) {
     if (typeof m.from !== "string" || !ID_RE.test(m.from)) throw bad(`msgs[${i}].from is not an id`);
     if (m.kind !== "msg" && m.kind !== "sys") throw bad(`msgs[${i}].kind must be msg or sys`);
     if (!isInt(m.ts)) throw bad(`msgs[${i}].ts must be an integer`);
+    if (m.seq > c.last_seq) throw bad(`msgs[${i}].seq is above conv.last_seq`);
     const out = { seq: m.seq, cmid: m.cmid, from: m.from, kind: m.kind, ts: m.ts };
     if (m.text !== undefined && m.text !== null) {
       if (typeof m.text !== "string" || Buffer.byteLength(m.text) > MAX_TEXT_BYTES) throw bad(`msgs[${i}].text is over ${MAX_TEXT_BYTES} bytes`);
@@ -323,6 +343,14 @@ export function parseArchive(body) {
     conv: { id: c.id, kind: c.kind, name: typeof c.name === "string" ? c.name : null, creator: creator ?? null, policy: c.policy ?? null, created_at: c.created_at, last_seq: c.last_seq },
     members, msgs,
   };
+}
+
+/** Runs `fn` over `items` with at most `n` in flight; the first failure rejects. */
+async function pool(n, items, fn) {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (next < items.length) await fn(items[next++]);
+  }));
 }
 
 const isConditionFailure = (e) => e?.name === "ConditionalCheckFailedException";
@@ -347,28 +375,30 @@ export function createArchive({ ddb, cmds, table, now = () => Date.now(), log = 
   return async function archive(body) {
     const { conv, members, msgs } = parseArchive(body);
     const PK = `CHAT#${conv.id}`;
+    let written = 0;
     try {
+      // Members and messages first, META last: a failure part-way leaves a META that still says the older last_seq, so last_seq is never ahead of the
+      // messages that exist. Bounded concurrency keeps a full batch (500 members, 100 messages) inside the Lambda's time limit. Not BatchWriteItem
+      // (chat.md 7.2): these are conditional PutItems, which BatchWriteItem cannot express, and each one is idempotent so a retry repeats safely.
+      await pool(8, members, (m) => put(
+        { PK, SK: `E#${m.uid}#${pad(m.epoch, 4)}`, entity: "chat_member", uid: m.uid, epoch: m.epoch, join_seq: m.join_seq, ...(m.left_seq !== null ? { left_seq: m.left_seq } : {}), ...(m.invited_by !== null ? { invited_by: m.invited_by } : {}) },
+        { expr: "attribute_not_exists(PK) OR attribute_not_exists(#l) OR #l = :l", names: { "#l": "left_seq" }, values: { ":l": m.left_seq ?? -1 } },
+      ));
+      await pool(8, msgs, async (m) => {
+        if (await put(
+          { PK, SK: `M#${pad(m.seq, 10)}`, entity: "chat_msg", seq: m.seq, cmid: m.cmid, from: m.from, kind: m.kind, ts: m.ts, ...(m.text !== undefined ? { text: m.text } : {}), ...(m.sys !== undefined ? { sys: m.sys } : {}) },
+          { expr: "attribute_not_exists(PK)", names: undefined, values: undefined },
+        )) written += 1; // M# is immutable: a replay with other content is dropped, and not counted
+      });
       await put(
         { PK, SK: "META", entity: "chat_conv", kind: conv.kind, name: conv.name, creator: conv.creator, policy: conv.policy, created_at: conv.created_at, last_seq: conv.last_seq, archived_at: now() },
         { expr: "attribute_not_exists(PK) OR #ls <= :ls", names: { "#ls": "last_seq" }, values: { ":ls": conv.last_seq } },
       );
-      for (const m of members) {
-        await put(
-          { PK, SK: `E#${m.uid}#${pad(m.epoch, 4)}`, entity: "chat_member", uid: m.uid, epoch: m.epoch, join_seq: m.join_seq, ...(m.left_seq !== null ? { left_seq: m.left_seq } : {}), ...(m.invited_by !== null ? { invited_by: m.invited_by } : {}) },
-          { expr: "attribute_not_exists(PK) OR attribute_not_exists(#l) OR #l = :l", names: { "#l": "left_seq" }, values: { ":l": m.left_seq ?? -1 } },
-        );
-      }
-      for (const m of msgs) {
-        await put(
-          { PK, SK: `M#${pad(m.seq, 10)}`, entity: "chat_msg", seq: m.seq, cmid: m.cmid, from: m.from, kind: m.kind, ts: m.ts, ...(m.text !== undefined ? { text: m.text } : {}), ...(m.sys !== undefined ? { sys: m.sys } : {}) },
-          { expr: "attribute_not_exists(PK)", names: undefined, values: undefined },
-        );
-      }
     } catch (e) {
       log.error?.("chat archive failed", logSafeError(e));
       throw unavailable("the archive could not be written");
     }
-    return { stored: msgs.length, through_seq: msgs.reduce((hi, m) => Math.max(hi, m.seq), 0) };
+    return { stored: written, received: msgs.length, through_seq: msgs.reduce((hi, m) => Math.max(hi, m.seq), 0) };
   };
 }
 
@@ -381,5 +411,5 @@ export function createChatService(deps) {
     readEntries: deps.readEntries, member: deps.memberReader, resolveLabel: deps.resolveLabel, now: deps.now, log: deps.log,
     listGranted: deps.listGranted ?? (deps.ddb ? () => scanAllowSubs(deps.ddb, deps.cmds, deps.table) : undefined),
   });
-  return { directory, push: createChatPush(deps), archive: createArchive(deps) };
+  return { directory, push: createChatPush({ ...deps, memberReader: deps.memberReader }), archive: createArchive(deps) };
 }
