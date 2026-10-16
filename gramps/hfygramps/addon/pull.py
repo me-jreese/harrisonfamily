@@ -172,6 +172,8 @@ def _run(ctx):
         log.line("cloud tree changed")
         return _refuse("D50")
     ctx.outcome["cloud"] = (int(handshake.get("head_seq") or 0), last_pull_seq)
+    if isinstance(ctx.services.get("sink"), dict):   # in-process only, for the window's header; status.json's shape is unchanged
+        ctx.services["sink"]["cloud"] = {"head_seq": handshake.get("head_seq"), "rendered_seq": handshake.get("rendered_seq")}
     log.line("handshake ok head_seq=%s" % handshake.get("head_seq"))
 
     # ---- the cloud state (step 3): a delta on the cached state when the change feed is on, else (or on any doubt) a full snapshot
@@ -380,7 +382,10 @@ def _plan(ctx):
         local, sidecar.load_base(side), ctx.snap.heads, pins=pins,
         sticky=set(sidecar.meta_json(side, "birthlike_sticky", [])), released=set(sidecar.meta_json(side, "released", [])),
         mode=ctx.mode, allow_deletes=ctx.options.allow_deletes, files=tree.media_files(), pulled=sidecar.load_pulled(side, pull_n),
-        expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy, confirm_mass_delete=bool(ctx.services.get("confirm_mass_delete")))
+        expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy,
+        confirm_mass_delete=bool(ctx.services.get("confirm_mass_delete")) or (ctx.mode == "gui" and ctx.options.confirm_mass_delete),
+        decisions=ctx.options.decisions if ctx.mode == "gui" and not ctx.dry else None,
+        defer_deletes=ctx.mode == "gui" and ctx.options.confirm_deletes is False)
     plan.local = local
     if ctx.decisions is not None and ctx.decisions.overrides:
         ctx.decisions.settle(plan)
@@ -414,7 +419,7 @@ def _check_reviewed(ctx, plan):
     if not isinstance(reviewed, dict) or not isinstance(reviewed.get("plan_hash"), str):
         ctx.log.line("reviewed plan not found")
         return _fail("refused", consts.EXIT_USAGE, "none", "plan_unknown", "There is no preview for that run id. Run check first and review it.")
-    if reviewed["plan_hash"] != plan.plan_hash:
+    if reviewed["plan_hash"] != (plan.reviewed_hash or plan.plan_hash):
         ctx.log.line("plan differs from the reviewed one")
         return _fail("changes_pending", consts.EXIT_DRY_RUN_CHANGES, "review_preview", "plan_changed",
                      "The changes now differ from the preview you reviewed. Nothing was applied; review the new preview.")
@@ -598,6 +603,13 @@ def _update_sidecar(ctx, plan, cloud_tree):
         for (h, path) in plan.closed:
             side.execute("UPDATE conflicts SET state = 'resolved', resolved_at = ? WHERE handle = ? AND path = ? AND state IN ('open', 'parked')",
                          (now, h, path))
+        for c in plan.decided_rows:  # a conflict decided in the run that found it was never stored: the row records the decision
+            side.execute("INSERT OR IGNORE INTO conflicts (id, class, handle, path, kind, base_json, cloud_json, local_json, state, detected_at) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+                         (c["id"], c.get("class"), c.get("handle"), c["path"], c["kind"], c.get("base_json"), c.get("cloud_json"), c.get("local_json"), now))
+        for d in plan.decided:  # the answer a person gave in the window (the choice's name only, never a value)
+            side.execute("UPDATE conflicts SET decision = ?, state = 'resolved', resolved_at = COALESCE(resolved_at, ?) WHERE id = ?",
+                         (d["choice"], now, d["id"]))
         for (cid,) in side.execute("SELECT id FROM conflicts WHERE state IN ('open', 'parked')").fetchall():
             if cid not in current:
                 side.execute("UPDATE conflicts SET state = 'resolved', resolved_at = ? WHERE id = ?", (now, cid))
@@ -618,11 +630,14 @@ def _update_sidecar(ctx, plan, cloud_tree):
 
         # holds: the projection's are replaced each run (first_seen kept); an expunge notice's stay until io releases them
         seen = {(c, h, p, r): f for c, h, p, r, f in side.execute("SELECT class, handle, path, rule, first_seen FROM holds")}
+        kept = sidecar.download_holds(side, sidecar.pathless_media(local_after))     # an earlier run's held download: nothing here fetches that file again
         side.execute("DELETE FROM holds WHERE rule != ?", (sidecar.EXPUNGE_RULE,))
         for x in plan.holds:
             key = (cls_of.get(x["handle"], ""), x["handle"], x["pointer"], x["rule"])
             side.execute("INSERT OR REPLACE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
                          (key[0], key[1], key[2], key[3], x.get("detail") or x["scope"], seen.get(key, now)))
+        for row in kept:
+            side.execute("INSERT OR IGNORE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)", row)
         for n in plan.notices:
             for p in n["paths"]:
                 side.execute("INSERT OR IGNORE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",

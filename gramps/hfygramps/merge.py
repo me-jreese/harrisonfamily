@@ -902,6 +902,45 @@ def local_value(conflict, local, local_proj, base):
     return _plain(node)
 
 
+def set_local_value(conflict, local, local_proj, base, value):
+    """A copy of the raw desktop object ``local`` with ``value`` (a plain, projected-form value; ``MISSING`` removes it) put at the
+    conflict's path. ``local_proj`` and ``base`` are the same inputs ``local_value`` takes, because the path's keyed-list tokens
+    (``<ref>#<n>``) mean something only against the view the conflict was found in. Used to carry out a person's decision on a
+    conflict in the same run: ``resolve_conflict`` / ``resolve_date`` say what the desktop value becomes, this puts it there.
+    Raises ``ValueError`` for a path that does not exist in the desktop object (nothing is guessed) and for the object-level path."""
+    if not conflict["path"]:
+        raise ValueError("an object-level conflict has no path to set")
+    toks = _tokens(conflict["path"])
+    bv = _build(base, None, None)
+    root = _build(local, None, _build(local_proj, None, bv))
+    node = root
+    for tok in toks[:-1]:
+        node = node.items.get(tok, MISSING) if isinstance(node, LV) else node.get(tok, MISSING) if isinstance(node, dict) else MISSING
+        if node is MISSING:
+            raise ValueError("the path is not in the desktop object")
+    last = toks[-1]
+    if isinstance(node, LV):
+        if value is MISSING:
+            if last in node.items:
+                del node.items[last]
+                node.order = [k for k in node.order if k != last]
+        else:
+            node.items[last] = _build(value, None, node.items.get(last))
+            if last not in node.order:
+                node.order.append(last)
+    elif isinstance(node, dict):
+        if value is MISSING:
+            node.pop(last, None)
+        else:
+            node[last] = _build(value, last, node.get(last))
+    else:
+        raise ValueError("the path is not in the desktop object")
+    out = _render(root)
+    if "change" in local:
+        out["change"] = local["change"]
+    return out
+
+
 def resolve_conflict(conflict, choice, local_raw=MISSING):
     """``{"local": value, "cloud": value}`` for a non-date conflict: ``keep_mine`` keeps the desktop value and pushes its
     projection, ``take_website`` takes the cloud value, ``skip`` leaves the conflict open (``None``).

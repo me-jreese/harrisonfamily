@@ -144,6 +144,10 @@ html.hfy-shell-v2 .io-shell:not([data-bp="compact"]) .hfy-bar__search-hint {
 html.hfy-shell-v2 .hfy-bar__end { flex: none; display: flex; align-items: center; gap: var(--io-shell-space-2); }
 /* A filled bell/chat slot (lib/bar-slots.js) is a transparent host: the filling island sizes its own control. Empty slots are not rendered. */
 html.hfy-shell-v2 .hfy-bar__slot { display: contents; }
+/* 375px, all four slots filled (bell, chat, gear, account: 4 x 44px, HFY-TSK-143 joint layout check, review DL-13): the 44px targets sit edge to edge
+   (the gear and the avatar draw smaller glyphs inside theirs) and the brand-to-icons gap narrows, so the group ends inside the page gutter. */
+html.hfy-shell-v2 .io-shell[data-bp="compact"] .hfy-bar { gap: var(--io-shell-space-2); }
+html.hfy-shell-v2 .io-shell[data-bp="compact"] .hfy-bar__end { gap: 0; }
 html.hfy-shell-v2 .hfy-account__skel {
   display: block;
   width: calc(2 * var(--io-shell-control-h-sm));

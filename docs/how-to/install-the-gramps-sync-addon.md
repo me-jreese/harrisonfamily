@@ -141,6 +141,38 @@ Only the redacted form of each object is sent. Phone numbers, mail addresses, st
 
 **If the website changed something too.** Changes to the same object on both sides merge field by field. A change to the same field on both sides, a type change on a birth-like event, or a birth year change over a local day and month is a conflict: the command line parks it (exit `20`, `next_action` `resolve_conflicts`), the desktop value stays, and the website value is what is sent. The conflict stays open on every later run, pull or push, until the two sides agree or you decide it in the Gramps window. A push never puts back a value that the website scrubbed in place (the pull records those as `expunge.notice` holds). A push that meets a website edit made while it ran stops with exit `75`; run it again.
 
+### 10. Use the Website sync window
+
+Open the bound tree in Gramps and choose **Tools > Family Tree Processing > Website sync...**. The window does what sections 5, 6 and 9 do, with a preview you can read and answers you can give, in one run. It needs the sign-in of [section 4](#4-sign-in); **Sign in...** in the window does it for you.
+
+The header names the tree, the website, who you are signed in as, the last sync and the website's version (`seq N`, with a tick when the site has been rendered up to it). **Check for changes** reads the website again and rebuilds the preview, **Open backups** opens the backups folder and **View log** shows the newest run log (step names and codes, never a value). **More...** has "Restore backup..." (which tells you the command to run with Gramps closed) and "Rebase after a recovery...".
+
+Below the header are five sections, each with a count, and each row opens to the field-level differences:
+
+| Section | What it lists |
+| --- | --- |
+| From the website | What **Apply** will change in this tree: new, changed and deleted records, with each field as it was at the last sync and as the website has it now. |
+| To the website | What **Push** will send: the projected change per field. A delete waits for your confirmation and a fresh sign-in; it says so on its row. |
+| Conflicts | Each conflict with three columns: the base, the website and **yours**. Yours is read from the database while the window is open, so it shows a day and month, or a street-level place, that never leaves this computer (the website columns come from the preview file, which holds only what the website may see). Choose **Keep mine**, **Take website** or **Skip for now** for each one. A date conflict where the website changed the year of a birth you hold a day and month for offers three: **Keep mine**, **Take the website year and keep my day and month** (the default) and **Take the website value and clear my day and month**, which asks you to confirm. A website delete of a record you edited offers keep mine (the record is created again on the website) or delete here (confirmed). |
+| Held back | What the redaction policy keeps on this computer (a phone number in a note, a street address, a held photo), a photo or document from the website whose file was not saved here (it carries a location, or it is empty) and stays listed until it has a file in Gramps, a file or record the last sync could not send (with the reason, and "run the push again"), and any event that was once a birth and still has a day and month: those say "Release day and month..." and, once you confirm, the next push publishes them. A push that would publish a day and month on such an event is flagged here and is not sent until you release it. |
+| Blocked | What cannot be sent or applied until something else changes: a person's renumber, a merge of a signed-in member, a record a privacy check kept out, a record waiting for a media file. |
+
+A person's name in a row is a link to that person's page on the website. It has no underline in any state and looks like the text around it; Tab reaches it and shows the focus ring. A record with no Gramps ID shows the name as plain text.
+
+**Apply 3 · Push 5** does the whole thing in one run, in this order:
+
+1. If any Gramps edit window is open (a person, family, event or any other editor), the window stops with "close open edit windows to sync". Close them and press the button again. Nothing was requested or changed.
+2. Each choice that needs a confirmation asks for it, then, if you chose anything other than **Skip for now** for a conflict, the window says how many conflicts it is about to decide and how many of them send your value over the website's (**Keep mine** is the default for a plain field, so pressing the button without touching a conflict decides it as keep mine; set **Skip for now** to leave one open). Incoming deletes, a mass of them (more than 10 records or 5 % of the tree) and the outgoing deletes, reverts and merges each get a list with every record they cover; declining leaves them out.
+3. The pull applies, with your decisions carried out in the same plan: a backup first, then one Gramps transaction, one **Edit > Undo** entry. If the website changed since the preview, nothing is applied and the window says to check again.
+4. If deletes are going out and the sign-in is older than five minutes, the window asks you to sign in again, then sends the delete batches first and the rest after, so the five-minute window cannot lapse during a long push.
+
+The window runs a check, an apply and a sign-in on Gramps's main thread, because the database handle must not leave it, so it does not repaint while a slow request runs (it shows "Checking the website..." or "Working..." first). **Open backups** opens the folder in Finder, and tells you the folder's path when the system cannot open it.
+5. A banner shows the counts, the backup path and the undo warning: undoing the sync will revert those changes on the website at the next sync.
+
+The window never stores a value it shows, and the command line never prints one: previews, `status.json` and logs hold ids, paths and counts, and the preview's values are projected (no local-only part).
+
+How the window was checked: `python3 -m unittest gramps/tests/unit/test_addon_review.py` drives the same flow without Gtk; `gramps/tests/gramps/run.sh test_addon_gui.py` draws it over a fixture-tree copy and renders offscreen screenshots (`HFY_GUI_SHOTS=<folder>` keeps them), and checks the edit-window refusal with real Gramps editor objects; `gramps/tests/e2e/run.sh scenario_gui.py` runs the flow against the dev server and greps its request log. Screenshots from those runs are worker-rendered evidence of the layout. The manual UAT on a fixture copy is io's G-uat handoff (or a computer-use step on io's Mac), and the evidence for it says which.
+
 ## Exit codes
 
 The wrapper exits with the `exit_code` in `~/Library/Application Support/hfy_sync/<dbid>/status.json`, which holds counts and codes only.
@@ -164,7 +196,7 @@ If Gramps is closed and the command still says the tree is open, the `lock` file
 
 The addon follows one tree. It checks that the tree's folder name, a marker stored in the tree and the sidecar agree, and that at least 90 % of the objects the last sync saw are still in the tree. A few creates and deletes between syncs never trip this. A different tree does: one restored from an old copy, re-imported from an export, or with more than a tenth of its objects deleted.
 
-Open the bound tree and run again. To make the website follow the new tree on purpose, the rebind goes through a fresh sign-in, a new sidecar, rebase mode (objects equal to the website's copy are re-based, everything else becomes a conflict that you resolve in the Gramps window) and the mass-delete guard. Those steps arrive with later tasks (`addon-gui-preview` for the new sidecar and rebase mode; the step-up and the push side of the mass-delete guard are in this build, and so is the pull side's); until then the addon only refuses. D12 and D13 are the same family: the sync state for the tree is gone or damaged, and rebasing it is a Gramps-window action that sends nothing by itself.
+Open the bound tree and run again. To make the website follow the new tree on purpose, the rebind goes through a fresh sign-in, a new sidecar, rebase mode (objects equal to the website's copy are re-based, everything else becomes a conflict that you resolve in the Gramps window) and the mass-delete guard. The step-up and both sides of the mass-delete guard are in this build, and the Gramps window decides conflicts ([section 10](#10-use-the-website-sync-window)); the new sidecar and rebase mode for a re-imported tree (D12) are not built yet, so until then the addon only refuses. D12 and D13 are the same family: the sync state for the tree is gone or damaged, and rebasing it is a Gramps-window action that sends nothing by itself.
 
 ## When the website's store was recovered (D50)
 
@@ -192,7 +224,7 @@ If the sync state itself is missing or damaged (D12, D13) the same `next_action`
 
 ```sh
 python3 -m unittest discover gramps/tests/unit          # anywhere: the runtime, the wrapper, the pull, the restore, the push, the build and the installer
-gramps/tests/gramps/run.sh test_addon_skeleton.py test_addon_pull.py   # a Mac with Gramps 6.0.6: the real Gramps on copies of the fixture tree
+gramps/tests/gramps/run.sh test_addon_skeleton.py test_addon_pull.py test_addon_gui.py   # a Mac with Gramps 6.0.6: the real Gramps on copies of the fixture tree
 gramps/tests/e2e/run.sh scenario_pull.py scenario_rebase.py   # the same, against the local sync dev server (needs node 22 and api/node_modules)
 gramps/tests/e2e/run.sh scenario_push.py                # the same Mac, plus node 22 and api/node_modules: the push against the local dev server
 gramps/tests/e2e/run.sh scenario_decisions.py           # the same: a web conflict decision applied, or reopened because the website moved (HFY-TSK-338)

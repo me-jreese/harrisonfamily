@@ -20,8 +20,8 @@
         "css": "e9be417d"
       },
       "chat": {
-        "js": "2070e098",
-        "css": "afca4af7"
+        "js": "edc06987",
+        "css": "03f00346"
       },
       "edit-entry": {
         "js": "fd4c177e",
@@ -104,8 +104,8 @@
         "css": "be4f0b90"
       },
       "shell": {
-        "js": "ba33538b",
-        "css": "f6871411"
+        "js": "d63bbad6",
+        "css": "6aa10a05"
       },
       "timeline": {
         "js": "8f0e6288",
@@ -118,7 +118,7 @@
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "355e34c1"
+    "sw": "b01131d7"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
