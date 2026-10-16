@@ -29,6 +29,7 @@ if GRAMPS_DIR not in sys.path:
 from hfygramps import canonical  # noqa: E402
 from hfygramps import projection as PR  # noqa: E402
 from hfygramps.addon import binding, consts, paths, runner, sidecar, transport  # noqa: E402
+from hfygramps.addon import plan as plan_mod  # noqa: E402
 
 CLASS_RANK = {c: i for i, c in enumerate(consts.CLASSES)}
 CLOUD_TREE = "11111111-2222-4333-8444-555555555555"
@@ -45,7 +46,10 @@ def load_fixture():
 
 
 def project_all(objects, **kw):
-    return {h: p for h, p in PR.project_tree(copy.deepcopy(list(objects.values())), **kw)[0].items() if p is not None}
+    """What a push sends, and so what the website holds: the projection with every person's back-links made to agree with the projected
+    families (`plan.symmetric`). The website refuses a tree where they disagree, so a fake cloud never holds one."""
+    proj = PR.project(copy.deepcopy(list(objects.values())), **kw)
+    return {h: p for h, p in plan_mod.symmetric(proj.projected, proj.holds).items() if p is not None}
 
 
 class FakeTree(runner.TreeAccess):
@@ -148,10 +152,12 @@ class FakeTree(runner.TreeAccess):
 
 
 def snapshot_bytes(tree_id, seq, heads, schema=21, redaction=1):
-    """A snapshot file as api/src/sync/pull.js buildSnapshot writes it; `heads` are dicts {class, handle, gramps_id, version, seq, deleted, obj}."""
+    """A snapshot file as api/src/sync/pull.js buildSnapshot writes it; `heads` are dicts {class, handle, gramps_id, version, seq, deleted, obj},
+    plus `expunged: True` on a head privacy-expunge emptied (HFY-TSK-204): the line carries the flag only then, and the flag is part of the body hash."""
     rows = sorted(heads, key=lambda h: (CLASS_RANK[h["class"]], h["handle"]))
     body = "".join(canonical.canonical_json({"class": h["class"], "handle": h["handle"], "gramps_id": h.get("gramps_id", ""), "version": h["version"],
-                                              "seq": h["seq"], "deleted": h.get("deleted", False), "obj": None if h.get("deleted") else h["obj"]}) + "\n"
+                                              "seq": h["seq"], "deleted": h.get("deleted", False), **({"expunged": True} if h.get("expunged") is True else {}),
+                                              "obj": None if h.get("deleted") else h["obj"]}) + "\n"
                    for h in rows)
     sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
     header = canonical.canonical_json({"type": "header", "tree_id": tree_id, "seq": seq, "schema": schema, "redaction": redaction,

@@ -1,0 +1,44 @@
+{
+  "name": "hfy-chat-worker",
+  "main_module": "index.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": [],
+  "bindings": [
+    {
+      "type": "durable_object_namespace",
+      "name": "CHAT_HUB",
+      "class_name": "ChatHub"
+    }
+  ],
+  "vars": {
+    "SITE_ORIGIN": "https://harrisonfamily.us",
+    "SESSION_ISSUER": "https://harrisonfamily.us/auth",
+    "SESSION_AUDIENCE": "harrisonfamily-web",
+    "SESSION_JWKS_URL": "https://harrisonfamily.us/auth/.well-known/jwks.json",
+    "SESSION_COOKIE": "io_id",
+    "CHAT_ENABLED": "1",
+    "CHAT_OPEN_TO": "uat",
+    "CHAT_UAT_SUBJECTS": "",
+    "API_BASE": "https://harrisonfamily.us/api",
+    "CHAT_SERVICE_KID": "hfy-chat-1",
+    "CHAT_LOCATION_HINT": "wnam"
+  },
+  "migrations": {
+    "new_tag": "v1",
+    "new_sqlite_classes": [
+      "ChatHub"
+    ]
+  },
+  "routes": [
+    "harrisonfamily.us/chat/ws*",
+    "harrisonfamily.us/chat/v1/*"
+  ],
+  "observability": {
+    "enabled": false
+  },
+  "workers_dev": false,
+  "bundle": {
+    "file": "index.js",
+    "sha256": "82acedb3a686d47ba3d9dfc0fa6df09e520105377b8c35dcd313c10d9d7085ad"
+  }
+}

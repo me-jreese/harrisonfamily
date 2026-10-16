@@ -386,6 +386,7 @@ Every route stays in the single `ROUTES` registry that derives `caps.json`, and 
 | `SYNC#RENDER` | `STATE` | — | — | `render-lambda` |
 | `SYNC#RENDERED` | `<seq 12 digits>` | — | +400 d | `render-lambda` |
 | `SYNC#UPLOAD#<handle>` | `<sha256>` | — | +1 h | `sync-routes` |
+| `EXPUNGE#<Class>#<handle>` | `META` | `EXPUNGEQ#pending` / `<due_at>#<Class>#<handle>` | — (deleted by the expunge or by a resurrect) | `privacy-expunge` (written by `applyBatch` for every withdraw, due 72 h later) |
 
 Head attributes: `class`, `handle`, `gramps_id`, `version`, `seq`, `deleted`, `schema:21`, `redaction:1`, `obj_json`, `hash`, `blob` (Media), `updated_at`, `updated_by`, `origin`, `expunged`. The `origin` value is one of `desktop | seed | self | admin | proposal | graduation | moderation | tag`.
 

@@ -76,6 +76,10 @@ One CloudFront distribution, `<distribution-id>`, serves the whole site, with Cl
 - **Variants of the gated paths.** A request that spells a gated prefix in a form that no gated pattern matches, such as `/Person/index.json` or `/person/<gramps-id>.JSON`, reaches the default behavior. The repository's `HFYAppendIndex` answers it with `404` before S3 is reached ([HFYAppendIndex](#hfyappendindex)).
 - **The MCP behaviors.** The association names a numbered version of `hfy-mcp-edge401` from the `us-east-1` stack of that name. On a `401`, the function copies `x-amzn-remapped-www-authenticate`, the name under which a Function URL returns the header, back into `WWW-Authenticate`, unless the response already has one. See [MCP server: CloudFront behaviors](mcp-server.md#cloudfront-behaviors).
 
+### The chat Worker routes (not CloudFront behaviors)
+
+Two paths leave the distribution's routing. A Cloudflare Worker route on the same host answers `<site>/chat/ws*` and `<site>/chat/v1/*` ahead of CloudFront, and every other path, `/chat/` and `/chat/index.html` included, reaches CloudFront unchanged. The Worker ([`chat-worker/`](../../chat-worker/)) verifies the `io_id` cookie and the exact `Origin`, then hands the `ChatHub` Durable Object a new request that carries only `x-chat-uid` and `x-chat-exp`. A request on those paths that is not the upgrade or `GET /chat/v1/health` goes on to CloudFront with `fetch(request)`, as if the route did not exist. The routes are created once in the Cloudflare zone and verified, not created, by the deploy pipeline. The repository does not record whether they exist: check the zone's Worker-route list. [Build, test and stage the chat Worker](../how-to/deploy-the-chat-worker.md) covers the bundle; [Edge and origin design](../explanation/edge-and-origin-design.md#the-chat-worker-route-is-the-one-path-ahead-of-cloudfront) covers why.
+
 The managed policies the scripts use:
 
 | Policy | Kind | ID |

@@ -134,6 +134,7 @@ class Apply(RebaseCase):
         con = e.side()
         con.execute("INSERT INTO outbox (batch_key, created_at, state, request_json) VALUES ('old-pending', '2026-10-01T00:00:00Z', 'pending', '{}')")
         con.execute("INSERT INTO outbox (batch_key, created_at, state, request_json) VALUES ('old-acked', '2026-10-01T00:00:00Z', 'acked', '{}')")
+        con.execute("INSERT INTO meta (key, value) VALUES ('open_session', 'old-store-session')")  # a push session the old store opened (HFY-TSK-206)
         con.commit()
         con.close()
         doc = e.run("rebase", yes=True)
@@ -163,6 +164,7 @@ class Apply(RebaseCase):
         self.assertEqual(meta["cloud_tree_id"], NEW_TREE)
         self.assertEqual(int(meta["last_pull_seq"]), e.cloud.seq)
         self.assertEqual(meta["rebase_n"], "1")
+        self.assertNotIn("open_session", meta)  # the new store never opened it: the next push opens its own
         # unsent entries addressed to the old tree are rejected; sent-and-acked history stays
         self.assertEqual(dict(self.table_rows("outbox", "batch_key, state")), {"old-pending": "rejected", "old-acked": "acked"})
         self.assertEqual(len(os.listdir(e.tp.backups)), 3)  # database, sidecar copy, sha256

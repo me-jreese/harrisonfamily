@@ -29,6 +29,7 @@ Neutral descriptions of the machinery. Consult these; you don't read them front 
 - [Codebase map](reference/codebase-map.md) — each capability routed to the files that implement it, including the pieces outside the repository.
 - [System architecture](reference/architecture.md) — the deployed system: request routing, origins, buckets, compute, the identity store, the `hfy-app` table and the CloudFormation stacks.
 - [Family API (hfy-api)](reference/api.md) — the members-only API at `/api/*`: routes, permissions, audit records, notifications, uploads and configuration.
+- [Editing: the D-11 audit](reference/editing-d11-audit.md) — what was measured on `/edit/`, `/edit/family/` and `/me/review/` at 375 and 1024 px, the screenshots, what it does not cover, and the five end-to-end scenarios.
 - [Field policy](reference/field-policy.md) — who may change which field, on which record and how: the generated table, the Q2-15 switches and the withheld types. Checked against `field-policy.js` by a test.
 - [MCP server (/mcp)](reference/mcp-server.md) — the MCP endpoint that `hfy-api` serves: tools, policy, groups, step-up, audit and the conformance gate.
 - [Identity services](reference/identity-services.md) — the auth edge, the private data gate and the legacy sign-in path: routes, tokens, cookies, session refresh and configuration.
@@ -53,9 +54,10 @@ For a new environment, for this family or another, in this order. The first page
 2. [Deploy and update the Lambda@Edge functions in us-east-1](how-to/deploy-the-edge-functions.md) — deploy `hfy-mcp-edge401` and `hfy-edge-gate`, validate the gate before anything attaches it, and later ship a change to either.
 3. [Add or remove a family member's access](how-to/manage-family-access.md) — publish the allowlist, the admin list and the MCP groups, and later change who has access or sign a member out on every device.
 4. [Deploy the app stack and its CloudFront behaviors](how-to/deploy-the-app-stack.md) — create or update `<app-stack>` from commit-named code zips through a reviewed change set, and add its behaviors.
-5. [Sync Gramps with the website](how-to/sync-gramps-with-the-website.md) — sync the Gramps tree through the cloud store, cut the site over (deny first, then live, then verify) and roll it back.
-6. [Cut over to authV2 and the private data gate, and roll back](how-to/cut-over-to-the-private-data-gate.md) — find which state a site is in, flip `authV2` before attaching the gate, and roll back in the reverse order; production cut over on 2026-10-12.
-7. [Turn on push notifications](how-to/turn-on-push-notifications.md) — optional: give the API a VAPID key pair, and later turn push off, replace the keys or correct their subject.
+5. [Deploy the graph renderer](how-to/deploy-the-graph-renderer.md) — build the linux/arm64 `hfy-graph-render` package, ship it in the RG-6 change set and smoke it.
+6. [Sync Gramps with the website](how-to/sync-gramps-with-the-website.md) — sync the Gramps tree through the cloud store, cut the site over (deny first, then live, then verify) and roll it back.
+7. [Cut over to authV2 and the private data gate, and roll back](how-to/cut-over-to-the-private-data-gate.md) — find which state a site is in, flip `authV2` before attaching the gate, and roll back in the reverse order; production cut over on 2026-10-12.
+8. [Turn on push notifications](how-to/turn-on-push-notifications.md) — optional: give the API a VAPID key pair, and later turn push off, replace the keys or correct their subject.
 
 ### Ship a change
 
@@ -69,6 +71,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Change the theme or brand fonts](how-to/change-the-theme-or-brand-fonts.md) — change the colours, a theme partial or a font with the theme lint passing, and ship it.
 - [Refresh `11ty/` from the Eleventy source without losing E5 files](how-to/refresh-the-eleventy-output.md) — promote new Eleventy output while keeping the repo-owned files, then rebuild the islands over it.
 - [Publish a change to the HFYAppendIndex CloudFront Function](how-to/publish-the-cloudfront-function.md) — test, dry-run, publish and roll back `scripts/cloudfront/append-index.js`.
+- [Build, test and stage the chat Worker](how-to/deploy-the-chat-worker.md) — rebuild the committed `chat-worker/dist/` bundle, run its checks and tests, smoke it with real sockets in `workerd` and on a staging Worker; production deploy and CI are separate tasks.
 - [Run the test suites](how-to/run-the-tests.md) — run each suite with its prerequisites, and know which ones reach production.
 - [Regenerate the Gramps goldens](how-to/regenerate-the-gramps-goldens.md) — rebuild the values Gramps 6.0.6 computes for dates, birth and death indexes, and the relationship scenarios, compare them byte for byte, and check them without Gramps.
 - [Install and run the Gramps sync addon](how-to/install-the-gramps-sync-addon.md) — put the `hfy_sync` addon into Gramps, check it from the command line, bind the tree, and read its exit codes.

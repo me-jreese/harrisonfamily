@@ -9,7 +9,7 @@
 // The store view holds every head in memory. Cold start = the latest snapshot (ctx.snapshot, optional) plus a fold of SYNC#LOG since
 // its seq; warm = a consistent GetItem of SYNC#HEAD, then a fold of the log since the cached seq. GSI reads are never used for the
 // view. `ctx` is the applyBatch store context: { ddb, cmds, table, now? }.
-import { HttpError } from "../http.js";
+import { HttpError } from "../http-error.js";
 import { collectRefs } from "./semantics.js";
 import { CLASSES, getRecord, getSyncHead, logKey, seqKey } from "../sync/store.js";
 
@@ -66,6 +66,7 @@ export class StoreView {
     this.graphCache = null; // { at, value }
     this.typesCache = null; // { seq, value }
     this.snapTried = false; // the snapshot is offered once per view
+    this.epoch = undefined; // SYNC#HEAD.expunge_epoch this view was built under (undefined until first read)
   }
 
   /** Sets (or tombstones) one head, keeping the reverse reference index in step. */
@@ -75,8 +76,11 @@ export class StoreView {
     // A stale entry (a slower, overlapping fold of an earlier log page) never overwrites a newer head.
     if (old && Number.isFinite(entry.seq) && Number.isFinite(old.seq) && entry.seq <= old.seq) return;
     if (old && !old.deleted && old.obj) for (const r of collectRefs(old.obj)) this.refs.get(keyOf(r.cls, r.handle))?.delete(key);
-    const live = entry.deleted !== true && entry.obj != null;
-    this.heads.set(key, { class: entry.class, handle: entry.handle, gramps_id: entry.gramps_id ?? old?.gramps_id ?? "", version: entry.version, seq: entry.seq, deleted: !live, obj: live ? entry.obj : null });
+    const live = entry.deleted !== true && entry.obj != null && entry.expunged !== true;
+    this.heads.set(key, {
+      class: entry.class, handle: entry.handle, gramps_id: entry.gramps_id ?? old?.gramps_id ?? "", version: entry.version, seq: entry.seq, deleted: !live, obj: live ? entry.obj : null,
+      ...(entry.expunged === true ? { expunged: true } : {}),
+    });
     if (live) {
       for (const r of collectRefs(entry.obj)) {
         const t = keyOf(r.cls, r.handle);
@@ -89,13 +93,13 @@ export class StoreView {
   /** Folds one SYNC#LOG item. A marker only advances the seq. */
   foldLog(item) {
     if (item.op === "create" || item.op === "update" || item.op === "delete" || item.op === "withdraw") {
-      const live = (item.op === "create" || item.op === "update") && item.obj_json != null;
-      this.put({ class: item.class, handle: item.handle, gramps_id: item.gramps_id || undefined, version: item.version, seq: item.seq, deleted: !live, obj: live ? JSON.parse(item.obj_json) : null });
+      const live = (item.op === "create" || item.op === "update") && item.obj_json != null && item.expunged !== true;
+      this.put({ class: item.class, handle: item.handle, gramps_id: item.gramps_id || undefined, version: item.version, seq: item.seq, deleted: !live, obj: live ? JSON.parse(item.obj_json) : null, ...(item.expunged === true ? { expunged: true } : {}) });
     }
     this.seq = Math.max(this.seq, item.seq);
   }
 
-  /** Loads a snapshot { seq, heads: [{class, handle, version, seq, deleted, obj, gramps_id?}] }. */
+  /** Loads a snapshot { seq, heads: [{class, handle, version, seq, deleted, obj, expunged?, gramps_id?}] }. */
   load(snapshot) {
     for (const h of snapshot.heads) this.put(h);
     this.seq = snapshot.seq;
@@ -129,13 +133,20 @@ async function foldSince(ctx, view, headSeq) {
 }
 
 const views = new WeakMap(); // ddb client -> Map(table -> StoreView)
-function viewFor(ctx) {
+/**
+ * The cached view of this table. `epoch` is SYNC#HEAD.expunge_epoch as the caller just read it (absent = 0): an expunge rewrites log entries and
+ * heads in place without moving seq, so a view built under another epoch could still hold the removed value in memory, and is dropped (privacy-expunge).
+ */
+function viewFor(ctx, epoch) {
   let byTable = views.get(ctx.ddb);
   if (!byTable) views.set(ctx.ddb, (byTable = new Map()));
   let v = byTable.get(ctx.table);
+  if (v && epoch !== undefined && v.epoch !== undefined && v.epoch !== epoch) v = undefined;
   if (!v) byTable.set(ctx.table, (v = new StoreView()));
+  if (epoch !== undefined) v.epoch = epoch;
   return v;
 }
+const epochOf = (head) => (Number.isInteger(head?.expunge_epoch) ? head.expunge_epoch : 0);
 
 /** Drops the cached view of this context's table (tests; also the recovery path after a restore). */
 export function resetStoreView(ctx) {
@@ -153,8 +164,9 @@ export async function rebuildStoreView(ctx) {
 
 /** The cached view brought up to SYNC#HEAD.seq (one consistent GetItem when nothing changed). */
 export async function storeView(ctx) {
-  const view = viewFor(ctx);
-  const headSeq = (await getSyncHead(ctx))?.seq ?? 0;
+  const head = await getSyncHead(ctx);
+  const view = viewFor(ctx, epochOf(head));
+  const headSeq = head?.seq ?? 0;
   if (!view.snapTried && view.seq === 0 && view.heads.size === 0 && typeof ctx.snapshot === "function") {
     view.snapTried = true;
     const snap = await ctx.snapshot();

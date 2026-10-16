@@ -245,6 +245,20 @@ class DevServer:
             raise DevServerError("the head switch was refused (%s)" % status)
         return doc["head"]
 
+    def apply(self, ops, key, origin="admin", principal="web-dev", step_up=False):
+        """A batch from a WEBSITE writer (POST /_dev/apply: the real applyBatch with origin admin, proposal, ...). Returns (status, body):
+        the result of applyBatch on 200, {error, message, details?} otherwise."""
+        status, body = _call("POST", self.origin + "/_dev/apply", {"origin": origin, "principal": principal, "idempotency_key": key, "ops": ops, "step_up": step_up},
+                             {"Content-Type": "application/json"})
+        return status, (json.loads(body.decode("utf-8")) if body else None)
+
+    def items(self, prefix):
+        """The keys ({PK, SK}) of the table items whose PK starts with `prefix`: never their contents."""
+        status, doc = self.get_json("/_dev/items?" + urllib.parse.urlencode({"prefix": prefix}))
+        if status != 200:
+            raise DevServerError("items refused (%s)" % status)
+        return doc["items"]
+
     def state(self):
         status, doc = self.get_json("/_dev/state")
         if status != 200:
@@ -326,6 +340,13 @@ class Session:
     def client(self, tree_id=None):
         self.versions.tree_id = tree_id
         return transport.Client(self.origin, self.versions, self.tokens, http=self.http)
+
+
+def snapshot_heads(client):
+    """{handle: {class, gramps_id, version, seq, deleted, obj}} of the cloud store now, through the addon's own client and the verifying reader."""
+    route = client.get("/api/sync/snapshot").body
+    _header, lines = read_snapshot(route["url"], route)
+    return {row["handle"]: row for row in lines}
 
 
 def make_versions(gramps_version="6.0.6", db_schema=21):

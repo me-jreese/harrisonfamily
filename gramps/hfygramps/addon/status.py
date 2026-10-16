@@ -25,7 +25,7 @@ def zero_counts():
 
 
 def build(run_id, action, mode, dbid, bound, result, exit_code, started_at, finished_at, *, dry_run=False, error=None,
-          next_action="none", counts=None, versions=None, head_seq=0, snapshot_seq=0, backup=None):
+          next_action="none", counts=None, versions=None, head_seq=0, snapshot_seq=0, backup=None, via=None):
     """A status.json document. `error` is {"code", "message"} only: no object content ever goes in here."""
     if result not in consts.RESULTS:
         raise ValueError("unknown result")
@@ -42,7 +42,7 @@ def build(run_id, action, mode, dbid, bound, result, exit_code, started_at, fini
         "result": result,
         "exit_code": int(exit_code),
         "tree": {"dbid": dbid, "bound": bool(bound)},
-        "cloud": {"head_seq": head_seq, "snapshot_seq": snapshot_seq},
+        "cloud": dict({"head_seq": head_seq, "snapshot_seq": snapshot_seq}, **({"via": via} if via in ("delta", "snapshot") else {})),
         "counts": counts if counts is not None else zero_counts(),
         "backup": backup,
         "error": error,

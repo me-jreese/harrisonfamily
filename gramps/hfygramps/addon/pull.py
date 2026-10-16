@@ -26,7 +26,7 @@ from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
 from . import backup as backup_mod
-from . import consts, errors, faults, media, paths, sidecar, snapshot, status, transport
+from . import consts, delta, errors, faults, media, paths, sidecar, snapshot, status, transport
 from . import plan as plan_mod
 
 MAX_REPLANS = 3
@@ -54,6 +54,10 @@ class Cloud:
         if not isinstance(body, dict) or not isinstance(body.get("url"), str):
             raise transport.TransportError("bad_snapshot_answer", consts.EXIT_INTERNAL, message="The snapshot answer was not usable.")
         return body
+
+    def changes(self, since, limit):
+        """GET /api/sync/changes (ARCH-B, delta.py): the decoded answer, whatever it is; delta.py checks the shape."""
+        return self.client.get("/api/sync/changes", query={"since": since, "limit": limit}).body
 
     def fetch(self, url):
         return self.http.get_bytes(media.check_download_url(url))
@@ -154,8 +158,8 @@ def _run(ctx):
     ctx.outcome["cloud"] = (int(handshake.get("head_seq") or 0), last_pull_seq)
     log.line("handshake ok head_seq=%s" % handshake.get("head_seq"))
 
-    # ---- snapshot (step 3)
-    ctx.snap = _snapshot(ctx, cloud, cloud_tree, last_pull_seq)
+    # ---- the cloud state (step 3): a delta on the cached state when the change feed is on, else (or on any doubt) a full snapshot
+    ctx.snap = _cloud_state(ctx, cloud, handshake, cloud_tree, last_pull_seq)
     snap = ctx.snap
     ctx.outcome["cloud"] = (int(handshake.get("head_seq") or 0), snap.seq)
     log.line("snapshot seq=%d count=%d" % (snap.seq, snap.header["count"]))
@@ -247,20 +251,64 @@ def _run(ctx):
 # ---------------------------------------------------------------------------------------------------------------- steps
 
 
-def _snapshot(ctx, cloud, cloud_tree, last_pull_seq):
-    info, raw = None, None
-    for attempt in (0, 1):
-        info = cloud.snapshot_info()
-        try:
-            raw = cloud.fetch(info["url"])
-            break
-        except transport.TransportError as exc:
-            if exc.status != 403 or attempt:  # D52: an expired presigned URL is asked for once more
-                raise
-    snap = snapshot.parse(raw, expect=info, tree_id=cloud_tree, schema=ctx.tree.schema_version, last_pull_seq=last_pull_seq)
+def _cloud_state(ctx, cloud, handshake, cloud_tree, last_pull_seq):
+    """Step 3: the website's whole state as a verified Snapshot, by the cheapest route that can be trusted (delta.py)."""
+    epoch = delta.epoch_of(handshake)
+    if not delta.enabled(handshake, ctx.config) or not hasattr(cloud, "changes"):
+        snap = _snapshot(ctx, cloud, cloud_tree, last_pull_seq)
+        _remember(ctx, snap, epoch, 0)
+        return snap
+    log = ctx.log
+    head_seq = int(handshake.get("head_seq") or 0)
+    try:
+        replica = delta.load(ctx.tp, cloud_tree, ctx.tree.schema_version, epoch)
+        if replica.streak >= consts.DELTA_VERIFY_EVERY - 1:
+            return _verified_snapshot(ctx, cloud, replica, head_seq, cloud_tree, last_pull_seq, epoch)
+        delta.advance(replica, cloud, head_seq)
+        snap = replica.to_snapshot(ctx.tree.schema_version, last_pull_seq)
+        _cache_snapshot(ctx, snap.raw_gz, snap.seq)
+        _remember(ctx, snap, epoch, replica.streak + 1)
+        ctx.outcome["pull_via"] = "delta"
+        log.line("delta ok seq=%d" % snap.seq)
+        return snap
+    except delta.Fallback as fb:
+        log.line("delta fallback: %s" % fb.code)
+    snap = _snapshot(ctx, cloud, cloud_tree, last_pull_seq)
+    _remember(ctx, snap, epoch, 0)
+    ctx.outcome["pull_via"] = "snapshot"
+    return snap
+
+
+def _verified_snapshot(ctx, cloud, replica, head_seq, cloud_tree, last_pull_seq, epoch):
+    """Every 7th sync: the full snapshot is the cloud state, and the delta replay to its seq must hash to the same body."""
+    snap = _snapshot(ctx, cloud, cloud_tree, last_pull_seq)
+    _remember(ctx, snap, epoch, 0)
+    ctx.outcome["pull_via"] = "snapshot"
+    try:
+        delta.advance(replica, cloud, head_seq, until=snap.seq)
+        if replica.seq != snap.seq:
+            ctx.log.line("delta verify inconclusive: the replay ended at another seq")
+        elif replica.to_snapshot(ctx.tree.schema_version).body_sha256 == snap.body_sha256:
+            ctx.log.line("delta verify ok seq=%d" % snap.seq)
+        else:
+            ctx.log.line("delta verify MISMATCH seq=%d: the snapshot is used and replaces the cache" % snap.seq)
+            ctx.outcome["delta_verify"] = "mismatch"
+    except delta.Fallback as fb:
+        ctx.log.line("delta verify inconclusive: %s" % fb.code)
+    return snap
+
+
+def _remember(ctx, snap, epoch, streak):
+    try:
+        delta.save_state(ctx.tp, snap, epoch, streak)
+    except OSError:
+        pass  # the cache is a convenience; with no state file the next run takes a snapshot
+
+
+def _cache_snapshot(ctx, raw, seq):
     try:
         os.makedirs(ctx.tp.cache, mode=0o700, exist_ok=True)
-        cache = os.path.join(ctx.tp.cache, "snapshot-%d.jsonl.gz" % snap.seq)
+        cache = os.path.join(ctx.tp.cache, "snapshot-%d.jsonl.gz" % seq)
         os.chmod(ctx.tp.cache, 0o700)  # makedirs leaves an existing folder as it was
         fd = os.open(cache + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # private from the first byte, whatever the umask
         with os.fdopen(fd, "wb") as fh:
@@ -273,6 +321,20 @@ def _snapshot(ctx, cloud, cloud_tree, last_pull_seq):
             os.unlink(os.path.join(ctx.tp.cache, f))
     except OSError:
         pass  # the cache is a convenience
+
+
+def _snapshot(ctx, cloud, cloud_tree, last_pull_seq):
+    info, raw = None, None
+    for attempt in (0, 1):
+        info = cloud.snapshot_info()
+        try:
+            raw = cloud.fetch(info["url"])
+            break
+        except transport.TransportError as exc:
+            if exc.status != 403 or attempt:  # D52: an expired presigned URL is asked for once more
+                raise
+    snap = snapshot.parse(raw, expect=info, tree_id=cloud_tree, schema=ctx.tree.schema_version, last_pull_seq=last_pull_seq)
+    _cache_snapshot(ctx, raw, snap.seq)
     return snap
 
 
@@ -568,6 +630,6 @@ def _final(ctx, plan):
     if att:
         return ("partial", consts.EXIT_PARTIAL, att[2], {"code": att[0], "message": att[1]})
     if ctx.options.action == "sync" and plan.counts["push_pending"]:
-        return ("partial", consts.EXIT_PARTIAL, "none", {"code": "push_unavailable",
-                "message": "%d desktop change(s) are waiting to go to the website; this build of the addon cannot push yet." % plan.counts["push_pending"]})
+        return ("partial", consts.EXIT_PARTIAL, "none", {"code": "push_pending",
+                "message": "%d desktop change(s) are waiting to go to the website; `sync` only pulls, so run hfy-sync push to send them." % plan.counts["push_pending"]})
     return (consts.OK, consts.EXIT_OK, "none", None)

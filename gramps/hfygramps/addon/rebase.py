@@ -11,8 +11,8 @@ against the new store without touching the tree and without sending anything:
                  they differ -> a conflict; only one side has it -> left for the next pull (website only) or push (desktop only)
     backup       the verified backup of every apply (backup.make): the sidecar of this moment is part of it
     sidecar      ONE SQLite transaction: the old base is dropped, the converged objects become the new base, the old open conflicts are
-                 closed (the new run lists what still differs), unsent outbox entries are rejected, the pull window is cleared, and the
-                 meta follows the new tree
+                 closed (the new run lists what still differs), unsent outbox entries are rejected, the old store's open push session is
+                 forgotten, the pull window is cleared, and the meta follows the new tree
 
 Nothing is written to the Gramps tree and nothing is sent to the website: the plan's local commits, deletes and push ops are
 counted for the summary and then dropped. The next `pull` brings the website-only objects in through the usual preview, and conflicts
@@ -150,6 +150,7 @@ def _write_sidecar(ctx, plan, cloud_tree, summary):
                          (c["id"], c.get("class"), c.get("handle"), c["path"], c["kind"], c.get("base_json"), c.get("cloud_json"),
                           c.get("local_json"), state, now))
         side.execute("UPDATE outbox SET state = 'rejected' WHERE state IN ('pending', 'sent')")  # addressed to the old cloud tree
+        side.execute("DELETE FROM meta WHERE key = 'open_session'")  # the push session the old store opened (pushstate): the new store never heard of it
         if sidecar.has_table(side, "pulled"):
             side.execute("DELETE FROM pulled")  # the revert labels compare against pulls from the old tree
         sidecar.set_meta(side, "cloud_tree_id", cloud_tree)

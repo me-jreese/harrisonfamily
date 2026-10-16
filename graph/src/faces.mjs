@@ -106,17 +106,29 @@ async function encode(sharp, bytes, box) {
   return out;
 }
 
+/** The face sink of a staging directory: <mediaOut>/faces/<name>, written atomically. */
+export function fsFaceSink(mediaOut) {
+  const dir = join(mediaOut, 'faces');
+  return {
+    exists: (name) => existsSync(join(dir, name)),
+    write: (name, bytes) => writeAtomic(join(dir, name), bytes),
+  };
+}
+
 /**
  * Crops and writes the faces for `jobs` ({id, media, rect}: the person's gramps id, the media handle of Person.media_list[0]
  * and its rect). Writes only files that do not exist yet. Prune separately, after graph.json is written.
+ * `reader.read` may return a Promise (the cloud builder reads the photos from S3).
  * @param {{ id: string, media: string, rect: unknown }[]} jobs
- * @param {{ read(handle: string): Buffer | null }} reader
- * @param {string} mediaOut  <staging>/media (faces go to <mediaOut>/faces)
+ * @param {{ read(handle: string): Buffer | null | Promise<Buffer | null> }} reader
+ * @param {string | { exists(name: string): boolean | Promise<boolean>, write(name: string, bytes: Buffer): void | Promise<void> }} mediaOut
+ *   <staging>/media (faces go to <mediaOut>/faces), or a sink for the faces' file names (hfy-graph-render keeps them in memory
+ *   until verify() has passed, then uploads only the new ones)
  * @returns {Promise<{ faces: Map<string, string|null>, keep: Set<string>, written: number, warnings: { code: string, id: string }[] }>}
  */
 export async function buildFaces(jobs, reader, mediaOut) {
   const { default: sharp } = await import('sharp'); // loaded only when faces are built
-  const dir = join(mediaOut, 'faces');
+  const sink = typeof mediaOut === 'string' ? fsFaceSink(mediaOut) : mediaOut;
   const faces = new Map();
   const keep = new Set();
   const warnings = [];
@@ -124,7 +136,7 @@ export async function buildFaces(jobs, reader, mediaOut) {
   let written = 0;
   for (const job of jobs) {
     faces.set(job.id, null);
-    const bytes = reader.read(job.media);
+    const bytes = await reader.read(job.media);
     if (bytes === null || bytes === undefined) {
       warn('MEDIA_MISSING', job.id);
       continue;
@@ -156,8 +168,7 @@ export async function buildFaces(jobs, reader, mediaOut) {
     }
     const rect = norm.rect;
     const name = faceName(job.id, bytes, rect);
-    const target = join(dir, name);
-    if (!existsSync(target)) {
+    if (!(await sink.exists(name))) {
       let out;
       try {
         out = await encode(sharp, bytes, box);
@@ -165,7 +176,7 @@ export async function buildFaces(jobs, reader, mediaOut) {
         warn('UNSUPPORTED_FORMAT', job.id);
         continue;
       }
-      writeAtomic(target, out);
+      await sink.write(name, out);
       written += 1;
     }
     faces.set(job.id, `faces/${name}`);

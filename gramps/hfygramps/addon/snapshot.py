@@ -2,7 +2,8 @@
 
 A gzip file of canonical JSON lines. Line 1 is the header `{"type":"header","tree_id","seq","schema","redaction","count","body_sha256"}`;
 every further line is one head `{"class","handle","gramps_id","version","seq","deleted","obj"}` (a tombstone has `deleted: true` and
-`obj: null`). `body_sha256` is the SHA-256 of every byte after the header line's newline.
+`obj: null`; a head privacy-expunge emptied, HFY-TSK-204, is a tombstone that also carries `expunged: true`, and the key is present only then).
+`body_sha256` is the SHA-256 of every byte after the header line's newline, so the flag is part of what it hashes.
 
 `parse` verifies the file the way step 3 says before anything reads an object: the gunzip stays under a size cap, the body hashes to
 the header's `body_sha256` (and to the route's), the header names this tree, the database schema and the redaction version the addon
@@ -31,12 +32,14 @@ class SnapshotError(Exception):
 
 
 class Head:
-    """One head of the snapshot. `hash` is the canonical hash of the object (None for a tombstone)."""
+    """One head of the snapshot. `hash` is the canonical hash of the object (None for a tombstone). `expunged` is True only on the tombstone of a
+    head privacy-expunge emptied: the website writes the flag into the line, so a delta replica has to carry it to hash like the website's file."""
 
-    __slots__ = ("cls", "handle", "gramps_id", "version", "seq", "deleted", "obj", "hash")
+    __slots__ = ("cls", "handle", "gramps_id", "version", "seq", "deleted", "obj", "hash", "expunged")
 
-    def __init__(self, cls, handle, gramps_id, version, seq, deleted, obj):
+    def __init__(self, cls, handle, gramps_id, version, seq, deleted, obj, expunged=False):
         self.cls, self.handle, self.gramps_id, self.version, self.seq, self.deleted, self.obj = cls, handle, gramps_id, version, seq, deleted, obj
+        self.expunged = expunged is True
         self.hash = None if deleted else canonical.object_hash(obj)
 
 
@@ -130,7 +133,7 @@ def parse(raw_gz, expect=None, tree_id=None, schema=None, redaction=consts.REDAC
                 raise _bad("a live head carries no matching object")
         gid = row.get("gramps_id")
         try:
-            heads.append(Head(cls, handle, gid if isinstance(gid, str) else "", row["version"], row["seq"], deleted, obj))
+            heads.append(Head(cls, handle, gid if isinstance(gid, str) else "", row["version"], row["seq"], deleted, obj, row.get("expunged") is True))
         except canonical.CanonicalError:
             raise _bad("a head carries a value that is not canonical JSON")
     if len(heads) != header["count"]:

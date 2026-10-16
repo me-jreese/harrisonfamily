@@ -9,6 +9,7 @@
 //   IDALIAS#Person#<id>  put for a Person merge or an allowed renumber   (never deleted)
 //   SYNC#BATCH#<id>      put, attribute_not_exists                       (the receipt; the cross-attempt idempotency guard)
 //   AUDIT#records:<id>   put                                              (one audit item per batch)
+//   EXPUNGE#<Class>#<h>  put per withdraw op                               (the record expunge, due 72 hours later: api/scripts/expunge.mjs --due)
 //   SYNC#BUDGET#<hour>   update, only for a batch with a delete or withdraw (the destructive budget the validator reads; it is checked on
 //                        the same view as the SYNC#HEAD seq condition, so concurrent batches cannot both pass it)
 //   + caller `extra` items and registered contributors' items             (proposal state, contribution ops, comment updates)
@@ -30,7 +31,7 @@ import { canonicalJson as storedJson } from "../shared/canonical.mjs";
 import { SyncError } from "./errors.js";
 import { defaultHooks } from "./hooks.js";
 import {
-  BUDGET_TTL_SECONDS, CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, budgetBucket, budgetKey,
+  BUDGET_TTL_SECONDS, CLASSES, FIXED_TXN_ITEMS, MAX_BATCH_OBJ_BYTES, MAX_BLOB_BYTES, MAX_OBJ_BYTES, MAX_OPS, OP_KINDS, ORIGINS, aliasItem, auditId, batchIdFor, batchItem, budgetBucket, budgetKey, expungeDueItem,
   getBatchReceipt, getGid, getRecordItem, getSyncHead, gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
 import { completeAssignments, isAssignment, isWebAssignment, mintIds, policyOf, WEB_ORIGINS } from "./id-policy.js";
@@ -151,7 +152,11 @@ function txnItemBound(op) {
   if (op.op === "marker") return 1;
   if (op.op === "create") return 3; // head, log, the id claim
   if (op.op === "update") return op.renumber === true && op.class === "Person" ? 5 : 4; // + the old id's write (+ an alias for a Person)
-  return op.class === "Person" && op.reason === "merge" ? 4 : 3; // delete or withdraw: head, log, the id write (+ an alias for a merge)
+  // Exact, not a pessimistic bound: head, log, the id write, the scheduled expunge (privacy-expunge). 24 of them with the fixed items and the budget
+  // counter are exactly 100, so any extra item a caller adds (the session check of POST /api/sync/batches) is a 101st; assertTxnSize then throws
+  // txn_too_large, which the route answers as 413 batch_too_large.
+  if (op.op === "withdraw") return 4;
+  return op.class === "Person" && op.reason === "merge" ? 4 : 3; // delete: head, log, the id write (+ an alias for a merge)
 }
 
 /** Strips the server-only members from an op, leaving what the caller sent: this is what the request hash covers. */
@@ -464,6 +469,9 @@ export async function applyBatch(ctx, req) {
         condition: "attribute_not_exists(PK)",
         tag: "sync:log",
       });
+      // A privacy withdraw schedules the expunge of its history for 72 hours later, in the same transaction (api/scripts/expunge.mjs --due).
+      // Until then sync-admin resurrect can still bring the record back (and cancels the schedule).
+      if (op.op === "withdraw") puts.push({ item: expungeDueItem({ class: op.class, handle: op.handle, version, seq, batch_id: batchId, at }), tag: "sync:expunge" });
       results.push({ op_id: op.op_id, class: op.class, handle: op.handle, version, seq, gramps_id: grampsId });
       changes.push({
         op_id: op.op_id, op: op.op, class: op.class, handle: op.handle, gramps_id: grampsId, version, base_version: op.base_version, seq,
