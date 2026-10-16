@@ -29,6 +29,8 @@ const esc = (s) => String(s).replace(/~/g, "~0").replace(/\//g, "~1");
 // identifiers in the Gramps JSON are skipped in resulting objects ('key', 'id', 'temp' and the like are NOT: SrcAttribute.key is
 // free text). checkValue (an intent, stubs) also skips the edit engine's own reference keys, which hold handles and temp ids.
 const OBJECT_ID_KEYS = new Set(["_class", "handle", "ref", "gramps_id", "checksum", "mime", "lat", "long", "father_handle", "mother_handle", "source_handle"]);
+// father_handle, mother_handle, source_handle and Event.place are skipped only because the sync validator and semantics code check them as
+// references to existing records, so free text cannot be stored there. If that check is relaxed, remove them from these sets.
 // Event.place is a handle on a stored object but free text in a relationship stub, so it is skipped for objects only.
 const OBJECT_ONLY_ID_KEYS = new Set(["place"]);
 const OBJECT_SKIP = new Set([...OBJECT_ID_KEYS, ...OBJECT_ONLY_ID_KEYS]);

@@ -43,7 +43,7 @@ All states pass at both widths. Every row below was measured on the rebuilt isla
 | `/me/review/` | a member's own suggestion | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-card-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-card-1024.png) | green | green |
 | `/me/review/` | editing one's own suggestion | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-edit-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-282/review-mine-edit-1024.png) | green | green |
 
-The screenshots are full-page captures under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-282/`. The links are bucket paths, not web addresses: opening them needs AWS access to that bucket.
+The screenshots are full-page captures under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-282/`. The links are bucket paths, not web addresses: opening them needs AWS access to that bucket. All 32 files were listed in the bucket on 2026-10-15 and match the links in the table.
 
 ## What the audit found
 
