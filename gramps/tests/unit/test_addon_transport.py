@@ -242,7 +242,7 @@ class Retries(NetCase):
             (403, {"error": "step_up_required", "message": "m"}, 77, "step_up"),
             (426, {"error": "upgrade_required", "message": "m"}, 78, "update_addon"),
             (403, {"error": "not_owner", "message": "m"}, 78, "none"),
-            (403, {"error": "tree_mismatch", "message": "m"}, 78, "open_bound_tree"),
+            (403, {"error": "tree_mismatch", "message": "m"}, 78, "rebase"),
             (409, {"error": "redaction_version_mismatch", "message": "m"}, 78, "update_addon"),
             (503, {"error": "sync_paused", "message": "m"}, 69, "none"),
             (404, {"error": "not_enabled", "message": "m"}, 69, "none"),

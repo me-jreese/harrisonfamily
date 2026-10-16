@@ -1,24 +1,24 @@
 # Operate the sync store
 
-Pause the cloud record store, resume it, switch the change feed on or off, force the renderer to run, and bring back the records of a mistaken delete or withdraw. The tool is `api/scripts/sync-admin.mjs` (HFY-TSK-177). It is an operator script: it is never deployed, and no workflow runs it.
+Pause the cloud record store, resume it, switch the change feed on or off, force the renderer to run, bring back the records of a mistaken delete or withdraw, and recover the store itself when its heads or its log are damaged. The tool is `api/scripts/sync-admin.mjs` (HFY-TSK-177, and HFY-TSK-275 for the recovery). It is an operator script: it is never deployed, and no workflow runs it.
 
-**io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume` and `resurrect` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
+**io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume`, `feed-on`, `feed-off`, `resurrect`, `rebuild-heads`, `copy-back` and `bump-tree-id` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
 
 ## Before you start
 
 - You are in `api/` with the dependencies installed (`npm ci`).
 - You have AWS credentials for the app stack's account and region, with read and write access to the app table and, for `render`, permission to invoke the render function (`hfy-sync-render`).
-- Common flags: `--table <app-table>` (default `hfy-app`) and `--region <region>` (default `us-west-2`). Every command takes exactly one of `--dry-run` or `--apply` (each given once). `pause --all` and `resume --all` are accepted and change nothing: the switch is store-wide. `--help` prints the usage.
+- Common flags: `--table <app-table>` (default `hfy-app`) and `--region <region>` (default `us-west-2`). Every command takes exactly one of `--dry-run` or `--apply` (each given once). `--help` prints the usage.
 
 ## Pause and resume the store
 
-`pause` sets `SYNC#HEAD.writes_enabled` to `false`. From then on `applyBatch()` refuses every origin with `503 sync_paused` (the desktop push, the web editor, proposals, graduation, moderation). The conflict queue keeps working. `resume` sets it back to `true`.
+`pause --all` sets `SYNC#HEAD.writes_enabled` to `false`. From then on `applyBatch()` refuses every origin with `503 sync_paused`: the desktop push (and the seed session), the web editor, proposals, graduation, moderation and tagging. The desktop's sync routes answer the same, so one switch stops every writer of the store. The conflict queue keeps working. `resume --all` sets it back to `true`. (`--all` names that store-wide scope; the command has no narrower form. `SYNC_API_ENABLED` is the separate environment switch that stops the desktop only.)
 
 ```sh
 cd api
-node scripts/sync-admin.mjs pause --dry-run --table <app-table> --region <region>
-node scripts/sync-admin.mjs pause --apply --by <your-name> --table <app-table> --region <region>
-node scripts/sync-admin.mjs resume --apply --by <your-name> --table <app-table> --region <region>
+node scripts/sync-admin.mjs pause --all --dry-run --table <app-table> --region <region>
+node scripts/sync-admin.mjs pause --all --apply --by <your-name> --table <app-table> --region <region>
+node scripts/sync-admin.mjs resume --all --apply --by <your-name> --table <app-table> --region <region>
 ```
 
 Each change is pinned to the value it read and writes one `AUDIT#sync-admin:` item. A second `pause` changes nothing. A store with no `SYNC#HEAD` item is refused: the seed creates it, and a script-made one would break the seed.
@@ -89,6 +89,83 @@ A delete or withdraw tombstones the head at once, but the log still holds the ve
 
 The 35-day point-in-time recovery tail is separate: it cannot bring a record back through this tool, and the privacy text discloses it.
 
+## Recover the store
+
+This replaces the old disaster runbook (19.8), which restored the whole table from point-in-time recovery to a new name and swapped `TABLE_NAME`. A swap rolls back every domain that lives in the table (members, posts, comments, uploads, chat, notifications) and breaks the stack, which is review SI-04. The recovery is **store-scoped**: it rewrites the four sync partitions, `REC#` (the record heads), `SYNC#` (the log, the head, receipts, sessions, conflicts), `GID#` (the Gramps-id guard) and `IDALIAS#` (renumber and merge aliases), and nothing else. Every other item in the table is left byte for byte as it is; the tests prove it. `TABLE_NAME` is never changed.
+
+io's go-ahead is required for every `--apply`, as above. Work through these steps in order, and stop at the first one that is enough.
+
+1. **Pause every writer.** `pause --all --apply`. Every `--apply` below refuses to run until the store is paused, and each write transaction is guarded by a check that the store is still paused.
+
+2. **Find out whether the log is whole.** The log, `SYNC#LOG`, is append-only and is the authority: every head, id guard and alias is derived from it.
+
+   ```sh
+   node scripts/sync-admin.mjs rebuild-heads --to-seq head --dry-run --table <app-table> --region <region>
+   ```
+
+   It reads the log and checks it (dense seqs 1 to `SYNC#HEAD.seq`, every object text against its hash, every object's versions counting up by one), folds it with the rules `applyBatch()` uses, and compares the result with the stored `REC#`, `GID#` and `IDALIAS#` items. It prints counts, field names, classes and opaque handles, never record text or a Gramps id. `plan: nothing to change` means the heads already equal the log (this is also the check to run after any step below). If it says `the log is damaged`, go to step 4.
+
+3. **Log whole, heads wrong: rebuild the heads from the log.** After reading the dry run, `rebuild-heads --to-seq <N> --apply`:
+
+   - `--to-seq head` (the log's last seq) rewrites only what differs: missing, edited or orphaned heads, id guards and aliases, and a wrong `live_heads` count. The log is read, never changed. A Media head's blob descriptor (it is on the head, not in the log) and a head whose last entry was expunged are kept as they are.
+   - `--to-seq <N>` with N before the last seq puts the store **back to its state at seq N**. This is more than a pure refold, and io should confirm the reading: a refold of the heads to N while the log still runs past N would leave heads that disagree with `SYNC#HEAD.seq` and with the log, so the tool does not do that. Instead it **appends new log entries** after the tail (the existing entries are never edited or removed). The log stays append-only: the tool appends one admin entry (origin `admin`, principal `operator:sync-admin`, batch `rebuild:<N>:<last seq>`) for every object whose state differs, a delete if it did not exist then, an update back to the older text, or a create over a tombstone, and moves `SYNC#HEAD.seq` past them (in transactions of at most 20 entries and about 3 MB). Then it rewrites the heads from the whole log. A Person id stays retired even when the person is rolled back to not existing. Edits made after N are not lost from the log (the history keeps them) but are no longer the current state: the desktop will see them as differences when it rebases. Several cases are reported rather than guessed. An object a privacy erasure expunged (its text is gone from the log on purpose) is **left as it is** and listed as `expunged: left as is`: a rollback never writes a live entry without text. A Media object rolled back to different text keeps its newest blob descriptor, because the blob is on the head and not in the log: the plan says so, and each such file's sha256 and size must be checked afterwards.
+
+   **A rollback does not republish what was withdrawn.** Putting an object back over a tombstone is the same act as `resurrect`, so it keeps `resurrect`'s refusals. The object keeps its tombstone and the plan lists it as `refused  left as is <Class> <handle>: <reason>`, with a note that counts them:
+
+   | Reason | Meaning |
+   |---|---|
+   | `withdrawn_private_needs_flag` | The last entry is a privacy withdraw. Re-creating it puts the record back in the store and the next render republishes it, so it needs `--include-withdrawn` and io's explicit go-ahead for the withdrawn records. With the flag the dry run prints the same WARNING as `resurrect`, naming the count. |
+   | `past_grace` | The withdraw is older than 72 hours, so its expunge is queued. No flag brings it back. |
+   | `merge` | The last entry is a person merge. The alias and the survivor are the merge's business. |
+   | `media_blob_not_in_log` | A Media's blob descriptor is on the head, which the delete dropped, and not in the log. |
+
+   A plain delete of any other class is rolled back whatever its age, which is what the command is for. A withdraw that `--include-withdrawn` re-creates leaves its `EXPUNGE#<Class>#<handle>` schedule item in place (unlike `resurrect`, which deletes it). That is harmless: `expunge.mjs --due` skips a live head and drops the item.
+
+   Run the dry run again: it must report nothing to change. One `SYNC#ADMIN` audit item records each run (the recovery copy-back never overwrites or deletes that partition).
+
+4. **Log damaged: copy back from a point-in-time copy.** Restore the app table by point-in-time recovery **to a new table name** (never over the live table):
+
+   ```sh
+   aws dynamodb restore-table-to-point-in-time --source-table-name <app-table> --target-table-name <app-table>-pitr-<date> \
+     --restore-date-time <time before the damage> --region <region>
+   ```
+
+   Wait until the side table is active, then:
+
+   ```sh
+   node scripts/sync-admin.mjs copy-back --from-table <app-table>-pitr-<date> --dry-run --table <app-table> --region <region>
+   node scripts/sync-admin.mjs copy-back --from-table <app-table>-pitr-<date> --apply --by <your-name> --table <app-table> --region <region>
+   ```
+
+   The dry run lists, per partition, what it would write and delete, and refuses a side table that is the live table, has no `SYNC#HEAD`, or has a damaged log of its own (restore from an earlier time then). `--apply` copies only `REC#`, `SYNC#`, `GID#` and `IDALIAS#` items that differ, and **it also deletes** live sync items the side table lacks (a true restore removes what was written after the restore point); the dry run prints the write and delete counts per partition and one line per item, so read the delete counts before approving. `SYNC#ADMIN`, the audit trail of earlier recoveries, is excluded from the copy and from the deletes and is always kept. The writes go in transactions of at most 25 items and 3 MB. It writes `SYNC#HEAD` last, **with `writes_enabled` forced to `false`**, so the restored store is still paused. `expunge_epoch` is the one `SYNC#HEAD` field that is **not** the restore point's: it is written as the larger of the live table's and the restore point's, plus one, and the dry run reports it (`expunge_epoch: live L, restore point R: written as E`). A restore moves `seq` backwards, so a cache of the abandoned timeline can sit at a seq the new timeline reaches again; the epoch is the other value every cache already checks, so the raise drops them all: the store view of each warm Lambda, `snapshots/<seq>.jsonl.gz` (otherwise the desktop's `hfy-sync rebase`, the next step, could be handed the abandoned timeline's snapshot, which passes its own sha256 check), the graph renderer's `SYNC#GRAPH` marker (the next render pass rebuilds `person/graph.json`) and the desktop's delta cache. A second `copy-back` dry run, once nothing else differs, leaves the epoch where it is. Every other `SYNC#HEAD` field is the restore point's, `changes_feed` included: check the feed switch (`feed-on` / `feed-off`) before you resume. Posts, comments, uploads, chat and every other partition that changed since the restore point are not touched. **Notifications:** the restore rewinds the log, so new writes use seqs the abandoned timeline already used, and the record-change notification claims (`RECFAN#<seq>/<subject>`, 35-day lifetime) of those seqs are outside the four partitions and stay. A notification for a reused seq can be dropped as already sent. At family scale this is accepted; the dry run prints a note when it applies. (`rebuild-heads` never reuses a seq, so it has no such effect.) Then run `rebuild-heads --to-seq head --dry-run`: it must report nothing to change. Delete the side table when you are done (a separate deletion, with io's go-ahead).
+
+   The renderer's `SYNC#RENDER` state comes back with the copy. If the restored store is behind the live site, run `render --full` after the store is resumed; if the site was rendered from newer data than the restored store holds, read the render report's refused deletes before approving any mass delete.
+
+   **Privacy expunges and the copy-back.** The side table is a copy from before the damage, so it still holds any text that [`expunge.mjs`](#remove-something-from-the-cloud) removed after the restore point, and the copy writes it back into `SYNC#LOG` and the heads. Restore to a point after the last expunge when you can. If you cannot, run the same expunge again for each record or path removed since the restore point, then `render --full` and the sweep, before you resume; the `AUDIT#expunge:` items hold counts only, so work from the worklog's go-ahead entries. The `EXPUNGE#` schedule items are outside the four partitions and stay: one whose record the restored log does not hold makes each `expunge.mjs --due` run report that record as failed (`no_such_record`) and keep the item. `rebuild-heads --to-seq` never undoes an expunge: an object whose entry was expunged is left as it is.
+
+   **Withdraws and the copy-back.** The same rewind undoes every privacy withdraw made after the restore point, not only an expunge: the side table holds the record live, and the copy writes it back live, with no `--include-withdrawn`, no 72-hour check and no warning (the `rebuild-heads` refusals above do not apply to a copy-back). The withdraw's `EXPUNGE#<Class>#<handle>` schedule item stays, outside the four partitions, and `expunge.mjs --due` drops it once the record is live. Restore to a point after the last privacy withdraw when you can. If you cannot, list the withdraws made since the restore point before you apply (the worklog's go-ahead entries and the `SYNC#BATCH#` receipts of that period), and withdraw each record again as soon as the store is resumed: until you do, the restored store holds it live and a render pass publishes it. Then `render --full` and read the render report.
+
+5. **Give the store a new tree id.** The desktop must stop trusting the history it remembers:
+
+   ```sh
+   node scripts/sync-admin.mjs bump-tree-id --dry-run --table <app-table> --region <region>
+   node scripts/sync-admin.mjs bump-tree-id --apply --by <your-name> --table <app-table> --region <region>
+   ```
+
+   The new `SYNC#HEAD.tree_id` makes every desktop request that names the old one fail with `403 tree_mismatch`, and a pull stop at the handshake with D50. The binding to the desktop's tree is kept. Add `--reseed` only when the store was emptied on purpose and the desktop must send everything again (over a store that still holds heads it changes no head, but the seed session's creates for handles that already have a head are refused `409 exists`, so the seed cannot finish; the test pins this): it also marks the store not seeded and clears the open session, so web and proposal writes are refused (`503 store_not_seeded`) until a seed session completes. The next session then carries `seed: true`, its batches are origin `seed`, and they are silent: no notification, inbox row or push goes out for them.
+
+6. **Resume, and have the desktop rebase.** `resume --all --apply`. On the Mac, with Gramps closed, `hfy-sync rebase` looks (exit 10), `hfy-sync rebase --yes` re-bases the objects both sides agree on and turns the rest into conflicts, changes nothing in the tree and sends nothing ([When the website's store was recovered](install-the-gramps-sync-addon.md#when-the-websites-store-was-recovered-d50)). Resolve the conflicts, then `hfy-sync pull`.
+
+7. **Re-render if needed.** `render --dry-run --full`, then `--apply --full`.
+
+If the recovery has to roll back further than the log reaches (the log itself was lost and every point-in-time copy is damaged), the last resort is a re-seed: restore a pre-seed side table with `copy-back`, `bump-tree-id --reseed`, resume, and run the first-sync seed from the desktop again. That needs io's decision, because everything written on the website since the seed is lost.
+
+## What is proven and what is not yet
+
+The tests (`api/test/sync-recovery.test.js`) run every command against an in-memory DynamoDB fake with synthetic objects. They prove, for the fake: every item outside `REC#`, `SYNC#`, `GID#` and `IDALIAS#` is byte for byte unchanged by `rebuild-heads` and `copy-back`; the log stays append-only; the refold equals what `applyBatch()` wrote; a rollback leaves a privacy withdraw, a merge and a Media as tombstones; a warm store view and the snapshot cache of the abandoned timeline are dropped by a copy-back. They are **not** the dry run on a real non-production copy that the acceptance criteria ask for. That evidence needs an AWS session (product-lead profile) and io's go-ahead, and is still to be recorded: restore a non-production side table from point in time, run `rebuild-heads --to-seq head --dry-run` and then `--apply` on a copy of the app table, run `copy-back --from-table <side> --dry-run` and then `--apply`, and record only the counts the tool prints (never object text, handles or ids), together with a before and after item count of every other partition.
+
+`pause --all` and `resume --all` name the store-wide scope: there is no narrower form and no second code path (the check is inside `applyBatch()` for every origin, and the desktop's sync routes answer the same).
+
 ## Remove something from the cloud
 
 `api/scripts/expunge.mjs` (HFY-TSK-204, BRD2 D2-33, runbook 19.11, catalog entry S19) removes a record, one value of a record, a proposal, a chat message or an upload from every cloud copy. Use it when a report or io finds sensitive data that reached the cloud. It is an operator script: it is never deployed, and no workflow runs it.
@@ -133,7 +210,7 @@ The role holds `s3:ListBucketVersions`, `s3:GetBucketVersioning`, `s3:GetObjectV
 
 **Record, one value (`--path`).** The pointer is RFC 6901 into the object, for example `/text/string`. In every log entry and in the head, a string becomes `--replacement` (default empty) and any other object member is removed; an array element that is not a string is refused, and so are `handle`, `_class` and `gramps_id`. This rewrites append-only history, an audited exception (SI-18). The hashes are recomputed and the version and seq do not move, so the desktop add-on sees a changed hash at an unchanged version and treats it as an expunge notice: it refreshes its base and holds the local value. The snapshot and shadow steps are the same as for a whole record, and a Media photo is not touched. The live site files keep the old value until the render has rewritten them: do step 3, then step 4 with `--sweep`.
 
-**What the epoch does.** Every record run raises `SYNC#HEAD.expunge_epoch` by one in the transaction that rewrites the head. The store view in every warm Lambda and the cached snapshot check it, so none of them can keep the removed value in memory or in `snapshots/`. The graph renderer keeps the epoch it built under in `SYNC#GRAPH.expunge_epoch` and rebuilds `person/graph.json` when the two differ, so an expunge that leaves `seq` alone still reaches the graph.
+**What the epoch does.** Every record run raises `SYNC#HEAD.expunge_epoch` by one in the transaction that rewrites the head. The store view in every warm Lambda and the cached snapshot check it, so none of them can keep the removed value in memory or in `snapshots/`. The graph renderer keeps the epoch it built under in `SYNC#GRAPH.expunge_epoch` and rebuilds `person/graph.json` when the two differ, so an expunge that leaves `seq` alone still reaches the graph. `sync-admin.mjs copy-back` raises the epoch for the same reason: it moves `seq` backwards.
 
 **Proposal.** `PROP#<ulid>` META and every `IDX#` copy lose the proposal document and their index keys and stay as an expunged stub, so no list or page shows them. The proposal thread's comments and reactions are deleted, the audit rows of those comments keep who, what and when and lose the text they copied, and the comments' photos are deleted from the site bucket with every version. The proposal's own `AUDIT#proposal:<ulid>` rows keep who, what and when and lose `before`, `after` and any decision `reason`. The `IDEM#` receipts whose result echoes the proposal (a create or a decision) are deleted: they are found by one filtered table scan, so the run needs `dynamodb:Scan` and takes a moment on a large table. A system proposal's `PROPREQ#<request id>` item loses its content hash (the id still resolves to the expunged stub, and the request id cannot be reused for a different suggestion). The inbox rows of a decision can hold the reason an admin typed; they expire 90 days after they are read and are not touched.
 
@@ -144,4 +221,3 @@ The role holds `s3:ListBucketVersions`, `s3:GetBucketVersioning`, `s3:GetObjectV
 **Withdraws and the 72-hour grace.** A privacy withdraw tombstones the head at once (no read serves it, the next render removes the files) and writes `EXPUNGE#<Class>#<handle>`, due 72 hours later. Until then `sync-admin resurrect --include-withdrawn` can bring a mistaken mass withdraw back and cancels the schedule. After it, the expunge is queued and runs when io next runs `node scripts/expunge.mjs --due` (dry run, then `--apply`, which needs io's step-up token): **nothing runs it for you, so "72 hours" is the earliest it can happen, not a promise of when.** The privacy text must say "queued after 72 hours and run by io", and io should run `--due` at least weekly; the dry run's first line, `due: N scheduled expunges past the 72-hour grace`, is the overdue count (an overdue alert belongs to the status and alerting task). `--now` takes every scheduled item at once and exists for tests and for a withdraw that must not wait. A schedule item whose record is live again is dropped.
 
 **What it cannot reach.** The DynamoDB point-in-time recovery tail (35 days) keeps older copies of the table until they age out; so do backups taken outside this stack. The graph builder's face crops under `media/faces/` are outside it too (see Media photo). `person/graph.json` is inside it, but only its noncurrent versions: its live file is the graph renderer's to rewrite (step 3). The privacy text and this runbook say so, and nothing here shortens it.
-

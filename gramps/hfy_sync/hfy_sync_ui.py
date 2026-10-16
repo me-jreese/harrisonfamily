@@ -66,7 +66,28 @@ def describe_run(doc):
     return "\n".join(lines)
 
 
-_CHECK, _APPLY, _RESTORE = 1, 2, 3
+def describe_rebase(doc):
+    """A rebase's result as dialog text: counts and the refusal's message only. No object content."""
+    c = (doc.get("counts") or {}).get("rebase") or {}
+    lines = [_("Result: %(result)s.") % {"result": doc.get("result", "")}]
+    if c.get("needed") is False and not doc.get("error") and doc.get("dry_run"):
+        lines.append(_("The website's store is the one this tree last synced with. There is nothing to rebase."))
+    else:
+        lines.append(_("Same on both sides: %(n)d. Different on both sides (conflicts): %(c)d.") % {"n": c.get("rebased", 0), "c": c.get("conflicts", 0)})
+        lines.append(_("Only on the website: %(w)d. Only in this tree: %(d)d. A later sync brings these across.") % {
+            "w": c.get("cloud_only", 0), "d": c.get("desktop_only", 0)})
+        if c.get("deleted_on_desktop", 0):
+            lines.append(_("Deleted in this tree but still on the website: %(n)d. The rebase forgets those deletes, so a later sync would bring "
+                           "them back. Delete them on the website first if they should stay gone.") % {"n": c["deleted_on_desktop"]})
+    error = doc.get("error") or {}
+    if error:
+        lines.append("%s: %s" % (error.get("code", ""), error.get("message", "")))
+    if doc.get("backup"):
+        lines.append(_("A backup was taken before anything changed."))
+    return "\n".join(lines)
+
+
+_CHECK, _APPLY, _RESTORE, _REBASE = 1, 2, 3, 4
 
 
 def _menu(parent):
@@ -74,6 +95,7 @@ def _menu(parent):
     dialog.add_button(_("_Check for changes"), _CHECK)
     dialog.add_button(_("_Apply website changes"), _APPLY)
     dialog.add_button(_("_Restore backup..."), _RESTORE)
+    dialog.add_button(_("Re_base after a recovery..."), _REBASE)
     dialog.add_button(_("_Close"), Gtk.ResponseType.CLOSE)
     label = Gtk.Label(label=_("A backup is taken before anything changes. Undo is available until you close the tree; "
                               "undoing will revert these changes on the website at the next sync."))
@@ -91,7 +113,7 @@ def _menu(parent):
 
 
 def present(parent, doc, actions):
-    """Shows the status, then a small menu. `actions` is a dict of callables: bind(), check(), apply(preview_run_id), backups(), restore_hint(name)."""
+    """Shows the status, then a small menu. `actions` is a dict of callables: bind(), check(), apply(preview_run_id), rebase_check(), rebase(), backups(), restore_hint(name)."""
     if doc.get("result") == "ok" and not (doc.get("tree") or {}).get("bound"):
         ask = QuestionDialog2(
             _("Bind this tree to the website?"),
@@ -121,6 +143,19 @@ def present(parent, doc, actions):
                 _("_Apply"), _("_Cancel"), parent=parent)
             if n and ask.run():
                 OkDialog(_TITLE, describe_run(actions["apply"](preview.get("run_id"))), parent=parent)
+        elif choice == _REBASE:
+            preview = actions["rebase_check"]()
+            needed = (preview.get("counts") or {}).get("rebase", {}).get("needed")
+            if preview.get("result") != "changes_pending" or not needed:
+                OkDialog(_TITLE, describe_rebase(preview), parent=parent)
+                continue
+            ask = QuestionDialog2(
+                _("Rebase this tree onto the website's recovered store?"),
+                describe_rebase(preview) + "\n\n" + _("Nothing in this tree changes and nothing is sent to the website. "
+                                                       "Conflicts wait for you. A backup is taken first."),
+                _("_Rebase"), _("_Cancel"), parent=parent)
+            if ask.run():
+                OkDialog(_TITLE, describe_rebase(actions["rebase"]()), parent=parent)
         elif choice == _RESTORE:
             names = actions["backups"]()
             if not names:

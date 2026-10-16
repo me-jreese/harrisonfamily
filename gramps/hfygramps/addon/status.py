@@ -102,6 +102,11 @@ def summary_line(doc):
     if err:
         bits.append("%s %s" % (err.get("code", ""), err.get("message", "")))
     bits.append("(exit %s%s)" % (doc.get("exit_code"), ", next: %s" % doc["next_action"] if doc.get("next_action") not in (None, "none") else ""))
+    if doc.get("action") == "rebase":
+        r = (doc.get("counts") or {}).get("rebase") or {}
+        bits.append("run %s; re-based: %s, conflicts: %s, only on the website: %s, only on the desktop: %s, deleted on the desktop but still on the website: %s" % (
+            doc.get("run_id"), r.get("rebased", 0), r.get("conflicts", 0), r.get("cloud_only", 0), r.get("desktop_only", 0),
+            r.get("deleted_on_desktop", 0)))
     if doc.get("action") in consts.PULL_ACTIONS:
         # What io needs to act on the run: the run id (`sync --yes --plan <run id>` names it) and the counts. Never a value.
         c = doc.get("counts") or {}

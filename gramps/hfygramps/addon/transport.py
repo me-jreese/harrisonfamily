@@ -84,7 +84,7 @@ def map_error(status, code):
     if status == 426 or code in ("redaction_version_mismatch", "upgrade_required"):
         return consts.EXIT_CONFIG, "update_addon"
     if status == 403:
-        return consts.EXIT_CONFIG, ("open_bound_tree" if code == "tree_mismatch" else "none")
+        return consts.EXIT_CONFIG, ("rebase" if code == "tree_mismatch" else "none")  # D50: a recovered or re-seeded store is another cloud tree
     if code == "sync_paused" or (status == 404 and code == "not_enabled"):
         return consts.EXIT_NOT_ENABLED, "none"
     if status in (400, 413, 422):

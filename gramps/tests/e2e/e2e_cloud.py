@@ -7,6 +7,7 @@
         .update(obj)                   push an update with base_version = the head's version (a website edit: origin desktop, owner bearer)
         .create(obj, blob=None)        push a create; `blob` is {"bytes", "content_type"} for a Media object (presign, PUT, then the op)
         .delete_with(updates, cls, handle)   one batch: the updates, then the delete (it needs the step-up session this driver signs in with)
+        .follow_tree(id)               name the new cloud tree in later calls (after the dev server's tree_id was changed)
         .scrub(obj)                    POST /_dev/scrub: rewrite the head in place at the same version (stands in for privacy-expunge --path)
 
 The driver's calls are the real push routes, so everything it writes passed the server's validator, privacy checker and integrity rules. It
@@ -45,6 +46,11 @@ class CloudDriver:
         self.tree_id = plain.post("/api/sync/bind", {"dbid": dbid, "fingerprint": fingerprint, "tree_name_sha256": tree_name_sha256}).body["tree_id"]
         self.client = self.session.client(tree_id=self.tree_id)
         return self.tree_id
+
+    def follow_tree(self, tree_id):
+        """The website's owner after `sync-admin bump-tree-id` (the dev server: PATCH /_dev/head {tree_id}): calls now name the new tree."""
+        self.tree_id = tree_id
+        self.client = self.session.client(tree_id=tree_id)
 
     def _push(self, ops, session_id=None):
         self.keys += 1

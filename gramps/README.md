@@ -325,6 +325,18 @@ python3 -m unittest discover gramps/tests/unit -p test_addon_push.py       # CI:
 gramps/tests/e2e/run.sh scenario_push.py                                   # Mac with Gramps 6.0.6, node 22 and api/node_modules
 ```
 
+### The rebase (D50)
+
+HFY-TSK-275 (review SI-04, BRD2 11.1 error catalog D50). When the website's store is recovered or re-seeded an operator gives it a new tree id (`api/scripts/sync-admin.mjs bump-tree-id`). The handshake then names a cloud tree other than the sidecar's `cloud_tree_id`, and `check`, `pull` and `sync` refuse with D50 (exit 78, `next_action: rebase`); the server's `403 tree_mismatch` maps to the same `next_action`. `rebase` starts the sync over without touching the tree and without sending anything.
+
+| Path | What it is |
+| --- | --- |
+| `hfygramps/addon/rebase.py` | The action: handshake (D03, then the cloud tree must differ from the sidecar's), the new store's snapshot with the rollback guard waived, `plan.build` with an empty base (so each object is classified as sync.md 7 says for "no base": equal projections converge, different ones conflict, one-sided ones wait), the verified backup, then ONE sidecar transaction. |
+
+What the sidecar transaction does: drops the old `base`, records the converged objects at the new store's versions and seqs, closes the old open conflicts (`decision: rebase`) and lists the new ones (parked on the command line, open in the window), rejects `outbox` entries that were not sent, forgets the push session the old store opened (`open_session`), clears the `pulled` window, and moves `cloud_tree_id`, `last_pull_seq` and `last_snapshot_sha256` to the new store. The plan's local commits, deletes and push ops are counted and dropped: the next `pull` brings in what only the website has through the usual preview. Without `--yes` (or with `--dry-run`) it stops after the classification and changes nothing. A second run, or a run against the cloud tree the sidecar already knows, finds nothing to do and exits 0. `counts.rebase` in status.json holds `{needed, rebased, conflicts, cloud_only, desktop_only, deleted_on_desktop}`; no object content anywhere. `deleted_on_desktop` counts the objects this tree deleted since its last sync that the new store still holds: the dropped base no longer remembers the delete, so the next `pull` would bring them back, and the summary and the dialog say so first.
+
+Not covered here: D12 and D13 (sidecar missing or damaged) still end in `next_action: rebase`, but this action starts from an existing, readable sidecar. D12's rebase mode (a re-imported or copied tree, BRD2 8.3) is not this action either: it belongs with the binding and pull work, and this action reports `nothing to rebase` for a sidecar with no remembered cloud tree. **Tests.** `tests/unit/test_addon_rebase.py` (CI), `tests/e2e/scenario_rebase.py` (real processes against the dev server, whose `PATCH /_dev/head {tree_id}` stands in for `bump-tree-id`).
+
 ### The tree binding
 
 A run proceeds only when three things agree (BRD2 section 11, SI-06):
@@ -344,7 +356,7 @@ A tree that was re-imported, restored from a copy or exported and re-imported ha
 3. Rebase mode (D12): objects that equal the website's copy are re-based, everything else becomes a conflict; the command line refuses, the GUI resolves, and nothing is pushed automatically. Owners: `addon-pull-apply` (the new sidecar and the rebase pass) and `addon-gui-preview` (the Gramps-window resolution).
 4. The mass-delete guard on both sides for the first runs, so a tree that is missing objects cannot delete them on the website. Owners: `addon-push` (the push side) and `addon-pull-apply` (the pull side).
 
-D12 (sidecar missing) and D13 (sidecar damaged, or written by a newer addon) are refusals with exit 78 and `next_action: rebase`; the skeleton never rebuilds a sidecar by itself.
+D12 (sidecar missing) and D13 (sidecar damaged, or written by a newer addon) are refusals with exit 78 and `next_action: rebase`; the skeleton never rebuilds a sidecar by itself, and the `rebase` action of HFY-TSK-275 handles D50 (a changed cloud tree) from a readable sidecar only.
 
 ### status.json
 

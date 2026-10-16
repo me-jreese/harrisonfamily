@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """hfy-sync: the command-line wrapper of the Gramps website-sync addon (sync.md 8.2, 8.7, 13.2).
 
-    hfy-sync <status|login|check|pull|push|sync|bind> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]
+    hfy-sync <status|login|check|pull|push|sync|bind|rebase> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]
     hfy-sync restore <backup> [--tree NAME] [--json]
 
 It runs `Gramps -O <tree> -a tool -p name=hfy_sync,action=...`, then maps the run's status.json to an exit code. Gramps' own
 cli_tool swallows exceptions and exits 0, so the exit code comes from status.json (the `exit_code` field), and a missing file or
 one with another run's `run_id` is exit 70 (D41). Before Gramps starts it refuses, without opening the tree in Gramps: a
 `--force-unlock` flag (64, D02), a tree whose database schema is not supported (78, D04: Gramps would otherwise upgrade it
-on open) and a tree that is open elsewhere (75, D01: the `lock` file). CLI `sync`, `pull` and `push` are dry runs unless `--yes`.
+on open) and a tree that is open elsewhere (75, D01: the `lock` file). CLI `sync`, `pull`, `push`, `bind` and `rebase` are dry runs unless `--yes`.
+`rebase` starts the sync over against a recovered or re-seeded website store (D50): it changes only the sync state, never the tree, and sends nothing.
 `sync --yes --plan RUN_ID` applies only when the new plan equals the preview that run wrote (exit 10 otherwise; headless runbook 19.3).
 `restore <backup>` needs no Gramps process: with Gramps closed and `<dbdir>/lock` absent it verifies the backup's sha256, moves the
 database files aside, copies the backup in, runs `PRAGMA integrity_check`, puts the sidecar saved with that backup back, and then runs
@@ -159,7 +160,7 @@ def main(argv):
     if schema not in consts.SUPPORTED_DB_SCHEMAS:
         return refuse("D04")  # before Gramps could upgrade the tree on open
     # CLI sync, pull and push only look unless --yes (sync.md 8.2)
-    effective_dry = 1 if dry_run or (action in ("sync", "pull", "push", "bind") and not yes) else 0
+    effective_dry = 1 if dry_run or (action in ("sync", "pull", "push", "bind", "rebase") and not yes) else 0
     return _run_gramps(environ, tp, tree_dir, tree_name, action, effective_dry, allow_deletes, yes, step_up, plan or "", run_id, as_json, refuse)
 
 
