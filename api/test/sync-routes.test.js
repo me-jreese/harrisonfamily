@@ -66,8 +66,8 @@ describe("SYNC_API_ENABLED (AC3)", () => {
 
   it("the switch is declared on every sync route, as a serverSwitch, and caps.json describes the auth mode", () => {
     const caps = buildCaps();
-    const sync = caps.actions.filter((a) => a.path.startsWith("/api/sync/"));
-    expect(sync.map((a) => a.name).sort()).toEqual(["sync.batches", "sync.bind", "sync.conflicts.decision", "sync.conflicts.list", "sync.media.download", "sync.media.presign", "sync.meta", "sync.sessions.abort", "sync.sessions.complete", "sync.sessions.open", "sync.snapshot", "sync.status"]);
+    const sync = caps.actions.filter((a) => a.path.startsWith("/api/sync/") && a.name !== "sync.admin.status");
+    expect(sync.map((a) => a.name).sort()).toEqual(["sync.batches", "sync.bind", "sync.changes", "sync.conflicts.decision", "sync.conflicts.list", "sync.media.download", "sync.media.presign", "sync.meta", "sync.sessions.abort", "sync.sessions.complete", "sync.sessions.open", "sync.snapshot", "sync.status"]);
     for (const a of sync) expect(a).toMatchObject({ auth: "sync-bearer", gate: { switch: "SYNC_API_ENABLED" } });
     expect(caps.auth.sync_bearer).toMatchObject({ audience: SYNC_AUDIENCE, client_id: SYNC_CLIENT_ID, group: "gramps-owner" });
     expect(caps.sync.handshake_headers).toEqual(["x-hfy-sync-client", "x-hfy-gramps-version", "x-hfy-gramps-schema", "x-hfy-redaction-version", "x-hfy-tree-id"]);
@@ -262,7 +262,7 @@ describe("GET /api/sync/meta (AC4)", () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
       api_version: 1, min_client: "0.1.0", accepted: { gramps: ["6.0"], schema: [21] }, redaction_version: 1, tree_id: null, bound: null,
-      head_seq: 0, rendered_seq: 0, writes_enabled: true, seeded: false, merges_enabled: false,
+      head_seq: 0, rendered_seq: 0, writes_enabled: true, seeded: false, merges_enabled: false, changes_feed: false, expunge_epoch: 0,
       limits: { max_ops: 24, max_obj_bytes: 204800, max_body_bytes: 2097152 },
       id_block: { Person: "I8000-I8999", Family: "F8000-F8999", Event: "E8000-E8999", Place: "P8000-P8999", Media: "O8000-O8999", Note: "N8000-N8999", Source: "S8000-S8999", Citation: "C8000-C8999", Repository: "R8000-R8999" },
       retired_person_ids: [],

@@ -122,7 +122,7 @@ const noStaleWrites = (w) => expect(w.rows("REC#")).toHaveLength(0);
 
 describe("the routes exist on the sync-bearer middleware with caps.json (AC1)", () => {
   it("caps.json lists sessions, complete, abort, batches and media presign as sync-bearer routes behind SYNC_API_ENABLED", () => {
-    const sync = buildCaps().actions.filter((a) => a.path.startsWith("/api/sync/"));
+    const sync = buildCaps().actions.filter((a) => a.path.startsWith("/api/sync/") && a.name !== "sync.admin.status");
     const by = Object.fromEntries(sync.map((a) => [a.name, `${a.method} ${a.path}`]));
     expect(by).toMatchObject({
       "sync.sessions.open": "POST /api/sync/sessions", "sync.sessions.complete": "POST /api/sync/sessions/:id/complete", "sync.sessions.abort": "POST /api/sync/sessions/:id/abort",
@@ -294,6 +294,30 @@ describe("POST /api/sync/batches: desktop batches through applyBatch (AC2)", () 
     expect(w.rows("SYNC#BUDGET")).toHaveLength(0);
     expect((await w.push(dels)).status).toBe(200); // fresh step-up: the route does not bypass it, and does not need a second one
     expect(w.rows("SYNC#BUDGET").reduce((n, r) => n + r.count, 0)).toBe(12);
+  });
+
+  it("24 withdraws fill all 100 transaction items (4 each, the scheduled expunge included): they commit outside a session, and inside one the session check is a 101st item, answered 413 batch_too_large with nothing written, never 500", async () => {
+    const people = Array.from({ length: 24 }, (_, i) => person(i + 1));
+    const withdraws = (list) => list.map((p) => ({ op: "withdraw", class: "Person", handle: p.handle, base_version: 1, reason: "private" }));
+    const w = world();
+    await w.push(people.map((p) => create(p)));
+    const session = (await w.open()).body.session_id;
+    const refused = await w.push(withdraws(people), { session });
+    expect(err(refused)).toEqual({ status: 413, error: "batch_too_large" });
+    expect(refused.body.message).toMatch(/at most 23 withdraws/);
+    expect(w.rows("EXPUNGE#")).toHaveLength(0);
+    expect(w.rows("SYNC#BUDGET")).toHaveLength(0);
+    expect(w.rows("REC#Person#").filter((r) => r.SK === "HEAD").every((r) => r.deleted === false)).toBe(true);
+    expect(w.headNow().seq).toBe(24); // the refused batch took no seq
+    const fits = await w.push(withdraws(people.slice(0, 23)), { session });
+    expect(fits.status).toBe(200);
+    expect(w.rows("EXPUNGE#")).toHaveLength(23);
+    // the same 24 outside a session: 3 fixed + the budget counter + 24 x 4 = exactly 100
+    const w2 = world();
+    await w2.push(people.map((p) => create(p)));
+    const plain = await w2.push(withdraws(people));
+    expect(plain.status).toBe(200);
+    expect(w2.rows("EXPUNGE#")).toHaveLength(24);
   });
 
   it("S08: a throttled store read is 503 retryable, nothing is written, and the retry with the same key commits once", async () => {

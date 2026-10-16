@@ -1,7 +1,7 @@
 // HFY-TSK-172 (sync-routes; sync.md 7.2): the /api/sync/* route definitions that sit on the sync-bearer middleware (auth.js, guard.js).
 // HFY-TSK-172 shipped the handshake surface, GET /api/sync/meta and POST /api/sync/bind. HFY-TSK-173 (sync-push-routes) adds the push routes
 // (push.js, media.js): sessions, complete, abort, batches and media/presign. HFY-TSK-174 (sync-pull-routes) adds the pull routes (pull.js): snapshot,
-// media download, status, conflicts and conflict decisions. The change feed (GET /sync/changes, ARCH-B) is phase B (changes-feed).
+// media download, status, conflicts and conflict decisions. HFY-TSK-277 (changes-feed) adds the ARCH-B change feed GET /sync/changes (changes.js), behind SYNC#HEAD.changes_feed (default off).
 //
 // Every entry is `auth: "sync-bearer"` and gated by the SYNC_API_ENABLED switch (404 not_enabled when off). The handler (handler.js)
 // authenticates the bearer, runs syncContext() and hands the route `c.sync`: { head, terms, store, checkTree, requireStepUp, stepUp }.
@@ -13,6 +13,8 @@ import { BLOCK_PREFIX } from "./validator.js";
 import { headKey } from "./store.js";
 import { batchesPush, sessionsAbort, sessionsComplete, sessionsOpen } from "./push.js";
 import { syncMediaPresign } from "./media.js";
+import { syncAdminStatus } from "./admin.js";
+import { syncChanges } from "./changes.js";
 import { syncConflictDecision, syncConflictsList, syncMediaDownload, syncSnapshot, syncStatus } from "./pull.js";
 
 const ok = (body, status = 200) => ({ status, body });
@@ -84,6 +86,8 @@ export async function syncMeta(c) {
     writes_enabled: c.sync.writesEnabled,
     seeded: head?.seeded === true,
     merges_enabled: head?.merges_enabled === true,
+    changes_feed: head?.changes_feed === true,
+    expunge_epoch: Number.isInteger(head?.expunge_epoch) ? head.expunge_epoch : 0,
     limits: { ...LIMITS },
     id_block: { ...ID_BLOCK },
     retired_person_ids: retired,
@@ -150,8 +154,11 @@ export const SYNC_ROUTES = [
   { ...SYNC_ROUTE_BASE, name: "sync.media.presign", method: "POST", path: "/sync/media/presign", summary: "Presigned PUT for a blob {handle, content_type, size, sha256_b64, md5_hex}, staged at media/.staging/<handle>/<sha256> and finalized after the Media op commits (sync bearer, gramps-owner; no MCP tool)", handler: syncMediaPresign },
   // HFY-TSK-174: the pull routes. routes.js derives write from the method (every non-GET), so the three POST routes set pausedOk to keep working while the store is paused (writes_enabled false): the blob download writes nothing, the heartbeat writes one SYNC#CLIENT item, and the conflict decision writes only the conflict item and an audit item, never the record log or heads. That is a deliberate choice: pausing guards the record store, not the conflict queue.
   { ...SYNC_ROUTE_BASE, name: "sync.snapshot", method: "GET", path: "/sync/snapshot", summary: "ARCH-C pull: {seq, url (presigned GET, 300 s), body_sha256, count, generated_at} for a gzip JSONL of every head, built at the current head and cached per seq (sync bearer, gramps-owner; no MCP tool)", handler: syncSnapshot },
+  { ...SYNC_ROUTE_BASE, name: "sync.changes", method: "GET", path: "/sync/changes", summary: "ARCH-B pull ?since=<seq>&limit=<1..500>: the dense change feed {ops: [{seq, op, class, handle, gramps_id, version, hash, obj|null, at, origin, expunged?}], head_seq, next_since, dense: true, expunge_epoch}; an expunged entry has obj null and expunged true; 400 bad_cursor when since is beyond the head; 404 not_enabled while SYNC#HEAD.changes_feed is off (sync bearer, gramps-owner; no MCP tool)", handler: syncChanges },
   { ...SYNC_ROUTE_BASE, name: "sync.media.download", method: "POST", path: "/sync/media/:handle/download", pausedOk: true, summary: "Blob download: {url (presigned GET, 300 s), sha256, md5, size, content_type}; 404 no_blob when the Media head holds no present blob (sync bearer, gramps-owner; no MCP tool)", handler: syncMediaDownload },
   { ...SYNC_ROUTE_BASE, name: "sync.status", method: "POST", path: "/sync/status", pausedOk: true, summary: "The desktop's heartbeat after each run {client_instance_id, dbid, fingerprint, addon_version, gramps_version, schema, last_run}: 204 (sync bearer, gramps-owner; no MCP tool)", handler: syncStatus },
   { ...SYNC_ROUTE_BASE, name: "sync.conflicts.list", method: "GET", path: "/sync/conflicts", summary: "The conflict queue ?state=open|resolved|dismissed&limit&cursor: {state, conflicts, next_cursor} (sync bearer, gramps-owner; no MCP tool)", handler: syncConflictsList },
-  { ...SYNC_ROUTE_BASE, name: "sync.conflicts.decision", method: "POST", path: "/sync/conflicts/:id/decision", pausedOk: true, summary: "Record a decision {decision: keep_cloud|keep_desktop|manual}: gramps-owner plus step-up (auth_time within 300 s; an hfy-admin cookie alone is refused); stores {cloud_version, cloud_value_hash}; 409 already_resolved (sync bearer; no MCP tool)", handler: syncConflictDecision },
+  { ...SYNC_ROUTE_BASE, name: "sync.conflicts.decision", method: "POST", path: "/sync/conflicts/:id/decision", pausedOk: true, cookieOwner: true, summary: "Record a decision {decision: keep_cloud|keep_desktop|manual}: gramps-owner plus step-up (auth_time within 300 s; an hfy-admin cookie alone is refused); stores {cloud_version, cloud_value_hash}; 409 already_resolved (sync bearer; no MCP tool)", handler: syncConflictDecision },
+  // HFY-TSK-279 (sync-admin-status-page): the cookie side of /admin/sync/. Session auth (no bearer): hfy-admin or gramps-owner reads it; the decision route above also takes the gramps-owner's session plus step-up.
+  { name: "sync.admin.status", method: "GET", path: "/sync/admin/status", gate: syncGate(), summary: "The admin sync page's read {desktop, website, conflicts, batches} (session cookie; hfy-admin or gramps-owner, else 403 not_allowed; no MCP tool)", handler: syncAdminStatus },
 ];

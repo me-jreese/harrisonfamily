@@ -10,9 +10,13 @@
 //   SYNC#BUDGET#<yyyymmddhh>      META  count of delete and withdraw ops committed in that UTC hour (validator-js's destructive budget)
 //   SYNC#SESSION#<session_id>     META  a multi-batch push session (sync-push-routes, HFY-TSK-173); SYNC#HEAD.open_session names the open one
 //   SYNC#UPLOAD#<handle>          <sha256 hex>  a presigned blob upload waiting for its Media op (sync-push-routes), ttl +1 h
+//   EXPUNGE#<Class>#<handle>      META          a withdraw's scheduled record expunge, due 72 h after the withdraw (privacy-expunge)   GSI1 EXPUNGEQ#pending / <due_at>#<Class>#<handle>
+//   AUDIT#expunge:<id>            one audit item per expunge run, counts only (api/scripts/expunge.mjs)
 //
 // `expunged`: BRD2 section 4 lists an `expunged` flag on heads and log entries. applyBatch never writes it (the attribute is absent,
-// not false); privacy-expunge sets it when it nulls obj_json, and readers must treat an absent flag as not expunged.
+// not false); privacy-expunge (api/scripts/expunge.mjs) sets it when it nulls obj_json, and readers must treat an absent flag as not
+// expunged. An expunge rewrites log entries and heads without moving seq, so it raises SYNC#HEAD.expunge_epoch in the same transaction as
+// the head rewrite: the store view and the snapshot cache (pull.js) key on it.
 //
 // GID lifecycle. A Person id is permanent: a delete, withdraw, merge or renumber rewrites GID#Person#<id> as
 // {handle, retired:true, reason} and nothing ever deletes it, so a retired id can never be handed to someone else (409
@@ -21,7 +25,7 @@
 // Reuse of a freed non-Person id is therefore harmless. gidDelete() refuses a Person on purpose.
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../shared/canonical.mjs";
-import { HttpError } from "../http.js";
+import { HttpError } from "../http-error.js";
 
 export const CLASSES = Object.freeze(["Person", "Family", "Event", "Place", "Source", "Citation", "Repository", "Media", "Note", "Tag"]);
 export const ORIGINS = Object.freeze(["desktop", "seed", "self", "admin", "proposal", "graduation", "moderation", "tag"]);
@@ -61,6 +65,11 @@ export const SESSION_TTL_SECONDS = 7 * 86400;
 /** The UTC hour bucket of a time, `yyyymmddhh`, that SYNC#BUDGET# counters are keyed by. */
 export const budgetBucket = (ms) => new Date(ms).toISOString().slice(0, 13).replace(/[-T]/g, "");
 export const budgetKey = (bucket) => ({ PK: `SYNC#BUDGET#${bucket}`, SK: "META" });
+/** The grace between a privacy withdraw and the expunge of its history: a mistaken mass withdraw can be resurrected (sync-admin resurrect) until then. */
+export const EXPUNGE_GRACE_MS = 72 * 3600 * 1000;
+export const expungeKey = (cls, handle) => ({ PK: `EXPUNGE#${cls}#${handle}`, SK: "META" });
+/** The pending-expunge queue on GSI1: items sorted by when they fall due. */
+export const EXPUNGE_QUEUE = "EXPUNGEQ#pending";
 /** How long a budget counter lives (seconds): well past the 25 hour buckets the rolling window reads. */
 export const BUDGET_TTL_SECONDS = 3 * 86400;
 /** Hour buckets the rolling 24 hour window reads: the current hour and the 24 before it, so no destructive op in the last 24 hours is missed. */
@@ -209,6 +218,37 @@ export const aliasItem = (cls, oldId, f) => ({
   at: f.at,
 });
 
+/** A withdraw's scheduled expunge: due EXPUNGE_GRACE_MS after the withdraw. Holds ids and times only, never object text. */
+export const expungeDueItem = (f) => ({
+  ...expungeKey(f.class, f.handle),
+  GSI1PK: EXPUNGE_QUEUE,
+  GSI1SK: `${new Date(Date.parse(f.at) + EXPUNGE_GRACE_MS).toISOString()}#${f.class}#${f.handle}`,
+  entity: "expunge_due",
+  class: f.class,
+  handle: f.handle,
+  version: f.version,
+  seq: f.seq,
+  batch_id: f.batch_id,
+  scheduled_at: f.at,
+  due_at: new Date(Date.parse(f.at) + EXPUNGE_GRACE_MS).toISOString(),
+});
+
+/**
+ * A log entry or head item as a reader of the change feed or a snapshot sees it: an expunged one has `obj: null, expunged: true` and keeps
+ * its seq and hash (BRD2 section 4). `obj` is parsed; the flag is present only when true.
+ */
+export function entryView(item) {
+  if (!item) return null;
+  const expunged = item.expunged === true;
+  return {
+    seq: item.seq,
+    ...(item.class ? { class: item.class, handle: item.handle, gramps_id: item.gramps_id ?? "", version: item.version } : {}),
+    hash: item.hash ?? null,
+    obj: expunged || item.obj_json == null ? null : JSON.parse(item.obj_json),
+    ...(expunged ? { expunged: true } : {}),
+  };
+}
+
 // ---- reads -----------------------------------------------------------------------------------------------------------
 const get = async ({ ddb, cmds, table }, Key) => (await ddb.send(new cmds.GetCommand({ TableName: table, Key, ConsistentRead: true }))).Item;
 
@@ -241,6 +281,7 @@ export function parseHead(item) {
     hash: item.hash ?? null,
     origin: item.origin,
     updated_at: item.updated_at,
+    ...(item.expunged === true ? { expunged: true } : {}),
   };
 }
 

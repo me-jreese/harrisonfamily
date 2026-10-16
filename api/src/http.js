@@ -1,6 +1,9 @@
 // Small HTTP helpers shared by the handler and routes.
 import { ContentError } from "@io-kit/content";
 import { CommentError } from "@io-kit/comments";
+import { HttpError } from "./http-error.js";
+
+export { HttpError };
 
 export const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -10,20 +13,6 @@ export const JSON_HEADERS = {
 
 export function json(statusCode, body, extra = {}) {
   return { statusCode, headers: { ...JSON_HEADERS, ...extra }, body: body === undefined ? "" : JSON.stringify(body) };
-}
-
-export class HttpError extends Error {
-  /**
-   * `details` (optional) is sent as the body's `details`: `{fields: [{field, code, suggest?}]}` on a 422, `{current}` on a 409, or
-   * a SyncError's structured conflict description (src/sync/apply.js).
-   */
-  constructor(status, code, message, details, headers) {
-    super(message ?? code);
-    this.status = status;
-    this.code = code;
-    if (details !== undefined) this.details = details;
-    if (headers !== undefined) this.headers = headers; // extra response headers, for example WWW-Authenticate on a 401 (HFY-TSK-172)
-  }
 }
 
 /** A log-safe token: a short word-character string, else the fallback. Error names and codes only ever pass through this. */

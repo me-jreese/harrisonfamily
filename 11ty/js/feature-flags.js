@@ -15,6 +15,10 @@
         "js": "57140198",
         "css": "ed4e0505"
       },
+      "admin-sync": {
+        "js": "86e857f7",
+        "css": "e9be417d"
+      },
       "chat": {
         "js": "2070e098",
         "css": "afca4af7"
@@ -24,11 +28,11 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "764ac5b3",
-        "css": "9e0815ba"
+        "js": "7c9a4197",
+        "css": "4cd750ae"
       },
       "family": {
-        "js": "a24014c3",
+        "js": "5fefd75a",
         "css": "e52fd206"
       },
       "family-entry": {
@@ -64,7 +68,7 @@
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "ff1305ca",
+        "js": "ea5afbca",
         "css": "be703fb4"
       },
       "person": {
@@ -939,6 +943,15 @@
     if (flags.accessRequests !== true) return;
     if (/^\/me\/requests\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("access-requests", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-279: the admin-sync island fills the static /admin/sync/ page (sync status and conflict decisions for hfy-admin and gramps-owner). With syncStatusV1
+  // off the bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island shows anyone else the standard not-allowed line.
+  resolveFlags().then((flags) => {
+    if (flags.syncStatusV1 !== true) return;
+    if (/^\/admin\/sync\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("admin-sync", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 

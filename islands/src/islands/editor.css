@@ -13,6 +13,8 @@
 .hfy-editor__layout { display: grid; gap: var(--io-space-4); min-width: 0; }
 .hfy-editor__lead { display: grid; gap: var(--io-space-2); }
 .hfy-editor__subject { margin: 0; font-size: var(--io-typography-size-lg); font-weight: var(--io-typography-weight-semibold); }
+/* D-11 (HFY-TSK-282): the name is a link alone on its line, so it is a 44 px target (an inline link in a sentence is exempt, a lone one is not). */
+.hfy-editor__subject > a.hfy-person-name { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); }
 .hfy-editor__intro { margin: 0; color: var(--io-color-semantic-text-dim); }
 .hfy-editor a.hfy-editor__back { justify-self: start; display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }
 .hfy-editor__note, .hfy-editor__soon { margin: 0; color: var(--io-color-semantic-text-dim); }

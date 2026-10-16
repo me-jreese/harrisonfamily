@@ -71,7 +71,7 @@ describe('d3-dag 1.2.2 is a dependency of graph/ only', () => {
   });
 
   it('no other lockfile in the repository (islands, the chat worker, api, auth, lambda) holds any of them', () => {
-    const lockfiles = repoFiles().filter((f) => LOCK_FILES.test(f) && f !== 'graph/package-lock.json');
+    const lockfiles = repoFiles().filter((f) => LOCK_FILES.test(f) && f !== 'graph/package-lock.json' && !f.startsWith('graph/cloud/'));
     assert.ok(lockfiles.some((f) => f.startsWith('islands/')), 'the islands lockfile is among those checked');
     const hits = [];
     for (const f of lockfiles) {
@@ -89,7 +89,7 @@ describe('d3-dag 1.2.2 is a dependency of graph/ only', () => {
 
   it('no other package.json in the repository declares d3-dag', () => {
     const hits = repoFiles()
-      .filter((f) => f.endsWith('package.json') && f !== 'graph/package.json')
+      .filter((f) => f.endsWith('package.json') && f !== 'graph/package.json' && f !== 'graph/cloud/package.json')
       .filter((f) => existsSync(join(REPO, f)) && /"d3-dag"/.test(readFileSync(join(REPO, f), 'utf8')));
     assert.deepEqual(hits, []);
   });

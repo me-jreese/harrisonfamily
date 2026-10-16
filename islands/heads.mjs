@@ -9,7 +9,7 @@
 //   block B, immediately AFTER main.css: <link rel=stylesheet href=/css/hfy-theme.css?v=<sha8>>, so the cascade is
 //     main.css first and the theme second. (Its ?v is the same sha8 of the file that assets.mjs writes on every other script,
 //     stylesheet and manifest reference of the page, so the two stay consistent; the main.css anchor matches with or without it.)
-// Pages without main.css (posts/, me/, me/notifications/, me/links/, me/inbox/, me/review/, me/requests/, tree/, edit/, edit/family/, join/, chat/, offline.html, family-login/) get A then B right after </title>.
+// Pages without main.css (posts/, me/, me/notifications/, me/links/, me/inbox/, me/review/, me/requests/, admin/sync/, tree/, edit/, edit/family/, join/, chat/, offline.html, family-login/) get A then B right after </title>.
 // offline.html and family-login/ get no early hint: they never load feature-flags.js (so nothing would mount the shell or clear the class), and
 // html.hfy-shell-v2 there would leave the shell's pre-mount placeholder bars (theme partial 60) painted on the offline page.
 // After an Eleventy refresh rewrites a page, `cd islands && npm run build` puts the blocks back. Workspace port: partials/head.njk
@@ -47,6 +47,8 @@ export const PAGES = [
   "me/review/index.html",
   // the family requests page (accessRequests, HFY-TSK-264)
   "me/requests/index.html",
+  // the admin sync status page (syncStatusV1, HFY-TSK-279)
+  "admin/sync/index.html",
   // the join page (accessRequests, HFY-TSK-140)
   "join/index.html",
   // the chat page (chatV1, HFY-TSK-142)

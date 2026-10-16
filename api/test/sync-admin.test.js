@@ -38,7 +38,7 @@ describe("argument handling and --help", () => {
   it("--help prints the usage and the io go-ahead rule, and touches nothing", () => {
     const out = execFileSync(process.execPath, [SCRIPT, "--help"], { encoding: "utf8" });
     expect(out).toBe(`${HELP}\n`);
-    for (const word of ["pause", "resume", "render", "resurrect", "--full", "--allow-mass-delete", "--prune-foreign", "--dry-run", "--apply"]) expect(out).toContain(word);
+    for (const word of ["pause", "resume", "feed-on", "feed-off", "render", "resurrect", "--full", "--allow-mass-delete", "--prune-foreign", "--dry-run", "--apply"]) expect(out).toContain(word);
     expect(out).toMatch(/IO'S GO-AHEAD IS REQUIRED/);
     expect(out).toMatch(/recorded verbatim in the worklog/);
   });
@@ -106,6 +106,40 @@ describe("pause and resume", () => {
     const none = world(null);
     await expect(run(args(["pause", "--apply"]), none.ctx)).rejects.toThrow(/no SYNC#HEAD/);
     expect(none.ddb.all()).toHaveLength(0);
+  });
+});
+
+describe("feed-on and feed-off (HFY-TSK-277)", () => {
+  it("--dry-run writes nothing; --apply sets SYNC#HEAD.changes_feed to the boolean true and audits, and feed-off reverses it", async () => {
+    const w = world();
+    expect(w.row("SYNC#HEAD", "META").changes_feed).toBeUndefined(); // absent = off
+    const before = w.snapshot();
+    await run(args(["feed-on", "--dry-run"]), w.ctx);
+    expect(w.snapshot()).toBe(before);
+    await run(args(["feed-on", "--apply", "--by", "operator-a"]), w.ctx);
+    expect(w.row("SYNC#HEAD", "META")).toMatchObject({ changes_feed: true, writes_enabled: true, seeded: true });
+    const audits = w.ddb.all().filter((r) => r.PK.startsWith("AUDIT#sync-admin:feed-on"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ op: "sync-admin.feed-on", principal: "operator-a", before: { changes_feed: null }, after: { changes_feed: true } });
+    const on = w.snapshot();
+    await run(args(["feed-on", "--apply"]), w.ctx); // already on: nothing to change
+    expect(w.snapshot()).toBe(on);
+    await run(args(["feed-off", "--apply"]), w.ctx);
+    expect(w.row("SYNC#HEAD", "META").changes_feed).toBe(false);
+    const off = w.snapshot();
+    await run(args(["feed-off", "--apply"]), w.ctx);
+    expect(w.snapshot()).toBe(off);
+  });
+  it("feed-off on a store where the switch was never set writes the explicit false; pause is untouched; a missing SYNC#HEAD is refused", async () => {
+    const w = world();
+    await run(args(["feed-off", "--apply"]), w.ctx);
+    expect(w.row("SYNC#HEAD", "META")).toMatchObject({ changes_feed: false, writes_enabled: true });
+    await expect(run(args(["feed-on", "--apply"]), world(null).ctx)).rejects.toThrow(/no SYNC#HEAD/);
+  });
+  it("takes --by and the common flags only", () => {
+    expect(() => args(["feed-on", "--dry-run", "--all"])).toThrow(/does not apply/);
+    expect(() => args(["feed-off", "--dry-run", "--full"])).toThrow(/does not apply/);
+    expect(args(["feed-on", "--apply", "--by", "x", "--table", "t", "--region", "r"])).toMatchObject({ command: "feed-on", apply: true, by: "x" });
   });
 });
 
@@ -183,6 +217,9 @@ describe("resurrect", () => {
     expect(w.row("GID#Note#N0001", "META")).toBeUndefined();
     const headBefore = w.row("SYNC#HEAD", "META");
     const snap = w.snapshot();
+    // the withdraw scheduled its expunge (privacy-expunge); the deletes did not
+    expect(w.row(`EXPUNGE#Person#${p1.handle}`, "META")).toMatchObject({ entity: "expunge_due", GSI1PK: "EXPUNGEQ#pending" });
+    expect(w.row(`EXPUNGE#Person#${p2.handle}`, "META")).toBeUndefined();
 
     w.clock.advance(3600 * 1000);
     await run(args(["resurrect", "--batch", r.batch_id, "--dry-run"]), w.ctx);
@@ -197,6 +234,7 @@ describe("resurrect", () => {
 
     await run(args(["resurrect", "--batch", r.batch_id, "--apply", "--include-withdrawn", "--by", "operator-a"]), w.ctx);
     const head = w.row(`REC#Person#${p1.handle}`, "HEAD");
+    expect(w.row(`EXPUNGE#Person#${p1.handle}`, "META")).toBeUndefined(); // the resurrect cancelled the scheduled expunge
     expect(head).toMatchObject({ deleted: false, version: 4, origin: "admin", updated_by: "operator:sync-admin", gramps_id: "I0001" });
     expect(JSON.parse(head.obj_json)).toMatchObject({ gender: 0 }); // the latest live version (v2), not v1
     expect(head.hash).toBe(w.row("SYNC#LOG", seqKey(head.seq)).hash);
@@ -297,8 +335,8 @@ describe("resurrect", () => {
     w.ctx.ddb = { send: async (c) => (c.constructor.name === "TransactWriteCommand" && sent.push(c.input.TransactItems.length), real(c)) };
     await run(args(["resurrect", "--batch", r.batch_id, "--apply"]), w.ctx);
     expect(sent).toHaveLength(2);
-    expect(sent[0]).toBe(1 + 3 * 20 + 1); // head update + 20 x (head, log, gid) + audit
-    expect(sent[1]).toBe(1 + 3 * 4 + 1);
+    expect(sent[0]).toBe(1 + 4 * 20 + 1); // head update + 20 x (head, log, gid, cancelled expunge) + audit
+    expect(sent[1]).toBe(1 + 4 * 4 + 1);
     expect(w.ddb.all().filter((x) => x.entity === "rec" && x.deleted === false)).toHaveLength(24);
   });
 

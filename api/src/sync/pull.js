@@ -7,7 +7,7 @@
 //   POST /api/sync/conflicts/:id/decision       gramps-owner plus step-up (auth_time <= 300 s): an hfy-admin cookie alone never reaches a sync route
 //
 // The snapshot file: line 1 is the header {"type":"header","tree_id","seq","schema","redaction","count","body_sha256"}; every further line is one
-// head {"class","handle","gramps_id","version","seq","deleted","obj"} (a tombstone has deleted:true and obj:null), in class then handle order, each line
+// head {"class","handle","gramps_id","version","seq","deleted","obj"} (a tombstone has deleted:true and obj:null; an expunged one also has expunged:true), in class then handle order, each line
 // canonical JSON ending in "\n". body_sha256 is the SHA-256 (hex) of the uncompressed BODY: every byte after the header line's "\n". The gzip header
 // carries no mtime, so the same heads always give the same bytes. The object is cached per seq at snapshots/<seq>.jsonl.gz; its S3 metadata holds
 // body_sha256, count and generated_at, so a cache hit costs one HeadObject. The heads come from the store view (records/index.js): the stored objects
@@ -51,7 +51,8 @@ const byHead = (a, b) => (classRank.get(a.class) ?? 99) - (classRank.get(b.class
  */
 export function buildSnapshot({ treeId, seq, heads }) {
   const sorted = [...heads].sort(byHead);
-  const body = sorted.map((h) => `${canonicalJson({ class: h.class, handle: h.handle, gramps_id: h.gramps_id ?? "", version: h.version, seq: h.seq, deleted: h.deleted === true, obj: h.deleted === true ? null : h.obj })}\n`).join("");
+  // An expunged head (privacy-expunge) is a tombstone that says so: `expunged: true` is present only then, so the bytes of every other snapshot are unchanged.
+  const body = sorted.map((h) => `${canonicalJson({ class: h.class, handle: h.handle, gramps_id: h.gramps_id ?? "", version: h.version, seq: h.seq, deleted: h.deleted === true, ...(h.expunged === true ? { expunged: true } : {}), obj: h.deleted === true ? null : h.obj })}\n`).join("");
   const bodySha = sha256(body);
   const header = `${canonicalJson({ type: "header", tree_id: treeId ?? null, seq, schema: SCHEMA_VERSION, redaction: REDACTION_VERSION, count: sorted.length, body_sha256: bodySha })}\n`;
   return { gz: gzipSync(Buffer.from(header + body, "utf8"), { level: 9 }), body_sha256: bodySha, count: sorted.length };
@@ -59,6 +60,28 @@ export function buildSnapshot({ treeId, seq, heads }) {
 
 const s3Status = (e) => e?.$metadata?.httpStatusCode;
 const isMissing = (e) => e?.name === "NotFound" || e?.name === "NoSuchKey" || s3Status(e) === 404 || s3Status(e) === 403; // no s3:ListBucket: a missing key answers 403
+
+/**
+ * Builds the snapshot of `heads` at `seq` and writes it to snapshots/<seq>.jsonl.gz, with the metadata the cache check reads, then the
+ * latest.json checkpoint (best effort). Returns { body_sha256, count, generated_at }. Used by the route and by api/scripts/expunge.mjs, which
+ * rebuilds the snapshot after it deleted every copy. `store` = { s3, syncBucket, now, log? }; `head` is the SYNC#HEAD item (tree_id, expunge_epoch).
+ */
+export async function writeSnapshot(store, { seq, head, heads }) {
+  const key = snapshotKey(seq);
+  const epoch = String(Number.isInteger(head?.expunge_epoch) ? head.expunge_epoch : 0);
+  const built = buildSnapshot({ treeId: head?.tree_id, seq, heads });
+  const generatedAt = new Date(store.now()).toISOString();
+  await store.s3.send(new PutObjectCommand({
+    Bucket: store.syncBucket, Key: key, Body: built.gz, ContentType: "application/gzip", CacheControl: "private, no-store",
+    Metadata: { body_sha256: built.body_sha256, count: String(built.count), generated_at: generatedAt, tree_id: head?.tree_id ?? "", expunge_epoch: epoch, redaction: String(REDACTION_VERSION), schema: String(SCHEMA_VERSION) },
+  }));
+  // The checkpoint the store views start from; a failure here costs nothing but a longer cold start. Concurrent builds at different seqs can
+  // regress latest.json to an older seq; that is accepted, since a view replays the log from the checkpoint seq and so stays correct.
+  await store.s3.send(new PutObjectCommand({
+    Bucket: store.syncBucket, Key: LATEST_KEY, Body: JSON.stringify({ seq, key, body_sha256: built.body_sha256, count: built.count, generated_at: generatedAt }), ContentType: "application/json", CacheControl: "private, no-store",
+  })).catch((e) => store.log?.warn?.("snapshot checkpoint not written", logSafeError(e, { route: "sync.snapshot" })));
+  return { body_sha256: built.body_sha256, count: built.count, generated_at: generatedAt };
+}
 
 /** GET /api/sync/snapshot. */
 export async function syncSnapshot(c) {
@@ -94,23 +117,12 @@ export async function syncSnapshot(c) {
     }
   }
   if (!meta) {
-    const built = buildSnapshot({ treeId: head?.tree_id, seq, heads });
-    const generatedAt = new Date(store.now()).toISOString();
     try {
-      await store.s3.send(new PutObjectCommand({
-        Bucket: store.syncBucket, Key: key, Body: built.gz, ContentType: "application/gzip", CacheControl: "private, no-store",
-        Metadata: { body_sha256: built.body_sha256, count: String(built.count), generated_at: generatedAt, tree_id: head?.tree_id ?? "", expunge_epoch: epoch, redaction: String(REDACTION_VERSION), schema: String(SCHEMA_VERSION) },
-      }));
-      // The checkpoint the store views start from; a failure here costs nothing but a longer cold start. Concurrent builds at different seqs can
-      // regress latest.json to an older seq; that is accepted, since a view replays the log from the checkpoint seq and so stays correct.
-      await store.s3.send(new PutObjectCommand({
-        Bucket: store.syncBucket, Key: LATEST_KEY, Body: JSON.stringify({ seq, key, body_sha256: built.body_sha256, count: built.count, generated_at: generatedAt }), ContentType: "application/json", CacheControl: "private, no-store",
-      })).catch((e) => store.log?.warn?.("snapshot checkpoint not written", logSafeError(e, { route: "sync.snapshot" })));
+      meta = await writeSnapshot(store, { seq, head, heads });
     } catch (e) {
       store.log?.error?.("snapshot write failed", logSafeError(e, { route: "sync.snapshot" }));
       throw retryable();
     }
-    meta = { body_sha256: built.body_sha256, count: built.count, generated_at: generatedAt };
   }
   let url;
   try {
@@ -197,7 +209,7 @@ export async function syncStatus(c) {
   const at = new Date(store.now()).toISOString();
   await store.ddb.send(new store.cmds.PutCommand({
     TableName: store.table,
-    Item: { ...clientKey(instance), entity: "syncclient", client_instance_id: instance, ...rest, principal: c.actor.id, updated_at: at },
+    Item: { ...clientKey(instance), GSI1PK: "SYNCCLIENT", GSI1SK: `${at}#${instance}`, entity: "syncclient", client_instance_id: instance, ...rest, principal: c.actor.id, updated_at: at },
     ConditionExpression: "attribute_not_exists(PK) OR principal = :p", ExpressionAttributeValues: { ":p": c.actor.id },
   })).catch((e) => {
     if (e?.name === "ConditionalCheckFailedException") throw new HttpError(409, "conflict", "this client instance belongs to another principal");
@@ -252,6 +264,14 @@ export async function syncConflictsList(c) {
 
 /** The hash a decision is tied to: the cloud values at the conflict's paths, as the queue showed them (SI-30). */
 export const cloudValueHash = (paths) => sha256(canonicalJson((Array.isArray(paths) ? paths : []).map((p) => ({ path: String(p?.path ?? ""), cloud: p?.cloud === undefined ? null : p.cloud }))));
+
+/**
+ * Does a stored decision still apply (SI-30)? True only while the cloud head is the version the decision was made against and the cloud values at the
+ * conflict's paths hash the same. The add-on applies a decision only then; otherwise it reopens the conflict. `paths` are the conflict's paths with the
+ * CURRENT cloud values.
+ */
+export const decisionStillApplies = (conflict, { version, paths }) =>
+  conflict?.state === "resolved" && (conflict.cloud_version ?? null) === (Number.isInteger(version) ? version : null) && conflict.cloud_value_hash === cloudValueHash(paths);
 
 /**
  * POST /api/sync/conflicts/:id/decision {decision}. gramps-owner plus step-up within 300 s (PS-22), checked before the item is read, so a stale
