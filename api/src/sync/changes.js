@@ -29,7 +29,7 @@ import { logKey, seqKey } from "./store.js";
 
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 500;
-/** Object text per page: DynamoDB reads are 1 MB a page and the Lambda response limit is 6 MB; a single object is at most 200 KB. */
+/** Object text per page, in UTF-8 bytes: DynamoDB reads are 1 MB a page and the Lambda response limit is 6 MB; a single object is at most 200 KB. */
 export const RESPONSE_OBJ_BYTES = 3_000_000;
 
 const SEQ = /^\d{1,12}$/;
@@ -93,7 +93,7 @@ export async function syncChanges(c) {
       }));
       for (const item of r.Items ?? []) {
         if (item.seq !== next || item.SK !== seqKey(next)) throw gap();
-        const size = typeof item.obj_json === "string" ? item.obj_json.length : 0;
+        const size = typeof item.obj_json === "string" ? Buffer.byteLength(item.obj_json, "utf8") : 0; // UTF-8 bytes: canonicalJson leaves non-ASCII text unescaped
         if (ops.length > 0 && bytes + size > RESPONSE_OBJ_BYTES) { full = true; break; }
         ops.push(changeOp(item));
         bytes += size;

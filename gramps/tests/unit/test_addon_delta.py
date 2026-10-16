@@ -343,11 +343,27 @@ class Fallbacks(DeltaCase):
                 self.cloud.changes_error = transport.TransportError(code, consts.EXIT_SERVER_REFUSED, status=status)
                 self.assert_falls_back(reason)
 
-    def test_a_server_error_is_not_a_fallback_it_is_a_failed_run(self):
+    def test_a_busy_or_failing_feed_falls_back_to_the_snapshot_route(self):
+        for status, code in ((503, "retryable"), (500, "server"), (429, "rate_limited")):
+            with self.subTest(status=status):
+                self.setUp()
+                self.synced_then_edited()
+                self.cloud.changes_error = transport.TransportError(code, consts.EXIT_TEMPORARY, "retry", status=status)
+                self.assert_falls_back("feed_unavailable")
+
+    def test_a_sign_in_problem_on_the_feed_stops_the_run_it_is_not_a_fallback(self):
         self.synced_then_edited()
-        self.cloud.changes_error = transport.TransportError("retryable", consts.EXIT_TEMPORARY, "retry", status=503)
+        self.cloud.changes_error = transport.TransportError("unauthorized", consts.EXIT_SIGN_IN, "login", status=401)
         doc = self.env.run("pull", yes=True)
-        self.assertEqual((doc["result"], doc["exit_code"]), ("failed", consts.EXIT_TEMPORARY))
+        self.assertEqual((doc["result"], doc["exit_code"]), ("refused", consts.EXIT_SIGN_IN))
+
+    def test_an_unwritable_state_file_does_not_fail_a_delta_run(self):
+        self.synced_then_edited()
+        with mock.patch.object(delta, "save_state", side_effect=OSError("disk full")):
+            doc = self.env.run("pull", yes=True)
+        self.assertEqual((doc["result"], doc["exit_code"]), ("ok", 0), doc)
+        self.assertEqual(doc["cloud"]["via"], "delta")
+        self.assertEqual(by_gid(self.env.tree.objects(), "N0004")["text"]["string"], "Edited on the website.")
 
     def test_an_answer_that_is_not_the_documented_shape(self):
         for bad in ({"ops": []}, {"ops": "x", "head_seq": 1, "next_since": 1, "dense": True}, {"ops": [], "head_seq": 1, "next_since": 1, "dense": False}, None, []):

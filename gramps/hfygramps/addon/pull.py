@@ -267,7 +267,7 @@ def _cloud_state(ctx, cloud, handshake, cloud_tree, last_pull_seq):
         delta.advance(replica, cloud, head_seq)
         snap = replica.to_snapshot(ctx.tree.schema_version, last_pull_seq)
         _cache_snapshot(ctx, snap.raw_gz, snap.seq)
-        delta.save_state(ctx.tp, snap, epoch, replica.streak + 1)
+        _remember(ctx, snap, epoch, replica.streak + 1)
         ctx.outcome["pull_via"] = "delta"
         log.line("delta ok seq=%d" % snap.seq)
         return snap

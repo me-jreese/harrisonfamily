@@ -20,7 +20,7 @@ replays only the ops after that seq:
 
 Any doubt falls back to the full snapshot for this run and costs nothing but the download: no cache, a damaged cache, a changed epoch, a gap in
 the seqs, a version that does not follow, an object that does not hash, an expunged op, a head behind the cache, `410`, `400 bad_cursor`
-or `404 not_enabled` from the feed, a feed answer that is not the documented shape. The reason is a word in the run log, never content.
+or `404 not_enabled` from the feed, a `429`/`5xx` that outlasts the transport's retries, a feed answer that is not the documented shape. The reason is a word in the run log, never content.
 
 Verification. A cache that is only ever advanced by deltas could drift if the website's log or this code had a fault, so every 7th sync
 (DELTA_VERIFY_EVERY: six delta syncs, then one) downloads the full snapshot anyway, uses it for the plan, replays the feed to the snapshot's seq and
@@ -45,6 +45,7 @@ _HANDLE = re.compile(consts.HANDLE_PATTERN)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _OPS = ("create", "update", "delete", "withdraw", "marker")
 FEED_REFUSALS = (400, 404, 410)  # bad_cursor or validation, not_enabled, gap_too_large: the feed cannot serve this cursor, a snapshot can
+FEED_UNAVAILABLE = (429, 500, 502, 503, 504)  # still failing after the transport's own retries: the feed is optional, so try the snapshot route
 
 
 class Fallback(Exception):
@@ -202,6 +203,8 @@ def _page(cloud, since):
     except transport.TransportError as exc:
         if exc.status in FEED_REFUSALS:
             raise Fallback("feed_%s" % exc.code)
+        if exc.status in FEED_UNAVAILABLE:
+            raise Fallback("feed_unavailable")  # a 401 or 403 is not here: signing in again is the answer to those, not a different route
         raise
     if (not isinstance(resp, dict) or resp.get("dense") is not True or not isinstance(resp.get("ops"), list)
             or not _int(resp.get("head_seq")) or not _int(resp.get("next_since"))):

@@ -283,6 +283,24 @@ describe("GET /api/sync/changes (AC1)", () => {
   });
 });
 
+describe("the page budget counts UTF-8 bytes, not characters", () => {
+  it("a page of multi-byte text stops at the byte budget", async () => {
+    const w = world({ head: { seq: 4 } });
+    const wide = "\u3042".repeat(Math.floor(RESPONSE_OBJ_BYTES / 3 / 2) + 10); // 3 bytes each
+    for (let s = 1; s <= 4; s += 1) {
+      const obj = note(s, { text: { _class: "StyledText", string: wide, tags: [] } });
+      w.ddb.rows.set(`SYNC#LOG\u0000${String(s).padStart(12, "0")}`, {
+        PK: "SYNC#LOG", SK: String(s).padStart(12, "0"), entity: "change", seq: s, op: "create", class: "Note", handle: obj.handle, gramps_id: obj.gramps_id, version: 1, obj_json: canonicalJson(obj), hash: "0".repeat(64), principal: "p", origin: "desktop", at: "2026-10-14T12:00:00.000Z",
+      });
+    }
+    const r = (await feed(w, "?since=0&limit=500")).body;
+    expect(Buffer.byteLength(wide) * 2).toBeGreaterThan(RESPONSE_OBJ_BYTES); // two objects are over the budget in bytes ...
+    expect(wide.length * 4).toBeLessThan(RESPONSE_OBJ_BYTES); // ... while all four are under it counted in characters
+    expect(r.ops.length).toBe(1);
+    expect(r.next_since).toBe(1);
+  });
+});
+
 describe("a delta and a snapshot give the same state (AC3, server side)", () => {
   it("folding the feed reproduces the snapshot byte for byte: creates, updates, a delete, a withdraw, a resurrect and a marker", async () => {
     const w = world();
