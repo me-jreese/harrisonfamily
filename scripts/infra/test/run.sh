@@ -229,6 +229,17 @@ eq "in place" "$(patterns "$(last_update)")" '["/person/*","/api/*","/uploads/*"
 # ---------------------------------------------------------------------------------------------------------------------
 CURRENT="site CSP: add-csp-headers.sh attaches report-only, then enforcing, then detaches (HFY-TSK-149)"
 dflt() { jq -c "$2" "$1"; } # FILE JQ -> over the DEFAULT behavior of a config
+# A curl double for the /join/ gate of --mode enforce: prints $STUB_DIR/join-headers (default: the Turnstile variant in report-only).
+mkdir -p "$T/csp-curl"
+cat > "$T/csp-curl/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/csp-curl.log"
+if [ -f "$STUB_DIR/join-headers" ]; then cat "$STUB_DIR/join-headers"; exit 0; fi
+printf 'HTTP/2 200\r\ncontent-security-policy-report-only: default-src %s; script-src %s https://challenges.cloudflare.com\r\n\r\n' "'self'" "'self'"
+STUB
+chmod +x "$T/csp-curl/curl"
+OLD_PATH=$PATH; PATH="$T/csp-curl:$PATH"
+SITE="https://site.example"
 new_stub
 run add-csp-headers.sh
 eq "no --mode is refused" "$RC" 2
@@ -250,9 +261,23 @@ echo_last; run add-csp-headers.sh --mode report-only
 eq "report-only rerun is a true no-op" "$(updates)" 1
 contains "...and says so" "$OUT" "no change"
 run add-csp-headers.sh --mode enforce
+eq "enforce without --site-url is refused (the /join/ gate)" "$RC:$(updates)" "2:1"
+contains "...and says what it needs" "$OUT" "--site-url"
+printf 'HTTP/2 200\r\ncontent-security-policy-report-only: default-src %s\r\n\r\n' "'self'" > "$STUB_DIR/join-headers"
+run add-csp-headers.sh --mode enforce --site-url "$SITE"
+eq "enforce is refused when /join/ still shows the base policy" "$RC:$(updates)" "1:1"
+contains "...with the gate message" "$OUT" "GATE:"
+printf 'HTTP/2 200\r\ncontent-security-policy: default-src %s; script-src https://challenges.cloudflare.com\r\n\r\n' "'self'" > "$STUB_DIR/join-headers"
+run add-csp-headers.sh --mode enforce --site-url "$SITE"
+eq "...and when only an enforcing header (not report-only) carries it" "$RC:$(updates)" "1:1"
+rm "$STUB_DIR/join-headers"
+run add-csp-headers.sh --mode enforce --site-url "http://$SITE"
+eq "a non-https --site-url is refused" "$RC" 2
+run add-csp-headers.sh --mode enforce --site-url "$SITE"
+contains "enforce proceeds once /join/ shows the Turnstile variant" "$OUT" "gate passed"
 eq "enforce: switches the policy in place" "$(updates):$(dflt "$(last_update)" '.DefaultCacheBehavior.ResponseHeadersPolicyId')" "2:\"$CSP_RHP\""
 eq "enforce: the /join/ function is associated once" "$(dflt "$(last_update)" '[.DefaultCacheBehavior.FunctionAssociations.Items[] | select(.EventType == "viewer-response")] | length')" 1
-echo_last; run add-csp-headers.sh --mode enforce
+echo_last; run add-csp-headers.sh --mode enforce --site-url "$SITE"
 eq "enforce rerun is a true no-op" "$(updates)" 2
 run add-csp-headers.sh --mode detach
 eq "detach (the rollback): no policy on the default behavior" "$(updates):$(dflt "$(last_update)" '.DefaultCacheBehavior | has("ResponseHeadersPolicyId")')" "3:false"
@@ -268,6 +293,7 @@ contains "dry run shows the policy it would attach" "$OUT" "$CSP_RO_RHP"
 contains "dry run says nothing changed" "$OUT" "(dry-run) no changes made"
 new_stub
 run add-csp-headers.sh --mode enforce --report-only-policy-id ro-x --enforce-policy-id en-x --function-arn arn:aws:cloudfront::1:function/f --dry-run
+contains "a dry run without --site-url notes the gate" "$OUT" "needs --site-url"
 contains "explicit ids win over the stack outputs" "$OUT" "policy en-x"
 check "...and describe-stacks is never called" bash -c "! grep -q describe-stacks '$STUB_DIR/calls.log'"
 new_stub
@@ -288,6 +314,13 @@ eq "a response headers policy that is not ours is never replaced" "$RC:$(updates
 contains "...and the script says why" "$OUT" "not one of the site CSP policies"
 run add-csp-headers.sh --mode detach
 eq "...nor removed by detach" "$RC:$(updates)" "1:0"
+FOREIGN_FN="$T/foreign-fn.json"
+jq '.DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Items += [{FunctionARN: "arn:aws:cloudfront::123456789012:function/other-viewer-response", EventType: "viewer-response"}] | .DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Quantity += 1' "$FIXTURE" > "$FOREIGN_FN"
+new_stub "$FOREIGN_FN"
+run add-csp-headers.sh --mode report-only
+eq "another viewer-response function on the default behavior is refused up front" "$RC:$(updates)" "1:0"
+contains "...and the script says why" "$OUT" "another viewer-response function"
+PATH=$OLD_PATH
 
 # ---------------------------------------------------------------------------------------------------------------------
 CURRENT="data gate: HFY-TSK-080 behaviors with the Lambda@Edge association"
