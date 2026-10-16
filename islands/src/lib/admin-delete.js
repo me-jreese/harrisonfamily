@@ -31,6 +31,7 @@ export const COPY = Object.freeze({
   budgetLine: (b) => `${b.used} deleted in the last day. a day's limit is ${b.limit}.`,
   overBudget: "too many things were deleted in the last 24 hours to delete more here. use gramps on the desktop, or try again tomorrow.",
   confirm: "delete for good",
+  retryConfirm: "try the delete again",
   cancel: "keep it",
   deleting: "deleting",
   done: "deleted.",
@@ -93,11 +94,15 @@ export function planView(body) {
   return { deletes, updates, ids, budget };
 }
 
-/** The words for every error the two routes can answer: { text, signIn, stepUp, reload }. */
+/**
+ * The words for every error the two routes can answer: { text, signIn, stepUp, reload, retry }. `retry` is true when the same request may be sent
+ * again as it is (the answer never came back, or the site failed): the sheet keeps its confirm button and re-sends under the SAME Idempotency-Key, so a
+ * delete that did commit replays its receipt instead of failing on a stale version.
+ */
 export function problemFor(err) {
   const status = isObj(err) || err instanceof Error ? err.status : 0;
   const code = isObj(err) || err instanceof Error ? err.code : "";
-  const base = { signIn: false, stepUp: false, reload: false };
+  const base = { signIn: false, stepUp: false, reload: false, retry: false };
   if (code === "step_up_required" || status === 401) return { ...base, text: "sign in again to confirm. deleting needs a sign-in from the last 15 minutes.", signIn: true, stepUp: code === "step_up_required" };
   if (code === "delete_budget") return { ...base, text: COPY.overBudget };
   if (code === "version_conflict") return { ...base, text: "this page changed after you opened it. reload the page and look again before deleting.", reload: true };
@@ -106,9 +111,9 @@ export function problemFor(err) {
   if (code === "not_allowed" || status === 403) return { ...base, text: "only an admin can delete things on the website." };
   if (status === 404) return { ...base, text: "that page is already gone." };
   if (code === "idempotency_mismatch") return { ...base, text: "that didn't go through. reload the page and try again.", reload: true };
-  if (status === 0) return { ...base, text: "that didn't reach the site. check your connection and try again." };
+  if (status === 0) return { ...base, text: "that didn't reach the site. check your connection and try again.", retry: true };
   if (status === 400 || status === 422) return { ...base, text: "the website won't allow that change." };
-  return { ...base, text: "that didn't work. try again in a moment." };
+  return { ...base, text: "that didn't work. try again in a moment.", retry: !status || status >= 500 };
 }
 
 /** One queue row: the two people and how close the match is. `href` is the person's page. */

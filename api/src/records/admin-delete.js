@@ -26,6 +26,14 @@
 //
 // The queue (GET /api/admin/duplicates) lists pairs of people the duplicate matcher (duplicates.js) thinks may be one person. It is READ-ONLY and
 // writes no record: there is no "flagged" state, and a merge stays a desktop operation. It exists so io, merging in Gramps, starts from a list.
+// It lists the whole tree, so it keeps the duplicate matcher's privacy contract (a candidate's lifespan never carries a year the record API
+// would withhold): a living person, or one whose status is unknown, has no lifespan in a row (the years still count toward the score, on the
+// server, and the names are shown as everywhere else). A person is "living" by the edit bundle's display hint: no death event, and no birth
+// year or a birth within the last 110 years. Only a person with a recorded death, or born longer ago than that, shows a lifespan.
+//
+// A dry run's plan counts the cascade against the two limits it spends: `plan.objects` is every record the batch touches (deletes and link
+// updates) against `plan.max_objects` (one applyBatch, 24), and `budget.adding` is every record deleted, the cascade's included, against the
+// rolling delete budget. A record the cascade adds carries `why`, so the sheet names it.
 import { HttpError } from "../http.js";
 import { SyncError } from "../sync/errors.js";
 import { DESTRUCTIVE_LIMIT, DESTRUCTIVE_SHARE, budgetVerdict } from "../sync/validator.js";
@@ -298,7 +306,10 @@ export async function adminDeletesPost(c) {
     return {
       status: 200,
       body: {
-        plan: { delete: compiled.deletes, update: compiled.updates, retired_ids: retired, objects: compiled.deletes.length + compiled.updates.length },
+        plan: {
+          delete: compiled.deletes, update: compiled.updates, retired_ids: retired, objects: compiled.deletes.length + compiled.updates.length, max_objects: MAX_BATCH_OBJECTS,
+          cascade: compiled.deletes.filter((d) => d.why !== "target").length,
+        },
         budget: await budgetFor(ctx, compiled.deletes.length),
         summary: planned.summary, warnings: planned.warnings, errors: [],
       },
@@ -314,6 +325,13 @@ export async function adminDeletesPost(c) {
 
 const DEFAULT_PAGE = 50;
 const MAX_PAGE = 100;
+const LIVING_YEARS = 110; // the edit bundle's isLiving hint
+/** True when the matcher summary may print this person's years: a recorded death, or a birth long enough ago. Unknown status hides them. */
+export const yearsShown = (obj, summary, nowYear) => {
+  const hasDeath = Number.isInteger(obj?.death_ref_index) && obj.death_ref_index >= 0;
+  if (hasDeath) return true;
+  return Number.isInteger(summary?.birthYear) && summary.birthYear > 0 && summary.birthYear <= nowYear - LIVING_YEARS;
+};
 const personRow = (p, gid) => ({ key: `Person:${p.handle}`, gramps_id: gid.get(p.handle) ?? "", displayName: p.displayName, lifespan: p.lifespan });
 
 /** GET /api/admin/duplicates: pairs of people who may be one person, best first. Read-only. */
@@ -328,7 +346,14 @@ export async function adminDuplicatesList(c) {
   const events = (h) => { const e = view.heads.get(`Event:${h}`); return e && !e.deleted ? e.obj : undefined; };
   const people = view.live().filter((h) => h.class === "Person");
   const gid = new Map(people.map((h) => [h.handle, gidOf(h.obj)]));
-  const pairs = findDuplicatePairs(people.map((h) => summarizePerson(h.obj, events)));
+  const nowYear = new Date(c.store.now()).getUTCFullYear();
+  const shown = new Set();
+  const summaries = people.map((h) => {
+    const sum = summarizePerson(h.obj, events);
+    if (yearsShown(h.obj, sum, nowYear)) shown.add(h.handle);
+    return sum;
+  });
+  const pairs = findDuplicatePairs(summaries, { showYears: (p) => shown.has(p.handle) });
   const items = pairs.slice(offset, offset + limit).map((p) => ({ a: personRow(p.a, gid), b: personRow(p.b, gid), score: p.score }));
   const next = offset + limit < pairs.length ? String(offset + limit) : null;
   return { status: 200, body: { items, cursor: next, total: pairs.length } };

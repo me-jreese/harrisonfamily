@@ -20,7 +20,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "e2042f9c",
+        "js": "496c6be1",
         "css": "9e0815ba"
       },
       "family": {
@@ -84,7 +84,7 @@
         "css": "890fde1c"
       },
       "review": {
-        "js": "3aeb52a3",
+        "js": "f2883480",
         "css": "f6c66152"
       },
       "search": {

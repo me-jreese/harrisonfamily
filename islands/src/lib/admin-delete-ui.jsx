@@ -19,7 +19,7 @@ function List({ title, note, items, id }) {
   );
 }
 
-/** The delete sheet's state machine: planning -> ready -> deleting -> done, or error from any of them. */
+/** The delete sheet's state machine: planning -> ready -> deleting -> done, or error from any of them (a retryable error goes back to deleting under the same key). */
 function useDelete({ cls, bundle }) {
   const [sheet, setSheet] = useState(null);
   const keyRef = useRef(null);
@@ -37,7 +37,9 @@ function useDelete({ cls, bundle }) {
     }
   };
   const confirm = async () => {
-    if (!sheet || sheet.phase !== "ready") return;
+    // From "ready", or from a retryable error (the answer was lost or the site failed) with a plan on screen: the same key, so a delete that did commit replays.
+    const again = sheet && sheet.phase === "error" && sheet.view && sheet.problem && sheet.problem.retry && keyRef.current;
+    if (!sheet || !(sheet.phase === "ready" || again)) return;
     const view = sheet.view;
     set({ phase: "deleting", view });
     try {
@@ -109,8 +111,8 @@ export function DeletePanel({ cls, bundle, signInHref }) {
             )}
             <div className="hfy-sheet__actions">
               <button type="button" className="hfy-sheet__secondary" onClick={flow.close} disabled={sheet.phase === "deleting"} data-hfy-delete-cancel>{COPY.cancel}</button>
-              {view && sheet.phase !== "error" && (
-                <button type="button" className="hfy-admin__danger" onClick={onConfirm} disabled={busy || over} data-hfy-delete-confirm>{sheet.phase === "deleting" ? COPY.deleting : COPY.confirm}</button>
+              {view && (sheet.phase !== "error" || (sheet.problem && sheet.problem.retry)) && (
+                <button type="button" className="hfy-admin__danger" onClick={onConfirm} disabled={busy || over} data-hfy-delete-confirm>{sheet.phase === "deleting" ? COPY.deleting : sheet.phase === "error" ? COPY.retryConfirm : COPY.confirm}</button>
               )}
             </div>
           </div>

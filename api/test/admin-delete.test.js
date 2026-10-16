@@ -9,7 +9,7 @@ import { headKey } from "../src/sync/store.js";
 import { ROUTES } from "../src/routes.js";
 import { budgetVerdict } from "../src/sync/validator.js";
 import { cleanOps, DELETABLE_CLASSES } from "../src/records/admin-delete.js";
-import { findDuplicatePairs, summarizePerson } from "../src/records/duplicates.js";
+import { SMALL_TREE, findDuplicatePairs, summarizePerson } from "../src/records/duplicates.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
 const typ = (cls, value, string = "") => ({ _class: cls, value, string });
@@ -331,6 +331,10 @@ describe("a Person: references, ID retirement and symmetry (AC2)", () => {
     expect(r.body.plan.retired_ids).toEqual(["I0003"]);
     expect(r.body.plan.objects).toBe(3);
     expect(r.body.budget).toMatchObject({ adding: 2, limit: 10, over: false });
+    // the plan counts the cascade against the batch cap and names it: the child's own birth event goes with the child
+    expect(r.body.plan.max_objects).toBe(24);
+    expect(r.body.plan.cascade).toBe(1);
+    expect(r.body.plan.delete.map((d) => d.why).sort()).toEqual(["exclusive_event", "target"]);
     expect(r.body.summary.length).toBeGreaterThan(0);
     expect(writes(w)).toBe(before);
     expect(w.ddb.all().length).toBe(rows);
@@ -498,6 +502,32 @@ describe("the possible-duplicate queue (AC3)", () => {
     expect(w.txns).toEqual([]);
   });
 
+  it("prints no year for a living or unknown-status person, and a lifespan for one with a recorded death", async () => {
+    const born = (n, ymd) => event(n, 12, [0, 0, ymd, false]);
+    const died = (n, ymd) => event(n, 13, [0, 0, ymd, false]);
+    const [b1, b2, b3, d3, b4, d4] = [born(71, 1990), born(72, 1991), born(73, 1850), died(73 + 100, 1920), born(74 + 100, 1851), died(74 + 200, 1921)];
+    const mkp = (n, rest) => person(n, { first: "Quill", last: "Marlowe", rest: { gender: 0, ...rest } });
+    const people = [
+      mkp(80, { event_ref_list: [eref(b1)], birth_ref_index: 0 }), // living (born 1990, no death)
+      mkp(81, { event_ref_list: [eref(b2)], birth_ref_index: 0 }), // living
+      mkp(82, {}), // no events: status unknown
+      mkp(83, { event_ref_list: [eref(b3), eref(d3)], birth_ref_index: 0, death_ref_index: 1 }), // deceased
+      mkp(84, { event_ref_list: [eref(b4), eref(d4)], birth_ref_index: 0, death_ref_index: 1 }), // deceased
+    ];
+    const w = await world({ extra: [b1, b2, b3, d3, b4, d4, ...people] });
+    const r = await w.dups(ADMIN);
+    expect(r.status).toBe(200);
+    const byKey = new Map(r.body.items.flatMap((i) => [i.a, i.b]).map((x) => [x.key, x]));
+    const life = (n) => byKey.get(`Person:${h(n)}`)?.lifespan;
+    expect([life(80), life(81), life(82)]).toEqual(["", "", ""]);
+    expect([life(83), life(84)]).toEqual(["1850-1920", "1851-1921"]);
+    // the living pair is still listed (their years may count toward the score on the server), and nothing in the body carries a living person's year
+    const living = r.body.items.find((i) => [i.a.key, i.b.key].every((k) => [h(80), h(81)].some((x) => k === `Person:${x}`)));
+    expect(living).toBeTruthy();
+    expect(JSON.stringify(living)).not.toMatch(/199\d/);
+    expect(JSON.stringify(r.body.items.filter((i) => [i.a.key, i.b.key].some((k) => k === `Person:${h(80)}` || k === `Person:${h(81)}`)))).not.toMatch(/\b(1990|1991)\b/);
+  });
+
   it("pages with limit and cursor, and refuses a bad limit", async () => {
     const w = await world({ extra: twins() });
     const all = (await w.dups(ADMIN)).body;
@@ -529,6 +559,27 @@ describe("findDuplicatePairs (pure)", () => {
     expect(names).toEqual(expect.arrayContaining(["ab", "cd", "ae", "af"]));
     expect(names).not.toContain("ef");
     expect(new Set(names).size).toBe(names.length);
+  });
+  it("showYears blanks a person's lifespan and leaves the score alone", () => {
+    const people = [s("a", "Maud", "Hollowell", { birthYear: 1900, deathYear: 1970 }), s("b", "Maud", "Holowell", { birthYear: 1901 })];
+    const [shown] = findDuplicatePairs(people);
+    expect([shown.a.lifespan, shown.b.lifespan]).toEqual(["1900-1970", "1901-"]);
+    const [hidden] = findDuplicatePairs(people, { showYears: (p) => p.handle === "a" });
+    expect([hidden.a.lifespan, hidden.b.lifespan]).toEqual(["1900-1970", ""]);
+    expect(hidden.score).toBe(shown.score);
+  });
+  it("a small tree is compared all against all; a large tree is blocked, and the blocking's known misses are pinned", () => {
+    const filler = (n) => Array.from({ length: n }, (_, i) => s(`f${i}`, `Given${String.fromCharCode(97 + (i % 26))}${i}`, `Surname${i}x`.replace(/\d/g, (d) => "abcdefghij"[d])));
+    // a surname with no word of 3 letters ("Ng"), and a slip at both ends of a surname ("Brandt" / "Xrandz")
+    const twins = [s("t1", "Wren", "Ng"), s("t2", "Wren", "Ng"), s("t3", "Maud", "Brandtson"), s("t4", "Maud", "Xrandtsox")];
+    const pairOf = (pairs, a, b) => pairs.some((p) => p.a.handle === a && p.b.handle === b);
+    const small = findDuplicatePairs([...twins, ...filler(20)]);
+    expect(pairOf(small, "t1", "t2")).toBe(true);
+    const big = findDuplicatePairs([...twins, ...filler(SMALL_TREE + 10)]);
+    expect(pairOf(big, "t1", "t2")).toBe(false); // known miss: no surname word of 3 letters or more
+    expect(pairOf(big, "t3", "t4")).toBe(false); // known miss: a slip at both ends of a surname
+    // the blocking still finds an ordinary pair in a large tree
+    expect(pairOf(findDuplicatePairs([s("u1", "Maud", "Hollowell"), s("u2", "Maud", "Holowell"), ...filler(SMALL_TREE + 10)]), "u1", "u2")).toBe(true);
   });
   it("is empty for an empty or all-different tree, and compares through summarizePerson", () => {
     expect(findDuplicatePairs([])).toEqual([]);

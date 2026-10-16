@@ -166,6 +166,21 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.locator("[data-hfy-admin-done]")).toHaveCount(0);
     });
 
+    test("a lost answer keeps the confirm button, and the retry goes out under the same Idempotency-Key", async ({ page }) => {
+      let tries = 0;
+      const s = await openEditor(page, { del: (rec) => (rec.body.dry_run ? null : (tries += 1) === 1 ? { status: 503, json: { error: "unavailable" } } : null) });
+      if (name === "375") await page.locator('#sec-delete button.hfy-editor__toggle').click();
+      await page.locator("[data-hfy-delete-open]").click();
+      await page.locator("[data-hfy-delete-confirm]").click();
+      await expect(sheet(page).locator("[data-hfy-problem]")).toContainText("try again");
+      await expect(page.locator("[data-hfy-delete-confirm]")).toHaveText("try the delete again");
+      await page.locator("[data-hfy-delete-confirm]").click();
+      await expect(page.locator("[data-hfy-admin-done]")).toContainText("deleted. that page is gone.");
+      const real = s.deletes.filter((d) => !d.body.dry_run);
+      expect(real).toHaveLength(2);
+      expect(real[1].headers["idempotency-key"]).toBe(real[0].headers["idempotency-key"]);
+    });
+
     test("the review page's 'possible duplicates' tab lists the pairs as links, and only reads", async ({ page }) => {
       const s = await stub(page);
       await page.goto("/me/review/?tab=duplicates", { waitUntil: "domcontentloaded" });

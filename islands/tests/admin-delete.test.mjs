@@ -97,6 +97,13 @@ describe("words for every error", () => {
     assert.match(problemFor(e(500, "server")).text, /try again/);
     assert.equal(problemFor(undefined).signIn, false);
   });
+  it("only an answer that never came or a site failure may be sent again as it is", () => {
+    assert.equal(problemFor(e(0, "network")).retry, true);
+    assert.equal(problemFor(e(503, "server")).retry, true);
+    for (const [status, code] of [[401, "step_up_required"], [403, "delete_budget"], [409, "version_conflict"], [409, "still_referenced"], [413, "too_large"], [404, "not_found"], [422, "idempotency_mismatch"]]) {
+      assert.equal(problemFor(e(status, code)).retry, false, `${status} ${code}`);
+    }
+  });
   it("no word a family member would not know", () => {
     const all = [COPY.lead, COPY.dupLead, ...Object.values(NOUN), ...[401, 403, 404, 409, 413].map((s) => problemFor(e(s, "x")).text)].join(" ");
     assert.doesNotMatch(all, /\b(gramps_id|handle|applyBatch|idempotency|step-up|api|403|409|payload)\b/i);
