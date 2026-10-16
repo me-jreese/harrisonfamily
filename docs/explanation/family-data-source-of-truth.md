@@ -10,7 +10,7 @@ The projection is redaction policy v1 ([Redaction policy v1](../reference/redact
 
 ## The cloud store is where the website changes
 
-Members can now correct their own page, add a photo, or suggest a change, and an admin approves it. Those changes are written to the cloud record store, an append-only log with a current head for each record. The website never edits the tree. A change made on the website reaches the tree only when io pulls it: the addon shows a preview, io reviews it, and Apply writes it into Gramps in one transaction, after a verified backup.
+Where editing is switched on (the `recordEdit` and `proposalReview` flags, with the app's `HFY_EDITING` switch; see [Turn a feature flag on or off](../how-to/toggle-a-feature-flag.md)), members can correct their own page, add a photo, or suggest a change, and an admin approves it. Those changes are written to the cloud record store, an append-only log with a current head for each record. The website never edits the tree. A change made on the website reaches the tree only when io pulls it: the addon shows a preview, io reviews it, and Apply writes it into Gramps in one transaction, after a verified backup.
 
 So the store is the source of truth for what the website has changed or approved, and the tree is the source of truth for what io has researched. Neither side wins by default:
 
@@ -35,7 +35,7 @@ Because the store is an append-only log, removing a record from the site (a with
 The family-tree pictures on the old person pages are SVG files that a Graphviz script drew from the tree. They are a legacy feature, and they are not owned by the renderer (the sync design, section 11.5, and decision D2-25).
 
 - **The SVGs are frozen.** They stop changing at the cutover, because the script that makes them belongs to the retired publish.
-- **A person created in the cloud has none.** Nothing draws a picture for them, so their page shows the **see in the family tree** link, which opens the `/tree/` page. That page draws the tree from `person/graph.json`, which covers every person, however they were created.
-- **They will go.** The task `viz-v2-retire-graphviz` retires the SVGs and the link becomes the only tree entry point.
+- **A person created in the cloud has none.** Nothing draws a picture for them. With the `familyViz` flag on, their page shows the **see in the family tree** link, which opens the `/tree/` page, and that page draws the tree from `person/graph.json`, which covers every person, however they were created. With `familyViz` off, the link is absent and `/tree/` says the tree is not turned on yet.
+- **They will go.** The task `viz-v2-retire-graphviz` retires the SVGs, and the link, once `familyViz` is on, becomes the only tree entry point.
 
-This is an interim state. Until the SVGs are retired, a page may show an old picture for a person who has changed since the cutover; the link is always current.
+This is an interim state. Until the SVGs are retired, a page may show an old picture for a person who has changed since the cutover. With `familyViz` on, the tree behind the link is drawn from the graph file that `hfy-graph-render` rebuilds after each live pass, so it is current.

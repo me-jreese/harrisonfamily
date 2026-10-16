@@ -14,16 +14,22 @@ export function exitCodes(src) {
   return [...src.matchAll(/^(EXIT_[A-Z_]+)\s*=\s*(\d+)\s*$/gm)].map((m) => ({ name: m[1], code: m[2] }));
 }
 
-/** The API error codes: a 4xx/5xx status followed by a quoted code, also as either arm of a ternary, in api/src/sync. */
+/**
+ * The API error codes: a 4xx/5xx status followed by a quoted code, also as either arm of a ternary whose condition is any expression without a
+ * comma or a `?` (`flag ? "a" : "b"`, `state === "expired" ? "a" : "b"`), in api/src/sync.
+ */
 export function apiCodes(files) {
   const out = new Map();
   for (const [file, src] of files) {
-    for (const m of src.matchAll(/\b([45]\d\d)\s*,\s*(?:[\w.]+\s*\?\s*"([a-z_]+)"\s*:\s*)?"([a-z_]+)"/g)) {
+    for (const m of src.matchAll(/\b([45]\d\d)\s*,\s*(?:[^,?\n]+?\?\s*"([a-z_]+)"\s*:\s*)?"([a-z_]+)"/g)) {
       for (const code of [m[2], m[3]].filter(Boolean)) out.set(`${m[1]} ${code}`, file);
     }
   }
   return out;
 }
+
+/** The codes only the sync API throws: a `sync_` or `seed_` or `session_` prefix, plus `tree_mismatch` and `store_not_seeded`. */
+export const SYNC_ONLY = /^(?:sync_|seed_|session_)|^(?:tree_mismatch|store_not_seeded)$/;
 
 // Reach: the sync API's codes live in api/src/sync (the test below pins that no sync-only code is thrown elsewhere in api/src). The web API's own
 // codes (api/src/records, routes.js and the rest) are documented in their route summaries, not on this page. Codes built in a variable or
@@ -34,12 +40,17 @@ describe("docs/reference/sync-errors.md", () => {
   it("finds the exit codes and the API codes in the sources (the greps are not empty)", () => {
     expect(exitCodes(read("gramps/hfygramps/addon/consts.py")).length).toBeGreaterThanOrEqual(10);
     expect(apiCodes(syncFiles).size).toBeGreaterThanOrEqual(40);
-    expect([...apiCodes(syncFiles).keys()]).toEqual(expect.arrayContaining(["409 exists", "409 version_conflict", "503 sync_paused"]));
+    // 409 exists and version_conflict are the arms of a flag ternary, session_closed and session_expired of a comparison ternary (push.js).
+    expect([...apiCodes(syncFiles).keys()]).toEqual(
+      expect.arrayContaining(["409 exists", "409 version_conflict", "409 session_closed", "409 session_expired", "503 sync_paused"]),
+    );
   });
 
   it("keeps the sync-only codes inside api/src/sync (the grep's reach)", () => {
     const walk = (d) => readdirSync(join(repo, d), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(`${d}/${e.name}`) : e.name.endsWith(".js") ? [`${d}/${e.name}`] : []));
-    const strays = walk("api/src").filter((f) => !f.startsWith("api/src/sync/") && /[45]\d\d\s*,\s*"(sync_[a-z_]+|tree_mismatch|store_not_seeded|seed_[a-z_]+)"/.test(read(f)));
+    const strays = walk("api/src").filter(
+      (f) => !f.startsWith("api/src/sync/") && [...apiCodes([[f, read(f)]]).keys()].some((key) => SYNC_ONLY.test(key.split(" ")[1])),
+    );
     expect(strays).toEqual([]);
   });
 

@@ -99,7 +99,7 @@ Runbook 19.10.
 
 ### Remove something from the cloud
 
-Runbook 19.11. Use this when sensitive data reached the cloud: a date of birth in a note, a contact detail, a photo with a location. The tool is `api/scripts/expunge.mjs` ([full procedure](operate-the-sync-store.md#remove-something-from-the-cloud)). **It writes app-table items and deletes S3 versions, so it needs io's go-ahead, a dry run first, and io's step-up to apply** (`EXPUNGE_ACCESS_TOKEN`, a fresh sign-in within 300 seconds). Its output holds counts only.
+Runbook 19.11. Use this when sensitive data reached the cloud: a date of birth in a note, a contact detail, a photo with a location. The tool is `api/scripts/expunge.mjs` ([full procedure](operate-the-sync-store.md#remove-something-from-the-cloud)). **It writes app-table items and deletes S3 versions, so it needs io's go-ahead, a dry run first, and io's step-up to apply** (`EXPUNGE_ACCESS_TOKEN`, a fresh sign-in within 300 seconds). Once the data-write guard is applied, a `--record` run also needs io's break-glass session for the site bucket. Its output holds counts only.
 
 | What you remove | Mode |
 | --- | --- |
@@ -119,7 +119,7 @@ After a record or path expunge: render again (`render --apply --full`), let the 
 
 ### Tree pictures (the interim)
 
-The family-tree SVGs, `media/tree_<gramps-id>.svg`, are legacy: they are not renderer-owned, and they freeze at the cutover. A person created in the cloud (on the website, through a suggestion) has no SVG, so the person page shows the **see in the family tree** link to the `/tree/` page instead, which reads `person/graph.json` ([Front end](../reference/front-end.md)). The `viz-v2-retire-graphviz` task retires the SVGs; until then the existing SVGs stay as they are, and nobody regenerates them: the legacy ETL that wrote them is retired at the cutover. Decided in BRD2 D2-25 and sync design section 11.5 ([why](../explanation/family-data-source-of-truth.md#tree-pictures)).
+The family-tree SVGs, `media/tree_<gramps-id>.svg`, are legacy: they are not renderer-owned, and they freeze at the cutover. A person created in the cloud (on the website, through a suggestion) has no SVG. With the `familyViz` flag on, the person page shows the **see in the family tree** link to the `/tree/` page instead, which reads `person/graph.json` ([Front end](../reference/front-end.md)); with it off, the link is absent and `/tree/` says the tree is not turned on yet ([Turn a feature flag on or off](toggle-a-feature-flag.md)). Check the flag in `flags.json` rather than assuming it. The `viz-v2-retire-graphviz` task retires the SVGs; until then the existing SVGs stay as they are, and nobody regenerates them: the legacy ETL that wrote them is retired at the cutover. Decided in BRD2 D2-25 and sync design section 11.5 ([why](../explanation/family-data-source-of-truth.md#tree-pictures)).
 
 ## Cut over to the cloud store
 

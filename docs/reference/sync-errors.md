@@ -2,7 +2,7 @@
 
 Every exit code of `hfy-sync`, every error code of the sync API, and the rows that BRD2 section 11.1 added to the sync error catalog (D44 to D52 and S19 to S22). It is the lookup for the operator runbook in [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md). The map from each catalog row to the tests that trigger it is [Sync error catalog and its tests](sync-error-catalog.md); the commands are in [Install the Gramps sync addon](../how-to/install-the-gramps-sync-addon.md) and [Operate the sync store](../how-to/operate-the-sync-store.md).
 
-A test (`api/test/sync-errors-reference.test.js`, in `cd api && npm test`) reads the sources and fails if an exit code or an API error code is missing from the two tables below. Add a code to the source and to this page together. The API check reads `api/src/sync/*.js` for a status followed by a quoted code; a code built in a variable or thrown through a helper is outside its reach, and another test fails if a sync-only code is thrown outside that folder.
+A test (`api/test/sync-errors-reference.test.js`, in `cd api && npm test`) reads the sources and fails if an exit code or an API error code is missing from the two tables below. Add a code to the source and to this page together. The API check reads `api/src/sync/*.js` for a status followed by a quoted code, or by a ternary whose two arms are quoted codes; a code built in a variable or thrown through a helper is outside its reach. Another test fails if a code with the prefix `sync_`, `seed_` or `session_`, or `tree_mismatch` or `store_not_seeded`, is thrown outside that folder; any other code thrown outside it is not checked.
 
 ## Exit codes
 
@@ -14,11 +14,11 @@ The wrapper `gramps/bin/hfy-sync` exits with the `exit_code` in `~/Library/Appli
 | --- | --- | --- | --- |
 | `0` | `EXIT_OK` | In sync, or the changes were applied | none |
 | `10` | `EXIT_DRY_RUN_CHANGES` | A dry run found changes, or `--plan <run_id>` found a different plan than the one reviewed | `review_preview` |
-| `20` | `EXIT_PARTIAL` | Partial: a conflict is parked, a field is held, a delete waits for a step-up, or a change was skipped as a privacy incident | `resolve_conflicts`, `review_incidents`, `step_up` |
+| `20` | `EXIT_PARTIAL` | Partial: a conflict is parked (a pulled change that would leave a dangling reference or a one-sided link is parked as an integrity conflict that names the class and the Gramps ID, D19), a field is held, a delete waits for a step-up, or a change was skipped as a privacy incident | `resolve_conflicts`, `review_incidents`, `step_up` |
 | `64` | `EXIT_USAGE` | Usage: a wrong option or action, `--force-unlock` (D02), or a named plan or backup that does not exist | none |
-| `65` | `EXIT_SERVER_REFUSED` | The server refused data for privacy or integrity (D24, D25), or a snapshot failed verification | open the preview |
+| `65` | `EXIT_SERVER_REFUSED` | The server refused data for privacy or integrity (D24, D25), a snapshot failed verification, or the relationship check inside the pull's transaction failed (the D19 backstop; nothing was applied) | open the preview |
 | `69` | `EXIT_NOT_ENABLED` | Sync is paused (the kill switch, D27) or not enabled | none |
-| `70` | `EXIT_INTERNAL` | An internal error, or `status.json` is missing or belongs to another run (D19, D41) | read the log |
+| `70` | `EXIT_INTERNAL` | An internal error, or `status.json` is missing or belongs to another run (D41) | read the log |
 | `75` | `EXIT_TEMPORARY` | Temporary: the tree is open in Gramps (D01), an edit window is open (D45), another run holds the lock (D14), no disk space (D15), the network or the cloud moved (D08, D22) | `retry`, `close_gramps` |
 | `77` | `EXIT_SIGN_IN` | Sign-in or step-up is needed (D06, D07), or the Keychain is locked (D42) | `login`, `step_up` |
 | `78` | `EXIT_CONFIG` | Configuration: the wrong tree (D03), an unsupported schema (D04), an addon that is too old (D05), the sync state missing or damaged (D12, D13), the cloud tree changed (D50) | `open_bound_tree`, `update_addon`, `rebase`, `bind` |
@@ -27,7 +27,7 @@ The wrapper `gramps/bin/hfy-sync` exits with the `exit_code` in `~/Library/Appli
 
 ## API error codes
 
-The sync routes answer `{error: {code, message, details?}}` with the status below. `details` holds pointers, classes and opaque handles, never a value. The desktop maps the status and code to the row it acts on.
+The sync routes answer a flat body, `{error: "<code>", message, details?}`, with the status below. `details` holds pointers, classes and opaque handles, never a value. The desktop maps the status and code to the row it acts on.
 
 <!-- sync-api-codes:start -->
 
@@ -53,6 +53,8 @@ The sync routes answer `{error: {code, message, details?}}` with the status belo
 | 409 | `version_conflict` | An op's `base_version` is stale (D22); `details.conflicts` lists the current versions |
 | 409 | `exists` | A create names a handle that already exists |
 | 409 | `session_open` | A push session is already open (D48) |
+| 409 | `session_closed` | The push session is closed: a batch into a complete or aborted session, a complete of an aborted one, or an abort of a complete one, is refused (a repeat of the same close is not an error); nothing is written |
+| 409 | `session_expired` | The push session is past its 7 days (D48): a batch into it, or a complete of it, is refused; it can still be aborted |
 | 409 | `redaction_version_mismatch` | The addon's redaction version differs from the server's (D05) |
 | 409 | `gid_conflict` | A Gramps ID guard condition failed in the transaction |
 | 409 | `gramps_id_taken` | The Gramps ID belongs to another object (D26) |
