@@ -271,7 +271,7 @@ export const ROUTES = defineRoutes([
   // The read-only records API (HFY-TSK-175; sync.md 7.2, BRD2 D2-34): the stored, redacted object through publishView and applyModOverlay, behind
   // the HFY_EDITING switch (admins and a member's own record excepted). No `mcp` member. by-id is listed first.
   {
-    name: "records.byGrampsId", method: "GET", path: "/records/Person/by-id/:gramps_id", summary: "A person by gramps_id: {class, handle, gramps_id, version, obj} with ETag \"v<version>\"; read-only, year-only non-birth dates and no hidden items for non-admins (no MCP tool)",
+    name: "records.byGrampsId", method: "GET", path: "/records/Person/by-id/:gramps_id", summary: "A person by gramps_id: {class, handle, gramps_id, version, obj} with ETag \"v<version>\"; read-only, year-only non-birth dates and no hidden items for non-admins. An id retired by a merge or renumber answers {mergedInto: <live id>} (an alias chain is followed, at most 8 links) and 404 when no live person is at its end (no MCP tool)",
     gate: recordsGate(), handler: recordByGrampsId,
   },
   {

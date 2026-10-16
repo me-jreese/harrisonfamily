@@ -68,6 +68,23 @@ test("an unknown ?focus falls back to the viewer with a polite notice, and the a
   await expect.poll(() => new URL(page.url()).searchParams.get("focus")).toBe("I9003");
 });
 
+test("merge-alias-redirect: an old ?focus id follows its mergedInto stub to the new id, with no 'not found' notice", async ({ page }) => {
+  await stub(page);
+  await page.route("**/person/I9100.json", (r) => r.fulfill({ json: { mergedInto: "I9007" } }));
+  await page.goto("/tree/?focus=I9100", { waitUntil: "domcontentloaded" });
+  await expect(focusName(page)).toHaveText("Dina Other");
+  await expect(page.locator("[data-tree-notice]")).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).searchParams.get("focus")).toBe("I9007");
+});
+
+test("merge-alias-redirect: an unknown ?focus with no stub still falls back with the notice", async ({ page }) => {
+  await stub(page);
+  await page.route("**/person/I9100.json", (r) => r.fulfill({ status: 404, json: { error: "x" } }));
+  await page.goto("/tree/?focus=I9100", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("[data-tree-notice]")).toContainText("couldn't find that person");
+  await expect(focusName(page)).toHaveText("Ada Example");
+});
+
 test("a viewer who is not in the graph lands on the default person", async ({ page }) => {
   await stub(page, { sub: "I8888" });
   await page.goto("/tree/", { waitUntil: "domcontentloaded" });
