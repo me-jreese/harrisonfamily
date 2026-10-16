@@ -6,17 +6,17 @@ The audit of the tagging lightbox (flag `photoTagEdit`) before its flag flips, a
 
 Each state is measured at 375 and 1024 px wide by [`islands/tests/tag-edit-d11-audit.spec.mjs`](../../islands/tests/tag-edit-d11-audit.spec.mjs), with the same measurements as the editing audit ([`islands/tests/d11-measure.mjs`](../../islands/tests/d11-measure.mjs)): 16 px inputs, 44 px targets, one control height per row, no horizontal scroll, axe clean (serious and critical). Two tagging checks are explicit: the four corner handles of a selected box and all twelve nudge buttons measure 44 by 44 px or more, and each has a name.
 
-| State | What is on screen |
-|---|---|
-| `tag-layer` | tagging switched on, the page's tags as boxes |
-| `tag-selected` | an existing tag selected: four handles, the panel, the nudge buttons |
-| `tag-picker` | a new box drawn, the person picker open with matches |
-| `tag-sheet` | the confirmation sheet for a tag that goes to review |
-| `tag-sent` | the toast after sending |
+| State | What is on screen | 375 px | 1024 px | Checklist at 375 | Checklist at 1024 |
+|---|---|---|---|---|---|
+| `tag-layer` | tagging switched on, the page's tags as boxes | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-layer-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-layer-1024.png) | green | green |
+| `tag-selected` | an existing tag selected: four handles, the panel, the nudge buttons | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-selected-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-selected-1024.png) | green | green |
+| `tag-picker` | a new box drawn, the person picker open with matches | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-picker-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-picker-1024.png) | green | green |
+| `tag-sheet` | the confirmation sheet for a tag that goes to review | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sheet-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sheet-1024.png) | green | green |
+| `tag-sent` | the toast after sending | [375](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sent-375.png) | [1024](s3://jreese-net/agent-documents/assets/HFY-TSK-283/tag-sent-1024.png) | green | green |
 
-All five states pass at both widths. The screenshots are written by running the spec with `HFY_AUDIT_SHOTS=<dir>` and are named `<state>-<width>.png`. They belong under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-283/`; they have not been uploaded yet, so there are no links here. Upload them for the flip and link them in this table.
+All five states pass at both widths. The screenshots are full-page captures written by running the spec with `HFY_AUDIT_SHOTS=<dir>`, named `<state>-<width>.png`, under the task's asset prefix (HFY-R16), `s3://jreese-net/agent-documents/assets/HFY-TSK-283/`. Every image was checked by eye before the upload: it shows only the synthetic fixture world (placeholder names and ids, the "Test Person (synthetic)" page and a gray stand-in photo). The links are bucket paths, not web addresses: opening them needs AWS access to that bucket. All 10 files were listed in the bucket on 2026-10-16 and match the links in the table.
 
-Open before the flip: (1) upload the screenshots to the asset prefix and link them above (needs io or the pipeline's upload step); (2) the tag editor has no Undo control on its toast, which editing.md describes, so browser scenario 2 removes the tag through the UI and the API test replays the inverse ops as the undo proof; a follow-up against `tag-editor-ui` should add it, then the scenario can click it.
+Open before the flip: the tag editor has no Undo control on its toast, which editing.md describes, so browser scenario 2 removes the tag through the UI and the API test replays the inverse ops as the undo proof; a follow-up against `tag-editor-ui` should add it, then the scenario can click it.
 
 Not covered: the installed iPhone app (io's UAT inside `tag-edit-flip`), and anything a live site serves; the audit runs on localhost against the committed site.
 
