@@ -3,7 +3,8 @@
 Triggers: the table stream (filtered to ``SYNC#LOG``; only a wake-up, the ``SYNC#LOG`` cursor is the truth), the 15-minute EventBridge
 schedule (``{"source": "schedule"}``) and an operator invoke (``{"allow_mass_delete": true}``, ``{"prune_foreign": true}``,
 ``{"force": true}``, ``{"reconcile": true}``). RENDER_MODE (``off`` | ``shadow`` | ``live``) comes from the stack parameter ``RenderMode``;
-``off`` returns at once without a single AWS call. Settings: TABLE_NAME, SYNC_BUCKET, SITE_BUCKET, METRICS_NAMESPACE.
+``off`` returns at once without a single AWS call. Settings: TABLE_NAME, SYNC_BUCKET, SITE_BUCKET, METRICS_NAMESPACE, and GRAPH_RENDER_FUNCTION (optional: the
+function a live pass starts, asynchronously, once it has rendered; unset leaves the graph alone).
 
 A stream batch always answers ``{"batchItemFailures": []}`` once the pass has run: a render failure is recorded and alarmed by the engine
 and recovered by the schedule, so it is not a batch failure. A schedule or operator invoke still raises ``RenderFailed``.
@@ -29,7 +30,7 @@ def _clients():
     if not _CLIENTS:
         import boto3  # the Lambda runtime provides it; imported here so RENDER_MODE=off needs nothing
 
-        _CLIENTS.update(ddb=boto3.client("dynamodb"), s3=boto3.client("s3"), cw=boto3.client("cloudwatch"))
+        _CLIENTS.update(ddb=boto3.client("dynamodb"), s3=boto3.client("s3"), cw=boto3.client("cloudwatch"), lam=boto3.client("lambda"))
     return _CLIENTS
 
 
@@ -47,6 +48,7 @@ def build_engine(context=None, environ=None):
         shadow_bucket=aws.S3Bucket(clients["s3"], sync_bucket, "render-shadow/"),
         metrics=aws.CloudWatchMetrics(clients["cw"], env.get("METRICS_NAMESPACE", "HFY/SyncRender"), log),
         mode=mode,
+        graph_trigger=(aws.LambdaInvoker(clients["lam"], env["GRAPH_RENDER_FUNCTION"]) if mode == "live" and env.get("GRAPH_RENDER_FUNCTION") else None),
         remaining_ms=(context.get_remaining_time_in_millis if context is not None and hasattr(context, "get_remaining_time_in_millis") else (lambda: 10 ** 9)),
     )
     return engine.Engine(deps)

@@ -486,16 +486,50 @@ class SyncInfra(unittest.TestCase):
             self.assertNotIn("config/", str(s.get("Resource")))
             self.assertNotIn("uploads/", str(s.get("Resource")))
 
-    # AC8: graph renderer placeholder
-    def test_graph_renderer_placeholder(self):
+    # AC8 (HFY-TSK-247) and HFY-TSK-274: the graph renderer
+    def test_graph_renderer_function(self):
         f = self.r["GraphRenderFunction"]["Properties"]
         self.assertEqual((f["Runtime"], f["Architectures"], f["ReservedConcurrentExecutions"]), ("nodejs22.x", ["arm64"], 1))
+        self.assertEqual(f["Handler"], "src/index.handler")
         self.assertEqual(f["Code"]["S3Key"], {"Ref": "GraphRenderCodeKey"})
-        # the placeholder role is logs only; viz-graph-cloud-source widens it with the real package
-        self.assertEqual([x["Sid"] for x in statements(self.r["GraphRenderRole"])], ["Logs"])
-        # nothing invokes it: no event source, schedule target or permission references it
+        env = f["Environment"]["Variables"]
+        self.assertEqual(sorted(env), ["GRAPH_DEBOUNCE_SECONDS", "METRICS_NAMESPACE", "SITE_BUCKET", "TABLE_NAME"])
+        self.assertEqual(env["METRICS_NAMESPACE"], "HFY/SyncRender", "the same namespace as the renderer's own RenderError alarm")
+        self.assertGreaterEqual(f["MemorySize"], 1024)
+        cfg = self.r["GraphRenderInvokeConfig"]["Properties"]
+        self.assertEqual(cfg["FunctionName"], {"Ref": "GraphRenderFunction"})
+        self.assertLessEqual(cfg["MaximumRetryAttempts"], 1)
+        # a failure raises the renderer's own RenderError alarm: no alarm of its own
+        self.assertNotIn("GraphRenderErrorAlarm", self.r)
+
+    def test_graph_renderer_role_is_scoped_to_its_outputs(self):
+        role = self.r["GraphRenderRole"]
+        self.assertEqual([x["Sid"] for x in statements(role)],
+                         ["Logs", "TableRead", "TableWrite", "PhotoRead", "GraphOutputs", "FacesList", "Metrics"])
+        self.assertEqual(sorted(by_sid(role, "TableRead")["Action"]), ["dynamodb:GetItem", "dynamodb:Query"])
+        write = by_sid(role, "TableWrite")
+        self.assertEqual(sorted(write["Action"]), ["dynamodb:PutItem", "dynamodb:UpdateItem"])
+        self.assertEqual(write["Condition"], {"ForAllValues:StringEquals": {"dynamodb:LeadingKeys": ["SYNC#GRAPH"]}})
+        self.assertEqual(write["Resource"], {"Fn::GetAtt": ["Table", "Arn"]})
+        self.assertEqual(by_sid(role, "PhotoRead")["Action"], "s3:GetObject")
+        self.assertEqual(sub(by_sid(role, "PhotoRead")["Resource"]).split("}/", 1)[1], "media/*")
+        out = by_sid(role, "GraphOutputs")
+        self.assertEqual(sorted(out["Action"]), ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"])
+        self.assertEqual(sorted(sub(x).split("}/", 1)[1] for x in out["Resource"]), ["media/faces/*", "person/graph.json"])
+        self.assertEqual(by_sid(role, "FacesList")["Condition"], {"StringLike": {"s3:prefix": ["media/faces/*"]}})
+        self.assertEqual(by_sid(role, "Metrics")["Condition"], {"StringEquals": {"cloudwatch:namespace": "HFY/SyncRender"}})
+        for s in statements(role):
+            self.assertNotIn("uploads/", str(s.get("Resource")))
+            self.assertNotIn("config/", str(s.get("Resource")))
+
+    def test_only_the_renderer_invokes_the_graph_renderer(self):
+        inv = by_sid(self.r["RenderRole"], "GraphInvoke")
+        self.assertEqual(inv["Action"], "lambda:InvokeFunction")
+        self.assertIn("GraphRenderFunctionName", json.dumps(inv["Resource"]))
+        self.assertEqual(self.r["RenderFunction"]["Properties"]["Environment"]["Variables"]["GRAPH_RENDER_FUNCTION"], {"Ref": "GraphRenderFunctionName"})
+        # no event source, schedule target or permission starts it
         for n, r in self.r.items():
-            if r["Type"] in ("AWS::Lambda::EventSourceMapping", "AWS::Events::Rule", "AWS::Lambda::Permission") and n != "GraphRenderFunction":
+            if r["Type"] in ("AWS::Lambda::EventSourceMapping", "AWS::Events::Rule", "AWS::Lambda::Permission"):
                 self.assertNotIn("GraphRenderFunction", json.dumps(r), n)
 
     def test_placeholders_are_no_ops(self):

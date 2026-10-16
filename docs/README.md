@@ -53,9 +53,10 @@ For a new environment, for this family or another, in this order. The first page
 2. [Deploy and update the Lambda@Edge functions in us-east-1](how-to/deploy-the-edge-functions.md) — deploy `hfy-mcp-edge401` and `hfy-edge-gate`, validate the gate before anything attaches it, and later ship a change to either.
 3. [Add or remove a family member's access](how-to/manage-family-access.md) — publish the allowlist, the admin list and the MCP groups, and later change who has access or sign a member out on every device.
 4. [Deploy the app stack and its CloudFront behaviors](how-to/deploy-the-app-stack.md) — create or update `<app-stack>` from commit-named code zips through a reviewed change set, and add its behaviors.
-5. [Sync Gramps with the website](how-to/sync-gramps-with-the-website.md) — sync the Gramps tree through the cloud store, cut the site over (deny first, then live, then verify) and roll it back.
-6. [Cut over to authV2 and the private data gate, and roll back](how-to/cut-over-to-the-private-data-gate.md) — find which state a site is in, flip `authV2` before attaching the gate, and roll back in the reverse order; production cut over on 2026-10-12.
-7. [Turn on push notifications](how-to/turn-on-push-notifications.md) — optional: give the API a VAPID key pair, and later turn push off, replace the keys or correct their subject.
+5. [Deploy the graph renderer](how-to/deploy-the-graph-renderer.md) — build the linux/arm64 `hfy-graph-render` package, ship it in the RG-6 change set and smoke it.
+6. [Sync Gramps with the website](how-to/sync-gramps-with-the-website.md) — sync the Gramps tree through the cloud store, cut the site over (deny first, then live, then verify) and roll it back.
+7. [Cut over to authV2 and the private data gate, and roll back](how-to/cut-over-to-the-private-data-gate.md) — find which state a site is in, flip `authV2` before attaching the gate, and roll back in the reverse order; production cut over on 2026-10-12.
+8. [Turn on push notifications](how-to/turn-on-push-notifications.md) — optional: give the API a VAPID key pair, and later turn push off, replace the keys or correct their subject.
 
 ### Ship a change
 

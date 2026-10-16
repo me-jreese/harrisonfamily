@@ -21,7 +21,7 @@
 // Reuse of a freed non-Person id is therefore harmless. gidDelete() refuses a Person on purpose.
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../shared/canonical.mjs";
-import { HttpError } from "../http.js";
+import { HttpError } from "../http-error.js";
 
 export const CLASSES = Object.freeze(["Person", "Family", "Event", "Place", "Source", "Citation", "Repository", "Media", "Note", "Tag"]);
 export const ORIGINS = Object.freeze(["desktop", "seed", "self", "admin", "proposal", "graduation", "moderation", "tag"]);

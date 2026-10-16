@@ -62,6 +62,10 @@ If the first live pass cannot finish (the time budget, a failed write), the next
 
 A first pass in any mode writes a **baseline** outbox item (live only), with no people, so a cutover never sends notifications. Every mode change counts (live to shadow and back, or off to live after another mode ran), so record changes made while the site was in the other mode are not notified when `live` returns: the baseline covers them silently. This is deliberate (the site is rebuilt from the store, so nothing is stale); an operator who needs those notifications sends them by hand.
 
+## Graph trigger
+
+After a `live` pass has rendered and committed its cursor, the engine invokes `hfy-graph-render` asynchronously (`InvocationType=Event`, payload `{"source":"render","seq":<seq>}`) when the `GRAPH_RENDER_FUNCTION` environment variable names it. Shadow passes, held passes, skipped passes and `off` never do. A failed invoke never fails the pass: the cursor has moved and the site is rendered, so it raises the `RenderError` metric and the next live pass (or an operator invoke) starts the graph again. The graph function debounces and skips a seq it has already built; see the [graph README](../../graph/README.md#the-cloud-source-hfy-graph-render).
+
 ## Key ownership
 
 The renderer owns exactly these keys, and its writer and deleter refuse any other (a `ProtectedKey` failure, whatever a manifest or listing says):
