@@ -28,6 +28,7 @@ const PAGES = [
   "docs/how-to/run-the-tests.md",
   "docs/reference/repository-operations.md",
   "docs/reference/editing-d11-audit.md",
+  "docs/reference/tagging-d11-audit.md",
 ];
 
 describe("field-policy.md", () => {
