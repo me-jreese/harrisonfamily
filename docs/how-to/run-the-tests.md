@@ -504,11 +504,8 @@ gramps/tests/e2e/run.sh scenario_smoke.py        # bind, status, the empty check
 gramps/tests/e2e/run.sh scenario_push.py         # the push: seed, edits, replay, 409, deletes, merges, ids, the privacy greps, and the pull and push together
 gramps/tests/e2e/run.sh scenario_media.py        # media: the signed upload through the staging key, held files, the forced 409 after an upload, the GPS check on download (about 30 seconds)
 gramps/tests/e2e/run.sh scenario_pull.py         # the pull: check, apply, faults, conflicts, privacy, expunge, restore, reviewed plan (about 4 minutes)
-<<<<<<< HEAD
 gramps/tests/e2e/run.sh scenario_gui.py          # the Gramps window's flow (HFY-TSK-208): a composite date decided and applied in one run with the request log greped, and the deletes after the step-up (about 30 seconds)
-=======
 gramps/tests/e2e/run.sh scenario_decisions.py    # a web conflict decision: applied while the website's value matches (keep website and keep desktop), reopened when the record moved or was scrubbed, and a check that writes nothing (HFY-TSK-338, about 1 minute)
->>>>>>> origin/main
 gramps/tests/e2e/run.sh scenario_rebase.py       # a recovered website store (a new cloud tree, D50): pull stops, rebase re-bases and parks conflicts, nothing is sent (about 30 seconds)
 ```
 
