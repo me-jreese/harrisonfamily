@@ -24,6 +24,7 @@ from .. import projection as PR
 from .. import rules as R
 from . import consts, mediaup
 from . import plan as pullplan
+from .knownfields import unknown_fields
 
 # The Gramps ID prefixes of the block the website mints from (api/src/sync/validator.js BLOCK_PREFIX); the handshake's `id_block` wins.
 DEFAULT_BLOCK_PREFIX = {"Person": "I", "Family": "F", "Event": "E", "Place": "P", "Media": "O", "Note": "N", "Source": "S", "Citation": "C",
@@ -177,8 +178,11 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     versions = {h: r["version"] for h, r in cloud.items()}
     tree = M.merge_tree(base_objs, local, projected_all, heads, versions=versions, pins=pins or {}, project_fn=project_one, mode=mode,
                         allow_deletes=allow_deletes, sticky=sticky, policy=policy, cloud_is_delta=False, unreadable=unreadable)
+    # D39: an object with a field this addon does not know is the website's alone: nothing is sent for it (a push built from the
+    # local copy would drop the field there), and the merge's conflicts on it are not offered
+    parked = {h for h, r in cloud.items() if not r["deleted"] and unknown_fields(r["class"], r["obj"])}
     plan.actions = tree.actions()
-    plan.conflicts = list(tree.conflicts)
+    plan.conflicts = [c for c in tree.conflicts if c.get("handle") not in parked]
     plan.autos = list(tree.autos)
     plan.integrity = list(tree.integrity)
 
@@ -191,6 +195,9 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     for handle in sorted(tree.results):
         r = tree.results[handle]
         cls = r.cls or classes.get(handle, "")
+        if handle in parked:
+            plan.blocked.append(_hold(cls, handle, "cloud_unknown_field"))
+            continue
         plan.closed += [M._conflict_id(cls, handle, p) for p in r.closed]
         act = r.action
         if act == "push_create" or (act == "update" and r.push is not None):

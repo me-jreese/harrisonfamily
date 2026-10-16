@@ -385,7 +385,7 @@ def _plan(ctx):
         expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy,
         confirm_mass_delete=bool(ctx.services.get("confirm_mass_delete")) or (ctx.mode == "gui" and ctx.options.confirm_mass_delete),
         decisions=ctx.options.decisions if ctx.mode == "gui" and not ctx.dry else None,
-        defer_deletes=ctx.mode == "gui" and ctx.options.confirm_deletes is False)
+        defer_deletes=ctx.mode == "gui" and ctx.options.confirm_deletes is False, parked=ctx.snap.parked)
     plan.local = local
     if ctx.decisions is not None and ctx.decisions.overrides:
         ctx.decisions.settle(plan)

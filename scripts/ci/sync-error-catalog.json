@@ -1,0 +1,1127 @@
+{
+  "version": 1,
+  "rows": {
+    "D01": {
+      "failure": "Tree open in the GUI during a CLI run",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d01_gui_process_75_only_for_the_cli"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_tree_open_elsewhere_is_75_and_the_lock_is_left_alone"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_a_gramps_window_in_the_process_list_is_75"
+        }
+      ]
+    },
+    "D02": {
+      "failure": "--force-unlock passed",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d02_force_unlock_64"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_force_unlock_is_64_and_never_reaches_gramps"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_force_unlock_given_straight_to_gramps_is_64"
+        }
+      ]
+    },
+    "D03": {
+      "failure": "Wrong tree: dbid, marker or fingerprint differs from the bound tree",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d03_wrong_tree_by_dbid"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d03_marker_missing_or_different"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_local_edits_between_syncs_never_trigger_d03"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_swapping_in_a_different_tree_triggers_d03"
+        }
+      ]
+    },
+    "D04": {
+      "failure": "Local schema is not 21, or Gramps is not 6.0",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d04_unsupported_schema_or_series_78"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_unsupported_database_schema_is_78_and_gramps_never_opens_the_tree"
+        }
+      ]
+    },
+    "D05": {
+      "failure": "Addon too old (426) or redaction version mismatch (409)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_nothing_else_is_retried_and_each_maps_to_its_exit_code"
+        }
+      ]
+    },
+    "D06": {
+      "failure": "Not signed in, or the refresh token expired or was revoked (rotation reuse)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_a_reused_refresh_token_means_sign_in_again_and_the_dead_token_is_removed"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_signed_out_is_77"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_signin.py",
+          "name": "test_a_revoked_family_means_sign_in_again"
+        }
+      ]
+    },
+    "D07": {
+      "failure": "Delete ops without a fresh step-up (403 step_up_required)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_server_step_up_refusal_parks_the_deletes_and_the_rest_still_goes"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_deletes_without_step_up_are_parked_with_exit_20"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_review.py",
+          "name": "test_step_up_is_asked_just_before_the_deletes_and_those_batches_go_first"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_gui.py",
+          "name": "test_the_deletes_go_first_right_after_the_step_up"
+        }
+      ]
+    },
+    "D08": {
+      "failure": "Network, DNS, timeout or 5xx: retry idempotent calls 1 s, 4 s, 16 s",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_a_503_retryable_retries_three_times_at_1_4_16_then_succeeds"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_gives_up_after_three_retries_with_exit_75"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_network_errors_retry_the_same_way"
+        }
+      ]
+    },
+    "D09": {
+      "failure": "TLS verification failure: fail closed",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_an_untrusted_certificate_is_refused_and_nothing_is_sent"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_the_source_never_switches_verification_off"
+        }
+      ]
+    },
+    "D10": {
+      "failure": "Snapshot corrupt, truncated, wrong tree or wrong schema",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_corrupt_snapshot_is_fetched_again_once_and_twice_is_75"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull.py",
+          "name": "test_every_check_of_step_3_refuses"
+        }
+      ]
+    },
+    "D11": {
+      "failure": "Snapshot older than the last pull (rollback protection)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_snapshot_older_than_the_last_pull_is_refused"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull.py",
+          "name": "test_an_older_snapshot_than_the_last_pull_is_refused_as_rollback"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull.py",
+          "name": "test_the_run_refuses_a_rolled_back_snapshot_and_a_snapshot_of_another_tree"
+        }
+      ]
+    },
+    "D12": {
+      "failure": "Sidecar missing: rebase mode",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d12_and_d13_sidecar_missing_or_damaged"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_a_missing_or_damaged_sidecar_is_78_and_nothing_is_rebuilt"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_rebase.py",
+          "name": "test_rebase_after_a_recovery_rebases_the_converged_objects_and_turns_the_rest_into_conflicts"
+        }
+      ]
+    },
+    "D13": {
+      "failure": "Sidecar corrupt or from a newer addon",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d12_and_d13_sidecar_missing_or_damaged"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_open_checked_refuses_damage_and_newer_versions"
+        }
+      ]
+    },
+    "D14": {
+      "failure": "Concurrent run: state.lock held",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_runtime.py",
+          "name": "test_d14_concurrent_run_75"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_a_second_run_while_state_lock_is_held_is_75"
+        }
+      ]
+    },
+    "D15": {
+      "failure": "Low disk space",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_the_refusals"
+        }
+      ]
+    },
+    "D16": {
+      "failure": "Backup fails or fails integrity_check",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_pull.py",
+          "name": "test_no_backup_no_apply"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_restore.py",
+          "name": "test_a_backup_that_cannot_be_made_leaves_nothing_behind"
+        }
+      ]
+    },
+    "D17": {
+      "failure": "True conflicts: the GUI asks, the CLI parks and exits 20",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_a_parked_cli_conflict_stays_open_across_three_more_runs_with_both_sides_unchanged"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_a_skipped_gui_conflict_stays_open_across_three_more_runs_with_both_sides_unchanged"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_a_parked_cli_conflict_stays_open_across_three_more_runs_with_both_sides_unchanged"
+        }
+      ]
+    },
+    "D18": {
+      "failure": "io edited a record during the preview: stale hash, re-plan",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_an_edit_between_the_preview_and_the_apply_triggers_a_replan"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_with_a_reviewed_plan_or_in_the_gui_a_replan_stops_for_a_new_preview"
+        }
+      ]
+    },
+    "D19": {
+      "failure": "Dangling reference or symmetry failure would abort the apply (repaired: the plan reports it as an integrity conflict)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d19_a_dangling_reference_is_an_integrity_conflict_naming_class_and_gramps_id_on_every_run"
+        },
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d19_the_conflict_ends_when_the_website_drops_the_reference"
+        },
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d19_an_incoming_delete_of_a_note_the_desktop_still_uses_is_an_integrity_conflict_not_a_delete"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_a_cloud_change_that_would_break_symmetry_is_frozen_before_it_gets_that_far"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_a_symmetry_violation_inside_the_transaction_aborts_it_and_leaves_the_database_unchanged"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_pull.py",
+          "name": "test_a_symmetry_violation_aborts_the_transaction_and_leaves_the_database_unchanged"
+        }
+      ]
+    },
+    "D20": {
+      "failure": "Crash or power loss during the commit",
+      "tests": [
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_a_killed_process_in_the_middle_of_the_apply"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_in_the_middle_of_the_apply"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_a_crash_has_the_same_effect_as_a_fault_but_leaves_no_status"
+        }
+      ]
+    },
+    "D21": {
+      "failure": "Crash after the commit, before the sidecar update",
+      "tests": [
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_after_the_commit_and_before_the_sidecar_update"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_a_killed_process_after_the_commit"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_review.py",
+          "name": "test_a_crash_between_the_commit_and_the_sidecar_keeps_the_rows"
+        }
+      ]
+    },
+    "D22": {
+      "failure": "Cloud moved between the snapshot and the push (409 version_conflict)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_409_is_partial_and_the_next_run_converges"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_a_409_is_partial_and_the_next_run_converges"
+        }
+      ]
+    },
+    "D23": {
+      "failure": "Response lost after the server committed: replay with the same Idempotency-Key",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_lost_response_is_replayed_with_the_same_key_and_advances_the_base"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_a_lost_response_is_replayed_with_the_same_key_and_answered_idempotent_replayed"
+        }
+      ]
+    },
+    "D24": {
+      "failure": "Server privacy refusal (422 privacy_violation)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_privacy_refusal_drops_the_ops_it_names_and_pushes_the_rest"
+        }
+      ]
+    },
+    "D25": {
+      "failure": "Dangling references at session completion (422 integrity_violation)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_session_that_cannot_complete_keeps_its_dependants_held_and_is_retried"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "D25: completing checks the whole session: a dangling reference, then a half-linked relationship, are 422 integrity_violation; the fix completes it"
+        }
+      ]
+    },
+    "D26": {
+      "failure": "gramps_id collision or reserved block (409 gramps_id_taken, reserved_id_block)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_stale_handshake_is_caught_by_the_servers_409_and_the_object_is_held_after_the_fact"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_desktop_create_in_the_8000_block_is_held_with_reserved_id_block"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_one_taken_id_holds_that_record_and_the_other_five_reach_the_cloud"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_one_gramps_id_collision_holds_that_record_and_the_rest_of_its_batch_goes"
+        }
+      ]
+    },
+    "D27": {
+      "failure": "Kill switch (503 sync_paused)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_writes_paused_is_exit_69_before_anything_is_read"
+        }
+      ]
+    },
+    "D28": {
+      "failure": "Idempotency key reused with another payload (422 idempotency_key_reused)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_replay_answered_409_422_or_410_is_rejected_and_the_next_plan_recomputes"
+        }
+      ]
+    },
+    "D29": {
+      "failure": "Media missing, Dropbox placeholder or unreadable",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_media_up.py",
+          "name": "test_a_dropbox_online_only_file_is_held_and_its_metadata_syncs"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_media_up.py",
+          "name": "test_a_file_that_is_missing_or_unsupported_is_held"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_media.py",
+          "name": "test_the_fixture_files_that_cannot_go_are_held_with_guidance"
+        }
+      ]
+    },
+    "D30": {
+      "failure": "Stored Gramps MD5 is stale",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_media_up.py",
+          "name": "test_a_stale_gramps_md5_gives_a_warning_and_the_disk_md5_is_used"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_media.py",
+          "name": "test_a_stale_gramps_md5_is_a_warning_and_the_disk_md5_is_sent"
+        }
+      ]
+    },
+    "D31": {
+      "failure": "Blob upload fails (expired presign, checksum mismatch)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_media_up.py",
+          "name": "test_an_upload_refused_once_is_asked_for_again_with_a_new_presign"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_media_up.py",
+          "name": "test_an_upload_refused_twice_defers_that_media_and_what_refers_to_it_to_the_next_run"
+        }
+      ]
+    },
+    "D32": {
+      "failure": "Photo has GPS EXIF",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_media_up.py",
+          "name": "test_the_fixture_gps_photo_the_placeholder_and_the_pdf_are_held_with_guidance"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_media.py",
+          "name": "test_a_cloud_photo_with_a_gps_position_is_held_on_download_and_never_written"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_media.py",
+          "name": "test_a_website_photo_with_a_gps_position_is_held_on_download"
+        }
+      ]
+    },
+    "D33": {
+      "failure": "Downloaded blob checksum mismatch",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_media.py",
+          "name": "test_a_file_that_does_not_match_its_checksums_is_never_written_and_defers_the_object_and_what_refers_to_it"
+        }
+      ]
+    },
+    "D34": {
+      "failure": "Media root not writable",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d34_a_media_root_that_cannot_be_written_defers_that_media_and_the_rest_of_the_pull_goes_on"
+        }
+      ]
+    },
+    "D35": {
+      "failure": "Local renumber of a synced person",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_person_renumber_is_blocked"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_a_person_renumber_is_blocked"
+        }
+      ]
+    },
+    "D36": {
+      "failure": "Local person merge",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_with_merges_enabled_a_gui_merge_with_step_up_produces_an_alias"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_the_cli_parks_a_merge"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_merge_is_held_while_merges_enabled_is_false"
+        }
+      ]
+    },
+    "D37": {
+      "failure": "Mass local deletion (more than 10, or more than 5 percent)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_the_cli_never_pushes_a_mass_delete_even_with_step_up_and_allow_deletes"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_the_gui_pushes_a_mass_delete_only_with_the_users_confirmation"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_the_cli_never_pushes_a_mass_delete"
+        }
+      ]
+    },
+    "D38": {
+      "failure": "Mass incoming deletion",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_pull_safety.py",
+          "name": "test_a_mass_delete_is_never_applied_by_the_cli"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_review.py",
+          "name": "test_a_mass_of_incoming_deletes_lists_every_object_in_one_modal"
+        }
+      ]
+    },
+    "D39": {
+      "failure": "Unknown class or field from the cloud",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d39_an_object_of_a_class_this_addon_does_not_know_is_parked_and_the_rest_of_the_pull_goes_on"
+        },
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d39_an_object_with_a_field_this_addon_does_not_know_is_parked_and_the_rest_of_the_pull_goes_on"
+        },
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d39_nothing_is_sent_for_an_object_whose_website_copy_has_a_field_the_addon_does_not_know"
+        }
+      ]
+    },
+    "D40": {
+      "failure": "Object over 200 KB, or a batch too large (413)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_sync_catalog_rows.py",
+          "name": "test_d40_an_object_over_the_size_limit_is_held_and_the_rest_of_the_push_goes"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_batches_respect_the_server_limits"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_large_batch_is_split_by_bytes"
+        }
+      ]
+    },
+    "D41": {
+      "failure": "status.json missing or stale after a CLI run",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_wrapper.py",
+          "name": "test_missing_or_stale_status_json_is_70"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_skeleton.py",
+          "name": "test_missing_or_stale_status_json_is_exit_70"
+        }
+      ]
+    },
+    "D42": {
+      "failure": "Keychain locked or unavailable",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_a_locked_keychain_is_d42_exit_77"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_transport.py",
+          "name": "test_a_locked_keychain_stops_the_refresh_with_exit_77"
+        }
+      ]
+    },
+    "D43": {
+      "failure": "Undo after a sync: the next sync pushes the reverted values",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_review.py",
+          "name": "test_the_banner_has_the_counts_the_backup_path_and_the_undo_warning"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_a_local_edit_back_to_the_pre_pull_value_is_labelled_a_revert_and_the_cli_parks_it"
+        }
+      ]
+    },
+    "D44": {
+      "failure": "Gramps reused a retired website person ID",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_create_that_reuses_a_retired_person_id_is_held_before_sending"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_a_create_that_reuses_a_retired_person_id_is_held_before_sending"
+        }
+      ]
+    },
+    "D45": {
+      "failure": "A Gramps edit window is open at Apply (GUI)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_review.py",
+          "name": "test_the_apply_is_refused_while_an_edit_window_is_open"
+        },
+        {
+          "file": "gramps/tests/gramps/test_addon_gui.py",
+          "name": "test_a_real_edit_window_refuses_the_apply_before_anything_changes"
+        }
+      ]
+    },
+    "D46": {
+      "failure": "Restore from a backup needed (hfy-sync restore)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_restore.py",
+          "name": "test_restore_puts_back_the_database_and_the_sidecar_saved_with_the_backup"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_restore.py",
+          "name": "test_it_verifies_the_sha256_of_both_copies_before_it_moves_anything"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_pull.py",
+          "name": "test_restore_returns_the_tree_and_the_sidecar_and_the_check_pushes_no_reverts_and_no_deletes"
+        }
+      ]
+    },
+    "D47": {
+      "failure": "A push would revert a website change",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_the_command_line_parks_a_push_that_puts_the_old_value_back"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_push.py",
+          "name": "test_a_pulled_website_edit_that_is_undone_is_not_pushed_back_by_the_command_line"
+        }
+      ]
+    },
+    "D48": {
+      "failure": "409 session_open, or an own session abandoned after sidecar loss",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_another_open_session_is_d48"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_an_abandoned_session_is_resumed_by_the_next_run_and_completed"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "D48: a second open while one is open is 409 session_open naming it; abort closes it and a new open then succeeds"
+        }
+      ]
+    },
+    "D49": {
+      "failure": "Outbox entry pending, or a replay answered 409, 422 or 410",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_pending_entry_from_a_crash_before_the_send_is_discarded_and_replanned"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_replay_answered_409_422_or_410_is_rejected_and_the_next_plan_recomputes"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_only_a_2xx_or_a_replayed_answer_advances_the_base"
+        }
+      ]
+    },
+    "D50": {
+      "failure": "403 tree_mismatch after a cloud re-seed or recovery",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_rebase.py",
+          "name": "test_pull_and_sync_stop_at_the_handshake_with_d50_and_name_the_rebase"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_rebase.py",
+          "name": "test_converged_objects_become_the_new_base_the_rest_become_conflicts_and_nothing_is_changed_or_sent"
+        },
+        {
+          "file": "gramps/tests/e2e/scenario_rebase.py",
+          "name": "test_rebase_after_a_recovery_rebases_the_converged_objects_and_turns_the_rest_into_conflicts"
+        }
+      ]
+    },
+    "D51": {
+      "failure": "Person merge held, a member principal merged away, or a Merged Gramps ID that is not new",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_merge_is_held_while_merges_enabled_is_false"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_merged_away_member_principal_is_blocked_with_guidance"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_the_merged_id_attribute_must_be_new_since_base"
+        }
+      ]
+    },
+    "D52": {
+      "failure": "Presigned snapshot or media URL expired mid-download",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_media.py",
+          "name": "test_a_download_url_refused_once_is_asked_for_again_then_deferred"
+        },
+        {
+          "file": "gramps/tests/unit/test_addon_pull_review.py",
+          "name": "test_the_cloud_quotes_the_handle_in_the_download_url"
+        }
+      ]
+    },
+    "S01": {
+      "failure": "Bad or expired token, wrong audience or client",
+      "tests": [
+        {
+          "file": "api/test/sync-routes.test.js",
+          "name": "no token, a malformed header or the session cookie alone is 401 with a WWW-Authenticate challenge"
+        },
+        {
+          "file": "api/test/sync-routes.test.js",
+          "name": "checks the issuer, the audience, the client_id, the token use and the expiry"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S01: no token, a garbage token or a web token is 401 with a challenge, on every push route"
+        },
+        {
+          "file": "api/test/sync-pull.test.js",
+          "name": "S01: no token, a garbage token or a web token is 401 with a challenge, on every pull route"
+        }
+      ]
+    },
+    "S02": {
+      "failure": "Not in gramps-owner, or groups.json unreadable: fail closed",
+      "tests": [
+        {
+          "file": "api/test/sync-routes.test.js",
+          "name": "an unreadable, empty or malformed groups.json means nobody is the owner"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S02: a subject outside gramps-owner is 403 not_owner, and an unreadable groups.json fails closed"
+        },
+        {
+          "file": "api/test/sync-pull.test.js",
+          "name": "S02: a subject outside gramps-owner is 403 not_owner (hfy-admin is not gramps-owner), and an unreadable groups.json fails closed"
+        }
+      ]
+    },
+    "S03": {
+      "failure": "Writes paused or the API disabled (503, 404)",
+      "tests": [
+        {
+          "file": "api/test/sync-routes.test.js",
+          "name": "anything but 1 answers 404 not_enabled to every caller, before the token is read"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S03: SYNC_API_ENABLED off is 404 not_enabled; writes_enabled false is 503 sync_paused on every push route, and nothing is written"
+        },
+        {
+          "file": "api/test/sync-apply.test.js",
+          "name": "reads SYNC#HEAD on every call: flipping writes_enabled between two calls takes effect on the second"
+        }
+      ]
+    },
+    "S04": {
+      "failure": "Handshake mismatch (426, 409)",
+      "tests": [
+        {
+          "file": "api/test/sync-routes.test.js",
+          "name": "an old client is 426 upgrade_required with the terms; so is a missing or malformed client header"
+        },
+        {
+          "file": "api/test/sync-routes.test.js",
+          "name": "a different redaction version is 409 redaction_version_mismatch; a missing one is 426"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S04: an old client or an unsupported schema is 426 and a redaction mismatch is 409, before anything is written"
+        }
+      ]
+    },
+    "S05": {
+      "failure": "Invalid op: schema, checker or integrity (400, 422)",
+      "tests": [
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S05: an invalid op is 400 or 422 with pointers and nothing is written; the batch is atomic"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a reference that resolves nowhere is 422 integrity_violation with its pointer"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "refuses an unknown key and a wrong type with the schema pointer, 400 validation"
+        }
+      ]
+    },
+    "S06": {
+      "failure": "Version, gramps_id or idempotency condition fails (409)",
+      "tests": [
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S06: a stale base_version is 409 version_conflict with the current version and object per op; a create over a live object is 409 exists"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S06: the same Idempotency-Key with another body is 422 idempotency_key_reused; no key is 428 idempotency_key_required"
+        },
+        {
+          "file": "api/test/sync-apply.test.js",
+          "name": "a claim of an id in use is 409 gramps_id_taken; two claims on one id in a batch are 409 gid_conflict"
+        }
+      ]
+    },
+    "S07": {
+      "failure": "Seq counter race",
+      "tests": [
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S07 and S20: a lost seq race is retried inside the request; the retry uses a new ClientRequestToken and the same Idempotency-Key"
+        },
+        {
+          "file": "api/test/sync-apply.test.js",
+          "name": "concurrent batches stay dense and gap-free (4 racers = 1 try + 3 retries)"
+        }
+      ]
+    },
+    "S08": {
+      "failure": "DynamoDB throttling, 5xx or timeout (503 retryable)",
+      "tests": [
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S08: a throttled store read is 503 retryable, nothing is written, and the retry with the same key commits once"
+        },
+        {
+          "file": "api/test/sync-pull.test.js",
+          "name": "S08: a store or S3 failure is 503 retryable, and the next call recovers"
+        },
+        {
+          "file": "api/test/sync-apply.test.js",
+          "name": "answers 503 retryable when the store throttles, and when a seq race outlasts the retry budget"
+        }
+      ]
+    },
+    "S09": {
+      "failure": "Renderer exception: stream retry, bisect, DLQ; rendered_seq lags and the site stays on the last good render",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda_aws.py",
+          "name": "test_a_failed_pass_on_the_stream_is_a_wake_up_that_failed_not_a_batch_failure"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_failed_write_leaves_the_cursor_and_a_retry_finishes_without_repeating"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda_aws.py",
+          "name": "test_the_stream_filter_is_the_change_log_and_failures_are_reported_per_item"
+        }
+      ]
+    },
+    "S10": {
+      "failure": "Rendered file fails the privacy re-check",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda_privacy.py",
+          "name": "test_a_planted_birth_date_blocks_the_files_that_carry_it"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda_privacy.py",
+          "name": "test_a_blocked_file_is_not_deleted_when_it_already_exists"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda_privacy.py",
+          "name": "test_the_fix_unblocks_the_file"
+        }
+      ]
+    },
+    "S11": {
+      "failure": "Mass delete in one render",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_more_than_the_threshold_refuses_every_delete_and_holds_the_cursor"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_the_operator_override_deletes_and_advances"
+        }
+      ]
+    },
+    "S12": {
+      "failure": "Push session abandoned",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_an_abandoned_push_session_is_rendered_through_the_schedule"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_an_open_session_with_an_unreadable_opened_at_holds_the_render_and_alarms_until_it_is_aborted"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "D48: a second open while one is open is 409 session_open naming it; abort closes it and a new open then succeeds"
+        }
+      ]
+    },
+    "S13": {
+      "failure": "Two live heads with one gramps_id (should be impossible)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda_catalog_rows.py",
+          "name": "test_s13_two_live_heads_with_one_gramps_id_render_the_first_by_handle_order_and_raise_the_alarm"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda_catalog_rows.py",
+          "name": "test_s13_a_twin_that_sorts_first_takes_the_file_and_the_alarm_is_raised_again_on_each_pass"
+        }
+      ]
+    },
+    "S14": {
+      "failure": "S3 write denied (policy misconfiguration)",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_failed_write_leaves_the_cursor_and_a_retry_finishes_without_repeating"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_the_writer_refuses_a_protected_key"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_checksum_that_does_not_match_fails_the_pass"
+        }
+      ]
+    },
+    "S15": {
+      "failure": "Head hash mismatch on read",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda_catalog_rows.py",
+          "name": "test_s15_a_log_entry_whose_object_does_not_hash_to_its_hash_is_skipped_and_raises_the_alarm"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda_catalog_rows.py",
+          "name": "test_s15_a_good_entry_after_it_restores_the_object_and_ends_the_alarm"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_head_that_differs_from_the_view_is_a_head_mismatch"
+        }
+      ]
+    },
+    "S16": {
+      "failure": "Legacy aws s3 sync --delete after the cutover: bucket policy AccessDenied",
+      "tests": [
+        {
+          "file": "scripts/infra/test/guard-tests.inc.sh",
+          "name": "guard: --simulate (the allow/deny matrix through iam simulate-custom-policy)"
+        },
+        {
+          "file": "scripts/infra/test/guard-tests.inc.sh",
+          "name": "guard: the deny patterns are pinned to ci.manifest.yaml deploy.exclude"
+        }
+      ]
+    },
+    "S17": {
+      "failure": "Table restored from PITR: the desktop sees head_seq below last_pull_seq",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_addon_push.py",
+          "name": "test_a_snapshot_older_than_the_last_pull_is_refused"
+        },
+        {
+          "file": "api/test/sync-recovery.test.js",
+          "name": "restores only REC#, SYNC#, GID# and IDALIAS# items from a side table; every other partition of the live table stays byte for byte; TABLE_NAME is never swapped"
+        },
+        {
+          "file": "api/test/sync-recovery.test.js",
+          "name": "the snapshot cache of the abandoned timeline is never served, on the warm container or on a cold one"
+        }
+      ]
+    },
+    "S18": {
+      "failure": "Proposal approved on a stale base (409 to the proposals domain)",
+      "tests": [
+        {
+          "file": "api/test/proposal-decision.test.js",
+          "name": "409 rebase_conflict, state stale, a proposal.stale audit and the proposer told (proposal_stale)"
+        },
+        {
+          "file": "api/test/proposal-decision.test.js",
+          "name": "a relationship proposal whose read_versions moved is stale, though its ops apply cleanly"
+        }
+      ]
+    },
+    "S19": {
+      "failure": "Sensitive data found in history: privacy-expunge",
+      "tests": [
+        {
+          "file": "api/test/sync-pull.test.js",
+          "name": "S19: an entry whose value was expunged (obj_json removed, history kept) is a tombstone in the snapshot, never its old value"
+        },
+        {
+          "file": "api/test/sync-changes.test.js",
+          "name": "S19: an expunged entry returns obj null and expunged true, keeps its seq, version and hash, and carries no value (HFY-TSK-204 AC5)"
+        }
+      ]
+    },
+    "S20": {
+      "failure": "IdempotentParameterMismatch on an internal retry",
+      "tests": [
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S07 and S20: a lost seq race is retried inside the request; the retry uses a new ClientRequestToken and the same Idempotency-Key"
+        },
+        {
+          "file": "api/test/sync-apply.test.js",
+          "name": "a lost race re-reads SYNC#HEAD, re-runs validation on the refreshed view and takes a new token (no IdempotentParameterMismatch)"
+        }
+      ]
+    },
+    "S21": {
+      "failure": "Render stalled: a skip with no later trigger, a DLQ'd failure, or an alarm with no confirmed subscriber",
+      "tests": [
+        {
+          "file": "scripts/infra/test/test_app_stack.py",
+          "name": "test_schedule_invokes_the_renderer_every_15_minutes"
+        },
+        {
+          "file": "scripts/infra/test/test_app_stack.py",
+          "name": "test_topic_subscription_is_io_email_from_a_parameter"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_time_budget_stops_the_writes_and_the_next_pass_resumes"
+        }
+      ]
+    },
+    "S22": {
+      "failure": "Head mismatch in the daily reconcile, or withdraw-driven deletes above the mass-delete threshold",
+      "tests": [
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_head_that_differs_from_the_view_is_a_head_mismatch"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_a_single_withdraw_still_alarms_below_the_threshold"
+        },
+        {
+          "file": "gramps/tests/unit/test_render_lambda.py",
+          "name": "test_withdrawn_people_are_exempt_and_rendered_with_no_override"
+        },
+        {
+          "file": "api/test/sync-push.test.js",
+          "name": "S22: a delete-heavy desktop batch needs the step-up (stale auth is 403 step_up_required, nothing written); with it the deletes commit and count against the budget"
+        }
+      ]
+    }
+  }
+}

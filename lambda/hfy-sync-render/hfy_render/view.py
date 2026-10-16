@@ -72,6 +72,9 @@ class StoreView:
     principals: Set[str] = field(default_factory=set)
     origins: Set[str] = field(default_factory=set)
     range_entries: int = 0
+    #: Objects whose newest log entry does not hash to its own ``hash`` (catalog S15). Such an entry is skipped: the object stays as the
+    #: entry before it left it (or absent), the pass goes on, and the engine alarms. A later good entry for the object clears it.
+    corrupt: Dict[Key, int] = field(default_factory=dict)
 
     def fold(self, item: Dict[str, Any]) -> None:
         """Folds one SYNC#LOG item. Entries must arrive in ascending seq order."""
@@ -92,6 +95,10 @@ class StoreView:
         if old is not None and seq <= old.seq:
             return  # a duplicate or out-of-order replay never moves a head back
         live = op in ("create", "update") and item.get("obj_json") is not None
+        if live and isinstance(item.get("hash"), str) and item["hash"] != sha256_hex(str(item["obj_json"]).encode("utf-8")):
+            self.corrupt[key] = seq  # S15: the entry's object is not the one it hashes to; the head stays as it was
+            return
+        self.corrupt.pop(key, None)
         gid = item.get("gramps_id")
         if in_range:
             self.range_entries += 1
@@ -114,6 +121,15 @@ class StoreView:
             obj_json=item.get("obj_json") if live else None, op=op, at=item.get("at"),
             origin=item.get("origin"), principal=item.get("principal"), reason=item.get("reason"), hash=item.get("hash"),
         )
+
+    def duplicate_ids(self) -> int:
+        """How many (class, Gramps ID) pairs are held by more than one live head (catalog S13: the GID guard makes this impossible)."""
+
+        seen: Dict[Tuple[str, str], int] = {}
+        for head in self.live_heads():
+            if head.gramps_id:
+                seen[(head.cls, head.gramps_id)] = seen.get((head.cls, head.gramps_id), 0) + 1
+        return sum(1 for n in seen.values() if n > 1)
 
     def live_heads(self) -> List[Head]:
         return [h for h in self.heads.values() if not h.deleted and h.obj_json is not None]
