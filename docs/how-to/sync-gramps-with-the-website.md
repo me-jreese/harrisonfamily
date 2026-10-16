@@ -1,6 +1,6 @@
 # How to sync Gramps with the website
 
-Use this page to move changes between the Gramps tree on the desktop and the family site, to cut the site over from the legacy publish to the cloud store, and to roll that cutover back. The desktop addon pushes the tree to the cloud store. The render Lambda `hfy-sync-render` renders the store into the site's data files. Nothing else writes those files once the cutover is done (HFY-PLN-002; BRD2 D2-05).
+Use this page to run the sync day to day (install, first time, daily use, restore, upgrade, recovery and removal), to move changes between the Gramps tree on the desktop and the family site, to cut the site over from the legacy publish to the cloud store, and to roll that cutover back. The desktop addon pushes the tree to the cloud store. The render Lambda `hfy-sync-render` renders the store into the site's data files. Nothing else writes those files once the cutover is done (HFY-PLN-002; BRD2 D2-05).
 
 The legacy publish, the ETL scripts and `sync_to_s3.py`, is kept at the end of this page as [the legacy procedure](#the-legacy-etl-publish-retired-at-the-cutover). It applies only before the cutover. After the cutover the bucket policy refuses it.
 
@@ -17,7 +17,109 @@ Placeholders: `<site-bucket>` is the site bucket, `<app-stack>` the app stack, `
 
 ## Sync day to day
 
-With Gramps closed, `gramps/bin/hfy-sync check --tree "<tree name>"` shows what would move in each direction and writes nothing. `gramps/bin/hfy-sync sync --tree "<tree name>" --yes` applies it. The same flow is in Gramps under **Tools > Family Tree Processing > Website sync...**, with the preview, the conflict choices, the confirmations and a result banner ([Use the Website sync window](install-the-gramps-sync-addon.md#10-use-the-website-sync-window)); it refuses while a Gramps edit window is open. The exit codes are in [Install the Gramps sync addon](install-the-gramps-sync-addon.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
+This is the operator runbook (sync design section 19, as amended by BRD2 section 11.1). It is for io on the Mac that holds the Gramps tree. The addon pages hold the detail: [Install the Gramps sync addon](install-the-gramps-sync-addon.md) for each command and its exit codes, [Operate the sync store](operate-the-sync-store.md) for the operator script, and [Sync errors and exit codes](../reference/sync-errors.md) for every code. [Where the family data lives](../explanation/family-data-source-of-truth.md) explains why the tree and the cloud store both hold it.
+
+**Rules that apply to every step below.**
+
+- **Every production use of `api/scripts/sync-admin.mjs` (and of `api/scripts/expunge.mjs`) needs io's go-ahead in the session** (AGENTS.md; review DL-28). An agent runs a dry run freely and an `--apply` only after io's go-ahead is on the record, written into the worklog with the dry-run output. The seed approval covers setting `writes_enabled` for the seed and nothing else.
+- **A step that writes app-table items says so.** The desktop's own push writes the store through the sync API, with io signed in, and is not a script. Every `sync-admin.mjs` command other than `render --dry-run` and the dry runs writes app-table items (or, for `render`, site files), and each step below says so.
+- **Never paste previews, backups or logs other than `status.json` into an agent session.** A preview holds pointers and projected values, a backup is the whole tree, and a log can name records. `status.json` holds counts and codes only. If an agent needs to help, read it the `status.json` and the exit code.
+
+### Install or update the addon
+
+```sh
+cd ~/harrisonfamily && gramps/scripts/install-addon.sh
+```
+
+Restart Gramps. **Tools > Family Tree Processing > Website sync...** appears. Run it again after every update of the addon ([Install the Gramps sync addon](install-the-gramps-sync-addon.md#1-install-or-update-the-addon)).
+
+### The first time (the migration)
+
+This is runbook 19.2. It writes the cloud store: the Apply at the end pushes the whole tree as the seed.
+
+1. **Wait for the orchestrator's message that sync is enabled and writes are on** (the G-seed message). Until it arrives, do not Apply. It confirms that `writes_enabled` is on, which io's G-seed approval covers and which is a `sync-admin.mjs` write the orchestrator makes after io's go-ahead.
+2. **Close every Gramps edit window, and do not edit the tree until Apply has finished.** The window refuses to apply while an editor is open (D45), and an edit made during the run is a stale-hash re-plan (D18).
+3. Mark the Dropbox media folders **Available offline**. About half the record media are online-only, and a placeholder file cannot be uploaded (D29).
+4. Open the tree. **Website sync... > Sign in...** (a passkey), then **Bind this tree**.
+5. **Check** (a dry run). Read the **To the website** list: everything is a create. Held items name the rule and the characters to edit in Gramps.
+6. **Apply.** It opens a push session, uploads the blobs and completes the session. This writes app-table items.
+7. The orchestrator runs the shadow render and sends the parity report. Approve the cutover only after you have read it ([Cut over to the cloud store](#cut-over-to-the-cloud-store)).
+
+### Daily use
+
+This is runbook 19.3. Open Gramps, then **Website sync... > Check for changes**, review, then **Apply**. Apply writes app-table items for what you push.
+
+Headless, with Gramps closed:
+
+```sh
+gramps/bin/hfy-sync check --tree "<tree name>"            # the line it prints names the run id
+gramps/bin/hfy-sync sync --tree "<tree name>" --yes --plan <run_id>
+```
+
+`--plan <run_id>` applies only the plan you reviewed. When the new plan's hash differs from that preview, the run applies nothing and exits `10`; run `check` again and review the new preview. The exit codes and the details in `status.json` are in [Sync errors and exit codes](../reference/sync-errors.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
+
+### Conflicts and held items
+
+Runbook 19.4. Open the Website sync window and pick per field. Held items name the rule and the characters to edit in Gramps. The command line never decides a conflict: it parks it and exits `20`, and the path stays pinned until you decide it in the window.
+
+### Restore from a backup
+
+Runbook 19.5 is the addon's `restore` action, not a hand copy. Quit Gramps, then:
+
+```sh
+gramps/bin/hfy-sync restore <backup name> --tree "<tree name>"
+```
+
+It checks the sha256 of the backup and its sidecar, moves the journal, WAL, SHM and lock aside, runs `PRAGMA integrity_check`, and restores the matching sidecar snapshot, so the next sync does not push the old values back as your edits. The Gramps window's **Restore backup...** refuses while the tree is open and shows the same command. After a recovery the window's **Rebase after a recovery...** runs the same re-base. Details: [Restore from a backup](install-the-gramps-sync-addon.md#8-restore-from-a-backup). The cloud is unaffected and restore writes nothing to it; the check after the restore shows what the website still has to give you again, and a push that would revert a website change is labelled and needs confirmation (D47).
+
+### Upgrading Gramps
+
+Runbook 19.6. Do not upgrade Gramps until the addon's release notes list the new version. Then upgrade and run `gramps/bin/hfy-sync status --tree "<tree name>"`. A newer Gramps or schema stops the sync with exit `78` (D04); it never corrupts anything.
+
+### Pause everything
+
+Runbook 19.7. **This writes app-table items and needs io's go-ahead.** `pause --all` sets `writes_enabled` to `false`, so every writer of the store is refused with `503 sync_paused`; `resume --all` reverses it. Use the product-lead credentials, a dry run first ([Pause and resume the store](operate-the-sync-store.md#pause-and-resume-the-store)). `render --full` re-renders, and `render --allow-mass-delete` and `--prune-foreign` follow a reviewed dry run; each of them writes site files and needs io's go-ahead.
+
+### When the cloud store is damaged
+
+Runbook 19.8 is store-scoped (`sync-store-recovery`), and it **writes app-table items at each `--apply`, each with io's go-ahead**. It never swaps `TABLE_NAME`. In short: `pause --all`; `rebuild-heads --to-seq N --dry-run`, then `--apply`, from the append-only log; if the log is damaged, restore the table by point in time to a side table and `copy-back` only `REC#`, `SYNC#`, `GID#` and `IDALIAS#` items; then `bump-tree-id`, `resume --all`. On the Mac the desktop refuses the recovered store (D11, D50) until `hfy-sync rebase` re-bases it. A re-seed after a recovery runs as a seed session with `seed: true`: its batches are origin `seed` and silent. The full procedure, the order and the traps are in [Operate the sync store: Recover the store](operate-the-sync-store.md#recover-the-store).
+
+### A lost laptop
+
+Runbook 19.9. Revoke the sign-in at `/auth/revoke` from another device, or have the orchestrator delete the refresh-token family (that deletes app-table items, with io's go-ahead). Then bind the new Mac again with a step-up sign-in ([Install the Gramps sync addon](install-the-gramps-sync-addon.md#when-the-tree-is-refused-as-the-wrong-tree-d03)). A desktop refresh token also expires after 30 days without use.
+
+### Never
+
+Runbook 19.10.
+
+- Never run Reorder Gramps IDs in **Change** mode. A synced person's ID is permanent, and the addon blocks a renumber (D35).
+- Never open the tree with `--force-unlock`. The wrapper refuses it (D02).
+- Never run the retired `sync_to_s3.py`. It refuses, and the bucket policy denies its writes anyway (S16).
+- Never paste previews, backups or logs other than `status.json` into an agent session.
+
+### Remove something from the cloud
+
+Runbook 19.11. Use this when sensitive data reached the cloud: a date of birth in a note, a contact detail, a photo with a location. The tool is `api/scripts/expunge.mjs` ([full procedure](operate-the-sync-store.md#remove-something-from-the-cloud)). **It writes app-table items and deletes S3 versions, so it needs io's go-ahead, a dry run first, and io's step-up to apply** (`EXPUNGE_ACCESS_TOKEN`, a fresh sign-in within 300 seconds). Once the data-write guard is applied, a `--record` run also needs io's break-glass session for the site bucket. Its output holds counts only.
+
+| What you remove | Mode |
+| --- | --- |
+| A whole withdrawn or deleted record | `--record <Class>:<handle>` |
+| One value of a record | `--record <Class>:<handle> --path <pointer>` |
+| A proposal and its discussion | `--proposal <ulid>` |
+| One chat message | `--chat <conv>:<seq>` |
+| An uploaded photo | `--upload <key>` |
+| Withdrawn records whose grace has passed | `--due` |
+
+Two time limits apply, and the privacy text says both:
+
+- **The 72-hour withdraw grace.** Marking a record Gramps-private (or otherwise withdrawing it) hides it at once and the next render removes its files, but its history is expunged only after 72 hours, and only when io runs `expunge.mjs --due`. Until then `sync-admin.mjs resurrect --include-withdrawn` brings a mistaken withdraw back. Nothing runs the expunge for you, so run `--due` at least weekly.
+- **The 35-day point-in-time tail.** DynamoDB point-in-time recovery keeps older copies of the table for 35 days, and nothing here shortens that. After a restore to a point before an expunge, run the expunge again ([Operate the sync store](operate-the-sync-store.md#recover-the-store), step 4).
+
+After a record or path expunge: render again (`render --apply --full`), let the graph follow, then sweep the noncurrent site versions. The steps are in the linked procedure.
+
+### Tree pictures (the interim)
+
+The family-tree SVGs, `media/tree_<gramps-id>.svg`, are legacy: they are not renderer-owned, and they freeze at the cutover. A person created in the cloud (on the website, through a suggestion) has no SVG. With the `familyViz` flag on, the person page shows the **see in the family tree** link to the `/tree/` page instead, which reads `person/graph.json` ([Front end](../reference/front-end.md)); with it off, the link is absent and `/tree/` says the tree is not turned on yet ([Turn a feature flag on or off](toggle-a-feature-flag.md)). Check the flag in `flags.json` rather than assuming it. The `viz-v2-retire-graphviz` task retires the SVGs; until then the existing SVGs stay as they are, and nobody regenerates them: the legacy ETL that wrote them is retired at the cutover. Decided in BRD2 D2-25 and sync design section 11.5 ([why](../explanation/family-data-source-of-truth.md#tree-pictures)).
 
 ## Cut over to the cloud store
 
