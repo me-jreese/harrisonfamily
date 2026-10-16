@@ -502,6 +502,7 @@ gramps/tests/e2e/run.sh                          # all of them
 gramps/tests/e2e/run.sh scenario_smoke.py        # bind, status, the empty check, and the request-log greps
 gramps/tests/e2e/run.sh scenario_push.py         # the push: seed, edits, replay, 409, deletes, merges, ids, the privacy greps, and the pull and push together
 gramps/tests/e2e/run.sh scenario_media.py        # media: the signed upload through the staging key, held files, the forced 409 after an upload, the GPS check on download (about 30 seconds)
+gramps/tests/e2e/run.sh scenario_tag_roundtrip.py # photo tags: a web tag reaches Gramps with the same four integers, a Gramps rectangle changes the site overlay, two tags of one person both survive (about 25 seconds)
 gramps/tests/e2e/run.sh scenario_pull.py         # the pull: check, apply, faults, conflicts, privacy, expunge, restore, reviewed plan (about 4 minutes)
 gramps/tests/e2e/run.sh scenario_decisions.py    # a web conflict decision: applied while the website's value matches (keep website and keep desktop), reopened when the record moved or was scrubbed, and a check that writes nothing (HFY-TSK-338, about 1 minute)
 gramps/tests/e2e/run.sh scenario_rebase.py       # a recovered website store (a new cloud tree, D50): pull stops, rebase re-bases and parks conflicts, nothing is sent (about 30 seconds)

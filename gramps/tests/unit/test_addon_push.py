@@ -1007,6 +1007,18 @@ class RevertGuard(PushCase):
         self.assertEqual(doc["counts"]["pushed"]["update"], 1)
         self.assertEqual((self.name(h), self.cloud.heads[h]["obj"]["primary_name"]["surname_list"][0]["surname"]), ("Webname", "Reedited"))
 
+    def test_an_edit_made_before_the_pull_and_not_yet_pushed_is_not_a_revert(self):
+        """A tag moved in Gramps, then a pull that takes another change to the same object: the push of the first edit puts nothing back."""
+        self.seed()
+        h = self.a_person()
+        self.tree.edit(h, lambda o: o["primary_name"]["surname_list"][0].__setitem__("surname", "Beforepull"))
+        self.cloud.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Webname"))
+        self.assertEqual(self.exit_of(self.pull()), ("ok", 0, "none"))
+        self.assertEqual(self.tree.data[h]["primary_name"]["surname_list"][0]["surname"], "Beforepull", "the pull kept the desktop's edit")
+        doc = self.push()
+        self.assertEqual((doc["counts"]["blocked"], doc["counts"]["pushed"]["update"]), (0, 1), doc)
+        self.assertEqual((self.name(h), self.cloud.heads[h]["obj"]["primary_name"]["surname_list"][0]["surname"]), ("Webname", "Beforepull"))
+
     def test_a_pull_older_than_the_last_five_runs_no_longer_counts(self):
         h, old = self.pulled_edit()
         con = self.sidecar()

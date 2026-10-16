@@ -178,6 +178,13 @@ def _get(obj, pointer):
     return R.pointer_get(obj, pointer, _MISSING) if pointer else obj
 
 
+KEPT_KEY = "__kept"  # in a pulled row's prepull object: the pointers the desktop had edited and not yet pushed when the pull ran
+
+
+def _overlaps(a, b):
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/") or a == "" or b == ""
+
+
 def revert_paths(op, cloud_obj, pulled):
     """Pointers at which push `op` puts back a value that a recent pull replaced; [] when it does not revert anything.
 
@@ -194,8 +201,12 @@ def revert_paths(op, cloud_obj, pulled):
         if op["op"] == "create" and kind == "delete":
             return [""]
         if op["op"] == "update" and kind == "update" and isinstance(row.get("prepull"), dict) and isinstance(cloud_obj, dict):
+            prepull = row["prepull"]
+            kept = prepull.get(KEPT_KEY) or []
             for p in M.diff_pointers(cloud_obj, op["obj"]):
-                want = _get(row["prepull"], p)
+                if any(_overlaps(p, k) for k in kept):
+                    continue  # the desktop's own unsent edit before the pull, which the pull did not replace
+                want = _get(prepull, p)
                 if want is not _MISSING and _get(op["obj"], p) == want and _get(cloud_obj, p) != want:
                     out.append(p)
     return sorted(set(out))
@@ -377,8 +388,13 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
         a = r.action
         if a in ("create_local", "update") and r.local_obj is not None:
             plan.commits[h] = r.local_obj
-            plan.pulled_rows.append({"class": r.cls, "handle": h, "kind": "create" if a == "create_local" else "update",
-                                     "prepull": _plain(lp.get(h)) if a == "update" else None})
+            prepull = _plain(lp.get(h)) if a == "update" else None
+            if isinstance(prepull, dict) and isinstance(base.get(h), dict):
+                # the desktop edits that were waiting to go before this pull: a later push of them is not a revert of the pull (D47)
+                kept = M.diff_pointers(base[h], prepull)
+                if kept:
+                    prepull[KEPT_KEY] = kept
+            plan.pulled_rows.append({"class": r.cls, "handle": h, "kind": "create" if a == "create_local" else "update", "prepull": prepull})
         elif a == "delete_local":
             if plan.mass_delete and not confirm_mass_delete:
                 plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid,
