@@ -11,6 +11,7 @@ The Gtk drawing in hfy_sync_gramplet.py is exercised by io's G-uat on the Mac (r
 import hashlib
 import os
 import sys
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -67,12 +68,15 @@ class GrampletE2E(PullE2E):
         # a status call and a dry check rewrite status.json but are not a sync
         real = "SELECT COUNT(*) FROM runs WHERE action IN ('pull', 'push', 'sync')"
         before = self.table(real)
+        last_before = m.last_run()
+        time.sleep(1.2)  # the dry rows below finish in a later second than the real push, so a leak would move the time
         self.hfy("status")
         self.hfy("check")
         self.hfy("push", "--dry-run")
         self.assertEqual(self.table(real), [(before[0][0] + 1,)], "only the dry push is a pull/push/sync row, and it is marked dry")
         self.assertEqual(self.table("SELECT COUNT(*) FROM runs WHERE action = 'check'"), [(1,)])
         self.assertIn("Last sync: " + doc["result"], m.lines()[1], "the last real run is the push")
+        self.assertEqual(m.last_run(), last_before, "status, check and a dry push leave the Last sync time and result as they were")
 
     def test_count_polling_signin_and_no_writes(self):
         self.bring_up()

@@ -91,6 +91,8 @@ class HfySyncGramplet(Gramplet):
         """True when the gramplet has been closed: its widgets are no longer inside a window. (A closed gramplet is detached from the
         pane; a detached one lives in its own window, which counts as inside.)"""
         try:
+            if self.box.get_parent() is None:  # taken out of its container: the gramplet was closed
+                return True
             return not isinstance(self.box.get_toplevel(), Gtk.Window)
         except Exception:  # noqa: BLE001 - when in doubt, stop asking
             return True

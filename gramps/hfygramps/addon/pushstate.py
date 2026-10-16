@@ -168,6 +168,16 @@ def outbox_prune(con, keep=consts.OUTBOX_KEEP):
     con.commit()
 
 
+OWN_PUSHES_DDL = "CREATE TABLE IF NOT EXISTS own_pushes (seq INTEGER PRIMARY KEY)"
+
+
+def record_own_seq(con, seq):
+    """Remembers a seq the website gave one of the desktop's own acknowledged pushes. `base` keeps only the newest seq of each object, so a
+    second push of the same object would otherwise hide the first; the gramplet's 'changes waiting' count reads this table instead."""
+    con.execute(OWN_PUSHES_DDL)
+    con.execute("INSERT OR IGNORE INTO own_pushes (seq) VALUES (?)", (int(seq),))
+
+
 def ack_batch(con, key, request, response):
     """An acknowledged batch (a 2xx or an `Idempotent-Replayed` answer): the outbox row becomes `acked` and every op's object (or
     deletion) becomes the base row at the version the server gave it, in ONE commit. Returns the number of ops applied.
@@ -184,6 +194,8 @@ def ack_batch(con, key, request, response):
         res = results.get(op.get("op_id"))
         if res is None:
             continue
+        if op["op"] in ("create", "update", "delete", "withdraw") and res.get("seq") is not None:
+            record_own_seq(con, res["seq"])
         if op["op"] in ("create", "update") and op["handle"] in keep:
             pass
         elif op["op"] in ("create", "update"):

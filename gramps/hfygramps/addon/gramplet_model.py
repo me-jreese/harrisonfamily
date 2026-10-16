@@ -1,11 +1,11 @@
 """What the Website sync gramplet shows and when it asks (HFY-TSK-278; sync.md 13, phase B). No Gtk here, so it is tested without a window.
 
 The gramplet is read-only with ONE disclosed exception. It reads the sidecar's `last_pull_seq` (opened
-read-only, so SQLite cannot create or change a file), its `base` and `runs` tables the same way, and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes
-waiting is the changes after `last_pull_seq` up to `head_seq` that the desktop did not make itself: each of the desktop's own acknowledged
-pushes sits in the sidecar's `base` table at the seq the website gave it, so those seqs are taken off (never below zero). A push of two
+read-only, so SQLite cannot create or change a file), its `own_pushes` and `runs` tables the same way, and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes
+waiting is the changes after `last_pull_seq` up to `head_seq` that the desktop did not make itself: each seq the website gave one of the desktop's own acknowledged
+pushes is kept in the sidecar's `own_pushes` table (`base` holds only an object's newest seq, so it cannot be counted), so those seqs are taken off (never below zero). A push of two
 updates with no website edit therefore shows none waiting. "Last sync" is the newest real `pull`, `push` or `sync` row of the
-sidecar's `runs` table; bind, status and check are other actions, and a dry pull or push is marked dry in its row, so none of them moves it, and status.json,
+sidecar's `runs` table (a failed or partial real run counts too); bind, status and check are other actions, and a dry pull or push is marked dry in its row, so none of them moves it, and status.json,
 which every run rewrites, is not used. It writes no status.json, no sidecar row, no tree object, no log and creates no
 Keychain item. The exception: the website rotates the refresh token on every refresh, so when the access token has expired (about once
 an hour of use: one TokenManager is kept for the life of the Model) the rotated refresh token is saved to the Keychain item that
@@ -61,12 +61,13 @@ def _read_only(tree_paths):
 
 
 def read_own_seqs(tree_paths, after, upto):
-    """How many distinct seqs in (after, upto] are the desktop's own acknowledged pushes (rows of `base`); 0 when unreadable."""
+    """How many distinct seqs in (after, upto] are the desktop's own acknowledged pushes (rows of `own_pushes`, one per acknowledged seq,
+    so two pushes of one object count twice); 0 when the table is missing (a sidecar from before it existed) or unreadable."""
     con = _read_only(tree_paths)
     if con is None:
         return 0
     try:
-        row = con.execute("SELECT COUNT(DISTINCT seq) FROM base WHERE seq > ? AND seq <= ?", (int(after), int(upto))).fetchone()
+        row = con.execute("SELECT COUNT(DISTINCT seq) FROM own_pushes WHERE seq > ? AND seq <= ?", (int(after), int(upto))).fetchone()
         return int(row[0]) if row else 0
     except (sqlite3.Error, ValueError, TypeError):
         return 0

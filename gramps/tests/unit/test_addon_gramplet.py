@@ -9,7 +9,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", ".."))
-from hfygramps.addon import consts, gramplet_model, oauth, paths, sidecar, status, transport  # noqa: E402
+from hfygramps.addon import consts, gramplet_model, oauth, paths, pushstate, sidecar, status, transport  # noqa: E402
 
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 DBID = "1700000000abcdef"
@@ -73,13 +73,14 @@ class GrampletCase(unittest.TestCase):
     def write_status(self, result="ok", age=2 * 86400):
         self.record("pull", result, age)
 
-    def own_push(self, *seqs):
-        """The desktop's own acknowledged push: base rows at the seqs the website gave."""
+    def own_push(self, *seqs, same_handle=None):
+        """The desktop's own acknowledged push, through the real ack path: the base row (one per object, newest seq) and the own seq."""
         con = sidecar.open_checked(self.tp.sidecar)
         try:
             for i, seq in enumerate(seqs):
-                con.execute("INSERT INTO base (class, handle, version, seq, hash, obj_json, deleted) VALUES ('Person', ?, 2, ?, 'h', '{}', 0)",
-                            ("h%d_%d" % (seq, i), seq))
+                handle = same_handle or "h%d_%d" % (seq, i)
+                pushstate.set_base(con, "Person", handle, 2, seq, {}, commit=False)
+                pushstate.record_own_seq(con, seq)
             con.commit()
         finally:
             con.close()
@@ -155,6 +156,23 @@ class OwnPushes(GrampletCase):
         self.bind(5)
         self.own_push(6, 7, 9)
         self.assertEqual(self.waiting(7)[0], 0)  # seq 9 is past head: not counted
+
+    def test_the_same_object_pushed_twice_with_no_website_edit_shows_none(self):
+        self.bind(5)
+        self.own_push(6)
+        self.own_push(7, same_handle="hX")  # object X pushed at seq 6, then again at seq 7: base keeps only seq 7
+        self.own_push(8, same_handle="hX")
+        self.assertEqual(self.waiting(8), (0, "Website: 0 changes waiting"))
+
+    def test_base_rows_a_pull_wrote_are_not_own_pushes(self):
+        self.bind(5)
+        con = sidecar.open_checked(self.tp.sidecar)
+        try:
+            con.execute("INSERT INTO base (class, handle, version, seq, hash, obj_json, deleted) VALUES ('Person', 'pulled', 2, 7, 'h', '{}', 0)")
+            con.commit()
+        finally:
+            con.close()
+        self.assertEqual(self.waiting(7)[0], 2)
 
     def test_unbound_tree_does_not_ask(self):
         c = FakeClient()
@@ -438,6 +456,7 @@ class FakeGtk:
     class Widget:
         def __init__(self, *a, **k):
             self.top = None
+            self.parent = object()
             self.mapped = True
 
         def connect(self, *a):
@@ -451,6 +470,9 @@ class FakeGtk:
 
         def get_toplevel(self):
             return self.top if self.top is not None else self
+
+        def get_parent(self):
+            return self.parent
 
         def get_mapped(self):
             return self.mapped
@@ -533,6 +555,12 @@ class GrampletGtk(unittest.TestCase):
         self.assertIsNone(self.g._tick_source)
         self.assertEqual(self.g._busy, False)
 
+    def test_a_gramplet_taken_out_of_its_container_ends_the_timer(self):
+        self.in_window()
+        (sid, (seconds, fn)), = self.timers.live.items()
+        self.g.box.parent = None  # removed from the pane even though a toplevel is still reachable
+        self.assertFalse(fn())
+
     def test_no_worker_is_started_once_the_gramplet_is_gone(self):
         started = []
         self.mod.threading.Thread = lambda *a, **k: started.append(k) or type("T", (), {"start": lambda self: None})()
@@ -562,7 +590,7 @@ class GrampletGtk(unittest.TestCase):
         with open(os.path.join(REPO, "gramps", "hfy_sync", "hfy_sync_gramplet.py"), encoding="utf-8") as fh:
             src = fh.read()
         self.assertNotIn("def on_close", src)
-        self.assertNotIn('"database-changed"', src.replace("# ", "").split("def db_changed")[1] if "def db_changed" in src else "")
+        self.assertNotIn(".connect(", src.split("def db_changed")[1].split("\n    def ")[0], "db_changed connects nothing")
 
 
 class Ago(unittest.TestCase):
