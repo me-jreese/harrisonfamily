@@ -32,14 +32,14 @@ const quiet = { warn() {}, error() {}, info() {} };
 
 /**
  * The synthetic tree: me (1), a woman (3) who is not yet recorded as anyone's parent, my child (6) in a family F1 of me alone, and a note on my page (N1).
- * `HFY_EDITING` is switched on for the life of the process by `createEditWorld` (call `world.dispose()` to restore it).
+ * `HFY_EDITING` is switched on for the life of the process by `createEditWorld` (call `world.dispose()` to restore it). Use `withEditWorld(fn)` for a try/finally that always disposes.
  */
 export async function createEditWorld({ admins = [ADMIN, ADMIN2] } = {}) {
   const before = process.env.HFY_EDITING;
   process.env.HFY_EDITING = "on";
   const hooks = createHookRegistry();
   const inbox = new InMemoryNotificationStore();
-  // The fake clock is the real one: step-up (a fresh sign-in) is judged against it, and `authTime` below is now.
+  // Two clocks on purpose: the seeding clock below is fixed (stable row order and versions), while step-up (a fresh sign-in) is judged against the real clock, so `authTime` below is real now. They never meet: seeded rows carry no sign-in time.
   const w = makeApi({
     admins, log: quiet, inbox, flags: { inboxV1: true },
     extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} } },
@@ -70,4 +70,14 @@ export async function createEditWorld({ admins = [ADMIN, ADMIN2] } = {}) {
   /** Change a record behind the API's back, as a Gramps sync would (a new version). */
   const bump = (obj, base) => applyBatch(sctx, { principal: "svc-seed", origin: "desktop", idempotencyKey: `bump${++k}`, ops: [{ op: "update", class: obj._class, handle: obj.handle, base_version: base, obj }] });
   return { ...w, call, stored, version, rows, bump, inbox, me, mother, kid, n1, fam, dispose: () => { if (before === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = before; } };
+}
+
+/** Runs `fn(world)` and always restores HFY_EDITING, even when `fn` throws. */
+export async function withEditWorld(fn, opts) {
+  const world = await createEditWorld(opts);
+  try {
+    return await fn(world);
+  } finally {
+    world.dispose();
+  }
 }

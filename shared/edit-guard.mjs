@@ -28,7 +28,10 @@ const esc = (s) => String(s).replace(/~/g, "~0").replace(/\//g, "~1");
 // Keys whose strings are identifiers, not member text: a 20-digit handle must never read as a phone number. Only keys proven to be
 // identifiers in the Gramps JSON are skipped in resulting objects ('key', 'id', 'temp' and the like are NOT: SrcAttribute.key is
 // free text). checkValue (an intent, stubs) also skips the edit engine's own reference keys, which hold handles and temp ids.
-const OBJECT_ID_KEYS = new Set(["_class", "handle", "ref", "gramps_id", "checksum", "mime", "lat", "long"]);
+const OBJECT_ID_KEYS = new Set(["_class", "handle", "ref", "gramps_id", "checksum", "mime", "lat", "long", "father_handle", "mother_handle", "source_handle"]);
+// Event.place is a handle on a stored object but free text in a relationship stub, so it is skipped for objects only.
+const OBJECT_ONLY_ID_KEYS = new Set(["place"]);
+const OBJECT_SKIP = new Set([...OBJECT_ID_KEYS, ...OBJECT_ONLY_ID_KEYS]);
 const VALUE_ID_KEYS = new Set([...OBJECT_ID_KEYS, "existing", "temp", "etag"]);
 const HANDLE_LISTS = new Set(["family_list", "parent_family_list", "note_list", "citation_list", "tag_list"]);
 // Keys that hold member text. A number or boolean there is scanned as its string form (a phone number sent as a JSON number).
@@ -38,7 +41,7 @@ const FIELD_CLASS = Object.freeze({ urls: "Url", attribute_list: "Attribute", sr
 const KNOWN_CLASSES = new Set(["Person", "Family", "Event", "Place", "Citation", "Source", "Repository", "Media", "Note", "Tag"]);
 
 /** Every text leaf of `value` as [pointer, text]: strings, plus numbers/booleans under text keys. Identifier keys and handle lists are skipped. */
-export function leaves(value, base = "", out = [], skip = OBJECT_ID_KEYS, key = null) {
+export function leaves(value, base = "", out = [], skip = OBJECT_SKIP, key = null) {
   if (typeof value === "string") out.push([base, value]);
   else if ((typeof value === "number" || typeof value === "boolean") && TEXT_KEYS.has(key)) out.push([base, String(value)]);
   else if (Array.isArray(value)) value.forEach((v, i) => leaves(v, `${base}/${i}`, out, skip, key));
