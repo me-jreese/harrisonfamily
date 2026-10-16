@@ -3,12 +3,17 @@
 //
 //   node scripts/sync-admin.mjs pause    --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs resume   --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs feed-on  --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs feed-off --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs render   --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
 //   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
 //   common: [--table hfy-app] [--region us-west-2]
 //
 //   pause      sets SYNC#HEAD.writes_enabled to false: applyBatch() then refuses every origin with 503 sync_paused.
 //   resume     sets it back to true.
+//   feed-on    sets SYNC#HEAD.changes_feed to true (HFY-TSK-277): GET /api/sync/changes then serves the ARCH-B delta feed and /api/sync/meta
+//              reports changes_feed: true, which tells the add-on it may pull deltas. feed-off sets it back to false (absent counts as off);
+//              the add-on then takes full snapshots again at its next run. The feed ships off; flipping it is io's go-ahead like the others.
 //   render     invokes the hfy-sync-render Lambda with an operator payload. --full forces a full pass although the cursor is current;
 //              --allow-mass-delete adds {"allow_mass_delete": true} (lets one pass delete more than the guard's limit, after review);
 //              --prune-foreign adds {"prune_foreign": true} (deletes renderer-shaped keys under the data prefixes that the renderer
@@ -56,16 +61,17 @@ async function auditPut(ctx, id, op, before, after, by, at) {
   return auditItem({ id, op, principalId: by, at, before, after }, randomUUID(), ctx.table);
 }
 
-// ---- pause / resume ---------------------------------------------------------------------------------------------------
-async function setWrites(ctx, enabled, { apply, by = "operator" }) {
+// ---- pause / resume / feed-on / feed-off ------------------------------------------------------------------------------
+// One boolean switch on SYNC#HEAD, set under a condition pinned to the value read, with an audit item in the same transaction.
+// `absentIs` is what a missing attribute means: applyBatch pauses only on an explicit false (absent = enabled), the feed is on only on true.
+async function setSwitch(ctx, { field, word, absentIs, labels }, enabled, { apply, by = "operator" }) {
   const { log } = ctx;
   const head = await get(ctx, headKey());
-  if (!head) throw new AdminError("there is no SYNC#HEAD item: the store is not initialised, so there is nothing to pause or resume");
-  const word = enabled ? "resume" : "pause";
-  const now = head.writes_enabled !== false; // absent counts as enabled (applyBatch pauses only on an explicit false)
-  log(`${word}: writes_enabled is ${head.writes_enabled === undefined ? "absent (enabled)" : String(head.writes_enabled)}; target ${enabled}`);
-  if (now === enabled && head.writes_enabled !== undefined) {
-    log(`${word}: already ${enabled ? "enabled" : "paused"}; nothing to change`);
+  if (!head) throw new AdminError(`there is no SYNC#HEAD item: the store is not initialised, so there is nothing to ${word}`);
+  const now = head[field] === undefined ? absentIs : head[field] === true || (absentIs && head[field] !== false);
+  log(`${word}: ${field} is ${head[field] === undefined ? `absent (${absentIs ? "enabled" : "off"})` : String(head[field])}; target ${enabled}`);
+  if (now === enabled && head[field] !== undefined) {
+    log(`${word}: already ${labels[enabled ? 1 : 0]}; nothing to change`);
     return { changed: false, apply };
   }
   if (!apply) {
@@ -73,29 +79,35 @@ async function setWrites(ctx, enabled, { apply, by = "operator" }) {
     return { changed: false, planned: true, apply };
   }
   const at = iso(ctx.now);
-  const names = { "#we": "writes_enabled", "#u": "updated_at" };
+  const names = { "#sw": field, "#u": "updated_at" };
   const values = { ":to": enabled, ":at": at };
   // Pinned to the value read, so a concurrent change fails instead of being overwritten.
   let condition = "attribute_exists(PK)";
-  if (head.writes_enabled === undefined) condition += " AND attribute_not_exists(#we)";
+  if (head[field] === undefined) condition += " AND attribute_not_exists(#sw)";
   else {
-    condition += " AND #we = :was";
-    values[":was"] = head.writes_enabled;
+    condition += " AND #sw = :was";
+    values[":was"] = head[field];
   }
-  const audit = await auditPut(ctx, `sync-admin:${word}:${at}`, `sync-admin.${word}`, { writes_enabled: head.writes_enabled ?? null }, { writes_enabled: enabled }, by, at);
+  const audit = await auditPut(ctx, `sync-admin:${word}:${at}`, `sync-admin.${word}`, { [field]: head[field] ?? null }, { [field]: enabled }, by, at);
   await ctx.ddb.send(
     new ctx.cmds.TransactWriteCommand({
       TransactItems: [
-        { Update: { TableName: ctx.table, Key: headKey(), UpdateExpression: "SET #we = :to, #u = :at", ConditionExpression: condition, ExpressionAttributeNames: names, ExpressionAttributeValues: values } },
+        { Update: { TableName: ctx.table, Key: headKey(), UpdateExpression: "SET #sw = :to, #u = :at", ConditionExpression: condition, ExpressionAttributeNames: names, ExpressionAttributeValues: values } },
         { Put: { TableName: ctx.table, Item: audit } },
       ],
     }),
   );
-  log(`${word}: writes_enabled is now ${enabled}`);
+  log(`${word}: ${field} is now ${enabled}`);
   return { changed: true, apply };
 }
+const WRITES = { field: "writes_enabled", absentIs: true, labels: ["paused", "enabled"] };
+const FEED = { field: "changes_feed", absentIs: false, labels: ["off", "on"] };
+const setWrites = (ctx, enabled, o) => setSwitch(ctx, { ...WRITES, word: enabled ? "resume" : "pause" }, enabled, o);
+const setFeed = (ctx, enabled, o) => setSwitch(ctx, { ...FEED, word: enabled ? "feed-on" : "feed-off" }, enabled, o);
 export const pause = (ctx, o) => setWrites(ctx, false, o);
 export const resume = (ctx, o) => setWrites(ctx, true, o);
+export const feedOn = (ctx, o) => setFeed(ctx, true, o);
+export const feedOff = (ctx, o) => setFeed(ctx, false, o);
 
 // ---- render -----------------------------------------------------------------------------------------------------------
 /** The Lambda payload for the render flags. Every flag is the literal `true`, which is what the renderer accepts. */
@@ -349,12 +361,14 @@ export const HELP = `sync-admin.mjs: operator tooling for the cloud record store
 Usage:
   node scripts/sync-admin.mjs pause     --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs resume    --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs feed-on   --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs feed-off  --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs render    --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
 Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --apply is required (once).
 On pause and resume, --all is accepted and changes nothing (the switch is store-wide). -h/--help prints this.
 
-IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume and resurrect) or makes the renderer write and
+IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off and resurrect) or makes the renderer write and
 delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
 (AGENTS.md; review DL-28). Always run --dry-run first. See docs/how-to/operate-the-sync-store.md.
 `;
@@ -364,7 +378,7 @@ export function parseArgs(argv) {
   const rest = [...argv];
   if (rest.includes("-h") || rest.includes("--help")) return { help: true };
   out.command = rest.shift();
-  if (!["pause", "resume", "render", "resurrect"].includes(out.command)) throw new AdminError(`unknown or missing command ${out.command ?? ""} (pause, resume, render, resurrect)`);
+  if (!["pause", "resume", "feed-on", "feed-off", "render", "resurrect"].includes(out.command)) throw new AdminError(`unknown or missing command ${out.command ?? ""} (pause, resume, feed-on, feed-off, render, resurrect)`);
   const modes = { dry: 0, apply: 0 };
   const value = (flag, i) => {
     if (rest[i + 1] === undefined || rest[i + 1].startsWith("--")) throw new AdminError(`${flag} needs a value`);
@@ -391,6 +405,8 @@ export function parseArgs(argv) {
   const allowed = {
     pause: ["by", "all"],
     resume: ["by", "all"],
+    "feed-on": ["by"],
+    "feed-off": ["by"],
     render: ["full", "allowMassDelete", "pruneForeign", "functionName"],
     resurrect: ["by", "batch", "includeWithdrawn"],
   }[out.command];
@@ -408,6 +424,10 @@ export async function run(args, ctx) {
       return pause(ctx, args);
     case "resume":
       return resume(ctx, args);
+    case "feed-on":
+      return feedOn(ctx, args);
+    case "feed-off":
+      return feedOff(ctx, args);
     case "render":
       return render(ctx, args);
     case "resurrect":

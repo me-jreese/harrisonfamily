@@ -123,7 +123,7 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None, services=None
     doc = status.build(run_id, options.action, mode, tree.dbid, outcome["bound"], res, exit_code, started, status.utc_now(),
                        dry_run=options.dry_run or options.action == "check", error=error, next_action=next_action, counts=outcome["counts"],
                        versions=_versions(tree), head_seq=outcome.get("cloud", (0, 0))[0], snapshot_seq=outcome.get("cloud", (0, 0))[1],
-                       backup=outcome.get("backup"))
+                       backup=outcome.get("backup"), via=outcome.get("pull_via"))
     try:
         if side is not None:
             sidecar.record_run(side, doc)
