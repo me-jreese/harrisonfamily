@@ -1019,6 +1019,46 @@ class RevertGuard(PushCase):
         self.assertEqual((doc["counts"]["blocked"], doc["counts"]["pushed"]["update"]), (0, 1), doc)
         self.assertEqual((self.name(h), self.cloud.heads[h]["obj"]["primary_name"]["surname_list"][0]["surname"]), ("Webname", "Beforepull"))
 
+    def test_an_unsent_edit_and_a_real_revert_in_different_elements_of_one_list_are_told_apart(self):
+        """revert_paths: the desktop's unsent edit of list element 0 is exempt; a push that puts back element 1's pre-pull value is a revert."""
+        from hfygramps.addon import plan as PLAN
+        old = {"media_list": [{"rect": [1, 1, 2, 2]}, {"rect": [3, 3, 4, 4]}]}
+        cloud = {"media_list": [{"rect": [1, 1, 2, 2]}, {"rect": [9, 9, 9, 9]}]}      # the pull moved element 1
+        op = {"op": "update", "obj": {"media_list": [{"rect": [5, 5, 6, 6]}, {"rect": [3, 3, 4, 4]}]}}  # element 0 unsent edit, element 1 put back
+        row = {"kind": "update", "prepull": old, "kept": ["/media_list/0/rect"]}
+        got = PLAN.revert_paths(op, cloud, [row])
+        self.assertTrue(got and all(p.startswith("/media_list/1/rect") for p in got), got)
+
+    def test_a_length_changing_desktop_edit_exempts_the_whole_list_a_known_limit(self):
+        from hfygramps.addon import plan as PLAN
+        old = {"media_list": [{"rect": [3, 3, 4, 4]}]}
+        cloud = {"media_list": [{"rect": [9, 9, 9, 9]}]}
+        op = {"op": "update", "obj": {"media_list": [{"rect": [3, 3, 4, 4]}]}}
+        self.assertEqual(PLAN.revert_paths(op, cloud, [{"kind": "update", "prepull": old, "kept": ["/media_list"]}]), [],
+                         "diff_pointers names a list whose length changed as one pointer, which overlaps every element of it")
+        self.assertEqual(PLAN.revert_paths(op, cloud, [{"kind": "update", "prepull": old, "kept": []}]),
+                         ["/media_list/0/rect/%d" % i for i in range(4)])
+
+    def test_the_kept_pointers_are_stored_beside_the_prepull_object_not_inside_it(self):
+        self.seed()
+        h = self.a_person()
+        self.tree.edit(h, lambda o: o["primary_name"]["surname_list"][0].__setitem__("surname", "Beforepull"))
+        self.cloud.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Webname"))
+        self.assertEqual(self.exit_of(self.pull()), ("ok", 0, "none"))
+        pre, kept = self.rows("SELECT prepull_json, kept_json FROM pulled WHERE handle = ?", h)[0]
+        self.assertNotIn("__kept", json.loads(pre))
+        self.assertEqual(json.loads(kept), ["/primary_name/surname_list/0/surname"])
+
+    def test_a_desktop_and_a_web_edit_of_the_same_field_conflict_rather_than_being_exempted(self):
+        self.seed()
+        h = self.a_person()
+        self.tree.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Deskname"))
+        self.cloud.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Webname"))
+        self.pull()
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM pulled WHERE handle = ?", h)[0][0], 0, "nothing was pulled over the edit")
+        self.assertEqual(self.tree.data[h]["primary_name"]["first_name"], "Deskname")
+        self.assertGreaterEqual(self.rows("SELECT COUNT(*) FROM conflicts WHERE handle = ?", h)[0][0], 1)
+
     def test_a_pull_older_than_the_last_five_runs_no_longer_counts(self):
         h, old = self.pulled_edit()
         con = self.sidecar()

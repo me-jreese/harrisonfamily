@@ -178,7 +178,11 @@ def _get(obj, pointer):
     return R.pointer_get(obj, pointer, _MISSING) if pointer else obj
 
 
-KEPT_KEY = "__kept"  # in a pulled row's prepull object: the pointers the desktop had edited and not yet pushed when the pull ran
+# A pulled row also carries `kept`: the pointers the desktop had edited and not yet pushed when the pull ran (its own column in the
+# sidecar, not part of the prepull object, which keeps the shape of a Gramps object). A push of those is not a revert of the pull.
+# `M.diff_pointers` is element-granular for lists of the same length, but reports a list whose length changed (a tag added or removed
+# on the desktop) as one whole-list pointer; that pointer overlaps every element of the list, so a revert of a web change inside such
+# a list is not labelled while the desktop's own unsent add or remove is waiting. Known limit, accepted: it errs towards sending.
 
 
 def _overlaps(a, b):
@@ -202,7 +206,7 @@ def revert_paths(op, cloud_obj, pulled):
             return [""]
         if op["op"] == "update" and kind == "update" and isinstance(row.get("prepull"), dict) and isinstance(cloud_obj, dict):
             prepull = row["prepull"]
-            kept = prepull.get(KEPT_KEY) or []
+            kept = row.get("kept") or []
             for p in M.diff_pointers(cloud_obj, op["obj"]):
                 if any(_overlaps(p, k) for k in kept):
                     continue  # the desktop's own unsent edit before the pull, which the pull did not replace
@@ -389,12 +393,12 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
         if a in ("create_local", "update") and r.local_obj is not None:
             plan.commits[h] = r.local_obj
             prepull = _plain(lp.get(h)) if a == "update" else None
+            kept = []
             if isinstance(prepull, dict) and isinstance(base.get(h), dict):
                 # the desktop edits that were waiting to go before this pull: a later push of them is not a revert of the pull (D47)
                 kept = M.diff_pointers(base[h], prepull)
-                if kept:
-                    prepull[KEPT_KEY] = kept
-            plan.pulled_rows.append({"class": r.cls, "handle": h, "kind": "create" if a == "create_local" else "update", "prepull": prepull})
+            plan.pulled_rows.append({"class": r.cls, "handle": h, "kind": "create" if a == "create_local" else "update", "prepull": prepull,
+                                     "kept": kept})
         elif a == "delete_local":
             if plan.mass_delete and not confirm_mass_delete:
                 plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid,

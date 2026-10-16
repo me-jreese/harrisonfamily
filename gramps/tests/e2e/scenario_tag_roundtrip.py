@@ -4,13 +4,17 @@ and two tags of one person in one photo survive one being moved on the web while
 
     web tag       a tag the website writes (an update of the person's media_list, the way the tagging domain's applyBatch does) comes down as a
                   MediaRef whose rectangle is the same four integers (RT-1)
-    overlay       a rectangle changed in Gramps and pushed changes `media/<handle>.json` `regions[]` as the renderer writes it from the store (RT-2)
+    overlay       a rectangle changed in Gramps and pushed changes `regions[]` of the render output `media/<handle>.json`, as `render_site` writes
+                  it from what the store holds (RT-2). That document is what the site's region overlay is drawn from; the browser island
+                  that draws it is not run here
     two tags      one person, one photo, two tags: the web moves one, Gramps edits the other; after the pull and the push both edits are in
                   Gramps and in the store, and no tag is lost, doubled or conflicted (RT-3)
 
 It runs the real installed wrapper against the local sync dev server on copies of the fixture tree; nothing leaves the machine. The tag
 editor's own save path is HFY-TSK for tag-editor-ui; this lane stands in for it with the same op (an `update` of the person head with a
-changed `media_list`), as scenario_pull.py stands in for the website's other edits. Fictional data only.
+changed `media_list`), as scenario_pull.py stands in for the website's other edits. `test_the_stand_in_tag_has_the_shape_a_real_tag_save_emits`
+pins that stand-in to the schema and to the fixture's own tags (four integers, the MediaRef fields); the fidelity gap that remains, that a
+tag really made through the editor reaches Gramps, belongs to the later tag-edit-e2e task. Fictional data only.
 """
 import copy
 import json
@@ -97,6 +101,20 @@ class TagRoundTrip(PL.PullE2E):
         self.assertEqual((doc["counts"]["blocked"], doc["counts"]["conflicts_open"]), (0, 0), json.dumps(doc["error"]))
         return doc
 
+    # --------------------------------------------------------------------------------------------------------------------- contract
+
+    def test_the_stand_in_tag_has_the_shape_a_real_tag_save_emits(self):
+        """A tag save writes a MediaRef whose `rect` is four integers and whose other fields are those of every MediaRef in the tree; the
+        stand-in must not drift from that, or the scenarios would prove nothing about a real tag."""
+        from hfygramps import schema_check as sc
+        tag = new_tag(self.photo, [12, 7, 58, 93])
+        person = copy.deepcopy(PL.by_gid(self.local_objects(), WEB_PERSON_GID))
+        person["media_list"].append(tag)
+        self.assertEqual(sc.validate_object(person, sc.load(sc.STEM + ".schema.json")), [], "schema-valid")
+        self.assertTrue(len(tag["rect"]) == 4 and all(isinstance(n, int) and not isinstance(n, bool) for n in tag["rect"]))
+        fixture_tag = next(r for r in PL.by_gid(self.local_objects(), TAGGED_GID)["media_list"] if r.get("rect") is not None)
+        self.assertEqual(sorted(tag), sorted(fixture_tag), "same MediaRef fields as the fixture's own tag")
+
     # --------------------------------------------------------------------------------------------------------------------- RT-1
 
     def test_a_web_tag_reaches_gramps_with_the_same_four_integers(self):
@@ -126,7 +144,7 @@ class TagRoundTrip(PL.PullE2E):
         self.assertEqual(self.cloud.get(WEB_PERSON_GID)["media_list"][-1]["rect"], moved)
         self.assertEqual(self.regions_for(WEB_PERSON_GID), [moved], "the overlay follows the pushed rectangle")
         self.assertNotIn(rect, [r["rect"] for r in self.overlay()])
-        self.assertIsNotNone(doc)
+        self.assertGreaterEqual(doc["counts"]["pushed"]["update"], 1, "the push sent the person")
 
     # --------------------------------------------------------------------------------------------------------------------- RT-3
 

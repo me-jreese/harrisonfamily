@@ -502,9 +502,10 @@ def _record_pending(ctx, plan, run_n):
     with ctx.side:
         for row in plan.pulled_rows:
             if row["handle"] in plan.commits or row["handle"] in plan.removals:
-                ctx.side.execute("INSERT OR REPLACE INTO pulled (run_n, class, handle, kind, prepull_json, at) VALUES (?, ?, ?, ?, ?, ?)",
+                ctx.side.execute("INSERT OR REPLACE INTO pulled (run_n, class, handle, kind, prepull_json, at, kept_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
                                  (run_n, row["class"], row["handle"], row["kind"],
-                                  json.dumps(row["prepull"], sort_keys=True) if row["prepull"] is not None else None, now))
+                                  json.dumps(row["prepull"], sort_keys=True) if row["prepull"] is not None else None, now,
+                                  json.dumps(row["kept"]) if row.get("kept") else None))
                 keys.append((row["class"], row["handle"]))
     return keys
 

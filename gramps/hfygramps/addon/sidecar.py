@@ -131,7 +131,7 @@ def record_run(con, doc):
 PULL_WINDOW = 5
 PULL_DDL = """
 CREATE TABLE IF NOT EXISTS pulled (run_n INTEGER NOT NULL, class TEXT NOT NULL, handle TEXT NOT NULL, kind TEXT NOT NULL,
-  prepull_json TEXT, at TEXT, PRIMARY KEY (run_n, class, handle));
+  prepull_json TEXT, at TEXT, kept_json TEXT, PRIMARY KEY (run_n, class, handle));
 CREATE TABLE IF NOT EXISTS incidents (class TEXT NOT NULL, handle TEXT NOT NULL, gramps_id TEXT, rule TEXT NOT NULL, seq INTEGER,
   first_seen TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY (class, handle));
 """
@@ -141,6 +141,8 @@ OPEN_CONFLICT_STATES = ("open", "parked")
 
 def ensure_pull_tables(con):
     con.executescript(PULL_DDL)
+    if "kept_json" not in {r[1] for r in con.execute("PRAGMA table_info(pulled)")}:  # a table made before `kept_json` existed
+        con.execute("ALTER TABLE pulled ADD COLUMN kept_json TEXT")
 
 
 def has_table(con, name):
@@ -188,13 +190,16 @@ def load_conflicts(con, states=OPEN_CONFLICT_STATES):
 
 
 def load_pulled(con, pull_n):
-    """{handle: [{run_n, kind, prepull}]}, newest run first, for the last PULL_WINDOW pull runs (and the run in flight)."""
+    """{handle: [{run_n, kind, prepull, kept}]}, newest run first, for the last PULL_WINDOW pull runs (and the run in flight). `kept` is
+    the list of pointers the desktop had edited and not yet pushed when the pull ran ([] for a row made before the column existed)."""
     if not has_table(con, "pulled"):
         return {}
     out = {}
-    for run_n, cls, handle, kind, prepull in con.execute(
-            "SELECT run_n, class, handle, kind, prepull_json FROM pulled WHERE run_n > ? ORDER BY run_n DESC", (pull_n - PULL_WINDOW,)):
-        out.setdefault(handle, []).append({"run_n": run_n, "class": cls, "kind": kind, "prepull": json.loads(prepull) if prepull else None})
+    has_kept = "kept_json" in {r[1] for r in con.execute("PRAGMA table_info(pulled)")}
+    q = "SELECT run_n, class, handle, kind, prepull_json, %s FROM pulled WHERE run_n > ? ORDER BY run_n DESC" % ("kept_json" if has_kept else "NULL")
+    for run_n, cls, handle, kind, prepull, kept in con.execute(q, (pull_n - PULL_WINDOW,)):
+        out.setdefault(handle, []).append({"run_n": run_n, "class": cls, "kind": kind, "prepull": json.loads(prepull) if prepull else None,
+                                           "kept": json.loads(kept) if kept else []})
     return out
 
 
