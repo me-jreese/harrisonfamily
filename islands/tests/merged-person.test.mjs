@@ -49,9 +49,10 @@ test("the person-page.js hook is untouched and the island rule matches its hop l
   assert.equal(MAX_MERGE_HOPS, 2);
 });
 
-test("the personV2 island and the tree page follow an alias through lib/merged-person.js", () => {
+test("smoke (source check only; the Playwright specs cover the behaviour): the personV2 island and the tree page import lib/merged-person.js", () => {
   const person = readFileSync(new URL("../src/islands/person.jsx", import.meta.url), "utf8");
   const tree = readFileSync(new URL("../src/islands/tree.jsx", import.meta.url), "utf8");
   assert.match(person, /mergedRedirect/);
+  assert.match(person, /go\?\.limit/);
   assert.match(tree, /resolveMerged/);
 });

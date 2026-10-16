@@ -746,6 +746,40 @@ class MergeAlias(unittest.TestCase):
         rig.run()
         self.assertEqual(self.stub(rig), {"mergedInto": "I0001"})
 
+    def test_a_renumber_alias_the_index_lags_on_keeps_its_stub(self):
+        rig = sup.Rig("live")
+        self.alias(rig, reason="renumber")
+        rig.run()
+        self.assertEqual(self.stub(rig), {"mergedInto": "I0001"})
+        rig.table.query_aliases = lambda cls: iter(())  # GSI1 has not shown the alias this pass
+        rig.store.marker()
+        rig.run()
+        self.assertEqual(self.stub(rig), {"mergedInto": "I0001"}, "a lagging index must not flap the stub")
+        del rig.table.items[(f"IDALIAS#Person#{self.OLD}", "META")]  # really gone: the stub leaves
+        rig.store.marker()
+        rig.run()
+        self.assertIsNone(self.stub(rig))
+
+    def test_dynamo_query_aliases_pages_gsi1_and_decodes(self):
+        from hfy_render.aws import DynamoTable
+        from boto3.dynamodb.types import TypeSerializer
+
+        ser = TypeSerializer()
+        row = lambda old: {"old_gramps_id": ser.serialize(old), "current_gramps_id": ser.serialize("I0001")}
+        calls = []
+
+        class Client:
+            def query(self, **kw):
+                calls.append(kw)
+                if "ExclusiveStartKey" not in kw:
+                    return {"Items": [row("I9101")], "LastEvaluatedKey": {"PK": ser.serialize("x")}}
+                return {"Items": [row("I9102")]}
+
+        got = [i["old_gramps_id"] for i in DynamoTable(Client(), "t").query_aliases("Person")]
+        self.assertEqual(got, ["I9101", "I9102"])
+        self.assertEqual(calls[0]["IndexName"], "GSI1")
+        self.assertEqual(calls[0]["ExpressionAttributeValues"][":pk"], {"S": "IDALIAS#Person"})
+
 
 class Reconcile(unittest.TestCase):
     def test_a_matching_store_raises_nothing(self):

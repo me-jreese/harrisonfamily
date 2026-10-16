@@ -447,7 +447,8 @@ class Engine:
         The site redirects an old id to the new one from this stub. A stub is written only while the new id is a live person's page
         and the old id is not (a retired id is never reused, but a stub never shadows a real page). When the alias item is gone, or
         the survivor is, the key leaves the desired set and the normal diff removes the file. The aliases come from GSI1, and also
-        from a consistent read for each merge delete in the view, so a pass never misses an alias the index has not caught up with."""
+        from a consistent read for each merge delete in the view, so a pass never misses an alias the index has not caught up with. The same consistent read covers every stub the previous manifest
+        holds, so a renumber alias that the index lags on keeps its stub instead of flapping."""
 
         live = {(o.get("gramps_id") or "").strip() for k, o in objects.items() if k[0] == "Person"}
         aliases: Dict[str, str] = {}
@@ -458,6 +459,24 @@ class Engine:
         merged = [h.gramps_id for h in view.heads.values() if h.cls == "Person" and h.deleted and h.op == "delete" and h.reason == "merge" and h.gramps_id]
         if merged:
             got = self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in merged])
+            for item in got.values():
+                old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
+                if isinstance(old, str) and isinstance(new, str):
+                    aliases[old] = new
+        # GSI1 is eventually consistent: an alias the index has not shown this pass would drop its stub and a later pass would write it
+        # again (the site flaps). So the aliases behind the stubs the last manifest already holds are read back strongly consistent.
+        try:
+            prior, _ = self._load_manifest(self.d.mode)
+        except Exception:  # noqa: BLE001 - an unreadable manifest only costs the extra read
+            prior = {}
+        again = []
+        for key in prior:
+            if key.startswith("person/") and key.endswith(".json"):
+                name = key[len("person/"):-len(".json")]
+                if name not in aliases and ALIAS_ID.match(name):
+                    again.append(name)
+        if again:
+            got = self.d.table.batch_get([(f"IDALIAS#Person#{gid}", "META") for gid in again])
             for item in got.values():
                 old, new = item.get("old_gramps_id"), item.get("current_gramps_id")
                 if isinstance(old, str) and isinstance(new, str):

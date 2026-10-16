@@ -72,7 +72,7 @@
         "css": "be703fb4"
       },
       "person": {
-        "js": "374f2c70",
+        "js": "9e60ae53",
         "css": "92f22fd0"
       },
       "person-links": {

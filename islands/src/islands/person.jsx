@@ -22,9 +22,11 @@ const waitFor = (test) => new Promise((resolve) => {
 });
 
 // A merged-away person's JSON is the stub {mergedInto} (merge-alias-redirect): follow it to the new id. The page's own hook does the same;
-// both go to the same address, so whichever runs first wins. Returns true when this page is leaving.
+// both go to the same address, so whichever runs first wins. Returns true when the island must stop: the page is leaving, or the hop
+// limit is spent (the legacy hook owns that case and shows its error line; the island never renders a stub as a page).
 function followMerged(person, id) {
   const go = mergedRedirect(location.href, person, id);
+  if (go?.limit) return true;
   if (!go?.url) return false;
   location.replace(go.url);
   return true;

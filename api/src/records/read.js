@@ -171,14 +171,19 @@ export const recordGet = async (c) => readOne(store(c), c.actor, c.params.class,
 
 /**
  * An old id that a merge (or an allowed renumber) retired answers {mergedInto: <new id>} (SYNC-10, merge-alias-redirect), the API twin of the
- * `person/<old>.json` stub the renderer writes. The new id must be a live person's, so a withdrawn survivor is never named; anything else is
+ * `person/<old>.json` stub the renderer writes. The new id must be a live person's that this actor may view, so a withdrawn or hidden survivor is never named; anything else is
  * 404 not_found. The body holds the id only.
  */
-async function mergedStub(ctx, oldId) {
+async function mergedStub(ctx, actor, oldId) {
   const alias = await getAlias(ctx, "Person", oldId);
   const target = alias?.current_gramps_id;
   if (typeof target !== "string" || target === oldId || !GID_RE.test(target)) throw notFound();
-  if ((await byGrampsId(ctx, "Person", target)).length === 0) throw notFound();
+  const live = await byGrampsId(ctx, "Person", target);
+  if (live.length !== 1) throw notFound();
+  // The survivor goes through the same view as a direct read, so a moderation-hidden person is not named to someone who could not open them.
+  const head = await get(ctx, "Person", live[0].handle);
+  if (!head) throw notFound();
+  if (!(await viewRecord(ctx, actor, { class: "Person", handle: live[0].handle, gramps_id: target, version: head.version, obj: head.obj }))) throw notFound();
   return json(200, { mergedInto: target }, { vary: "Cookie" });
 }
 
@@ -188,7 +193,7 @@ export async function recordByGrampsId(c) {
   if (!GID_RE.test(gid)) throw notFound();
   const ctx = store(c);
   const hits = await byGrampsId(ctx, "Person", gid);
-  if (hits.length === 0) return mergedStub(ctx, gid);
+  if (hits.length === 0) return mergedStub(ctx, c.actor, gid);
   if (hits.length > 1 && c.actor?.admin !== true) throw notFound(); // no duplicate oracle for members
   if (hits.length > 1) throw new HttpError(409, "ambiguous_gramps_id", "more than one person has this id");
   return readOne(ctx, c.actor, "Person", hits[0].handle);
