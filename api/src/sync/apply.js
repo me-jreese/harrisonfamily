@@ -152,7 +152,10 @@ function txnItemBound(op) {
   if (op.op === "marker") return 1;
   if (op.op === "create") return 3; // head, log, the id claim
   if (op.op === "update") return op.renumber === true && op.class === "Person" ? 5 : 4; // + the old id's write (+ an alias for a Person)
-  if (op.op === "withdraw") return 4; // head, log, the id write, the scheduled expunge (privacy-expunge)
+  // Exact, not a pessimistic bound: head, log, the id write, the scheduled expunge (privacy-expunge). 24 of them with the fixed items and the budget
+  // counter are exactly 100, so any extra item a caller adds (the session check of POST /api/sync/batches) is a 101st; assertTxnSize then throws
+  // txn_too_large, which the route answers as 413 batch_too_large.
+  if (op.op === "withdraw") return 4;
   return op.class === "Person" && op.reason === "merge" ? 4 : 3; // delete: head, log, the id write (+ an alias for a merge)
 }
 

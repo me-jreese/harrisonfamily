@@ -14,7 +14,7 @@ import { storeView } from "../src/records/index.js";
 import { buildSnapshot } from "../src/sync/pull.js";
 import { loadProposal } from "../src/records/proposal-store.js";
 import { newProposal, proposalPuts } from "../src/records/proposals.js";
-import { ExpungeError, HELP, createHubClient, parseArgs, parseChatRef, parsePointer, renderedKeys, run, scrubAt, stepUpFrom } from "../scripts/expunge.mjs";
+import { ExpungeError, HELP, SITE_ENV, createHubClient, createSiteClient, parseArgs, parseChatRef, parsePointer, referenceHistory, renderedKeys, run, scrubAt, stepUpFrom } from "../scripts/expunge.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/expunge.mjs", import.meta.url));
 const T = "hfy-app";
@@ -24,6 +24,8 @@ const h = (n) => n.toString(16).padStart(28, "0");
 const SECRET = "synthetic-secret-phrase";
 const person = (n, extra = {}) => ({ _class: "Person", handle: h(n), gramps_id: `I${String(n).padStart(4, "0")}`, change: 1, private: false, gender: 1, ...extra });
 const note = (n, text = `Synthetic ${n}`) => ({ _class: "Note", handle: h(2000 + n), gramps_id: `N${String(n).padStart(4, "0")}`, change: 1, private: false, format: 0, text: { _class: "StyledText", string: text, tags: [] } });
+const media = (n, extra = {}) => ({ _class: "Media", handle: h(4000 + n), gramps_id: `O${String(n).padStart(4, "0")}`, change: 1, private: false, path: `m${n}.jpg`, mime: "image/jpeg", ...extra });
+const family = (n, extra = {}) => ({ _class: "Family", handle: h(1000 + n), gramps_id: `F${String(n).padStart(4, "0")}`, change: 1, private: false, child_ref_list: [], event_ref_list: [], note_list: [], ...extra });
 const create = (o) => ({ op: "create", class: o._class, handle: o.handle, base_version: null, obj: o });
 const update = (o, base) => ({ op: "update", class: o._class, handle: o.handle, base_version: base, obj: o });
 const withdraw = (o, base) => ({ op: "withdraw", class: o._class, handle: o.handle, base_version: base, reason: "private" });
@@ -227,7 +229,7 @@ describe("a withdraw schedules its expunge", () => {
     await w.batch([del(n, 2)]);
     expect(w.row(`EXPUNGE#Note#${n.handle}`, "META")).toBeUndefined();
   });
-  it("still commits a batch of 24 withdraws in one transaction (4 items each), and refuses a 25th op", async () => {
+  it("still commits a batch of 24 withdraws in one transaction (4 items each) when no session check rides along", async () => {
     const w = world();
     const people = Array.from({ length: 24 }, (_, i) => person(100 + i));
     await w.batch(people.slice(0, 12).map(create));
@@ -528,6 +530,331 @@ describe("a shared versioned bucket that is not versioned", () => {
     await w.go(["--record", `Person:${p.handle}`, "--apply"]);
     expect(w.text()).toMatch(/the site bucket is not versioned/);
     expect(w.s3.keys(SITE)).toEqual([`person/${p.gramps_id}.json`]); // the current copy is the renderer's: render --full rewrites it
+  });
+});
+
+/** A client that behaves like `inner` except that it refuses a delete in the site bucket with an S3 AccessDenied: the data-write guard's deny. */
+function guardedFor(inner, calls = []) {
+  return {
+    send: async (c) => {
+      calls.push([c.constructor.name, c.input.Bucket]);
+      if (c.constructor.name === "DeleteObjectCommand" && c.input.Bucket === SITE) throw Object.assign(new Error("Access Denied"), { name: "AccessDenied", $metadata: { httpStatusCode: 403 } });
+      return inner.send(c);
+    },
+  };
+}
+
+describe("a Media record's photo", () => {
+  /** A withdrawn Media with its photo in the site bucket (two versions of the jpg, an older png, a staging copy) and another Media's files beside it. */
+  async function withdrawnMedia(w) {
+    const m = media(1);
+    const other = media(2);
+    await w.batch([create(m), create(other)]);
+    await w.batch([withdraw(m, 1)]);
+    const own = (ext) => `media/${m.handle}${ext}`;
+    w.s3.seed(SITE, own(".jpg"));
+    w.s3.seed(SITE, own(".jpg"));
+    w.s3.seed(SITE, own(".png"));
+    w.s3.seed(SITE, own(".JPG")); // a legacy upper-case extension
+    w.s3.seed(SITE, `media/.staging/${m.handle}/${"a".repeat(64)}`);
+    w.s3.seed(SITE, own(".json"));
+    w.s3.seed(SITE, own(".json"));
+    w.s3.seed(SITE, "media/index.json");
+    w.s3.seed(SITE, `media/${other.handle}.jpg`);
+    w.s3.seed(SITE, `media/.staging/${other.handle}/${"b".repeat(64)}`);
+    return { m, other, own };
+  }
+
+  it("a dry run counts the file's versions, the older extension and the staging copy, and deletes nothing", async () => {
+    const w = world();
+    const { m } = await withdrawnMedia(w);
+    const before = w.s3snap();
+    await w.go(["--record", `Media:${m.handle}`]);
+    expect(w.s3snap()).toBe(before);
+    expect(w.s3.deleted).toEqual([]);
+    expect(w.text()).toMatch(/5 photo file versions \(the file and its staging copies\)/);
+    expect(w.text()).not.toContain(m.handle);
+  });
+
+  it("--apply deletes every version of media/<handle>.<ext> and of media/.staging/<handle>/, keeps the rendered json's current version and another Media's files", async () => {
+    const w = world();
+    const { m, other, own } = await withdrawnMedia(w);
+    await w.go(["--record", `Media:${m.handle}`, "--apply"]);
+    expect(w.s3.versions(SITE, own(".jpg"))).toEqual([]);
+    expect(w.s3.versions(SITE, own(".png"))).toEqual([]);
+    expect(w.s3.versions(SITE, own(".JPG"))).toEqual([]);
+    expect(w.s3.keys(SITE, `media/.staging/${m.handle}/`)).toEqual([]);
+    // the rendered json is the renderer's: only its noncurrent version goes, as for any rendered key
+    expect(w.s3.versions(SITE, own(".json"))).toHaveLength(1);
+    expect(w.s3.versions(SITE, own(".json"))[0]).toMatchObject({ latest: true });
+    expect(w.s3.versions(SITE, `media/${other.handle}.jpg`)).toHaveLength(1);
+    expect(w.s3.keys(SITE, `media/.staging/${other.handle}/`)).toHaveLength(1);
+    // no delete marker was left where the file was: every delete named its version
+    expect(w.s3.deleted.filter(([b, k]) => b === SITE && k === own(".jpg")).every(([, , v]) => typeof v === "string")).toBe(true);
+    const audit = w.ddb.all().find((r) => r.PK.startsWith("AUDIT#expunge:"));
+    expect(audit.after).toMatchObject({ mode: "record", counts: { media_file_versions: 5 } });
+    expect(JSON.stringify(audit)).not.toContain(m.handle);
+    expect(w.text()).not.toContain(m.handle);
+  });
+
+  it("a rerun after a crash before the file was deleted finishes it (the tombstone no longer names the file; the handle does)", async () => {
+    const w = world();
+    const { m, own } = await withdrawnMedia(w);
+    const ctx = { ...w.ctx, siteS3: { send: async (c) => { if (c.constructor.name === "DeleteObjectCommand" && c.input.Bucket === SITE) throw Object.assign(new Error("boom"), { name: "InternalError" }); return w.s3.send(c); } } };
+    await expect(run(w.args(["--record", `Media:${m.handle}`, "--apply"]), ctx)).rejects.toThrow(/boom/);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD")).toMatchObject({ expunged: true, obj_json: null }); // the table is done
+    expect(w.s3.versions(SITE, own(".jpg"))).toHaveLength(2); // the file is not
+    await w.go(["--record", `Media:${m.handle}`, "--apply"]);
+    expect(w.s3.versions(SITE, own(".jpg"))).toEqual([]);
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
+  });
+
+  it("on a site bucket that is not versioned the file is deleted by key", async () => {
+    const w = world({ versioned: { [SYNC]: true, [SITE]: false } });
+    const { m, own } = await withdrawnMedia(w);
+    await w.go(["--record", `Media:${m.handle}`, "--apply"]);
+    expect(w.s3.keys(SITE, `media/${m.handle}.`)).toEqual([own(".json")]); // the rendered json is the renderer's
+    expect(w.s3.deleted.filter(([b, k]) => b === SITE && k === own(".jpg")).every(([, , v]) => v === undefined)).toBe(true);
+  });
+
+  it("--path on a Media record never removes the file, and a live Media is refused with its file untouched", async () => {
+    const w = world();
+    const m = media(1);
+    await w.batch([create(m)]);
+    w.s3.seed(SITE, `media/${m.handle}.jpg`);
+    await expect(w.go(["--record", `Media:${m.handle}`, "--apply"])).rejects.toThrow(/live: withdraw or delete it first/);
+    await w.go(["--record", `Media:${m.handle}`, "--path", "/path", "--apply"]);
+    expect(w.s3.versions(SITE, `media/${m.handle}.jpg`)).toHaveLength(1);
+    expect(w.text()).not.toMatch(/photo file/);
+  });
+
+  it("--due removes the photo of a withdrawn Media with the rest of its record", async () => {
+    const w = world();
+    const { m, own } = await withdrawnMedia(w);
+    w.clock.advance(EXPUNGE_GRACE_MS + 1000);
+    await w.go(["--due", "--apply"]);
+    expect(w.s3.versions(SITE, own(".jpg"))).toEqual([]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD")).toMatchObject({ expunged: true });
+    expect(w.text()).toMatch(/due: 1 expunged, 0 skipped, 0 failed/);
+  });
+});
+
+describe("the site bucket under the data-write guard", () => {
+  it("a delete the guard refuses stops after the table, names the cause and no key, and the same command with the break-glass session finishes it", async () => {
+    const w = world();
+    const m = media(1);
+    await w.batch([create(m)]);
+    await w.batch([withdraw(m, 1)]);
+    w.s3.seed(SITE, `media/${m.handle}.jpg`);
+    w.s3.seed(SITE, `media/${m.handle}.jpg`);
+    const usual = guardedFor(w.s3);
+    const err = await run(w.args(["--record", `Media:${m.handle}`, "--apply"]), { ...w.ctx, s3: usual }).catch((e) => e);
+    expect(err).toBeInstanceOf(ExpungeError);
+    expect(err.code).toBe("site_denied");
+    expect(err.message).toMatch(/EXPUNGE_SITE_AWS_ACCESS_KEY_ID/);
+    expect(err.message).toMatch(/table is already rewritten/);
+    expect(err.message).not.toContain(m.handle);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD")).toMatchObject({ expunged: true, obj_json: null });
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeDefined(); // the sweep is still owed
+    expect(w.row(`EXPUNGE#Media#${m.handle}`, "META")).toBeDefined(); // and so is the schedule item
+    expect(w.s3.versions(SITE, `media/${m.handle}.jpg`)).toHaveLength(2);
+
+    // the second run: the usual client still refuses site deletes, the break-glass client does them, and no site call goes through the usual one
+    const usualCalls = [];
+    const siteCalls = [];
+    const ctx = { ...w.ctx, s3: guardedFor(w.s3, usualCalls), siteS3: { send: async (c) => (siteCalls.push([c.constructor.name, c.input.Bucket]), w.s3.send(c)) } };
+    await run(w.args(["--record", `Media:${m.handle}`, "--apply"]), ctx);
+    expect(w.s3.versions(SITE, `media/${m.handle}.jpg`)).toEqual([]);
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
+    expect(w.row(`EXPUNGE#Media#${m.handle}`, "META")).toBeUndefined();
+    expect(usualCalls.filter(([, b]) => b === SITE)).toEqual([]);
+    expect(siteCalls.filter(([, b]) => b !== SITE)).toEqual([]);
+    expect(siteCalls.map(([n]) => n)).toEqual(expect.arrayContaining(["GetBucketVersioningCommand", "ListObjectVersionsCommand", "DeleteObjectCommand"]));
+  });
+
+  it("the sync bucket, the proposal photos and --upload keep the usual client: the break-glass role does not reach them", async () => {
+    const w = world();
+    const { p } = await withdrawnTree(w);
+    w.s3.seed(SYNC, `render-shadow/person/${p.gramps_id}.json`);
+    const key = "uploads/posts/01J00000000000000000000ABC/photo.jpg";
+    w.s3.seed(SITE, key);
+    const siteCalls = [];
+    const ctx = { ...w.ctx, siteS3: { send: async (c) => (siteCalls.push([c.constructor.name, c.input.Bucket, c.input.Key ?? c.input.Prefix]), w.s3.send(c)) } };
+    await run(w.args(["--upload", key, "--apply"]), ctx);
+    expect(w.s3.versions(SITE, key)).toEqual([]);
+    expect(siteCalls).toEqual([]);
+    await run(w.args(["--record", `Person:${p.handle}`, "--apply"]), ctx);
+    expect(w.s3.keys(SYNC, "render-shadow/")).toEqual([]);
+    expect(siteCalls.every(([, b, k]) => b === SITE && !String(k).startsWith("uploads/") && !String(k).startsWith("render-shadow/") && !String(k).startsWith("snapshots/"))).toBe(true);
+  });
+
+  it("a --due run whose site deletes are refused fails those records with a content-free line, keeps their schedule items, and the next run finishes them", async () => {
+    const w = world();
+    const ps = [person(1), person(2)];
+    await w.batch(ps.map(create));
+    await w.batch(ps.map((p) => withdraw(p, 1)));
+    for (const p of ps) {
+      w.s3.seed(SITE, `person/${p.gramps_id}.json`);
+      w.s3.seed(SITE, `person/${p.gramps_id}.json`, { marker: true });
+    }
+    w.clock.advance(EXPUNGE_GRACE_MS + 1000);
+    await run(w.args(["--due", "--apply"]), { ...w.ctx, s3: guardedFor(w.s3) });
+    expect(w.text()).toMatch(/due: one Person failed \(ExpungeError site_denied\); its schedule item stays for the next run/);
+    expect(w.text()).toMatch(/due: 0 expunged, 0 skipped, 2 failed/);
+    expect(w.text()).not.toContain(ps[0].handle);
+    expect(w.text()).not.toContain(ps[0].gramps_id);
+    for (const p of ps) expect(w.row(`EXPUNGE#Person#${p.handle}`, "META")).toBeDefined();
+    expect(w.s3.versions(SITE, `person/${ps[0].gramps_id}.json`)).toHaveLength(2);
+    w.lines.length = 0;
+    await run(w.args(["--due", "--apply"]), { ...w.ctx, s3: guardedFor(w.s3), siteS3: w.s3 });
+    expect(w.text()).toMatch(/due: 2 expunged, 0 skipped, 0 failed/);
+    for (const p of ps) {
+      expect(w.row(`EXPUNGE#Person#${p.handle}`, "META")).toBeUndefined();
+      expect(w.s3.versions(SITE, `person/${p.gramps_id}.json`)).toHaveLength(1); // the noncurrent version went, the delete marker stays
+    }
+  });
+
+  it("builds the break-glass client from the three variables only when all three are set, and refuses a partial set", () => {
+    const made = [];
+    const make = (c) => (made.push(c), { client: true });
+    expect(createSiteClient({}, "us-west-2", make)).toBeUndefined();
+    expect(made).toEqual([]);
+    const [a, b, c] = SITE_ENV;
+    expect(() => createSiteClient({ [a]: "x" }, "us-west-2", make)).toThrow(/together, or none/);
+    expect(() => createSiteClient({ [a]: "x", [b]: "y" }, "us-west-2", make)).toThrow(/together, or none/);
+    expect(createSiteClient({ [a]: "id", [b]: "secret", [c]: "session" }, "us-west-2", make)).toEqual({ client: true });
+    expect(made).toEqual([{ region: "us-west-2", credentials: { accessKeyId: "id", secretAccessKey: "secret", sessionToken: "session" } }]);
+    // the names are in the help text, and the values never are
+    for (const k of SITE_ENV) expect(HELP).toContain(k);
+    try {
+      createSiteClient({ [a]: "id", [b]: "secret-value-1" }, "us-west-2", make);
+    } catch (e) {
+      expect(e.message).not.toContain("secret-value-1");
+    }
+  });
+});
+
+describe("pages that embedded the record in an earlier version", () => {
+  /** A Note on a Person's page, then the reference cleaned off and the Note deleted (the admin delete with remove_references). */
+  async function cleanedNote(w) {
+    const n = note(1, `has ${SECRET}`);
+    const p = person(1, { note_list: [n.handle] });
+    await w.batch([create(n), create(p)]);
+    await w.batch([update({ ...p, note_list: [] }, 1)]);
+    await w.batch([del(n, 1)]);
+    return { n, p };
+  }
+  const storeCtx = (w) => ({ ddb: w.ddb, cmds, table: T, now: w.ctx.now });
+
+  it("the live graph alone misses the Person page of a Note whose reference was cleaned away; the reference history finds it", async () => {
+    const w = world();
+    const { n, p } = await cleanedNote(w);
+    const view = await storeView(storeCtx(w));
+    const target = { class: "Note", handle: n.handle, gramps_id: n.gramps_id };
+    expect(renderedKeys(view, target)).toEqual([`note/${n.handle}.json`]);
+    const history = await referenceHistory(storeCtx(w));
+    expect(renderedKeys(view, target, history)).toEqual([`note/${n.handle}.json`, `person/${p.gramps_id}.json`, "person/index.json", "person/search-index.json"]);
+  });
+
+  it("a Person delete with its family cleaned still reaches the family page and the spouse's page, a deleted family's page included", async () => {
+    const w = world();
+    const dad = person(1, { family_list: [h(1001)] });
+    const mum = person(2, { family_list: [h(1001)] });
+    const fam = family(1, { father_handle: dad.handle, mother_handle: mum.handle });
+    await w.batch([create(dad), create(mum), create(fam)]);
+    await w.batch([update({ ...fam, father_handle: null }, 1), update({ ...dad, family_list: [] }, 1)]);
+    await w.batch([del(dad, 2)]);
+    const view = await storeView(storeCtx(w));
+    const target = { class: "Person", handle: dad.handle, gramps_id: dad.gramps_id };
+    expect(renderedKeys(view, target)).toEqual(["person/I0001.json", "person/index.json", "person/search-index.json"]);
+    const keys = renderedKeys(view, target, await referenceHistory(storeCtx(w)));
+    expect(keys).toEqual(expect.arrayContaining([`family/${fam.handle}.json`, "person/I0002.json", "person/I0001.json"]));
+    // and when the family is deleted too, its file still keeps noncurrent versions
+    await w.batch([del(fam, 2)]);
+    const view2 = await storeView(storeCtx(w));
+    expect(renderedKeys(view2, target, await referenceHistory(storeCtx(w)))).toEqual(expect.arrayContaining([`family/${fam.handle}.json`, "person/I0002.json"]));
+  });
+
+  it("a record expunge deletes the noncurrent versions of that Person page in a versioned site bucket", async () => {
+    const w = world();
+    const { n, p } = await cleanedNote(w);
+    const page = `person/${p.gramps_id}.json`;
+    w.s3.seed(SITE, page); // an older render that embedded the note
+    w.s3.seed(SITE, page); // the current render, without it
+    w.s3.seed(SITE, `note/${n.handle}.json`);
+    w.s3.seed(SITE, `note/${n.handle}.json`, { marker: true });
+    w.s3.seed(SITE, "person/I0002.json");
+    w.s3.seed(SITE, "person/I0002.json");
+    await w.go(["--record", `Note:${n.handle}`, "--apply"]);
+    expect(w.s3.versions(SITE, page)).toHaveLength(1);
+    expect(w.s3.versions(SITE, page)[0]).toMatchObject({ latest: true });
+    expect(w.s3.versions(SITE, `note/${n.handle}.json`)).toHaveLength(1);
+    expect(w.s3.versions(SITE, "person/I0002.json")).toHaveLength(2); // an unrelated page keeps its versions
+    expect(w.text()).not.toContain(p.gramps_id);
+  });
+
+  it("the log is read once for a whole --due run, and a record nulled earlier in the run still counts for the next", async () => {
+    const w = world();
+    const n = note(1, `a ${SECRET}`);
+    const m = note(2, `b ${SECRET}`);
+    const p = person(1, { note_list: [n.handle, m.handle] });
+    await w.batch([create(n), create(m), create(p)]);
+    await w.batch([update({ ...p, note_list: [] }, 1)]);
+    await w.batch([withdraw(n, 1), withdraw(m, 1)]);
+    const page = `person/${p.gramps_id}.json`;
+    w.s3.seed(SITE, page);
+    w.s3.seed(SITE, page);
+    let logReads = 0;
+    const real = w.ddb.send.bind(w.ddb);
+    const ctx = { ...w.ctx, ddb: { send: async (c) => { if (c.constructor.name === "QueryCommand" && c.input.KeyConditionExpression === "PK = :pk" && c.input.ExpressionAttributeValues[":pk"] === "SYNC#LOG") logReads += 1; return real(c); } } };
+    w.clock.advance(EXPUNGE_GRACE_MS + 1000);
+    await run(w.args(["--due", "--apply"]), ctx);
+    expect(logReads).toBe(1);
+    expect(w.s3.versions(SITE, page)).toHaveLength(1);
+  });
+});
+
+describe("a --path expunge on a versioned site bucket: the render, then --sweep", () => {
+  async function scrubbed(w) {
+    const n = note(1, `first ${SECRET}`);
+    await w.batch([create(n)]);
+    await w.batch([update({ ...n, text: { ...n.text, string: `second ${SECRET}` } }, 1)]);
+    const file = `note/${n.handle}.json`;
+    w.s3.seed(SITE, file); // the live file still holds the value
+    await w.go(["--record", `Note:${n.handle}`, "--path", "/text/string", "--replacement", "[removed]", "--apply"]);
+    return { n, file };
+  }
+
+  it("the render turns the live file into a noncurrent version; a rerun is refused as a typo, and --sweep removes the copy", async () => {
+    const w = world();
+    const { n, file } = await scrubbed(w);
+    expect(w.s3.versions(SITE, file)).toHaveLength(1); // the apply cannot touch the current version
+    w.s3.seed(SITE, file); // sync-admin render --full writes the scrubbed file: the old one is noncurrent now
+    expect(w.s3.versions(SITE, file)).toHaveLength(2);
+    await expect(w.go(["--record", `Note:${n.handle}`, "--path", "/text/string", "--replacement", "[removed]", "--apply"])).rejects.toThrow(/path was not found.*--sweep/);
+    expect(w.s3.versions(SITE, file)).toHaveLength(2);
+
+    const epoch = w.row("SYNC#HEAD", "META").expunge_epoch;
+    const tableBefore = w.snapshot();
+    w.lines.length = 0;
+    await w.go(["--record", `Note:${n.handle}`, "--path", "/text/string", "--replacement", "[removed]", "--sweep"]); // dry run, the same line plus --sweep
+    expect(w.text()).toMatch(/0 log entries, 0 heads, 0 conflicts.*1 noncurrent site version.*nothing left to rewrite/);
+    expect(w.s3.versions(SITE, file)).toHaveLength(2);
+    expect(w.snapshot()).toBe(tableBefore);
+    await w.go(["--record", `Note:${n.handle}`, "--path", "/text/string", "--replacement", "[removed]", "--sweep", "--apply"]);
+    expect(w.s3.versions(SITE, file)).toHaveLength(1);
+    expect(w.s3.versions(SITE, file)[0]).toMatchObject({ latest: true });
+    expect(w.row("SYNC#HEAD", "META").expunge_epoch).toBe(epoch); // the table was not rewritten again
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
+  });
+
+  it("--sweep only goes with --record and --path", () => {
+    const w = world();
+    expect(() => w.args(["--record", `Note:${h(2001)}`, "--sweep"])).toThrow(/--sweep only applies to --record with --path/);
+    expect(() => w.args(["--due", "--sweep"])).toThrow(/--sweep only applies/);
+    expect(() => w.args(["--upload", "uploads/posts/01J00000000000000000000ABC/photo.jpg", "--sweep"])).toThrow(/--sweep only applies/);
+    expect(w.args(["--record", `Note:${h(2001)}`, "--path", "/text/string", "--sweep"]).sweep).toBe(true);
+    expect(HELP).toMatch(/--sweep/);
   });
 });
 

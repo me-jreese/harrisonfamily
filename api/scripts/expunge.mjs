@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Remove something from every cloud copy (HFY-TSK-204, privacy-expunge; BRD2 D2-33, review PS-05 and SI-18, runbook 19.11).
 //
-//   node scripts/expunge.mjs --record <Class>:<handle> [--path <pointer> [--replacement <text>]] [--apply]
+//   node scripts/expunge.mjs --record <Class>:<handle> [--path <pointer> [--replacement <text>] [--sweep]] [--apply]
 //   node scripts/expunge.mjs --proposal <ulid> [--apply]
 //   node scripts/expunge.mjs --chat <conv>:<seq> [--apply]
 //   node scripts/expunge.mjs --upload <key> [--apply]
@@ -17,17 +17,33 @@
 //                             withdraw it first). (a) every SYNC#LOG entry of the handle (found through GSI1 RECHIST# and the head's seq) and the
 //                             head get obj_json null and expunged true; hash and seq stay. (b) every snapshot (snapshots/) and all its noncurrent
 //                             versions are deleted and the snapshot is rebuilt. (c) the render-shadow copies of the record's rendered files, of the
-//                             pages that embed it and of the index files are deleted with their versions, and, when the site bucket is versioned,
-//                             the noncurrent versions of those keys there. One process, one set of credentials: io's usual administrator credentials (they reach the table, the
-//                             sync bucket and the site bucket; hfy-data-breakglass reaches only the site data prefixes). The open and decided sync
-//                             conflicts of the handle lose their values. SYNC#HEAD.expunge_epoch rises by one in the same transaction as the head
-//                             rewrite, which is what makes every reader (the store view, the snapshot cache) drop what it held.
+//                             pages that embedded it (now or in any stored version of them: a delete that cleaned a reference away does not hide
+//                             the page) and of the index files are deleted with their versions, and, when the site bucket is versioned, the
+//                             noncurrent versions of those keys there. (d) a Media record's photo: every version of media/<handle>.<ext> and of
+//                             media/.staging/<handle>/* (the renderer never writes or deletes a binary, and the tombstone no longer names the
+//                             file, so the keys come from the handle).
+//                             The open and decided sync conflicts of the handle lose their values. SYNC#HEAD.expunge_epoch rises by one in the same
+//                             transaction as the head rewrite, which is what makes every reader (the store view, the snapshot cache) drop what it held.
+//                             CREDENTIALS. One process reaches the table and the sync bucket with io's usual administrator credentials. The
+//                             data-write guard (scripts/infra/apply-data-write-guard.sh), once applied, denies s3:PutObject, s3:DeleteObject and
+//                             s3:DeleteObjectVersion on the rendered data prefixes, and s3:DeleteObject and s3:DeleteObjectVersion on media/* (binaries
+//                             included), to every principal but the renderers and hfy-data-breakglass. Those administrator credentials then cannot
+//                             delete a site-bucket version or a photo. hfy-data-breakglass can, but reaches neither the table nor the sync bucket, so
+//                             the site-bucket calls of this run use a second set of credentials, the break-glass session, from the environment
+//                             variables EXPUNGE_SITE_AWS_ACCESS_KEY_ID, EXPUNGE_SITE_AWS_SECRET_ACCESS_KEY and EXPUNGE_SITE_AWS_SESSION_TOKEN (all
+//                             three or none; never arguments). Without them every call uses the one set, which is right while the guard is off.
+//                             A delete the guard refuses stops the run after the table is rewritten, names the cause, and the same command, run
+//                             again with the session set, finishes it.
 // --record ... --path <ptr>   one value of a live or tombstoned record, as an RFC 6901 pointer into the object (for example /text/string). In
 //                             every log entry and in the head, a string becomes --replacement (default the empty string) and any other
 //                             object member is removed; an array element that is not a string is refused. This rewrites append-only
 //                             history: an audited exception (SI-18). Hashes are recomputed, version and seq do not move, so the changed
 //                             hash at an unchanged version is the expunge notice the desktop add-on acts on. The identity members
-//                             (handle, _class, gramps_id) are refused. Steps (b) and (c) follow.
+//                             (handle, _class, gramps_id) are refused. Steps (b) and (c) follow; a Media photo (d) is not touched (only the
+//                             whole record removes the file). The live site files still hold the old value until sync-admin render --full has
+//                             rewritten them, and on a versioned site bucket the render turns each of them into a noncurrent version that
+//                             still holds it. Run the same line again after the render with --sweep: a path that is no longer found is then
+//                             expected, not a typo, and (b) and (c) delete the copies the render left.
 // --proposal <ulid>           PROP#<ulid> META and every IDX# copy lose the proposal document and their index keys (they stay as an expunged stub),
 //                             the proposal thread's comments and reactions are deleted, the audit rows of those comments lose before and after,
 //                             and the comments' photos are deleted from the site bucket with every version. The AUDIT#proposal:<ulid> rows
@@ -52,6 +68,7 @@ import { assertTxnSize, auditItem } from "../src/txn.js";
 import { CLASSES, EXPUNGE_QUEUE, expungeKey, headKey, logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
 import { HANDLE_SHAPE } from "../src/records/ops.js";
 import { rebuildStoreView, storeView } from "../src/records/index.js";
+import { collectRefs } from "../src/records/semantics.js";
 import { SNAPSHOT_PREFIX, writeSnapshot } from "../src/sync/pull.js";
 import { createSyncAuthenticator, requireOwner, requireStepUp } from "../src/sync/auth.js";
 
@@ -129,17 +146,24 @@ async function transactAll(ctx, items, guard) {
 }
 
 // ---- S3 -----------------------------------------------------------------------------------------------------------------
-async function bucketVersioned(ctx, bucket) {
-  const r = await ctx.s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
+/**
+ * The client for the rendered data prefixes of the site bucket (the record steps): the break-glass session when the run was given one, else the
+ * run's only client. The data-write guard denies deletes there to every other principal, io's administrator credentials included. Everything else
+ * (the sync bucket, uploads/) uses `ctx.s3`: hfy-data-breakglass does not reach it.
+ */
+const siteClient = (ctx) => ctx.siteS3 ?? ctx.s3;
+
+async function bucketVersioned(ctx, bucket, s3 = ctx.s3) {
+  const r = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
   return r?.Status === "Enabled" || r?.Status === "Suspended";
 }
 
 /** Every version and delete marker whose key starts with `prefix`: [{ key, versionId, latest, marker }]. */
-async function listVersions(ctx, bucket, prefix) {
+async function listVersions(ctx, bucket, prefix, s3 = ctx.s3) {
   const out = [];
   let marker;
   for (let i = 0; i < 1000; i += 1) {
-    const r = await ctx.s3.send(new ListObjectVersionsCommand({ Bucket: bucket, Prefix: prefix, ...(marker ? { KeyMarker: marker.key, VersionIdMarker: marker.version } : {}) }));
+    const r = await s3.send(new ListObjectVersionsCommand({ Bucket: bucket, Prefix: prefix, ...(marker ? { KeyMarker: marker.key, VersionIdMarker: marker.version } : {}) }));
     for (const v of r.Versions ?? []) out.push({ key: v.Key, versionId: v.VersionId, latest: v.IsLatest === true, marker: false });
     for (const v of r.DeleteMarkers ?? []) out.push({ key: v.Key, versionId: v.VersionId, latest: v.IsLatest === true, marker: true });
     if (r.IsTruncated !== true) return out;
@@ -149,12 +173,43 @@ async function listVersions(ctx, bucket, prefix) {
 }
 
 /** Deletes the listed versions for good (a VersionId is named whenever the bucket is versioned, so no delete marker is left behind). */
-async function deleteVersions(ctx, bucket, list, versioned) {
-  for (const v of list) await ctx.s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: v.key, ...(versioned && v.versionId ? { VersionId: v.versionId } : {}) }));
+async function deleteVersions(ctx, bucket, list, versioned, s3 = ctx.s3) {
+  for (const v of list) await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: v.key, ...(versioned && v.versionId ? { VersionId: v.versionId } : {}) }));
 }
 
 /** The versions of exactly `key` (a prefix listing also returns longer keys). */
-const exactVersions = async (ctx, bucket, key) => (await listVersions(ctx, bucket, key)).filter((v) => v.key === key);
+const exactVersions = async (ctx, bucket, key, s3 = ctx.s3) => (await listVersions(ctx, bucket, key, s3)).filter((v) => v.key === key);
+
+/** S3 refused the call for lack of permission (an explicit bucket-policy deny answers 403 AccessDenied). */
+const isDenied = (e) => e?.name === "AccessDenied" || e?.$metadata?.httpStatusCode === 403;
+
+/**
+ * Deletes site-bucket versions of the rendered data prefixes with the site client. A refusal is not a bug to retry blindly: the data-write guard
+ * denies those deletes to every principal but the renderers and hfy-data-breakglass. The table side of the run is already done and is not undone;
+ * the same command, run again with the break-glass session in EXPUNGE_SITE_AWS_*, finishes the job. The message names no key.
+ */
+async function deleteSiteVersions(ctx, list, versioned) {
+  try {
+    await deleteVersions(ctx, ctx.siteBucket, list, versioned, siteClient(ctx));
+  } catch (e) {
+    if (!isDenied(e)) throw e;
+    throw new ExpungeError(
+      `the site bucket refused a delete: the data-write guard denies s3:DeleteObject and s3:DeleteObjectVersion on the data prefixes and media/ to every role except the renderers and hfy-data-breakglass. The table is already rewritten; set ${SITE_ENV.join(", ")} from a break-glass session and run the same command again`,
+      "site_denied",
+    );
+  }
+}
+
+/** The environment variables that carry the break-glass session for the site bucket (all three or none). */
+export const SITE_ENV = Object.freeze(["EXPUNGE_SITE_AWS_ACCESS_KEY_ID", "EXPUNGE_SITE_AWS_SECRET_ACCESS_KEY", "EXPUNGE_SITE_AWS_SESSION_TOKEN"]);
+
+/** The S3 client of the break-glass session from `env`, or undefined when none is set. `make` builds a client from `{ region, credentials }`. */
+export function createSiteClient(env, region, make) {
+  const [accessKeyId, secretAccessKey, sessionToken] = SITE_ENV.map((k) => env[k]);
+  if (!accessKeyId && !secretAccessKey && !sessionToken) return undefined;
+  if (!accessKeyId || !secretAccessKey || !sessionToken) throw new ExpungeError(`set ${SITE_ENV.join(", ")} together, or none of them`);
+  return make({ region, credentials: { accessKeyId, secretAccessKey, sessionToken } });
+}
 
 // ---- audit ----------------------------------------------------------------------------------------------------------------
 /** The AUDIT#expunge:<id> item of a run. It holds the mode and counts only. */
@@ -219,8 +274,13 @@ const fileOf = (h) => {
 /**
  * The site keys that can carry `cls:handle`: its own file, the index files of its class, and the file of every object that references it,
  * transitively until a Person is reached (a Person page is terminal, as in the renderer). `target` is the head item or view entry of the record.
+ *
+ * `view.refs` holds only the references that are live now. A delete that cleaned a reference away (a Note taken off its Person, a Person taken
+ * off its Family) leaves the pages that embedded the record out of that graph, while their earlier versions in a versioned site bucket still hold
+ * it. `history` (target key -> Set of source keys, from referenceHistory) adds every reference any stored version ever had; a source that is
+ * deleted now is listed too, because its file keeps noncurrent versions.
  */
-export function renderedKeys(view, target) {
+export function renderedKeys(view, target, history) {
   const keys = new Set();
   const add = (h) => {
     const f = fileOf(h);
@@ -232,16 +292,54 @@ export function renderedKeys(view, target) {
   const queue = [`${target.class}:${target.handle}`];
   while (queue.length > 0) {
     const t = queue.shift();
-    for (const src of view.refs.get(t) ?? []) {
+    for (const src of new Set([...(view.refs.get(t) ?? []), ...(history?.get(t) ?? [])])) {
       if (seen.has(src)) continue;
       seen.add(src);
       const h = view.heads.get(src);
-      if (!h || h.deleted) continue;
+      if (!h || (h.deleted && !history?.get(t)?.has(src))) continue;
       add(h);
       if (h.class !== "Person") queue.push(src);
     }
   }
   return [...keys].sort();
+}
+
+/**
+ * Every reference that any stored version of any record ever held: target key ("Class:handle") -> Set of source keys. One read of SYNC#LOG, parsing
+ * every entry that still holds an object (an expunged one holds none). It is read once per run, before anything is rewritten, so a --due run that
+ * expunges several records still sees the references of the ones it already nulled.
+ */
+export async function referenceHistory(ctx) {
+  const refs = new Map();
+  let key;
+  for (let i = 0; i < 100000; i += 1) {
+    const r = await ctx.ddb.send(new ctx.cmds.QueryCommand({
+      TableName: ctx.table, KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": logKey(1).PK }, ConsistentRead: true, ...(key ? { ExclusiveStartKey: key } : {}),
+    }));
+    for (const e of r.Items ?? []) {
+      if (typeof e.obj_json !== "string" || e.expunged === true || !e.class || !e.handle) continue;
+      let obj;
+      try {
+        obj = JSON.parse(e.obj_json);
+      } catch {
+        continue; // not an object we can read: it holds nothing to follow
+      }
+      const src = `${e.class}:${e.handle}`;
+      for (const t of collectRefs(obj)) {
+        const k = `${t.cls}:${t.handle}`;
+        if (k !== src) (refs.get(k) ?? refs.set(k, new Set()).get(k)).add(src);
+      }
+    }
+    key = r.LastEvaluatedKey;
+    if (!key) return refs;
+  }
+  throw new ExpungeError("a log listing did not end; stopping");
+}
+
+/** `referenceHistory`, read once per run when the run carries a memo (`run` adds one), else read now. */
+function historyFor(ctx) {
+  if (!ctx.memo) return referenceHistory(ctx);
+  return (ctx.memo.history ??= referenceHistory(ctx));
 }
 
 // ---- record mode ------------------------------------------------------------------------------------------------------------
@@ -291,15 +389,33 @@ async function snapshotCopies(ctx) {
   return { sync, syncVersioned: await bucketVersioned(ctx, sync), snapshots: await listVersions(ctx, sync, SNAPSHOT_PREFIX) };
 }
 
-/** Steps (b) and (c) shared by every record run: what the snapshots and rendered copies hold. `snapshots` false leaves the snapshots to the caller. */
-async function copiesOf(ctx, keys, { snapshots: withSnapshots = true } = {}) {
+/**
+ * A Media record's photo: every version of media/<handle>.<ext> (a binary, never the rendered media/<handle>.json) and of the staging copies under
+ * media/.staging/<handle>/. The renderer never writes or deletes either (sync-render.md), so nothing else would. `handle` is already shaped like a
+ * Gramps handle (hex), so it is safe in a pattern.
+ */
+async function mediaPhotoVersions(ctx, handle) {
+  const s3 = siteClient(ctx);
+  const binary = new RegExp(`^media/${handle}\\.(?!json$)[^/]+$`, "i"); // any extension but the rendered json, an older or upper-case one included
+  const own = (await listVersions(ctx, ctx.siteBucket, `media/${handle}.`, s3)).filter((v) => binary.test(v.key));
+  const staged = (await listVersions(ctx, ctx.siteBucket, `media/.staging/${handle}/`, s3)).filter((v) => v.key.startsWith(`media/.staging/${handle}/`));
+  return [...own, ...staged];
+}
+
+/**
+ * Steps (b), (c) and (d) shared by every record run: what the snapshots, the rendered copies and a Media photo hold. `snapshots` false leaves the
+ * snapshots to the caller. `photoOf` is the handle of a Media record that is being removed whole (its photo goes too), else undefined.
+ */
+async function copiesOf(ctx, keys, { snapshots: withSnapshots = true, photoOf } = {}) {
   const { sync, syncVersioned, snapshots } = withSnapshots ? await snapshotCopies(ctx) : { sync: ctx.syncBucket, syncVersioned: await bucketVersioned(ctx, ctx.syncBucket), snapshots: [] };
   const shadow = [];
   for (const k of keys) shadow.push(...(await exactVersions(ctx, sync, `render-shadow/${k}`)));
-  const siteVersioned = await bucketVersioned(ctx, ctx.siteBucket);
+  const s3 = siteClient(ctx);
+  const siteVersioned = await bucketVersioned(ctx, ctx.siteBucket, s3);
   const site = [];
-  if (siteVersioned) for (const k of keys) site.push(...(await exactVersions(ctx, ctx.siteBucket, k)).filter((v) => !v.latest));
-  return { sync, syncVersioned, snapshots, shadow, siteVersioned, site };
+  if (siteVersioned) for (const k of keys) site.push(...(await exactVersions(ctx, ctx.siteBucket, k, s3)).filter((v) => !v.latest));
+  const photo = photoOf ? await mediaPhotoVersions(ctx, photoOf) : [];
+  return { sync, syncVersioned, snapshots, shadow, siteVersioned, site, photo };
 }
 
 /** Deletes the snapshot versions and rebuilds the snapshot from a fresh view; then removes anything a racing writer left behind. */
@@ -325,7 +441,8 @@ async function finishSweep(ctx, scheduleKeys) {
 }
 
 /**
- * One record. `path` undefined: the whole record (tombstones only). `due` is the EXPUNGE# item when a --due run called this.
+ * One record. `path` undefined: the whole record (tombstones only). `sweep` (with `path`): this run follows sync-admin render, so a path that is no
+ * longer found is expected and only the copies outside the table are removed. `due` is the EXPUNGE# item when a --due run called this.
  * Returns { counts, skipped?, schedule? } (`schedule` is the key of the EXPUNGE# item a deferred run still owes a delete, after its sweep).
  * A transaction that a resurrect or an edit cancelled is retried once from a fresh read (what was nulled before it stays nulled).
  */
@@ -341,7 +458,7 @@ export async function expungeRecord(ctx, opts) {
   }
 }
 
-async function expungeRecordOnce(ctx, { cls, handle, path, replacement = "", apply = false, who, due, deferSnapshot = false }) {
+async function expungeRecordOnce(ctx, { cls, handle, path, replacement = "", apply = false, who, due, deferSnapshot = false, sweep = false }) {
   const { log } = ctx;
   if (!CLASSES.includes(cls)) throw new ExpungeError(`unknown class ${String(cls).slice(0, 32)}`, "unknown_class");
   if (typeof handle !== "string" || !HANDLE_SHAPE.test(handle)) throw new ExpungeError("the handle is not shaped like a Gramps handle", "handle_shape");
@@ -382,19 +499,22 @@ async function expungeRecordOnce(ctx, { cls, handle, path, replacement = "", app
     const next = scrub(head);
     if (next !== null && next !== head.obj_json) headItem = rewriteUpdate(ctx, recKey(cls, handle), next, head.hash ?? sha256(head.obj_json));
     // A rerun after a crash finds the value already gone; when a sweep is owed it finishes that instead of refusing (a typo still is refused).
-    if (logItems.length === 0 && !headItem && !sweepOwed) throw new ExpungeError("the path was not found in any copy of that record (or already holds the replacement)", "path_not_found");
+    if (logItems.length === 0 && !headItem && !sweepOwed && !sweep) throw new ExpungeError("the path was not found in any copy of that record (or already holds the replacement); after a render, add --sweep to remove the copies it left", "path_not_found");
   }
   const conflicts = await handleConflicts(ctx, cls, handle);
   const rewrites = logItems.length + (headItem ? 1 : 0) + conflicts.length;
   const view = await storeView({ ddb: ctx.ddb, cmds: ctx.cmds, table: ctx.table, now: ctx.now });
-  const keys = renderedKeys(view, { class: cls, handle, gramps_id: head.gramps_id });
-  const copies = await copiesOf(ctx, keys, { snapshots: !deferSnapshot });
+  const keys = renderedKeys(view, { class: cls, handle, gramps_id: head.gramps_id }, await historyFor(ctx));
+  // A Media photo goes with a whole-record expunge only (the record is a tombstone here); --path never removes the file.
+  const photoOf = tokens === undefined && cls === "Media" ? handle : undefined;
+  const copies = await copiesOf(ctx, keys, { snapshots: !deferSnapshot, photoOf });
   const scheduleKey = (await get(ctx, expungeKey(cls, handle))) ? expungeKey(cls, handle) : undefined;
   const counts = {
     log_entries: logItems.length, head: headItem ? 1 : 0, conflicts: conflicts.length, snapshot_versions: copies.snapshots.length, shadow_versions: copies.shadow.length,
     site_noncurrent_versions: copies.site.length, rendered_keys: keys.length, schedule_items: scheduleKey ? 1 : 0,
+    ...(photoOf ? { media_file_versions: copies.photo.length } : {}),
   };
-  log(`record ${cls}${path ? " (one value)" : ""}: ${plural(counts.log_entries, "log entry", "log entries")}, ${plural(counts.head, "head")}, ${plural(counts.conflicts, "conflict")}, ${plural(counts.snapshot_versions, "snapshot version")}, ${plural(counts.shadow_versions, "shadow version")}, ${plural(counts.site_noncurrent_versions, "noncurrent site version")} over ${plural(keys.length, "rendered key")}${copies.siteVersioned ? "" : " (the site bucket is not versioned)"}${rewrites === 0 ? "; nothing left to rewrite, only the copies outside the table" : ""}`);
+  log(`record ${cls}${path ? " (one value)" : ""}: ${plural(counts.log_entries, "log entry", "log entries")}, ${plural(counts.head, "head")}, ${plural(counts.conflicts, "conflict")}, ${plural(counts.snapshot_versions, "snapshot version")}, ${plural(counts.shadow_versions, "shadow version")}, ${plural(counts.site_noncurrent_versions, "noncurrent site version")} over ${plural(keys.length, "rendered key")}${copies.siteVersioned ? "" : " (the site bucket is not versioned)"}${photoOf ? `; ${plural(counts.media_file_versions, "photo file version")} (the file and its staging copies)` : ""}${rewrites === 0 ? "; nothing left to rewrite, only the copies outside the table" : ""}`);
   if (!apply) return { counts };
 
   const at = iso(ctx);
@@ -422,7 +542,7 @@ async function expungeRecordOnce(ctx, { cls, handle, path, replacement = "", app
   }
   // The copies outside the table. The shadow and the site bucket first, then the snapshot is rebuilt from the table as it now is.
   await deleteVersions(ctx, copies.sync, copies.shadow, copies.syncVersioned);
-  await deleteVersions(ctx, ctx.siteBucket, copies.site, copies.siteVersioned);
+  await deleteSiteVersions(ctx, [...copies.site, ...copies.photo], copies.siteVersioned);
   if (deferSnapshot) return { counts, schedule: scheduleKey };
   const stray = await resnapshot(ctx, copies);
   await finishSweep(ctx, scheduleKey ? [scheduleKey] : []);
@@ -637,7 +757,7 @@ export async function stepUpFrom(authenticate, token, nowMs = Date.now()) {
 export const HELP = `expunge.mjs: remove a record value, proposal, chat message or upload from every cloud copy.
 
 Usage:
-  node scripts/expunge.mjs --record <Class>:<handle> [--path <pointer> [--replacement <text>]] [--apply]
+  node scripts/expunge.mjs --record <Class>:<handle> [--path <pointer> [--replacement <text>] [--sweep]] [--apply]
   node scripts/expunge.mjs --proposal <ulid> [--apply]
   node scripts/expunge.mjs --chat <conv>:<seq> [--apply]
   node scripts/expunge.mjs --upload <key> [--apply]
@@ -648,6 +768,11 @@ Dry run by default: without --apply nothing is written. -h/--help prints this.
 --apply NEEDS IO'S STEP-UP: EXPUNGE_ACCESS_TOKEN holds the sync access token of the tree owner's fresh sign-in (mfa, auth_time within
 300 s). A chat expunge also needs CHAT_HUB_ADMIN_URL and CHAT_HUB_ADMIN_TOKEN. Run the dry run first and read the counts. Each --apply writes
 AUDIT#expunge:<id> with counts only. See docs/how-to/operate-the-sync-store.md (remove something from the cloud).
+
+--record on the rendered data prefixes of the site bucket: once the data-write guard is applied, the administrator credentials cannot delete
+versions there or a Media photo. Hand the site-bucket calls a break-glass session (hfy-data-breakglass) in EXPUNGE_SITE_AWS_ACCESS_KEY_ID,
+EXPUNGE_SITE_AWS_SECRET_ACCESS_KEY and EXPUNGE_SITE_AWS_SESSION_TOKEN (all three or none); the table and the sync bucket keep the usual credentials.
+--sweep (with --path) runs the copies steps again after sync-admin render --full, when a path that is no longer found is expected.
 `;
 
 export function parseArgs(argv, env = process.env) {
@@ -682,6 +807,7 @@ export function parseArgs(argv, env = process.env) {
       out.due = true;
     }
     else if (a === "--now") out.now = true;
+    else if (a === "--sweep") out.sweep = true;
     else if (a === "--path") out.path = value(a, i++);
     else if (a === "--replacement") out.replacement = value(a, i++);
     else if (a === "--table") out.table = value(a, i++);
@@ -697,6 +823,7 @@ export function parseArgs(argv, env = process.env) {
   if (out.path !== undefined && out.mode !== "record") throw new ExpungeError("--path only applies to --record");
   if (out.replacement !== undefined && out.path === undefined) throw new ExpungeError("--replacement only applies with --path");
   if (out.now && out.mode !== "due") throw new ExpungeError("--now only applies to --due");
+  if (out.sweep && (out.mode !== "record" || out.path === undefined)) throw new ExpungeError("--sweep only applies to --record with --path (a whole-record run can simply be run again)");
   if (out.mode === "record") {
     const i = out.record.indexOf(":");
     const cls = i > 0 ? out.record.slice(0, i) : "";
@@ -723,11 +850,12 @@ export async function run(args, ctx) {
     if (typeof ctx.stepUp !== "function") throw new ExpungeError("--apply needs io's step-up and none is configured");
     who = await ctx.stepUp();
   } else ctx.log("dry run: nothing is written, deleted or sent");
-  const c = { ...ctx, uid: ctx.uid ?? randomUUID, syncBucket: args.syncBucket ?? ctx.syncBucket, siteBucket: args.siteBucket ?? ctx.siteBucket };
+  // `memo` holds what one run reads once however many records it expunges (the reference history).
+  const c = { ...ctx, uid: ctx.uid ?? randomUUID, syncBucket: args.syncBucket ?? ctx.syncBucket, siteBucket: args.siteBucket ?? ctx.siteBucket, memo: {} };
   const apply = args.apply === true;
   switch (args.mode) {
     case "record":
-      return expungeRecord(c, { cls: args.cls, handle: args.handle, path: args.path, replacement: args.replacement ?? "", apply, who });
+      return expungeRecord(c, { cls: args.cls, handle: args.handle, path: args.path, replacement: args.replacement ?? "", apply, who, sweep: args.sweep === true });
     case "proposal":
       return expungeProposal(c, { id: args.proposal, apply, who });
     case "chat":
@@ -754,7 +882,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const ddb = lib.DynamoDBDocumentClient.from(new DynamoDBClient({ region: args.region }), { marshallOptions: { removeUndefinedValues: true } });
       const cmds = { GetCommand: lib.GetCommand, PutCommand: lib.PutCommand, DeleteCommand: lib.DeleteCommand, QueryCommand: lib.QueryCommand, ScanCommand: lib.ScanCommand, TransactWriteCommand: lib.TransactWriteCommand };
       const s3 = new S3Client({ region: args.region });
-      const ctx = { ddb, cmds, table: args.table, s3, syncBucket: args.syncBucket ?? env.SYNC_BUCKET ?? DEFAULT_SYNC_BUCKET, siteBucket: args.siteBucket ?? env.SITE_BUCKET ?? DEFAULT_SITE_BUCKET, log: console.log, now: () => Date.now(), uid: randomUUID };
+      // The break-glass session for the rendered data prefixes of the site bucket, when io hands one in (see CREDENTIALS in the header).
+      const siteS3 = createSiteClient(env, args.region, (config) => new S3Client(config));
+      const ctx = { ddb, cmds, table: args.table, s3, ...(siteS3 ? { siteS3 } : {}), syncBucket: args.syncBucket ?? env.SYNC_BUCKET ?? DEFAULT_SYNC_BUCKET, siteBucket: args.siteBucket ?? env.SITE_BUCKET ?? DEFAULT_SITE_BUCKET, log: console.log, now: () => Date.now(), uid: randomUUID };
       if (args.apply) {
         const getGroups = createGroupResolver({
           load: async () => {
