@@ -7,7 +7,7 @@
 //   node scripts/sync-admin.mjs feed-off --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs merges-on  --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs merges-off --dry-run|--apply [--by <name>]
-//   node scripts/sync-admin.mjs rekey    --dry-run|--apply
+//   node scripts/sync-admin.mjs rekey    --dry-run|--apply [--members <id,id|none>] [--retry-refused] [--resweep]
 //   node scripts/sync-admin.mjs render   --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
 //   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
 //   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--include-withdrawn] [--by <name>]
@@ -31,7 +31,8 @@
 //              Deploy the re-key job (api/src/identity-rekey.js) and the merge aliases first; --apply refuses while a merge alias still has an unfinished
 //              re-key. merges-off sets it back to false (absent counts as off).
 //   rekey      runs the identity re-key for every merge alias that is not done (the afterCommit hook does this after each merge; this is the manual
-//              retry). A dry run only counts them; output is counts and states, never ids.
+//              retry). A dry run only counts them; output is counts and states, never ids. --apply needs --members <gramps ids|none>: the CLI has no member list,
+//              so without it the job fails closed. --retry-refused re-evaluates aliases marked refused; --resweep also revisits done ones (late orphans).
 //   render     invokes the hfy-sync-render Lambda with an operator payload. --full forces a full pass although the cursor is current;
 //              --allow-mass-delete adds {"allow_mass_delete": true} (lets one pass delete more than the guard's limit, after review);
 //              --prune-foreign adds {"prune_foreign": true} (deletes renderer-shaped keys under the data prefixes that the renderer
@@ -142,14 +143,19 @@ export async function mergesOn(ctx, o) {
 export const mergesOff = (ctx, o) => setMerges(ctx, false, o);
 
 /** The manual retry of the re-key job. Prints counts only. */
-export async function rekey(ctx, { apply }) {
-  const pending = await pendingAliases(ctx);
-  ctx.log(`rekey: ${pending.length} merge alias(es) not done`);
+export async function rekey(ctx, { apply, members, retryRefused, resweep }) {
+  const opts = { retryRefused: Boolean(retryRefused), resweep: Boolean(resweep) };
+  const pending = await pendingAliases(ctx, opts);
+  const refused = pending.filter((p) => p.state === "refused").length;
+  ctx.log(`rekey: ${pending.length} merge alias(es) not done${opts.retryRefused ? " (including refused)" : ""}`);
   if (!apply || pending.length === 0) return { planned: !apply, pending: pending.length, apply };
-  const rctx = { ...ctx, uid: ctx.uid ?? (() => randomUUID()) };
-  const results = await rekeyPending(rctx);
-  for (const r of results) ctx.log(`rekey: ${r.state}`);
-  return { results, apply };
+  // The CLI has no member list of its own: the operator names the member ids (userGrampsID values) or `none`. Without it the job fails closed.
+  const isMember = ctx.isMember ?? (members ? async (id) => members.includes(id) : undefined);
+  if (!isMember) throw new AdminError("rekey --apply needs --members <id,id,...> (the member gramps ids) or --members none: the member check is not available from the CLI");
+  const rctx = { ...ctx, isMember, uid: ctx.uid ?? (() => randomUUID()) };
+  const results = await rekeyPending(rctx, opts);
+  for (const r of results) ctx.log(`rekey: ${r.state}${r.reason ? ` (${r.reason}${r.evidence ? `: ${r.evidence}` : ""})` : ""}`);
+  return { results, apply, refused };
 }
 
 // ---- render -----------------------------------------------------------------------------------------------------------
@@ -410,7 +416,7 @@ Usage:
   node scripts/sync-admin.mjs feed-off  --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs merges-on  --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs merges-off --dry-run|--apply [--by <name>]
-  node scripts/sync-admin.mjs rekey     --dry-run|--apply
+  node scripts/sync-admin.mjs rekey     --dry-run|--apply [--members <id,id|none>] [--retry-refused] [--resweep]
   node scripts/sync-admin.mjs render    --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--include-withdrawn] [--by <name>]
@@ -453,6 +459,9 @@ export function parseArgs(argv) {
     else if (a === "--reseed") out.reseed = true;
     else if (a === "--all") out.all = true;
     else if (a === "--include-withdrawn") out.includeWithdrawn = true;
+    else if (a === "--members") out.members = (v => (v === "none" ? [] : v.split(",").filter(Boolean)))(value(a, i++));
+    else if (a === "--retry-refused") out.retryRefused = true;
+    else if (a === "--resweep") out.resweep = true;
     else if (a === "--full") out.full = true;
     else if (a === "--allow-mass-delete") out.allowMassDelete = true;
     else if (a === "--prune-foreign") out.pruneForeign = true;
@@ -467,14 +476,14 @@ export function parseArgs(argv) {
     "feed-off": ["by"],
     "merges-on": ["by"],
     "merges-off": ["by"],
-    rekey: [],
+    rekey: ["members", "retryRefused", "resweep"],
     render: ["full", "allowMassDelete", "pruneForeign", "functionName"],
     resurrect: ["by", "batch", "includeWithdrawn"],
     "rebuild-heads": ["by", "toSeq", "includeWithdrawn"],
     "copy-back": ["by", "fromTable"],
     "bump-tree-id": ["by", "reseed"],
   }[out.command];
-  for (const k of ["by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName", "toSeq", "fromTable", "reseed"]) {
+  for (const k of ["members", "retryRefused", "resweep", "by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName", "toSeq", "fromTable", "reseed"]) {
     if (out[k] !== undefined && !allowed.includes(k)) throw new AdminError(`--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`).replace("function-name", "function")} does not apply to ${out.command}`);
   }
   if (out.command === "rebuild-heads" && out.toSeq === undefined) throw new AdminError("rebuild-heads needs --to-seq <N> (or head for the log's last seq)");

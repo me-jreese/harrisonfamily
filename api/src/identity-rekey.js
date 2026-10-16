@@ -21,7 +21,7 @@
 // that is not done, and sync-admin.mjs `rekey` / `merges-on` use the same code.
 import { logSafeError } from "./http.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
-import { commentGuard } from "./comments.js";
+import { commentGuard, hasPendingPhoto } from "./comments.js";
 import { aliasKey } from "./sync/store.js";
 import { allowSubKey } from "./shared/allowlist-store.mjs";
 import { subSubject, rsubKeys, recsubGsi } from "./subscriptions.js";
@@ -35,6 +35,14 @@ const MAX_PAGES = 50;
 const MAX_PASSES = 6;
 /** Alias chain links followed to the live survivor. */
 const MAX_CHAIN = 8;
+/** Thrown when no member check is wired: the job fails closed (nothing moves, no marker) rather than guess an id is not a member. */
+export class MemberCheckUnavailable extends Error {
+  constructor() {
+    super("member check unavailable");
+    this.name = "MemberCheckUnavailable";
+    this.code = "member_check_unavailable";
+  }
+}
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 export const markerKeys = (oldId) => ({ PK: `REKEY#Person#${oldId}`, SK: "META" });
@@ -61,14 +69,22 @@ const getItem = async (ctx, Key) => (await ctx.ddb.send(new ctx.cmds.GetCommand(
 async function planThread(ctx, oldId, newId) {
   const { items, more } = await queryAll(ctx, { KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": threadPk(oldId) } });
   const units = [];
+  // A comment whose photo graduation is pending stays put (the graduation job writes against THREAD#person:<old> and the comment's guard), with the
+  // reactions that target it. They are reported as `blocked`, so the alias stays `partial` and the next run moves them once graduation has finished.
+  const pending = new Set(items.filter((it) => it.SK.startsWith("C#") && hasPendingPhoto(it.comment)).map((it) => it.comment?.id ?? it.SK.slice(2)));
+  let blocked = 0;
   for (const it of items) {
     const isComment = it.SK.startsWith("C#");
+    if ((isComment && pending.has(it.comment?.id ?? it.SK.slice(2))) || (it.SK.startsWith("R#") && pending.has(it.target))) {
+      blocked += 1;
+      continue;
+    }
     const moved = { ...it, PK: threadPk(newId) };
     if (isComment) moved.comment = { ...it.comment, threadId: `person:${newId}` };
     const del = isComment ? { key: { PK: it.PK, SK: it.SK }, ...commentGuard(it.comment) } : { key: { PK: it.PK, SK: it.SK }, condition: "attribute_exists(PK)" };
     units.push({ puts: [{ item: moved, condition: "attribute_not_exists(PK)" }], deletes: [del], t: isComment ? { comments: 1 } : it.SK.startsWith("R#") ? { reactions: 1 } : {} });
   }
-  return { units, more };
+  return { units, more: more || blocked > 0 };
 }
 
 async function planFollows(ctx, oldId, newId) {
@@ -175,10 +191,13 @@ async function runStep(ctx, planner, oldId, newId) {
 
 /**
  * Evidence that `oldId` is a member principal: the member set (userGrampsID), an ALLOW# entry whose sub is the id, or any PLINKS#, CONTRIB# or
- * INBOX# partition keyed by it. `isMember` throwing is NOT evidence either way; it propagates so the alias stays pending.
+ * INBOX# partition keyed by it. `isMember` throwing is NOT evidence either way; it propagates so the alias stays pending. A ctx with no `isMember`
+ * fails closed (MemberCheckUnavailable). PLINKS# counts as evidence because links.js only lets the owner (actor.id === :id, a member) write one;
+ * an admin may only clear. So a PLINKS# partition under a gramps id exists only for a member principal.
  */
 export async function memberEvidence(ctx, oldId) {
-  if (ctx.isMember && (await ctx.isMember(oldId)) === true) return "member_list";
+  if (typeof ctx.isMember !== "function") throw new MemberCheckUnavailable();
+  if ((await ctx.isMember(oldId)) === true) return "member_list";
   const allow = await ctx.ddb.send(new ctx.cmds.QueryCommand({ TableName: ctx.table, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk", ExpressionAttributeValues: { ":pk": allowSubKey(oldId) }, Limit: 1 }));
   if ((allow.Items ?? []).length > 0) return "allow_entry";
   for (const prefix of ["PLINKS#", "CONTRIB#", "INBOX#"]) {
@@ -241,29 +260,45 @@ export async function rekeyPerson(ctx, oldId, newId, { batchId } = {}) {
   return { state, counts };
 }
 
-/** Every merge alias whose job is not finished: [{ oldId, newId, batchId }]. A `done` or `refused` marker settles an alias. */
-export async function pendingAliases(ctx) {
+/**
+ * Every merge alias whose job is not finished: [{ oldId, newId, batchId, state }]. A `done` or `refused` marker settles an alias.
+ * opts.retryRefused also returns `refused` aliases (the operator's clear-the-refusal path); opts.resweep also returns `done` ones (orphans a stale
+ * client wrote under the old id after completion); opts.settled is a Set of old ids the caller already knows are done (skips the marker read).
+ */
+export async function pendingAliases(ctx, { retryRefused = false, resweep = false, settled } = {}) {
   const { items } = await queryAll(ctx, { IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk", ExpressionAttributeValues: { ":pk": "IDALIAS#Person" } });
   const out = [];
   for (const a of items) {
     if (a.reason !== "merge" || typeof a.current_gramps_id !== "string" || a.current_gramps_id === a.old_gramps_id) continue;
+    if (!resweep && settled?.has(a.old_gramps_id)) continue;
     const marker = await getItem(ctx, markerKeys(a.old_gramps_id));
-    if (marker && (marker.state === "done" || marker.state === "refused")) continue;
+    if (marker?.state === "done" && !resweep) {
+      settled?.add(a.old_gramps_id);
+      continue;
+    }
+    if (marker?.state === "refused" && !retryRefused) continue;
     out.push({ oldId: a.old_gramps_id, newId: a.current_gramps_id, batchId: a.batch_id, state: marker?.state ?? "new" });
   }
   return out;
 }
 
 /** Runs the job for every pending alias, each against its live survivor. An alias whose chain does not end in a live person is left pending. */
-export async function rekeyPending(ctx) {
+export async function rekeyPending(ctx, opts = {}) {
   const results = [];
-  for (const p of await pendingAliases(ctx)) {
+  for (const p of await pendingAliases(ctx, opts)) {
     const target = await liveSurvivor(ctx, p.newId);
     if (!target) {
+      // persisted once (not on every retry) so the operator sees the diagnostic in REKEY#; still retried, since a later merge can fix the chain
+      if (p.state !== "unresolved") await writeMarker(ctx, p.oldId, { state: "unresolved", reason: "no_live_survivor", new_gramps_id: p.newId, ...(p.batchId ? { batch_id: p.batchId } : {}) }, "identity.rekey.unresolved");
       results.push({ oldId: p.oldId, state: "unresolved" });
       continue;
     }
-    results.push({ oldId: p.oldId, newId: target, ...(await rekeyPerson(ctx, p.oldId, target, { batchId: p.batchId })) });
+    try {
+      results.push({ oldId: p.oldId, newId: target, ...(await rekeyPerson(ctx, p.oldId, target, { batchId: p.batchId })) });
+    } catch (e) {
+      if (!(e instanceof MemberCheckUnavailable)) throw e;
+      results.push({ oldId: p.oldId, state: "member_check_unavailable" });
+    }
   }
   return results;
 }
@@ -273,10 +308,11 @@ export async function rekeyPending(ctx) {
  * that committed a merge is handled at once and an earlier crash is finished by the next batch. It logs codes only and never throws.
  */
 export function createRekeyHook(ctx) {
+  const settled = new Set(); // old ids this process has seen finished: no marker read per batch
   return async (info) => {
     if (info?.origin === "seed") return;
     try {
-      await rekeyPending(ctx);
+      await rekeyPending(ctx, { settled });
     } catch (e) {
       ctx.log?.warn?.("rekey_failed", logSafeError(e, { route: "identity-rekey" }));
     }

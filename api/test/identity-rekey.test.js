@@ -4,7 +4,7 @@ import { cmds, createFakeDdb } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
-import { UNIT_BUDGET, createRekeyHook, markerKeys, pack, pendingAliases, registerRekeyHook, rekeyPending, rekeyPerson } from "../src/identity-rekey.js";
+import { MemberCheckUnavailable, UNIT_BUDGET, createRekeyHook, markerKeys, pack, pendingAliases, registerRekeyHook, rekeyPending, rekeyPerson } from "../src/identity-rekey.js";
 import { seedPosts } from "../src/content.js";
 import { MAX_TXN_ITEMS } from "../src/txn.js";
 import { mergesOn, parseArgs, rekey, run } from "../scripts/sync-admin.mjs";
@@ -296,5 +296,89 @@ describe("sync-admin: rekey and merges-on", () => {
     await rekey(actx(w), { apply: true });
     await expect(mergesOn(actx(w), { apply: true })).resolves.toMatchObject({ changed: true });
     expect(() => parseArgs(["rekey", "--apply", "--by", "x"])).toThrow(/does not apply/);
+  });
+});
+
+describe("review fixes: fail-closed member check, pending photos, diagnostics, hidden shape", () => {
+  const actx2 = (w) => ({ ...w.ctx, log: () => {} });
+  it("a ctx with no isMember fails closed: nothing moves, no marker; the CLI wants --members", async () => {
+    const w = world();
+    seedData(w);
+    const { isMember, ...bare } = w.ctx;
+    await expect(rekeyPerson(bare, "I0001", "I0002")).rejects.toBeInstanceOf(MemberCheckUnavailable);
+    expect(w.row("REKEY#Person#I0001", "META")).toBeUndefined();
+    expect((await rekeyPending(bare))[0]).toMatchObject({ state: "member_check_unavailable" });
+    expect(thread(w, "I0001").length).toBeGreaterThan(0);
+    await expect(rekey({ ...bare, log: () => {} }, { apply: true })).rejects.toThrow(/--members/);
+    expect(parseArgs(["rekey", "--apply", "--members", "I1,I2"]).members).toEqual(["I1", "I2"]);
+    await rekey({ ...bare, log: () => {} }, { apply: true, members: [] });
+    expect(thread(w, "I0002").length).toBeGreaterThan(0);
+  });
+
+  it("the CLI member list refuses a member id", async () => {
+    const w = world();
+    seedData(w);
+    const { isMember, ...bare } = w.ctx;
+    await rekey({ ...bare, log: () => {} }, { apply: true, members: ["I0001"] });
+    expect(w.row("REKEY#Person#I0001", "META").state).toBe("refused");
+    expect(thread(w, "I0001").length).toBeGreaterThan(0);
+  });
+
+  it("--retry-refused re-evaluates a refused alias; a plain pass leaves it settled", async () => {
+    const w = world({ members: ["I0001"] });
+    seedData(w);
+    await rekeyPending(w.ctx);
+    expect(w.row("REKEY#Person#I0001", "META").state).toBe("refused");
+    w.ctx.isMember = async () => false;
+    expect(await rekeyPending(w.ctx)).toEqual([]);
+    expect((await rekeyPending(w.ctx, { retryRefused: true }))[0]).toMatchObject({ state: "done" });
+    expect(thread(w, "I0001")).toEqual([]);
+  });
+
+  it("a comment with a pending photo graduation stays (with its reactions); the alias stays partial and finishes later", async () => {
+    const w = world();
+    w.put(alias("I0001", "I0002"));
+    w.put(comment("person:I0001", 1, { attachments: [{ graduated: { state: "pending" } }] }));
+    w.put(reaction("person:I0001", 1, "I0800"));
+    w.put(comment("person:I0001", 2));
+    const r = await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(r.state).toBe("partial");
+    expect(thread(w, "I0001").map((x) => x.SK).sort()).toEqual([`C#${ulid(1)}`, `R#${ulid(1)}#I0800`]);
+    expect(thread(w, "I0002")).toHaveLength(1);
+    w.put(comment("person:I0001", 1, { attachments: [{ graduated: { state: "done" } }] }));
+    expect((await rekeyPerson(w.ctx, "I0001", "I0002")).state).toBe("done");
+    expect(thread(w, "I0001")).toEqual([]);
+    expect(thread(w, "I0002")).toHaveLength(3);
+  });
+
+  it("an unresolved alias is persisted once as a diagnostic and is retried", async () => {
+    const w = world();
+    w.put(alias("I0001", "I0002"));
+    w.put(alias("I0002", "I0001"));
+    const r = await rekeyPending(w.ctx);
+    expect(r.map((x) => x.state)).toEqual(["unresolved", "unresolved"]);
+    expect(w.row("REKEY#Person#I0001", "META")).toMatchObject({ state: "unresolved", reason: "no_live_survivor" });
+    const audits = w.rows("AUDIT#").length;
+    await rekeyPending(w.ctx);
+    expect(w.rows("AUDIT#").length).toBe(audits);
+    expect((await pendingAliases(w.ctx)).length).toBe(2);
+  });
+
+  it("--resweep revisits a done alias and moves late orphans", async () => {
+    const w = world();
+    seedData(w);
+    await rekeyPending(w.ctx);
+    w.put(comment("person:I0001", 9));
+    expect(await rekeyPending(w.ctx)).toEqual([]);
+    await rekeyPending(w.ctx, { resweep: true });
+    expect(thread(w, "I0001")).toEqual([]);
+  });
+
+  it("the hidden row keeps extra attributes and tolerates a missing version", async () => {
+    const w = world();
+    w.put(alias("I0001", "I0002"));
+    w.put({ PK: "OTD#HIDDEN", SK: "META", ids: ["birth:I0001"], note: "synthetic", updatedBy: "x" });
+    await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(w.row("OTD#HIDDEN", "META")).toMatchObject({ ids: ["birth:I0002"], note: "synthetic", updatedBy: "x", version: 1 });
   });
 });
