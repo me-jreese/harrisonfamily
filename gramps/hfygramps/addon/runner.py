@@ -12,7 +12,7 @@ import sys
 import time
 import webbrowser
 
-from . import binding, consts, keychain, oauth, paths, preflight, pull, sidecar, status, transport
+from . import binding, consts, keychain, oauth, paths, preflight, pull, push, sidecar, status, transport
 
 
 class TreeAccess:
@@ -39,7 +39,7 @@ class TreeAccess:
     dbdir = ""  # the tree's folder (backups read sqlite.db there)
 
     def objects(self):
-        """{handle: raw `json_data` dict} of every primary object, read without changing anything."""
+        """{handle: raw `json_data` dict (with `_class` and `handle`)} of every primary object, read without changing anything."""
         raise NotImplementedError
 
     def media_files(self):
@@ -98,13 +98,12 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None, services=None
     run_id = run_id or status.new_run_id()
     started = status.utc_now()
     tree_paths = paths.TreePaths(tree.dbid, environ)
-    outcome = {"bound": False, "dry_run": options.dry_run, "counts": None}
+    outcome = {"bound": False, "dry_run": options.dry_run, "counts": None, "run_id": run_id}
     side = None
     try:
         tree_paths.ensure()
         log = _Log(tree_paths, run_id)
         log.line("run %s action=%s mode=%s" % (run_id, options.action, mode))
-        outcome["run_id"] = run_id
         result = _decide(tree, mode, options, tree_paths, log, argv if argv is not None else sys.argv, environ, outcome, services or {})
         side = outcome.get("side")
         if side is None and outcome["bound"] and os.path.exists(tree_paths.sidecar):
@@ -203,11 +202,13 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
             return _bind(tree, mode, options, tp, log, config, outcome)
         if options.action == "login":
             return _login(options, config, log, services, environ)
-        if options.action in consts.PULL_ACTIONS and not outcome["bound"]:
+        if options.action in consts.PULL_ACTIONS + ("push",) and not outcome["bound"]:
             log.line("refused: not bound")
             return _refused("unbound")
         if options.action in consts.PULL_ACTIONS:
             return pull.run(tree, mode, options, tp, log, config, outcome.get("side"), outcome, services, outcome["run_id"], environ)
+        if options.action == "push":
+            return push.run(tree, mode, options, tp, side, config, log, outcome, services, outcome["run_id"], environ=environ)
         if options.action == "restore":
             log.line("refused: restore through the tool")
             return _refused("restore_open")  # the tree is open in this very run: restore is the wrapper's job, with Gramps closed

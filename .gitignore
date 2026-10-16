@@ -37,6 +37,13 @@ islands/test-results/
 islands/playwright-report/
 !.github/actions/io-kit-ci/build/
 
+# chat-worker (HFY-TSK-198)
+# chat-worker/dist/ is COMMITTED build output (HFY-R58): CI uploads it with curl and cannot build it (no CodeArtifact read, HFY-R62).
+# Rebuild with `cd chat-worker && npm ci && npm run build` and commit the result with the source change; `npm run check` fails when it is stale.
+!chat-worker/dist/
+chat-worker/.staging/
+chat-worker/.wrangler/
+
 # Family-data protection (HFY-PLN-002 D-03)
 # Real family data never enters this repo. Each data directory is ignored except the tracked synthetic samples on the allowlist.
 # scripts/ci/check-no-family-data.sh (CI and pre-commit) fails on any other tracked file there.

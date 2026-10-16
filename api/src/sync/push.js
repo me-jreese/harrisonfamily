@@ -320,6 +320,12 @@ export const batchesPush = guarded(async (c) => {
       client: { agent: c.sync.handshake.client, ...(b.client_run_id ? { run_id: b.client_run_id } : {}) }, stepUp: c.sync.stepUp(),
     });
   } catch (e) {
+    // A batch that passed applyBatch's bound on its own ops can still need a 101st transaction item once the session check rides along: 24
+    // withdraws take 4 each (head, log, id write, scheduled expunge), so with the 3 fixed items and the budget counter they fill all 100 (23 fit
+    // beside the check). Nothing was written; it is a size the client splits, never a 500.
+    if (e instanceof RangeError && e.code === "txn_too_large") {
+      throw new HttpError(413, "batch_too_large", "this batch and the session check need more than 100 transaction items; send fewer ops (a withdraw takes 4, so at most 23 withdraws fit in a session)");
+    }
     throw (session && sessionRace(e, session)) ?? e;
   }
   if (plan.length) await finalizeBlobs(store, plan);

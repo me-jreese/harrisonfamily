@@ -28,7 +28,8 @@
 // resurrect. A delete or withdraw tombstones the head at once (the log keeps the version before it). For each such op of the batch this
 // plans a new head at the next version, with a new log entry (op create, origin admin, principal operator:sync-admin, base_version the
 // tombstone's) at a new dense seq, and re-claims the object's GID item. It is refused, object by object and with the reason named, when:
-//   - the tombstone is older than 72 hours (the expunge grace: privacy-expunge removes the history after it),
+//   - the tombstone is older than 72 hours (the expunge grace: a withdraw schedules EXPUNGE#<Class>#<handle>, and expunge.mjs --due removes the
+//     history once it falls due; a resurrect deletes that schedule item),
 //   - the log holds no usable prior version (obj_json null or expunged, or its hash does not match),
 //   - the head moved after the tombstone (it is no longer the tombstone this batch wrote),
 //   - the op is a privacy withdraw and --include-withdrawn was not passed (re-creating it republishes a withdrawn record),
@@ -45,10 +46,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
-import { batchKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
+import { batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
 
 export const GRACE_MS = 72 * 3600 * 1000;
-export const CHUNK = 20; // 2 fixed items + 3 per object stays far under the 100-item transaction limit
+export const CHUNK = 20; // 2 fixed items + 4 per object (head, log, id claim, cancelled expunge) stays under the 100-item transaction limit
 export const PRINCIPAL = "operator:sync-admin";
 export const DEFAULT_FUNCTION = "hfy-sync-render";
 
@@ -272,6 +273,8 @@ async function commitChunk(ctx, chunk, batchId, by) {
         ConditionExpression: "attribute_not_exists(PK)",
       },
     });
+    // The record is back: its scheduled expunge (written by the withdraw, privacy-expunge) is cancelled in the same transaction.
+    items.push({ Delete: { TableName: ctx.table, Key: expungeKey(p.tomb.class, p.tomb.handle) } });
     if (p.gramps_id && p.tomb.class !== "Tag") {
       const claim = gidClaimItem(p.tomb.class, p.gramps_id, p.tomb.handle, { at, batch_id: `resurrect:${batchId}` });
       items.push({

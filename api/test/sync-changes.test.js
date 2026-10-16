@@ -9,7 +9,7 @@ import { buildCaps } from "../src/routes.js";
 import { createGroupResolver } from "../src/policy.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, createSyncAuthenticator, requireConflictDecision } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
-import { headKey } from "../src/sync/store.js";
+import { entryView, headKey } from "../src/sync/store.js";
 import { buildSnapshot, snapshotKey } from "../src/sync/pull.js";
 import { MAX_LIMIT, RESPONSE_OBJ_BYTES, changeOp } from "../src/sync/changes.js";
 import { canonicalJson } from "../src/shared/canonical.mjs";
@@ -229,18 +229,50 @@ describe("GET /api/sync/changes (AC1)", () => {
     }
   });
 
-  it("S19: an expunged entry returns obj null and expunged true, with no value and no hash", async () => {
+  it("S19: an expunged entry returns obj null and expunged true, keeps its seq, version and hash, and carries no value (HFY-TSK-204 AC5)", async () => {
     const w = world();
     const a = person(1);
     await w.push([create(a), create(person(2))]);
     const logRow = w.rows("SYNC#LOG")[0];
+    expect(typeof logRow.hash).toBe("string");
     w.ddb.rows.set(`${logRow.PK}\u0000${logRow.SK}`, { ...logRow, obj_json: null, expunged: true });
     const r = await feed(w);
-    expect(r.body.ops[0]).toMatchObject({ seq: 1, op: "create", handle: a.handle, version: 1, obj: null, hash: null, expunged: true });
+    expect(r.body.ops[0]).toMatchObject({ seq: 1, op: "create", handle: a.handle, version: 1, obj: null, hash: logRow.hash, expunged: true });
     expect(JSON.stringify(r.body.ops[0])).not.toContain("Alder"); // the scrubbed value is gone from the feed
     expect(r.body.ops[1].obj).not.toBeNull();
     expect(r.body.ops[1].expunged).toBeUndefined();
-    expect(changeOp({ seq: 9, op: "delete", class: "Note", handle: h(1), gramps_id: "N1", version: 3, obj_json: null, expunged: true, at: "t", origin: "desktop" })).toMatchObject({ expunged: true, obj: null });
+    expect(changeOp({ seq: 9, op: "delete", class: "Note", handle: h(1), gramps_id: "N1", version: 3, obj_json: null, expunged: true, at: "t", origin: "desktop" })).toMatchObject({ expunged: true, obj: null, hash: null });
+  });
+
+  it("the feed serialises a log entry through entryView(): the same seq, class, handle, id, version, hash and object, plus the op, time and origin", async () => {
+    const w = world();
+    const a = person(1);
+    await w.push([create(a), create(note(1))]);
+    // an expunged and a live entry, so both shapes of entryView are compared with what the route returns
+    const expungedRow = w.rows("SYNC#LOG")[0];
+    w.ddb.rows.set(`${expungedRow.PK}\u0000${expungedRow.SK}`, { ...expungedRow, obj_json: null, expunged: true });
+    const ops = (await feed(w)).body.ops;
+    for (const op of ops) {
+      const row = w.rows("SYNC#LOG").find((x) => x.seq === op.seq);
+      const v = entryView(row);
+      expect(op).toMatchObject({ seq: v.seq, class: v.class, handle: v.handle, gramps_id: v.gramps_id, version: v.version, hash: v.hash, obj: v.obj, at: row.at, origin: row.origin });
+      expect(op.expunged).toBe(v.expunged);
+    }
+    expect(ops.map((o) => o.expunged)).toEqual([true, undefined]);
+  });
+
+  it("a --path scrub (the object inside the entry rewritten with its hash, no expunged flag) is an ordinary op whose hash is that of the scrubbed object", async () => {
+    const w = world();
+    const n = note(1);
+    await w.push([create(n)]);
+    const row = w.rows("SYNC#LOG")[0];
+    const scrubbed = canonicalJson({ ...n, text: { ...n.text, string: "" } });
+    const hash = createHash("sha256").update(scrubbed).digest("hex");
+    w.ddb.rows.set(`${row.PK}\u0000${row.SK}`, { ...row, obj_json: scrubbed, hash });
+    const op = (await feed(w)).body.ops[0];
+    expect(op).toMatchObject({ seq: 1, version: 1, hash, obj: { text: { string: "" } } });
+    expect(op).not.toHaveProperty("expunged");
+    expect(createHash("sha256").update(canonicalJson(op.obj)).digest("hex")).toBe(op.hash);
   });
 
   it("the epoch of an expunge that did not move seq is in the response, so a cached client can tell", async () => {

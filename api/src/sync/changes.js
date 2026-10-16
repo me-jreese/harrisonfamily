@@ -12,10 +12,12 @@
 // that cannot (a hole, a version that does not follow the one it holds, an object that does not hash to `hash`) must take a full snapshot.
 //
 // What an op carries. `obj` is the redacted canonical object the log entry holds for a create or an update, and null for a delete, a
-// withdraw or a marker (a tombstone). `hash` is the entry's sha256 of that object. An entry privacy-expunge has scrubbed (`expunged: true`
-// on the log item) keeps its seq and version but returns `obj: null, expunged: true`, so the object value never leaves the store again; a
-// client that reads such an op must not trust its cached copy of that head and takes a snapshot. The principal, the batch id and the
-// on-behalf-of subject are never returned.
+// withdraw or a marker (a tombstone). `hash` is the entry's sha256 of that object. Every entry is serialised through entryView() (store.js),
+// so an entry privacy-expunge has emptied (`expunged: true` on the log item, HFY-TSK-204) keeps its seq, version and hash but returns
+// `obj: null, expunged: true`, and the object value never leaves the store again; a client that reads such an op must not trust its cached
+// copy of that head and takes a snapshot. A `--path` scrub rewrites the object inside the entry and its hash and sets no flag, so it reads as an
+// ordinary op whose hash differs from the one the client holds at the same version. The principal, the batch id and the on-behalf-of subject
+// are never returned.
 //
 // `expunge_epoch` (SYNC#HEAD.expunge_epoch, absent = 0) is what lets a client with a cached state notice a scrub in place: an expunge rewrites
 // log entries and heads without advancing seq, so a cache at the head seq looks current while it still holds the old value. The client
@@ -25,7 +27,7 @@
 // under the Lambda response limit. `next_since` is the seq of the last op returned (or `since` when there are none), so a client pages with
 // next_since until it equals head_seq.
 import { HttpError, logSafeError } from "../http.js";
-import { logKey, seqKey } from "./store.js";
+import { entryView, logKey, seqKey } from "./store.js";
 
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 500;
@@ -43,22 +45,26 @@ function intParam(raw, field, { min, max, fallback }) {
   return n;
 }
 
-/** The wire shape of one log item. Exported for the tests. */
+/**
+ * The wire shape of one log item. The entry itself is read through entryView() (store.js), the one reader of a log entry that knows about
+ * privacy-expunge: an expunged entry reads `obj: null, expunged: true` and keeps its seq, version and hash (BRD2 section 4). Only a create or
+ * an update carries an object and a hash on the wire. Exported for the tests.
+ */
 export function changeOp(item) {
-  const expunged = item.expunged === true;
-  const live = (item.op === "create" || item.op === "update") && !expunged && typeof item.obj_json === "string";
+  const v = entryView(item);
+  const carries = item.op === "create" || item.op === "update";
   return {
-    seq: item.seq,
+    seq: v.seq,
     op: item.op,
-    class: item.class ?? null,
-    handle: item.handle ?? null,
-    gramps_id: item.gramps_id ?? "",
-    version: Number.isInteger(item.version) ? item.version : null,
-    hash: live && typeof item.hash === "string" ? item.hash : null,
-    obj: live ? JSON.parse(item.obj_json) : null,
+    class: v.class ?? null,
+    handle: v.handle ?? null,
+    gramps_id: v.gramps_id ?? "",
+    version: Number.isInteger(v.version) ? v.version : null,
+    hash: carries && typeof v.hash === "string" ? v.hash : null,
+    obj: carries ? v.obj : null,
     at: item.at,
     origin: item.origin,
-    ...(expunged ? { expunged: true } : {}),
+    ...(v.expunged ? { expunged: true } : {}),
   };
 }
 
