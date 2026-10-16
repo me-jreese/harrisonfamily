@@ -221,3 +221,16 @@ def load_incidents(con):
     cur = con.execute("SELECT class, handle, gramps_id, rule, seq, first_seen, state FROM incidents WHERE state = 'open' ORDER BY class, handle")
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur]
+
+
+def release_event(con, handle):
+    """A person released an event in the Gramps window: its day and month are no longer kept local by the sticky set (BRD2 11.1, PS-02).
+    The handle goes into ``released`` (so no rule puts it back, ``projection.update_birthlike_sticky``) and out of ``birthlike_sticky``."""
+    released = set(meta_json(con, "released", []))
+    released.add(handle)
+    sticky = set(meta_json(con, "birthlike_sticky", []))
+    sticky.discard(handle)
+    set_meta_json(con, "released", sorted(released))
+    set_meta_json(con, "birthlike_sticky", sorted(sticky))
+    con.commit()
+

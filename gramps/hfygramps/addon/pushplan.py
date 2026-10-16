@@ -21,6 +21,7 @@ import re
 
 from .. import merge as M
 from .. import projection as PR
+from .. import rules as R
 from . import consts
 from . import plan as pullplan
 
@@ -111,7 +112,7 @@ def _hold(cls, handle, rule, path="", detail=None):
 
 
 def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes=False, step_up=False, sticky=(), pins=None, unreadable=(),
-               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None, pulled=None):
+               policy=None, max_obj_bytes=None, files=None, members=None, expunge_holds=None, pulled=None, released=()):
     """The plan.
 
     local        {handle: raw Gramps object}
@@ -123,6 +124,8 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     mode         "cli" (conflicts are parked, deletes need allow_deletes, a merge is parked) or "gui"
     allow_deletes, yes  the CLI flag; in the GUI `yes` is the confirmation
     step_up      the token carries a fresh step-up (amr mfa within 300 s)
+    released     the event handles a person released in the Gramps window (the sidecar's ``released`` meta): the projection no longer keeps
+                 their day and month local (BRD2 11.1, PS-02)
     sticky       the sidecar's ``birthlike_sticky`` handles; pins {handle: [{"path", "base_json"}]} the open and parked conflicts
     expunge_holds  {handle: [pointer]} the values a website scrub removed (the pull's ``expunge.notice`` holds, ``sidecar.load_expunge_holds``):
                  an update never puts the desktop's value back at those pointers, and is not sent when they were all that differed
@@ -142,9 +145,10 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
     for h, r in cloud.items():
         classes.setdefault(h, r["class"])
 
-    proj = PR.project(list(local.values()), base=base_objs, files=files, sticky=sticky, policy=policy)
+    released = frozenset(released or ())
+    proj = PR.project(list(local.values()), base=base_objs, files=files, released=released, sticky=sticky, policy=policy)
     projected_all = symmetric(proj.projected, proj.holds)
-    plan.sticky = frozenset(M.update_baseline(sticky, list(local.values()), base_objs, policy=policy))
+    plan.sticky = frozenset(M.update_baseline(sticky, list(local.values()), base_objs, released, policy=policy))
     for x in proj.holds:
         plan.holds.append(_hold(classes.get(x["handle"], ""), x["handle"], x["rule"], x["pointer"]))
 
@@ -157,7 +161,7 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
             return projected_all[obj["handle"]]
         tree = dict(local)
         tree[obj["handle"]] = obj
-        again = PR.project(list(tree.values()), base=base_objs, files=files, sticky=sticky, policy=policy)
+        again = PR.project(list(tree.values()), base=base_objs, files=files, released=released, sticky=sticky, policy=policy)
         return symmetric(again.projected, again.holds).get(obj["handle"])
 
     heads = {h: (M.TOMBSTONE if r["deleted"] else r["obj"]) for h, r in cloud.items()}
@@ -201,6 +205,10 @@ def build_plan(local, base, cloud, *, meta, mode="cli", allow_deletes=False, yes
                 continue
             if guard:
                 plan.holds.append(_hold(cls, handle, guard))
+                continue
+            sg = _sticky_guard(op, plan.sticky, released, policy)
+            if sg:
+                plan.blocked.append(_hold(cls, handle, "sticky_daymonth", sg))   # flagged in the preview, never sent until released (PS-02)
                 continue
             reverts = pullplan.revert_paths(op, cloud_obj, pulled.get(handle))
             if reverts and not _confirmed(mode, yes):
@@ -260,6 +268,15 @@ def _guard(op, local_obj, base_row, ranges, retired, max_obj_bytes):
     if len(_obj_bytes(obj)) > max_obj_bytes:
         return "object_too_large"                         # D40
     return None
+
+
+def _sticky_guard(op, sticky, released, policy):
+    """The pointer where a create or update would publish a day or a month on an event in the sticky set that a person has not released,
+    or None. The projection keeps them local, so this fires only when it did not: a last check before anything goes on the wire."""
+    if op.get("class") != "Event" or op["handle"] not in sticky or op["handle"] in released or not isinstance(op.get("obj"), dict):
+        return None
+    bad = R.date_violations(op["obj"].get("date"), policy)
+    return "/date" + bad[0] if bad else None
 
 
 def _obj_bytes(obj):

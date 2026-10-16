@@ -61,10 +61,16 @@ class TreeAccess:
 
 
 class Options:
-    def __init__(self, action="status", dry_run=False, allow_deletes=False, yes=False, step_up=False, plan="", backup=""):
+    def __init__(self, action="status", dry_run=False, allow_deletes=False, yes=False, step_up=False, plan="", backup="",
+                 decisions=None, confirm_mass_delete=False, confirm_deletes=None, deletes_first=False):
         self.action = action
         self.plan = plan or ""  # `sync --yes --plan <run_id>`: apply only if the new plan equals that run's preview (runbook 19.3)
         self.backup = backup or ""
+        # The Gramps window only (addon-gui-preview); the command line has no way to set these, and `run` ignores them in cli mode.
+        self.decisions = dict(decisions or {})              # {conflict id: {"choice", "confirmed"}}, carried out in the same run
+        self.confirm_mass_delete = bool(confirm_mass_delete)  # the person confirmed the modal that lists a mass of incoming deletes
+        self.confirm_deletes = confirm_deletes              # False: the person declined the incoming deletes (they are listed as blocked)
+        self.deletes_first = bool(deletes_first)            # push: the delete batches go first, right after the step-up (D07)
         self.step_up = bool(step_up)
         self.dry_run = bool(dry_run)
         self.allow_deletes = bool(allow_deletes)

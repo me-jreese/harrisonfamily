@@ -71,7 +71,8 @@ NOT_ENABLED = (EXIT_NOT_ENABLED, "none", "This action is not in this build of th
 REFUSALS["config_unreadable"] = (EXIT_CONFIG, "none", "config.json is unreadable. Fix or remove it, then bind the tree again; the tree and the website are untouched.")
 REFUSALS["usage"] = (EXIT_USAGE, "none", "Unknown action or option. See hfy-sync for the list of actions.")
 REFUSALS["unbound"] = (EXIT_CONFIG, "bind", "This tree is not bound to the website yet. Bind it first (hfy-sync bind --yes); nothing was read or sent.")
-REFUSALS["D45"] = (EXIT_TEMPORARY, "retry", "A Gramps edit window is open. Close the open edit windows to sync, then apply again.")
+EDITORS_OPEN_MESSAGE = "close open edit windows to sync"  # D45, verbatim in the window and in the refusal
+REFUSALS["D45"] = (EXIT_TEMPORARY, "retry", "A Gramps edit window is open: %s, then apply again." % EDITORS_OPEN_MESSAGE)
 REFUSALS["D50"] = (EXIT_CONFIG, "rebase", "The website's store is a different cloud tree than the one this tree last synced with (a re-seed or recovery). Rebase it from the Gramps window; nothing is sent automatically.")
 REFUSALS["disk_space"] = (EXIT_TEMPORARY, "none", "Not enough free disk space for the backup (three times the database plus 100 MB). Free some space and run again; nothing was changed.")
 REFUSALS["restore_open"] = (EXIT_TEMPORARY, "close_gramps", "A restore needs the tree closed. Close Gramps and run hfy-sync restore from the command line.")
@@ -118,7 +119,11 @@ HOLD_MESSAGES = {
     "privacy_violation": "The website refused this record's content (a rule differs between the addon and the website). Nothing of it is stored.",
     "integrity_violation": "The website found a reference to a record it does not have. This record will be sent again on the next run.",
     "exists": "The website already has a record with this handle.",
+    "sticky_daymonth": "This event was a birth event, and a push would publish its day and month. They stay on this computer until you release "
+                       "this event in the Gramps window. Nothing was sent for it.",
 }
+# The blocks a person can lift in the Gramps window by confirming (the window runs the push with `yes`): the command line never does.
+CONFIRMABLE_RULES = ("delete_parked", "mass_delete", "revert_parked", "merge_gui_only")
 
 # A Media handle names a file on this disk (`media_root/<handle><ext>`) and sits in a URL path, so it is held to a strict shape wherever
 # it comes from the website: the snapshot parser and the media download both refuse anything else (no separator, no "..", no escapes).
