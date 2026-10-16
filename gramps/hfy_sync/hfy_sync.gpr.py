@@ -33,7 +33,9 @@ register(
     tool_modes=[TOOL_MODE_GUI, TOOL_MODE_CLI],
 )
 
-# The sidebar gramplet (HFY-TSK-278): last sync, website changes waiting, a Sync button. It writes nothing.
+# The sidebar gramplet (HFY-TSK-278): last sync, website changes waiting, a Sync button. It writes nothing of its own (see
+# gramplet_model.py for the one Keychain exception). Desktop-only, and only present once the user adds it to a sidebar. Its version
+# is kept equal to the addon's on purpose (the registration test checks both).
 register(
     GRAMPLET,
     id="hfy_sync_gramplet",

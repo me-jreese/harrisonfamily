@@ -15,7 +15,7 @@
 #
 """The Website sync gramplet (HFY-TSK-278): the last sync, the website changes waiting, and a Sync button that opens the tool.
 
-It performs no writes. What it shows and when it asks the website is hfygramps.addon.gramplet_model (tested without a window); this
+It writes nothing of its own; the one exception (the rotated sign-in saved to the existing Keychain item) is in the model's docstring. What it shows and when it asks the website is hfygramps.addon.gramplet_model (tested without a window); this
 file only draws it. It asks at most every five minutes, only while it is on screen, from a worker thread so the window never waits.
 """
 import os
@@ -37,6 +37,7 @@ from hfygramps.addon import gramplet_model  # noqa: E402
 
 _ = glocale.translation.gettext
 LOG = logging.getLogger("hfy_sync")
+TOOL_ID = "hfy_sync"  # the id hfy_sync.gpr.py registers the tool under
 TICK_S = 30  # how often visibility is looked at; the website is asked only when the model says it is due
 
 
@@ -44,7 +45,8 @@ class HfySyncGramplet(Gramplet):
     def init(self):
         self.model = None
         self._busy = False
-        self._source = None
+        self._lock = threading.Lock()
+        self._connected_db = None
         self.label = Gtk.Label(xalign=0, wrap=True, selectable=False)
         self.button = Gtk.Button(label=_("_Sync..."), use_underline=True)
         self.button.connect("clicked", self._open_tool)
@@ -55,14 +57,23 @@ class HfySyncGramplet(Gramplet):
         self.gui.get_container_widget().add(box)
         box.show_all()
         self.box = box
+        self._tick_source = None
         self._tick_source = GLib.timeout_add_seconds(TICK_S, self._tick)
 
     def db_changed(self):
-        self.model = None
-        self.connect(self.dbstate.db, "database-changed", self._reset)
+        self._reset()
+        if self._connected_db is not self.dbstate.db:  # connect once per database object
+            self._connected_db = self.dbstate.db
+            self.connect(self.dbstate.db, "database-changed", self._reset)
 
     def _reset(self, *_args):
-        self.model = None
+        with self._lock:
+            self.model = None
+
+    def on_close(self):
+        if self._tick_source is not None:
+            GLib.source_remove(self._tick_source)
+            self._tick_source = None
 
     def on_load(self):
         self._reset()
@@ -79,13 +90,14 @@ class HfySyncGramplet(Gramplet):
 
     def _model(self):
         db = self.dbstate.db
-        if self.model is None and db is not None and db.is_open():
-            dbid = db.get_dbid()
-            if not dbid:
-                return None
-            factory = gramplet_model.client_factory(dbid, VERSION, db.get_schema_version())
-            self.model = gramplet_model.Model(dbid, factory)
-        return self.model
+        with self._lock:
+            if self.model is None and db is not None and db.is_open():
+                dbid = db.get_dbid()
+                if not dbid:
+                    return None
+                factory = gramplet_model.client_factory(dbid, VERSION, db.get_schema_version())
+                self.model = gramplet_model.Model(dbid, factory)
+            return self.model
 
     def _tick(self):
         try:
@@ -112,18 +124,22 @@ class HfySyncGramplet(Gramplet):
         GLib.idle_add(self.label.set_text, "\n".join(lines))
 
     def _open_tool(self, _button):
-        """Opens Tools > Family Tree Processing > Website sync..., the same dialog the menu opens."""
-        from gramps.gen.plug import BasePluginManager
-        from gramps.gui.plug import tool
-        from gramps.gui.pluginmanager import GuiPluginManager
-        from gramps.gen.user import User
+        """Opens Tools > Family Tree Processing > Website sync..., the same dialog the menu opens. Never raises into Gtk."""
+        try:
+            from gramps.gen.user import User
+            from gramps.gui.plug import tool
+            from gramps.gui.pluginmanager import GuiPluginManager
 
-        pmgr = GuiPluginManager.get_instance()
-        data = next((p for p in pmgr.get_reg_tools(gui=True) if p.id == "hfy_sync"), None)
-        if data is None:
-            return
-        mod = pmgr.load_plugin(data)
-        user = User(parent=self.uistate.window, uistate=self.uistate)
-        tool.gui_tool(
-            dbstate=self.dbstate, user=user, tool_class=getattr(mod, data.toolclass), options_class=getattr(mod, data.optionclass),
-            translated_name=data.name, name=data.id, category=data.category, callback=self.dbstate.db.request_rebuild)
+            pmgr = GuiPluginManager.get_instance()
+            data = next((p for p in pmgr.get_reg_tools(gui=True) if p.id == TOOL_ID), None)
+            if data is None:
+                self.label.set_text(_("Website sync is not installed as a tool. Reinstall the addon."))
+                return
+            mod = pmgr.load_plugin(data)
+            user = User(parent=self.uistate.window, uistate=self.uistate)
+            tool.gui_tool(
+                dbstate=self.dbstate, user=user, tool_class=getattr(mod, data.toolclass), options_class=getattr(mod, data.optionclass),
+                translated_name=data.name, name=data.id, category=data.category, callback=self.dbstate.db.request_rebuild)
+        except Exception:  # noqa: BLE001
+            LOG.error("hfy_sync gramplet could not open the tool", exc_info=True)
+            self.label.set_text(_("Could not open Website sync. Use Tools > Family Tree Processing > Website sync."))

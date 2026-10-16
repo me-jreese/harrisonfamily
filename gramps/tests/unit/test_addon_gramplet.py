@@ -136,6 +136,87 @@ class SignIn(GrampletCase):
         self.assertEqual(m.state, gramplet_model.SIGN_IN)
 
 
+class TokenReuse(GrampletCase):
+    def test_one_token_manager_for_many_polls(self):
+        self.bind()
+        built = []
+
+        class Kc:
+            def read(self):
+                return "rt"
+
+            def delete(self):
+                raise AssertionError("the gramplet must not delete the Keychain item")
+
+        orig = oauth.TokenManager
+
+        class Counting(orig):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                built.append(self)
+
+        oauth.TokenManager = Counting
+        self.addCleanup(setattr, oauth, "TokenManager", orig)
+        factory = gramplet_model.client_factory(DBID, "6.0.6", 21, self.env, keychain_override=Kc())
+        self.assertIs(factory(), factory())
+        self.assertEqual(len(built), 1, "one TokenManager across polls")
+
+    def test_a_refused_refresh_leaves_the_keychain_item(self):
+        self.bind()
+        state = {"token": "rt"}
+
+        class Kc:
+            def read(self):
+                return state["token"]
+
+            def delete(self):
+                state["token"] = None
+
+        class Http:
+            def request(self, *a, **k):
+                raise oauth.AuthRequired()
+
+            def __getattr__(self, name):
+                raise oauth.AuthRequired()
+
+        orig = oauth._token_post
+        oauth._token_post = lambda *a, **k: (_ for _ in ()).throw(oauth.AuthRequired())
+        self.addCleanup(setattr, oauth, "_token_post", orig)
+        factory = gramplet_model.client_factory(DBID, "6.0.6", 21, self.env, http=Http(), keychain_override=Kc())
+        m = gramplet_model.Model(DBID, factory, self.env, clock=self.clock)
+        m.refresh(True)
+        self.assertEqual(m.state, gramplet_model.SIGN_IN)
+        self.assertEqual(state["token"], "rt", "the item is not deleted from the gramplet")
+
+
+class RunInProgress(GrampletCase):
+    def test_no_ask_while_a_run_holds_state_lock(self):
+        from hfygramps.addon import preflight
+        self.bind()
+        c = FakeClient()
+        m = self.model(c)
+        with preflight.StateLock(self.tp.lock) as lock:
+            self.assertTrue(lock.acquired)
+            self.assertFalse(m.refresh(True))
+        self.assertEqual(c.calls, 0)
+        self.assertTrue(m.refresh(True), "asks once the run is over")
+
+    def test_no_lock_file_is_not_created(self):
+        self.bind()
+        self.assertFalse(os.path.exists(self.tp.lock))
+        self.assertFalse(gramplet_model.run_in_progress(self.tp))
+        self.assertFalse(os.path.exists(self.tp.lock))
+
+
+class SidecarValue(GrampletCase):
+    def test_percent_in_path_and_odd_values(self):
+        env = {"HOME": os.path.join(self.tmp.name, "a%20b#c")}
+        tp = paths.TreePaths(DBID, env)
+        tp.ensure()
+        sidecar.create(tp.sidecar, {"tree_id": "t", "dbid": DBID, "last_pull_seq": 7})
+        self.assertEqual(gramplet_model.read_last_pull_seq(tp), 7)
+
+
 class Polling(GrampletCase):
     def test_at_most_every_five_minutes(self):
         self.bind()
@@ -206,7 +287,7 @@ class NoWrites(GrampletCase):
         for rel in ("gramps/hfygramps/addon/gramplet_model.py", "gramps/hfy_sync/hfy_sync_gramplet.py"):
             with open(os.path.join(REPO, rel), encoding="utf-8") as fh:
                 text = fh.read()
-            for bad in ("atomic_write_json", "status.write", "set_meta", "DbTxn", "commit_", "open(" + "p, \"w", "sidecar.open_checked", ".store("):
+            for bad in ("atomic_write_json", "status.write", "set_meta", "DbTxn", "commit_", "open(" + "p, \"w", "sidecar.open_checked", ".store(", ".delete("):
                 self.assertNotIn(bad, text, (rel, bad))
 
 
@@ -223,7 +304,9 @@ class Registration(unittest.TestCase):
         with open(os.path.join(REPO, "gramps", "hfy_sync", "hfy_sync_gramplet.py"), encoding="utf-8") as fh:
             src = fh.read()
         compile(src, "hfy_sync_gramplet.py", "exec")
-        self.assertIn('p.id == "hfy_sync"', src)
+        self.assertIn('TOOL_ID = "hfy_sync"', src)
+        self.assertIn("p.id == TOOL_ID", src)
+        self.assertNotIn("BasePluginManager", src)
 
 
 class Ago(unittest.TestCase):

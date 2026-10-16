@@ -1,17 +1,24 @@
 """What the Website sync gramplet shows and when it asks (HFY-TSK-278; sync.md 13, phase B). No Gtk here, so it is tested without a window.
 
-The gramplet is read-only. It reads `status.json` (the last run), the sidecar's `last_pull_seq` (opened read-only, so SQLite cannot
-create or change a file) and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes waiting is
-`head_seq - last_pull_seq`, never below zero. It writes nothing: no status.json, no sidecar row, no tree object, no Keychain item.
+The gramplet is read-only with ONE disclosed exception. It reads `status.json` (the last run), the sidecar's `last_pull_seq` (opened
+read-only, so SQLite cannot create or change a file) and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes
+waiting is `head_seq - last_pull_seq`, never below zero. It writes no status.json, no sidecar row, no tree object, no log and creates no
+Keychain item. The exception: the website rotates the refresh token on every refresh, so when the access token has expired (about once
+an hour of use: one TokenManager is kept for the life of the Model) the rotated refresh token is saved to the Keychain item that
+already exists. This is the same code every run uses. The gramplet never deletes the Keychain item (a refused refresh shows the
+sign-in prompt and leaves the item for the next run to judge), and it does not ask while a sync run holds state.lock, so it cannot
+race a run on the rotating token. io has not yet confirmed this exception is acceptable (open item on HFY-TSK-278).
 
 It asks the website at most once every POLL_INTERVAL_S and only while the gramplet is visible; a failed ask counts as an ask, so a
 broken network is not retried faster. With no saved sign-in it shows a sign-in prompt, not an error. Everything shown is a code,
 a count or a time, never object content.
 """
 import calendar
+import fcntl
 import os
 import sqlite3
 import time
+import urllib.parse
 
 from . import consts, keychain, oauth, paths, status, transport
 
@@ -25,17 +32,33 @@ def read_last_pull_seq(tree_paths):
     """The sidecar's `last_pull_seq`, read through a read-only connection; None when there is no sidecar or it cannot be read."""
     if not os.path.exists(tree_paths.sidecar):
         return None
-    uri = "file:%s?mode=ro" % tree_paths.sidecar.replace("?", "%3f").replace("#", "%23")
+    uri = "file:%s?mode=ro" % urllib.parse.quote(tree_paths.sidecar)
     con = None
     try:
         con = sqlite3.connect(uri, uri=True, timeout=2)
         row = con.execute("SELECT value FROM meta WHERE key = 'last_pull_seq'").fetchone()
-        return int(row[0]) if row and str(row[0]).isdigit() else None
-    except sqlite3.Error:
+        return int(row[0]) if row else None
+    except (sqlite3.Error, ValueError, TypeError):
         return None
     finally:
         if con is not None:
             con.close()
+
+
+def run_in_progress(tree_paths):
+    """True when a sync run holds state.lock. Read-only: the lock file is opened, never created, and only a shared lock is tried."""
+    try:
+        fh = open(tree_paths.lock, "rb")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        fh.close()
 
 
 def parse_utc(text):
@@ -104,6 +127,8 @@ class Model:
             self.state = UNAVAILABLE
         if not self.poll_due(visible):
             return False
+        if run_in_progress(self.tp):
+            return False  # a run owns the rotating token; ask again on the next tick
         self.last_poll = self.clock()
         self.polls += 1
         try:
@@ -150,16 +175,38 @@ class Model:
         return out
 
 
+class _KeepKeychainItem:
+    """The Keychain as the gramplet uses it: reads and the rotated-token save pass through, delete does nothing (see the module docstring)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def read(self):
+        return self._inner.read()
+
+    def delete(self):
+        return None
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 def client_factory(dbid, gramps_version, schema_version, environ=None, http=None, keychain_override=None):
     """A callable giving a transport.Client for this tree's server, signed in from the saved Keychain token.
 
-    The only thing a call can change is the rotated refresh token in the Keychain (oauth.TokenManager, the same code every run uses):
-    the website rotates it on each refresh, so asking at all means keeping the new one. No tree, sidecar, status.json or log is written.
+    One Client (and so one oauth.TokenManager) is built on the first call and reused, so the access token is reused until it nears
+    expiry and only then is the refresh token spent. The only thing a refresh changes is the rotated refresh token in the existing
+    Keychain item; the item is never deleted from here. Nothing else is written.
     """
+    cache = []
+
     def make():
+        if cache:
+            return cache[0]
         cfg = paths.read_json(paths.TreePaths(dbid, environ).config)
         server = transport.check_server((cfg or {}).get("server") or consts.DEFAULT_SERVER)
-        kc = keychain_override or keychain.open_for(server, environ)
+        kc = _KeepKeychainItem(keychain_override or keychain.open_for(server, environ))
         tokens = oauth.TokenManager(server, kc, http=http)
-        return transport.Client(server, transport.Versions(gramps_version, schema_version), tokens, http=http)
+        cache.append(transport.Client(server, transport.Versions(gramps_version, schema_version), tokens, http=http))
+        return cache[0]
     return make

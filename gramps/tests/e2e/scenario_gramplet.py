@@ -3,7 +3,7 @@
     count     after a sync, a website edit shows as "1 change waiting" (head_seq - last_pull_seq), and the last sync comes from status.json
     polling   repeated refreshes inside five minutes, and any while not visible, send no /api/sync/meta call
     sign-in   with an empty Keychain it shows the sign-in prompt, not an error
-    no writes the gramplet's reads leave status.json, the sidecar and the tree's sqlite.db byte for byte as they were
+    no writes the gramplet's reads (one Keychain refresh-token rotation aside, asserted) leave status.json, the sidecar and the tree's sqlite.db byte for byte as they were
 
 The Gtk drawing in hfy_sync_gramplet.py is exercised by io's G-uat on the Mac (runbook 19.1); this checks everything it shows. Fictional data only.
 """
@@ -50,6 +50,8 @@ class GrampletE2E(PullE2E):
         self.assertEqual(self.metas(), hidden, "hidden: no call")
         self.assertTrue(m.refresh(visible=True))
         self.assertEqual(m.waiting(), 0)
+        stores_after_first = session.keychain.stores  # the one disclosed write: the rotated refresh token
+        token_after_first = session.keychain.token
         self.assertIn("Last sync: ok", m.lines()[1])
 
         self.website_edit_note()
@@ -64,6 +66,8 @@ class GrampletE2E(PullE2E):
         m.refresh(visible=True)
         self.assertEqual(self.metas(), base + 1)
         self.assertEqual(m.lines()[0], "Website: 1 change waiting")
+        self.assertEqual(session.keychain.stores, stores_after_first, "the access token is reused: no second refresh")
+        self.assertEqual(session.keychain.token, token_after_first)
 
         empty = self.model(E.MemoryKeychain(), clock)
         empty.refresh(visible=True)
