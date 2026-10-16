@@ -534,6 +534,10 @@ Each check below prints a line that starts with `ok` or `FAIL`, and the first `F
 
 The output prints the token's `sub`, which is a real gramps_id, and its groups, so it is private.
 
+### Orchestration tooling: `scripts/orchestration/`
+
+[`scripts/orchestration/`](../../scripts/orchestration/README.md) holds the HFY-PLN-002 orchestrator's Workflow scripts and its batch, catalog, GitHub and mirror tools. Its README lists each tool's inputs and outputs and how to run it. No workflow runs them.
+
 ## Git hook: `scripts/git-hooks/pre-commit`
 
 [`scripts/git-hooks/pre-commit`](../../scripts/git-hooks/pre-commit) runs from the repository root, in this order:
