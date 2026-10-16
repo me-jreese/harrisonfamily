@@ -16,7 +16,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@io-kit/chat": "0.1.6"
+    "@io-kit/chat": "0.3.0"
   },
   "devDependencies": {
     "wrangler": "4.145.0"
