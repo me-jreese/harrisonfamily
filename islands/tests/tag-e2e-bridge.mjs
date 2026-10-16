@@ -14,6 +14,7 @@ const PEOPLE = [{ grampsId: "I0001", displayName: "Alder Testwood" }, { grampsId
 const FLAGS = { photoTags: true, photoTagEdit: true, recordEdit: true, proposalReview: true };
 
 /** The tags of the world's photo, as the site would list them: one per MediaRef in a person's media_list that points at it. */
+// Limit: this is a hand-built stand-in for the site's build output; it proves the store holds the approved tag, not that the real build emits it.
 export function galleryOf(world) {
   const tags = [];
   for (const p of [world.me, world.mother, world.kid]) {
