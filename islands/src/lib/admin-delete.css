@@ -1,0 +1,35 @@
+/* Admin web deletes and the possible-duplicate queue (admin-delete-ui.jsx, HFY-TSK-295). Aliases only: --io-color-semantic-*, --io-space-*,
+   --io-control-*, --io-radius-* and --io-typography-* (theme-lint no-literal-token-values). The delete sheet reuses the editor's .hfy-sheet
+   classes; the danger button is bordered and worded, never told by colour alone. Targets are --io-control-tap-min. */
+.hfy-admin { display: grid; gap: var(--io-space-3); justify-items: start; min-width: 0; }
+.hfy-admin__lead, .hfy-admin__done p { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-admin__done { display: grid; gap: var(--io-space-2); justify-items: start; padding: var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-success); }
+.hfy-admin__done p { color: var(--io-color-semantic-text); font-weight: var(--io-typography-weight-semibold); }
+.hfy-admin a.hfy-admin__link, .hfy-admin__link { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); color: var(--io-color-semantic-link); font-weight: var(--io-typography-weight-semibold); }
+.hfy-admin .hfy-admin__danger, .hfy-sheet .hfy-admin__danger {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-5);
+  border: var(--io-control-focus-ring) solid var(--io-color-semantic-danger); border-radius: var(--io-radius-md); background: transparent; color: var(--io-color-semantic-text);
+  font: inherit; font-weight: var(--io-typography-weight-semibold); cursor: pointer;
+}
+.hfy-sheet .hfy-admin__danger:disabled { border-color: var(--io-color-semantic-border-strong); background: var(--io-color-semantic-surface-sunken); color: var(--io-color-semantic-text-dim); cursor: default; }
+.hfy-admin .hfy-admin__danger:focus-visible, .hfy-sheet .hfy-admin__danger:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+
+.hfy-dups { display: grid; gap: var(--io-space-3); min-width: 0; align-content: start; }
+.hfy-dups__lead, .hfy-dups__note { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-dups__skeleton { min-height: calc(3 * var(--io-control-h-lg)); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); }
+.hfy-dups__problem { display: grid; gap: var(--io-space-2); margin: 0; padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-danger); overflow-wrap: anywhere; }
+.hfy-dups__items { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--io-space-2); }
+.hfy-dups__row { display: grid; gap: var(--io-space-1); padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); min-width: 0; }
+.hfy-dups__side { overflow-wrap: anywhere; }
+.hfy-dups__side a { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); color: var(--io-color-semantic-link); font-weight: var(--io-typography-weight-semibold); }
+.hfy-dups__strength { color: var(--io-color-semantic-text-dim); }
+.hfy-dups .hfy-dups__btn, .hfy-dups__btn {
+  justify-self: start; display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text);
+  font: inherit; font-weight: var(--io-typography-weight-semibold); cursor: pointer;
+}
+.hfy-dups .hfy-dups__btn:disabled { background: var(--io-color-semantic-surface-sunken); color: var(--io-color-semantic-text-dim); cursor: default; }
+.hfy-dups a:focus-visible, .hfy-dups .hfy-dups__btn:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+@media (min-width: 43rem) {
+  .hfy-dups__row { grid-template-columns: 1fr 1fr auto; align-items: center; gap: var(--io-space-3); }
+}

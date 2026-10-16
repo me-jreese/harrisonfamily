@@ -83,7 +83,14 @@ export function createHandler(deps) {
       return [...ids];
     };
     // `store` is the record-store context of the editing routes: reads (records/index.js) and, with the extra members, applyBatch() (sync/apply.js).
-    const store = { ddb, cmds, table, now, uid, log, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts, guardDob: deps.guardDob === true, via, completeAccessRequest: deps.completeAccessRequest };
+    const store = { ddb, cmds, table, now, uid, log, hooks: deps.syncHooks, idPolicy: deps.idPolicy, txnOpts: deps.txnOpts, guardDob: deps.guardDob === true, via, completeAccessRequest: deps.completeAccessRequest,
+      // The gramps_ids behind sign-ins (members and admins): POST /api/admin/deletes never deletes one of those people. Absent when the lists are not wired.
+      // These are io's S3 lists only; a sign-in that exists as a DynamoDB ALLOW# item alone is checked per Person target by the delete route itself (listAllowBySub).
+      // An empty member list (its source was unavailable) answers an empty set, which the delete route treats as "unknown" and refuses (fail closed).
+      accountIds: deps.listMembers ? async () => {
+        const members = await deps.listMembers();
+        return members.size ? new Set([...members, ...(deps.getAdmins ? await deps.getAdmins() : [])]) : new Set();
+      } : undefined };
     // A post whose thread holds a photo with a graduation under way is not deleted (409 graduation_pending): the thread purge would take the comment the retry needs.
     const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload, beforeDelete: (post) => refusePendingGraduation(base, `post:${post.id}`) });
     const comments = createCommentSource({

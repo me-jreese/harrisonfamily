@@ -36,6 +36,8 @@ Because records keep changing while a suggestion waits, approval does not compar
 
 An admin has three decisions: approve, decline with a reason, or ask for changes with a message. Approving one that deletes a record or removes a family link is destructive, and asks for a fresh sign-in within 15 minutes, so a stolen session cannot remove people from the tree. The proposer can amend a suggestion that is waiting, asked about, or out of date, and can withdraw it.
 
+An admin can also delete a person, family, event, place, source, source citation or photo straight from the editor, once the `adminDelete` flag is on (Q2-15). It is not a suggestion and has no second reviewer: the admin sees the whole plan first (what goes, which pages lose a link, the ids retired for ever), signs in again if the sign-in is older than 15 minutes, and is held to a daily limit on deletes. A member cannot do it (`403 not_allowed`); a member's way to ask for a removal is still a suggestion. Merging two people stays in Gramps on the desktop, and the `possible duplicates` tab only lists who to look at. See [Delete a page and review possible duplicates](../how-to/delete-a-page-and-review-duplicates.md).
+
 Approval writes the records, the audit entry and the proposer's credit in one transaction. The proposer is credited when a suggestion is accepted, not when it is sent, so the contributions list rewards correct information and not volume.
 
 ## Relationships get their own wizard

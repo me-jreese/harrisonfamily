@@ -26,6 +26,9 @@ import { DrillLinks } from "../lib/editor-drill.jsx";
 import { recordNotes, recordPolicy, recordTitle } from "../lib/editor-records.js";
 import { draftKey, makeLookups, pendingChip } from "../lib/editor-sections.js";
 import { suggestPeople } from "../lib/people-corpus.js";
+import { canDelete, COPY as DELETE_COPY } from "../lib/admin-delete.js";
+import { DeletePanel } from "../lib/admin-delete-ui.jsx";
+import { useFlags } from "../lib/use-flags.js";
 
 export { ModeBadge };
 // `fresh`: a step-up (a destructive change needs a sign-in no older than 15 minutes), so the sign-in page asks again instead of reusing the session.
@@ -111,10 +114,12 @@ function Section({ section, open, onToggle, children }) {
 }
 
 const LIST_TITLE = { alt: "also known as" };
+const DELETE_SECTION = Object.freeze({ id: "delete", title: DELETE_COPY.sectionTitle });
 
 const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 64rem)").matches;
 
 function Editor({ route }) {
+  const flags = useFlags();
   const [open, setOpen] = useState(null);
   const [isWide, setIsWide] = useState(wide());
   const [scrollTo, setScrollTo] = useState(null);
@@ -193,6 +198,8 @@ function Editor({ route }) {
   const resolver = useMemo(() => createModeResolver(bundle && bundle.policy), [bundle]);
   const sections = useMemo(() => (viewer ? sectionsFor(route.cls, viewer) : []), [viewer, route.cls]);
   sectionsRef.current = sections;
+  // An admin with adminDelete gets a last card to delete the page (Q2-15). It is not a form section: it makes no ops, so the save flow never sees it.
+  const showDelete = canDelete({ cls: route.cls, viewer, flags });
   schemasRef.current = state.schemas || {};
   const lookups = useMemo(() => makeLookups(bundle || {}, state.schemas || {}), [bundle, state.schemas]);
   // The person picker searches the family index (suggestPeople, free text disallowed); a pick is turned into the person's handle by the records API.
@@ -205,7 +212,7 @@ function Editor({ route }) {
   }), []);
   const counts = useCounts({ bundle, sections, drafts, resolver, cls: route.cls, viewer });
   const flow = useSaveFlow({ sections, viewer, getBundle: () => bundleRef.current, getDrafts: () => draftsRef.current, refetch: fetchBundle, adopt });
-  const openSet = open || new Set(isWide ? sections.map((s) => s.id) : sections.slice(0, 1).map((s) => s.id));
+  const openSet = open || new Set(isWide ? [...sections, ...(showDelete ? [DELETE_SECTION] : [])].map((s) => s.id) : sections.slice(0, 1).map((s) => s.id));
   const toggle = (id) => { const next = new Set(openSet); if (next.has(id)) next.delete(id); else next.add(id); setOpen(next); };
   const reveal = (id) => { if (!openSet.has(id)) setOpen(new Set([...openSet, id])); setScrollTo(id); };
 
@@ -231,7 +238,7 @@ function Editor({ route }) {
       </div>
       <nav className="hfy-editor__index" aria-label={COPY.sections}>
         <ol>
-          {sections.map((s) => <li key={s.id}><a href={`#sec-${s.id}`} onClick={() => reveal(s.id)}>{s.title}</a></li>)}
+          {[...sections, ...(showDelete ? [DELETE_SECTION] : [])].map((s) => <li key={s.id}><a href={`#sec-${s.id}`} onClick={() => reveal(s.id)}>{s.title}</a></li>)}
         </ol>
       </nav>
       <div className="hfy-editor__cards">
@@ -251,6 +258,11 @@ function Editor({ route }) {
             {!s.form && !s.drill && !(s.lists || []).length && <p className="hfy-editor__soon">{COPY.soon}</p>}
           </Section>
         ))}
+        {showDelete && (
+          <Section section={DELETE_SECTION} open={openSet.has(DELETE_SECTION.id)} onToggle={toggle}>
+            <DeletePanel cls={route.cls} bundle={bundle} signInHref={signInHref} refetch={fetchBundle} />
+          </Section>
+        )}
       </div>
       <SaveDock flow={flow} counts={counts} />
       <ConfirmSheet flow={flow} signInHref={signInHref} />
