@@ -5,6 +5,9 @@
 //   node scripts/sync-admin.mjs resume   --all --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs feed-on  --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs feed-off --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs merges-on  --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs merges-off --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs rekey    --dry-run|--apply [--members <id,id|none>] [--retry-refused] [--resweep]
 //   node scripts/sync-admin.mjs render   --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
 //   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
 //   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--include-withdrawn] [--by <name>]
@@ -24,6 +27,12 @@
 //   feed-on    sets SYNC#HEAD.changes_feed to true (HFY-TSK-277): GET /api/sync/changes then serves the ARCH-B delta feed and /api/sync/meta
 //              reports changes_feed: true, which tells the add-on it may pull deltas. feed-off sets it back to false (absent counts as off);
 //              the add-on then takes full snapshots again at its next run. The feed ships off; flipping it is io's go-ahead like the others.
+//   merges-on  sets SYNC#HEAD.merges_enabled to true (HFY-TSK-294): desktop Person merges stop being held and /api/sync/meta reports merges_enabled: true.
+//              Deploy the re-key job (api/src/identity-rekey.js) and the merge aliases first; --apply refuses while a merge alias still has an unfinished
+//              re-key. merges-off sets it back to false (absent counts as off).
+//   rekey      runs the identity re-key for every merge alias that is not done (the afterCommit hook does this after each merge; this is the manual
+//              retry). A dry run only counts them; output is counts and states, never ids. --apply needs --members <gramps ids|none>: the CLI has no member list,
+//              so without it the job fails closed. --retry-refused re-evaluates aliases marked refused; --resweep also revisits done ones (late orphans).
 //   render     invokes the hfy-sync-render Lambda with an operator payload. --full forces a full pass although the cursor is current;
 //              --allow-mass-delete adds {"allow_mass_delete": true} (lets one pass delete more than the guard's limit, after review);
 //              --prune-foreign adds {"prune_foreign": true} (deletes renderer-shaped keys under the data prefixes that the renderer
@@ -59,6 +68,7 @@ import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
 import { batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
 import { WITHDRAW_GRACE_MS, withdrawWarning } from "../src/sync/refold.js";
+import { pendingAliases, rekeyPending } from "../src/identity-rekey.js";
 import { RecoveryError, bumpTreeId, copyBack, rebuildHeads } from "./sync-recovery.mjs";
 
 export const GRACE_MS = WITHDRAW_GRACE_MS; // 72 hours: the expunge grace of a withdraw (store.js EXPUNGE_GRACE_MS)
@@ -116,12 +126,37 @@ async function setSwitch(ctx, { field, word, absentIs, labels }, enabled, { appl
 }
 const WRITES = { field: "writes_enabled", absentIs: true, labels: ["paused", "enabled"] };
 const FEED = { field: "changes_feed", absentIs: false, labels: ["off", "on"] };
+const MERGES = { field: "merges_enabled", absentIs: false, labels: ["off", "on"] };
+const setMerges = (ctx, enabled, o) => setSwitch(ctx, { ...MERGES, word: enabled ? "merges-on" : "merges-off" }, enabled, o);
 const setWrites = (ctx, enabled, o) => setSwitch(ctx, { ...WRITES, word: enabled ? "resume" : "pause" }, enabled, o);
 const setFeed = (ctx, enabled, o) => setSwitch(ctx, { ...FEED, word: enabled ? "feed-on" : "feed-off" }, enabled, o);
 export const pause = (ctx, o) => setWrites(ctx, false, o);
 export const resume = (ctx, o) => setWrites(ctx, true, o);
 export const feedOn = (ctx, o) => setFeed(ctx, true, o);
 export const feedOff = (ctx, o) => setFeed(ctx, false, o);
+export async function mergesOn(ctx, o) {
+  const pending = await pendingAliases(ctx);
+  if (pending.length > 0 && o.apply) throw new AdminError(`merges-on refused: ${pending.length} merge alias(es) have an unfinished re-key (run rekey --apply first)`);
+  if (pending.length > 0) ctx.log(`merges-on: ${pending.length} merge alias(es) have an unfinished re-key; --apply would be refused`);
+  return setMerges(ctx, true, o);
+}
+export const mergesOff = (ctx, o) => setMerges(ctx, false, o);
+
+/** The manual retry of the re-key job. Prints counts only. */
+export async function rekey(ctx, { apply, members, retryRefused, resweep }) {
+  const opts = { retryRefused: Boolean(retryRefused), resweep: Boolean(resweep) };
+  const pending = await pendingAliases(ctx, opts);
+  const refused = pending.filter((p) => p.state === "refused").length;
+  ctx.log(`rekey: ${pending.length} merge alias(es) not done${opts.retryRefused ? " (including refused)" : ""}`);
+  if (!apply || pending.length === 0) return { planned: !apply, pending: pending.length, apply };
+  // The CLI has no member list of its own: the operator names the member ids (userGrampsID values) or `none`. Without it the job fails closed.
+  const isMember = ctx.isMember ?? (members ? async (id) => members.includes(id) : undefined);
+  if (!isMember) throw new AdminError("rekey --apply needs --members <id,id,...> (the member gramps ids) or --members none: the member check is not available from the CLI");
+  const rctx = { ...ctx, isMember, uid: ctx.uid ?? (() => randomUUID()) };
+  const results = await rekeyPending(rctx, opts);
+  for (const r of results) ctx.log(`rekey: ${r.state}${r.reason ? ` (${r.reason}${r.evidence ? `: ${r.evidence}` : ""})` : ""}`);
+  return { results, apply, refused };
+}
 
 // ---- render -----------------------------------------------------------------------------------------------------------
 /** The Lambda payload for the render flags. Every flag is the literal `true`, which is what the renderer accepts. */
@@ -379,6 +414,9 @@ Usage:
   node scripts/sync-admin.mjs resume    --all --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs feed-on   --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs feed-off  --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs merges-on  --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs merges-off --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs rekey     --dry-run|--apply [--members <id,id|none>] [--retry-refused] [--resweep]
   node scripts/sync-admin.mjs render    --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--include-withdrawn] [--by <name>]
@@ -388,13 +426,13 @@ Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --a
 pause --all stops every writer of the store at once (the switch is store-wide); the recovery commands (rebuild-heads, copy-back, bump-tree-id)
 refuse --apply until the store is paused, and never swap TABLE_NAME. -h/--help prints this.
 
-IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off, resurrect, rebuild-heads, copy-back and
-bump-tree-id; the last three are the store recovery, and a copy-back can undo writes made since its restore point, withdraws included) or makes the
+IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off, merges-on, merges-off, rekey, resurrect, rebuild-heads,
+copy-back and bump-tree-id; the last three are the store recovery, and a copy-back can undo writes made since its restore point, withdraws included) or makes the
 renderer write and delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
 (AGENTS.md; review DL-28). Always run --dry-run first. See docs/how-to/operate-the-sync-store.md.
 `;
 
-export const COMMANDS = ["pause", "resume", "feed-on", "feed-off", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
+export const COMMANDS = ["pause", "resume", "feed-on", "feed-off", "merges-on", "merges-off", "rekey", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
 
 export function parseArgs(argv) {
   const out = { command: undefined, apply: undefined, table: process.env.TABLE_NAME ?? "hfy-app", region: process.env.AWS_REGION ?? "us-west-2" };
@@ -421,6 +459,9 @@ export function parseArgs(argv) {
     else if (a === "--reseed") out.reseed = true;
     else if (a === "--all") out.all = true;
     else if (a === "--include-withdrawn") out.includeWithdrawn = true;
+    else if (a === "--members") out.members = (v => (v === "none" ? [] : v.split(",").filter(Boolean)))(value(a, i++));
+    else if (a === "--retry-refused") out.retryRefused = true;
+    else if (a === "--resweep") out.resweep = true;
     else if (a === "--full") out.full = true;
     else if (a === "--allow-mass-delete") out.allowMassDelete = true;
     else if (a === "--prune-foreign") out.pruneForeign = true;
@@ -433,13 +474,16 @@ export function parseArgs(argv) {
     resume: ["by", "all"],
     "feed-on": ["by"],
     "feed-off": ["by"],
+    "merges-on": ["by"],
+    "merges-off": ["by"],
+    rekey: ["members", "retryRefused", "resweep"],
     render: ["full", "allowMassDelete", "pruneForeign", "functionName"],
     resurrect: ["by", "batch", "includeWithdrawn"],
     "rebuild-heads": ["by", "toSeq", "includeWithdrawn"],
     "copy-back": ["by", "fromTable"],
     "bump-tree-id": ["by", "reseed"],
   }[out.command];
-  for (const k of ["by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName", "toSeq", "fromTable", "reseed"]) {
+  for (const k of ["members", "retryRefused", "resweep", "by", "batch", "all", "includeWithdrawn", "full", "allowMassDelete", "pruneForeign", "functionName", "toSeq", "fromTable", "reseed"]) {
     if (out[k] !== undefined && !allowed.includes(k)) throw new AdminError(`--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`).replace("function-name", "function")} does not apply to ${out.command}`);
   }
   if (out.command === "rebuild-heads" && out.toSeq === undefined) throw new AdminError("rebuild-heads needs --to-seq <N> (or head for the log's last seq)");
@@ -459,6 +503,12 @@ export async function run(args, ctx) {
       return feedOn(ctx, args);
     case "feed-off":
       return feedOff(ctx, args);
+    case "merges-on":
+      return mergesOn(ctx, args);
+    case "merges-off":
+      return mergesOff(ctx, args);
+    case "rekey":
+      return rekey(ctx, args);
     case "render":
       return render(ctx, args);
     case "resurrect":
@@ -482,7 +532,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else {
       const [{ DynamoDBClient }, lib] = await Promise.all([import("@aws-sdk/client-dynamodb"), import("@aws-sdk/lib-dynamodb")]);
       const ddb = lib.DynamoDBDocumentClient.from(new DynamoDBClient({ region: args.region }), { marshallOptions: { removeUndefinedValues: true } });
-      const cmds = { GetCommand: lib.GetCommand, QueryCommand: lib.QueryCommand, ScanCommand: lib.ScanCommand, TransactWriteCommand: lib.TransactWriteCommand };
+      const cmds = { GetCommand: lib.GetCommand, QueryCommand: lib.QueryCommand, PutCommand: lib.PutCommand, ScanCommand: lib.ScanCommand, TransactWriteCommand: lib.TransactWriteCommand };
       await run(args, { ddb, cmds, table: args.table, log: console.log, now: () => Date.now() });
     }
   } catch (e) {
