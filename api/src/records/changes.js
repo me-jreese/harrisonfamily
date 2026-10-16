@@ -618,7 +618,8 @@ function appliedOf(direct) {
   };
   const undoKeys = new Set(inverse.flatMap(touchesOf));
   const undo = direct.changes.deleted.length ? null : { base_versions: pick(versions, [...undoKeys]), ops: inverse };
-  return { versions, undo };
+  // The records the group deleted, so a client that sent a delete (the admin delete route, a destructive edit) can say what went. Absent when none.
+  return { versions, undo, ...(direct.changes.deleted.length ? { deleted: direct.changes.deleted } : {}) };
 }
 
 export const subjectOf = (req, stored, ops) => {

@@ -3,7 +3,7 @@
 // /css and /fonts from $SITE, a scratch copy of the site built with islands/build.mjs (so this never tests a stale committed 11ty/css/auth-edge.css):
 //   rsync -a --delete 11ty/ $SCRATCH/site-signin/ && (cd islands && node build.mjs --site $SCRATCH/site-signin)
 //   cd auth && SITE=$SCRATCH/site-signin E2E_PORT=4175 npm run e2e:theme
-// Chrome (channel chrome) at 375 and 1024: /auth/login, /auth/password/forgot, /auth/password/reset, /auth/link signed out (302 to login)
+// Playwright's bundled headless shell (channel chromium-headless-shell; PW_CHANNEL=chrome opts into system Chrome) at 375 and 1024: /auth/login, /auth/password/forgot, /auth/password/reset, /auth/link signed out (302 to login)
 // and the denied page. Test-only wiring: password provider stub, in-memory stores, synthetic allowlist. Never talks to production.
 // E2E_SHOTS=<dir> also writes a full-page screenshot per page and width. E2E_OFFLINE=1 blocks accounts.google.com (GIS) requests.
 import http from "node:http";
@@ -176,7 +176,7 @@ const measure = () =>
 let page;
 let browser;
 try {
-  browser = await chromium.launch({ channel: "chrome" });
+  browser = await chromium.launch({ channel: process.env.PW_CHANNEL || "chromium-headless-shell" });
   for (const { w, h } of WIDTHS) {
     const ctx = await browser.newContext({ viewport: { width: w, height: h } });
     if (process.env.E2E_OFFLINE) await ctx.route(/^https:\/\/accounts\.google\.com\//, (r) => r.abort());

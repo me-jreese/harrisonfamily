@@ -30,11 +30,15 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if not os.path.isdir(os.path.join(_HERE, "hfygramps")):
     sys.path.insert(0, os.path.dirname(_HERE))
 
+import copy  # noqa: E402
 import logging  # noqa: E402
+import time  # noqa: E402
 
 from gramps.gen.const import GRAMPS_LOCALE as glocale  # noqa: E402
 from gramps.gen.const import VERSION, VERSION_TUPLE  # noqa: E402
 from gramps.gen.db import DbTxn  # noqa: E402
+from gramps.gen.errors import HandleError  # noqa: E402
+from gramps.gen.lib.json_utils import data_to_object, object_to_dict  # noqa: E402
 from gramps.gui.plug import tool  # noqa: E402
 
 import hfy_sync_ui  # noqa: E402
@@ -48,13 +52,20 @@ _HANDLE_GETTERS = {
     "Repository": "get_repository_handles", "Citation": "get_citation_handles", "Media": "get_media_handles",
     "Event": "get_event_handles", "Person": "get_person_handles", "Family": "get_family_handles",
 }
+_ITER_HANDLES = {cls: "iter_%s_handles" % cls.lower() for cls in consts.CLASSES}  # every class has one (DbReadBase)
+_GETTER = {cls: "get_%s_from_handle" % cls.lower() for cls in consts.CLASSES}
+_RAW_GETTER = {cls: "get_raw_%s_data" % cls.lower() for cls in consts.CLASSES}  # the stored json_data dict, no Gramps object built
+_COMMIT = {cls: "commit_%s" % cls.lower() for cls in consts.CLASSES}
+_REMOVE = {cls: "remove_%s" % cls.lower() for cls in consts.CLASSES}
 
 
 class GrampsTree(runner.TreeAccess):
-    """The open Gramps database as the runner sees it. Reads only handles and the marker; no object content."""
+    """The open Gramps database as the runner sees it. status and bind read only handles and the marker; check, pull and push read the objects; only the pull writes them."""
 
-    def __init__(self, db):
+    def __init__(self, db, uistate=None):
         self.db = db
+        self.uistate = uistate
+        self.dbdir = getattr(db, "path", None) or ""
         self.dbid = db.get_dbid()
         self.name = db.get_dbname() or ""
         self.schema_version = db.get_schema_version()
@@ -72,6 +83,59 @@ class GrampsTree(runner.TreeAccess):
                 out.add((cls, handle))
         return out
 
+    def objects(self):
+        """Every primary object as the dict Gramps stores (`json_data`), the same shape synthetic-tree.jsonl has.
+
+        It goes through the raw getters and builds no Gramps object. Measured on the fixture tree (scenario_push's dry run): a read through
+        the object getters changed `sqlite.db` when the tree closed in a process with a random hash seed, such as the Gramps window,
+        where the raw getters left it byte for byte."""
+        out = {}
+        for cls in consts.CLASSES:
+            get = getattr(self.db, _RAW_GETTER[cls])
+            for handle in getattr(self.db, _ITER_HANDLES[cls])():
+                data = get(handle)
+                if data is not None:
+                    out[handle] = data
+        return out
+
+    def _read(self, cls, handle):
+        # Gramps raises HandleError for a handle that is not there (a create the plan is about to make), where the fakes return None.
+        try:
+            obj = getattr(self.db, _GETTER[cls])(handle)
+        except HandleError:
+            return None
+        return None if obj is None else object_to_dict(obj)
+
+    def editors_open(self):
+        """True while an edit window is open (BRD2 D45). Best effort: it looks at the windows the window manager tracks by id."""
+        gwm = getattr(self.uistate, "gwm", None)
+        if gwm is None:
+            return False
+        from gramps.gui.editors.editprimary import EditPrimary
+        from gramps.gui.editors.editsecondary import EditSecondary
+
+        return any(isinstance(item, (EditPrimary, EditSecondary)) for item in list(getattr(gwm, "id2item", {}).values()))
+
+    def apply(self, label, commits, removals, precheck=None, verify=None, hook=None):
+        # ONE non-batch DbTxn: a single Edit > Undo entry in the GUI (sync.md 8.3 step 9); any exception aborts all of it.
+        items = sorted(commits.items(), key=lambda kv: (consts.CLASSES.index(kv[1]["_class"]), kv[0]))
+        half = (len(items) + 1) // 2
+        with DbTxn(label, self.db) as trans:
+            if precheck is not None:
+                precheck(self._read)
+            for i, (handle, state) in enumerate(items, 1):
+                state = copy.deepcopy(state)
+                state.setdefault("change", int(time.time()))
+                getattr(self.db, _COMMIT[state["_class"]])(data_to_object(state), trans)
+                if hook is not None and i == half:
+                    hook("mid_apply")
+            if hook is not None and not items:
+                hook("mid_apply")
+            for cls, handle in removals:
+                getattr(self.db, _REMOVE[cls])(handle, trans)
+            if verify is not None:
+                verify(self.objects())
+
     def bind(self, tree_id, also):
         # The marker goes in the tree inside one DbTxn, together with the sidecar that remembers it (BRD2 section 11, 8.3 step 1).
         with DbTxn(_("Website sync: bind this tree"), self.db) as _trans:
@@ -79,12 +143,29 @@ class GrampsTree(runner.TreeAccess):
             also()
 
 
+def _gui_actions(tree):
+    """The callables the Website sync menu runs (hfy_sync_ui.present)."""
+    from hfygramps.addon import backup, paths
+
+    def run(action, **kw):
+        return runner.run(tree, "gui", runner.Options(action, **kw), argv=sys.argv)
+
+    tp = paths.TreePaths(tree.dbid)
+    return {
+        "bind": lambda: run("bind", yes=True),
+        "check": lambda: run("check", dry_run=True),
+        "apply": lambda preview_id: run("pull", yes=True, plan=preview_id or ""),
+        "backups": lambda: [n for n, _p in backup.list_backups(tp.backups)],
+        "restore_hint": lambda name: "hfy-sync restore %s --tree \"%s\"" % (name, tree.name),
+    }
+
+
 class HfySyncOptions(tool.ToolOptions):
     """The options string of `-a tool -p`. Integers, because the Gramps parser reads booleans only as True or False."""
 
     def __init__(self, name, person_id=None):
         tool.ToolOptions.__init__(self, name, person_id)
-        self.options_dict = {"action": "status", "dry_run": 0, "allow_deletes": 0, "yes": 0, "step_up": 0, "run_id": ""}
+        self.options_dict = {"action": "status", "dry_run": 0, "allow_deletes": 0, "yes": 0, "step_up": 0, "run_id": "", "plan": "", "ui": ""}
         self.options_help = {
             "action": ("=ACTION", "What to do", ["status", "login", "check", "pull", "push", "sync", "bind"], False),
             "dry_run": ("=0/1", "Report what would change; write nothing to the tree or the website", ["No", "Yes"], True),
@@ -92,6 +173,8 @@ class HfySyncOptions(tool.ToolOptions):
             "yes": ("=0/1", "Do not stop at the preview", ["No", "Yes"], True),
             "step_up": ("=0/1", "For login: ask for a fresh sign-in (prompt=login, max_age=300)", ["No", "Yes"], True),
             "run_id": ("=ID", "Run id the hfy-sync wrapper checks status.json against", "text"),
+            "plan": ("=ID", "Apply only if the changes equal the preview of this run id (sync --yes --plan)", "text"),
+            "ui": ("=sim", "Test seam: run as the GUI does (conflicts stay open, not parked); honoured only while HFY_SYNC_TEST=1", "text"),
         }
 
 
@@ -103,14 +186,15 @@ class HfySyncTool(tool.Tool):
         opts = runner.Options(
             action="status" if gui else str(values.get("action") or "status").strip(),
             dry_run=bool(values.get("dry_run")), allow_deletes=bool(values.get("allow_deletes")), yes=bool(values.get("yes")),
-            step_up=bool(values.get("step_up")),
+            step_up=bool(values.get("step_up")), plan=str(values.get("plan") or "").strip(),
         )
         run_id = str(values.get("run_id") or "") or None
+        simulated_gui = os.environ.get("HFY_SYNC_TEST") == "1" and str(values.get("ui") or "") == "sim"
         try:
-            tree = GrampsTree(dbstate.db)
-            doc = runner.run(tree, "gui" if gui else "cli", opts, run_id=run_id, argv=sys.argv)
+            tree = GrampsTree(dbstate.db, getattr(user, "uistate", None))
+            doc = runner.run(tree, "gui" if gui or simulated_gui else "cli", opts, run_id=run_id, argv=sys.argv)
         except Exception:  # noqa: BLE001 - cli_tool would swallow it; status.json is the channel, and there is none without a tree
             LOG.error("hfy_sync failed before it could write status.json", exc_info=True)
             return
         if gui:
-            hfy_sync_ui.present(user.uistate.window, doc, lambda: runner.run(tree, "gui", runner.Options("bind", yes=True), argv=sys.argv))
+            hfy_sync_ui.present(user.uistate.window, doc, _gui_actions(tree))

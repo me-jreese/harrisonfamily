@@ -197,6 +197,17 @@ The cost is CORS. The presigned URL points at the bucket's own S3 endpoint, whic
 
 Reads are not part of the exception. The API hands back the photo's URL on the site's own origin, so photos are read through CloudFront, through their own `/uploads/*` behavior (HFY-R58), which the data gate makes members-only. Serving member files from the site's own origin is what makes that behavior's headers necessary: a file a member uploaded, if a browser sniffed it as HTML, would run with the site's privileges. The behavior's response headers forbid sniffing and sandbox the response, so an upload can only ever display as an image. Both policies the behavior can carry, the app stack's public one and the gate's `hfy-uploads-private`, send the same `nosniff` and sandbox headers. Each presigned URL also signs the content type, so the stored type is the one the API approved. For how posts and photos fit into the member features, see [member content design](member-content-design.md).
 
+## The chat Worker route is the one path ahead of CloudFront
+
+Chat is the one feature that does not fit behind CloudFront. A chat conversation is a WebSocket held open for the life of a page view, with every member in one place so that membership, message order, presence and the direct-chat pacing rule are decided in one synchronous step. API Gateway WebSockets behind CloudFront would work but would put a Lambda call and a DynamoDB lookup in front of every frame. io decided on Cloudflare (HFY-R77), and the site is already proxied there (HFY-R65).
+
+The cost is one exception to "one distribution fronts everything": a Worker route for `<site>/chat/ws*` and `<site>/chat/v1/*`, ahead of CloudFront on the same host. It keeps the single-origin properties the rest of this page relies on:
+
+- **The cookie still travels.** The upgrade is a same-origin `GET`, so the host-only `io_id` cookie reaches the Worker and page JavaScript holds no token. The Worker verifies it with WebCrypto against the auth edge's JWKS, with the same checks as the data gate, which makes it a second verifier that must not drift.
+- **The cookie goes no further.** The Worker hands the Durable Object a new request that carries only `x-chat-uid` and `x-chat-exp`, never the `Cookie`, and the platform log is off, because a log can record headers.
+- **Only two paths move.** The route patterns are exact, so every other path, `/chat/` included, reaches CloudFront as before, and a request on the routes that is not the upgrade or the health check goes on to CloudFront with `fetch(request)`. Removing the routes makes `/chat/ws` fall through to CloudFront, which answers 404, and the data gate, `authV2` and `HFYAppendIndex` are untouched.
+- **The code ships as a committed bundle.** The Worker needs `@io-kit/chat` from CodeArtifact, which CI cannot read, so the bundle is built locally and committed like the islands output. See [Build, test and stage the chat Worker](../how-to/deploy-the-chat-worker.md).
+
 ## One accepted origin secret
 
 Each Lambda accepts exactly one origin-verify value. That keeps the check simple, but it means rotation cannot be seamless. Two places have to change: the functions' environment, through a stack deploy that changes the reference (for example, by pointing `OriginVerifySecretName` at a new secret), and the distribution's origin headers, through the behavior scripts (all three, since two of them write `hfy-api-origin`). They cannot change at the same instant.

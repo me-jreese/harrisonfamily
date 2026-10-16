@@ -355,12 +355,16 @@ class Refusals(AddonCase):
         self.assertEqual(proc.returncode, 78, proc.stdout + proc.stderr)
         self.assertEqual(self.status()["error"]["code"], "D13")
 
-    def test_actions_the_skeleton_does_not_have_yet_say_so(self):
+    def test_the_network_actions_ask_for_a_sign_in_before_any_network_call(self):
         self.bind()
-        for action in ("sync", "pull", "push", "check"):
-            proc = S.run_wrapper([action, "--tree", self.name])
-            self.assertEqual(proc.returncode, 69, "%s: %s" % (action, proc.stdout + proc.stderr))
-            self.assertEqual(self.status()["error"]["code"], "not_enabled")
+        # check, pull and sync (HFY-TSK-205) and push (HFY-TSK-206) exist now. Without a token they stop at the sign-in; the file
+        # keychain keeps the real login Keychain out of the test, and no request leaves the machine.
+        empty = os.path.join(tempfile.mkdtemp(prefix="hfy-nokey-"), "no-token")
+        self.addCleanup(shutil.rmtree, os.path.dirname(empty), True)
+        for action in ("sync", "pull", "check", "push"):
+            proc = S.run_wrapper([action, "--tree", self.name], {"HFY_SYNC_KEYCHAIN_FILE": empty})
+            self.assertEqual(proc.returncode, 77, "%s: %s" % (action, proc.stdout + proc.stderr))
+            self.assertEqual((self.status()["error"]["code"], self.status()["next_action"]), ("not_signed_in", "login"))
 
 
 class Binding(AddonCase):
@@ -569,7 +573,7 @@ class GuiMode(AddonCase):
         tool, ui = self.load_modules()
         shown = []
         self.addCleanup(setattr, ui, "present", ui.present)
-        ui.present = lambda parent, doc, run_bind: shown.append((parent, doc, run_bind))
+        ui.present = lambda parent, doc, actions: shown.append((parent, doc, actions))
         # a Gramps window in the process list does not stop the tool inside that window
         ps = os.path.join(os.path.dirname(self.ps_file), "gui-ps.txt")
         with open(ps, "w", encoding="utf-8") as fh:
@@ -581,10 +585,10 @@ class GuiMode(AddonCase):
         def go(db, DbTxn):
             tool.HfySyncTool(SimpleNamespace(db=db), user, tool.HfySyncOptions, "hfy_sync", None)
             self.assertEqual(len(shown), 1)
-            parent, doc, run_bind = shown[0]
+            parent, doc, actions = shown[0]
             self.assertEqual(parent, "the-window")
             self.assertEqual((doc["mode"], doc["action"], doc["result"], doc["tree"]["bound"]), ("gui", "status", "ok", False))
-            bound = run_bind()
+            bound = actions["bind"]()
             self.assertEqual((bound["mode"], bound["action"], bound["result"], bound["tree"]["bound"]), ("gui", "bind", "ok", True))
 
         self.edit(go)

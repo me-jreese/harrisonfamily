@@ -3,11 +3,13 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt, requireFeature } from "./features.js";
+import { describeGate, gateExempt, requireFeature, serverSwitch } from "./features.js";
+import { CHAT_AUDIENCE, CHAT_ISSUER, CHAT_MAX_LIFETIME_SECONDS, CHAT_SUBJECT } from "./chat.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
+import { adminDeletesPost, adminDuplicatesList } from "./records/admin-delete.js";
 import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
 import { proposalsDecide } from "./records/proposal-decision.js";
@@ -94,6 +96,8 @@ const need = (v, field) => {
   if (v === undefined || v === null || v === "") throw new HttpError(400, "validation", `${field} is required`);
   return v;
 };
+
+const CHAT_GATE = serverSwitch("CHAT_SERVICE_AUTH", ({ actor }) => actor?.service === true, { rule: "the caller is the chat service actor (a valid ES256 service JWT for aud hfy-api/chat); ChatServicePublicKeys empty refuses every token" });
 
 /**
  * HFY-TSK-238 (api-feature-gate AC3): every PLN-002 route carries `gate`: requireFeature(flag) or serverSwitch(name, check) from
@@ -249,6 +253,21 @@ export const ROUTES = defineRoutes([
   { name: "notifications.preferences.put", method: "PUT", path: "/notifications/preferences", summary: "Save notification preferences", handler: (c) => c.notifyHandler() },
   // The desktop sync API (HFY-TSK-172; sync.md 7): bearer auth, gramps-owner, behind SYNC_API_ENABLED. Defined in src/sync/routes.js; the push and pull routes join it.
   ...SYNC_ROUTES,
+  // The chat service routes (HFY-TSK-164; chat.md 14.3): `auth: "service"`, the chat Worker's ES256 service JWT and never the session cookie (src/chat.js).
+  // No `mcp` member and no policy row, so none is an MCP tool. The switch's check only asks for the service actor: the stack gate is the key list itself
+  // (ChatServicePublicKeys), and an empty list refuses every token with the 401 of a bad one.
+  {
+    name: "chat.directory", method: "GET", path: "/chat/directory", auth: "service", summary: "Service only: the chat directory {version, generated_at, members: [{id, label}]} (allowlist members, labels never emails; cached 5 minutes); 401 without a valid service token, 503 when the allowlist is unreadable",
+    gate: CHAT_GATE, handler: async (c) => ok(await c.chat.directory()),
+  },
+  {
+    name: "chat.push", method: "POST", path: "/chat/push", auth: "service", summary: "Service only: {items: [{recipient, conv, seq, actor}]} (1 to 50): one notification each, with a title and a navigate URL, never message text, only for recipients who turned chat texts on; 200 {sent, skipped, disabled?}",
+    gate: CHAT_GATE, handler: async (c) => ok(await c.chat.push(c.body)),
+  },
+  {
+    name: "chat.archive", method: "POST", path: "/chat/archive", auth: "service", summary: "Service only: mirror a conversation {conv, members, msgs} (at most 100 messages) into CHAT#<conv> items, idempotently and without a ttl; 200 {stored (newly written), received, through_seq}; seq above conv.last_seq is 400",
+    gate: CHAT_GATE, handler: async (c) => ok(await c.chat.archive(c.body)),
+  },
   // The read-only records API (HFY-TSK-175; sync.md 7.2, BRD2 D2-34): the stored, redacted object through publishView and applyModOverlay, behind
   // the HFY_EDITING switch (admins and a member's own record excepted). No `mcp` member. by-id is listed first.
   {
@@ -274,6 +293,17 @@ export const ROUTES = defineRoutes([
   {
     name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (MCP tool hfy_changes_submit)",
     gate: editingGate(), handler: changesPost,
+  },
+  // Admin web deletes and the possible-duplicate queue (HFY-TSK-295; Q2-15 per the decision-sheet default, pending io's recorded answer; review IF-03). Dark until the adminDelete flag is on (or the caller is uat) AND
+  // HFY_EDITING is on; then a member is 403 not_allowed. A delete is compiled to EditOps and takes the /api/changes pipeline (step-up within 900 s, the
+  // delete/withdraw budget, ID retirement). The queue is read-only. No MCP tool: deleting is a human action in the site UI.
+  {
+    name: "adminDeletes.post", method: "POST", path: "/admin/deletes", summary: "Delete records, admins only: {targets: [Class:handle] (Person, Family, Event, Place, Source, Citation or Media, up to 10), base_versions, remove_references?: boolean, dry_run?} with an Idempotency-Key header (not for dry_run): a Source takes its Citations, a Person or Family takes an Event nothing else uses and a Person takes a Family left empty; other records that point at the deleted ones are cleaned in the same batch when remove_references is true, else 409 still_referenced {referrers}; 201 {applied: {versions, deleted}, proposal: null, summary}, or 200 {plan: {delete, update, retired_ids, objects}, budget, summary, warnings} for dry_run; 403 not_allowed (a member), 401 step_up_required (sign in within 900 s), 403 delete_budget (more than 10 deletes, or 5 % of the records, in 24 hours: a hard cap on the web), 409 cannot_delete_account_person (the admin's own person, or any member's or admin's), 409 version_conflict, 413 too_large (more than 24 records); a Person's gramps_id is retired for ever (no MCP tool)",
+    gate: requireFeature("adminDelete"), handler: adminDeletesPost,
+  },
+  {
+    name: "adminDuplicates.list", method: "GET", path: "/admin/duplicates", summary: "The possible-duplicate queue, admins only: pairs of people the duplicate matcher thinks may be one person, best first, for a merge in Gramps on the desktop: ?limit=1-100 (default 50), cursor: {items: [{a, b, score}], cursor, total}, each side {key, gramps_id, displayName, lifespan}; read-only, writes no record (no MCP tool)",
+    gate: requireFeature("adminDelete"), handler: adminDuplicatesList,
   },
   // The relationship wizard's routes (HFY-TSK-210; editing.md 8.2): an intent is compiled to EditOps. Preview writes nothing; a submit is a proposal of
   // kind "relationship" for a member and, for an admin on route auto, applied through applyBatch(). Behind HFY_EDITING. No MCP tool.
@@ -382,6 +412,8 @@ export function buildCaps() {
       // Routes with auth "sync-bearer" (/api/sync/*) take the desktop client's access token instead of the cookie (src/sync/auth.js).
       sync_bearer: { scheme: "bearer", issuer: SYNC_ISSUER, audience: SYNC_AUDIENCE, client_id: SYNC_CLIENT_ID, group: "gramps-owner", step_up: { amr: "mfa", max_age_seconds: 300 } },
     },
+    // Routes with auth "service" (/api/chat/*) take the chat Worker's ES256 service JWT (src/chat.js); keys come from ChatServicePublicKeys.
+    service: { scheme: "bearer", alg: "ES256", issuer: CHAT_ISSUER, audience: CHAT_AUDIENCE, subject: CHAT_SUBJECT, max_lifetime_seconds: CHAT_MAX_LIFETIME_SECONDS, keys_env: "CHAT_SERVICE_PUBLIC_KEYS" },
     sync: {
       api_version: 1, enabled_by: "SYNC_API_ENABLED", min_client: DEFAULT_MIN_CLIENT, accepted: { gramps: [...ACCEPTED_GRAMPS], schema: [...DEFAULT_ACCEPTED_SCHEMA] },
       handshake_headers: Object.values(HEADERS), limits: { ...LIMITS },

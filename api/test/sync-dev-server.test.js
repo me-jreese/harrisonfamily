@@ -380,6 +380,67 @@ describe("the sync routes through the in-memory table and the directory store", 
     expect((await (await api(dev, tok, "GET", "/sync/meta")).json()).head_seq).toBe(1);
   });
 
+  it("/_dev/apply is a website writer: a website-origin edit goes through applyBatch, its refusals keep their status, a replay is a replay (HFY-TSK-206)", async () => {
+    const dev = await server();
+    const tok = (await login(dev)).access_token;
+    const { tree_id: tree } = await (await api(dev, tok, "POST", "/sync/bind", { body: BIND })).json();
+    await fetch(`${dev.origin}/_dev/head`, { method: "PATCH", body: JSON.stringify({ seeded: true, writes_enabled: true }) });
+    const handle = "b".repeat(28);
+    const note = (text) => ({
+      _class: "Note", handle, gramps_id: "N0002", private: false, change: 0, tag_list: [],
+      text: { _class: "StyledText", string: text, tags: [] }, type: { _class: "NoteType", string: "", value: 1 }, format: 0,
+    });
+    const apply = (b) => fetch(`${dev.origin}/_dev/apply`, { method: "POST", body: JSON.stringify(b) });
+    expect((await apply({})).status).toBe(400);
+    const made = await apply({ idempotency_key: "w-1", ops: [{ op: "create", class: "Note", handle, base_version: null, obj: note("First wording") }] });
+    expect(made.status, JSON.stringify(await made.clone().json())).toBe(200);
+    expect((await made.json()).results[0]).toMatchObject({ handle, version: 1 });
+    const edit = (key, v, text) => apply({ idempotency_key: key, ops: [{ op: "update", class: "Note", handle, base_version: v, obj: note(text) }] });
+    expect((await edit("w-2", 1, "Second wording")).status).toBe(200);
+    const stale = await edit("w-3", 1, "Third wording");
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error).toBe("version_conflict");
+    expect((await (await edit("w-2", 1, "Second wording")).json()).replayed).toBe(true);
+    const snap = await (await api(dev, tok, "GET", "/sync/snapshot", { tree })).json();
+    const text = gunzipSync(Buffer.from(await (await fetch(snap.url)).arrayBuffer())).toString("utf8");
+    expect(text).toContain("Second wording");
+    expect(text).not.toContain("First wording");
+    // the keys of the table, never its contents
+    const items = (await (await fetch(`${dev.origin}/_dev/items?prefix=${encodeURIComponent("REC#Note#")}`)).json()).items;
+    expect(items).toEqual([{ PK: `REC#Note#${handle}`, SK: "HEAD" }]);
+    expect((await (await fetch(`${dev.origin}/_dev/items?prefix=${encodeURIComponent("IDALIAS#")}`)).json()).items).toEqual([]);
+  });
+
+  it("/_dev/scrub rewrites a head in place at the same version and seq and raises the expunge epoch, so the next snapshot differs", async () => {
+    const dev = await server();
+    const tok = (await login(dev)).access_token;
+    const { tree_id: tree } = await (await api(dev, tok, "POST", "/sync/bind", { body: BIND })).json();
+    await fetch(`${dev.origin}/_dev/head`, { method: "PATCH", body: JSON.stringify({ seeded: true, writes_enabled: true }) });
+    const handle = "b".repeat(28);
+    const obj = {
+      _class: "Note", handle, gramps_id: "N0002", private: false, change: 0, tag_list: [],
+      text: { _class: "StyledText", string: "Synthetic text to scrub", tags: [] }, type: { _class: "NoteType", string: "", value: 1 }, format: 0,
+    };
+    const push = await api(dev, tok, "POST", "/sync/batches", { tree, headers: { "idempotency-key": "k-2" }, body: { ops: [{ op: "create", class: "Note", handle, base_version: null, obj }] } });
+    expect(push.status).toBe(200);
+    const first = await (await api(dev, tok, "GET", "/sync/snapshot", { tree })).json();
+    const scrub = (b) => fetch(`${dev.origin}/_dev/scrub`, { method: "POST", body: JSON.stringify(b) });
+    for (const bad of [{}, { class: "Nope", handle, obj }, { class: "Note", handle: "c".repeat(28), obj }, { class: "Note", handle, obj: { ...obj, handle: "d".repeat(28) } }]) {
+      expect((await scrub(bad)).status, JSON.stringify(bad).slice(0, 40)).toBeGreaterThanOrEqual(400);
+    }
+    const scrubbed = { ...obj, text: { ...obj.text, string: "[removed]" } };
+    const done = await scrub({ class: "Note", handle, obj: scrubbed });
+    expect(done.status).toBe(200);
+    expect(await done.json()).toMatchObject({ version: 1, seq: 1, expunge_epoch: 1 });
+    const second = await (await api(dev, tok, "GET", "/sync/snapshot", { tree })).json();
+    expect(second.seq).toBe(first.seq);
+    expect(second.body_sha256).not.toBe(first.body_sha256);
+    const text = gunzipSync(Buffer.from(await (await fetch(second.url)).arrayBuffer())).toString("utf8");
+    expect(text).toContain("[removed]");
+    expect(text).not.toContain("Synthetic text to scrub");
+    expect(JSON.stringify(logLines(dev))).toContain("[removed]"); // the dev log records the scrub request, as it records every request
+  });
+
   it("the head switches pause and resume writes, and refuse what they do not know", async () => {
     const dev = await server();
     const tok = (await login(dev)).access_token;

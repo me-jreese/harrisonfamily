@@ -239,6 +239,8 @@ export function createFakeDdb() {
         case "QueryCommand":
           return query(i);
         case "ScanCommand": {
+          const allow = i.ExpressionAttributeValues?.[":allow"]; // the chat directory's ALLOW# scan: whole items (the real call projects PK and sub)
+          if (allow !== undefined) return { Items: [...rows.values()].filter((r) => r.PK.startsWith(allow)).map((r) => structuredClone(r)) };
           const p = i.ExpressionAttributeValues?.[":p"];
           const items = [...rows.values()].filter((r) => (p === undefined ? true : r.PK.startsWith(p)));
           return { Items: items.map((r) => ({ PK: r.PK })) };

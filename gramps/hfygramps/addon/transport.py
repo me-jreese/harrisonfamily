@@ -23,6 +23,7 @@ import urllib.request
 from . import consts
 
 MAX_BODY_BYTES = 16 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024  # a presigned snapshot or media file (get_bytes); the API's own JSON stays under MAX_BODY_BYTES
 # Cloudflare answers urllib's default `Python-urllib/x.y` agent with its own 403 (error 1010) before the origin sees the request
 # (probe, HFY-TSK-180, DL-31); any request the addon makes names itself instead.
 USER_AGENT = "hfy_sync/%s" % consts.ADDON_VERSION
@@ -32,11 +33,14 @@ _CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 class TransportError(Exception):
     """A failed call. `code` is a short word (an API error code or one of ours), never response content."""
 
-    def __init__(self, code, exit_code, next_action="none", status=None, message=None):
+    def __init__(self, code, exit_code, next_action="none", status=None, message=None, details=None):
         self.code = code
         self.exit_code = exit_code
         self.next_action = next_action
         self.status = status
+        # The `details` member of an error body ({error, message, details?}, api/src/http.js), kept as data for a caller that acts on
+        # it (the push reads the op ids and pointers of a 409 or a 422). It is never part of the message or of any log line.
+        self.details = details if isinstance(details, dict) else None
         self.message = message or "The call failed (%s)." % code
         Exception.__init__(self, "%s (%s)" % (self.message, code))
 
@@ -101,9 +105,9 @@ def _is_tls_failure(exc):
         isinstance(reason, ssl.SSLError) and "CERTIFICATE_VERIFY_FAILED" in str(reason))
 
 
-def _read(fp):
-    data = fp.read(MAX_BODY_BYTES + 1)
-    if len(data) > MAX_BODY_BYTES:
+def _read(fp, cap=MAX_BODY_BYTES):
+    data = fp.read(cap + 1)
+    if len(data) > cap:
         raise TransportError("body_too_large", consts.EXIT_INTERNAL)
     return data
 
@@ -141,13 +145,29 @@ class Http:
                     raise retry.final
                 self.sleep(schedule.pop(0))
 
-    def _once(self, method, url, headers, data):
+    def get_bytes(self, url, headers=None):
+        """GET of a presigned URL: the raw body, with the same retries as any idempotent call. The caller sends no Authorization
+        header here, the URL is the credential (and a bearer token must never go to S3)."""
+        self.attempts = 0
+        schedule = list(self.delays)
+        while True:
+            self.attempts += 1
+            try:
+                return self._once("GET", url, headers or {}, None, raw=True).body
+            except _Retryable as retry:
+                if not schedule:
+                    raise retry.final
+                self.sleep(schedule.pop(0))
+
+    def _once(self, method, url, headers, data, raw=False):
         headers = dict(headers)
         if not any(k.lower() == "user-agent" for k in headers):
             headers["User-Agent"] = USER_AGENT
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=self.timeout) as resp:
+                if raw:
+                    return Response(resp.status, {k.lower(): v for k, v in resp.headers.items()}, _read(resp, MAX_DOWNLOAD_BYTES))
                 return Response(resp.status, {k.lower(): v for k, v in resp.headers.items()}, _json_or_none(_read(resp)))
         except urllib.error.HTTPError as exc:
             try:
@@ -181,7 +201,8 @@ class Http:
         if 300 <= status < 400:
             raise TransportError("unexpected_redirect", consts.EXIT_INTERNAL, status=status, message="The server answered with a redirect; refusing to follow it.")
         exit_code, next_action = map_error(status, code)
-        raise TransportError(code, exit_code, next_action, status=status, message="The website answered %d (%s)." % (status, code))
+        raise TransportError(code, exit_code, next_action, status=status, message="The website answered %d (%s)." % (status, code),
+                             details=body.get("details") if isinstance(body, dict) else None)
 
 
 class _Retryable(Exception):

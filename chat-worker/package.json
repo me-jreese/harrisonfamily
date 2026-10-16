@@ -1,0 +1,24 @@
+{
+  "name": "hfy-chat-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The chat Worker and the ChatHub Durable Object for harrisonfamily.us (HFY-PLN-002, chat.md section 17). The built bundle in dist/ is committed (HFY-R58); CI uploads it and never builds it.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/build.mjs --check",
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node test/smoke.mjs",
+    "staging:keys": "node scripts/staging-keys.mjs",
+    "staging:deploy": "node scripts/staging-deploy.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@io-kit/chat": "0.1.6"
+  },
+  "devDependencies": {
+    "wrangler": "4.145.0"
+  }
+}

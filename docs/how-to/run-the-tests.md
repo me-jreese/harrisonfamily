@@ -11,11 +11,13 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | API, [`api/test/`](../../api/test/) | Offline | In process only: an in-memory DynamoDB fake, loopback test servers, and keys generated for the run, or the kit's committed test-only fixture keys for the MCP files. `api`, `package-api` and `mcp-infra` also run repository scripts in child processes, on fixture input, with no AWS call. The run writes generated documents to `api/dist/`, which is gitignored. |
 | Auth edge, [`auth/test/`](../../auth/test/) | Offline | In process only: fixture environment values, in-memory stores, a fake DynamoDB table and a loopback JWKS server. |
 | Passkey end to end, [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs) | Local | The real auth edge app, served in process at `http://localhost:<E2E_PORT>` (default `4173`) with test-only wiring and synthetic data, driven by Playwright's Chromium with a virtual authenticator. The login page still requests Google's sign-in script. |
-| Sign-in pages end to end, [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) | Local | The real auth edge pages, with their real CSP, served in process at `http://localhost:<E2E_PORT>` (default `4175`) with test-only wiring and a synthetic allowlist, plus `/css` and `/fonts` from the scratch site that `SITE` names. Google Chrome drives them. The login page requests Google's sign-in script unless `E2E_OFFLINE=1`. |
+| Sign-in pages end to end, [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) | Local | The real auth edge pages, with their real CSP, served in process at `http://localhost:<E2E_PORT>` (default `4175`) with test-only wiring and a synthetic allowlist, plus `/css` and `/fonts` from the scratch site that `SITE` names. Playwright's bundled headless shell drives them. The login page requests Google's sign-in script unless `E2E_OFFLINE=1`. |
 | Edge gate, [`edge-gate/test/`](../../edge-gate/test/) | Offline | In process only: RSA keys generated for the run, a stubbed JWKS fetch and a fixed clock. |
+| Chat Worker, [`chat-worker/test/`](../../chat-worker/test/) | Offline; needs `CODEARTIFACT_AUTH_TOKEN` to install | `npm run check` and `npm test` run the committed `dist/index.js` in process: a fake Durable Object state over `node:sqlite`, a fake namespace, stubbed `fetch` and a console spy, with generated RSA and ES256 keys and synthetic ids. `test/smoke.mjs --local` and `--local-prod` also start `wrangler dev` (workerd) on `127.0.0.1` with a local JWKS and API stand-in; nothing is deployed. |
 | Gramps goldens, [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py) | Offline | Read the committed golden files ([semantics](../../api/test/records/fixtures/gramps-semantics.golden.json), [relationships](../../api/test/records/fixtures/gramps-relationships.golden.json)) only, with the standard library. They need no Gramps; regenerating the files does ([Regenerate the Gramps goldens](regenerate-the-gramps-goldens.md)). |
+| Gramps addon pull, [`test_addon_pull.py`](../../gramps/tests/unit/test_addon_pull.py), [`test_addon_pull_safety.py`](../../gramps/tests/unit/test_addon_pull_safety.py), [`test_addon_media.py`](../../gramps/tests/unit/test_addon_media.py) and [`test_addon_restore.py`](../../gramps/tests/unit/test_addon_restore.py) | Offline | In process, standard library only, over the synthetic fixture: a fake tree with a real transaction semantics, a fake cloud that builds snapshots the way `api/src/sync/pull.js` does, and a temporary `HOME`. They cover snapshot verification, the plan and the preview, the backup and its retention, media down, fault injection at every step boundary (raised and killed), the stale check, open conflicts over three more runs, the inbound privacy scan, reverts, expunge notices, the reviewed plan and the restore. |
 | Gramps addon, [`gramps/tests/unit/test_addon_runtime.py`](../../gramps/tests/unit/test_addon_runtime.py) and [`test_addon_wrapper.py`](../../gramps/tests/unit/test_addon_wrapper.py) | Offline | In process and child processes, standard library only. A fake tree stands in for Gramps, a fake Gramps command for `Gramps -O <tree> -a tool`, and a temporary `HOME` and `GRAMPSHOME` hold every file; the build and install tests use a temporary plugins folder. Needs `bash` and `zip`. |
-| Gramps addon, Gramps lane, [`gramps/tests/gramps/test_addon_skeleton.py`](../../gramps/tests/gramps/test_addon_skeleton.py) | Local, on a Mac with Gramps 6.0.6 (`io-mac-gramps`) | Run `gramps/tests/gramps/run.sh test_addon_skeleton.py` (about one to three minutes). It installs the addon into a throwaway `GRAMPSHOME` and drives the real Gramps command line and the `hfy-sync` wrapper on copies of the synthetic fixture tree; the audit hook forbids the real Gramps and Pictures folders for the whole run. CI does not run it. See [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md). |
+| Gramps addon, Gramps lane, [`gramps/tests/gramps/test_addon_skeleton.py`](../../gramps/tests/gramps/test_addon_skeleton.py) and [`test_addon_pull.py`](../../gramps/tests/gramps/test_addon_pull.py) | Local, on a Mac with Gramps 6.0.6 (`io-mac-gramps`) | Run `gramps/tests/gramps/run.sh test_addon_skeleton.py test_addon_pull.py` (about one to three minutes). `test_addon_pull.py` proves the apply against a real Gramps database: one `DbTxn` named for the seq, one Edit > Undo entry, and a full rollback (byte for byte) on a failed check, a changed object or a fault. It installs the addon into a throwaway `GRAMPSHOME` and drives the real Gramps command line and the `hfy-sync` wrapper on copies of the synthetic fixture tree; the audit hook forbids the real Gramps and Pictures folders for the whole run. CI does not run it. See [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md). |
 | Sync dev server, [`api/test/sync-dev-server.test.js`](../../api/test/sync-dev-server.test.js) | Offline | Part of the API suite (step 1). The real server, [`api/scripts/sync-dev-server.mjs`](../../api/scripts/sync-dev-server.mjs), started in process on an ephemeral `127.0.0.1` port and driven with `fetch`: the dev sign-in endpoints, the sync routes over the in-memory table, presigned uploads into a temporary directory, and the request log. Nothing leaves the machine. |
 | Sync end-to-end scenarios, [`gramps/tests/e2e/`](../../gramps/tests/e2e/) | Local, on a Mac with Gramps 6.0.6 (`io-mac-gramps`) | Step 15. The installed addon and the addon's own sign-in and transport against that dev server, on copies of the synthetic fixture tree, inside Gramps' bundled Python and under the same audit hook as the Gramps lane. CI does not run the scenarios; it runs their plumbing, [`test_e2e_support.py`](../../gramps/tests/unit/test_e2e_support.py), with a stub in place of the server. |
 | Render Lambda, [`gramps/tests/unit/test_render_lambda.py`](../../gramps/tests/unit/test_render_lambda.py) and its siblings `test_render_lambda_privacy.py`, `test_render_lambda_view.py` and `test_render_lambda_aws.py` | Offline | In process only: the real render pass over in-memory fakes of the table and the buckets (`render_lambda_support.py`), on the synthetic tree. Standard library only; the boto3 adapter tests use botocore's Stubber and skip when boto3 is not installed, and one test runs `node` on `api/src/records/semantics.js` when `node` is installed. No call reaches AWS. See [The render Lambda](../reference/sync-render.md). |
@@ -46,9 +48,9 @@ Add a suite to CI only if it needs nothing from CodeArtifact: put its command in
 
 ## Before you start
 
-- **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
-- **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
-- **Google Chrome installed** for the island browser tests, unless you switch them to Playwright's Chromium (step 4), and for the sign-in pages end-to-end test, which always uses Chrome (step 10).
+- **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `chat-worker/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
+- **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/`, `chat-worker/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
+- **Playwright's headless shell installed** for the island browser tests (step 4) and the sign-in pages end-to-end test (step 10). Neither needs Google Chrome: they launch the bundled `chromium-headless-shell` unless `PW_CHANNEL` names another channel.
 - **Start each block from the repository root.** Every command below assumes it. Blocks that change directory do so inside parentheses, in a subshell, so your shell is back at the root when each block ends.
 
 ## Steps
@@ -62,6 +64,7 @@ Run the steps that cover your change:
 | The sign-in pages' styling (`islands/src/auth-edge/`) or `auth/edge.manifest.json` | Steps 2, 3 and 5, and the sign-in pages test in step 10. |
 | `islands/`, a theme partial or an `11ty/` page | Steps 3 and 4. |
 | `edge-gate/` | Step 8. |
+| `chat-worker/`, or `shared/privacy-guard.mjs` | Step 16. |
 | `graph/` | Step 14. |
 | `11ty/js/feature-flags.js`, `auth-v2.js`, `person-page.js` or `11ty/family-login/index.html` | Step 9. |
 | `scripts/infra/`, `scripts/cloudfront/`, or a file under `11ty/person/` | Step 5. |
@@ -143,13 +146,13 @@ It covers `islands/src/**/*.css` and the inline styles of the twelve repo-owned 
 ### 4. Run the island browser tests (local)
 
 1. Make sure the site matches the source. The specs serve the site as it is on disk, `11ty/` by default, with its bundles, theme stylesheet, fonts and pages. If you changed anything under `islands/`, rebuild into `11ty/` first ([Build and preview the islands](build-and-preview-the-islands.md)), or test a scratch build as below. `npm run check:islands` from step 3 tells you whether `11ty/` is current.
-2. Run the suite:
+2. Run the specs you changed, one file at a time:
 
    ```sh
-   (cd islands && npm test)
+   (cd islands && npx playwright test tests/<spec>.spec.mjs --workers=1)
    ```
 
-   `npm test` runs the `node:test` suites from step 3 and then `playwright test`, so it also needs the `api/` install. To run only the browser tests, run `(cd islands && npx playwright test)` instead.
+   Name more files to run more specs. `npx playwright test` with no file runs every spec, and `npm test` runs the `node:test` suites from step 3 first and then every spec, so it also needs the `api/` install. Run the whole suite only when the change reaches every page, such as the committed `flags.json`, and not on a machine someone else is using.
 
 [`playwright.config.mjs`](../../islands/playwright.config.mjs) starts the local server for you: `npx http-server <site> -p <port> -a 127.0.0.1 -s -c-1`, at a 375 × 812 viewport. The site defaults to `../11ty` and the port to `8089`. If something is already listening on the port, Playwright reuses it, so stop any other server there first, or choose another port with `PW_PORT`.
 
@@ -167,11 +170,21 @@ The [test suites table](../reference/repository-operations.md#test-suites) lists
 
 The specs that measure the design system's look, `islands-look`, `legacy-pages`, `person-page`, `qa-fixes`, `qa2-fixes`, `shell` and `theme-foundation`, fail when the theme stylesheet or the fonts are stale, not only when a bundle is.
 
-The default browser channel is `chrome`, which needs Google Chrome installed. To use Playwright's bundled Chromium instead:
+The specs launch Playwright's bundled headless shell, the `chromium-headless-shell` channel, and never your installed Chrome. Outside CI the config runs at most 2 workers and one spec file per worker (`fullyParallel` is off); `--workers=1` runs one. Install the shell once, which adds a build to Playwright's cache and nothing to the system:
 
 ```sh
-(cd islands && npx playwright install chromium && PW_CHANNEL=chromium npx playwright test)
+(cd islands && npx playwright install chromium-headless-shell)
 ```
+
+To drive system Google Chrome or Playwright's full Chromium instead, set `PW_CHANNEL=chrome` or `PW_CHANNEL=chromium` (after `npx playwright install chromium`). Both are explicit opt-ins. Chrome opens full browser windows on the machine, so use it only for a bug that shows only there.
+
+When a run ends, no browser should remain. This prints nothing:
+
+```sh
+pgrep -fl playwright_chromiumdev_profile
+```
+
+If it lists browsers that you started, stop them with `pkill -f playwright_chromiumdev_profile`. That pattern also matches the browsers of other runs on the machine, so check the list first. Do not start a run in a loop or in watch or `--ui` mode.
 
 Failure output goes to `islands/test-results/`, which is gitignored.
 
@@ -328,7 +341,7 @@ The scenarios run in order: the login page offers a passkey; password sign-in; e
 
 #### Sign-in pages
 
-[`signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) checks the styled sign-in pages with the stylesheet built from the current source. It needs Google Chrome, and a scratch site built with the `islands/` install from step 3:
+[`signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) checks the styled sign-in pages with the stylesheet built from the current source. It needs the headless shell build for the Playwright version that `auth/` pins (`(cd auth && npx playwright install chromium-headless-shell)` installs it), and a scratch site built with the `islands/` install from step 3:
 
 ```sh
 rsync -a --delete 11ty/ <scratch-site>/
@@ -338,7 +351,7 @@ rsync -a --delete 11ty/ <scratch-site>/
 
 As in step 4, `rsync --delete` refreshes the copy in place, so the same `<scratch-site>` serves both steps.
 
-It serves the real edge pages, with their real CSP, on `http://localhost:<E2E_PORT>` (default `4175`), and serves `/css` and `/fonts` from `SITE`. The pages link the stylesheet with the `?v=` of the committed `theme.cssUrl`. It drives Chrome at 375 and 1024 px over `/auth/login`, the forgot-password and reset pages, `/auth/link` signed out and signed in, and the denied page. Its checks include the self-hosted fonts loading, no horizontal scroll, sizes and colours from the design system, the notice for an address that is not on the allowlist, the keyboard focus ring on the Google button, the prompt to add a passkey, and no CSP violations. The wiring is test-only: a stub password provider, in-memory stores, a signing key generated for the run and a synthetic allowlist.
+It serves the real edge pages, with their real CSP, on `http://localhost:<E2E_PORT>` (default `4175`), and serves `/css` and `/fonts` from `SITE`. The pages link the stylesheet with the `?v=` of the committed `theme.cssUrl`. It drives the headless shell (`PW_CHANNEL=chrome` opts into system Chrome) at 375 and 1024 px over `/auth/login`, the forgot-password and reset pages, `/auth/link` signed out and signed in, and the denied page. Its checks include the self-hosted fonts loading, no horizontal scroll, sizes and colours from the design system, the notice for an address that is not on the allowlist, the keyboard focus ring on the Google button, the prompt to add a passkey, and no CSP violations. The wiring is test-only: a stub password provider, in-memory stores, a signing key generated for the run and a synthetic allowlist.
 
 - `E2E_OFFLINE=1` blocks the requests to Google's sign-in script.
 - `E2E_SHOTS=<dir>` saves a full-page screenshot of each page at each width.
@@ -484,9 +497,11 @@ The scenarios drive the installed addon and the addon's own sign-in and transpor
 gramps/tests/e2e/run.sh --list                   # the scenario files
 gramps/tests/e2e/run.sh                          # all of them
 gramps/tests/e2e/run.sh scenario_smoke.py        # bind, status, the empty check, and the request-log greps
+gramps/tests/e2e/run.sh scenario_push.py         # the push: seed, edits, replay, 409, deletes, merges, ids, the privacy greps, and the pull and push together
+gramps/tests/e2e/run.sh scenario_pull.py         # the pull: check, apply, faults, conflicts, privacy, expunge, restore, reviewed plan (about 4 minutes)
 ```
 
-The smoke scenario's "empty check" reads the cloud's snapshot through the addon's transport and verifies it in the test, because the addon has no `check` command yet; the addon-pull-apply task replaces it with the addon's own `check` run against this server.
+`scenario_pull.py` seeds the dev server through the real push routes with what the desktop projects, makes the "website" change an object (the same routes), signs the addon in through a refresh token held in a file (honoured only while `HFY_SYNC_TEST=1`; the login Keychain is never used), and then drives `hfy-sync` as io does. A fault is injected with `HFY_SYNC_FAULT=<step>` or `HFY_SYNC_FAULT=crash:<step>` (the process ends at once), also honoured only under `HFY_SYNC_TEST=1`; the steps are `after_snapshot`, `after_media`, `after_backup`, `mid_apply`, `after_commit` and `after_sidecar`. The smoke scenario's "empty check" also runs the addon's own `check` against the server.
 
 `run.sh` is [the Gramps lane's runner](install-the-gramps-sync-addon.md) with this folder as the lane. It makes a throwaway `GRAMPSHOME` and `HOME`, imports the fixture once into a template tree, copies the template for each scenario file, and runs the file inside the bundled Python under the audit hook that forbids the real Gramps and Pictures folders. It exits `1` when any scenario or any of its negative controls fails. The login Keychain is never used: the scenarios sign in through a Keychain held in memory.
 
@@ -497,11 +512,11 @@ node api/scripts/sync-dev-server.mjs --port 0         # prints one JSON line wit
 node api/scripts/sync-dev-server.mjs --help
 ```
 
-It writes every request to `requests.jsonl` in its data directory (`--log-file` moves it) before it answers: one JSON object per line, a JSON body embedded as written, so a test can `grep` for `"dbid":"…"` and for the absence of a name. The `Authorization` header is never logged, and the sign-in endpoint's body is logged as field names only. Because bodies are logged as written, the "no tree content in the log" grep means something only for requests that carry ids and hashes, as the bind scenario's do. A scenario that pushes objects needs those redacted in the log first, or its negative grep moved to a redaction scenario. The credential grep holds for every scenario.
+It writes every request to `requests.jsonl` in its data directory (`--log-file` moves it) before it answers: one JSON object per line, a JSON body embedded as written, so a test can `grep` for `"dbid":"…"` and for the absence of a name. The `Authorization` header is never logged, and the sign-in endpoint's body is logged as field names only. Because bodies are logged as written, the "no tree content in the log" grep means something only for requests that carry ids and hashes, as the bind scenario's do. A scenario that pushes objects logs what it pushes, which is the projected objects only: the push scenarios (HFY-TSK-206) grep that log for the planted fixture values (phones, mail, street addresses and the exact birth days and months), and finding none is the check that held content never reaches the server. The credential grep holds for every scenario.
 
 `--data-dir DIR` keeps `DIR` and uses only a folder the server owns inside it, `DIR/hfy-sync-dev/`, whose `s3/` store it empties at every start (the table is in memory, so a leftover object would be an orphan). It never touches anything else in `DIR`, refuses an existing `hfy-sync-dev/` it did not make, and refuses a `--log-file` that names a file that already has content. With no `--data-dir` the server makes a temporary directory and removes it on exit.
 
-`/_dev/head` (`PATCH`) sets the store's switches (`writes_enabled`, `seeded`, `merges_enabled`, `min_client`) in place of `sync-admin`, and `/_dev/auth` (`PATCH`) sets the access-token lifetime or revokes every sign-in. These switches, the presigned `PUT`/`GET` store under `/_s3/` and the token-lifetime knob are reserved for the later scenarios (push conflicts, media, step-up, lost-response replay); the smoke and sign-in scenarios do not use them, and only the server's own vitest suite does.
+`/_dev/scrub` (`POST {class, handle, obj}`) rewrites one live head in place at the same version and seq and raises `expunge_epoch`, which is what privacy-expunge's `--path` mode leaves behind; the pull scenarios use it until that task exists. `/_dev/head` (`PATCH`) sets the store's switches (`writes_enabled`, `seeded`, `merges_enabled`, `min_client`) in place of `sync-admin`, and `/_dev/auth` (`PATCH`) sets the access-token lifetime or revokes every sign-in. The pull scenarios use the presigned `PUT`/`GET` store under `/_s3/` (media, the scrub), and the push scenarios use `merges_enabled` and the snapshot half of that store; the token-lifetime knob is reserved for the later scenarios. `POST /_dev/apply` runs a batch through the real `applyBatch()` as a website writer (`{origin, principal, idempotency_key, ops, step_up}`; origin `admin` by default), which is how a scenario makes a website-side edit or a cloud-created object (with `--id-policy assign`, a person with no ID yet); `GET /_dev/items?prefix=` lists the keys, never the contents, of the table items under a key prefix, for the question "is there an `IDALIAS#` item?".
 
 The server is a development tool: it binds loopback only, refuses a request whose `Host` is not its own address, and keeps nothing after it exits. Its `/auth/authorize` endpoint has no sign-in page and approves any well-formed sign-in request for the synthetic owner at once, for any loopback port, so any process on the machine can obtain an owner token for the synthetic data. Run it only on a machine you trust, and never point it at real data. It has no deployed route; [`scripts/ci/package-api.sh`](../../scripts/ci/package-api.sh) leaves `api/scripts/` out of the Lambda package.
 
@@ -544,7 +559,8 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | `mcp-conformance.sh` fails after a change to the `api/` dependencies | It installs only when `api/node_modules` is missing, so it ran against the old install | `(cd api && npm ci)`, then run it again. |
 | The content contract cannot find a package | `api/` dependencies are not installed | `(cd api && npm ci)` |
 | The auth `edge` test fails on `theme.cssUrl` | The `?v=` in `auth/edge.manifest.json` is not the hash of the committed `11ty/css/auth-edge.css` | Rebuild the islands and commit both files ([Build and preview the islands](build-and-preview-the-islands.md)). The sign-in pages use the new stylesheet only after `hfy-auth-edge` is redeployed ([Deploy the app stack](deploy-the-app-stack.md)). |
-| Playwright cannot find the `chrome` distribution | Google Chrome is not installed | For the island specs, use `PW_CHANNEL=chromium`, as in step 4. The sign-in pages test always uses Chrome, so install it. |
+| Playwright reports `Executable doesn't exist` under `chromium_headless_shell-…` | The `chromium-headless-shell` build for that package's Playwright version is not installed. `islands/` and `auth/` pin different versions, so each needs its own. | `(cd islands && npx playwright install chromium-headless-shell)`, or the same in `auth/`, as in steps 4 and 10. |
+| Playwright cannot find the `chrome` distribution | `PW_CHANNEL=chrome` is set and Google Chrome is not installed | Unset `PW_CHANNEL`, which restores the headless shell, or install Chrome. |
 | Island specs time out waiting for an island | The site is stale, or another server holds the port | Run `(cd islands && npm run check:islands)`; if it reports differences, rebuild with `(cd islands && npm run build)` and commit the result. Stop the other server, or set `PW_PORT`. |
 | The bundle test or `check:islands` fails | The site's build outputs do not match `islands/` | Rebuild and commit every output ([Build and preview the islands](build-and-preview-the-islands.md)). `stale auth/edge.manifest.json` means the sign-in stylesheet changed: commit the manifest and redeploy `hfy-auth-edge`. |
 | `theme-delivery` or `copy` fails after an Eleventy refresh | The refresh brought back pages without the head blocks or with the old copy | `(cd islands && npm run build)` and commit the pages ([Refresh the Eleventy output](refresh-the-eleventy-output.md)). |
@@ -583,3 +599,19 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 - [MCP server](../reference/mcp-server.md): the MCP server and its conformance gate.
 - [Release model](../explanation/release-model.md): why live checks run against production rather than a staging copy.
 - [Build and preview the islands](build-and-preview-the-islands.md), [Change the theme or brand fonts](change-the-theme-or-brand-fonts.md), [Deploy a site change](deploy-a-site-change.md), [Deploy the app stack](deploy-the-app-stack.md), [Deploy the edge functions](deploy-the-edge-functions.md), [Publish the CloudFront function](publish-the-cloudfront-function.md), [Cut over to authV2 and the private data gate](cut-over-to-the-private-data-gate.md), [Connect an MCP client](connect-an-mcp-client.md), [Rotate the origin-verify secret](rotate-the-origin-verify-secret.md), [Toggle a feature flag](toggle-a-feature-flag.md).
+
+### 16. Run the chat Worker suites (offline, and local workerd)
+
+```sh
+(cd chat-worker && npm ci && npm run check && npm test)
+```
+
+`npm run check` rebuilds the bundle in a temporary directory and exits `1` when `chat-worker/dist/` is missing, stale or extra. `npm test` runs `node --test test/*.test.mjs` over the committed bundle: the `wrangler.toml` and `deploy.json` declarations, the Durable Object rules (no timers, a tagged `acceptWebSocket`, a registered auto-response), the request the Worker hands the hub (only `x-chat-uid` and `x-chat-exp`, never the `Cookie`), the pass-through of other requests, the console staying free of headers and frame text, and the shared R-18 vectors on the bundled guard. See [Build, test and stage the chat Worker](deploy-the-chat-worker.md).
+
+To exercise real sockets, add (needs the `workerd` binary that `npm ci` installs, and no login):
+
+```sh
+(cd chat-worker && npm run smoke -- --local && npm run smoke -- --local-prod)
+```
+
+Afterwards `pgrep -fl workerd` prints nothing. CI does not run these: the install needs CodeArtifact.

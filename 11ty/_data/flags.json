@@ -1,6 +1,7 @@
 {
   "aboutCta": false,
   "accessRequests": false,
+  "adminDelete": false,
   "authV2": true,
   "commentPhotosV1": false,
   "contribV1": false,

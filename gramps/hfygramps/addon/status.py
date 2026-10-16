@@ -102,4 +102,10 @@ def summary_line(doc):
     if err:
         bits.append("%s %s" % (err.get("code", ""), err.get("message", "")))
     bits.append("(exit %s%s)" % (doc.get("exit_code"), ", next: %s" % doc["next_action"] if doc.get("next_action") not in (None, "none") else ""))
+    if doc.get("action") in consts.PULL_ACTIONS:
+        # What io needs to act on the run: the run id (`sync --yes --plan <run id>` names it) and the counts. Never a value.
+        c = doc.get("counts") or {}
+        p = c.get("pulled") or {}
+        bits.append("run %s; from the website: %s new, %s changed, %s deleted; conflicts open: %s" % (
+            doc.get("run_id"), p.get("create", 0), p.get("update", 0), p.get("delete", 0), c.get("conflicts_open", 0)))
     return " ".join(b for b in bits if b)

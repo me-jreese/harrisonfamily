@@ -17,9 +17,19 @@
 //   /_s3/<bucket>/<key>      the presigned URLs of the media and snapshot buckets. The store behind them is a directory (<data-dir>/s3), and the
 //                            handler's own S3 client (Head, Get, Put, Copy, Delete) is the same directory. A signed PUT is refused unless the
 //                            Content-Type, Content-Length and x-amz-checksum-sha256 it was signed for arrive with matching bytes.
-//   /_dev/*                  health, state, the SYNC#HEAD switches (writes_enabled, seeded, merges_enabled, min_client, ...) and the auth knobs.
-//                            These switches, the presigned PUT/GET store and the token-lifetime knob are reserved for the later scenarios (push
-//                            conflicts, media, step-up, lost-response replay: addon-push, addon-media); the scenarios of this task do not use them.
+//   /_dev/*                  health, state, the SYNC#HEAD switches (writes_enabled, seeded, merges_enabled, min_client, ...), the auth knobs, and
+//                            POST /_dev/apply: a batch through applyBatch() as a WEBSITE writer (origin admin by default; self, proposal, ... are accepted), for the scenarios that
+//                            need a cloud-side edit or a cloud-created object (HFY-TSK-206: the Birth retyped to Residence on the web, an ID-less
+//                            person under --id-policy assign). It is the same applyBatch, validator and id policy the real writers use.
+//                            GET /_dev/items?prefix= lists the keys (never the contents) of the table items under a key prefix.
+//                            POST /_dev/scrub {class, handle, obj} (HFY-TSK-205) stands in for privacy-expunge's --path mode until that task lands:
+//                            it rewrites one live head's object (and its log entry) in place at the SAME version and seq and raises
+//                            SYNC#HEAD.expunge_epoch by one, which is what an expunge does, so the addon's expunge-notice path (a changed hash at
+//                            an unchanged version) runs end to end.
+//                            addon-push (HFY-TSK-206) uses /_dev/apply, /_dev/items, the writes_enabled, seeded and merges_enabled switches, the
+//                            auth knobs and the snapshot half of the presigned store; addon-pull-apply (HFY-TSK-205) uses the media half of the
+//                            store and /_dev/scrub. The token-lifetime knob and the step-up and lost-response-replay scenarios are still reserved
+//                            for the later tasks (addon-media).
 //
 // REQUEST LOG. Every request is appended to <data-dir>/requests.jsonl (--log-file) BEFORE its response is sent, so a test that has the response can
 // grep the log for the request: one JSON object per line with method, path, query, status, the error code, byte counts, the body's sha256 and the
@@ -54,10 +64,13 @@ import { createUlidFactory } from "@io-kit/feed";
 import { DynamoPreferencesStore, DynamoSubscriptionStore } from "@io-kit/notify/server";
 import { createFakeDdb, cmds } from "../test/fake-ddb.js";
 import { createHandler } from "../src/handler.js";
+import { HttpError } from "../src/http.js";
+import { applyBatch } from "../src/sync/apply.js";
 import { createGroupResolver } from "../src/policy.js";
 import { createSyncAuthenticator, SYNC_CLIENT_ID } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
-import { headKey } from "../src/sync/store.js";
+import { CLASSES, headKey, logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
+import { resetStoreView } from "../src/records/index.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 
 export const DEV_OWNER_SUB = "I9001"; // synthetic; the gramps-owner of the dev groups config
@@ -459,8 +472,10 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     issuer: auth.issuer, audience: auth.audience, getJwks: auth.getJwks, now,
     getGroups: createGroupResolver({ load: async () => groups, log }), log,
   });
+  const ulid = createUlidFactory();
+  const uid = () => ulid(now());
   const handler = createHandler({
-    ddb, cmds, table: DEV_TABLE, now, log, ulid: createUlidFactory(),
+    ddb, cmds, table: DEV_TABLE, now, log, ulid,
     authenticate: async () => null, // no cookie session here: only the sync-bearer routes are served
     authenticateSync,
     subscriptions: new DynamoSubscriptionStore(ddb, cmds, DEV_TABLE), preferences: new DynamoPreferencesStore(ddb, cmds, DEV_TABLE),
@@ -488,7 +503,7 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     }
     if (path === "/auth/.well-known/jwks.json" && method === "GET") return json(200, auth.jwks());
     if (path.startsWith("/_s3/")) return s3Route(method, path, url.searchParams, req, body);
-    if (path.startsWith("/_dev/")) return devRoute(method, path, body);
+    if (path.startsWith("/_dev/")) return devRoute(method, path, body, url);
     if (path.startsWith("/api/") || path === "/api") {
       const headers = {};
       for (const [k, v] of Object.entries(req.headers)) headers[k] = Array.isArray(v) ? v.join(", ") : v;
@@ -535,7 +550,7 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     }
   }
 
-  async function devRoute(method, path, body) {
+  async function devRoute(method, path, body, url) {
     const parsed = () => {
       try {
         const v = body.length ? JSON.parse(body.toString("utf8")) : {};
@@ -550,6 +565,12 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       return json(200, { head: await getHead(), table_items: ddb.all().length, s3_objects: { [SYNC_BUCKET]: (await s3.list(SYNC_BUCKET)).length, [MEDIA_BUCKET]: (await s3.list(MEDIA_BUCKET)).length } });
     }
     if (path === "/_dev/head" && method === "GET") return json(200, { head: await getHead() });
+    if (path === "/_dev/items" && method === "GET") {
+      // The keys (PK and SK, nothing else) of the items whose PK starts with ?prefix=, for a scenario that asks "is there an IDALIAS item?".
+      // Keys only: item contents are tree data, and the request log would hold them.
+      const prefix = url.searchParams.get("prefix") ?? "";
+      return json(200, { items: ddb.all().filter((it) => typeof it.PK === "string" && it.PK.startsWith(prefix)).map((it) => ({ PK: it.PK, SK: it.SK })).slice(0, 500) });
+    }
     if (path === "/_dev/head" && method === "PATCH") {
       // Stands in for `sync-admin pause|resume` and the seed flip: sets only the switches named, each checked for its type.
       const b = parsed();
@@ -558,6 +579,22 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       const head = (await getHead()) ?? { ...headKey() };
       await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...head, ...b, updated_at: new Date(now()).toISOString() } }));
       return json(200, { head: await getHead() });
+    }
+    if (path === "/_dev/apply" && method === "POST") {
+      // A website-side writer: {origin?: "admin", principal?: "web-dev", idempotency_key, ops, step_up?: bool}. 200 applyBatch's result; an
+      // applyBatch refusal is answered with its own status and {error, message, details}, like the real routes.
+      const b = parsed();
+      if (!b || !Array.isArray(b.ops) || typeof b.idempotency_key !== "string") return json(400, { error: "validation", message: "send {idempotency_key, ops, origin?, principal?, step_up?}" });
+      try {
+        const r = await applyBatch(
+          { ddb, cmds, table: DEV_TABLE, now, uid, log, hooks, ...(idPolicy ? { idPolicy: { mode: idPolicy } } : {}) },
+          { principal: typeof b.principal === "string" ? b.principal : "web-dev", origin: typeof b.origin === "string" ? b.origin : "admin", idempotencyKey: b.idempotency_key, ops: b.ops, stepUp: b.step_up === true, client: { agent: "sync-dev-apply" } },
+        );
+        return json(200, r);
+      } catch (e) {
+        if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) });
+        throw e;
+      }
     }
     if (path === "/_dev/auth" && method === "PATCH") {
       const b = parsed();
@@ -568,6 +605,25 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       }
       if (b.revoke_all === true) auth.revokeAll();
       return json(200, { access_ttl_seconds: auth.state.accessTtlSeconds });
+    }
+    if (path === "/_dev/scrub" && method === "POST") {
+      const b = parsed();
+      const obj = b?.obj;
+      if (!b || !CLASSES.includes(b.class) || typeof b.handle !== "string" || obj === null || typeof obj !== "object" || Array.isArray(obj) || obj.handle !== b.handle || obj._class !== b.class) {
+        return json(400, { error: "validation", message: "send {class, handle, obj} with obj the scrubbed object of that class and handle" });
+      }
+      const item = (await ddb.send(new cmds.GetCommand({ TableName: DEV_TABLE, Key: recKey(b.class, b.handle), ConsistentRead: true }))).Item;
+      if (!item || item.deleted === true) return json(404, { error: "not_found", message: "no live head with that class and handle" });
+      const objJson = objectJson(obj);
+      const hash = sha256(objJson);
+      await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...item, obj_json: objJson, hash } }));
+      const entry = (await ddb.send(new cmds.GetCommand({ TableName: DEV_TABLE, Key: logKey(item.seq), ConsistentRead: true }))).Item;
+      if (entry && entry.handle === b.handle && entry.class === b.class) await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...entry, obj_json: objJson, hash } }));
+      const head = (await getHead()) ?? { ...headKey() };
+      const epoch = (Number.isInteger(head.expunge_epoch) ? head.expunge_epoch : 0) + 1;
+      await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...head, expunge_epoch: epoch, updated_at: new Date(now()).toISOString() } }));
+      resetStoreView({ ddb, table: DEV_TABLE });
+      return json(200, { class: b.class, handle: b.handle, version: item.version, seq: item.seq, hash, expunge_epoch: epoch });
     }
     return json(404, { error: "not_found", message: "no such dev route" });
   }

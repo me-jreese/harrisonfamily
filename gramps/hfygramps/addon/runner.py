@@ -12,7 +12,7 @@ import sys
 import time
 import webbrowser
 
-from . import binding, consts, keychain, oauth, paths, preflight, sidecar, status, transport
+from . import binding, consts, keychain, oauth, paths, preflight, pull, push, sidecar, status, transport
 
 
 class TreeAccess:
@@ -36,10 +36,35 @@ class TreeAccess:
         """Writes the marker inside one DbTxn and calls `also()` inside it; an exception from either leaves the tree untouched."""
         raise NotImplementedError
 
+    dbdir = ""  # the tree's folder (backups read sqlite.db there)
+
+    def objects(self):
+        """{handle: raw `json_data` dict (with `_class` and `handle`)} of every primary object, read without changing anything."""
+        raise NotImplementedError
+
+    def media_files(self):
+        """{media handle: {"exif_gps", "md5", "readable"}} for the projection; {} when the addon does not read the files."""
+        return {}
+
+    def editors_open(self):
+        """True while a Gramps edit window is open (GUI only; D45)."""
+        return False
+
+    def apply(self, label, commits, removals, precheck=None, verify=None, hook=None):
+        """Applies `commits` ({handle: local-form object}) and `removals` ([(class, handle)]) in ONE non-batch DbTxn named `label`.
+
+        Inside the transaction: `precheck(read)` first (`read(class, handle)` gives the raw object or None; it raises to abort), then
+        the commits, `hook("mid_apply")` after the first half of them, the removals, and last `verify(objects_now)` with every object
+        as it would be committed. Any exception rolls the whole transaction back and propagates.
+        """
+        raise NotImplementedError
+
 
 class Options:
-    def __init__(self, action="status", dry_run=False, allow_deletes=False, yes=False, step_up=False):
+    def __init__(self, action="status", dry_run=False, allow_deletes=False, yes=False, step_up=False, plan="", backup=""):
         self.action = action
+        self.plan = plan or ""  # `sync --yes --plan <run_id>`: apply only if the new plan equals that run's preview (runbook 19.3)
+        self.backup = backup or ""
         self.step_up = bool(step_up)
         self.dry_run = bool(dry_run)
         self.allow_deletes = bool(allow_deletes)
@@ -73,7 +98,7 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None, services=None
     run_id = run_id or status.new_run_id()
     started = status.utc_now()
     tree_paths = paths.TreePaths(tree.dbid, environ)
-    outcome = {"bound": False, "dry_run": options.dry_run, "counts": None}
+    outcome = {"bound": False, "dry_run": options.dry_run, "counts": None, "run_id": run_id}
     side = None
     try:
         tree_paths.ensure()
@@ -95,8 +120,9 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None, services=None
         side = outcome.get("side")  # a sidecar opened before the failure is still closed below, and gets the failed run's row
     res, exit_code, next_action, error = result
     doc = status.build(run_id, options.action, mode, tree.dbid, outcome["bound"], res, exit_code, started, status.utc_now(),
-                       dry_run=options.dry_run, error=error, next_action=next_action, counts=outcome["counts"],
-                       versions=_versions(tree))
+                       dry_run=options.dry_run or options.action == "check", error=error, next_action=next_action, counts=outcome["counts"],
+                       versions=_versions(tree), head_seq=outcome.get("cloud", (0, 0))[0], snapshot_seq=outcome.get("cloud", (0, 0))[1],
+                       backup=outcome.get("backup"))
     try:
         if side is not None:
             sidecar.record_run(side, doc)
@@ -175,20 +201,30 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
         if options.action == "bind":
             return _bind(tree, mode, options, tp, log, config, outcome)
         if options.action == "login":
-            return _login(options, config, log, services)
+            return _login(options, config, log, services, environ)
+        if options.action in consts.PULL_ACTIONS + ("push",) and not outcome["bound"]:
+            log.line("refused: not bound")
+            return _refused("unbound")
+        if options.action in consts.PULL_ACTIONS:
+            return pull.run(tree, mode, options, tp, log, config, outcome.get("side"), outcome, services, outcome["run_id"], environ)
+        if options.action == "push":
+            return push.run(tree, mode, options, tp, side, config, log, outcome, services, outcome["run_id"], environ=environ)
+        if options.action == "restore":
+            log.line("refused: restore through the tool")
+            return _refused("restore_open")  # the tree is open in this very run: restore is the wrapper's job, with Gramps closed
         exit_code, next_action, message = consts.NOT_ENABLED
         log.line("not enabled %s" % options.action)
         return ("refused", exit_code, next_action, {"code": "not_enabled", "message": message})
 
 
-def _login(options, config, log, services):
+def _login(options, config, log, services, environ=None):
     """`login` (sync.md 8.5): needs no bound tree. `services` lets tests replace the Keychain, the browser and the transport."""
     server = services.get("server") or (config or {}).get("server") or consts.DEFAULT_SERVER
     if options.dry_run:
         log.line("login: dry run")
         return (consts.OK, consts.EXIT_OK, "none", None)
     try:
-        kc = services.get("keychain") or keychain.Keychain(account=keychain.account_for(transport.check_server(server)))
+        kc = services.get("keychain") or keychain.open_for(transport.check_server(server), environ)
         oauth.login(server, kc, http=services.get("http"), open_browser=services.get("open_browser", webbrowser.open),
                     timeout=services.get("timeout", consts.LOGIN_TIMEOUT_S), step_up=options.step_up)
     except ValueError:

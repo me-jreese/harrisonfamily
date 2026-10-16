@@ -36,6 +36,7 @@ Neutral descriptions of the machinery. Consult these; you don't read them front 
 - [Front end](reference/front-end.md) — what `11ty/` contains: the feature flags and preview override, the `authV2` data path, the island loader and islands, and the PWA shell.
 - [Theme and asset build](reference/theme-and-asset-build.md) — everything the islands build writes besides the bundles, from the theme layer and fonts to the `?v=<sha8>` asset versions, and the checks that hold them.
 - [Repository operations](reference/repository-operations.md) — the CI workflows, deploy role, scripts, hooks and test suites that build, check and ship the repo.
+- [Orchestration tooling for HFY-PLN-002](../scripts/orchestration/README.md) — the orchestrator's workflow scripts and its batch, catalog, GitHub and mirror tools: each one's inputs, outputs and how to run it.
 - [The render Lambda (hfy-sync-render)](reference/sync-render.md) — how the data site is rendered from the cloud store: modes, the diff write, the guards, the privacy re-check, the cursor and outbox, and the operator payloads.
 - [Redaction policy v1](reference/redaction-policy.md) — what never goes to the cloud as a declarative rule file: the one birth-like list, the rules by class, the tables they read and the golden vectors. Generated from `gramps/redaction/redaction-v1.json`.
 - [Private data and secrets inventory](reference/private-data-and-secrets.md) — every private asset and secret by name and location, the family-data contract and the placeholder vocabulary.
@@ -63,11 +64,13 @@ For a new environment, for this family or another, in this order. The first page
 - [Roll back, or drill a rollback of, a site deploy](how-to/roll-back-a-site-deploy.md) — undo a release or rehearse it, checking `authV2` first while the gate is attached.
 - [Turn on editing](how-to/turn-on-editing.md) — name the approvers, set `HfyEditing`, try the editor and the relationship wizard in one tab, flip `proposalReview`, `recordEdit` and `relationshipWizard` in that order, and turn it off again.
 - [Review suggested changes](how-to/review-suggested-changes.md) — as an admin, open the queue and approve, ask for changes, decline or edit then approve.
+- [Delete a page and review possible duplicates](how-to/delete-a-page-and-review-duplicates.md) — as an admin, delete a person, family, event, place, source, citation or photo on the website, and read the list of people who may be in the tree twice.
 - [Turn a feature flag on or off, for one tab or for everyone](how-to/toggle-a-feature-flag.md) — preview a flag with the per-tab override, publish it in `flags.json`, and roll it back.
 - [Build and preview the React islands](how-to/build-and-preview-the-islands.md) — rebuild everything the islands build writes, check it against the source, and view it locally with a flag on.
 - [Change the theme or brand fonts](how-to/change-the-theme-or-brand-fonts.md) — change the colours, a theme partial or a font with the theme lint passing, and ship it.
 - [Refresh `11ty/` from the Eleventy source without losing E5 files](how-to/refresh-the-eleventy-output.md) — promote new Eleventy output while keeping the repo-owned files, then rebuild the islands over it.
 - [Publish a change to the HFYAppendIndex CloudFront Function](how-to/publish-the-cloudfront-function.md) — test, dry-run, publish and roll back `scripts/cloudfront/append-index.js`.
+- [Build, test and stage the chat Worker](how-to/deploy-the-chat-worker.md) — rebuild the committed `chat-worker/dist/` bundle, run its checks and tests, smoke it with real sockets in `workerd` and on a staging Worker; production deploy and CI are separate tasks.
 - [Run the test suites](how-to/run-the-tests.md) — run each suite with its prerequisites, and know which ones reach production.
 - [Regenerate the Gramps goldens](how-to/regenerate-the-gramps-goldens.md) — rebuild the values Gramps 6.0.6 computes for dates, birth and death indexes, and the relationship scenarios, compare them byte for byte, and check them without Gramps.
 - [Install and run the Gramps sync addon](how-to/install-the-gramps-sync-addon.md) — put the `hfy_sync` addon into Gramps, check it from the command line, bind the tree, and read its exit codes.

@@ -4,8 +4,10 @@
 // detailed = level 1), so the preview never promises a text the lock screen will not show. Labels and descriptions are the DS catalog
 // copy (lowercase, "my page", never "record"). Types are in the order the settings page lists them inside each group.
 //
-// `chat_message` is the one registry type that is not here: the chat task adds its entry with its own toggle (BRD2 D2-15, chat.md 13).
-// tests/notify-catalog.test.mjs pins that exception; moving a type into CATALOG means removing it from CATALOG_EXEMPT.
+// `chat_message` (HFY-TSK-164, chat.md 13) is here with its strings identical to the registry's. It is shown only while the `chatV1` flag is on
+// (catalogFor({chat})), and it is the one type that defaults OFF (CHAT-D12, BRD2 11.5): the server sends a chat text only to a member who turned it on,
+// so the page shows it off until they do (CHAT_DEFAULT_OFF, applied in islands/notifications.jsx).
+// tests/notify-catalog.test.mjs pins the exceptions; moving a type into CATALOG means removing it from CATALOG_EXEMPT.
 const T = "Harrison Family";
 
 export const GROUP_ABOUT_ME = "about_me";
@@ -32,6 +34,7 @@ export const CATALOG = {
     moderation_request: { group: GROUP_ABOUT_ME, label: "a moderator asks me to update something", desc: "a moderator asks you to change something you shared.", title: T, generic: "a moderator asked you to update something you shared.", detailed: "{actor} asked you to update your {item}." },
     moderation_question: { group: GROUP_ABOUT_ME, label: "a moderator has a question for me", desc: "a moderator asks you about something you shared.", title: T, generic: "a moderator has a question about something you shared.", detailed: "{actor} has a question about your {item}." },
     moderation_unhidden: { group: GROUP_ABOUT_ME, label: "something of mine is visible again", desc: "a moderator brings back something that was hidden.", title: T, generic: "something you shared is visible again.", detailed: "your {item} is visible again." },
+    chat_message: { group: GROUP_FAMILY, label: "someone sends me a chat message", desc: "a chat message while you're away from the site.", title: T, generic: "you have a new chat message.", detailed: "{actor} sent you a chat message." },
     new_family_post: { group: GROUP_FAMILY, label: "family posts something new", desc: "a new post on the family timeline.", title: T, generic: "there's a new family post.", detailed: "{actor} shared a new family post." },
     record_updated_followed: { group: GROUP_FAMILY, label: "a followed page is updated", desc: "a page you chose to follow changes.", title: T, generic: "a page you follow was updated.", detailed: "{subject}'s page was updated." },
     records_updated_followed_digest: { group: GROUP_FAMILY, label: "several followed pages are updated", desc: "one note when a batch of changes touches more than three pages you follow.", title: T, generic: "pages you follow were updated.", detailed: "{count} pages you follow were updated." },
@@ -43,17 +46,43 @@ export const CATALOG = {
 };
 
 /** Registry types the catalog does not hold yet (see the header). */
-export const CATALOG_EXEMPT = ["chat_message", "access_request_new", "access_request_decided", "second_email_notice"];
+export const CATALOG_EXEMPT = ["access_request_new", "access_request_decided", "second_email_notice"];
+
+/** Types that start switched off for a member who never chose (the server sends them only after an explicit opt-in). */
+export const CHAT_TYPE = "chat_message";
+export const CHAT_DEFAULT_OFF = [CHAT_TYPE];
 
 /**
  * The catalog a viewer sees: the moderators' group (and its types) only for a viewer `/api/me` reports as `admin`, since the server sends
- * those types only to admins and a toggle for a push nobody will send is noise.
+ * those types only to admins and a toggle for a push nobody will send is noise; and the chat toggle only while the `chatV1` flag is on (`chat: true`).
  */
-export function catalogFor({ admin = false } = {}) {
-  if (admin === true) return CATALOG;
+export function catalogFor({ admin = false, chat = false } = {}) {
+  const hide = (t, id) => (admin !== true && t.group === GROUP_MODERATORS) || (chat !== true && id === CHAT_TYPE);
+  if (admin === true && chat === true) return CATALOG;
   return {
     ...CATALOG,
-    groups: CATALOG.groups.filter((g) => g.id !== GROUP_MODERATORS),
-    types: Object.fromEntries(Object.entries(CATALOG.types).filter(([, t]) => t.group !== GROUP_MODERATORS))
+    groups: admin === true ? CATALOG.groups : CATALOG.groups.filter((g) => g.id !== GROUP_MODERATORS),
+    types: Object.fromEntries(Object.entries(CATALOG.types).filter(([id, t]) => !hide(t, id)))
   };
+}
+
+/**
+ * Preferences as the page shows them: every default-off type the member never saved is switched off (the kit would show a missing type as on).
+ * Anything the member saved is left as it is.
+ */
+export function withDefaultOff(prefs) {
+  const types = { ...(prefs?.types ?? {}) };
+  for (const id of CHAT_DEFAULT_OFF) if (!types[id]) types[id] = { enabled: false, level: 0 };
+  return { ...(prefs ?? {}), types };
+}
+
+/**
+ * What the page saves: a default-off type that is still untouched (off, level 0) is dropped when `shown` is false, so a member who never sees the
+ * chat toggle never gets a stored choice for it. When the toggle is shown the page saves the whole map as the kit builds it.
+ */
+export function withoutHiddenDefaults(prefs, shown) {
+  if (shown === true || !prefs?.types) return prefs;
+  const types = { ...prefs.types };
+  for (const id of CHAT_DEFAULT_OFF) if (types[id] && types[id].enabled === false && types[id].level === 0) delete types[id];
+  return { ...prefs, types };
 }
