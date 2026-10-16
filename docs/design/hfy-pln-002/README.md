@@ -8,12 +8,15 @@ The live dispatch catalog is the docstore document DOC-981BF41F2443. io's verbat
 |---|---|
 | `BRD2.md` | Architecture, locked decisions D2-xx, io decisions, data model, privacy model, waves W0-W6. Section 11 overrides the domain files. |
 | `sync.md`, `editing.md`, `social.md`, `surfaces.md`, `chat.md`, `viz.md` | Domain designs. Grep for your task key. |
-| `tasks.json` | Every task: key, wave, repo, depends_on, acceptance criteria, test_plan. |
+| `tasks.json` | Every task: key, wave, repo, depends_on, acceptance criteria, test_plan. Follow-up tasks filed after the import have no wave. |
 | `tracker-idmap.json` | Plan key → tracker id (HFY-TSK-nnn). |
+| `addenda.json` | Plan key → the orchestrator's notes for that task, which `make_batch.py` appends to the task pack. |
 | `requirements.md` | Requirement trace R-01..R-42, D-01..D-03. |
 | `viz-adr.md`, `chat-adr.md` | Research-intake decisions. The viz approach is approved; chat runs on Cloudflare Durable Objects. |
 
 Gramps ids of real people are redacted as `<gramps-id>`.
+
+The orchestrator's tools, which read `tasks.json`, `tracker-idmap.json` and `addenda.json`, are in [`scripts/orchestration/`](../../../scripts/orchestration/README.md).
 
 ## Protocol for cloud worker sessions
 

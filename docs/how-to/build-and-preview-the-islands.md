@@ -21,7 +21,7 @@ You need:
 
 - **Node 22 or later.** [`islands/package.json`](../../islands/package.json) declares `"node": ">=22"`.
 - **The AWS CLI, with credentials for `us-west-2`** that allow `codeartifact:GetAuthorizationToken` on the `io` domain and `sts:GetServiceBearerToken`. Installing the packages also needs `codeartifact:ReadFromRepository` on the `io-kit` repository, because the token carries the permissions of the principal that requested it.
-- **Google Chrome, for the test checks only.** [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs) launches the `chrome` channel unless `PW_CHANNEL` names another. See [How to run the test suites](run-the-tests.md).
+- **Playwright's headless shell, for the test checks only.** [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs) launches the `chromium-headless-shell` channel unless `PW_CHANNEL` names another, so no Google Chrome is needed. Install it once with `(cd islands && npx playwright install chromium-headless-shell)`. See [How to run the test suites](run-the-tests.md).
 
 A clean checkout already holds the committed output, so you can [preview](#4-preview-the-site-locally) it without building. The preview server is a dev dependency, though, so run `npm ci` in `islands/` once first: step 1, then `(cd islands && npm ci)` from the repository root in the same shell (the install half of [step 2](#2-build)).
 
@@ -191,14 +191,14 @@ In a second terminal, from the repository root:
 
    Expect `true`, whatever the committed flags say: this page keeps the flags it resolved even if the override is cleared. This is the element the Playwright shell spec waits for. If it is `false`, check `document.documentElement.classList.contains("hfy-shell-v2")`. The head's early hint or the loader adds that class, and the loader removes it when `shellV2` resolves off or `shell.js` fails to load. A `false` class means the bundle was not found, so rerun checks 1 and 3. A `true` class means the bundle loaded but did not mount, so look for an error in the console.
 
-5. The browser specs pass:
+5. The browser specs for what you changed pass:
 
    ```bash
    cd islands
-   npx playwright test
+   npx playwright test tests/<spec>.spec.mjs --workers=1
    ```
 
-   This runs the Playwright specs at 375 × 812 against `http://127.0.0.1:8089`, or against `HFY_SITE` on `PW_PORT` when you set them for a scratch copy. Playwright reuses your preview server if it is still running and starts its own otherwise. The specs stub the `/auth`, `/api`, Google and data routes they use with synthetic data, so they do not depend on a deployed site. Some pin `/_data/flags.json`; others start from the committed file and force flags off with `?hfy_flags=`. They load the output in the served site, so rebuild after any source change first. `npm test` runs the `node:test` files from check 2 first. See [How to run the test suites](run-the-tests.md) for running one spec and for using another browser channel.
+   This runs the named Playwright specs at 375 × 812 against `http://127.0.0.1:8089`, or against `HFY_SITE` on `PW_PORT` when you set them for a scratch copy. Playwright reuses your preview server if it is still running and starts its own otherwise. The specs stub the `/auth`, `/api`, Google and data routes they use with synthetic data, so they do not depend on a deployed site. Some pin `/_data/flags.json`; others start from the committed file and force flags off with `?hfy_flags=`. They load the output in the served site, so rebuild after any source change first. A bare `npx playwright test` runs every spec, and `npm test` runs the `node:test` files from check 2 first and then every spec; run those only when the change reaches every page. See [How to run the test suites](run-the-tests.md) for the worker cap, for using another browser channel and for checking that no browser is left running.
 
 6. The `authV2` path passes. The local preview cannot sign you in (see step 4), so its tests stand in. Check 5 already runs the browser spec. To run it alone, from `islands/`:
 
@@ -233,7 +233,7 @@ In a second terminal, from the repository root:
 | A flag stays on or off for every page in the tab. | The override lasts for the tab. | Press **turn off** in the banner, open `/?hfy_flags=`, or close the tab. |
 | Island changes do not show after a rebuild. | The page still links the old `?v=`, or the browser or the service worker served a cached copy. | View the page source: if its `?v=` values did not change, the build did not write that page, so build again. Otherwise bypass or unregister the worker in DevTools, and check that the server runs with `-c-1`. |
 | `node build.mjs --site <dir>` exits `2`. | The directory has no `index.html`, or `--site` has no value. | Pass the absolute path of a copy of `11ty/`. |
-| Playwright cannot launch a browser. | Google Chrome is not installed. | Install Chrome, or set `PW_CHANNEL` (see [How to run the test suites](run-the-tests.md)). |
+| Playwright cannot launch a browser. | The headless shell is not installed, or `PW_CHANNEL=chrome` is set and Google Chrome is not. | Run `(cd islands && npx playwright install chromium-headless-shell)`, and unset `PW_CHANNEL` (see [How to run the test suites](run-the-tests.md)). |
 
 ## Limits
 

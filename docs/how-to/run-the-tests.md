@@ -11,7 +11,7 @@ Values in angle brackets are placeholders. `<project>` is the private project di
 | API, [`api/test/`](../../api/test/) | Offline | In process only: an in-memory DynamoDB fake, loopback test servers, and keys generated for the run, or the kit's committed test-only fixture keys for the MCP files. `api`, `package-api` and `mcp-infra` also run repository scripts in child processes, on fixture input, with no AWS call. The run writes generated documents to `api/dist/`, which is gitignored. |
 | Auth edge, [`auth/test/`](../../auth/test/) | Offline | In process only: fixture environment values, in-memory stores, a fake DynamoDB table and a loopback JWKS server. |
 | Passkey end to end, [`auth/e2e/passkey.e2e.mjs`](../../auth/e2e/passkey.e2e.mjs) | Local | The real auth edge app, served in process at `http://localhost:<E2E_PORT>` (default `4173`) with test-only wiring and synthetic data, driven by Playwright's Chromium with a virtual authenticator. The login page still requests Google's sign-in script. |
-| Sign-in pages end to end, [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) | Local | The real auth edge pages, with their real CSP, served in process at `http://localhost:<E2E_PORT>` (default `4175`) with test-only wiring and a synthetic allowlist, plus `/css` and `/fonts` from the scratch site that `SITE` names. Google Chrome drives them. The login page requests Google's sign-in script unless `E2E_OFFLINE=1`. |
+| Sign-in pages end to end, [`auth/e2e/signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) | Local | The real auth edge pages, with their real CSP, served in process at `http://localhost:<E2E_PORT>` (default `4175`) with test-only wiring and a synthetic allowlist, plus `/css` and `/fonts` from the scratch site that `SITE` names. Playwright's bundled headless shell drives them. The login page requests Google's sign-in script unless `E2E_OFFLINE=1`. |
 | Edge gate, [`edge-gate/test/`](../../edge-gate/test/) | Offline | In process only: RSA keys generated for the run, a stubbed JWKS fetch and a fixed clock. |
 | Gramps goldens, [`gramps/tests/unit/test_gramps_goldens.py`](../../gramps/tests/unit/test_gramps_goldens.py) and [`test_gramps_relationship_goldens.py`](../../gramps/tests/unit/test_gramps_relationship_goldens.py) | Offline | Read the committed golden files ([semantics](../../api/test/records/fixtures/gramps-semantics.golden.json), [relationships](../../api/test/records/fixtures/gramps-relationships.golden.json)) only, with the standard library. They need no Gramps; regenerating the files does ([Regenerate the Gramps goldens](regenerate-the-gramps-goldens.md)). |
 | Gramps addon pull, [`test_addon_pull.py`](../../gramps/tests/unit/test_addon_pull.py), [`test_addon_pull_safety.py`](../../gramps/tests/unit/test_addon_pull_safety.py), [`test_addon_media.py`](../../gramps/tests/unit/test_addon_media.py) and [`test_addon_restore.py`](../../gramps/tests/unit/test_addon_restore.py) | Offline | In process, standard library only, over the synthetic fixture: a fake tree with a real transaction semantics, a fake cloud that builds snapshots the way `api/src/sync/pull.js` does, and a temporary `HOME`. They cover snapshot verification, the plan and the preview, the backup and its retention, media down, fault injection at every step boundary (raised and killed), the stale check, open conflicts over three more runs, the inbound privacy scan, reverts, expunge notices, the reviewed plan and the restore. |
@@ -49,7 +49,7 @@ Add a suite to CI only if it needs nothing from CodeArtifact: put its command in
 
 - **Node 22 or later.** `node --version` prints `v22` or higher. The `api/`, `auth/`, `edge-gate/`, `graph/` and `islands/` packages declare `"node": ">=22"`. `tests/client/` and `scripts/cloudfront/test/` have no package and run on the same Node.
 - **`CODEARTIFACT_AUTH_TOKEN` exported** before any install in `api/`, `auth/` or `islands/`, and before `scripts/ci/mcp-conformance.sh`, which stops without it even when `api/` is already installed. Their `.npmrc` files fetch the `@io-kit/*` packages from a private CodeArtifact registry with that token. [Build and preview the islands](build-and-preview-the-islands.md) shows how to get one. `edge-gate/` has no dependencies, and `tests/client/` and `scripts/cloudfront/test/` have no package, so none of them installs anything. `tests/login-flow/` installs from the public registry and does not need the token.
-- **Google Chrome installed** for the island browser tests, unless you switch them to Playwright's Chromium (step 4), and for the sign-in pages end-to-end test, which always uses Chrome (step 10).
+- **Playwright's headless shell installed** for the island browser tests (step 4) and the sign-in pages end-to-end test (step 10). Neither needs Google Chrome: they launch the bundled `chromium-headless-shell` unless `PW_CHANNEL` names another channel.
 - **Start each block from the repository root.** Every command below assumes it. Blocks that change directory do so inside parentheses, in a subshell, so your shell is back at the root when each block ends.
 
 ## Steps
@@ -144,13 +144,13 @@ It covers `islands/src/**/*.css` and the inline styles of the twelve repo-owned 
 ### 4. Run the island browser tests (local)
 
 1. Make sure the site matches the source. The specs serve the site as it is on disk, `11ty/` by default, with its bundles, theme stylesheet, fonts and pages. If you changed anything under `islands/`, rebuild into `11ty/` first ([Build and preview the islands](build-and-preview-the-islands.md)), or test a scratch build as below. `npm run check:islands` from step 3 tells you whether `11ty/` is current.
-2. Run the suite:
+2. Run the specs you changed, one file at a time:
 
    ```sh
-   (cd islands && npm test)
+   (cd islands && npx playwright test tests/<spec>.spec.mjs --workers=1)
    ```
 
-   `npm test` runs the `node:test` suites from step 3 and then `playwright test`, so it also needs the `api/` install. To run only the browser tests, run `(cd islands && npx playwright test)` instead.
+   Name more files to run more specs. `npx playwright test` with no file runs every spec, and `npm test` runs the `node:test` suites from step 3 first and then every spec, so it also needs the `api/` install. Run the whole suite only when the change reaches every page, such as the committed `flags.json`, and not on a machine someone else is using.
 
 [`playwright.config.mjs`](../../islands/playwright.config.mjs) starts the local server for you: `npx http-server <site> -p <port> -a 127.0.0.1 -s -c-1`, at a 375 × 812 viewport. The site defaults to `../11ty` and the port to `8089`. If something is already listening on the port, Playwright reuses it, so stop any other server there first, or choose another port with `PW_PORT`.
 
@@ -168,11 +168,21 @@ The [test suites table](../reference/repository-operations.md#test-suites) lists
 
 The specs that measure the design system's look, `islands-look`, `legacy-pages`, `person-page`, `qa-fixes`, `qa2-fixes`, `shell` and `theme-foundation`, fail when the theme stylesheet or the fonts are stale, not only when a bundle is.
 
-The default browser channel is `chrome`, which needs Google Chrome installed. To use Playwright's bundled Chromium instead:
+The specs launch Playwright's bundled headless shell, the `chromium-headless-shell` channel, and never your installed Chrome. Outside CI the config runs at most 2 workers and one spec file per worker (`fullyParallel` is off); `--workers=1` runs one. Install the shell once, which adds a build to Playwright's cache and nothing to the system:
 
 ```sh
-(cd islands && npx playwright install chromium && PW_CHANNEL=chromium npx playwright test)
+(cd islands && npx playwright install chromium-headless-shell)
 ```
+
+To drive system Google Chrome or Playwright's full Chromium instead, set `PW_CHANNEL=chrome` or `PW_CHANNEL=chromium` (after `npx playwright install chromium`). Both are explicit opt-ins. Chrome opens full browser windows on the machine, so use it only for a bug that shows only there.
+
+When a run ends, no browser should remain. This prints nothing:
+
+```sh
+pgrep -fl playwright_chromiumdev_profile
+```
+
+If it lists browsers that you started, stop them with `pkill -f playwright_chromiumdev_profile`. That pattern also matches the browsers of other runs on the machine, so check the list first. Do not start a run in a loop or in watch or `--ui` mode.
 
 Failure output goes to `islands/test-results/`, which is gitignored.
 
@@ -329,7 +339,7 @@ The scenarios run in order: the login page offers a passkey; password sign-in; e
 
 #### Sign-in pages
 
-[`signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) checks the styled sign-in pages with the stylesheet built from the current source. It needs Google Chrome, and a scratch site built with the `islands/` install from step 3:
+[`signin-theme.e2e.mjs`](../../auth/e2e/signin-theme.e2e.mjs) checks the styled sign-in pages with the stylesheet built from the current source. It needs the headless shell build for the Playwright version that `auth/` pins (`(cd auth && npx playwright install chromium-headless-shell)` installs it), and a scratch site built with the `islands/` install from step 3:
 
 ```sh
 rsync -a --delete 11ty/ <scratch-site>/
@@ -339,7 +349,7 @@ rsync -a --delete 11ty/ <scratch-site>/
 
 As in step 4, `rsync --delete` refreshes the copy in place, so the same `<scratch-site>` serves both steps.
 
-It serves the real edge pages, with their real CSP, on `http://localhost:<E2E_PORT>` (default `4175`), and serves `/css` and `/fonts` from `SITE`. The pages link the stylesheet with the `?v=` of the committed `theme.cssUrl`. It drives Chrome at 375 and 1024 px over `/auth/login`, the forgot-password and reset pages, `/auth/link` signed out and signed in, and the denied page. Its checks include the self-hosted fonts loading, no horizontal scroll, sizes and colours from the design system, the notice for an address that is not on the allowlist, the keyboard focus ring on the Google button, the prompt to add a passkey, and no CSP violations. The wiring is test-only: a stub password provider, in-memory stores, a signing key generated for the run and a synthetic allowlist.
+It serves the real edge pages, with their real CSP, on `http://localhost:<E2E_PORT>` (default `4175`), and serves `/css` and `/fonts` from `SITE`. The pages link the stylesheet with the `?v=` of the committed `theme.cssUrl`. It drives the headless shell (`PW_CHANNEL=chrome` opts into system Chrome) at 375 and 1024 px over `/auth/login`, the forgot-password and reset pages, `/auth/link` signed out and signed in, and the denied page. Its checks include the self-hosted fonts loading, no horizontal scroll, sizes and colours from the design system, the notice for an address that is not on the allowlist, the keyboard focus ring on the Google button, the prompt to add a passkey, and no CSP violations. The wiring is test-only: a stub password provider, in-memory stores, a signing key generated for the run and a synthetic allowlist.
 
 - `E2E_OFFLINE=1` blocks the requests to Google's sign-in script.
 - `E2E_SHOTS=<dir>` saves a full-page screenshot of each page at each width.
@@ -546,7 +556,8 @@ Each command you ran exits `0`. Check with `echo $?` straight after it, and read
 | `mcp-conformance.sh` fails after a change to the `api/` dependencies | It installs only when `api/node_modules` is missing, so it ran against the old install | `(cd api && npm ci)`, then run it again. |
 | The content contract cannot find a package | `api/` dependencies are not installed | `(cd api && npm ci)` |
 | The auth `edge` test fails on `theme.cssUrl` | The `?v=` in `auth/edge.manifest.json` is not the hash of the committed `11ty/css/auth-edge.css` | Rebuild the islands and commit both files ([Build and preview the islands](build-and-preview-the-islands.md)). The sign-in pages use the new stylesheet only after `hfy-auth-edge` is redeployed ([Deploy the app stack](deploy-the-app-stack.md)). |
-| Playwright cannot find the `chrome` distribution | Google Chrome is not installed | For the island specs, use `PW_CHANNEL=chromium`, as in step 4. The sign-in pages test always uses Chrome, so install it. |
+| Playwright reports `Executable doesn't exist` under `chromium_headless_shell-…` | The `chromium-headless-shell` build for that package's Playwright version is not installed. `islands/` and `auth/` pin different versions, so each needs its own. | `(cd islands && npx playwright install chromium-headless-shell)`, or the same in `auth/`, as in steps 4 and 10. |
+| Playwright cannot find the `chrome` distribution | `PW_CHANNEL=chrome` is set and Google Chrome is not installed | Unset `PW_CHANNEL`, which restores the headless shell, or install Chrome. |
 | Island specs time out waiting for an island | The site is stale, or another server holds the port | Run `(cd islands && npm run check:islands)`; if it reports differences, rebuild with `(cd islands && npm run build)` and commit the result. Stop the other server, or set `PW_PORT`. |
 | The bundle test or `check:islands` fails | The site's build outputs do not match `islands/` | Rebuild and commit every output ([Build and preview the islands](build-and-preview-the-islands.md)). `stale auth/edge.manifest.json` means the sign-in stylesheet changed: commit the manifest and redeploy `hfy-auth-edge`. |
 | `theme-delivery` or `copy` fails after an Eleventy refresh | The refresh brought back pages without the head blocks or with the old copy | `(cd islands && npm run build)` and commit the pages ([Refresh the Eleventy output](refresh-the-eleventy-output.md)). |
