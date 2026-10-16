@@ -107,6 +107,7 @@ HOLD_MESSAGES = {
     "renumber_blocked": "A person's ID cannot change once it is on the website. Restore the old ID in Gramps.",
     "server_refused": "The website kept refusing the records in this batch; this one was not sent. Run the push again.",
     "object_too_large": "This record is larger than the website accepts and was not sent.",
+    "cloud_unknown_field": "The website's copy of this record has a field this version of the addon does not know. Nothing was sent for it; update the addon.",   # D39
     "merge_held": "A person merge is held until the website can re-key what depends on the merged ID. Nothing was sent for it.",
     "merge_member_principal": "The merged-away person is a signed-in family member. Merge the other way: keep this person and merge the other into them.",
     "merge_unverified": "The website did not say which people are signed-in members, so a merge cannot be checked. Nothing was sent for it.",

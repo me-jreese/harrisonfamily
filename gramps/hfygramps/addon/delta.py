@@ -8,7 +8,10 @@ replays only the ops after that seq:
              `"changes_feed": false`. Either missing means the plain snapshot pull, which stays the reference path.
     base     the newest cached state: it must verify like a downloaded snapshot (sha256, header, this tree, this database schema, this
              redaction version) and carry the `expunge_epoch` the handshake reports now. An expunge rewrites log entries and heads without moving
-             seq, so a cache at an unchanged seq could still hold a scrubbed value; a changed epoch discards the cache.
+             seq, so a cache at an unchanged seq could still hold a scrubbed value; a changed epoch discards the cache. It must also hold no
+             line of a class this addon does not know (a newer website, error catalog D39): `snapshot.parse` parks such a line in
+             `Snapshot.parked`, a replica holds heads only, and serialising it would leave the line out of `count` and the body, so the state
+             would no longer hash to the website's and the plan would lose the `deferred` entry. A cache with a parked line is not a base.
     replay   `GET /api/sync/changes?since=<cached seq>` page by page. Every op is checked before it is applied: the seqs run one by one from the
              cached seq (the feed is dense; a marker op fills the seq of a session close), the op is one of create, update, delete, withdraw
              or marker, a create is over no head or a tombstone and an update or delete over a live head, the version is exactly one more than
@@ -17,11 +20,15 @@ replays only the ops after that seq:
     result   the heads after the replay, serialised the way the website builds a snapshot (class order, canonical JSON, the same header; a head
              privacy-expunge emptied keeps the `expunged: true` the cached snapshot gave it, because the flag is part of the body). The
              body hashes to the same body_sha256 a snapshot at that seq would carry, so the rest of the run (plan, preview, apply, sidecar) cannot
-             tell the two apart: the plan of a delta pull is the plan of a snapshot pull of the same cloud state.
+             tell the two apart: the plan of a delta pull is the plan of a snapshot pull of the same cloud state. That holds because a state with a
+             parked class never takes this route (see `base`, and `bad_op` below for a class that arrives through the feed).
 
-Any doubt falls back to the full snapshot for this run and costs nothing but the download: no cache, a damaged cache, a changed epoch, a gap in
-the seqs, a version that does not follow, an object that does not hash, an expunged op, a head behind the cache, `410`, `400 bad_cursor`
+Any doubt falls back to the full snapshot for this run and costs nothing but the download: no cache, a damaged cache, a cache that holds a
+class this addon does not know (`unknown_class`), a changed epoch, a gap in the seqs, a version that does not follow, an object that does not
+hash, an expunged op, an op of a class this addon does not know (`bad_op`), a head behind the cache, `410`, `400 bad_cursor`
 or `404 not_enabled` from the feed, a `429`/`5xx` that outlasts the transport's retries, a feed answer that is not the documented shape. The reason is a word in the run log, never content.
+While the website holds an object of an unknown class every run is therefore a snapshot run (the feed is not asked), and the preview lists the
+object under `deferred` exactly as the snapshot route does.
 
 Verification. A cache that is only ever advanced by deltas could drift if the website's log or this code had a fault, so every 7th sync
 (DELTA_VERIFY_EVERY: six delta syncs, then one) downloads the full snapshot anyway, uses it for the plan, replays the feed to the snapshot's seq and
@@ -193,6 +200,8 @@ def load(tp, cloud_tree, schema, epoch):
         raise Fallback("cache_invalid")
     if snap.seq != state["seq"] or snap.body_sha256 != state["body_sha256"]:
         raise Fallback("cache_invalid")
+    if snap.parked:
+        raise Fallback("unknown_class")  # D39: a replica holds heads only, so it would lose the parked lines from the body, the count and the plan
     return Replica(cloud_tree, snap.seq, snap.heads, epoch, state["streak"])
 
 

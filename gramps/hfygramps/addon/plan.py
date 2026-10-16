@@ -31,6 +31,7 @@ from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
 from . import consts
+from .knownfields import unknown_fields
 
 REVERT_LABEL = "reverts a website change (origin)"
 MASS_DELETE_OBJECTS = 10
@@ -300,15 +301,16 @@ def _plain(value):
 
 
 def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="cli", allow_deletes=False, files=None, pulled=None,
-          expunge_holds=None, policy=None, confirm_mass_delete=False, decisions=None, defer_deletes=False):
+          expunge_holds=None, policy=None, confirm_mass_delete=False, decisions=None, defer_deletes=False, parked=()):
     """Plans one pull. `local` {handle: raw object}; `base_rows` sidecar.load_base(); `heads` a Snapshot's heads.
 
     `decisions` ({conflict id: {"choice", "confirmed"}}, the Gramps window only) are a person's answers to conflicts the first pass
     found; they are carried out in the same plan (``decide.second_pass``): the plan returned is the second pass, and
     `reviewed_hash` is the first pass's plan hash, the one the person saw. `defer_deletes` holds back every incoming delete (a person
-    who declined the confirmation): each is listed as blocked, nothing is removed."""
+    who declined the confirmation): each is listed as blocked, nothing is removed. `parked` are the snapshot's lines of a class this addon does
+    not know (``Snapshot.parked``, D39): they are listed as deferred and otherwise left alone."""
     kw = dict(sticky=sticky, released=released, mode=mode, allow_deletes=allow_deletes, files=files, pulled=pulled,
-              expunge_holds=expunge_holds, policy=policy, confirm_mass_delete=confirm_mass_delete, defer_deletes=defer_deletes)
+              expunge_holds=expunge_holds, policy=policy, confirm_mass_delete=confirm_mass_delete, defer_deletes=defer_deletes, parked=parked)
     first = _build_once(local, base_rows, heads, pins=pins, **kw)
     first.reviewed_hash = first.plan_hash
     if defer_deletes or confirm_mass_delete:
@@ -323,7 +325,7 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
 
 
 def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="cli", allow_deletes=False, files=None, pulled=None,
-                expunge_holds=None, policy=None, confirm_mass_delete=False, defer_deletes=False):
+                expunge_holds=None, policy=None, confirm_mass_delete=False, defer_deletes=False, parked=()):
     pol = policy or R.load_policy()
     pins = pins or {}
     files = files or {}
@@ -339,10 +341,16 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
         cloud[head.handle] = M.TOMBSTONE if head.deleted else head.obj
         versions[head.handle] = head.version
 
+    # ---- D39: an object with a field this addon does not know, or of a class it does not know, is parked: left as it is, the rest goes on
+    parked_fields = {head.handle for head in heads if not head.deleted and unknown_fields(head.cls, head.obj)}
+    for p in parked:
+        plan.deferred.append({"class": p["class"], "handle": p["handle"], "gramps_id": p.get("gramps_id", ""),
+                              "reason": "a kind of object this addon does not know: update the addon"})
+
     # ---- expunge notices: the same version with another hash is a scrub in place; the base follows the website, the old value is held
     for head in heads:
         row = base_rows.get(head.handle)
-        if head.deleted or row is None or row["deleted"] or head.version != row["version"] or row["hash"] == head.hash:
+        if head.handle in parked_fields or head.deleted or row is None or row["deleted"] or head.version != row["version"] or row["hash"] == head.hash:
             continue
         paths = M.diff_pointers(base[head.handle], head.obj)
         plan.notices.append({"class": head.cls, "handle": head.handle, "gramps_id": head.gramps_id, "paths": paths})
@@ -357,7 +365,7 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
     for head in heads:
         row = base_rows.get(head.handle)
         changed = row is None or row["deleted"] or head.hash != row["hash"] or head.version != row["version"]
-        if head.deleted or not changed or head.handle in {n["handle"] for n in plan.notices}:
+        if head.deleted or not changed or head.handle in {n["handle"] for n in plan.notices} or head.handle in parked_fields:
             continue
         if dob_hit(head.obj, index, pol, scan_table):
             hit_handles.add(head.handle)
@@ -369,14 +377,24 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
     for head in heads:
         row = base_rows.get(head.handle)
         changed = row is None or row["deleted"] or head.hash != row["hash"] or head.version != row["version"]
-        if not head.deleted and changed and head.handle not in hit_handles and head.handle not in {n["handle"] for n in plan.notices}:
+        if not head.deleted and changed and head.handle not in hit_handles and head.handle not in {n["handle"] for n in plan.notices} \
+                and head.handle not in parked_fields:
             pulled_objs[head.handle] = head.obj
     withheld_new = {h for h in hit_handles if h not in local}
     dependants = drop_dependants(pulled_objs, withheld_new, set(local)) if withheld_new else set()
     for h in sorted(dependants):
         head = head_by[h]
         plan.deferred.append({"class": head.cls, "handle": h, "gramps_id": head.gramps_id, "reason": "refers to an object withheld for privacy"})
-    withheld = hit_handles | dependants
+    parked_new = {h for h in parked_fields if h not in local}
+    parked_dependants = (drop_dependants(pulled_objs, parked_new, set(local)) if parked_new else set()) - dependants
+    for h in sorted(parked_fields):
+        head = head_by[h]
+        plan.deferred.append({"class": head.cls, "handle": h, "gramps_id": head.gramps_id, "reason": "a field this addon does not know: update the addon",
+                              "fields": unknown_fields(head.cls, head.obj)})
+    for h in sorted(parked_dependants):
+        head = head_by[h]
+        plan.deferred.append({"class": head.cls, "handle": h, "gramps_id": head.gramps_id, "reason": "refers to an object that is parked"})
+    withheld = hit_handles | dependants | parked_fields | parked_dependants
     for h in withheld:
         if h in base_rows and not base_rows[h]["deleted"] and h in base:
             cloud[h] = base[h]

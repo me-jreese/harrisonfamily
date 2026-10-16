@@ -88,7 +88,7 @@ class TransitiveDeferral(S.PullCase):
         ev["media_list"] = [dict(by_gid(objs, "I0014")["media_list"][0], ref=m["handle"])]
         e.cloud.put(ev)
         person = copy.deepcopy(by_gid(objs, "I0014"))
-        person.update(handle="d" * 28, gramps_id="I8101", family_list=[], parentfamily_list=[], media_list=[])
+        person.update(handle="d" * 28, gramps_id="I8101", family_list=[], media_list=[])
         person["event_ref_list"] = [dict(person["event_ref_list"][0], ref=ev["handle"])]
         e.cloud.put(person)
         return m, ev, person
@@ -216,7 +216,7 @@ class WithheldDependants(S.PullCase):
         ev.update(handle="e" * 28, gramps_id="E8102", note_list=[note["handle"]])
         e.cloud.put(ev)
         person = copy.deepcopy(by_gid(objs, "I0014"))
-        person.update(handle="d" * 28, gramps_id="I8102", family_list=[], parentfamily_list=[], media_list=[])
+        person.update(handle="d" * 28, gramps_id="I8102", family_list=[], media_list=[])
         person["event_ref_list"] = [dict(person["event_ref_list"][0], ref=ev["handle"])]
         e.cloud.put(person)
         other = copy.deepcopy(by_gid(objs, "N0001"))

@@ -267,6 +267,13 @@ class Engine:
             view.fold(item)
         if view.seq < target:
             raise errors.RenderFailed(errors.RULE_SNAPSHOT_GAP)
+        # S15 and S13: the store disagrees with itself. Neither stops the pass; both raise the head-mismatch alarm, with counts only.
+        # The renderer skips the entry that does not hash (the object keeps its last good version) and, for two live heads with one
+        # Gramps ID, renders the first by (gramps_id, handle) order, because the site cannot hold two files under one ID.
+        bad, dupes = len(view.corrupt), view.duplicate_ids()
+        if bad or dupes:
+            self.d.metrics.emit("HeadMismatch", bad + dupes)
+            log.error("render store inconsistency hash_mismatch=%d duplicate_ids=%d", bad, dupes)
         return view
 
     def _media_files(self, objects: Dict[Tuple[str, str], Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

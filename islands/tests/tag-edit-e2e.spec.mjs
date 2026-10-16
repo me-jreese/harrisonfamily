@@ -61,7 +61,7 @@ test("scenario 1: a tag drawn on another person becomes a suggestion, an admin a
   await again.ctx.close();
 });
 
-test("scenario 2: a tag on my own record saves now, and removing it takes it off again", async ({ browser }) => {
+test("scenario 2: a tag on my own record saves now, and the toast's undo takes it off again", async ({ browser }) => {
   const { page, ctx, log } = await member(browser, world, ME);
   await startTagging(page);
   await draw(page, [50, 50], [80, 80]);
@@ -78,15 +78,17 @@ test("scenario 2: a tag on my own record saves now, and removing it takes it off
   expect(realCalls(log)).toHaveLength(1);
   // the overlay has it without a reload
   await expect(regions(page)).toHaveCount(2);
-  // undo: remove my tag
-  await regions(page).last().click();
-  await expect(panel(page).locator("[data-hfy-tag-who]")).toContainText("Alder Testwood");
-  await panel(page).locator("[data-hfy-tag-remove]").click();
-  await expect(sheet(page).locator("[data-hfy-group='hfy-sheet-direct']")).toContainText("remove Alder Testwood");
-  await sheet(page).locator("[data-hfy-save]").click();
-  await expect(panel(page).locator("[data-hfy-tag-toast]")).toHaveText("the tag is removed.");
+  // undo: the toast's button sends the inverse ops the save returned, and the tag is off again
+  const undo = panel(page).locator("[data-hfy-tag-undo]");
+  await expect(undo).toBeVisible();
+  await expect(undo).toHaveText("undo");
+  await undo.click();
+  await expect(panel(page).locator("[data-hfy-tag-toast]")).toHaveText("undone. the tags are as they were.");
+  await expect(undo).toHaveCount(0);
   expect(mediaRefs(world.me)).toEqual([]);
   expect(world.version("Person", world.me.handle)).toBe(3);
+  expect(realCalls(log)).toHaveLength(2);
+  expect(world.rows("PROP#")).toEqual([]);
   await expect(regions(page)).toHaveCount(1);
   // the woman's tag was never touched
   expect(mediaRefs(world.mother)).toHaveLength(1);
