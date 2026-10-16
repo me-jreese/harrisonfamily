@@ -1,7 +1,7 @@
 // HFY-TSK-279 (sync-admin-status-page): the pure model of /admin/sync/ on invented rows. The words, the conflict rows, the decision bodies and the errors.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { COPY, ago, confirmAsk, conflictRows, countsLine, decidedLine, decisionBody, describeError, lagLine, normalizeStatus, pathWords, recordLabel, showValue, stamp } from "../src/lib/sync-admin-model.js";
+import { COPY, ago, confirmAsk, conflictRows, countsLine, decidedLine, decisionBody, describeError, lagLine, normalizeStatus, pathWords, recordLabel, reopenedNote, showValue, stamp } from "../src/lib/sync-admin-model.js";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 const CONFLICT = { id: "01J00000000000000000000001", class: "Person", gramps_id: "I0001", paths: [{ path: "/primary_name/first_name", cloud: "Birch", desktop: "Cedar" }, { path: "/gender", cloud: 1, desktop: null }] };
@@ -81,4 +81,24 @@ test("errors: a stale sign-in asks for a fresh one, a non-owner and a non-admin 
   assert.equal(describeError({ status: 404, code: "not_enabled" }).text, COPY.off);
   assert.equal(describeError({ status: 409, code: "already_resolved" }).kind, "reload");
   assert.equal(describeError({ status: 500 }).text, COPY.loadFailed);
+});
+
+test("a conflict reopened because the website's value moved reads open, with a 'cloud value changed' note and the earlier decision (HFY-TSK-338)", () => {
+  const reopened = (reason, decision = "keep_cloud") => ({ ...CONFLICT, state: "open", decision: null, reopened_at: "2026-10-14T10:00:00.000Z", history: [{ decision, reason, reopened_at: "2026-10-14T10:00:00.000Z" }] });
+  const a = reopenedNote(reopened("version_changed"));
+  assert.match(a.text, /^cloud value changed\./);
+  assert.equal(a.was, "keep website");
+  assert.equal(reopenedNote(reopened("value_changed", "keep_desktop")).was, "keep desktop");
+  assert.match(reopenedNote(reopened("no_hash")).text, /could not be checked/);
+  assert.equal(reopenedNote(reopened("version_changed", "manual")).was, null);
+  // the newest history entry speaks
+  assert.equal(reopenedNote({ ...reopened("version_changed"), history: [{ decision: "keep_desktop", reason: "value_changed" }, { decision: "keep_cloud", reason: "version_changed" }] }).was, "keep website");
+});
+
+test("a conflict that was never reopened, or is not open, has no note", () => {
+  assert.equal(reopenedNote(CONFLICT), null);
+  assert.equal(reopenedNote({ ...CONFLICT, history: [] }), null);
+  assert.equal(reopenedNote({ ...CONFLICT, state: "resolved", history: [{ decision: "keep_cloud", reason: "version_changed" }] }), null);
+  assert.equal(reopenedNote(null), null);
+  assert.equal(reopenedNote({ ...CONFLICT, state: "open", history: "x" }), null);
 });

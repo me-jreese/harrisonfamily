@@ -11,7 +11,7 @@ const FLAGS = { authV2: true, shellV2: false, personV2: false, postsV2: false, s
 const LONG = "A very long synthetic value without any spaces so it has to wrap rather than push the page sideways ".repeat(2).replace(/ /g, "-");
 const conflict = (n, over = {}) => ({
   id: `01J${String(n).padStart(23, "0")}`, class: "Person", handle: `h${n}`, gramps_id: `I000${n}`, kind: "field", source: "desktop_parked", state: "open", decision: null,
-  paths: [{ path: "/primary_name/first_name", base: "Alder", cloud: n === 1 ? LONG : "Birch", desktop: "Cedar" }], opened_at: "2026-10-13T00:00:00.000Z", resolved_at: null, by: null, cloud_version: null, cloud_value_hash: null, ...over,
+  paths: [{ path: "/primary_name/first_name", base: "Alder", cloud: n === 1 ? LONG : "Birch", desktop: "Cedar" }], opened_at: "2026-10-13T00:00:00.000Z", resolved_at: null, by: null, cloud_version: null, cloud_value_hash: null, reopened_at: null, history: [], applied_at: null, ...over,
 });
 const STATUS = (over = {}) => ({
   owner: true,
@@ -86,6 +86,18 @@ test("an hfy-admin reads the cards and has no decision buttons", async ({ page }
   await expect(page.locator("[data-hfy-conflict]")).toHaveCount(2);
   await expect(act(page, "keep-website")).toHaveCount(0);
   await expect(page.locator("[data-hfy-owner-only]").first()).toContainText("only the owner of the site can decide a conflict");
+});
+
+test("a decision the website's value outgrew is open again, with the 'cloud value changed' note and the earlier decision (HFY-TSK-338)", async ({ page }) => {
+  const reopened = conflict(2, { reopened_at: "2026-10-14T10:00:00.000Z", history: [{ decision: "keep_cloud", cloud_version: 3, resolved_at: "2026-10-14T09:00:00.000Z", reopened_at: "2026-10-14T10:00:00.000Z", reason: "value_changed" }] });
+  await open(page, { status: STATUS({ conflicts: [conflict(1), reopened] }) });
+  await expect(page.locator("[data-hfy-sync-ready]")).toBeVisible();
+  await expect(page.locator("[data-hfy-conflict]")).toHaveCount(2);
+  await expect(page.locator("[data-hfy-reopened]")).toHaveCount(1);
+  await expect(page.locator(`[data-hfy-conflict="${reopened.id}"] [data-hfy-reopened]`)).toContainText("cloud value changed");
+  await expect(page.locator(`[data-hfy-conflict="${reopened.id}"] [data-hfy-reopened]`)).toContainText("earlier decision: keep website");
+  await expect(page.locator(`[data-hfy-conflict="${reopened.id}"] [data-hfy-act="keep-website"]`)).toBeVisible(); // it can be decided again
+  expect(await axeViolations(page)).toEqual([]);
 });
 
 for (const [name, viewport] of VIEWPORTS) {

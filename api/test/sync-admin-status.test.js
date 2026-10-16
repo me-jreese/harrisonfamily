@@ -44,6 +44,15 @@ function world() {
 }
 
 describe("GET /api/sync/admin/status", () => {
+  it("shows a conflict that was reopened by a changed cloud value as open, with the old decision in history (HFY-TSK-338)", async () => {
+    const w = world();
+    const history = [{ decision: "keep_cloud", cloud_version: 3, cloud_value_hash: "a".repeat(64), resolved_at: "2026-10-14T09:00:00.000Z", by: OWNER, reopened_at: "2026-10-14T10:00:00.000Z", reason: "value_changed" }];
+    w.ddb.rows.set(`SYNC#CONFLICT#${CID(3)}\u0000META`, conflictRow(3, { reopened_at: "2026-10-14T10:00:00.000Z", history }));
+    const r = await w.call("GET", "/api/sync/admin/status", await w.as(ADMIN));
+    const c = r.body.conflicts.find((x) => x.id === CID(3));
+    expect(c).toMatchObject({ state: "open", decision: null, reopened_at: "2026-10-14T10:00:00.000Z", history });
+    expect(r.body.conflicts.find((x) => x.id === CID(1))).toMatchObject({ reopened_at: null, history: [] });
+  });
   it("shows desktop, website, open conflicts and recent batches to hfy-admin and gramps-owner", async () => {
     const w = world();
     for (const sub of [ADMIN, OWNER]) {
