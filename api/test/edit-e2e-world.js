@@ -32,9 +32,9 @@ const quiet = { warn() {}, error() {}, info() {} };
 
 /**
  * The synthetic tree: me (1), a woman (3) who is not yet recorded as anyone's parent, my child (6) in a family F1 of me alone, and a note on my page (N1).
- * `HFY_EDITING` is switched on for the life of the process by `createEditWorld` (call `world.dispose()` to restore it). Use `withEditWorld(fn)` for a try/finally that always disposes.
+ * With `{ photo: true }` the tree also has one photo (`world.pic`) with the woman tagged in it. `HFY_EDITING` is switched on for the life of the process by `createEditWorld` (call `world.dispose()` to restore it). Use `withEditWorld(fn)` for a try/finally that always disposes.
  */
-export async function createEditWorld({ admins = [ADMIN, ADMIN2] } = {}) {
+export async function createEditWorld({ admins = [ADMIN, ADMIN2], photo = false } = {}) {
   const before = process.env.HFY_EDITING;
   process.env.HFY_EDITING = "on";
   const hooks = createHookRegistry();
@@ -58,7 +58,10 @@ export async function createEditWorld({ admins = [ADMIN, ADMIN2] } = {}) {
   const me = person(1, { first: "Alder", last: "Testwood", rest: { family_list: [fam.handle], note_list: [n1.handle] } });
   const kid = person(6, { first: "Briar", last: "Testwood", rest: { parent_family_list: [fam.handle] } });
   const mother = person(3, { first: "Hazel", last: "Birchwell", gender: 0 });
-  await seed([me, mother, kid, n1, fam]);
+  // `photo` (HFY-TSK-283, tag-edit-e2e): one synthetic photo, and the woman (3) already tagged in it, so the photo is on her page.
+  const pic = { _class: "Media", handle: h(5000), gramps_id: "O0001", private: false, path: "photo-0001.jpg", mime: "image/jpeg", desc: "A synthetic photo", checksum: "", date: date(), attribute_list: [], citation_list: [], note_list: [], tag_list: [] };
+  if (photo) mother.media_list = [{ _class: "MediaRef", private: false, citation_list: [], note_list: [], attribute_list: [], ref: pic.handle, rect: [10, 10, 40, 40] }];
+  await seed([me, mother, kid, n1, fam, ...(photo ? [pic] : [])]);
 
   /** An API request as `who` (a gramps id; a session minted a few seconds ago, so a step-up is satisfied). */
   const call = async (method, path, who, { body, query, headers = {} } = {}) =>
@@ -69,7 +72,7 @@ export async function createEditWorld({ admins = [ADMIN, ADMIN2] } = {}) {
   const rows = (prefix) => w.ddb.all().filter((r) => r.PK.startsWith(prefix));
   /** Change a record behind the API's back, as a Gramps sync would (a new version). */
   const bump = (obj, base) => applyBatch(sctx, { principal: "svc-seed", origin: "desktop", idempotencyKey: `bump${++k}`, ops: [{ op: "update", class: obj._class, handle: obj.handle, base_version: base, obj }] });
-  return { ...w, call, stored, version, rows, bump, inbox, me, mother, kid, n1, fam, dispose: () => { if (before === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = before; } };
+  return { ...w, call, stored, version, rows, bump, inbox, me, mother, kid, n1, fam, pic, dispose: () => { if (before === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = before; } };
 }
 
 /** Runs `fn(world)` and always restores HFY_EDITING, even when `fn` throws. */
