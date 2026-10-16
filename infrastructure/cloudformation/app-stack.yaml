@@ -819,9 +819,10 @@ Resources:
           SITE_BUCKET: !Ref MediaBucket
 
   # Break-glass writer for the data prefixes once the bucket-policy deny is on (BRD2 11.4, PS-05, SI-15). io only, MFA required, one hour.
-  # It also lists and deletes object versions on those prefixes, which is how api/scripts/expunge.mjs removes the noncurrent copies of a rendered
-  # file (HFY-TSK-204, D2-33); the write guard denies s3:DeleteObjectVersion to everyone else. uploads/ and the sync bucket are not here: the
-  # expunge of an upload and of the snapshots and shadow copies runs under io's usual administrator credentials.
+  # It also lists and deletes object versions on those prefixes (HFY-TSK-204, D2-33), for the day the data-prefix write guard is widened to deny
+  # s3:DeleteObjectVersion. Today the guard (scripts/infra/apply-data-write-guard.sh) denies only PutObject and DeleteObject, and
+  # api/scripts/expunge.mjs runs a whole --record expunge in one process under io's usual administrator credentials, which also reach the sync
+  # bucket and the table. This role does not: uploads/, the sync bucket (snapshots, render-shadow) and the table are not here.
   BreakGlassRole:
     Type: AWS::IAM::Role
     Properties:

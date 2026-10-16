@@ -18,7 +18,8 @@
 //                             head get obj_json null and expunged true; hash and seq stay. (b) every snapshot (snapshots/) and all its noncurrent
 //                             versions are deleted and the snapshot is rebuilt. (c) the render-shadow copies of the record's rendered files, of the
 //                             pages that embed it and of the index files are deleted with their versions, and, when the site bucket is versioned,
-//                             the noncurrent versions of those keys there (break-glass role: hfy-data-breakglass). The open and decided sync
+//                             the noncurrent versions of those keys there. One process, one set of credentials: io's usual administrator credentials (they reach the table, the
+//                             sync bucket and the site bucket; hfy-data-breakglass reaches only the site data prefixes). The open and decided sync
 //                             conflicts of the handle lose their values. SYNC#HEAD.expunge_epoch rises by one in the same transaction as the head
 //                             rewrite, which is what makes every reader (the store view, the snapshot cache) drop what it held.
 // --record ... --path <ptr>   one value of a live or tombstoned record, as an RFC 6901 pointer into the object (for example /text/string). In
@@ -29,8 +30,10 @@
 //                             (handle, _class, gramps_id) are refused. Steps (b) and (c) follow.
 // --proposal <ulid>           PROP#<ulid> META and every IDX# copy lose the proposal document and their index keys (they stay as an expunged stub),
 //                             the proposal thread's comments and reactions are deleted, the audit rows of those comments lose before and after,
-//                             and the comments' photos are deleted from the site bucket with every version. The IDEM# receipt (24 hours) and the
-//                             inbox rows (90 days after read) carry no proposal text and expire on their own.
+//                             and the comments' photos are deleted from the site bucket with every version. The AUDIT#proposal:<ulid> rows
+//                             (every state change) lose before, after and any decision reason; the IDEM# receipts whose result echoes the proposal
+//                             are deleted (one filtered table scan finds them); the PROPREQ# item of a system proposal loses its content hash. The
+//                             inbox rows of a decision (90 days after read) can hold the reason an admin typed and expire on their own.
 // --chat <conv>:<seq>         the chat hub nulls the message text through its admin route (CHAT_HUB_ADMIN_URL, CHAT_HUB_ADMIN_TOKEN), then the
 //                             CHAT#<conv>/M#<seq> mirror row is deleted. The hub goes first, so a later archive batch cannot bring the text back.
 // --upload <key>              every version of uploads/posts|comments/<ulid>/photo.<ext> in the site bucket, and its UPLOAD# binding.
@@ -38,6 +41,8 @@
 //                             withdraw can still be resurrected) whose time has come; --now takes all of them at once (tests). Runs the whole-record
 //                             expunge for each. A stale item (the head is live again) is dropped.
 //
+// A crash part-way is finished by running the same command again: the head rewrite also writes EXPUNGE#SWEEP, and that item and the record's
+// EXPUNGE# schedule item are deleted only after the snapshot versions were replaced. --due runs the snapshot step whenever EXPUNGE#SWEEP exists.
 // The 35-day DynamoDB point-in-time recovery tail is outside this tool's reach and is disclosed in the privacy text and the runbook.
 // After a record or path expunge run `sync-admin.mjs render --full`, so the live site files are rewritten from the store.
 import { pathToFileURL } from "node:url";
@@ -50,7 +55,24 @@ import { rebuildStoreView, storeView } from "../src/records/index.js";
 import { SNAPSHOT_PREFIX, writeSnapshot } from "../src/sync/pull.js";
 import { createSyncAuthenticator, requireOwner, requireStepUp } from "../src/sync/auth.js";
 
-export class ExpungeError extends Error {}
+/** `code` is a short fixed word: a --due run logs the name and the code of a failure, never its message (a message can carry a value). */
+export class ExpungeError extends Error {
+  constructor(message, code = "refused") {
+    super(message);
+    this.name = "ExpungeError";
+    this.code = code;
+  }
+}
+
+/** A DynamoDB transaction that lost a condition or a race (a resurrect, an edit): the caller reads the record again. */
+const isCancelled = (e) => e?.name === "TransactionCanceledException";
+
+/**
+ * The item that says a snapshot sweep is owed. It is written in the same transaction as the head rewrite and deleted only after the snapshot
+ * versions were replaced, so a crash between the two leaves it behind and the next run finishes the sweep (a rerun of the record itself
+ * finds nothing left to rewrite and would otherwise never clean up the old snapshot versions).
+ */
+export const SWEEP_KEY = Object.freeze({ PK: "EXPUNGE#SWEEP", SK: "META" });
 
 export const DEFAULT_SYNC_BUCKET = "harrisonfamily-sync";
 export const DEFAULT_SITE_BUCKET = "harrisonfamily-frontend";
@@ -82,14 +104,18 @@ async function queryAll(ctx, input) {
 /** Bytes per transaction: DynamoDB allows 4 MB in all, and a path rewrite carries a whole object (up to 200 KB) per item. */
 export const TXN_BYTES = 1_500_000;
 
-/** Writes `items` (TransactItems) in transactions of at most TXN_CHUNK items and about TXN_BYTES bytes. */
-async function transactAll(ctx, items) {
+/**
+ * Writes `items` (TransactItems) in transactions of at most TXN_CHUNK items and about TXN_BYTES bytes. `guard` (a ConditionCheck) rides in every
+ * transaction, so a record that moved under the run (a resurrect, an edit) cancels the next chunk instead of being half rewritten.
+ */
+async function transactAll(ctx, items, guard) {
   let part = [];
   let bytes = 0;
   const flush = async () => {
     if (part.length === 0) return;
-    assertTxnSize(part);
-    await ctx.ddb.send(new ctx.cmds.TransactWriteCommand({ TransactItems: part }));
+    const send = guard ? [...part, guard] : part;
+    assertTxnSize(send);
+    await ctx.ddb.send(new ctx.cmds.TransactWriteCommand({ TransactItems: send }));
     part = [];
     bytes = 0;
   };
@@ -290,26 +316,55 @@ async function resnapshot(ctx, copies) {
 }
 
 /**
- * One record. `path` undefined: the whole record (tombstones only). `due` is the EXPUNGE# item when a --due run called this.
- * Returns { counts, skipped? }.
+ * Deletes the schedule items and the sweep marker once the snapshot is rebuilt. Nothing owed is dropped before then: a crash earlier leaves them,
+ * and the next run (--due, or the same --record) finishes the cleanup.
  */
-export async function expungeRecord(ctx, { cls, handle, path, replacement = "", apply = false, who, due, deferSnapshot = false }) {
+async function finishSweep(ctx, scheduleKeys) {
+  for (const Key of scheduleKeys) await ctx.ddb.send(new ctx.cmds.DeleteCommand({ TableName: ctx.table, Key }));
+  await ctx.ddb.send(new ctx.cmds.DeleteCommand({ TableName: ctx.table, Key: SWEEP_KEY }));
+}
+
+/**
+ * One record. `path` undefined: the whole record (tombstones only). `due` is the EXPUNGE# item when a --due run called this.
+ * Returns { counts, skipped?, schedule? } (`schedule` is the key of the EXPUNGE# item a deferred run still owes a delete, after its sweep).
+ * A transaction that a resurrect or an edit cancelled is retried once from a fresh read (what was nulled before it stays nulled).
+ */
+export async function expungeRecord(ctx, opts) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await expungeRecordOnce(ctx, opts);
+    } catch (e) {
+      if (!isCancelled(e)) throw e;
+      if (attempt >= 1) throw new ExpungeError("the record changed while it was being expunged (a resurrect or an edit); run the same command again", "record_moved");
+      ctx.log("record: it changed while being expunged; reading it again");
+    }
+  }
+}
+
+async function expungeRecordOnce(ctx, { cls, handle, path, replacement = "", apply = false, who, due, deferSnapshot = false }) {
   const { log } = ctx;
-  if (!CLASSES.includes(cls)) throw new ExpungeError(`unknown class ${String(cls).slice(0, 32)}`);
-  if (typeof handle !== "string" || !HANDLE_SHAPE.test(handle)) throw new ExpungeError("the handle is not shaped like a Gramps handle");
+  if (!CLASSES.includes(cls)) throw new ExpungeError(`unknown class ${String(cls).slice(0, 32)}`, "unknown_class");
+  if (typeof handle !== "string" || !HANDLE_SHAPE.test(handle)) throw new ExpungeError("the handle is not shaped like a Gramps handle", "handle_shape");
   const tokens = path === undefined ? undefined : parsePointer(path);
   const head = await get(ctx, recKey(cls, handle));
-  if (!head) throw new ExpungeError("no such record in the store");
+  if (!head) throw new ExpungeError("no such record in the store", "no_such_record");
   if (tokens === undefined && head.deleted !== true) {
     if (due) return { skipped: "live", counts: {} };
-    throw new ExpungeError("that record is live: withdraw or delete it first (a withdraw schedules this expunge), or use --path to scrub one value");
+    throw new ExpungeError("that record is live: withdraw or delete it first (a withdraw schedules this expunge), or use --path to scrub one value", "live");
   }
   if (due && tokens === undefined && due.version !== head.version) return { skipped: "moved", counts: {} };
   const entries = await recordHistory(ctx, cls, handle, head);
+  const sweepOwed = Boolean(await get(ctx, SWEEP_KEY));
 
   // The rewrites of the object copies.
   const logItems = [];
   let headItem;
+  // Every transaction that touches a log entry also checks the head is still the one read here, so a resurrect or an edit cancels the next chunk.
+  const guard = {
+    ConditionCheck: tokens === undefined
+      ? { TableName: ctx.table, Key: recKey(cls, handle), ConditionExpression: "#d = :t AND #v = :v AND #s = :s", ExpressionAttributeNames: { "#d": "deleted", "#v": "version", "#s": "seq" }, ExpressionAttributeValues: { ":t": true, ":v": head.version, ":s": head.seq } }
+      : { TableName: ctx.table, Key: recKey(cls, handle), ConditionExpression: "#v = :v AND #s = :s", ExpressionAttributeNames: { "#v": "version", "#s": "seq" }, ExpressionAttributeValues: { ":v": head.version, ":s": head.seq } },
+  };
   if (tokens === undefined) {
     for (const e of entries) if (!(e.expunged === true && e.obj_json == null)) logItems.push(nullUpdate(ctx, logKey(e.seq)));
     if (!(head.expunged === true && head.obj_json == null)) headItem = { Update: { ...nullUpdate(ctx, recKey(cls, handle)).Update, ConditionExpression: "#d = :t AND #v = :v AND #s = :s", ExpressionAttributeNames: { "#oj": "obj_json", "#ex": "expunged", "#d": "deleted", "#v": "version", "#s": "seq" }, ExpressionAttributeValues: { ":n": null, ":t": true, ":v": head.version, ":s": head.seq } } };
@@ -326,45 +381,51 @@ export async function expungeRecord(ctx, { cls, handle, path, replacement = "", 
     }
     const next = scrub(head);
     if (next !== null && next !== head.obj_json) headItem = rewriteUpdate(ctx, recKey(cls, handle), next, head.hash ?? sha256(head.obj_json));
-    if (logItems.length === 0 && !headItem) throw new ExpungeError("the path was not found in any copy of that record (or already holds the replacement)");
+    // A rerun after a crash finds the value already gone; when a sweep is owed it finishes that instead of refusing (a typo still is refused).
+    if (logItems.length === 0 && !headItem && !sweepOwed) throw new ExpungeError("the path was not found in any copy of that record (or already holds the replacement)", "path_not_found");
   }
   const conflicts = await handleConflicts(ctx, cls, handle);
+  const rewrites = logItems.length + (headItem ? 1 : 0) + conflicts.length;
   const view = await storeView({ ddb: ctx.ddb, cmds: ctx.cmds, table: ctx.table, now: ctx.now });
   const keys = renderedKeys(view, { class: cls, handle, gramps_id: head.gramps_id });
   const copies = await copiesOf(ctx, keys, { snapshots: !deferSnapshot });
-  const scheduled = (await get(ctx, expungeKey(cls, handle))) ? 1 : 0;
+  const scheduleKey = (await get(ctx, expungeKey(cls, handle))) ? expungeKey(cls, handle) : undefined;
   const counts = {
     log_entries: logItems.length, head: headItem ? 1 : 0, conflicts: conflicts.length, snapshot_versions: copies.snapshots.length, shadow_versions: copies.shadow.length,
-    site_noncurrent_versions: copies.site.length, rendered_keys: keys.length, schedule_items: scheduled,
+    site_noncurrent_versions: copies.site.length, rendered_keys: keys.length, schedule_items: scheduleKey ? 1 : 0,
   };
-  log(`record ${cls}${path ? " (one value)" : ""}: ${plural(counts.log_entries, "log entry", "log entries")}, ${plural(counts.head, "head")}, ${plural(counts.conflicts, "conflict")}, ${plural(counts.snapshot_versions, "snapshot version")}, ${plural(counts.shadow_versions, "shadow version")}, ${plural(counts.site_noncurrent_versions, "noncurrent site version")} over ${plural(keys.length, "rendered key")}${copies.siteVersioned ? "" : " (the site bucket is not versioned)"}`);
+  log(`record ${cls}${path ? " (one value)" : ""}: ${plural(counts.log_entries, "log entry", "log entries")}, ${plural(counts.head, "head")}, ${plural(counts.conflicts, "conflict")}, ${plural(counts.snapshot_versions, "snapshot version")}, ${plural(counts.shadow_versions, "shadow version")}, ${plural(counts.site_noncurrent_versions, "noncurrent site version")} over ${plural(keys.length, "rendered key")}${copies.siteVersioned ? "" : " (the site bucket is not versioned)"}${rewrites === 0 ? "; nothing left to rewrite, only the copies outside the table" : ""}`);
   if (!apply) return { counts };
 
   const at = iso(ctx);
-  await transactAll(ctx, logItems);
+  // The log entries first (each chunk guarded by the head), then the conflicts.
+  await transactAll(ctx, logItems, guard);
   await transactAll(ctx, conflicts.map((c) => ({
     Update: {
       TableName: ctx.table, Key: { PK: c.PK, SK: c.SK }, UpdateExpression: "SET #p = :p", ConditionExpression: "attribute_exists(PK)",
       ExpressionAttributeNames: { "#p": "paths" }, ExpressionAttributeValues: { ":p": c.paths.map((p) => ({ path: p?.path })) },
     },
   })));
-  // The head rewrite, the epoch, the cancelled schedule and the audit commit together.
-  const final = [];
-  if (headItem) final.push(headItem);
-  final.push({
-    Update: {
-      TableName: ctx.table, Key: headKey(), UpdateExpression: "SET #u = :at ADD #ee :one", ConditionExpression: "attribute_exists(PK)",
-      ExpressionAttributeNames: { "#u": "updated_at", "#ee": "expunge_epoch" }, ExpressionAttributeValues: { ":at": at, ":one": 1 },
-    },
-  });
-  if (scheduled) final.push({ Delete: { TableName: ctx.table, Key: expungeKey(cls, handle) } });
-  final.push({ Put: { TableName: ctx.table, Item: auditPut(ctx, who, tokens === undefined ? "record" : "record-path", counts) } });
-  await transactAll(ctx, final);
+  if (rewrites > 0) {
+    // The head rewrite, the epoch, the sweep marker and the audit commit together. The schedule item stays until the snapshot is rebuilt.
+    const final = [];
+    if (headItem) final.push(headItem);
+    final.push({
+      Update: {
+        TableName: ctx.table, Key: headKey(), UpdateExpression: "SET #u = :at ADD #ee :one", ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeNames: { "#u": "updated_at", "#ee": "expunge_epoch" }, ExpressionAttributeValues: { ":at": at, ":one": 1 },
+      },
+    });
+    final.push({ Put: { TableName: ctx.table, Item: { ...SWEEP_KEY, entity: "expunge_sweep", at } } });
+    final.push({ Put: { TableName: ctx.table, Item: auditPut(ctx, who, tokens === undefined ? "record" : "record-path", counts) } });
+    await transactAll(ctx, final);
+  }
   // The copies outside the table. The shadow and the site bucket first, then the snapshot is rebuilt from the table as it now is.
   await deleteVersions(ctx, copies.sync, copies.shadow, copies.syncVersioned);
   await deleteVersions(ctx, ctx.siteBucket, copies.site, copies.siteVersioned);
-  if (deferSnapshot) return { counts };
+  if (deferSnapshot) return { counts, schedule: scheduleKey };
   const stray = await resnapshot(ctx, copies);
+  await finishSweep(ctx, scheduleKey ? [scheduleKey] : []);
   log(`record ${cls}: applied${stray ? `; ${plural(stray, "stray snapshot version")} removed after the rebuild` : ""}. Run sync-admin render --full so the site files are rewritten from the store.`);
   return { counts };
 }
@@ -378,32 +439,63 @@ async function expungeDue(ctx, { now: takeAll = false, apply, who }) {
     : { IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk AND GSI1SK <= :after", ExpressionAttributeValues: { ":pk": EXPUNGE_QUEUE, ":after": bound } });
   log(`due: ${plural(items.length, "scheduled expunge")} ${takeAll ? "(--now: all of them)" : "past the 72-hour grace"}`);
   const total = { records: 0, skipped: 0, failed: 0 };
+  const owed = []; // schedule items to delete once the snapshot is rebuilt
   for (const it of items) {
+    const label = CLASSES.includes(it.class) ? it.class : "record"; // a schedule item is data: only a known class name is printed
     try {
       const r = await expungeRecord(ctx, { cls: it.class, handle: it.handle, apply, who, due: it, deferSnapshot: true });
       if (r.skipped) {
         total.skipped += 1;
-        log(`due: skipped one ${it.class} (${r.skipped}); ${apply ? "its schedule item is dropped" : "a run with --apply drops its schedule item"}`);
+        log(`due: skipped one ${label} (${r.skipped}); ${apply ? "its schedule item is dropped" : "a run with --apply drops its schedule item"}`);
         if (apply) await ctx.ddb.send(new ctx.cmds.DeleteCommand({ TableName: ctx.table, Key: expungeKey(it.class, it.handle) }));
-      } else total.records += 1;
+      } else {
+        total.records += 1;
+        if (r.schedule) owed.push(r.schedule);
+      }
     } catch (e) {
-      if (!(e instanceof ExpungeError)) throw e;
+      // A failure line names the class, the error name and its code: a thrown message can carry a handle or a value.
+      if (!(e instanceof ExpungeError) && !isCancelled(e)) throw e;
       total.failed += 1;
-      log(`due: one ${it.class} failed: ${e.message}`);
+      log(`due: one ${label} failed (${e.name}${e.code ? ` ${e.code}` : ""}); its schedule item stays for the next run`);
     }
   }
-  // One snapshot rebuild for the whole run, not one per record.
+  // One snapshot rebuild for the whole run, not one per record. It also runs when a crashed run left a sweep owed, even with no record due now.
   const snaps = await snapshotCopies(ctx);
   total.snapshot_versions = snaps.snapshots.length;
-  if (apply && total.records > 0) {
+  const sweepOwed = Boolean(await get(ctx, SWEEP_KEY));
+  const sweep = total.records > 0 || sweepOwed;
+  if (apply && sweep) {
     total.stray = await resnapshot(ctx, snaps);
-    await ctx.ddb.send(new ctx.cmds.PutCommand({ TableName: ctx.table, Item: auditPut(ctx, who, "due", { records: total.records, snapshot_versions: total.snapshot_versions }) }));
+    await finishSweep(ctx, owed);
+    if (total.records > 0) await ctx.ddb.send(new ctx.cmds.PutCommand({ TableName: ctx.table, Item: auditPut(ctx, who, "due", { records: total.records, snapshot_versions: total.snapshot_versions }) }));
   }
-  log(`due: ${total.records} expunged, ${total.skipped} skipped, ${total.failed} failed; ${plural(snaps.snapshots.length, "snapshot version")} ${apply && total.records > 0 ? "replaced by a rebuilt snapshot" : "would be replaced"}. Run sync-admin render --full so the site files are rewritten from the store.`);
+  log(`due: ${total.records} expunged, ${total.skipped} skipped, ${total.failed} failed; ${plural(snaps.snapshots.length, "snapshot version")} ${apply && sweep ? "replaced by a rebuilt snapshot" : "would be replaced"}${sweepOwed ? " (a sweep was owed from an earlier run)" : ""}. Run sync-admin render --full so the site files are rewritten from the store.`);
   return { counts: total };
 }
 
 // ---- proposal mode ------------------------------------------------------------------------------------------------------------
+/** The IDEM# receipts and PROPREQ# items that point at proposal `id`, by one filtered scan on `entity`. */
+async function proposalReceipts(ctx, id) {
+  const found = [];
+  let key;
+  for (let i = 0; i < 10000; i += 1) {
+    const r = await ctx.ddb.send(new ctx.cmds.ScanCommand({
+      TableName: ctx.table, FilterExpression: "#e IN (:e0, :e1)", ExpressionAttributeNames: { "#e": "entity" }, ExpressionAttributeValues: { ":e0": "idem", ":e1": "proposal_request" },
+      ConsistentRead: true, ...(key ? { ExclusiveStartKey: key } : {}),
+    }));
+    found.push(...(r.Items ?? []));
+    key = r.LastEvaluatedKey;
+    if (!key) {
+      const body = (it) => it.result?.body;
+      return {
+        receipts: found.filter((it) => it.entity === "idem" && (body(it)?.id === id || body(it)?.proposal?.id === id)),
+        requests: found.filter((it) => it.entity === "proposal_request" && it.id === id && it.expunged !== true),
+      };
+    }
+  }
+  throw new ExpungeError("a table scan did not end; stopping");
+}
+
 async function expungeProposal(ctx, { id, apply, who }) {
   const { log } = ctx;
   if (!ULID_RE.test(id ?? "")) throw new ExpungeError("--proposal needs a 26-character ULID");
@@ -414,11 +506,19 @@ async function expungeProposal(ctx, { id, apply, who }) {
   const photoKeys = [...new Set(comments.flatMap((r) => (Array.isArray(r.comment.attachments) ? r.comment.attachments : []).map((a) => (typeof a?.url === "string" ? a.url.replace(/^\//, "") : "")).filter((k) => UPLOAD_KEY_RE.test(k))))];
   const audits = [];
   for (const c of comments) audits.push(...(await queryAll(ctx, { KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": `AUDIT#${c.comment.id}` } })));
+  // The proposal's own audit trail (create, amend, withdraw, decide): states and counts, plus the free-text reason an admin typed on a decision.
+  const propAudits = await queryAll(ctx, { KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": `AUDIT#proposal:${id}` }, ConsistentRead: true });
+  // The idempotency receipts (24 hours, but a deleted-by-TTL item can linger) echo the proposal in their result body, and a system proposal's
+  // PROPREQ# item holds a hash of its content. Neither is reachable by key from the proposal id, so one filtered scan finds them.
+  const { receipts, requests } = await proposalReceipts(ctx, id);
   const siteVersioned = photoKeys.length > 0 ? await bucketVersioned(ctx, ctx.siteBucket) : false;
   const photoVersions = [];
   for (const k of photoKeys) photoVersions.push(...(await exactVersions(ctx, ctx.siteBucket, k)));
-  const counts = { proposal_items: rows.length, thread_items: thread.length, comment_audits: audits.length, photos: photoKeys.length, photo_versions: photoVersions.length };
-  log(`proposal: ${plural(counts.proposal_items, "item")} to redact, ${plural(counts.thread_items, "thread item")} (${plural(comments.length, "comment")}) to delete, ${plural(counts.comment_audits, "comment audit row")} to redact, ${plural(counts.photos, "photo")} (${plural(counts.photo_versions, "version")}) to delete`);
+  const counts = {
+    proposal_items: rows.length, thread_items: thread.length, comment_audits: audits.length, proposal_audits: propAudits.length, receipts: receipts.length, request_items: requests.length,
+    photos: photoKeys.length, photo_versions: photoVersions.length,
+  };
+  log(`proposal: ${plural(counts.proposal_items, "item")} to redact, ${plural(counts.thread_items, "thread item")} (${plural(comments.length, "comment")}) to delete, ${plural(counts.comment_audits, "comment audit row")} and ${plural(counts.proposal_audits, "proposal audit row")} to redact, ${plural(counts.receipts, "idempotency receipt")} to delete, ${plural(counts.request_items, "request item")} to redact, ${plural(counts.photos, "photo")} (${plural(counts.photo_versions, "version")}) to delete`);
   if (!apply) return { counts };
 
   const at = iso(ctx);
@@ -429,11 +529,21 @@ async function expungeProposal(ctx, { id, apply, who }) {
     },
   })));
   await transactAll(ctx, thread.map((r) => ({ Delete: { TableName: ctx.table, Key: { PK: r.PK, SK: r.SK } } })));
-  // The audit rows of the comments keep who, what and when, and lose the text they copied (an audited exception to append-only).
-  await transactAll(ctx, audits.map((r) => ({
+  // The audit rows of the comments and of the proposal keep who, what and when, and lose the text they copied, a decision reason included
+  // (an audited exception to append-only).
+  await transactAll(ctx, [...audits, ...propAudits].map((r) => ({
     Update: {
-      TableName: ctx.table, Key: { PK: r.PK, SK: r.SK }, UpdateExpression: "SET #b = :n, #a = :n, #r = :t", ConditionExpression: "attribute_exists(PK)",
-      ExpressionAttributeNames: { "#b": "before", "#a": "after", "#r": "redacted" }, ExpressionAttributeValues: { ":n": null, ":t": true },
+      TableName: ctx.table, Key: { PK: r.PK, SK: r.SK }, UpdateExpression: "SET #b = :n, #a = :n, #r = :t REMOVE #rs", ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeNames: { "#b": "before", "#a": "after", "#r": "redacted", "#rs": "reason" }, ExpressionAttributeValues: { ":n": null, ":t": true },
+    },
+  })));
+  // The receipts go (a replay inside their 24 hours then files a new request); the PROPREQ# items lose their content hash, so a reused request id
+  // is refused as a different suggestion and the id still resolves to the (expunged) proposal.
+  await transactAll(ctx, receipts.map((r) => ({ Delete: { TableName: ctx.table, Key: { PK: r.PK, SK: r.SK } } })));
+  await transactAll(ctx, requests.map((r) => ({
+    Update: {
+      TableName: ctx.table, Key: { PK: r.PK, SK: r.SK }, UpdateExpression: "SET #x = :t REMOVE #rh", ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeNames: { "#x": "expunged", "#rh": "requestHash" }, ExpressionAttributeValues: { ":t": true },
     },
   })));
   await deleteVersions(ctx, ctx.siteBucket, photoVersions, siteVersioned);
@@ -642,7 +752,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         import("@aws-sdk/client-dynamodb"), import("@aws-sdk/lib-dynamodb"), import("@aws-sdk/client-s3"), import("jose"), import("../src/policy.js"),
       ]);
       const ddb = lib.DynamoDBDocumentClient.from(new DynamoDBClient({ region: args.region }), { marshallOptions: { removeUndefinedValues: true } });
-      const cmds = { GetCommand: lib.GetCommand, PutCommand: lib.PutCommand, DeleteCommand: lib.DeleteCommand, QueryCommand: lib.QueryCommand, TransactWriteCommand: lib.TransactWriteCommand };
+      const cmds = { GetCommand: lib.GetCommand, PutCommand: lib.PutCommand, DeleteCommand: lib.DeleteCommand, QueryCommand: lib.QueryCommand, ScanCommand: lib.ScanCommand, TransactWriteCommand: lib.TransactWriteCommand };
       const s3 = new S3Client({ region: args.region });
       const ctx = { ddb, cmds, table: args.table, s3, syncBucket: args.syncBucket ?? env.SYNC_BUCKET ?? DEFAULT_SYNC_BUCKET, siteBucket: args.siteBucket ?? env.SITE_BUCKET ?? DEFAULT_SITE_BUCKET, log: console.log, now: () => Date.now(), uid: randomUUID };
       if (args.apply) {

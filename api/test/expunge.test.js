@@ -349,7 +349,10 @@ describe("record mode (whole record)", () => {
     w.lines.length = 0;
     await w.go(["--record", `Person:${p.handle}`, "--apply"]);
     expect(w.text()).toMatch(/0 log entries, 0 heads/);
-    expect(w.row("SYNC#HEAD", "META").expunge_epoch).toBe(2);
+    expect(w.text()).toMatch(/nothing left to rewrite/);
+    expect(w.row("SYNC#HEAD", "META").expunge_epoch).toBe(1); // nothing was rewritten, so the epoch does not rise again
+    expect(w.ddb.all().filter((r) => r.PK.startsWith("AUDIT#expunge:"))).toHaveLength(1);
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
   });
 
   it("refuses without a fresh step-up, and writes nothing", async () => {
@@ -455,21 +458,49 @@ describe("record mode (--path)", () => {
     expect(JSON.parse(w.row(`REC#Note#${h(2001)}`, "HEAD").obj_json)).not.toHaveProperty("format");
   });
 
-  it("stops (and writes nothing) when the head moved after it was read", async () => {
+  it("reads the record again once when the head moved under it, then stops with a content-free message", async () => {
     const w = world();
     const n = await liveNote(w);
-    // a writer changes the head's object between the read and the write: the pinned update fails
+    // a writer changes the head's object before every write: the pinned update fails, the retry reads again and fails the same way
     const real = w.ddb.send.bind(w.ddb);
-    let armed = true;
+    let tamper = true;
     const ctx = {
       ...w.ctx,
       ddb: { send: async (c) => {
-        if (armed && c.constructor.name === "TransactWriteCommand") { armed = false; const k = recKey("Note", n.handle); const r = w.ddb.rows.get(`${k.PK}\u0000${k.SK}`); r.hash = "f".repeat(64); }
+        if (tamper && c.constructor.name === "TransactWriteCommand") { const k = recKey("Note", n.handle); const r = w.ddb.rows.get(`${k.PK}\u0000${k.SK}`); r.hash = `${Math.random().toString(16).slice(2).padEnd(64, "f")}`; }
         return real(c);
       } },
     };
-    await expect(run(w.args(["--record", `Note:${n.handle}`, "--path", "/text/string", "--apply"]), ctx)).rejects.toThrow();
+    await expect(run(w.args(["--record", `Note:${n.handle}`, "--path", "/text/string", "--apply"]), ctx)).rejects.toThrow(/changed while it was being expunged/);
     expect(w.row("SYNC#HEAD", "META").expunge_epoch).toBeUndefined();
+    tamper = false;
+    // the retry itself works: one cancelled transaction is read again and the run completes
+    w.ddb.failNext("ConditionalCheckFailed", 1);
+    await run(w.args(["--record", `Note:${n.handle}`, "--path", "/text/string", "--apply"]), ctx);
+    expect(JSON.parse(w.row(`REC#Note#${n.handle}`, "HEAD").obj_json).text.string).toBe("");
+    expect(w.text()).toMatch(/changed while being expunged; reading it again/);
+  });
+
+  it("a rerun of the same --path after a crash in the snapshot sweep finishes the sweep instead of refusing", async () => {
+    const w = world();
+    const n = await liveNote(w);
+    w.s3.seed(SYNC, "snapshots/old.jsonl.gz", { body: SECRET });
+    w.s3.seed(SYNC, "snapshots/old.jsonl.gz", { body: SECRET });
+    const real = w.s3;
+    let failDelete = true;
+    const ctx = { ...w.ctx, s3: { send: async (c) => { if (failDelete && c.constructor.name === "DeleteObjectCommand" && c.input.Key.startsWith("snapshots/")) throw Object.assign(new Error("boom"), { name: "InternalError" }); return real.send(c); } } };
+    await expect(run(w.args(["--record", `Note:${n.handle}`, "--path", "/text/string", "--apply"]), ctx)).rejects.toThrow(/boom/);
+    expect(JSON.parse(w.row(`REC#Note#${n.handle}`, "HEAD").obj_json).text.string).toBe(""); // the table is done
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeDefined(); // and the sweep is still owed
+    expect(w.s3.versions(SYNC, "snapshots/old.jsonl.gz")).toHaveLength(2);
+    failDelete = false;
+    await run(w.args(["--record", `Note:${n.handle}`, "--path", "/text/string", "--apply"]), ctx);
+    expect(w.s3.versions(SYNC, "snapshots/old.jsonl.gz")).toHaveLength(0);
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
+    expect(w.text()).toMatch(/nothing left to rewrite/);
+    expect(w.ddb.all().filter((r) => r.PK.startsWith("AUDIT#expunge:"))).toHaveLength(1);
+    // with no sweep owed a typo is refused again
+    await expect(w.go(["--record", `Note:${n.handle}`, "--path", "/no/such", "--apply"])).rejects.toThrow(/path was not found/);
   });
 });
 
@@ -517,7 +548,15 @@ describe("proposal mode", () => {
     put({ PK: `THREAD#proposal:${PID}`, SK: `C#${COMMENT}`, GSI1PK: "COMMENTS", GSI1SK: COMMENT, entity: "comment", comment: { id: COMMENT, threadId: `proposal:${PID}`, body: `comment ${SECRET}`, attachments: [{ id: UPID, kind: "image", url: `/${PHOTO}`, mime: "image/jpeg" }] } });
     put({ PK: `THREAD#proposal:${PID}`, SK: `R#${COMMENT}#I0002`, entity: "reaction", target: COMMENT, reaction: { emoji: "x" } });
     put({ PK: `AUDIT#${COMMENT}`, SK: "2026-10-14T00:00:01.000Z#a", GSI1PK: "AUDIT", GSI1SK: "2026-10-14T00:00:01.000Z#a", entity: "audit", op: "create", id: COMMENT, principal: "I0001", at: "2026-10-14T00:00:01.000Z", before: null, after: { body: `comment ${SECRET}` } });
-    put({ PK: `AUDIT#proposal:${PID}`, SK: "2026-10-14T00:00:00.000Z#b", entity: "audit", op: "proposal.create", id: `proposal:${PID}`, principal: "I0001", at: "2026-10-14T00:00:00.000Z", before: null, after: { state: "pending", rev: 1, targets: 1 } });
+    put({ PK: `AUDIT#proposal:${PID}`, SK: "2026-10-14T00:00:00.000Z#b", entity: "audit", op: "proposal.create", id: `proposal:${PID}`, principal: "I0001", at: "2026-10-14T00:00:00.000Z", before: null, after: { state: "pending", rev: 1, targets: 1, note: `echo ${SECRET}` } });
+    put({ PK: `AUDIT#proposal:${PID}`, SK: "2026-10-14T00:00:09.000Z#c", entity: "audit", op: "proposal.decide", id: `proposal:${PID}`, principal: "I0099", at: "2026-10-14T00:00:09.000Z", before: { state: "pending", rev: 1 }, after: { state: "declined", rev: 2, summary: `echo ${SECRET}` }, reason: `because ${SECRET}` });
+    put({ PK: `AUDIT#proposal:${UPID}`, SK: "2026-10-14T00:00:00.000Z#z", entity: "audit", op: "proposal.create", id: `proposal:${UPID}`, principal: "I0002", at: "2026-10-14T00:00:00.000Z", before: null, after: { state: "pending", rev: 1 } }); // another proposal's trail
+    // The receipts: a create (body.id), a decide (body.proposal echoes the proposal), and another proposal's receipt that must stay.
+    put({ PK: "IDEM#I0001#aa", SK: "META", entity: "idem", requestHash: "h1", result: { status: 201, body: { id: PID } }, at: "2026-10-14T00:00:00.000Z", ttl: 1 });
+    put({ PK: "IDEM#I0099#bb", SK: "META", entity: "idem", requestHash: "h2", result: { status: 200, body: { proposal: { id: PID, summary: `receipt ${SECRET}` } } }, at: "2026-10-14T00:00:09.000Z", ttl: 1 });
+    put({ PK: "IDEM#I0002#cc", SK: "META", entity: "idem", requestHash: "h3", result: { status: 201, body: { id: UPID } }, at: "2026-10-14T00:00:00.000Z", ttl: 1 });
+    put({ PK: "PROPREQ#req-1", SK: "META", entity: "proposal_request", id: PID, requestHash: "hash-of-content" });
+    put({ PK: "PROPREQ#req-2", SK: "META", entity: "proposal_request", id: UPID, requestHash: "other" });
     put({ PK: `UPLOAD#${UPID}`, SK: "META", entity: "upload", owner: "I0001", purpose: "comment", key: PHOTO, attached: COMMENT });
     w.s3.seed(SITE, PHOTO);
     w.s3.seed(SITE, PHOTO);
@@ -533,7 +572,7 @@ describe("proposal mode", () => {
     await w.go(["--proposal", PID]);
     expect(w.snapshot()).toBe(before);
     expect(w.s3snap()).toBe(s3Before);
-    expect(w.text()).toMatch(/3 items to redact, 2 thread items \(1 comment\) to delete, 1 comment audit row to redact, 1 photo \(2 versions\) to delete/);
+    expect(w.text()).toMatch(/3 items to redact, 2 thread items \(1 comment\) to delete, 1 comment audit row and 2 proposal audit rows to redact, 2 idempotency receipts to delete, 1 request item to redact, 1 photo \(2 versions\) to delete/);
   });
 
   it("--apply redacts META and every IDX copy, deletes the thread and the photo, redacts the comment audits, and audits counts only", async () => {
@@ -552,12 +591,23 @@ describe("proposal mode", () => {
     expect(await loadProposal({ ddb: w.ddb, cmds, table: T }, PID)).toBeNull();
     expect(w.ddb.all().filter((r) => r.PK.startsWith("THREAD#proposal:"))).toEqual([]);
     expect(w.row(`AUDIT#${COMMENT}`, "2026-10-14T00:00:01.000Z#a")).toMatchObject({ before: null, after: null, redacted: true, op: "create", principal: "I0001" });
-    expect(w.row(`AUDIT#proposal:${PID}`, "2026-10-14T00:00:00.000Z#b").after).toEqual({ state: "pending", rev: 1, targets: 1 }); // counts and states only: untouched
+    // the proposal's own audit rows keep who, what and when and lose before, after and the decision reason
+    expect(w.row(`AUDIT#proposal:${PID}`, "2026-10-14T00:00:00.000Z#b")).toMatchObject({ before: null, after: null, redacted: true, op: "proposal.create", principal: "I0001" });
+    const decide = w.row(`AUDIT#proposal:${PID}`, "2026-10-14T00:00:09.000Z#c");
+    expect(decide).toMatchObject({ before: null, after: null, redacted: true, op: "proposal.decide", principal: "I0099" });
+    expect(decide).not.toHaveProperty("reason");
+    expect(w.row(`AUDIT#proposal:${UPID}`, "2026-10-14T00:00:00.000Z#z")).toMatchObject({ after: { state: "pending", rev: 1 } }); // another proposal's trail is untouched
+    expect(w.row("IDEM#I0001#aa", "META")).toBeUndefined();
+    expect(w.row("IDEM#I0099#bb", "META")).toBeUndefined();
+    expect(w.row("IDEM#I0002#cc", "META")).toBeDefined();
+    expect(w.row("PROPREQ#req-1", "META")).toMatchObject({ entity: "proposal_request", id: PID, expunged: true });
+    expect(w.row("PROPREQ#req-1", "META")).not.toHaveProperty("requestHash");
+    expect(w.row("PROPREQ#req-2", "META")).toMatchObject({ requestHash: "other" });
     expect(w.row(`UPLOAD#${UPID}`, "META")).toBeUndefined();
     expect(w.s3.keys(SITE)).toEqual(["uploads/comments/01J00000000000000000000000/photo.jpg"]);
     expect(JSON.stringify(w.ddb.all())).not.toContain(SECRET);
     const audit = w.ddb.all().find((r) => r.PK.startsWith("AUDIT#expunge:"));
-    expect(audit.after).toEqual({ mode: "proposal", counts: { proposal_items: 3, thread_items: 2, comment_audits: 1, photos: 1, photo_versions: 2 } });
+    expect(audit.after).toEqual({ mode: "proposal", counts: { proposal_items: 3, thread_items: 2, comment_audits: 1, proposal_audits: 2, receipts: 2, request_items: 1, photos: 1, photo_versions: 2 } });
     expect(JSON.stringify(audit)).not.toContain(PID);
     expect(w.text()).not.toContain(PID);
   });
@@ -750,6 +800,104 @@ describe("--due and --now", () => {
   });
 });
 
+describe("--due: crashes, races and failure lines", () => {
+  const schedule = (cls, handle, version = 1) => ({ PK: `EXPUNGE#${cls}#${handle}`, SK: "META", GSI1PK: "EXPUNGEQ#pending", GSI1SK: `2026-01-01T00:00:00.000Z#${cls}#${handle}`, entity: "expunge_due", class: cls, handle, version });
+
+  it("a crash in the snapshot sweep keeps the schedule item, and the next --due finishes the cleanup even though the record is already expunged", async () => {
+    const w = world();
+    const { p } = await withdrawnTree(w);
+    w.s3.seed(SYNC, "snapshots/old.jsonl.gz", { body: SECRET });
+    w.s3.seed(SYNC, "snapshots/old.jsonl.gz", { body: SECRET });
+    const real = w.s3;
+    let failDelete = true;
+    const ctx = { ...w.ctx, s3: { send: async (c) => { if (failDelete && c.constructor.name === "DeleteObjectCommand" && c.input.Key.startsWith("snapshots/")) throw Object.assign(new Error("boom"), { name: "InternalError" }); return real.send(c); } } };
+    await expect(run(w.args(["--due", "--now", "--apply"]), ctx)).rejects.toThrow(/boom/);
+    expect(w.row(`REC#Person#${p.handle}`, "HEAD")).toMatchObject({ expunged: true, obj_json: null }); // the table is done
+    expect(w.row(`EXPUNGE#Person#${p.handle}`, "META")).toBeDefined(); // the schedule item waits for the sweep
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeDefined();
+    expect(w.s3.versions(SYNC, "snapshots/old.jsonl.gz")).toHaveLength(2); // the old data is still there
+    failDelete = false;
+    w.lines.length = 0;
+    await run(w.args(["--due", "--now", "--apply"]), ctx);
+    expect(w.s3.versions(SYNC, "snapshots/old.jsonl.gz")).toHaveLength(0);
+    expect(w.s3.keys(SYNC, "snapshots/")).toHaveLength(2); // the rebuilt snapshot and its pointer
+    expect(w.row(`EXPUNGE#Person#${p.handle}`, "META")).toBeUndefined();
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
+    expect(w.text()).toMatch(/due: 1 expunged, 0 skipped, 0 failed/);
+    expect(w.ddb.all().filter((r) => r.PK.startsWith("AUDIT#expunge:") && r.after.mode === "record")).toHaveLength(1); // not audited twice
+    expect(w.row("SYNC#HEAD", "META").expunge_epoch).toBe(1);
+  });
+
+  it("an owed sweep runs even when nothing is due any more", async () => {
+    const w = world();
+    const { p } = await withdrawnTree(w);
+    await w.go(["--record", `Person:${p.handle}`, "--apply"]);
+    w.ddb.rows.set("EXPUNGE#SWEEP\u0000META", { PK: "EXPUNGE#SWEEP", SK: "META", entity: "expunge_sweep", at: "2026-10-14T00:00:00.000Z" });
+    w.s3.seed(SYNC, "snapshots/stray.jsonl.gz", { body: SECRET });
+    w.lines.length = 0;
+    await w.go(["--due", "--apply"]);
+    expect(w.text()).toMatch(/0 scheduled expunges/);
+    expect(w.text()).toMatch(/a sweep was owed/);
+    expect(w.s3.versions(SYNC, "snapshots/stray.jsonl.gz")).toHaveLength(0);
+    expect(w.row("EXPUNGE#SWEEP", "META")).toBeUndefined();
+  });
+
+  it("a resurrect that races an expunge fails that record only, and the run goes on to the next", async () => {
+    const w = world();
+    const ps = [person(1), person(2)];
+    await w.batch(ps.map(create));
+    await w.batch(ps.map((p) => withdraw(p, 1)));
+    w.ddb.failNext("ConditionalCheckFailed", 2); // the first record's guarded transaction is cancelled, and so is its one retry
+    await w.go(["--due", "--now", "--apply"]);
+    expect(w.text()).toMatch(/due: 1 expunged, 0 skipped, 1 failed/);
+    expect(w.text()).toMatch(/one Person failed \(ExpungeError record_moved\); its schedule item stays for the next run/);
+    const expunged = ps.filter((p) => w.row(`REC#Person#${p.handle}`, "HEAD").expunged === true);
+    expect(expunged).toHaveLength(1);
+    const left = ps.find((p) => !expunged.includes(p));
+    expect(w.row(`EXPUNGE#Person#${left.handle}`, "META")).toBeDefined();
+    await w.go(["--due", "--now", "--apply"]); // the next run takes it
+    expect(w.row(`REC#Person#${left.handle}`, "HEAD").expunged).toBe(true);
+    expect(w.row(`EXPUNGE#Person#${left.handle}`, "META")).toBeUndefined();
+  });
+
+  it("a record resurrected between the history read and the writes is skipped as live, not half expunged", async () => {
+    const w = world();
+    const { p, wd } = await withdrawnTree(w);
+    const { run: adminRun, parseArgs: adminArgs } = await import("../scripts/sync-admin.mjs");
+    const real = w.ddb.send.bind(w.ddb);
+    let resurrected = false;
+    const ctx = { ...w.ctx, ddb: { send: async (c) => {
+      if (!resurrected && c.constructor.name === "TransactWriteCommand") {
+        resurrected = true;
+        await adminRun(adminArgs(["resurrect", "--batch", wd.batch_id, "--apply", "--include-withdrawn"]), { ...w.ctx, log: () => {} });
+      }
+      return real(c);
+    } } };
+    await run(w.args(["--due", "--now", "--apply"]), ctx);
+    expect(resurrected).toBe(true);
+    expect(w.text()).toMatch(/skipped one Person \(live\)/);
+    expect(w.text()).toMatch(/due: 0 expunged, 1 skipped, 0 failed/);
+    expect(w.row(`REC#Person#${p.handle}`, "HEAD")).toMatchObject({ deleted: false });
+    expect(w.row(`REC#Person#${p.handle}`, "HEAD").obj_json).not.toBeNull();
+    expect(w.row(`EXPUNGE#Person#${p.handle}`, "META")).toBeUndefined();
+  });
+
+  it("a failure line carries the class, the error name and a code, never the handle or a value", async () => {
+    const w = world();
+    const ghost = h(77);
+    w.ddb.rows.set(`EXPUNGE#Note#${ghost}\u0000META`, schedule("Note", ghost));
+    await w.go(["--due", "--now", "--apply"]);
+    expect(w.text()).toMatch(/one Note failed \(ExpungeError no_such_record\)/);
+    expect(w.text()).not.toContain(ghost);
+    expect(w.text()).not.toMatch(/no such record/);
+    w.lines.length = 0;
+    w.ddb.rows.set(`EXPUNGE#Bogus${SECRET}#${ghost}\u0000META`, { ...schedule("Note", ghost), PK: `EXPUNGE#Bogus${SECRET}#${ghost}`, class: `Bogus${SECRET}` });
+    await w.go(["--due", "--now", "--apply"]);
+    expect(w.text()).toMatch(/one record failed \(ExpungeError unknown_class\)/);
+    expect(w.text()).not.toContain(SECRET); // the class text from the store is not echoed back
+  });
+});
+
 describe("step-up", () => {
   const OWNER = "I0001";
   const NOW = Date.parse("2026-10-14T12:00:00Z");
@@ -790,6 +938,20 @@ describe("snapshots and readers", () => {
     expect(entryView({ seq: 7, class: "Note", handle: h(1), gramps_id: "N1", version: 2, hash: "ab", obj_json: null, expunged: true })).toEqual({ seq: 7, class: "Note", handle: h(1), gramps_id: "N1", version: 2, hash: "ab", obj: null, expunged: true });
     expect(entryView({ seq: 8, class: "Note", handle: h(1), gramps_id: "N1", version: 3, hash: "cd", obj_json: '{"a":1}' })).toEqual({ seq: 8, class: "Note", handle: h(1), gramps_id: "N1", version: 3, hash: "cd", obj: { a: 1 } });
     expect(entryView(undefined)).toBeNull();
+  });
+  it("a --path scrub reads through entryView as a changed hash at an unchanged version and seq (the notice the add-on acts on)", async () => {
+    const w = world();
+    const n = note(1, `first ${SECRET}`);
+    await w.batch([create(n)]);
+    await w.batch([update({ ...n, text: { ...n.text, string: `second ${SECRET}` } }, 1)]);
+    const before = entryView(w.row("SYNC#LOG", "000000000002"));
+    await w.go(["--record", `Note:${n.handle}`, "--path", "/text/string", "--apply"]);
+    const after = entryView(w.row("SYNC#LOG", "000000000002"));
+    expect(after).toMatchObject({ seq: before.seq, version: before.version, handle: n.handle });
+    expect(after.hash).not.toBe(before.hash);
+    expect(after.hash).toBe(sha256(w.row("SYNC#LOG", "000000000002").obj_json));
+    expect(after.obj.text.string).toBe("");
+    expect(after).not.toHaveProperty("expunged"); // a value scrub is not a whole-record expunge
   });
   it("the store view treats an expunged log entry as no object", async () => {
     const w = world();
