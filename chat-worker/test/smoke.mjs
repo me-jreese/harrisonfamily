@@ -193,7 +193,7 @@ async function localWorker(keys) {
   child.stdout.on("data", (d) => { log += d; });
   child.stderr.on("data", (d) => { log += d; });
   const base = `http://127.0.0.1:${port}`;
-  const stop = () => { try { child.kill("SIGTERM"); } catch { /* gone */ } side?.close(); rmSync(persist, { recursive: true, force: true }); };
+  const stop = () => { try { child.kill("SIGTERM"); } catch { /* gone */ } side?.close(); try { rmSync(persist, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch { /* workerd still releasing files */ } };
   for (let i = 0; i < 120; i++) {
     try { if ((await fetch(`${base}/chat/v1/health`)).status === 200) return { base, stop }; } catch { /* not up yet */ }
     if (child.exitCode !== null) break;
