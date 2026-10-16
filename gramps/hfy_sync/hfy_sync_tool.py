@@ -50,8 +50,15 @@ _HANDLE_GETTERS = {
 }
 
 
+_RAW_GETTERS = {
+    "Tag": "get_raw_tag_data", "Place": "get_raw_place_data", "Note": "get_raw_note_data", "Source": "get_raw_source_data",
+    "Repository": "get_raw_repository_data", "Citation": "get_raw_citation_data", "Media": "get_raw_media_data",
+    "Event": "get_raw_event_data", "Person": "get_raw_person_data", "Family": "get_raw_family_data",
+}
+
+
 class GrampsTree(runner.TreeAccess):
-    """The open Gramps database as the runner sees it. Reads only handles and the marker; no object content."""
+    """The open Gramps database as the runner sees it. status and bind read only handles and the marker; push reads the objects."""
 
     def __init__(self, db):
         self.db = db
@@ -70,6 +77,15 @@ class GrampsTree(runner.TreeAccess):
         for cls in consts.CLASSES:
             for handle in getattr(self.db, _HANDLE_GETTERS[cls])():
                 out.add((cls, handle))
+        return out
+
+    def objects(self):
+        """Every object's raw json_data dict (Gramps' own serialization, `_class` and `handle` included). Read only."""
+        out = {}
+        for cls in consts.CLASSES:
+            getter = getattr(self.db, _RAW_GETTERS[cls])
+            for handle in getattr(self.db, _HANDLE_GETTERS[cls])():
+                out[handle] = getter(handle)
         return out
 
     def bind(self, tree_id, also):

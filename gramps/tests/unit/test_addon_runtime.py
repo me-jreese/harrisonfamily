@@ -452,7 +452,7 @@ class RunnerRefusals(HomeCase):
         self.assertEqual(paths.read_json(self.tp(tree).status)["exit_code"], 70)
 
     def test_actions_without_a_build_yet_are_69(self):
-        for action in ("check", "pull", "push", "sync"):
+        for action in ("check", "pull", "sync"):  # push has its own tests (test_addon_push.py)
             self.assert_refused(self.run_tool(FakeTree(), action=action), "not_enabled", 69, "none")
 
 

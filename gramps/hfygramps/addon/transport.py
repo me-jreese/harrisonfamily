@@ -32,11 +32,14 @@ _CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 class TransportError(Exception):
     """A failed call. `code` is a short word (an API error code or one of ours), never response content."""
 
-    def __init__(self, code, exit_code, next_action="none", status=None, message=None):
+    def __init__(self, code, exit_code, next_action="none", status=None, message=None, details=None):
         self.code = code
         self.exit_code = exit_code
         self.next_action = next_action
         self.status = status
+        # The `details` member of an error body ({error, message, details?}, api/src/http.js), kept as data for a caller that acts on
+        # it (the push reads the op ids and pointers of a 409 or a 422). It is never part of the message or of any log line.
+        self.details = details if isinstance(details, dict) else None
         self.message = message or "The call failed (%s)." % code
         Exception.__init__(self, "%s (%s)" % (self.message, code))
 
@@ -181,7 +184,8 @@ class Http:
         if 300 <= status < 400:
             raise TransportError("unexpected_redirect", consts.EXIT_INTERNAL, status=status, message="The server answered with a redirect; refusing to follow it.")
         exit_code, next_action = map_error(status, code)
-        raise TransportError(code, exit_code, next_action, status=status, message="The website answered %d (%s)." % (status, code))
+        raise TransportError(code, exit_code, next_action, status=status, message="The website answered %d (%s)." % (status, code),
+                             details=body.get("details") if isinstance(body, dict) else None)
 
 
 class _Retryable(Exception):

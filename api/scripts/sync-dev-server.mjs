@@ -17,7 +17,10 @@
 //   /_s3/<bucket>/<key>      the presigned URLs of the media and snapshot buckets. The store behind them is a directory (<data-dir>/s3), and the
 //                            handler's own S3 client (Head, Get, Put, Copy, Delete) is the same directory. A signed PUT is refused unless the
 //                            Content-Type, Content-Length and x-amz-checksum-sha256 it was signed for arrive with matching bytes.
-//   /_dev/*                  health, state, the SYNC#HEAD switches (writes_enabled, seeded, merges_enabled, min_client, ...) and the auth knobs.
+//   /_dev/*                  health, state, the SYNC#HEAD switches (writes_enabled, seeded, merges_enabled, min_client, ...), the auth knobs, and
+//                            POST /_dev/apply: a batch through applyBatch() as a WEBSITE writer (origin admin by default; self, proposal, ... are accepted), for the scenarios that
+//                            need a cloud-side edit or a cloud-created object (HFY-TSK-206: the Birth retyped to Residence on the web, an ID-less
+//                            person under --id-policy assign). It is the same applyBatch, validator and id policy the real writers use.
 //                            These switches, the presigned PUT/GET store and the token-lifetime knob are reserved for the later scenarios (push
 //                            conflicts, media, step-up, lost-response replay: addon-push, addon-media); the scenarios of this task do not use them.
 //
@@ -54,6 +57,8 @@ import { createUlidFactory } from "@io-kit/feed";
 import { DynamoPreferencesStore, DynamoSubscriptionStore } from "@io-kit/notify/server";
 import { createFakeDdb, cmds } from "../test/fake-ddb.js";
 import { createHandler } from "../src/handler.js";
+import { HttpError } from "../src/http.js";
+import { applyBatch } from "../src/sync/apply.js";
 import { createGroupResolver } from "../src/policy.js";
 import { createSyncAuthenticator, SYNC_CLIENT_ID } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
@@ -459,8 +464,10 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     issuer: auth.issuer, audience: auth.audience, getJwks: auth.getJwks, now,
     getGroups: createGroupResolver({ load: async () => groups, log }), log,
   });
+  const ulid = createUlidFactory();
+  const uid = () => ulid(now());
   const handler = createHandler({
-    ddb, cmds, table: DEV_TABLE, now, log, ulid: createUlidFactory(),
+    ddb, cmds, table: DEV_TABLE, now, log, ulid,
     authenticate: async () => null, // no cookie session here: only the sync-bearer routes are served
     authenticateSync,
     subscriptions: new DynamoSubscriptionStore(ddb, cmds, DEV_TABLE), preferences: new DynamoPreferencesStore(ddb, cmds, DEV_TABLE),
@@ -488,7 +495,7 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     }
     if (path === "/auth/.well-known/jwks.json" && method === "GET") return json(200, auth.jwks());
     if (path.startsWith("/_s3/")) return s3Route(method, path, url.searchParams, req, body);
-    if (path.startsWith("/_dev/")) return devRoute(method, path, body);
+    if (path.startsWith("/_dev/")) return devRoute(method, path, body, url);
     if (path.startsWith("/api/") || path === "/api") {
       const headers = {};
       for (const [k, v] of Object.entries(req.headers)) headers[k] = Array.isArray(v) ? v.join(", ") : v;
@@ -535,7 +542,7 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     }
   }
 
-  async function devRoute(method, path, body) {
+  async function devRoute(method, path, body, url) {
     const parsed = () => {
       try {
         const v = body.length ? JSON.parse(body.toString("utf8")) : {};
@@ -550,6 +557,12 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       return json(200, { head: await getHead(), table_items: ddb.all().length, s3_objects: { [SYNC_BUCKET]: (await s3.list(SYNC_BUCKET)).length, [MEDIA_BUCKET]: (await s3.list(MEDIA_BUCKET)).length } });
     }
     if (path === "/_dev/head" && method === "GET") return json(200, { head: await getHead() });
+    if (path === "/_dev/items" && method === "GET") {
+      // The keys (PK and SK, nothing else) of the items whose PK starts with ?prefix=, for a scenario that asks "is there an IDALIAS item?".
+      // Keys only: item contents are tree data, and the request log would hold them.
+      const prefix = url.searchParams.get("prefix") ?? "";
+      return json(200, { items: ddb.all().filter((it) => typeof it.PK === "string" && it.PK.startsWith(prefix)).map((it) => ({ PK: it.PK, SK: it.SK })).slice(0, 500) });
+    }
     if (path === "/_dev/head" && method === "PATCH") {
       // Stands in for `sync-admin pause|resume` and the seed flip: sets only the switches named, each checked for its type.
       const b = parsed();
@@ -558,6 +571,22 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
       const head = (await getHead()) ?? { ...headKey() };
       await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: { ...head, ...b, updated_at: new Date(now()).toISOString() } }));
       return json(200, { head: await getHead() });
+    }
+    if (path === "/_dev/apply" && method === "POST") {
+      // A website-side writer: {origin?: "admin", principal?: "web-dev", idempotency_key, ops, step_up?: bool}. 200 applyBatch's result; an
+      // applyBatch refusal is answered with its own status and {error, message, details}, like the real routes.
+      const b = parsed();
+      if (!b || !Array.isArray(b.ops) || typeof b.idempotency_key !== "string") return json(400, { error: "validation", message: "send {idempotency_key, ops, origin?, principal?, step_up?}" });
+      try {
+        const r = await applyBatch(
+          { ddb, cmds, table: DEV_TABLE, now, uid, log, hooks, ...(idPolicy ? { idPolicy: { mode: idPolicy } } : {}) },
+          { principal: typeof b.principal === "string" ? b.principal : "web-dev", origin: typeof b.origin === "string" ? b.origin : "admin", idempotencyKey: b.idempotency_key, ops: b.ops, stepUp: b.step_up === true, client: { agent: "sync-dev-apply" } },
+        );
+        return json(200, r);
+      } catch (e) {
+        if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) });
+        throw e;
+      }
     }
     if (path === "/_dev/auth" && method === "PATCH") {
       const b = parsed();

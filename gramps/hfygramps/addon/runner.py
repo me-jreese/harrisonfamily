@@ -12,7 +12,7 @@ import sys
 import time
 import webbrowser
 
-from . import binding, consts, keychain, oauth, paths, preflight, sidecar, status, transport
+from . import binding, consts, keychain, oauth, paths, preflight, push, sidecar, status, transport
 
 
 class TreeAccess:
@@ -30,6 +30,10 @@ class TreeAccess:
 
     def handles(self):
         """{(class, handle)} of every object in the tree, class names from consts.CLASSES."""
+        raise NotImplementedError
+
+    def objects(self):
+        """{handle: raw Gramps object (the json_data dict, with `_class` and `handle`)} for every object; read only."""
         raise NotImplementedError
 
     def bind(self, tree_id, also):
@@ -73,7 +77,7 @@ def run(tree, mode, options, run_id=None, argv=None, environ=None, services=None
     run_id = run_id or status.new_run_id()
     started = status.utc_now()
     tree_paths = paths.TreePaths(tree.dbid, environ)
-    outcome = {"bound": False, "dry_run": options.dry_run, "counts": None}
+    outcome = {"bound": False, "dry_run": options.dry_run, "counts": None, "run_id": run_id}
     side = None
     try:
         tree_paths.ensure()
@@ -176,6 +180,11 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
             return _bind(tree, mode, options, tp, log, config, outcome)
         if options.action == "login":
             return _login(options, config, log, services)
+        if options.action == "push":
+            if not verdict.bound:
+                log.line("refused unbound")
+                return _refused("unbound")
+            return push.run(tree, mode, options, tp, side, config, log, outcome, services, outcome["run_id"])
         exit_code, next_action, message = consts.NOT_ENABLED
         log.line("not enabled %s" % options.action)
         return ("refused", exit_code, next_action, {"code": "not_enabled", "message": message})
