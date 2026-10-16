@@ -239,6 +239,10 @@ export function createFakeDdb() {
         case "QueryCommand":
           return query(i);
         case "ScanCommand": {
+          if (i.FilterExpression === "#e IN (:e0, :e1)") { // a filtered scan by entity (scripts/expunge.mjs): whole items, one page
+            const want = new Set([i.ExpressionAttributeValues[":e0"], i.ExpressionAttributeValues[":e1"]]);
+            return { Items: [...rows.values()].filter((r) => want.has(r.entity)).map((r) => structuredClone(r)) };
+          }
           const allow = i.ExpressionAttributeValues?.[":allow"]; // the chat directory's ALLOW# scan: whole items (the real call projects PK and sub)
           if (allow !== undefined) return { Items: [...rows.values()].filter((r) => r.PK.startsWith(allow)).map((r) => structuredClone(r)) };
           const p = i.ExpressionAttributeValues?.[":p"];
