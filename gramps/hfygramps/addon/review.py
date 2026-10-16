@@ -25,7 +25,7 @@ from urllib.parse import quote
 from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
-from . import consts, decide, paths, preflight, pull as pull_mod, pushplan, runner, sidecar, status
+from . import consts, decide, paths, preflight, pull as pull_mod, pushstate, runner, sidecar, status
 from . import plan as plan_mod
 
 SECTIONS = (("from_website", "From the website"), ("to_website", "To the website"), ("conflicts", "Conflicts"),
@@ -170,20 +170,22 @@ def mass_blocked(pull_pv):
 class Context:
     """The live inputs the model reads for display: the tree's raw objects, the sidecar's base rows and (lazily) the projection."""
 
-    def __init__(self, local, base_rows, server, sticky=(), released=(), files=None, policy=None):
+    def __init__(self, local, base_rows, server, sticky=(), released=(), files=None, policy=None, holds=None):
         self.local = local or {}
         self.base_rows = base_rows or {}
         self.server = server
         self.sticky, self.released, self.files = set(sticky), set(released), files or {}
         self.policy = policy or R.load_policy()
+        self.holds = holds or []      # the sidecar's holds table as the last run left it (pushstate.hold_rows); only run_holds() reads it
         self._projected = None
 
     def projected(self):
+        """P(L) as the pull's plan makes it (`plan._build_once`): the conflicts the window shows were found against that projection, so the
+        "yours" column reads from it. It is not the push's `byte_view` of the tree: the push re-reads a Media by the mime its bytes admit to,
+        the pull does not, and a conflict on a reference to such a Media (its rect, say) would not be found in the push's projection."""
         if self._projected is None:
             base = {h: r["obj"] for h, r in self.base_rows.items() if not r["deleted"] and r["obj"] is not None}
-            # The same view of the tree as the push's plan: a Media whose bytes are a GPS photo or a PDF is held by the mime those bytes admit to.
-            view = pushplan.byte_view(self.local, self.files)
-            proj = PR.project(list(view.values()), base=base, files=self.files, released=self.released, sticky=self.sticky, policy=self.policy)
+            proj = PR.project(list(self.local.values()), base=base, files=self.files, released=self.released, sticky=self.sticky, policy=self.policy)
             self._projected = plan_mod.symmetric(proj.projected, proj.holds)
         return self._projected
 
@@ -233,6 +235,36 @@ def _section(sid, title, rows, summary=""):
 def _count_text(counts, extra=""):
     parts = ["%s %d" % (k, counts.get(k, 0)) for k in ("create", "update", "delete")]
     return " · ".join(parts) + extra
+
+
+def run_holds(ctx, seen):
+    """The Held back rows only a real run can find: a media file the download held (the pull reads its bytes) and a file or record the
+    upload could not send. The dry `check` and `push` the window reads cannot reproduce them, so they come from the sidecar's holds table
+    (`ctx.holds`), with the plain words the run recorded. `seen` is the {(handle, path, rule)} the previews already list.
+
+    The table is as the last run left it, so a row is left out when its object is no longer in the tree, when a download hold's Media now
+    has a path of its own (the dry push reads that file, and says what is wrong with it), and for any rule the dry runs do find themselves."""
+    out = []
+    for x in ctx.holds:
+        handle, rule = x["handle"], x["rule"]
+        raw = ctx.local.get(handle)
+        if raw is None or any(k[0] == handle and k[2] == rule for k in seen):
+            continue
+        if rule in consts.DOWNLOAD_HOLD_RULES:
+            if raw.get("_class") != "Media" or raw.get("path"):
+                continue
+        elif rule not in consts.SEND_FAILED_RULES:
+            continue
+        note = x.get("detail") or consts.HOLD_MESSAGES.get(rule)
+        if not note:
+            try:
+                note = PR.hold_reason(rule)
+            except (KeyError, ValueError):
+                note = rule
+        seen.add((handle, x.get("path", ""), rule))
+        out.append(dict(_identity(ctx, x["class"] or raw.get("_class", ""), handle), badge="held", rule=rule, path=x.get("path", ""),
+                        note=note, label=pretty_path(x.get("path", ""))))
+    return out
 
 
 def build_model(pull_pv, push_pv, ctx, header=None):
@@ -313,14 +345,14 @@ def build_model(pull_pv, push_pv, ctx, header=None):
         if key in seen or any(k[0] == x["handle"] and k[2] == x["rule"] for k in seen):
             continue
         cls = (ctx.local.get(x["handle"]) or {}).get("_class", "")
-        note = consts.HOLD_MESSAGES.get(x["rule"])       # a media file's own words (HFY-TSK-207), else the policy rule's summary
-        if not note:
-            try:
-                note = PR.hold_reason(x["rule"])
-            except (KeyError, ValueError):
-                note = x["rule"]
+        try:
+            note = PR.hold_reason(x["rule"])
+        except (KeyError, ValueError):
+            note = x["rule"]
+        seen.add(key)
         rows.append(dict(_identity(ctx, cls, x["handle"]), badge="held", rule=x["rule"], path=x.get("pointer", ""),
                          note="%s Edit it in Gramps to publish." % note if cls != "Media" else note, label=pretty_path(x.get("pointer", ""))))
+    rows += run_holds(ctx, seen)
     for s in pull_pv.get("sticky_held", []):
         if s["handle"] in ctx.released:
             continue
@@ -488,9 +520,9 @@ class Flow:
         return cfg.get("server") or consts.DEFAULT_SERVER
 
     def _sidecar_view(self):
-        """(base_rows, sticky, released, last_sync_iso, last_result) from the sidecar, read-only."""
+        """(base_rows, sticky, released, last_sync_iso, last_result, holds) from the sidecar, read-only."""
         if not os.path.exists(self.tp.sidecar):
-            return {}, [], [], "", ""
+            return {}, [], [], "", "", []
         con = sidecar.open_checked(self.tp.sidecar)
         try:
             base = sidecar.load_base(con)
@@ -500,12 +532,12 @@ class Flow:
             last = max([meta.get("last_pull_at") or "", meta.get("last_push_at") or ""])
             row = con.execute("SELECT result FROM runs WHERE action IN ('pull', 'sync', 'push') AND result != 'changes_pending' "
                               "ORDER BY finished_at DESC LIMIT 1").fetchone()
-            return base, sticky, released, last, row[0] if row else ""
+            return base, sticky, released, last, row[0] if row else "", pushstate.hold_rows(con)
         finally:
             con.close()
 
     def header(self, pull_doc, push_pv):
-        base, sticky, released, last, last_result = self._sidecar_view()
+        base, sticky, released, last, last_result, _holds = self._sidecar_view()
         cloud = self.sink.get("cloud") or {}
         head, rendered = cloud.get("head_seq"), cloud.get("rendered_seq")
         server = self._server()
@@ -527,8 +559,8 @@ class Flow:
         pull_pv = self._preview(pull_doc) or {}
         push_doc = self.run("push", dry_run=True)
         push_pv = self._preview(push_doc) or {}
-        base, sticky, released, _last, _res = self._sidecar_view()
-        ctx = Context(self.tree.objects(), base, self._server(), sticky, released, files=self.tree.media_files())
+        base, sticky, released, _last, _res, holds = self._sidecar_view()
+        ctx = Context(self.tree.objects(), base, self._server(), sticky, released, files=self.tree.media_files(), holds=holds)
         model = build_model(pull_pv, push_pv, ctx, self.header(pull_doc, push_pv))
         pull_mod._prune_previews(self.tp)    # a window checks twice per look: keep only the newest previews, as an apply does
         rv = Review(pull_doc, push_doc, pull_pv, push_pv, ctx, model)

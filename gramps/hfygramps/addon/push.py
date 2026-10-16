@@ -250,6 +250,7 @@ class _Push:
         self.deferred_media = set()  # new Media whose upload failed: what refers to them waits for the next run
         self.blob_retries = {}       # Media handle -> how many times the website could not find its staged blob this run
         self.base_handles = set()
+        self.pathless = frozenset()  # Media handles with no file path (a held download): their holds survive this run's replacement of the table
 
     # ------------------------------------------------------------------------------------------------------- the client
 
@@ -286,6 +287,7 @@ class _Push:
             self._resolve_outbox()
         snap = self._snapshot()
         local = self.tree.objects()
+        self.pathless = sidecar.pathless_media(local)
         base = pushstate.base_rows(con)
         self.base_handles = {h for h, r in base.items() if not r["deleted"]}
         sticky = pushstate.get_json(con, "birthlike_sticky", [])
@@ -720,7 +722,7 @@ class _Push:
             try:
                 self.side.execute("SELECT 1")
                 holds = pushplan._unique(plan.holds + plan.blocked + self.extra_holds + self.extra_blocked)
-                pushstate.sync_holds(con, holds, self.now())
+                pushstate.sync_holds(con, holds, self.now(), self.pathless)
                 self.counts["conflicts_open"] = len(pushstate.open_conflicts(con))
                 self.counts["holds"] = len(pushplan._unique(plan.holds + self.extra_holds))
                 self.counts["blocked"] = len(pushplan._unique(plan.blocked + self.extra_blocked))

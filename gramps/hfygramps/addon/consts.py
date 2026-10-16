@@ -140,6 +140,12 @@ HOLD_MESSAGES.update({
     "media_dependency_deferred": "This record refers to a photo or document whose file could not be uploaded, so it was not sent. Run the push again.",
 })
 
+# The holds only a real run finds (the dry `check` and `push` that the Gramps window reads cannot): the pull reads the bytes of a media file
+# it downloads (so a photo with a position, or an empty file, is held there), and the push finds out that a file or a record could not be
+# sent. The window reads these from the sidecar's holds table, as the last run left them (review.run_holds).
+DOWNLOAD_HOLD_RULES = ("media.exif_gps.hold", "media_blob_empty")
+SEND_FAILED_RULES = ("media_upload_failed", "media_upload_refused", "media_file_changed", "media_dependency_deferred", "server_refused")
+
 # A Media handle names a file on this disk (`media_root/<handle><ext>`) and sits in a URL path, so it is held to a strict shape wherever
 # it comes from the website: the snapshot parser and the media download both refuse anything else (no separator, no "..", no escapes).
 HANDLE_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"

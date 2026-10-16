@@ -9,8 +9,10 @@ itself is exercised on a fixture copy in gramps/tests/gramps/test_addon_gui.py (
 Python 3.9 compatible.
 """
 import copy
+import hashlib
 import json
 import os
+import shutil
 import sys
 import unittest
 
@@ -18,11 +20,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import push_support as PS  # noqa: E402
+import test_addon_media_up as MU  # noqa: E402  (the module only: its test classes must not be collected here a second time)
 from test_addon_push import PushCase, birth_needles  # noqa: E402
 from hfygramps import merge as M  # noqa: E402
-from hfygramps.addon import consts, decide, paths, pushplan, review, sidecar  # noqa: E402
+from hfygramps import projection as PR  # noqa: E402
+from hfygramps.addon import consts, decide, paths, plan as plan_mod, pushplan, review, sidecar  # noqa: E402
 
 NAME = "/primary_name/first_name"
+
+
+def GPS_PHOTO():
+    """The fixture's synthetic JPEG with an EXIF GPS position."""
+    with open(os.path.join(MU.FIXTURE_MEDIA, "synthetic-photo-gps.jpg"), "rb") as fh:
+        return fh.read()
 
 
 class Base(PushCase):
@@ -581,7 +591,9 @@ class LinksAndText(unittest.TestCase):
 class ProjectionView(Base):
     full = True
 
-    def test_the_models_projection_holds_a_pdf_by_its_bytes_like_the_push_plan(self):  # HFY-TSK-207 and 208 together
+    def test_yours_for_a_conflict_on_a_reference_to_a_media_the_bytes_call_a_pdf_reads_as_the_pull_found_it(self):  # HFY-TSK-207 and 208 together
+        # The conflicts come from the pull's plan, which projects the tree as it is (the push re-reads a Media by its bytes' mime, the pull does
+        # not), so the "yours" column must read from that projection: in the push's, the reference is gone and the value shows as "—".
         self.seed()
         template = self.tree.person_by_id("I0003")["media_list"][0]
         photo = copy.deepcopy(next(o for o in self.tree.objects().values() if o.get("_class") == "Media"))
@@ -589,22 +601,187 @@ class ProjectionView(Base):
         photo.update(handle=handle, gramps_id="O0100", path="new/photo.jpg", mime="image/jpeg", desc="A new synthetic photo", private=False)
         self.tree.data[handle] = photo
         owner = self.tree.person_by_id("I0002")
-        owner["media_list"] = owner["media_list"] + [dict(copy.deepcopy(template), ref=handle, rect=None, private=False)]
+        owner["media_list"] = owner["media_list"] + [dict(copy.deepcopy(template), ref=handle, rect=[1, 2, 3, 4], private=False)]
         local = self.tree.objects()
         info = {handle: {"state": "ok", "content_type": "application/pdf", "readable": True, "exif_gps": False, "md5": "0" * 32}}
-        self.assertIsNotNone(review.Context(local, {}, None, files={}).projected().get(handle), "the stored mime alone: a photo, sent")
-        self.assertIsNone(review.Context(local, {}, None, files=info).projected().get(handle), "the bytes say PDF, so it is held whole, as the plan holds it")
+        projected, holds = (lambda p: (p.projected, p.holds))(PR.project(list(local.values()), files=info))     # what plan._build_once makes
+        pull_like = plan_mod.symmetric(projected, holds)
+        refs = lambda lp: [r["ref"] for r in lp[owner["handle"]]["media_list"]]
+        self.assertIn(handle, refs(pull_like), "the pull's projection keeps the reference")
+        ctx = review.Context(local, {}, None, files=info)
+        self.assertEqual(ctx.projected()[owner["handle"]], pull_like[owner["handle"]], "the window reads the pull's projection")
+        conflict = {"handle": owner["handle"], "path": "/media_list/%s#0/rect" % handle}
+        self.assertEqual(review.yours_live(ctx, conflict), ([1, 2, 3, 4], False))
+        self.assertEqual(review.yours_live(review.Context(local, {}, None, files={}), conflict), ([1, 2, 3, 4], False))
 
 
-    def test_a_media_file_the_download_held_is_listed_in_the_plain_words_of_its_rule(self):  # HFY-TSK-207 and 208 together
+class ServesBytes(PS.PullView):
+    """The website serves `data` as the file of every Media the pull asks about."""
+
+    URL = "https://files.example.org/held-photo"
+
+    def __init__(self, cloud, data, content_type="image/jpeg"):
+        PS.PullView.__init__(self, cloud)
+        self.data, self.content_type = data, content_type
+
+    def media_download(self, handle):
+        return {"url": self.URL, "sha256": hashlib.sha256(self.data).hexdigest(), "md5": hashlib.md5(self.data).hexdigest(), "size": len(self.data),
+                "content_type": self.content_type}
+
+    def fetch(self, url):
+        return self.data if url == self.URL else PS.PullView.fetch(self, url)
+
+
+class HeldMediaRows(unittest.TestCase):
+    """`run_holds`: which rows of the sidecar's holds table the Held back section lists (the table is as the last run left it)."""
+
+    def ctx(self, local, holds):
+        return review.Context(local, {}, None, holds=holds)
+
+    def row(self, handle, rule, path="/blob", detail="", cls="Media"):
+        return {"class": cls, "handle": handle, "path": path, "rule": rule, "detail": detail, "first_seen": "2026-01-01T00:00:00Z"}
+
+    def test_a_download_hold_is_listed_for_a_media_without_a_file_in_the_words_the_run_recorded(self):
+        local = {"m1": {"_class": "Media", "handle": "m1", "gramps_id": "O1", "path": ""}}
+        rows = review.run_holds(self.ctx(local, [self.row("m1", "media.exif_gps.hold", detail="Words the pull recorded.")]), set())
+        self.assertEqual([(r["gramps_id"], r["class"], r["rule"], r["note"], r["badge"]) for r in rows],
+                         [("O1", "Media", "media.exif_gps.hold", "Words the pull recorded.", "held")])
+
+    def test_a_download_hold_is_not_listed_once_the_media_has_a_file_of_its_own(self):
+        local = {"m1": {"_class": "Media", "handle": "m1", "gramps_id": "O1", "path": "photos/o1.jpg"}}
+        self.assertEqual(review.run_holds(self.ctx(local, [self.row("m1", "media.exif_gps.hold"), self.row("m1", "media_blob_empty")]), set()), [])
+
+    def test_no_row_is_listed_for_an_object_that_is_gone_a_rule_the_dry_runs_find_themselves_or_one_the_previews_list(self):
+        local = {"m1": {"_class": "Media", "handle": "m1", "gramps_id": "O1", "path": ""}}
+        holds = [self.row("gone", "media.exif_gps.hold"), self.row("m1", "media_blob_missing"), self.row("m1", "delete_parked", path=""),
+                 self.row("m1", "expunge.notice", path="/desc"), self.row("m1", "media_blob_empty")]
+        self.assertEqual(review.run_holds(self.ctx(local, holds), {("m1", "/blob", "media_blob_empty")}), [])
+
+    def test_a_failed_upload_is_listed_even_when_the_media_has_a_file_and_falls_back_to_the_rules_plain_words(self):
+        local = {"m1": {"_class": "Media", "handle": "m1", "gramps_id": "O1", "path": "photos/o1.jpg"},
+                 "p1": {"_class": "Person", "handle": "p1", "gramps_id": "I1"}}
+        holds = [self.row("m1", "media_upload_failed"), self.row("p1", "media_dependency_deferred", path="", cls="Person")]
+        rows = review.run_holds(self.ctx(local, holds), set())
+        self.assertEqual([(r["gramps_id"], r["rule"], r["note"]) for r in rows],
+                         [("O1", "media_upload_failed", consts.HOLD_MESSAGES["media_upload_failed"]),
+                          ("I1", "media_dependency_deferred", consts.HOLD_MESSAGES["media_dependency_deferred"])])
+
+
+class HeldMediaHelpers(object):
+    full = True
+
+    def website_photo(self, data):
+        template = copy.deepcopy(next(o for o in self.tree.objects().values() if o["_class"] == "Media"))
+        handle = "c" * 28
+        template.update(handle=handle, gramps_id="O8001", path="", desc="A photo from the website", checksum=hashlib.md5(data).hexdigest(),
+                        mime="image/jpeg", private=False)
+        self.cloud.seq += 1
+        self.cloud.heads[handle] = {"class": "Media", "version": 1, "seq": self.cloud.seq, "deleted": False, "gramps_id": "O8001", "obj": template}
+        return handle
+
+    def flow_serving(self, data):
+        return review.Flow(self.tree, environ=self.env, services={"cloud": ServesBytes(self.cloud, data), "client": self.cloud})
+
+    def held(self, rv, handle):
+        return [r for r in self.sec_rows(rv, "held") if r["handle"] == handle]
+
+    def hold_table(self, handle):
+        return self.rows("SELECT rule, path FROM holds WHERE handle = ?", handle)
+
+
+class HeldMedia(HeldMediaHelpers, Base):
+    """A media file held on download shows under Held back in the window, and stays there: the dry runs cannot find it."""
+
+    def downloaded_and_held(self, extra_push=False):
         self.seed()
-        media = next(o for o in self.tree.objects().values() if o.get("_class") == "Media")
-        pull_pv = {"held": [{"handle": media["handle"], "rule": "media_blob_empty", "scope": "download", "pointer": "/blob"}]}
-        model = review.build_model(pull_pv, {}, review.Context(self.tree.objects(), {}, None))
-        rows = model["by_id"]["held"]["rows"]
-        self.assertEqual([r["rule"] for r in rows], ["media_blob_empty"])
-        self.assertEqual(rows[0]["note"], consts.HOLD_MESSAGES["media_blob_empty"])
-        self.assertNotIn("media_blob_empty", rows[0]["note"], "a rule id never reaches the window as its text")
+        person = self.a_person()
+        if extra_push:
+            self.tree.edit(person, lambda o: o["primary_name"].__setitem__("call", "Cally"))
+        handle = self.website_photo(GPS_PHOTO())
+        flow = self.flow_serving(GPS_PHOTO())
+        rv = flow.review()
+        self.assertEqual(self.held(rv, handle), [], "the dry check does not download, so it cannot know")
+        self.assertIn(handle, [r["handle"] for r in self.sec_rows(rv, "from_website")])
+        return flow, rv, handle, person
+
+    def test_a_photo_the_download_held_is_listed_under_held_back_in_the_words_of_its_rule(self):  # HFY-TSK-207 and 208 together
+        flow, rv, handle, _person = self.downloaded_and_held()
+        banner = flow.apply(rv)
+        self.assertEqual(banner["next_action"], "review_preview")
+        self.assertTrue(any("held back" in x for x in banner["lines"]), banner["lines"])
+        rows = self.held(flow.review(), handle)
+        self.assertEqual([(r["class"], r["gramps_id"], r["rule"], r["badge"]) for r in rows], [("Media", "O8001", "media.exif_gps.hold", "held")])
+        self.assertEqual(rows[0]["note"], PR.hold_reason("media.exif_gps.hold"))
+        self.assertNotIn("media.exif_gps.hold", rows[0]["note"], "a rule id never reaches the window as its text")
+        self.assertEqual([f for _d, _s, files in os.walk(self.tmp) for f in files if handle in f], [], "the held file is never written to disk")
+
+    def test_an_empty_file_the_download_held_is_listed_in_the_plain_words_of_its_rule(self):
+        self.seed()
+        handle = self.website_photo(b"")
+        flow = self.flow_serving(b"")
+        flow.apply(flow.review())
+        (row,) = self.held(flow.review(), handle)
+        self.assertEqual((row["rule"], row["note"]), ("media_blob_empty", consts.HOLD_MESSAGES["media_blob_empty"]))
+
+    def test_it_stays_listed_when_a_push_follows_the_download_in_the_same_apply_and_through_the_next_apply(self):
+        flow, rv, handle, person = self.downloaded_and_held(extra_push=True)
+        banner = flow.apply(rv)
+        self.assertTrue(any(x.startswith("Pushed to the website") and "0 changed" not in x for x in banner["lines"]), banner["lines"])
+        self.assertEqual(self.hold_table(handle), [("media.exif_gps.hold", "/blob")], "the push's replacement of the table kept it")
+        self.assertEqual([r["rule"] for r in self.held(flow.review(), handle)], ["media.exif_gps.hold"])
+        self.tree.edit(person, lambda o: o["primary_name"].__setitem__("call", "Cally Two"))
+        flow.apply(flow.review())
+        self.assertEqual(self.hold_table(handle), [("media.exif_gps.hold", "/blob")], "and so did the next pull's")
+        self.assertEqual([r["rule"] for r in self.held(flow.review(), handle)], ["media.exif_gps.hold"])
+
+    def test_it_goes_from_the_window_and_the_table_when_the_media_gets_a_file(self):
+        flow, rv, handle, _person = self.downloaded_and_held()
+        flow.apply(rv)
+        self.assertEqual(len(self.held(flow.review(), handle)), 1)
+        self.tree.data[handle]["path"] = "photos/clean.jpg"      # the person attached a file of their own
+        self.assertEqual(self.held(flow.review(), handle), [], "not listed any more, before any run")
+        flow.apply(flow.review())
+        self.assertEqual(self.hold_table(handle), [], "and the next run drops the row")
+
+
+class HeldUploads(HeldMediaHelpers, Base):
+    """A file the upload could not send shows under Held back too, with its reason: over real files, a Media op the website refuses."""
+
+    tree_class = PS.MediaPushTree
+
+    def setUp(self):
+        Base.setUp(self)
+        self.base = os.path.join(self.tmp, "media-base")
+        shutil.copytree(MU.FIXTURE_MEDIA, os.path.join(self.base, "media"))
+        self.tree.media_base = self.base
+
+    def new_photo(self):
+        data = MU.jpeg("fail")
+        os.makedirs(os.path.join(self.base, "new"))
+        with open(os.path.join(self.base, "new", "photo1.jpg"), "wb") as fh:
+            fh.write(data)
+        template = copy.deepcopy(self.tree.by_id("Media", "O0001"))
+        handle = "e%026d" % 1
+        template.update(handle=handle, gramps_id="O0100", path="new/photo1.jpg", mime="image/jpeg", desc="A new synthetic photo",
+                        checksum=hashlib.md5(data).hexdigest(), private=False)
+        self.tree.data[handle] = template
+        return handle
+
+    def test_a_media_file_the_upload_could_not_send_is_listed_with_its_reason_until_it_goes(self):  # HFY-TSK-207 and 208 together
+        self.seed()
+        handle = self.new_photo()
+        flow = self.flow()
+        self.cloud.refuse_put = 4          # S3 refuses the file, then the retry: the upload fails
+        banner = flow.apply(flow.review())
+        self.assertTrue(banner["ok"], banner)
+        rv = flow.review()
+        (row,) = [r for r in self.held(rv, handle) if r["rule"] == "media_upload_failed"]
+        self.assertEqual((row["class"], row["gramps_id"], row["note"]), ("Media", "O0100", consts.HOLD_MESSAGES["media_upload_failed"]))
+        self.assertIn(handle, [r["handle"] for r in self.sec_rows(rv, "to_website")], "it is still waiting to be sent")
+        self.cloud.refuse_put = 0
+        flow.apply(rv)
+        self.assertEqual([r for r in self.held(flow.review(), handle) if r["rule"] == "media_upload_failed"], [])
+        self.assertIn(handle, self.cloud.blobs, "the retry sent the file")
 
 
 class Banner(Base):

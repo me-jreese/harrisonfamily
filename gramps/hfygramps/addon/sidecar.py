@@ -215,6 +215,23 @@ def load_expunge_holds(con):
     return out
 
 
+def pathless_media(local):
+    """The handles of the Media objects of `local` ({handle: raw object}) that have no file path: where the download held the file."""
+    return frozenset(h for h, o in local.items() if isinstance(o, dict) and o.get("_class") == "Media" and not o.get("path"))
+
+
+def download_holds(con, pathless):
+    """The holds rows (class, handle, path, rule, detail, first_seen) of a media file the download held, whose Media is still in `pathless`.
+
+    Only the pull's download finds these (it reads the bytes), and a later pull does not fetch the file again, so a run that replaces the
+    holds table keeps them (`INSERT OR IGNORE` after its own rows) until the Media has a file of its own or is gone: the window lists
+    them under Held back as long as they stay."""
+    marks = ",".join("?" * len(consts.DOWNLOAD_HOLD_RULES))
+    rows = con.execute("SELECT class, handle, path, rule, detail, first_seen FROM holds WHERE class = 'Media' AND path = '/blob' AND rule IN (%s)" % marks,
+                       consts.DOWNLOAD_HOLD_RULES).fetchall()
+    return [row for row in rows if row[1] in pathless]
+
+
 def load_incidents(con):
     if not has_table(con, "incidents"):
         return []

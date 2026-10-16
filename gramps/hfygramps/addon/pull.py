@@ -590,11 +590,14 @@ def _update_sidecar(ctx, plan, cloud_tree):
 
         # holds: the projection's are replaced each run (first_seen kept); an expunge notice's stay until io releases them
         seen = {(c, h, p, r): f for c, h, p, r, f in side.execute("SELECT class, handle, path, rule, first_seen FROM holds")}
+        kept = sidecar.download_holds(side, sidecar.pathless_media(local_after))     # an earlier run's held download: nothing here fetches that file again
         side.execute("DELETE FROM holds WHERE rule != ?", (sidecar.EXPUNGE_RULE,))
         for x in plan.holds:
             key = (cls_of.get(x["handle"], ""), x["handle"], x["pointer"], x["rule"])
             side.execute("INSERT OR REPLACE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
                          (key[0], key[1], key[2], key[3], x.get("detail") or x["scope"], seen.get(key, now)))
+        for row in kept:
+            side.execute("INSERT OR IGNORE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)", row)
         for n in plan.notices:
             for p in n["paths"]:
                 side.execute("INSERT OR IGNORE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
