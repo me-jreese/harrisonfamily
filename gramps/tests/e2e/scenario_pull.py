@@ -33,7 +33,7 @@ import e2e_case as C  # noqa: E402
 import e2e_cloud as K  # noqa: E402
 import e2e_support as E  # noqa: E402
 from hfygramps import projection as PR  # noqa: E402
-from hfygramps.addon import consts, keychain, sidecar  # noqa: E402
+from hfygramps.addon import consts, keychain, mediafile, sidecar  # noqa: E402
 
 MEDIA_FIXTURE = os.path.join(HERE, "..", "fixtures", "media", "synthetic-photo-plain.jpg")
 NEW_MEDIA_HANDLE = "a1" * 14  # 28 hex characters
@@ -96,7 +96,12 @@ class PullE2E(C.E2ECase):
         web = E.sign_in(self.server, step_up=True)  # the website's owner (deletes need the step-up)
         self.cloud = K.CloudDriver(self.server, web)
         self.cloud.bind(local["dbid"], local["fingerprint"], self.tree_name_sha256())
-        projected = {h: p for h, p in PR.project_tree(copy.deepcopy(list(self.local_objects().values())))[0].items() if p is not None}
+        objects = copy.deepcopy(list(self.local_objects().values()))
+        # what the addon's push sends: the projection knows the files (a photo with a GPS location is held, the disk MD5 is the checksum)
+        import importlib  # by name: the unit lane checks that e2e_case has no static `gramps` import, and this file follows its pattern
+        base = self.edit(lambda db, DbTxn: importlib.import_module("gramps.gen.utils.file").media_path(db))
+        files = mediafile.collect([o for o in objects if o["_class"] == "Media"], base)
+        projected = {h: p for h, p in PR.project_tree(objects, files=files)[0].items() if p is not None}
         self.projected = projected
         self.cloud.seed(projected)
         self.server.set_head(seeded=True)

@@ -171,7 +171,10 @@ class PullApply(AddonCase):
         """The runner end to end, in this process, over the real database and the fake cloud; the e2e lane does it across processes."""
         self.bind()
         before_objects = self.objects()
-        projected = UP.project_all(before_objects)
+        from hfygramps.addon import mediafile
+        # what a push sends: the projection knows the files, so the photo with a GPS location is held and never reaches the website
+        fixtures = os.path.join(HERE, "..", "fixtures")
+        projected = UP.project_all(before_objects, files=mediafile.collect([o for o in before_objects.values() if o["_class"] == "Media"], fixtures))
         cloud = UP.FakeCloud(self.dbid, UP.heads_of(projected))
         env = dict(os.environ, HFY_SYNC_PS_CMD="true")
 

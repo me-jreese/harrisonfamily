@@ -92,7 +92,14 @@ class _Http:
     timeout = 5
 
     def __init__(self, cloud):
+        self.cloud = cloud
         self.opener = _Opener(cloud)
+
+    def send(self, method, url, headers=None, data=None, idempotent=False):
+        """The presigned PUT of a blob (the S3 stand-in: it enforces the signed type, length and SHA-256 of the body)."""
+        if method != "PUT" or not url.startswith("https://blobs.test/put/"):
+            raise OSError("unknown request")
+        return self.cloud.put_blob(url, headers or {}, data)
 
 
 class Versions:
@@ -141,6 +148,15 @@ class FakeCloud:
         self.decision_receipts = []   # (conflict id, outcome) of every POST /api/sync/conflicts/:id/applied (HFY-TSK-338)
         self.on_batch = None        # called (no arguments) before a new batch is checked: a website-side edit that races the push
         self.replays = []           # the keys that were answered from a stored receipt
+        self.staging = {}           # media/.staging/<handle>/<sha256> -> bytes (the blob store's staging area)
+        self.final = {}             # media/<handle><ext> -> bytes (the served keys)
+        self.pending = {}           # presigned URL -> {"key", "sha256_b64", "size", "content_type", "handle"}
+        self.presigns = []          # the bodies of the presign calls
+        self.puts = []              # (key, headers, size) of every PUT that reached the store
+        self.refuse_put = 0         # the next N PUTs answer 403 (an expired URL, a checksum S3 did not like)
+        self.refuse_presign = []    # [(status, code)] answered once to the next presign calls
+        self.blobs = {}             # handle -> the Media head's blob descriptor
+        self.lose_staging = 0       # the next N staged objects vanish after their PUT (the pending upload expired, a lifecycle rule)
         self.id_block = {c: "%s8000-%s8999" % (p, p) for c, p in pushplan.DEFAULT_BLOCK_PREFIX.items()}
 
     # ------------------------------------------------------------------------------------------------------------- the client
@@ -174,6 +190,8 @@ class FakeCloud:
         self._scripted(path)
         if path == "/api/sync/batches":
             return self._batch(body, idempotency_key)
+        if path == "/api/sync/media/presign":
+            return self._presign(body)
         if path == "/api/sync/sessions":
             return self._open(body)
         m = re.match(r"^/api/sync/sessions/([^/]+)/complete$", path)
@@ -216,6 +234,91 @@ class FakeCloud:
         url = "https://snapshots.test/snapshot/%d" % self.seq
         self.snapshot_files[url] = gzip.compress(header + body)
         return {"seq": self.seq, "url": url, "body_sha256": sha, "count": len(heads), "generated_at": "2026-10-14T00:00:00Z"}
+
+    # ------------------------------------------------------------------------------------------------------------------ blobs
+
+    def _presign(self, body):
+        """api/src/sync/media.js syncMediaPresign: the staging key, the signed headers."""
+        self.presigns.append(body)
+        if self.refuse_presign:
+            status, code = self.refuse_presign.pop(0)
+            raise err(status, code)
+        if body.get("content_type") not in ("image/jpeg", "image/png", "image/gif", "image/tiff", "application/pdf"):
+            raise err(400, "validation")
+        if not isinstance(body.get("size"), int) or not 1 <= body["size"] <= 25 * 1024 * 1024:
+            raise err(400, "validation")
+        sha_hex = base64.b64decode(body["sha256_b64"]).hex()
+        key = "media/.staging/%s/%s" % (body["handle"], sha_hex)
+        url = "https://blobs.test/put/%d" % len(self.presigns)
+        self.pending[url] = {"key": key, "sha256_b64": body["sha256_b64"], "size": body["size"], "content_type": body["content_type"],
+                             "handle": body["handle"], "sha256": sha_hex, "md5": body["md5_hex"]}
+        return _Resp(200, {"upload_url": url, "headers": {"Content-Type": body["content_type"], "x-amz-checksum-sha256": body["sha256_b64"]},
+                           "key": key, "expires_in": 300})
+
+    def put_blob(self, url, headers, data):
+        want = self.pending.get(url)
+        if want is None:
+            raise err(403, "http_403")
+        if self.refuse_put > 0:
+            self.refuse_put -= 1
+            raise err(403, "http_403")
+        lowered = {k.lower(): v for k, v in headers.items()}
+        if "authorization" in lowered:
+            raise AssertionError("a bearer token went to the blob store")
+        if lowered.get("x-amz-checksum-sha256") != want["sha256_b64"] or lowered.get("content-type") != want["content_type"]:
+            raise err(403, "http_403")
+        if len(data) != want["size"] or base64.b64encode(hashlib.sha256(data).digest()).decode("ascii") != want["sha256_b64"]:
+            raise err(400, "BadDigest")
+        if self.lose_staging > 0:
+            self.lose_staging -= 1
+        else:
+            self.staging[want["key"]] = bytes(data)
+        self.puts.append((want["key"], dict(headers), len(data)))
+        return _Resp(200, None)
+
+    _EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/tiff": ".tif", "application/pdf": ".pdf"}
+
+    def _prepare_blobs(self, ops):
+        """api/src/sync/media.js prepareBlobs: a present blob must sit at its staging key with the claimed size and checksum (422 otherwise)."""
+        plan = []
+        for o in ops:
+            blob = o.get("blob")
+            if blob is None or o["op"] not in ("create", "update") or o["class"] != "Media":
+                continue
+            if blob.get("state") == "missing":
+                continue
+            key = "media/.staging/%s/%s" % (o["handle"], blob["sha256"])
+            data = self.staging.get(key)
+            if data is None:
+                raise err(422, "blob_not_uploaded", {"op_id": o["op_id"], "handle": o["handle"]})
+            if len(data) != blob["size"] or hashlib.sha256(data).hexdigest() != blob["sha256"] or hashlib.md5(data).hexdigest() != blob["md5"]:
+                raise err(422, "blob_mismatch", {"op_id": o["op_id"], "handle": o["handle"]})
+            plan.append((o, key))
+        return plan
+
+    def _finalize_blobs(self, plan):
+        """After the commit: staging -> media/<handle><ext>, the head's blob descriptor, the staging key deleted, an orphaned key removed."""
+        for o, key in plan:
+            blob = o["blob"]
+            final = "media/%s%s" % (o["handle"], self._EXT[blob["content_type"]])
+            prior = self.blobs.get(o["handle"])
+            self.final[final] = self.staging.pop(key)
+            self.blobs[o["handle"]] = {"s3_key": final, "sha256": blob["sha256"], "md5": blob["md5"], "size": blob["size"],
+                                       "content_type": blob["content_type"], "state": "present"}
+            if prior and prior.get("s3_key") != final:
+                self.final.pop(prior["s3_key"], None)
+
+    def blob_bytes(self, handle):
+        """The bytes served for a Media head, or None."""
+        blob = self.blobs.get(handle)
+        return self.final.get(blob["s3_key"]) if blob and blob.get("state") == "present" else None
+
+    def check_blob_invariant(self):
+        """head.blob.sha256 always matches the object at media/<handle><ext> (review SI-31)."""
+        for handle, blob in self.blobs.items():
+            if blob.get("state") == "present":
+                data = self.final.get(blob["s3_key"])
+                assert data is not None and hashlib.sha256(data).hexdigest() == blob["sha256"], "the served blob is not the one the head names"
 
     # ---------------------------------------------------------------------------------------------------------------- sessions
 
@@ -292,6 +395,7 @@ class FakeCloud:
         destructive = [o for o in ops if o["op"] in ("delete", "withdraw")]
         if destructive and not self._fresh_step_up() and (any(o["op"] == "delete" for o in destructive) or len(destructive) > 10):
             raise err(403, "step_up_required", {"reason": "delete"})
+        blob_plan = self._prepare_blobs(ops)
         each = self.refuse_each.pop(0) if self.refuse_each else None
         privacy = [o for o in ops if (o["handle"] in self.refuse_privacy or o["handle"] == each) and o["op"] in ("create", "update")]
         if privacy:
@@ -345,6 +449,7 @@ class FakeCloud:
         response = {"batch_id": "B%d" % len(self.receipts), "seq_from": seq_from, "seq_to": self.seq, "results": results}
         self.receipts[key] = {"digest": digest, "response": response}
         self.batches.append(body)
+        self._finalize_blobs(blob_plan)
         if self.lose_response > 0:
             self.lose_response -= 1
             raise transport.TransportError("network", consts.EXIT_TEMPORARY, "retry", message="The network call failed.")
@@ -510,6 +615,17 @@ class PushTree(R.FakeTree):
 
     def by_id(self, cls, gramps_id):
         return next(o for o in self.data.values() if o["_class"] == cls and o.get("gramps_id") == gramps_id)
+
+
+class MediaPushTree(PushTree):
+    """A PushTree whose Media files are real files: `media_files()` reads them the way hfy_sync_tool.GrampsTree does (paths relative to
+    `media_base`, which is Gramps' base media path)."""
+
+    media_base = ""
+
+    def media_files(self):
+        from hfygramps.addon import mediafile
+        return mediafile.collect([o for o in self.data.values() if o["_class"] == "Media"], self.media_base)
 
 
 class PullView:

@@ -206,9 +206,10 @@ def _run(ctx):
     hook = ctx.services.get("between_preview_and_apply")
     for attempt in range(MAX_REPLANS + 1):
         if plan.media:
+            holds_before = len(plan.holds)
             got, failed = _media_down(ctx, cloud, plan)
             media_paths.update(got)
-            if _defer_media(plan, failed):
+            if _defer_media(plan, failed) or len(plan.holds) != holds_before:
                 _write_preview(ctx, plan)  # the preview file describes the plan that is applied
                 ctx.outcome["counts"] = plan.counts
             ctx.faults.hit("after_media")
@@ -433,11 +434,18 @@ def _media_down(ctx, cloud, plan):
         if info is None:
             ctx.log.line("media %s: no blob; metadata only" % h[:6])
             continue
+        if info.get("held"):
+            ctx.log.line("media %s: held (%s); metadata only" % (h[:6], info["held"]))
+            plan.holds.append({"handle": h, "rule": info["held"], "scope": "download", "pointer": "/blob",
+                               "detail": consts.HOLD_MESSAGES.get(info["held"]) or PR.hold_reason(info["held"])})
+            continue
         got[h] = info
         with ctx.side:
             ctx.side.execute("INSERT OR REPLACE INTO media_local (handle, path, md5, sha256, size, origin) VALUES (?, ?, ?, ?, ?, 'cloud')",
                              (h, info["path"], info["md5"], info["sha256"], info["size"]))
     ctx.outcome["media_down"] = ctx.outcome.get("media_down", 0) + sum(1 for i in got.values() if i["fresh"])
+    if any(x.get("scope") == "download" for x in plan.holds):
+        plan.counts = dict(plan.counts, holds=len(plan.holds))
     return got, failed
 
 
@@ -613,7 +621,7 @@ def _update_sidecar(ctx, plan, cloud_tree):
         for x in plan.holds:
             key = (cls_of.get(x["handle"], ""), x["handle"], x["pointer"], x["rule"])
             side.execute("INSERT OR REPLACE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
-                         (key[0], key[1], key[2], key[3], x["scope"], seen.get(key, now)))
+                         (key[0], key[1], key[2], key[3], x.get("detail") or x["scope"], seen.get(key, now)))
         for n in plan.notices:
             for p in n["paths"]:
                 side.execute("INSERT OR IGNORE INTO holds (class, handle, path, rule, detail, first_seen) VALUES (?, ?, ?, ?, ?, ?)",
@@ -646,9 +654,10 @@ def _attention(plan, extra_blocked=0):
                 "A withdraw-and-expunge push is offered." % len(plan.incidents), "review_incidents")
     if plan.conflicts:
         return ("conflicts_open", "%d conflict(s) are open; both sides were left as they are." % len(plan.conflicts), "resolve_conflicts")
-    if plan.blocked or plan.deferred or plan.parked:
+    media_held = sum(1 for x in plan.holds if x.get("scope") == "download")
+    if plan.blocked or plan.deferred or plan.parked or media_held:
         return ("blocked", "%d change(s) were held back (deletes, reverts or media files); see the preview." %
-                (len(plan.blocked) + len(plan.deferred) + len(plan.parked)), "review_preview")
+                (len(plan.blocked) + len(plan.deferred) + len(plan.parked) + media_held), "review_preview")
     return None
 
 

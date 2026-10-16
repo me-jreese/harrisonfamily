@@ -43,7 +43,8 @@ class TreeAccess:
         raise NotImplementedError
 
     def media_files(self):
-        """{media handle: {"exif_gps", "md5", "readable"}} for the projection; {} when the addon does not read the files."""
+        """{media handle: ``mediafile.inspect`` dict} for every Media object; {} when the addon does not read the files. The projection
+        reads ``exif_gps``, ``md5`` and ``readable``; the push also ``state``, ``sha256``, ``size``, ``content_type`` and ``path``."""
         return {}
 
     def editors_open(self):
