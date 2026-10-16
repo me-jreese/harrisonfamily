@@ -178,6 +178,17 @@ def _get(obj, pointer):
     return R.pointer_get(obj, pointer, _MISSING) if pointer else obj
 
 
+# A pulled row also carries `kept`: the pointers the desktop had edited and not yet pushed when the pull ran (its own column in the
+# sidecar, not part of the prepull object, which keeps the shape of a Gramps object). A push of those is not a revert of the pull.
+# `M.diff_pointers` is element-granular for lists of the same length, but reports a list whose length changed (a tag added or removed
+# on the desktop) as one whole-list pointer; that pointer overlaps every element of the list, so a revert of a web change inside such
+# a list is not labelled while the desktop's own unsent add or remove is waiting. Known limit, accepted: it errs towards sending.
+
+
+def _overlaps(a, b):
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/") or a == "" or b == ""
+
+
 def revert_paths(op, cloud_obj, pulled):
     """Pointers at which push `op` puts back a value that a recent pull replaced; [] when it does not revert anything.
 
@@ -194,8 +205,12 @@ def revert_paths(op, cloud_obj, pulled):
         if op["op"] == "create" and kind == "delete":
             return [""]
         if op["op"] == "update" and kind == "update" and isinstance(row.get("prepull"), dict) and isinstance(cloud_obj, dict):
+            prepull = row["prepull"]
+            kept = row.get("kept") or []
             for p in M.diff_pointers(cloud_obj, op["obj"]):
-                want = _get(row["prepull"], p)
+                if any(_overlaps(p, k) for k in kept):
+                    continue  # the desktop's own unsent edit before the pull, which the pull did not replace
+                want = _get(prepull, p)
                 if want is not _MISSING and _get(op["obj"], p) == want and _get(cloud_obj, p) != want:
                     out.append(p)
     return sorted(set(out))
@@ -233,7 +248,7 @@ class Plan:
         self.incidents = []      # {class, handle, gramps_id, rule, seq, offer}
         self.notices = []        # {class, handle, gramps_id, paths}
         self.media = []          # handles of Media whose file must be downloaded
-        self.blocked = []        # {class, handle, gramps_id, reason}
+        self.blocked = []        # {class, handle, gramps_id, reason}; a mass delete also has rule "mass_delete" (the window matches on it, not on the text)
         self.deferred = []       # {class, handle, gramps_id, reason} (media failures are added by the run)
         self.autos = []
         self.holds = []
@@ -248,6 +263,12 @@ class Plan:
         self.base_objs = {}      # handle -> the base object the plan was made against (after expunge refreshes)
         self.parked = []         # push ops the CLI parked (reverts)
         self.planned_push = {"create": 0, "update": 0, "delete": 0}
+        self.reviewed_hash = ""  # the plan hash of the pass the person reviewed (differs from plan_hash after decisions)
+        self.projected = {}      # handle -> P(L) (symmetric), the projected local objects this plan was made from
+        self.decided = []        # [{id, handle, path, choice}] conflicts a person decided in this plan
+        self.decided_rows = []   # the same conflicts in full (projected values): only the sidecar row takes them, never the preview file
+        self.undecided = []      # [{id, reason}] decisions that were not carried out
+        self.sticky_held = []    # [{class, handle, gramps_id}] sticky events whose local day and month are withheld
 
     # ---- queries
     @property
@@ -279,8 +300,30 @@ def _plain(value):
 
 
 def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="cli", allow_deletes=False, files=None, pulled=None,
-          expunge_holds=None, policy=None, confirm_mass_delete=False):
-    """Plans one pull. `local` {handle: raw object}; `base_rows` sidecar.load_base(); `heads` a Snapshot's heads."""
+          expunge_holds=None, policy=None, confirm_mass_delete=False, decisions=None, defer_deletes=False):
+    """Plans one pull. `local` {handle: raw object}; `base_rows` sidecar.load_base(); `heads` a Snapshot's heads.
+
+    `decisions` ({conflict id: {"choice", "confirmed"}}, the Gramps window only) are a person's answers to conflicts the first pass
+    found; they are carried out in the same plan (``decide.second_pass``): the plan returned is the second pass, and
+    `reviewed_hash` is the first pass's plan hash, the one the person saw. `defer_deletes` holds back every incoming delete (a person
+    who declined the confirmation): each is listed as blocked, nothing is removed."""
+    kw = dict(sticky=sticky, released=released, mode=mode, allow_deletes=allow_deletes, files=files, pulled=pulled,
+              expunge_holds=expunge_holds, policy=policy, confirm_mass_delete=confirm_mass_delete, defer_deletes=defer_deletes)
+    first = _build_once(local, base_rows, heads, pins=pins, **kw)
+    first.reviewed_hash = first.plan_hash
+    if defer_deletes or confirm_mass_delete:
+        # the person reviewed the plan without those answers: the hash `sync --plan` and the window compare is that plan's
+        first.reviewed_hash = _build_once(local, base_rows, heads, pins=pins, **dict(kw, confirm_mass_delete=False, defer_deletes=False)).plan_hash
+    if not decisions or not first.conflicts:
+        return first
+    from . import decide
+
+    return decide.second_pass(first, decisions, local, base_rows, pins or {}, lambda local2, base2, pins2: _build_once(local2, base2, heads, pins=pins2, **kw),
+                              policy or R.load_policy(), heads)
+
+
+def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="cli", allow_deletes=False, files=None, pulled=None,
+                expunge_holds=None, policy=None, confirm_mass_delete=False, defer_deletes=False):
     pol = policy or R.load_policy()
     pins = pins or {}
     files = files or {}
@@ -346,8 +389,10 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
     local_list = list(local.values())
     proj = PR.project(local_list, base=base, files=files, released=released, sticky=sticky, policy=pol)
     lp = symmetric(proj.projected, proj.holds)
+    plan.projected = lp
     plan.sticky = proj.sticky
     plan.holds = proj.holds
+    plan.sticky_held = sticky_held(local, proj.sticky, pol)
 
     def project_one(obj):
         objs = [obj if o.get("handle") == obj.get("handle") else o for o in local_list]
@@ -377,11 +422,18 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
         a = r.action
         if a in ("create_local", "update") and r.local_obj is not None:
             plan.commits[h] = r.local_obj
-            plan.pulled_rows.append({"class": r.cls, "handle": h, "kind": "create" if a == "create_local" else "update",
-                                     "prepull": _plain(lp.get(h)) if a == "update" else None})
+            prepull = _plain(lp.get(h)) if a == "update" else None
+            kept = []
+            if isinstance(prepull, dict) and isinstance(base.get(h), dict):
+                # the desktop edits that were waiting to go before this pull: a later push of them is not a revert of the pull (D47)
+                kept = M.diff_pointers(base[h], prepull)
+            plan.pulled_rows.append({"class": r.cls, "handle": h, "kind": "create" if a == "create_local" else "update", "prepull": prepull,
+                                     "kept": kept})
         elif a == "delete_local":
-            if plan.mass_delete and not confirm_mass_delete:
-                plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid,
+            if defer_deletes:
+                plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid, "reason": "incoming delete (not confirmed in this window)"})
+            elif plan.mass_delete and not confirm_mass_delete:
+                plan.blocked.append({"class": r.cls, "handle": h, "gramps_id": gid, "rule": "mass_delete",
                                      "reason": "mass delete: more than %d objects or %d %% of the tree" % (MASS_DELETE_OBJECTS, MASS_DELETE_PERCENT)})
             else:
                 plan.removals.append(h)
@@ -414,6 +466,19 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
     return plan
 
 
+def sticky_held(local, sticky, policy):
+    """The events in the sticky set that are not birth-like now and whose local date still has a day or a month: the day and month stay
+    on this computer until a person releases the handle (BRD2 11.1, PS-02). Handles and ids only."""
+    out = []
+    tree = R.Tree(list(local.values())) if sticky else None
+    for h in sorted(sticky or ()):
+        o = local.get(h)
+        if isinstance(o, dict) and o.get("_class") == "Event" and isinstance(o.get("date"), dict) and R.date_violations(o["date"], policy) \
+                and not R.is_birth_like(o, tree, policy):    # an event that is birth-like now is reduced by its own rule; a release would not change that
+            out.append({"class": "Event", "handle": h, "gramps_id": o.get("gramps_id", "")})
+    return out
+
+
 def _blob_changed(local_obj, cloud_obj):
     return bool(cloud_obj.get("checksum")) and (not isinstance(local_obj, dict) or local_obj.get("checksum") != cloud_obj.get("checksum"))
 
@@ -442,6 +507,7 @@ def _push(result, head, pulled_rows, hold_pointers, mode):
 
 def _finish(plan):
     plan.parked = [o for o in plan.push_ops if o["disposition"] == "parked"]
+    plan.planned_push = {"create": 0, "update": 0, "delete": 0}
     for o in plan.push_ops:
         if o["disposition"] in ("send", "confirm"):
             plan.planned_push[{"create": "create", "delete": "delete", "withdraw": "delete"}.get(o["op"], "update")] += 1
@@ -535,6 +601,7 @@ def preview(plan, run_id, action, mode, snapshot, now):
         "counts": plan.counts, "planned_push": plan.planned_push, "from_website": from_site, "to_website": to_site, "conflicts": conflicts,
         "held": [{"handle": x["handle"], "rule": x["rule"], "scope": x["scope"], "pointer": x["pointer"]} for x in plan.holds],
         "blocked": plan.blocked, "deferred": plan.deferred, "media_to_download": sorted(plan.media),
+        "sticky_held": plan.sticky_held, "decided": plan.decided, "undecided": plan.undecided, "reviewed_hash": plan.reviewed_hash,
         "incidents": [{"class": i["class"], "handle": i["handle"], "gramps_id": i["gramps_id"], "rule": i["rule"], "offer": i["offer"]} for i in plan.incidents],
         "expunge_notices": plan.notices, "mass_delete": plan.mass_delete,
         "integrity": plan.integrity,

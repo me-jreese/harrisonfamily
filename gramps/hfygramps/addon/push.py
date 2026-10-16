@@ -75,6 +75,16 @@ def step_up_fresh(token, now=None):
         and 0 <= now - auth_time <= consts.STEP_UP_MAX_AGE_S
 
 
+def _signed_in_label(token):
+    """A short label for 'Signed in as' in the window: the token's name claim, else its subject. Never written to status.json."""
+    claims = token_claims(token)
+    for key in ("name", "preferred_username", "sub"):
+        v = claims.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:64]
+    return ""
+
+
 def error_result(exc):
     """(result, exit_code, next_action, error) for a TransportError: nothing of the response but its code."""
     res = "refused" if exc.exit_code in (consts.EXIT_USAGE, consts.EXIT_NOT_ENABLED, consts.EXIT_SIGN_IN, consts.EXIT_CONFIG) else "failed"
@@ -228,6 +238,8 @@ class _Push:
         self.moved = False           # a 409 version_conflict stopped the push (D22)
         self.server_refused = None   # the last 4xx code that dropped ops (D24)
         self.no_step_up = False
+        self.step_up = False
+        self.signed_in = ""
         self.integrity_open = False  # the session could not be completed (D25)
         self.serial = 0
         self.limits = {}
@@ -239,6 +251,7 @@ class _Push:
         self.deferred_media = set()  # new Media whose upload failed: what refers to them waits for the next run
         self.blob_retries = {}       # Media handle -> how many times the website could not find its staged blob this run
         self.base_handles = set()
+        self.pathless = frozenset()  # Media handles with no file path (a held download): their holds survive this run's replacement of the table
 
     # ------------------------------------------------------------------------------------------------------- the client
 
@@ -275,16 +288,20 @@ class _Push:
             self._resolve_outbox()
         snap = self._snapshot()
         local = self.tree.objects()
+        self.pathless = sidecar.pathless_media(local)
         base = pushstate.base_rows(con)
         self.base_handles = {h for h, r in base.items() if not r["deleted"]}
         sticky = pushstate.get_json(con, "birthlike_sticky", [])
         token = self.client.token_provider()
-        step_up = step_up_fresh(token)
+        step_up = self.step_up = step_up_fresh(token)
+        self.signed_in = _signed_in_label(token)
+        if isinstance(self.services.get("sink"), dict):
+            self.services["sink"]["signed_in"] = self.signed_in    # in-process only, for the window's header: no file ever holds it
         self.plan = pushplan.build_plan(
             local, base, snap.heads, meta=self.meta, members=self._members(), mode=self.mode, allow_deletes=self.options.allow_deletes, yes=self.options.yes,
             step_up=step_up, sticky=sticky, pins=pushstate.pins(con), max_obj_bytes=self.limits.get("max_obj_bytes"),
             files=self.files, unreadable=[h for h, f in self.files.items() if not f.get("readable")], blobs=mediaup.load_rows(con),
-            expunge_holds=sidecar.load_expunge_holds(con), pulled=_pulled_window(con))
+            expunge_holds=sidecar.load_expunge_holds(con), pulled=_pulled_window(con), released=set(sidecar.meta_json(con, "released", [])))
         plan = self.plan
         for w in plan.warnings:
             self.log.line("push: warning %s %s" % (w["rule"], w["handle"][:6]))
@@ -301,6 +318,8 @@ class _Push:
         self.session_id = pushstate.get_text(con, "open_session")
         stopped = False
         order = [("create/update", plan.ops), ("delete", plan.destructive)]
+        if self.mode == "gui" and self.options.deletes_first:
+            order.reverse()   # D07: the delete batches go right after the step-up, before the 300 s window can lapse on a long push
         total = sum(len(pushplan.make_batches(ops, self.limits)) for _n, ops in order if ops)
         if not self.session_id and total and (total > 1 or not self.meta.get("seeded")):
             self._open_session()
@@ -431,6 +450,7 @@ class _Push:
         doc = {
             "schema": 1, "run_id": self.run_id, "action": "push", "created_at": self.now(), "cloud_seq": snap.seq,
             "counts": dict(plan.counts(), media_up=plan.media_up), "ops": ops, "holds": plan.holds, "warnings": plan.warnings, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
+            "step_up_fresh": bool(self.step_up), "sticky": sorted(plan.sticky), "mass_delete": bool(plan.mass_delete),
             "conflicts": [{"id": c["id"], "class": c["class"], "handle": c["handle"], "path": c["path"], "kind": c["kind"]} for c in plan.conflicts],
             "plan_sha256": hashlib.sha256(json.dumps(ops, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
         }
@@ -718,7 +738,7 @@ class _Push:
             try:
                 self.side.execute("SELECT 1")
                 holds = pushplan._unique(plan.holds + plan.blocked + self.extra_holds + self.extra_blocked)
-                pushstate.sync_holds(con, holds, self.now())
+                pushstate.sync_holds(con, holds, self.now(), self.pathless)
                 self.counts["conflicts_open"] = len(pushstate.open_conflicts(con))
                 self.counts["holds"] = len(pushplan._unique(plan.holds + self.extra_holds))
                 self.counts["blocked"] = len(pushplan._unique(plan.blocked + self.extra_blocked))

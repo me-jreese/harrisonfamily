@@ -17,7 +17,7 @@ Placeholders: `<site-bucket>` is the site bucket, `<app-stack>` the app stack, `
 
 ## Sync day to day
 
-With Gramps closed, `gramps/bin/hfy-sync check --tree "<tree name>"` shows what would move in each direction and writes nothing. `gramps/bin/hfy-sync sync --tree "<tree name>" --yes` applies it. The same flow is in Gramps under **Tools > Family Tree Processing > Website sync...**. The exit codes are in [Install the Gramps sync addon](install-the-gramps-sync-addon.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
+With Gramps closed, `gramps/bin/hfy-sync check --tree "<tree name>"` shows what would move in each direction and writes nothing. `gramps/bin/hfy-sync sync --tree "<tree name>" --yes` applies it. The same flow is in Gramps under **Tools > Family Tree Processing > Website sync...**, with the preview, the conflict choices, the confirmations and a result banner ([Use the Website sync window](install-the-gramps-sync-addon.md#10-use-the-website-sync-window)); it refuses while a Gramps edit window is open. The exit codes are in [Install the Gramps sync addon](install-the-gramps-sync-addon.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
 
 ## Cut over to the cloud store
 

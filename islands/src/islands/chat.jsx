@@ -16,10 +16,11 @@ import "./chat.css";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { ChatClient, browserPageEnv, indexedDbOutbox, webStorageSnapshot, websocketTransport } from "@io-kit/chat";
-import { ChatEntryButton, ChatPage, ChatProvider, MoleDock, RosterPanel, resolveCopy, useChat } from "@io-kit/chat/react";
+import { ChatClient, browserPageEnv, dmConvId, indexedDbOutbox, webStorageSnapshot, websocketTransport } from "@io-kit/chat";
+import { ChatEntryButton, ChatPage, ChatProvider, MoleDock, PresenceDot, RosterPanel, resolveCopy, useChat } from "@io-kit/chat/react";
 import { barSlots } from "../lib/bar-slots.js";
 import { memberSub } from "../lib/edge-session.js";
+import { personHref } from "../lib/person-name.jsx";
 import { contactGuard } from "../lib/chat-guard.js";
 import {
   CHAT_PAGE, CLIENT_OPTIONS, convFromSearch, copyFor, expSeconds, isMobileAgent, isPopout, noticeLine, outboxName, shellOptionsFor, signInHref, snapshotKey,
@@ -79,6 +80,55 @@ function Entry({ slot, narrow }) {
   return host && narrow && !hidden ? createPortal(<ChatEntryButton href={CHAT_PAGE} />, host) : null;
 }
 
+/**
+ * Presence on a profile (chat.md 10.3, R-37): the person page's hero action slot ([data-slot="presence"], person-page mount points,
+ * HFY-TSK-137) gets the dot, the state in words and, for someone else, a "chat" button. Only an eligible member (the hub's `people`)
+ * gets it: a person without an account, a deceased person and every page that is not a person page get nothing. The hero is rebuilt
+ * by every render, so the host is read again on each hfy:person-rendered; the host store lets the one React tree portal into it.
+ */
+function personStore() {
+  let cur = null;
+  const subs = new Set();
+  const read = (id) => {
+    const host = document.querySelector('#person-hero [data-slot="presence"]');
+    const next = host && id ? { host, personId: id } : null;
+    if (cur === next || (cur && next && cur.host === next.host && cur.personId === next.personId)) return;
+    cur = next;
+    subs.forEach((f) => f());
+  };
+  return {
+    start() {
+      if (!/^\/person\/?(index\.html)?$/.test(window.location.pathname)) return () => {};
+      const on = (e) => read((e.detail && e.detail.personId) || new URLSearchParams(window.location.search).get("id"));
+      document.addEventListener("hfy:person-rendered", on);
+      read(new URLSearchParams(window.location.search).get("id")); // the hero may be drawn before the island started
+      return () => document.removeEventListener("hfy:person-rendered", on);
+    },
+    get: () => cur,
+    subscribe: (f) => { subs.add(f); return () => subs.delete(f); },
+  };
+}
+
+function ProfilePresence({ person }) {
+  const host = useSyncExternalStore(person.subscribe, person.get, person.get);
+  const { state, copy, open } = useChat();
+  useEffect(() => person.start(), [person]);
+  const refused = ["forbidden", "sign_in", "unavailable"].includes(state.status.notice);
+  const id = host && host.personId;
+  if (!host || refused || !state.me || !state.people.some((p) => p.id === id)) return null;
+  const mine = id === state.me;
+  const st = state.presence[id] || "offline";
+  const words = st === "active" ? copy.presenceActive : st === "idle" ? copy.presenceIdle : copy.presenceOffline;
+  return createPortal(
+    <p className="io-chat hfy-presence" data-hfy-presence={id} data-state={st}>
+      <PresenceDot state={st} copy={copy} />
+      <span className="hfy-presence__text">{words}</span>
+      {!mine && <button type="button" className="hfy-presence__chat" onClick={() => open(dmConvId(state.me, id))}>{copy.entryLabel}</button>}
+    </p>,
+    host.host,
+  );
+}
+
 /** "sign in to chat." with the edge sign-in, back to this page afterwards. */
 function SignIn({ copy }) {
   return (
@@ -122,7 +172,7 @@ function Page({ narrow, popout }) {
   );
 }
 
-function Chrome({ slot, pageHost, popout }) {
+function Chrome({ slot, person, pageHost, popout }) {
   const narrow = !useQuery(PHONE_UP);
   const notice = useNotice();
   const refused = notice === "forbidden" || notice === "sign_in";
@@ -133,6 +183,7 @@ function Chrome({ slot, pageHost, popout }) {
   return (
     <>
       <Entry slot={slot} narrow={narrow} />
+      <ProfilePresence person={person} />
       {dock && !onPage && <RosterPanel />}
       {dock && <MoleDock reservePanel={!onPage} />}
       {onPage && createPortal(<Page narrow={narrow} popout={popout} />, pageHost)}
@@ -140,14 +191,23 @@ function Chrome({ slot, pageHost, popout }) {
   );
 }
 
-function App({ client, slot, pageHost, popout }) {
+/**
+ * P2-R46: a participant's name links to their page. The kit hands the host the opaque chat user id (the member's Gramps id, the edge
+ * session's sub) and the directory label; `personHref` is PersonName's rule (lib/person-name.jsx): /person/?id=<id> for a Gramps person
+ * id, null (plain text) for anything else. Only the id is read: no email and no name ever enters a URL. The kit applies it where an
+ * anchor is valid (transcript, system rows, the typing and pacing lines, the page heading) and keeps roster rows, docked title bars and
+ * picker rows plain, since a link inside a button is invalid HTML (@io-kit/chat 0.2.0, NameSlots).
+ */
+const chatPersonHref = (participant) => personHref(participant && participant.id);
+
+function App({ client, slot, person, pageHost, popout }) {
   const narrow = !useQuery(PHONE_UP);
   const medium = !useQuery(WIDE_UP);
   const options = useMemo(() => shellOptionsFor({ narrow, medium, navigate: (url) => window.location.assign(url) }), [narrow, medium]);
   const copy = useMemo(() => copyFor({ narrow }), [narrow]);
   return (
-    <ChatProvider client={client} options={options} copy={copy}>
-      <Chrome slot={slot} pageHost={pageHost} popout={popout} />
+    <ChatProvider client={client} options={options} copy={copy} personHref={chatPersonHref}>
+      <Chrome slot={slot} person={person} pageHost={pageHost} popout={popout} />
     </ChatProvider>
   );
 }
@@ -212,7 +272,7 @@ async function start() {
     host.id = "hfy-chat-root";
     host.setAttribute("data-hfy-keep", "");
     document.body.appendChild(host);
-    createRoot(host).render(<App client={client} slot={slotStore()} pageHost={pageHost} popout={isPopout(window.location.search)} />);
+    createRoot(host).render(<App client={client} slot={slotStore()} person={personStore()} pageHost={pageHost} popout={isPopout(window.location.search)} />);
     // The island is running and draws everything from here on.
     offLine()?.remove();
     // After the first render, so the first paint has the snapshot's conversations and a connect does not delay it.

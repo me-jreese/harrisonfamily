@@ -131,7 +131,7 @@ def record_run(con, doc):
 PULL_WINDOW = 5
 PULL_DDL = """
 CREATE TABLE IF NOT EXISTS pulled (run_n INTEGER NOT NULL, class TEXT NOT NULL, handle TEXT NOT NULL, kind TEXT NOT NULL,
-  prepull_json TEXT, at TEXT, PRIMARY KEY (run_n, class, handle));
+  prepull_json TEXT, at TEXT, kept_json TEXT, PRIMARY KEY (run_n, class, handle));
 CREATE TABLE IF NOT EXISTS incidents (class TEXT NOT NULL, handle TEXT NOT NULL, gramps_id TEXT, rule TEXT NOT NULL, seq INTEGER,
   first_seen TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY (class, handle));
 """
@@ -141,6 +141,8 @@ OPEN_CONFLICT_STATES = ("open", "parked")
 
 def ensure_pull_tables(con):
     con.executescript(PULL_DDL)
+    if "kept_json" not in {r[1] for r in con.execute("PRAGMA table_info(pulled)")}:  # a table made before `kept_json` existed
+        con.execute("ALTER TABLE pulled ADD COLUMN kept_json TEXT")
 
 
 def has_table(con, name):
@@ -188,13 +190,16 @@ def load_conflicts(con, states=OPEN_CONFLICT_STATES):
 
 
 def load_pulled(con, pull_n):
-    """{handle: [{run_n, kind, prepull}]}, newest run first, for the last PULL_WINDOW pull runs (and the run in flight)."""
+    """{handle: [{run_n, kind, prepull, kept}]}, newest run first, for the last PULL_WINDOW pull runs (and the run in flight). `kept` is
+    the list of pointers the desktop had edited and not yet pushed when the pull ran ([] for a row made before the column existed)."""
     if not has_table(con, "pulled"):
         return {}
     out = {}
-    for run_n, cls, handle, kind, prepull in con.execute(
-            "SELECT run_n, class, handle, kind, prepull_json FROM pulled WHERE run_n > ? ORDER BY run_n DESC", (pull_n - PULL_WINDOW,)):
-        out.setdefault(handle, []).append({"run_n": run_n, "class": cls, "kind": kind, "prepull": json.loads(prepull) if prepull else None})
+    has_kept = "kept_json" in {r[1] for r in con.execute("PRAGMA table_info(pulled)")}
+    q = "SELECT run_n, class, handle, kind, prepull_json, %s FROM pulled WHERE run_n > ? ORDER BY run_n DESC" % ("kept_json" if has_kept else "NULL")
+    for run_n, cls, handle, kind, prepull, kept in con.execute(q, (pull_n - PULL_WINDOW,)):
+        out.setdefault(handle, []).append({"run_n": run_n, "class": cls, "kind": kind, "prepull": json.loads(prepull) if prepull else None,
+                                           "kept": json.loads(kept) if kept else []})
     return out
 
 
@@ -215,9 +220,39 @@ def load_expunge_holds(con):
     return out
 
 
+def pathless_media(local):
+    """The handles of the Media objects of `local` ({handle: raw object}) that have no file path: where the download held the file."""
+    return frozenset(h for h, o in local.items() if isinstance(o, dict) and o.get("_class") == "Media" and not o.get("path"))
+
+
+def download_holds(con, pathless):
+    """The holds rows (class, handle, path, rule, detail, first_seen) of a media file the download held, whose Media is still in `pathless`.
+
+    Only the pull's download finds these (it reads the bytes), and a later pull does not fetch the file again, so a run that replaces the
+    holds table keeps them (`INSERT OR IGNORE` after its own rows) until the Media has a file of its own or is gone: the window lists
+    them under Held back as long as they stay."""
+    marks = ",".join("?" * len(consts.DOWNLOAD_HOLD_RULES))
+    rows = con.execute("SELECT class, handle, path, rule, detail, first_seen FROM holds WHERE class = 'Media' AND path = '/blob' AND rule IN (%s)" % marks,
+                       consts.DOWNLOAD_HOLD_RULES).fetchall()
+    return [row for row in rows if row[1] in pathless]
+
+
 def load_incidents(con):
     if not has_table(con, "incidents"):
         return []
     cur = con.execute("SELECT class, handle, gramps_id, rule, seq, first_seen, state FROM incidents WHERE state = 'open' ORDER BY class, handle")
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur]
+
+
+def release_event(con, handle):
+    """A person released an event in the Gramps window: its day and month are no longer kept local by the sticky set (BRD2 11.1, PS-02).
+    The handle goes into ``released`` (so no rule puts it back, ``projection.update_birthlike_sticky``) and out of ``birthlike_sticky``."""
+    released = set(meta_json(con, "released", []))
+    released.add(handle)
+    sticky = set(meta_json(con, "birthlike_sticky", []))
+    sticky.discard(handle)
+    set_meta_json(con, "released", sorted(released))
+    set_meta_json(con, "birthlike_sticky", sorted(sticky))
+    con.commit()
+

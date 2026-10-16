@@ -1,4 +1,4 @@
-/* The chat island's skin (HFY-TSK-142): @io-kit/chat 0.1.5 draws everything and reads only --io-chat-* custom properties, which are
+/* The chat island's skin (HFY-TSK-142): @io-kit/chat 0.2.0 draws everything and reads only --io-chat-* custom properties, which are
    defined here as aliases of the harrisonfamily theme (design-system tokens; theme-lint forbids a literal). Presence, the title bar and the
    new-message flash are the three places the kit's neutral system colours must be replaced (kit README, "Known limitations").
 
@@ -113,3 +113,42 @@ html.hfy-chat-convo .hfy-content > main.hfy-page--chat { padding: 0; }
 html.hfy-chat-convo .hfy-content > main.hfy-page--chat ~ footer { display: none; }
 html.hfy-chat-convo .hfy-chat__page { border: 0; border-radius: 0; }
 html.hfy-chat-convo .io-chat-page[data-layout="stack"] .io-chat-composer { padding-block-end: calc(var(--io-chat-gap) + var(--io-shell-safe-bottom)); }
+
+/* ------------------------------------------------------------------------------------------------------------ profile presence */
+/* HFY-TSK-143 (chat.md 10.3): the dot, the state in words and a "chat" button, in the person hero's presence slot. The element carries
+   .io-chat so the --io-chat-* tokens above reach it; the kit's column layout and background are reset for an inline row. */
+.io-chat.hfy-presence {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--io-space-2);
+  margin: 0;
+  background: none;
+  color: var(--io-color-semantic-text-dim);
+}
+.hfy-presence__chat {
+  box-sizing: border-box;
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: thin solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-pill);
+  background: none;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* P2-R46: the kit's participant-name link (a.io-chat-name-link, @io-kit/chat 0.2.0) follows the site's person-name rule (theme/20-base.css
+   a.hfy-person-name): the text's own colour and weight, never underlined in any state, the theme focus ring on keyboard focus. */
+a.io-chat-name-link:is(:link, :visited, :hover, :focus, :active) {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+a.io-chat-name-link:focus-visible {
+  outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
+  outline-offset: var(--io-control-focus-offset);
+}

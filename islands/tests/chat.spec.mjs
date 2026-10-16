@@ -420,6 +420,7 @@ test.describe("375", () => {
     expect(box.height).toBeGreaterThanOrEqual(43.5);
     // the four ordered slots (shell-bar-slots owns them): bell, chat, gear, account; the bell is nobody's here
     expect(await page.locator(".hfy-bar__end > [data-slot]").evaluateAll((els) => els.map((e) => e.getAttribute("data-slot")))).toEqual(["chat", "gear", "account"]);
+    expect(await page.locator(".hfy-bar__end").evaluate((e) => e.getBoundingClientRect().right <= window.innerWidth)).toBe(true); // the end group stays on screen
     await expect(page.getByTestId("io-chat-entry-dot")).toHaveCount(0);
     // an incoming message only lights the dot: no auto-open on a phone (and no panel, no dock)
     pat.say(CONV, "hi from pat");
