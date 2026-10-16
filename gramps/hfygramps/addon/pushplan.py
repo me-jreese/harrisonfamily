@@ -251,10 +251,10 @@ def _guard(op, local_obj, base_row, ranges, retired, max_obj_bytes):
     cls, obj = op["class"], op["obj"]
     gid = obj.get("gramps_id")
     old = base_row["obj"].get("gramps_id") if base_row and not base_row["deleted"] and base_row.get("obj") else None
+    if cls == "Person" and old not in (None, "") and (gid or "") != old:
+        return "renumber_blocked"                         # D35: a person's ID never changes once it is on the website (clearing it counts)
     if cls != "Tag" and gid and old != gid:
         # a create, or an update that gives the object an ID it did not have at the last sync (or changes it)
-        if cls == "Person" and old not in (None, "") and old != gid:
-            return "renumber_blocked"                     # D35: a person's ID never changes once it is on the website
         if in_block(ranges, cls, gid):
             return "reserved_id_block"                    # D26
         if cls == "Person" and gid in retired:

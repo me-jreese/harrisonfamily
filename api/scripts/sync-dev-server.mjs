@@ -21,8 +21,9 @@
 //                            POST /_dev/apply: a batch through applyBatch() as a WEBSITE writer (origin admin by default; self, proposal, ... are accepted), for the scenarios that
 //                            need a cloud-side edit or a cloud-created object (HFY-TSK-206: the Birth retyped to Residence on the web, an ID-less
 //                            person under --id-policy assign). It is the same applyBatch, validator and id policy the real writers use.
-//                            These switches, the presigned PUT/GET store and the token-lifetime knob are reserved for the later scenarios (push
-//                            conflicts, media, step-up, lost-response replay: addon-push, addon-media); the scenarios of this task do not use them.
+//                            addon-push (HFY-TSK-206) uses /_dev/apply, the writes_enabled, seeded and merges_enabled switches, the auth knobs and the
+//                            snapshot half of the presigned store. The media half of the store and the token-lifetime knob are still reserved for
+//                            the later scenarios (addon-media).
 //
 // REQUEST LOG. Every request is appended to <data-dir>/requests.jsonl (--log-file) BEFORE its response is sent, so a test that has the response can
 // grep the log for the request: one JSON object per line with method, path, query, status, the error code, byte counts, the body's sha256 and the

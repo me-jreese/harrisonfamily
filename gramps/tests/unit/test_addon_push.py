@@ -484,6 +484,16 @@ class Destructive(PushCase):
         self.assertEqual(doc["counts"]["blocked"], 1)
         self.assertEqual(self.cloud.heads[h]["gramps_id"], PS.load_fixture()[h]["gramps_id"])
 
+    def test_clearing_a_persons_id_is_a_renumber_and_is_blocked_on_the_client(self):
+        self.seed()
+        h = self.a_person()
+        self.tree.edit(h, lambda o: o.__setitem__("gramps_id", ""))
+        before = len(self.cloud.batches)
+        doc = self.push()
+        self.assertEqual(len(self.cloud.batches), before, "nothing of the person is sent")
+        self.assertEqual(self.rows("SELECT rule FROM holds WHERE handle = ?", h)[0][0], "renumber_blocked")
+        self.assertEqual(doc["counts"]["blocked"], 1)
+
     def test_a_non_person_renumber_pushes_normally(self):
         self.seed()
         ev = next(h for h, hd in sorted(self.cloud.heads.items()) if hd["class"] == "Event")
@@ -674,6 +684,24 @@ class Identity(PushCase):
         self.assertEqual(len(self.cloud.batches), before, "a second change of the id is a renumber and is blocked")
 
 
+class RetryBudget(PushCase):
+    full = True
+
+    def test_a_batch_that_runs_out_of_retries_holds_the_ops_left_and_ends_partial(self):
+        self.seed()
+        people = []
+        for _ in range(1 + consts.MAX_DEAD_BATCH_RETRIES + 1):
+            people.append(self.a_person(not_in=people))
+        for h in people:
+            self.tree.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Edited"))
+        self.cloud.refuse_each = list(people[:1 + consts.MAX_DEAD_BATCH_RETRIES])    # a different op is refused on every attempt
+        doc = self.push()
+        left = people[-1]
+        self.assertEqual(self.cloud.heads[left]["version"], 1, "the op that was never sent")
+        self.assertEqual(self.rows("SELECT rule FROM holds WHERE handle = ?", left)[0][0], "server_refused")
+        self.assertEqual(doc["result"], "partial", doc)
+
+
 class ServerRefusals(PushCase):
     def test_a_privacy_refusal_drops_the_ops_it_names_and_pushes_the_rest(self):  # D24
         self.seed()
@@ -688,6 +716,18 @@ class ServerRefusals(PushCase):
         self.assertEqual(self.rows("SELECT rule FROM holds WHERE handle = ?", a)[0][0], "privacy.test_rule")
         self.assertEqual(self.exit_of(doc)[:2], ("partial", 65))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM outbox WHERE state = 'rejected'")[0][0], 1)
+
+    def test_a_snapshot_address_must_be_https_or_loopback(self):
+        class C:
+            server = "https://sync.test"
+        for bad in ("file:///etc/passwd", "ftp://host/x", "http://snapshots.test/x", "http://127.0.0.1/x", "https:///x", "//host/x"):
+            self.assertFalse(push._allowed_url(C, bad), bad)
+        self.assertTrue(push._allowed_url(C, "https://snapshots.test/x"))
+        C.server = "http://127.0.0.1:9000"
+        self.assertTrue(push._allowed_url(C, "http://127.0.0.1:9000/_s3/x"))
+        self.assertFalse(push._allowed_url(C, "http://evil.test/x"))
+        with self.assertRaises(ValueError):
+            push.download(self.cloud, "file:///etc/passwd")
 
     def test_writes_paused_is_exit_69_before_anything_is_read(self):  # D27
         self.cloud.writes_enabled = False

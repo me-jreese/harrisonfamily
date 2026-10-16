@@ -24,6 +24,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import consts, oauth, keychain, pushplan, pushstate, sidecar, status, transport
@@ -134,8 +135,28 @@ def read_snapshot_bytes(raw, route, tree_id):
     return Snapshot(header["seq"], heads, n)
 
 
+def _allowed_url(client, url):
+    """A snapshot address must be https; plain http only for a loopback host when the configured server is itself loopback (the dev server)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        return False
+    if parts.scheme == "https":
+        return bool(host)
+    if parts.scheme == "http" and host in ("127.0.0.1", "::1", "localhost"):
+        try:
+            base_host = urllib.parse.urlsplit(str(client.server)).hostname or ""
+        except ValueError:
+            return False
+        return base_host in ("127.0.0.1", "::1", "localhost")
+    return False
+
+
 def download(client, url):
     """GET a presigned URL (no Authorization header, no redirect) and return its bytes; raises OSError-like failures as ValueError."""
+    if not _allowed_url(client, url):
+        raise ValueError("the snapshot address is not an allowed one")
     req = urllib.request.Request(url, method="GET", headers={"User-Agent": transport.USER_AGENT})
     try:
         with client.http.opener.open(req, timeout=client.http.timeout) as resp:
@@ -430,6 +451,8 @@ class _Push:
             pushstate.ack_batch(con, key, request, resp.body)
             self._count_pushed(body["ops"])
             return "ok"
+        for op in batch:                                    # the retry budget ran out with ops still unsent: hold them, so the verdict is partial
+            self._hold(op, "server_refused")
         return "ok"
 
     def _hold(self, op, rule, blocked=False, path=""):

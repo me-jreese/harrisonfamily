@@ -73,7 +73,7 @@ class _Opener:
 
     def open(self, req, timeout=None):
         url = req.full_url
-        if not url.startswith("fake://snapshot/"):
+        if not url.startswith("https://snapshots.test/snapshot/"):
             raise OSError("unknown url")
         self.cloud.downloads += 1
         data = self.cloud.snapshot_files.get(url)
@@ -107,6 +107,7 @@ class FakeCloud:
 
     def __init__(self, dbid, tree_id="cloud-tree-1", seeded=False, merges_enabled=False, retired=(), members=None, token=None):
         self.dbid = dbid
+        self.server = "https://sync.test"
         self.tree_id = tree_id
         self.seeded = seeded
         self.merges_enabled = merges_enabled
@@ -130,6 +131,7 @@ class FakeCloud:
         self.meta_overrides = {}    # keys of the handshake to replace (a stale handshake, a missing list)
         self.no_step_up = False     # the server's view of the token: refuse step-up whatever the token claims
         self.refuse_privacy = set()
+        self.refuse_each = []       # one handle per batch attempt: that op is refused (privacy) if the attempt carries it
         self.aliases = []
         self.writes_enabled = True
         self.heartbeats = []
@@ -203,7 +205,7 @@ class FakeCloud:
         sha = hashlib.sha256(body).hexdigest()
         header = (canonical.canonical_json({"type": "header", "tree_id": self.tree_id, "seq": self.seq, "schema": 21, "redaction": 1,
                                             "count": len(heads), "body_sha256": sha}) + "\n").encode("utf-8")
-        url = "fake://snapshot/%d" % self.seq
+        url = "https://snapshots.test/snapshot/%d" % self.seq
         self.snapshot_files[url] = gzip.compress(header + body)
         return {"seq": self.seq, "url": url, "body_sha256": sha, "count": len(heads), "generated_at": "2026-10-14T00:00:00Z"}
 
@@ -282,7 +284,8 @@ class FakeCloud:
         destructive = [o for o in ops if o["op"] in ("delete", "withdraw")]
         if destructive and not self._fresh_step_up() and (any(o["op"] == "delete" for o in destructive) or len(destructive) > 10):
             raise err(403, "step_up_required", {"reason": "delete"})
-        privacy = [o for o in ops if o["handle"] in self.refuse_privacy and o["op"] in ("create", "update")]
+        each = self.refuse_each.pop(0) if self.refuse_each else None
+        privacy = [o for o in ops if (o["handle"] in self.refuse_privacy or o["handle"] == each) and o["op"] in ("create", "update")]
         if privacy:
             raise err(422, "privacy_violation", {"violations": [{"rule": "privacy.test_rule", "class": o["class"], "handle": o["handle"], "pointer": "/x", "op_id": o["op_id"]} for o in privacy]})
         conflicts, bad_block, bad_retired, bad_renumber, bad_merge, bad_taken = [], [], [], [], [], []

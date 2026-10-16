@@ -98,6 +98,7 @@ HOLD_MESSAGES = {
     "gramps_id_retired": "Gramps reused a retired website ID; renumber this new record.",  # catalog D44, verbatim
     "gramps_id_taken": "The website already has another record with this ID; renumber this new record in Gramps.",
     "renumber_blocked": "A person's ID cannot change once it is on the website. Restore the old ID in Gramps.",
+    "server_refused": "The website kept refusing the records in this batch; this one was not sent. Run the push again.",
     "object_too_large": "This record is larger than the website accepts and was not sent.",
     "merge_held": "A person merge is held until the website can re-key what depends on the merged ID. Nothing was sent for it.",
     "merge_member_principal": "The merged-away person is a signed-in family member. Merge the other way: keep this person and merge the other into them.",
