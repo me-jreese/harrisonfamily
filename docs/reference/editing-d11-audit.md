@@ -16,6 +16,8 @@ Each state of each page is measured at 375 and 1024 px wide, by [`islands/tests/
 | No horizontal scroll | `scrollWidth` of the document is no wider than its `clientWidth` |
 | axe clean | axe-core reports no serious or critical violation (minor and moderate findings are not gated) |
 
+The audit is a heuristic, not a full guarantee. The link exemption skips any inline link whose parent has other text; the same-row height check compares only controls in the same flex or grid container whose centres sit within 3 px, so wrapped rows and controls in different containers are not compared.
+
 The pages run for real: the browser talks to the actual API handler over the in-memory DynamoDB fake ([`api/test/edit-e2e-world.js`](../../api/test/edit-e2e-world.js)), seeded with a synthetic tree, so the states on screen are the ones the API produces. Only `/auth`, the flags file and the static people index are stubbed. All names, ids and years are placeholders.
 
 ## Result
