@@ -1,8 +1,12 @@
 """What the Website sync gramplet shows and when it asks (HFY-TSK-278; sync.md 13, phase B). No Gtk here, so it is tested without a window.
 
-The gramplet is read-only with ONE disclosed exception. It reads `status.json` (the last run), the sidecar's `last_pull_seq` (opened
-read-only, so SQLite cannot create or change a file) and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes
-waiting is `head_seq - last_pull_seq`, never below zero. It writes no status.json, no sidecar row, no tree object, no log and creates no
+The gramplet is read-only with ONE disclosed exception. It reads the sidecar's `last_pull_seq` (opened
+read-only, so SQLite cannot create or change a file), its `base` and `runs` tables the same way, and `GET /api/sync/meta` (the website's `head_seq`). The number of website changes
+waiting is the changes after `last_pull_seq` up to `head_seq` that the desktop did not make itself: each of the desktop's own acknowledged
+pushes sits in the sidecar's `base` table at the seq the website gave it, so those seqs are taken off (never below zero). A push of two
+updates with no website edit therefore shows none waiting. "Last sync" is the newest real `pull`, `push` or `sync` row of the
+sidecar's `runs` table; bind, status and check are other actions, and a dry pull or push is marked dry in its row, so none of them moves it, and status.json,
+which every run rewrites, is not used. It writes no status.json, no sidecar row, no tree object, no log and creates no
 Keychain item. The exception: the website rotates the refresh token on every refresh, so when the access token has expired (about once
 an hour of use: one TokenManager is kept for the life of the Model) the rotated refresh token is saved to the Keychain item that
 already exists. This is the same code every run uses. The gramplet never deletes the Keychain item (a refused refresh shows the
@@ -15,12 +19,13 @@ a count or a time, never object content.
 """
 import calendar
 import fcntl
+import json
 import os
 import sqlite3
 import time
 import urllib.parse
 
-from . import consts, keychain, oauth, paths, status, transport
+from . import consts, keychain, oauth, paths, transport
 
 POLL_INTERVAL_S = 300  # the most often the website is asked (sync.md 13.2)
 
@@ -43,6 +48,53 @@ def read_last_pull_seq(tree_paths):
     finally:
         if con is not None:
             con.close()
+
+
+def _read_only(tree_paths):
+    if not os.path.exists(tree_paths.sidecar):
+        return None
+    uri = "file:%s?mode=ro" % urllib.parse.quote(tree_paths.sidecar)
+    try:
+        return sqlite3.connect(uri, uri=True, timeout=2)
+    except sqlite3.Error:
+        return None
+
+
+def read_own_seqs(tree_paths, after, upto):
+    """How many distinct seqs in (after, upto] are the desktop's own acknowledged pushes (rows of `base`); 0 when unreadable."""
+    con = _read_only(tree_paths)
+    if con is None:
+        return 0
+    try:
+        row = con.execute("SELECT COUNT(DISTINCT seq) FROM base WHERE seq > ? AND seq <= ?", (int(after), int(upto))).fetchone()
+        return int(row[0]) if row else 0
+    except (sqlite3.Error, ValueError, TypeError):
+        return 0
+    finally:
+        con.close()
+
+
+def read_last_real_run(tree_paths):
+    """(result, finished_at text) of the newest non-dry pull, push or sync row of the sidecar's `runs` table; (None, None) when there is none.
+
+    A dry run is a row too (its counts_json carries `"dry_run": true`), so the newest few rows are read and the dry ones skipped."""
+    con = _read_only(tree_paths)
+    if con is None:
+        return None, None
+    try:
+        for result, finished, counts in con.execute("SELECT result, finished_at, counts_json FROM runs WHERE action IN ('pull', 'push', 'sync') "
+                                                    "ORDER BY finished_at DESC"):
+            try:
+                dry = bool((json.loads(counts) or {}).get("dry_run"))
+            except (ValueError, TypeError, AttributeError):
+                dry = False
+            if not dry:
+                return result, finished
+        return None, None
+    except sqlite3.Error:
+        return None, None
+    finally:
+        con.close()
 
 
 def run_in_progress(tree_paths):
@@ -95,15 +147,9 @@ class Model:
 
     # -- what is on disk -------------------------------------------------------------------------------------------
     def last_run(self):
-        """(result, finished_at epoch or None) from status.json; (None, None) when there is none or it is damaged."""
-        try:
-            doc = status.read(self.tp)
-        except ValueError:
-            return None, None
-        if not isinstance(doc, dict):
-            return None, None
-        result = doc.get("result")
-        return (result if result in consts.RESULTS else None), parse_utc(doc.get("finished_at"))
+        """(result, finished_at epoch or None) of the last real pull, push or sync (the sidecar's runs table); (None, None) when none."""
+        result, finished = read_last_real_run(self.tp)
+        return (result if result in consts.RESULTS else None), parse_utc(finished)
 
     def bound(self):
         try:
@@ -149,7 +195,7 @@ class Model:
         pulled = read_last_pull_seq(self.tp)
         if self.state != READY or self.head_seq is None or pulled is None:
             return None
-        return max(0, self.head_seq - pulled)
+        return max(0, self.head_seq - pulled - read_own_seqs(self.tp, pulled, self.head_seq))
 
     # -- what to show ----------------------------------------------------------------------------------------------
     def lines(self):

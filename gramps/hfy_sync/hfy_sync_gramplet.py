@@ -46,7 +46,6 @@ class HfySyncGramplet(Gramplet):
         self.model = None
         self._busy = False
         self._lock = threading.Lock()
-        self._connected_db = None
         self.label = Gtk.Label(xalign=0, wrap=True, selectable=False)
         self.button = Gtk.Button(label=_("_Sync..."), use_underline=True)
         self.button.connect("clicked", self._open_tool)
@@ -58,29 +57,43 @@ class HfySyncGramplet(Gramplet):
         box.show_all()
         self.box = box
         self._tick_source = None
-        self._tick_source = GLib.timeout_add_seconds(TICK_S, self._tick)
+        self._start_timer()
 
+    # Gramps 6.0.6 never calls a gramplet's on_close, and "database-changed" is a signal of DbState, not of the database object a
+    # gramplet is handed, so neither is used. Gramps calls db_changed (a tree was opened or closed) and main (the gramplet is
+    # updated); the timer is also stopped by the timer itself: when the gramplet's widgets have left the window it stops ticking.
     def db_changed(self):
         self._reset()
-        if self._connected_db is not self.dbstate.db:  # connect once per database object
-            self._connected_db = self.dbstate.db
-            self.connect(self.dbstate.db, "database-changed", self._reset)
+        self._start_timer()
 
     def _reset(self, *_args):
         with self._lock:
             self.model = None
 
-    def on_close(self):
-        if self._tick_source is not None:
-            GLib.source_remove(self._tick_source)
-            self._tick_source = None
-
     def on_load(self):
         self._reset()
 
     def main(self):
+        self._start_timer()
         self._tick()
         yield False
+
+    def _start_timer(self):
+        if self._tick_source is None:
+            self._tick_source = GLib.timeout_add_seconds(TICK_S, self._on_timer)
+
+    def _stop_timer(self):
+        if self._tick_source is not None:
+            GLib.source_remove(self._tick_source)
+            self._tick_source = None
+
+    def _gone(self):
+        """True when the gramplet has been closed: its widgets are no longer inside a window. (A closed gramplet is detached from the
+        pane; a detached one lives in its own window, which counts as inside.)"""
+        try:
+            return not isinstance(self.box.get_toplevel(), Gtk.Window)
+        except Exception:  # noqa: BLE001 - when in doubt, stop asking
+            return True
 
     def _visible(self):
         try:
@@ -99,6 +112,14 @@ class HfySyncGramplet(Gramplet):
                 self.model = gramplet_model.Model(dbid, factory)
             return self.model
 
+    def _on_timer(self):
+        """The timer's callback: ticks, and ends the timer (returns False) once the gramplet is gone. main() or db_changed restart it."""
+        if self._gone():
+            self._tick_source = None
+            return False
+        self._tick()
+        return True
+
     def _tick(self):
         try:
             model = self._model()
@@ -111,7 +132,6 @@ class HfySyncGramplet(Gramplet):
         except Exception:  # noqa: BLE001 - a gramplet must never take Gramps down
             LOG.error("hfy_sync gramplet tick failed", exc_info=True)
             self._busy = False
-        return True
 
     def _work(self, model, visible):
         try:

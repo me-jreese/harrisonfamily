@@ -57,8 +57,32 @@ class GrampletCase(unittest.TestCase):
         sidecar.create(self.tp.sidecar, {"tree_id": "t", "dbid": DBID, "last_pull_seq": last_pull_seq})
         paths.atomic_write_json(self.tp.config, {"dbid": DBID, "server": "https://example.invalid"})
 
+    def record(self, action="pull", result="ok", age=2 * 86400, dry_run=False, run_id=None, write_status=True):
+        """Logs a run the way the runner does: the sidecar's runs table (not for a dry run) and status.json (always, as every run does)."""
+        doc = status.build(run_id or "R%d" % age + action, action, "cli", DBID, True, result, 0, status.utc_now(self.clock() - age - 1),
+                           status.utc_now(self.clock() - age), dry_run=dry_run)
+        con = sidecar.open_checked(self.tp.sidecar)
+        try:
+            sidecar.record_run(con, doc)
+        finally:
+            con.close()
+        if write_status:
+            status.write(self.tp, doc)
+        return doc
+
     def write_status(self, result="ok", age=2 * 86400):
-        paths.atomic_write_json(self.tp.status, {"result": result, "finished_at": status.utc_now(self.clock() - age)})
+        self.record("pull", result, age)
+
+    def own_push(self, *seqs):
+        """The desktop's own acknowledged push: base rows at the seqs the website gave."""
+        con = sidecar.open_checked(self.tp.sidecar)
+        try:
+            for i, seq in enumerate(seqs):
+                con.execute("INSERT INTO base (class, handle, version, seq, hash, obj_json, deleted) VALUES ('Person', ?, 2, ?, 'h', '{}', 0)",
+                            ("h%d_%d" % (seq, i), seq))
+            con.commit()
+        finally:
+            con.close()
 
     def model(self, client):
         return gramplet_model.Model(DBID, lambda: client, self.env, clock=self.clock)
@@ -95,6 +119,42 @@ class Display(GrampletCase):
         m = self.model(FakeClient())
         m.refresh(True)
         self.assertEqual(m.lines()[1], "Last sync: none yet")
+        self.record("push", "ok", 3600, write_status=False)
+        self.assertEqual(m.lines()[1], "Last sync: ok, 1 hour ago")  # the runs table, not status.json
+
+
+class OwnPushes(GrampletCase):
+    """HFY-TSK-343: the desktop's own pushes are not website changes."""
+
+    def waiting(self, head):
+        m = self.model(FakeClient(head_seq=head))
+        m.refresh(True)
+        return m.waiting(), m.lines()[0]
+
+    def test_a_push_of_two_updates_with_no_website_edit_shows_none(self):
+        self.bind(5)
+        self.own_push(6, 7)  # two updates pushed: the website gave them seqs 6 and 7
+        self.assertEqual(self.waiting(7), (0, "Website: 0 changes waiting"))
+
+    def test_one_website_edit_after_the_push_shows_one(self):
+        self.bind(5)
+        self.own_push(6, 7)
+        self.assertEqual(self.waiting(8), (1, "Website: 1 change waiting"))
+
+    def test_a_website_edit_between_two_pushes_still_counts(self):
+        self.bind(5)
+        self.own_push(6, 8)  # seq 7 was the website's
+        self.assertEqual(self.waiting(8)[0], 1)
+
+    def test_pushes_a_pull_has_taken_in_are_not_taken_off_twice(self):
+        self.bind(7)  # a pull since: last_pull_seq already covers seqs 6 and 7
+        self.own_push(6, 7)
+        self.assertEqual(self.waiting(9)[0], 2)
+
+    def test_never_negative_and_a_store_behind_the_desktop(self):
+        self.bind(5)
+        self.own_push(6, 7, 9)
+        self.assertEqual(self.waiting(7)[0], 0)  # seq 9 is past head: not counted
 
     def test_unbound_tree_does_not_ask(self):
         c = FakeClient()
@@ -102,6 +162,66 @@ class Display(GrampletCase):
         self.assertFalse(m.refresh(True))
         self.assertEqual(c.calls, 0)
         self.assertIn("not bound", m.lines()[0])
+
+
+class LastSync(GrampletCase):
+    """HFY-TSK-343: only real pull, push and sync runs set "Last sync"."""
+
+    def line(self):
+        m = self.model(FakeClient())
+        m.refresh(True)
+        return m.lines()[1]
+
+    def test_a_dry_run_check_does_not_change_it(self):
+        self.bind()
+        self.record("pull", "ok", 2 * 86400)
+        self.record("check", "changes_pending", 30, dry_run=True)
+        self.record("push", "changes_pending", 20, dry_run=True)
+        self.record("pull", "changes_pending", 10, dry_run=True)
+        self.assertEqual(self.line(), "Last sync: ok, 2 days ago")
+
+    def test_a_bind_and_a_status_call_do_not_change_it(self):
+        self.bind()
+        self.record("push", "ok", 3 * 86400)
+        self.record("bind", "ok", 60)
+        self.record("status", "ok", 30)
+        self.assertEqual(self.line(), "Last sync: ok, 3 days ago")
+
+    def test_only_dry_runs_and_binds_means_none_yet(self):
+        self.bind()
+        self.record("bind", "ok", 60)
+        self.record("check", "changes_pending", 30, dry_run=True)
+        self.assertEqual(self.line(), "Last sync: none yet")
+
+    def test_each_real_action_counts(self):
+        for action in ("pull", "push", "sync"):
+            with self.subTest(action=action):
+                self.bind() if not os.path.exists(self.tp.sidecar) else None
+                self.record(action, "partial", 600, run_id="X" + action)
+                self.assertEqual(self.line(), "Last sync: partial, 10 minutes ago")
+                con = sidecar.open_checked(self.tp.sidecar)
+                con.execute("DELETE FROM runs")
+                con.commit()
+                con.close()
+
+    def test_the_newest_real_run_wins(self):
+        self.bind()
+        self.record("pull", "ok", 5 * 86400)
+        self.record("push", "partial", 3600)
+        self.assertEqual(self.line(), "Last sync: partial, 1 hour ago")
+
+    def test_a_dry_run_is_marked_in_its_row_and_is_still_logged(self):
+        self.bind()
+        self.record("push", "changes_pending", 5, dry_run=True)
+        self.record("push", "ok", 50)
+        con = sidecar.open_checked(self.tp.sidecar)
+        try:
+            rows = con.execute("SELECT counts_json FROM runs ORDER BY finished_at DESC").fetchall()
+        finally:
+            con.close()
+        self.assertEqual(len(rows), 2, "every run is a row")
+        self.assertTrue(json.loads(rows[0][0]).get("dry_run"))
+        self.assertNotIn("dry_run", json.loads(rows[1][0]))
 
 
 class SignIn(GrampletCase):
@@ -307,6 +427,142 @@ class Registration(unittest.TestCase):
         self.assertIn('TOOL_ID = "hfy_sync"', src)
         self.assertIn("p.id == TOOL_ID", src)
         self.assertNotIn("BasePluginManager", src)
+
+
+class FakeGtk:
+    """Just enough of gi/Gramps to import hfy_sync_gramplet.py and drive its timer without a window."""
+
+    class Window:
+        pass
+
+    class Widget:
+        def __init__(self, *a, **k):
+            self.top = None
+            self.mapped = True
+
+        def connect(self, *a):
+            pass
+
+        def show_all(self):
+            pass
+
+        def pack_start(self, *a):
+            pass
+
+        def get_toplevel(self):
+            return self.top if self.top is not None else self
+
+        def get_mapped(self):
+            return self.mapped
+
+        def set_text(self, text):
+            self.text = text
+
+
+class Timers:
+    def __init__(self):
+        self.live, self.next_id = {}, 1
+
+    def add(self, seconds, fn, *args):
+        self.live[self.next_id] = (seconds, fn)
+        self.next_id += 1
+        return self.next_id - 1
+
+    def remove(self, source_id):
+        del self.live[source_id]  # a KeyError here is a double remove, as in GLib
+
+
+class GrampletGtk(unittest.TestCase):
+    """HFY-TSK-343: the timer ends with the gramplet, through hooks Gramps 6.0.6 calls (or by itself), and nothing is connected to a signal."""
+
+    def setUp(self):
+        import importlib.util
+        import types
+        self.timers = Timers()
+        glib = types.SimpleNamespace(timeout_add_seconds=self.timers.add, source_remove=self.timers.remove, idle_add=lambda fn, *a: None)
+        gtk = types.SimpleNamespace(Label=FakeGtk.Widget, Button=FakeGtk.Widget, Box=FakeGtk.Widget, Window=FakeGtk.Window,
+                                    Orientation=types.SimpleNamespace(VERTICAL=1))
+        repo = types.ModuleType("gi.repository")
+        repo.GLib, repo.Gtk = glib, gtk
+        gi = types.ModuleType("gi")
+        gi.repository = repo
+
+        class Gramplet:
+            def __init__(self):
+                container = FakeGtk.Widget()
+                container.remove = lambda w: None
+                container.add = lambda w: None
+                self.gui = types.SimpleNamespace(get_container_widget=lambda: container, textview=object())
+                self.connected = []
+                self.dbstate = types.SimpleNamespace(db=None)
+                self.init()
+
+            def connect(self, *a):
+                self.connected.append(a)
+
+        fakes = {"gi": gi, "gi.repository": repo, "gramps": types.ModuleType("gramps"), "gramps.gen": types.ModuleType("gramps.gen"),
+                 "gramps.gen.const": types.SimpleNamespace(GRAMPS_LOCALE=types.SimpleNamespace(translation=types.SimpleNamespace(gettext=lambda t: t)),
+                                                           VERSION="6.0.6"),
+                 "gramps.gen.plug": types.SimpleNamespace(Gramplet=Gramplet)}
+        saved = {k: sys.modules.get(k) for k in fakes}
+        sys.modules.update(fakes)
+
+        def restore():
+            for k, v in saved.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+        self.addCleanup(restore)
+        spec = importlib.util.spec_from_file_location("hfy_sync_gramplet_under_test", os.path.join(REPO, "gramps", "hfy_sync", "hfy_sync_gramplet.py"))
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+        self.g = self.mod.HfySyncGramplet()
+
+    def in_window(self):
+        self.g.box.top = FakeGtk.Window()
+
+    def test_a_timer_runs_while_the_gramplet_is_in_a_window_and_ends_itself_when_it_is_gone(self):
+        self.in_window()
+        self.assertEqual(len(self.timers.live), 1)
+        (sid, (seconds, fn)), = self.timers.live.items()
+        self.assertEqual(seconds, self.mod.TICK_S)
+        self.assertTrue(fn())  # still shown: keeps ticking
+        self.g.box.top = None  # Gramps closed the gramplet: its frame left the window
+        self.assertFalse(fn(), "GLib removes a source whose callback returns False")
+        self.assertIsNone(self.g._tick_source)
+        self.assertEqual(self.g._busy, False)
+
+    def test_no_worker_is_started_once_the_gramplet_is_gone(self):
+        started = []
+        self.mod.threading.Thread = lambda *a, **k: started.append(k) or type("T", (), {"start": lambda self: None})()
+        self.g.box.top = None
+        self.g._on_timer()
+        self.assertEqual(started, [])
+
+    def test_db_changed_and_main_restart_the_timer_once(self):
+        self.in_window()
+        (sid, (_s, fn)), = self.timers.live.items()
+        self.g.box.top = None
+        fn()
+        self.assertEqual(self.timers.live, {sid: self.timers.live[sid]})  # the fake keeps the dead source until it is removed here
+        del self.timers.live[sid]
+        self.g.box.top = FakeGtk.Window()
+        self.g.db_changed()
+        self.g.db_changed()
+        self.assertEqual(len(self.timers.live), 1, "one timer, never two")
+        list(self.g.main())
+        self.assertEqual(len(self.timers.live), 1)
+
+    def test_no_dead_hooks(self):
+        self.assertFalse(hasattr(self.g, "on_close"))
+        self.g.dbstate.db = object()
+        self.g.db_changed()
+        self.assertEqual(self.g.connected, [], "database-changed is a DbState signal: the gramplet connects nothing")
+        with open(os.path.join(REPO, "gramps", "hfy_sync", "hfy_sync_gramplet.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertNotIn("def on_close", src)
+        self.assertNotIn('"database-changed"', src.replace("# ", "").split("def db_changed")[1] if "def db_changed" in src else "")
 
 
 class Ago(unittest.TestCase):
