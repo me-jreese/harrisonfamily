@@ -191,7 +191,7 @@ class LaneShape(unittest.TestCase):
             with open(os.path.join(E2E, name), encoding="utf-8") as fh:
                 tree = ast.parse(fh.read(), name)
             imported = set()
-            for node in ast.walk(tree):
+            for node in tree.body:  # module level only: a scenario may import the bundle's package lazily, inside a test, once run.sh has set it up
                 if isinstance(node, ast.Import):
                     imported.update(a.name.split(".")[0] for a in node.names)
                 elif isinstance(node, ast.ImportFrom) and node.module:

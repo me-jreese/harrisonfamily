@@ -55,7 +55,7 @@ def describe_run(doc):
     lines = [_("Result: %(result)s.") % {"result": doc.get("result", "")}]
     lines.append(_("From the website: %(c)d new, %(u)d changed, %(d)d deleted.") % {
         "c": pulled.get("create", 0), "u": pulled.get("update", 0), "d": pulled.get("delete", 0)})
-    lines.append(_("Waiting to go to the website: %(n)d (this build cannot push yet).") % {"n": c.get("push_pending", 0)})
+    lines.append(_("Waiting to go to the website: %(n)d (hfy-sync push sends them).") % {"n": c.get("push_pending", 0)})
     lines.append(_("Open conflicts: %(n)d. Held back: %(b)d. Privacy incidents: %(i)d.") % {
         "n": c.get("conflicts_open", 0), "b": c.get("blocked", 0), "i": c.get("privacy_incidents", 0)})
     error = doc.get("error") or {}
