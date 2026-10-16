@@ -2083,12 +2083,12 @@ __name(createSessionVerifier, "createSessionVerifier");
 var SERVICE_TOKEN = { iss: "hfy-chat", aud: "hfy-api/chat", sub: "chat-hub", ttlSeconds: 60, defaultKid: "hfy-chat-1" };
 var cached = null;
 async function importServiceKey(secret) {
-  const digest = toB64u(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder3.encode(secret))));
-  if (cached?.digest === digest)
+  const digest2 = toB64u(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder3.encode(secret))));
+  if (cached?.digest === digest2)
     return cached.key;
   const body = secret.replace(/-----(BEGIN|END)[A-Z ]*-----/g, "").replace(/\s+/g, "");
   const key = crypto.subtle.importKey("pkcs8", fromB64u(body.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-  const entry = { digest, key };
+  const entry = { digest: digest2, key };
   cached = entry;
   key.catch(() => {
     if (cached === entry)
@@ -3332,6 +3332,49 @@ function scanText(text, opts = {}) {
 }
 __name(scanText, "scanText");
 
+// src/admin.mjs
+var ADMIN_PATH = "/chat/v1/admin/expunge";
+var HUB_ADMIN_PATH = "/admin/expunge";
+var MIN_TOKEN_CHARS = 32;
+var MAX_BODY_CHARS = 1024;
+var CONV_RE = /^(?:dm:[A-Za-z0-9_-]{1,64}:[A-Za-z0-9_-]{1,64}|g:[A-Za-z0-9]{1,40})$/;
+var MAX_SEQ = 2147483647;
+var json3 = /* @__PURE__ */ __name((status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } }), "json");
+function adminConfigured(env) {
+  return typeof env?.CHAT_ADMIN_TOKEN === "string" && env.CHAT_ADMIN_TOKEN.length >= MIN_TOKEN_CHARS;
+}
+__name(adminConfigured, "adminConfigured");
+async function digest(text) {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+}
+__name(digest, "digest");
+async function bearerOk(request, env) {
+  if (!adminConfigured(env)) return false;
+  const m = /^Bearer ([\x21-\x7e]{1,512})$/.exec(request.headers.get("authorization") ?? "");
+  if (!m) return false;
+  const [a, b] = await Promise.all([digest(m[1]), digest(env.CHAT_ADMIN_TOKEN)]);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < a.length && i < b.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+__name(bearerOk, "bearerOk");
+function parseBody(text) {
+  if (typeof text !== "string" || text.length === 0 || text.length > MAX_BODY_CHARS) return null;
+  let v;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+  const keys = Object.keys(v);
+  if (keys.length !== 2 || !keys.includes("conv") || !keys.includes("seq")) return null;
+  if (typeof v.conv !== "string" || !CONV_RE.test(v.conv)) return null;
+  if (!Number.isSafeInteger(v.seq) || v.seq < 1 || v.seq > MAX_SEQ) return null;
+  return { conv: v.conv, seq: v.seq };
+}
+__name(parseBody, "parseBody");
+
 // src/common.mjs
 var WS_PATH = "/chat/ws";
 var HEALTH_PATH = "/chat/v1/health";
@@ -3339,7 +3382,6 @@ function contactGuard(text) {
   return scanText(text).map((hit) => [hit.start, hit.end, hit.kind]);
 }
 __name(contactGuard, "contactGuard");
-var json3 = /* @__PURE__ */ __name((status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } }), "json");
 function ownRequest(request) {
   const path = new URL(request.url).pathname;
   if (request.method !== "GET") return false;
@@ -3347,6 +3389,27 @@ function ownRequest(request) {
   return path === WS_PATH && request.headers.get("upgrade")?.toLowerCase() === "websocket";
 }
 __name(ownRequest, "ownRequest");
+function adminRequest(request, env) {
+  return request.method === "POST" && new URL(request.url).pathname === ADMIN_PATH && adminConfigured(env);
+}
+__name(adminRequest, "adminRequest");
+async function handleAdmin(request, env) {
+  if (!await bearerOk(request, env)) return json3(401, { error: "unauthorized" });
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (declared > MAX_BODY_CHARS * 4) return json3(413, { error: "too_large" });
+  const body = await request.text();
+  if (body.length > MAX_BODY_CHARS) return json3(413, { error: "too_large" });
+  const id = env.CHAT_HUB.idFromName(HUB_NAME);
+  const hub = env.CHAT_HUB.get(id, { locationHint: env.CHAT_LOCATION_HINT ?? HUB_LOCATION_HINT });
+  return hub.fetch(
+    new Request(`https://chat-hub.internal${HUB_ADMIN_PATH}`, {
+      method: "POST",
+      headers: { authorization: request.headers.get("authorization"), "content-type": "application/json" },
+      body
+    })
+  );
+}
+__name(handleAdmin, "handleAdmin");
 function passThrough(request, env) {
   if (env && env.CHAT_PASSTHROUGH === "off") return json3(404, { error: "not_found" });
   return fetch(request);
@@ -3354,14 +3417,96 @@ function passThrough(request, env) {
 __name(passThrough, "passThrough");
 function makeHandler(workerFor) {
   return /* @__PURE__ */ __name(async function fetchHandler(request, env, ctx) {
+    if (adminRequest(request, env)) return handleAdmin(request, env);
     if (!ownRequest(request)) return passThrough(request, env);
     return workerFor(env).fetch(request, env, ctx);
   }, "fetchHandler");
 }
 __name(makeHandler, "makeHandler");
 
+// src/expunge.mjs
+function installReads(hub, sql) {
+  const store = hub.store;
+  const core = hub.core;
+  if (typeof store?.visible !== "function" || typeof store?.archiveBatches !== "function" || typeof core?.toMsg !== "function") {
+    throw new Error("expunge: the kit's hub no longer has store.visible, store.archiveBatches or core.toMsg");
+  }
+  const mark = /* @__PURE__ */ __name((conv, rows) => {
+    const cand = rows.filter((r) => r.kind === "msg" && (r.text === "" || r.text === null));
+    if (cand.length === 0) return rows;
+    const lo = Math.min(...cand.map((r) => r.seq));
+    const hi = Math.max(...cand.map((r) => r.seq));
+    const gone = new Set(
+      sql.exec("SELECT seq FROM msg WHERE conv = ? AND kind = 'msg' AND text IS NULL AND seq BETWEEN ? AND ?", conv, lo, hi).toArray().map((r) => Number(r.seq))
+    );
+    for (const r of cand) {
+      if (gone.has(r.seq)) {
+        r.text = null;
+        r.expunged = true;
+      }
+    }
+    return rows;
+  }, "mark");
+  const visible = store.visible.bind(store);
+  store.visible = (uid, conv, q) => mark(conv, visible(uid, conv, q));
+  const batches = store.archiveBatches.bind(store);
+  store.archiveBatches = (maxMsgs, maxConvs) => {
+    const out = batches(maxMsgs, maxConvs);
+    for (const b of out) mark(b.conv.id, b.msgs);
+    return out;
+  };
+  const toMsg = core.toMsg.bind(core);
+  core.toMsg = (row) => row.kind === "msg" && row.expunged === true ? { conv: row.conv, seq: row.seq, cmid: row.cmid, from: row.from, ts: row.ts, kind: "msg", text: null, expunged: true } : toMsg(row);
+}
+__name(installReads, "installReads");
+async function settleArchive(server) {
+  for (let i = 0; i < 5 && server?.archiving; i++) {
+    try {
+      await server.archiving;
+    } catch {
+    }
+  }
+}
+__name(settleArchive, "settleArchive");
+function withExpunge(Base) {
+  return class extends Base {
+    #ctx;
+    #env;
+    constructor(...args) {
+      super(...args);
+      this.#ctx = args[0];
+      this.#env = args[1] ?? {};
+      installReads(this, this.#ctx.storage.sql);
+    }
+    async fetch(request) {
+      if (new URL(request.url).pathname === HUB_ADMIN_PATH) return this.#admin(request);
+      return super.fetch(request);
+    }
+    async #admin(request) {
+      if (!await bearerOk(request, this.#env)) return adminConfigured(this.#env) ? json3(401, { error: "unauthorized" }) : json3(404, { error: "not_found" });
+      if (request.method !== "POST") return json3(405, { error: "method_not_allowed" });
+      const text = await request.text();
+      if (text.length > MAX_BODY_CHARS) return json3(413, { error: "too_large" });
+      const ref = parseBody(text);
+      if (!ref) return json3(400, { error: "bad_request" });
+      await this.ready;
+      await settleArchive(this.server);
+      const sql = this.#ctx.storage.sql;
+      const nulled = this.#ctx.storage.transactionSync(() => {
+        const row = sql.exec("SELECT kind, text FROM msg WHERE conv = ? AND seq = ?", ref.conv, ref.seq).toArray()[0];
+        if (!row) return null;
+        if (row.kind !== "msg" || row.text === null || row.text === void 0) return 0;
+        sql.exec("UPDATE msg SET text = NULL WHERE conv = ? AND seq = ? AND kind = 'msg'", ref.conv, ref.seq);
+        return 1;
+      });
+      return nulled === null ? json3(404, { error: "not_found" }) : json3(200, { nulled });
+    }
+  };
+}
+__name(withExpunge, "withExpunge");
+
 // src/index.mjs
-var ChatHub2 = chatHubClass({ contactGuard });
+var ChatHub2 = withExpunge(chatHubClass({ contactGuard }));
 var worker = createChatWorker();
 var index_default = { fetch: makeHandler(() => worker) };
 export {

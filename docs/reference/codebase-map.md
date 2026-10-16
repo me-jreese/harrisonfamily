@@ -378,7 +378,8 @@ Paths:
 
 - [`chat-worker/wrangler.toml`](../../chat-worker/wrangler.toml): the `ChatHub` Durable Object binding, migration `v1` (`new_sqlite_classes`), the two routes (`<site>/chat/ws*` and `<site>/chat/v1/*`), the vars, observability off, and `[env.staging]`.
 - [`chat-worker/src/index.mjs`](../../chat-worker/src/index.mjs): the production entry. It wires `@io-kit/chat/cloudflare` (`chatHubClass`, `createChatWorker`) with [`shared/privacy-guard.mjs`](../../shared/privacy-guard.mjs) as the hub's `contactGuard`.
-- [`chat-worker/src/common.mjs`](../../chat-worker/src/common.mjs): the guard adapter and the front door that answers only the upgrade on `/chat/ws` and `GET /chat/v1/health`, and sends everything else on with `fetch(request)`.
+- [`chat-worker/src/common.mjs`](../../chat-worker/src/common.mjs): the guard adapter and the front door that answers only the upgrade on `/chat/ws`, `GET /chat/v1/health` and (when `CHAT_ADMIN_TOKEN` is set) `POST /chat/v1/admin/expunge`, and sends everything else on with `fetch(request)`.
+- [`chat-worker/src/admin.mjs`](../../chat-worker/src/admin.mjs) and [`chat-worker/src/expunge.mjs`](../../chat-worker/src/expunge.mjs): `POST /chat/v1/admin/expunge` (HFY-TSK-337), the bearer-token check and body parser shared by the Worker and the hub, and the `withExpunge` mixin that nulls one message's text in the hub and makes later reads show it as removed. Closed unless the `CHAT_ADMIN_TOKEN` secret is set.
 - [`chat-worker/src/staging.mjs`](../../chat-worker/src/staging.mjs): the staging entry only (a test JWKS and a stand-in API). It is not part of `dist/`.
 - [`chat-worker/dist/`](../../chat-worker/dist/): the committed bundle (`index.js`) and `deploy.json` (bindings, migration, compatibility date, vars, routes) that the `cloudflare-worker` target of `@io-kit/ci` uploads.
 - [`chat-worker/scripts/`](../../chat-worker/scripts/): `build.mjs` (build and `--check`), `staging-keys.mjs` and `staging-deploy.mjs`.

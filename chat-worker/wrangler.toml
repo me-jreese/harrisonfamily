@@ -6,7 +6,9 @@
 #     package at CI time (HFY-R14). `npm run check` fails when dist/ is stale.
 #   - CI uploads dist/ with curl and the scoped token (the cloudflare-worker target of @io-kit/ci). It verifies the routes
 #     read-only and never creates them: the two routes below are created once by the orchestrator.
-#   - Secrets are never in this file. CHAT_SERVICE_PRIVATE_KEY is set once with `wrangler secret put`; CI keeps it.
+#   - Secrets are never in this file. CHAT_SERVICE_PRIVATE_KEY is set once with `wrangler secret put`; CI keeps it. CHAT_ADMIN_TOKEN
+#     (the bearer token of POST /chat/v1/admin/expunge, HFY-TSK-337) is a second, separate secret set the same way; without it that
+#     route does not exist. It is never the service key and never a member session.
 #   - Nothing here sets CHAT_WORKER_VERSION: CI injects the commit sha at upload, so the bundle is unchanged between merges.
 name = "hfy-chat-worker"
 main = "src/index.mjs"
