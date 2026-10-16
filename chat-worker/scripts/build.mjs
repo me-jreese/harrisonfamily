@@ -72,6 +72,8 @@ async function build(out) {
     if (rel === "README.md" || rel.endsWith(".map")) continue; // wrangler's own notes and sourcemaps are not uploaded
     files[rel] = readFileSync(f);
   }
+  // The sourcemap is not uploaded, so the bundle must not point at it.
+  if (files[MAIN]) files[MAIN] = Buffer.from(files[MAIN].toString("utf8").replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, "\n"));
   if (!files[MAIN]) throw new Error(`wrangler produced no ${MAIN} (got ${Object.keys(files).join(", ")})`);
   const d = await deployDescriptor();
   d.bundle = { file: MAIN, sha256: sha256(files[MAIN]) };

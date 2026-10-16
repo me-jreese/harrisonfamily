@@ -4,6 +4,14 @@ The chat Worker answers two paths on the site's host, `/chat/ws*` and `/chat/v1/
 
 Values in angle brackets are placeholders. The forms are listed in [Private data and secrets](../reference/private-data-and-secrets.md#placeholders).
 
+## Open steps that need io's go-ahead
+
+These are not done, and nothing here claims them:
+
+1. **Smoke against a deployed staging Worker.** The smoke passes 14 of 14 under local `wrangler dev`. Run `npm run staging:deploy`, then `node test/smoke.mjs --url https://hfy-chat-worker-staging.<account-subdomain>.workers.dev`. Needs a Cloudflare login.
+2. **Archive mirror writes `CHAT#` items with no `ttl`.** Needs a staging Worker whose `API_BASE` points at a stack that trusts the staging service key, then a DynamoDB sample. Depends on the hfy-api archive route (HFY-TSK-164) being deployed there.
+3. **A CodeArtifact-free staleness check for `dist/`.** CI cannot run `npm run check` (the install needs CodeArtifact), so a change to `shared/privacy-guard.mjs` or `src/` can merge with a stale `dist/`. Follow-up: record a hash of the bundled inputs and compare it in CI, or run `npm run check` in a path that has a token.
+
 ## Before you start
 
 - **Chat ships dark.** The island flag `chatV1` stays `false`, and the Worker's `CHAT_OPEN_TO` is `uat` with an empty `CHAT_UAT_SUBJECTS`, so nobody can connect until a committed change names them. Nothing on this page changes who can chat.
@@ -51,7 +59,7 @@ npm test
 | File | What it pins |
 | --- | --- |
 | `bundle.test.mjs` | `deploy.json` and `wrangler.toml`: every Durable Object class is in `new_sqlite_classes` (no key-value class, rename or delete), exactly the two routes, observability off, a staging Worker with its own name and test JWKS, no timer (`setTimeout`, `setInterval`) in the bundle, a tagged `acceptWebSocket` and a registered `setWebSocketAutoResponse`, one text-free log line, exact pins and a clean lockfile. |
-| `worker.test.mjs` | The upgrade checks (exact `Origin`, then the kill switch, the session, the UAT list, each as a close code); the Durable Object is handed a new `Request` with only `x-chat-uid` and `x-chat-exp` plus the handshake headers, never the `Cookie`; the first `get()` carries `locationHint: "wnam"`; every other request on the routes goes on with `fetch(request)`; no header or cookie reaches the console. |
+| `worker.test.mjs` | The upgrade checks (exact `Origin`, then the kill switch, the session, the UAT list, each as a close code); the Durable Object is handed a new `Request` whose identity headers are only `x-chat-uid` and `x-chat-exp`, plus the WebSocket handshake headers the kit needs (`Upgrade`, `Connection`, `Sec-WebSocket-*`), never the `Cookie` or `Authorization`; the first `get()` carries `locationHint: "wnam"`; every other request on the routes goes on with `fetch(request)`; no header or cookie reaches the console. |
 | `hub.test.mjs` | The hub on a fake `DurableObjectState` with SQLite: the socket tag, the auto-response, no timers across connect, send, close and the alarm, and no frame text on the console, failures included. |
 | `guard.test.mjs` | [`shared/privacy-guard.mjs`](../../shared/privacy-guard.mjs) as the bundle carries it, against [`shared/privacy-guard.vectors.json`](../../shared/privacy-guard.vectors.json), and through the hub (`CONTACT_INFO`). |
 
@@ -81,7 +89,7 @@ Staging is the production wiring in a separate Worker, `hfy-chat-worker-staging`
    npm run staging:deploy
    ```
 
-   It makes `chat-worker/.staging/keys.json` when absent (an RSA pair for test cookies and an ES256 service key; the directory is ignored by Git), deploys with the public JWKS as a var and the commit sha as `CHAT_WORKER_VERSION`, and sets the staging service key as a Worker secret. `--dry-run` builds the staging bundle and prints the command with the key material left out.
+   It makes `chat-worker/.staging/keys.json` when absent (an RSA pair for test cookies and an ES256 service key; the directory is ignored by Git), deploys with the public JWKS as a var and the commit sha as `CHAT_WORKER_VERSION`, and sets the staging service key as a Worker secret in the same deploy (`--secrets-file`, a temporary file in `.staging/` removed afterwards), so the Worker is never live without its key. `--dry-run` builds the staging bundle and prints the command with the key material left out.
 3. Smoke it, with the host `wrangler` printed:
 
    ```sh
@@ -92,14 +100,18 @@ Staging is the production wiring in a separate Worker, `hfy-chat-worker-staging`
 
 The stand-in API stores nothing. To check that the archive mirror writes `CHAT#` items with no `ttl`, point `API_BASE` of the staging env at a stack that trusts the staging service key (its public half is in `.staging/keys.json`, as `ChatServicePublicKeys` expects) and sample the items in DynamoDB. That needs an app-stack change and io's go-ahead.
 
+## Design versus task conflict: non-upgrade GET /chat/ws
+
+The design (`chat.md` section 6 and its test list) says a non-upgrade `GET /chat/ws` answers `426 {error: upgrade_required}`. The task's acceptance criteria say every request that is not the upgrade or the health check goes on to the origin with `fetch(request)`. The Worker follows the acceptance criteria: only the upgrade is the hub's, and the kit's own 426 is never reached from the Worker. The `chat.md` owner should reconcile the design text (the test list at the 426 line) with this behaviour.
+
 ## What the settings do
 
 | Setting | Where | Meaning |
 | --- | --- | --- |
 | `CHAT_ENABLED` | `[vars]` | `"1"` serves chat. Anything else is the kill switch: every upgrade closes `4503`. |
-| `CHAT_OPEN_TO`, `CHAT_UAT_SUBJECTS` | `[vars]` | `uat` lets only the listed Gramps ids connect, appear in the directory or receive pushes. `all` opens chat to every eligible member. |
+| `CHAT_OPEN_TO`, `CHAT_UAT_SUBJECTS` | `[vars]` | `uat` lets only the listed Gramps ids connect, appear in the directory or receive pushes. `all` opens chat to every eligible member. The UAT list is set only by a committed change to `wrangler.toml` followed by a rebuild of `dist/`; never set it in the Cloudflare dashboard or by an upload that keeps other bindings, because the CI upload replaces vars with the ones in `dist/deploy.json`. |
 | `CHAT_LOCATION_HINT` | `[vars]` | `wnam`. Every hub object is created with it. An unhinted object landed in London in the spike. |
-| `CHAT_WORKER_VERSION` | injected at upload | What `GET /chat/v1/health` reports. Not in `wrangler.toml` or `deploy.json`. |
+| `CHAT_WORKER_VERSION` | injected at upload | What `GET /chat/v1/health` reports. Not in `wrangler.toml` or `deploy.json`. The health route is unauthenticated and its body is exactly `{ok, version, protocol}`: the deployed commit sha and the protocol number, no env value (a test pins the key set). The first-deploy check compares the sha with the commit. |
 | `CHAT_SERVICE_PRIVATE_KEY` | Worker secret | The ES256 key the hub signs its calls to hfy-api with. Never in the repository; CI keeps it across uploads. |
 | `CHAT_PASSTHROUGH` | staging `[vars]` | `off` answers 404 to a request the Worker does not own, because workers.dev has no origin behind it. Unset in production, where such a request goes on to CloudFront with `fetch(request)`. |
 | `[observability]` | `wrangler.toml` | Off. A platform log can record request headers, and a header can carry the session cookie. The hub's own log lines carry event names and counts only. |

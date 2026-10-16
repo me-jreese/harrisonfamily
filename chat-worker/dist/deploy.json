@@ -39,6 +39,6 @@
   "workers_dev": false,
   "bundle": {
     "file": "index.js",
-    "sha256": "aedbca2894dce49a213c2f7486b1e5d327eeedb25d81272af8d4ab988498b42e"
+    "sha256": "82acedb3a686d47ba3d9dfc0fa6df09e520105377b8c35dcd313c10d9d7085ad"
   }
 }

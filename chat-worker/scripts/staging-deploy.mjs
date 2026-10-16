@@ -4,11 +4,12 @@
 //
 //   node scripts/staging-deploy.mjs [--dry-run]
 //
-// It makes .staging/keys.json when absent (npm run staging:keys), deploys with the public JWKS as a var, then sets the staging
-// service key as a Worker secret. The private halves never leave .staging/ except into that one secret. --dry-run builds the
+// It makes .staging/keys.json when absent (npm run staging:keys) and deploys with the public JWKS as a var and the staging
+// service key as a Worker secret in the same deploy (--secrets-file), so the Worker never runs without its key. The private
+// halves never leave .staging/ except into that one secret; the temporary secrets file is removed afterwards. --dry-run builds the
 // bundle and prints the command with the key material left out.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KEYS_FILE, makeStagingKeys } from "./staging-keys.mjs";
@@ -25,14 +26,19 @@ if (!existsSync(KEYS_FILE)) {
 const keys = JSON.parse(readFileSync(KEYS_FILE, "utf8"));
 const sha = spawnSync("git", ["rev-parse", "--short=12", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "staging";
 
+const SECRETS_FILE = join(dirname(KEYS_FILE), "secrets.json");
 const deploy = ["deploy", "--env", "staging", "--var", `TEST_JWKS:${JSON.stringify(keys.jwks)}`, "--var", `SESSION_ISSUER:${keys.issuer}`,
-  "--var", `SESSION_AUDIENCE:${keys.audience}`, "--var", `CHAT_WORKER_VERSION:${sha}`, ...(dry ? ["--dry-run", "--outdir", join(root, ".staging", "dry")] : [])];
+  "--var", `SESSION_AUDIENCE:${keys.audience}`, "--var", `CHAT_WORKER_VERSION:${sha}`,
+  ...(dry ? ["--dry-run", "--outdir", join(root, ".staging", "dry")] : ["--secrets-file", SECRETS_FILE])];
 console.log(`wrangler ${deploy.map((a) => (a.startsWith("{") ? "<jwks>" : a)).join(" ")}`);
-const d = spawnSync(wrangler, deploy, { cwd: root, stdio: "inherit", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
-if (d.status !== 0) process.exit(d.status ?? 1);
-if (dry) process.exit(0);
-
-const secret = spawnSync(wrangler, ["secret", "put", "CHAT_SERVICE_PRIVATE_KEY", "--env", "staging"], {
-  cwd: root, input: keys.servicePrivatePem, stdio: ["pipe", "inherit", "inherit"], env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
-});
-process.exit(secret.status ?? 1);
+if (!dry) writeFileSync(SECRETS_FILE, `${JSON.stringify({ CHAT_SERVICE_PRIVATE_KEY: keys.servicePrivatePem })}\n`, { mode: 0o600 });
+let status;
+try {
+  status = spawnSync(wrangler, deploy, { cwd: root, stdio: "inherit", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } }).status;
+} finally {
+  rmSync(SECRETS_FILE, { force: true });
+}
+if (status !== 0) {
+  console.error("staging deploy failed: the Worker may be missing or still on its previous version; the service key is set only by a successful deploy");
+  process.exit(status ?? 1);
+}

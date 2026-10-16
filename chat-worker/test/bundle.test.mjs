@@ -89,8 +89,14 @@ test("the production bundle holds no staging code and no test stand-in", () => {
 });
 
 test("the bundle logs through one text-free line only", () => {
-  const calls = bundle.split("\n").filter((l) => /\bconsole\.\w+\(/.test(l));
-  assert.deepEqual(calls.map((l) => l.trim()), ["console.log(JSON.stringify({ event, ...fields }));"], "any other console use must be reviewed against PS-16");
+  // Static, deliberately loose: every use of the `console` identifier, wherever it sits on a line. The runtime console spies
+  // in worker.test.mjs and hub.test.mjs are the authoritative PS-16 check; this only catches a new logging site early.
+  const uses = [...bundle.matchAll(/\bconsole\b\s*(\.\s*\w+)?/g)].map((m) => (m[1] ?? "<bare>").replace(/\s+/g, ""));
+  assert.deepEqual(uses, [".log"], "any other console use (another method, an alias, a bare reference) must be reviewed against PS-16");
+});
+
+test("the bundle does not point at a sourcemap that is never uploaded", () => {
+  assert.ok(!/sourceMappingURL/.test(bundle));
 });
 
 test("the entry wires the shared R-18 guard, not a copy", () => {
