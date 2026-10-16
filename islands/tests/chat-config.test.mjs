@@ -11,7 +11,7 @@ import { PAGES } from "../heads.mjs";
 import { COPY_EXTRA } from "../copy.mjs";
 import {
   CLIENT_OPTIONS, CONVERSATION_OPTIONS, SHELL_OPTIONS, STORAGE_KEY, chatUrl, convFromSearch, copyFor, expSeconds, isMobileAgent, isPopout, noticeLine,
-  outboxName, shellOptionsFor, snapshotKey,
+  outboxName, shellOptionsFor, signInHref, snapshotKey,
 } from "../src/lib/chat-config.js";
 import { contactGuard } from "../src/lib/chat-guard.js";
 import { contactGuard as workerGuard } from "../../chat-worker/src/common.mjs";
@@ -127,6 +127,37 @@ test("storage names carry the user id, and a refused or halted connection has it
   assert.equal(expSeconds({ exp: 1800000000000 }), 1800000000);
   assert.equal(expSeconds({}), undefined);
   assert.equal(expSeconds(null), undefined);
+});
+
+test("the signed-out gate returns to a same-origin path: ?c= kept, ?popout= dropped, always encoded", () => {
+  assert.equal(signInHref({ pathname: "/chat/", search: "" }), "/auth/login?returnTo=%2Fchat%2F");
+  assert.equal(signInHref({ pathname: "/chat/", search: "?c=dm%3AI9001%3AI9002" }), "/auth/login?returnTo=%2Fchat%2F%3Fc%3Ddm%253AI9001%253AI9002");
+  assert.equal(signInHref({ pathname: "/chat/", search: "?popout=1&c=g1" }), "/auth/login?returnTo=%2Fchat%2F%3Fc%3Dg1");
+  assert.equal(signInHref({ pathname: "/chat/", search: "?popout=1" }), "/auth/login?returnTo=%2Fchat%2F");
+  // nothing here can build an absolute or protocol-relative target: the value always starts with the page's own path
+  assert.match(signInHref({ pathname: "/chat/", search: "?c=//evil.example" }), /^\/auth\/login\?returnTo=%2Fchat%2F/);
+});
+
+test("sign-out erases a session's chat state: forgetEdgeSession purges hfy:chat:* storage and the outbox, and the island erases its client", () => {
+  const js = read("11ty", "js", "feature-flags.js");
+  assert.match(js, /featureAPI\.purgeChatState = purgeChatState;/);
+  assert.match(js, /forgetEdgeSession\(\) \{\s*purgeChatState\(\);/);
+  assert.match(js, /const CHAT_KEY_PREFIX = "hfy:chat:";/);
+  assert.match(js, /const CHAT_OUTBOX_PREFIX = "hfy:chat:outbox:";/);
+  assert.ok(js.includes('new Event("hfy:signout")'));
+  // the prefixes are the island's own names
+  assert.ok(snapshotKey("U").startsWith("hfy:chat:") && outboxName("U").startsWith("hfy:chat:outbox:") && `${STORAGE_KEY}:panel`.startsWith("hfy:chat:"));
+  const isl = readFileSync(join(islandsDir, "src", "islands", "chat.jsx"), "utf8");
+  assert.match(isl, /addEventListener\("hfy:signout"[^]*client\.signOut\(\)/);
+  assert.match(isl, /flags\.purgeChatState\?\.\(\)/);
+});
+
+test("the island keeps /chat/'s placeholder until the client is built, and says so when it cannot start", () => {
+  const isl = readFileSync(join(islandsDir, "src", "islands", "chat.jsx"), "utf8");
+  const start = isl.slice(isl.indexOf("async function start()"));
+  assert.ok(start.indexOf("buildClient(") < start.lastIndexOf("offLine()?.remove()"), "on the signed-in path the placeholder goes only after the client is built");
+  assert.match(start, /catch \(err\) \{[^}]*showUnavailable\(\)/);
+  assert.match(isl, /resolveCopy\(\)\.unavailable/);
 });
 
 // --------------------------------------------------------------------------------------------------- R-18, one detector

@@ -21,7 +21,7 @@ export function chatHub({ people = PEOPLE, core: coreOptions = {} } = {}) {
   const core = new ChatCore({ store, sockets: new MemorySocketTable(), contactGuard, ...coreOptions });
   core.applyDirectory(people, Date.now());
   const ends = new Map(); // socket id -> { send(text), close(code, reason) }
-  const log = { sockets: 0, frames: [] }; // every client frame the hub decoded, with the user: what the page really sent
+  const log = { sockets: 0, frames: [], live: 0, maxLive: 0, closed: 0 }; // every client frame the hub decoded, with the user: what the page really sent
   let n = 0;
   const deliver = (fx) => {
     for (const e of fx) {
@@ -58,9 +58,12 @@ export function chatHub({ people = PEOPLE, core: coreOptions = {} } = {}) {
       await page.routeWebSocket(/\/chat\/ws/, (ws) => {
         log.upgrades = (log.upgrades ?? 0) + 1;
         if (refuse) { ws.close({ code: refuse, reason: "refused" }); return; }
+        // live / maxLive / closed: the page's own sockets that are open now, the most at once, and how many have closed (rotation checks)
+        log.live += 1;
+        log.maxLive = Math.max(log.maxLive, log.live);
         const sock = open(uid, typeof exp === "function" ? exp() : exp, { send: (t) => ws.send(t), close: (code, reason) => ws.close({ code, reason }) });
         ws.onMessage((m) => sock.receive(typeof m === "string" ? m : Buffer.from(m).toString("utf8")));
-        ws.onClose(() => sock.gone());
+        ws.onClose(() => { log.live -= 1; log.closed += 1; sock.gone(); });
       });
     },
     /** A member with no browser: connects and says hello at once; `send` puts a frame on the wire; `received` holds what the hub sent. */

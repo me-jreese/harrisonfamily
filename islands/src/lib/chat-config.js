@@ -58,6 +58,18 @@ export function convFromSearch(search) {
   return c && c.length <= 200 ? c : null;
 }
 
+/**
+ * The edge sign-in link of the signed-out gate: back to this page afterwards. The return value is a path plus query only (the edge's
+ * safeReturnTo accepts nothing else for this origin), without `popout`: a sign-in that returned into a pop-out window would be a page
+ * with no roster to fall back on. `c` stays, so a push that lands on a conversation still lands there.
+ */
+export function signInHref(loc) {
+  const q = new URLSearchParams(loc.search || "");
+  q.delete("popout");
+  const rest = q.toString();
+  return `/auth/login?returnTo=${encodeURIComponent(loc.pathname + (rest ? `?${rest}` : ""))}`;
+}
+
 /** True for the pop-out window (`?popout=1`): no roster column, no dock. */
 export function isPopout(search) {
   return new URLSearchParams(search || "").get("popout") === "1";

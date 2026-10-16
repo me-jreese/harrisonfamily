@@ -22,7 +22,7 @@ import { barSlots } from "../lib/bar-slots.js";
 import { memberSub } from "../lib/edge-session.js";
 import { contactGuard } from "../lib/chat-guard.js";
 import {
-  CHAT_PAGE, CLIENT_OPTIONS, convFromSearch, copyFor, expSeconds, isMobileAgent, isPopout, noticeLine, outboxName, shellOptionsFor, snapshotKey,
+  CHAT_PAGE, CLIENT_OPTIONS, convFromSearch, copyFor, expSeconds, isMobileAgent, isPopout, noticeLine, outboxName, shellOptionsFor, signInHref, snapshotKey,
 } from "../lib/chat-config.js";
 
 const CONVO_CLASS = "hfy-chat-convo";
@@ -81,11 +81,10 @@ function Entry({ slot, narrow }) {
 
 /** "sign in to chat." with the edge sign-in, back to this page afterwards. */
 function SignIn({ copy }) {
-  const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
   return (
     <div className="hfy-chat__gate" role="status" data-hfy-chat-gate>
       <p>{copy.signedOut}</p>
-      <a className="hfy-chat__signin" href={`/auth/login?returnTo=${returnTo}`}>sign in</a>
+      <a className="hfy-chat__signin" href={signInHref(window.location)}>sign in</a>
     </div>
   );
 }
@@ -175,37 +174,53 @@ function buildClient({ uid, exp }) {
   });
 }
 
+/** /chat/'s static "isn't turned on yet." line, kept until the island knows what it will draw (it is removed once the client is built). */
+const offLine = () => document.querySelector("[data-chat-off]");
+
+/** The island could not start (storage or the socket blocked, a constructor error): say so on /chat/ rather than leave a blank page. */
+function showUnavailable() {
+  const line = offLine();
+  if (!line) return;
+  line.removeAttribute("data-chat-off");
+  line.setAttribute("data-hfy-chat-line", "");
+  line.setAttribute("role", "status");
+  line.textContent = resolveCopy().unavailable;
+}
+
 async function start() {
   const flags = window.HFYFeatureFlags;
   if (!flags || typeof flags.resolveFlags !== "function") return;
   const on = await flags.resolveFlags().then((f) => f && f.chatV1 === true, () => false);
   if (!on) return;
-  const pageHost = document.querySelector('[data-island="chat"]');
-  // /chat/'s static "isn't turned on yet." line goes as soon as the island is running; the island draws everything after it.
-  document.querySelector("[data-chat-off]")?.remove();
-  const session = await Promise.resolve(typeof flags.edgeSession === "function" ? flags.edgeSession() : null).catch(() => null);
-  const uid = memberSub(session);
-  if (!uid) {
-    if (pageHost) createRoot(pageHost).render(<Gate />);
-    return;
-  }
-  let client;
   try {
-    client = buildClient({ uid, exp: expSeconds(session) });
+    const pageHost = document.querySelector('[data-island="chat"]');
+    const session = await Promise.resolve(typeof flags.edgeSession === "function" ? flags.edgeSession() : null).catch(() => null);
+    const uid = memberSub(session);
+    if (!uid) {
+      // Signed out: nothing of a past session stays readable (a shared device), and /chat/ asks the reader to sign in.
+      try { flags.purgeChatState?.(); } catch { /* storage blocked */ }
+      if (pageHost) { offLine()?.remove(); createRoot(pageHost).render(<Gate />); }
+      return;
+    }
+    const client = buildClient({ uid, exp: expSeconds(session) });
+    // Sign-out (HFYFeatureFlags.forgetEdgeSession, lib/sign-out.js, auth-v2.js) announces itself: the client stops and erases its snapshot
+    // and its outbox, so no conversation text or unsent message outlives the session.
+    window.addEventListener("hfy:signout", () => { client.signOut().catch(() => {}); }, { once: true });
+    // One host for the panel, the dock and the portals. data-hfy-keep keeps it a direct child of <body>: the shell moves every other
+    // child of <body> into its scroller, where a fixed dock would be clipped by the scroller's compositing.
+    const host = document.createElement("div");
+    host.id = "hfy-chat-root";
+    host.setAttribute("data-hfy-keep", "");
+    document.body.appendChild(host);
+    createRoot(host).render(<App client={client} slot={slotStore()} pageHost={pageHost} popout={isPopout(window.location.search)} />);
+    // The island is running and draws everything from here on.
+    offLine()?.remove();
+    // After the first render, so the first paint has the snapshot's conversations and a connect does not delay it.
+    client.start().catch((err) => console.error("chat: start failed", err && err.message));
   } catch (err) {
-    console.error("chat: the client could not be built", err);
-    return;
+    console.error("chat: the island could not start", err && err.message);
+    showUnavailable();
   }
-  // One host for the panel, the dock and the portals. data-hfy-keep keeps it a direct child of <body>: the shell moves every other
-  // child of <body> into its scroller, where a fixed dock would be clipped by the scroller's compositing.
-  const host = document.createElement("div");
-  host.id = "hfy-chat-root";
-  host.setAttribute("data-hfy-keep", "");
-  document.body.appendChild(host);
-  createRoot(host).render(<App client={client} slot={slotStore()} pageHost={pageHost} popout={isPopout(window.location.search)} />);
-  // After the first render, so the first paint has the snapshot's conversations and a connect does not delay it.
-  client.start().catch((err) => console.error("chat: start failed", err && err.message));
 }
 
 if (typeof window !== "undefined") start();
-

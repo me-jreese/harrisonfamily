@@ -16,7 +16,7 @@
         "css": "ed4e0505"
       },
       "chat": {
-        "js": "d5bf47d2",
+        "js": "2070e098",
         "css": "afca4af7"
       },
       "edit-entry": {
@@ -451,6 +451,38 @@
   }
   purgeRetiredKeys();
 
+  // HFY-TSK-142 (chat): chat is private, so no conversation text or queued unsent message outlives a session on a shared device. The chat
+  // island keeps a per-user snapshot (sessionStorage hfy:chat:v1:<uid>), the shell's panel and mole state (localStorage / sessionStorage
+  // hfy:chat:panel and hfy:chat:moles) and a per-user outbox (IndexedDB hfy:chat:outbox:<uid>). Sign-out (forgetEdgeSession) and the
+  // island's own signed-out path call this. The "hfy:signout" event lets a running chat client erase its snapshot and outbox itself
+  // (ChatClient.signOut) before the page leaves; the sweep below covers every page the island is not running on.
+  const CHAT_KEY_PREFIX = "hfy:chat:";
+  const CHAT_OUTBOX_PREFIX = "hfy:chat:outbox:";
+  function purgeChatState() {
+    ["localStorage", "sessionStorage"].forEach((store) => {
+      try {
+        const area = window[store];
+        const keys = [];
+        for (let i = 0; i < area.length; i += 1) {
+          const k = area.key(i);
+          if (k && k.indexOf(CHAT_KEY_PREFIX) === 0) keys.push(k);
+        }
+        keys.forEach((k) => area.removeItem(k));
+      } catch (error) { /* storage blocked */ }
+    });
+    try { window.dispatchEvent(new Event("hfy:signout")); } catch (error) { /* no events */ }
+    try {
+      const idb = window.indexedDB;
+      if (idb && typeof idb.databases === "function") {
+        idb.databases().then((list) => {
+          (list || []).forEach((db) => {
+            if (db && db.name && db.name.indexOf(CHAT_OUTBOX_PREFIX) === 0) idb.deleteDatabase(db.name);
+          });
+        }).catch(() => {});
+      }
+    } catch (error) { /* IndexedDB blocked */ }
+  }
+
   function getSessionJSON() {
     return fetch(SESSION_URL, { credentials: "same-origin", cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -538,8 +570,10 @@
     });
   };
   featureAPI.purgeRetiredKeys = purgeRetiredKeys;
+  featureAPI.purgeChatState = purgeChatState;
   // Sign-out: drop the overlay and the "had an edge session" marker so later pages do not try to refresh.
   featureAPI.forgetEdgeSession = function forgetEdgeSession() {
+    purgeChatState();
     storageSet("localStorage", EDGE_SEEN_KEY, null);
     edgeOverlay = null;
     applyFeatureVisibility();

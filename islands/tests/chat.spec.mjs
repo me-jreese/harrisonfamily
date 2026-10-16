@@ -352,6 +352,10 @@ test.describe("1280", () => {
     await expect(mole.locator(".io-chat-row").filter({ hasText: "before the swap" })).toBeVisible();
     await expect.poll(() => log.refreshes, { timeout: 15000 }).toBe(1);
     await expect.poll(() => hub.log.upgrades, { timeout: 15000 }).toBeGreaterThanOrEqual(2); // the second socket, opened before the first closed
+    // the old socket closes once the new one carries the page: exactly one is live afterwards, and at no point were there more than two
+    await expect.poll(() => hub.log.live, { timeout: 15000 }).toBe(1);
+    expect(hub.log.maxLive).toBeLessThanOrEqual(2);
+    expect(hub.log.closed).toBe(hub.log.upgrades - 1);
     pat.say(CONV, "during the swap");
     await composer(page).fill("after the swap");
     await composer(page).press("Enter");
@@ -360,6 +364,10 @@ test.describe("1280", () => {
     await expect(mole.locator(".io-chat-row").filter({ hasText: "before the swap" })).toHaveCount(1);
     expect(hub.log.frames.filter((f) => f.uid === ME && f.frame.t === "send").map((f) => f.frame.text)).toEqual(["before the swap", "after the swap"]);
     expect(log.refreshes).toBe(1);
+    // a settled page holds one socket: the swap leaked none, and no further reconnect followed it
+    await page.waitForTimeout(1500);
+    expect(hub.log.live).toBe(1);
+    expect(hub.log.maxLive).toBeLessThanOrEqual(2);
     hub.dispose();
   });
 
@@ -527,6 +535,9 @@ test.describe("who sees chat", () => {
     await expect(page.getByRole("link", { name: "sign in", exact: true }).last()).toHaveAttribute("href", "/auth/login?returnTo=%2Fchat%2F");
     expect(hub.log.upgrades ?? 0).toBe(0);
     await expect(page.getByText("chat isn't turned on yet.")).toHaveCount(0);
+    // the return value is a same-origin path (the edge's safeReturnTo takes nothing else); a pop-out is not returned to, a ?c= is
+    await page.goto("/chat/?popout=1&c=dm%3AI9001%3AI9002", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("link", { name: "sign in", exact: true }).last()).toHaveAttribute("href", "/auth/login?returnTo=%2Fchat%2F%3Fc%3Ddm%253AI9001%253AI9002");
     expect(await noHScroll(page)).toBe(true);
     expect(await axeViolations(page)).toEqual([]);
     // and on any other page a signed-out visitor never loads the bundle
@@ -535,6 +546,61 @@ test.describe("who sees chat", () => {
     await expect(page.locator(".hfy-bar__end")).toBeVisible();
     await page.waitForTimeout(500);
     expect(log.chatAssets.length).toBe(before);
+    hub.dispose();
+  });
+});
+
+test.describe("a session's chat state", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("sign-out erases the snapshot, the panel and mole state and the outbox, so nothing readable or queued outlives the session", async ({ page, context }) => {
+    const hub = chatHub();
+    hub.virtual(PAT);
+    await wire(context, { hub });
+    await page.goto("/contact/", { waitUntil: "domcontentloaded" });
+    await panel(page).getByRole("button", { name: /Pat Example/ }).click();
+    await composer(page).fill("a private line");
+    await composer(page).press("Enter");
+    await expect(moles(page).first().locator(".io-chat-row").filter({ hasText: "a private line" })).toBeVisible();
+    // what a session leaves behind: the per-user snapshot, the shell's remembered panel and moles, and a queued unsent message
+    await page.evaluate(async (uid) => {
+      sessionStorage.setItem(`hfy:chat:v1:${uid}`, JSON.stringify({ conversations: [{ id: "x", last: "a private line" }] }));
+      sessionStorage.setItem("hfy:chat:moles", JSON.stringify(["x"]));
+      localStorage.setItem("hfy:chat:panel", "open");
+      await new Promise((resolve, reject) => {
+        const req = indexedDB.open(`hfy:chat:outbox:${uid}`, 1);
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const tx = req.result.transaction("outbox", "readwrite");
+          tx.objectStore("outbox").put({ cmid: "q1", conv: "x", text: "queued, unsent", createdAt: Date.now(), owner: uid });
+          tx.oncomplete = () => { req.result.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+        };
+      });
+    }, ME);
+    const keys = () => page.evaluate(() => [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.startsWith("hfy:chat:")));
+    expect((await keys()).length).toBeGreaterThan(0);
+    // the sign-out paths (auth-v2.js and lib/sign-out.js) both call forgetEdgeSession
+    await page.evaluate(() => window.HFYFeatureFlags.forgetEdgeSession());
+    await expect.poll(keys).toEqual([]);
+    // the page leaves, as it does after a sign-out; the outbox database goes with its last connection
+    await page.goto("/logged-out/", { waitUntil: "domcontentloaded" });
+    await expect.poll(() => page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name).filter((n) => n.startsWith("hfy:chat:"))), { timeout: 10000 }).toEqual([]);
+    expect(await keys()).toEqual([]);
+    hub.dispose();
+  });
+
+  test("an island that cannot start (session storage refused) says so on /chat/ instead of leaving the page blank", async ({ page, context }) => {
+    const hub = chatHub();
+    await wire(context, { hub });
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "sessionStorage", { configurable: true, get() { throw new DOMException("denied", "SecurityError"); } });
+    });
+    await page.goto("/chat/", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("chat isn't available right now.")).toBeVisible();
+    await expect(page.getByText("chat isn't turned on yet.")).toHaveCount(0);
+    await expect(page.getByTestId("io-chat-page")).toHaveCount(0);
+    expect(await axeViolations(page)).toEqual([]);
     hub.dispose();
   });
 });
