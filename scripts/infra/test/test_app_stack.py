@@ -195,6 +195,37 @@ class AppStack(unittest.TestCase):
         for key in ("FunctionUrl", "AuthFunctionUrl"):
             self.assertIn(key, self.t["Outputs"])
 
+    # HFY-TSK-149 (review PS-11): the site CSP policies and the /join/ function are written once in scripts/cloudfront/site-csp.json.
+    def test_site_csp_policies_hold_the_one_written_down_policy(self):
+        csp = json.loads((ROOT / "scripts" / "cloudfront" / "site-csp.json").read_text())
+        ro = self.r["SiteCspReportOnlyPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
+        self.assertEqual(ro["CustomHeadersConfig"]["Items"], [{"Header": "Content-Security-Policy-Report-Only", "Value": csp["base"], "Override": False}])
+        self.assertNotIn("SecurityHeadersConfig", ro, "report-only must not also enforce")
+        en = self.r["SiteCspPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
+        self.assertEqual(en["SecurityHeadersConfig"]["ContentSecurityPolicy"], {"ContentSecurityPolicy": csp["base"], "Override": False})
+        self.assertNotIn("CustomHeadersConfig", en)
+        for name in ("SiteCspReportOnlyPolicy", "SiteCspPolicy"):
+            self.assertEqual(self.r[name]["Type"], "AWS::CloudFront::ResponseHeadersPolicy")
+        # the uploads sandbox policy is a separate policy and unchanged
+        up = self.r["UploadsResponseHeadersPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]["ContentSecurityPolicy"]
+        self.assertEqual(up["ContentSecurityPolicy"], "sandbox; default-src 'none'; img-src 'self'")
+
+    def test_join_csp_function_is_the_repo_source_and_viewer_response_only(self):
+        fn = self.r["JoinCspFunction"]["Properties"]
+        self.assertEqual(fn["FunctionCode"].rstrip("\n"), (ROOT / "scripts" / "cloudfront" / "join-csp.js").read_text().rstrip("\n"))
+        self.assertEqual(fn["FunctionConfig"]["Runtime"], "cloudfront-js-1.0")
+        self.assertIs(fn["AutoPublish"], True)
+        self.assertLessEqual(len(fn["FunctionCode"].encode()), 10240)
+
+    def test_site_csp_adds_no_cache_behavior_resource_and_exports_what_the_script_reads(self):
+        self.assertEqual(self.t["Outputs"]["SiteCspPolicyId"]["Value"], {"Ref": "SiteCspPolicy"})
+        self.assertEqual(self.t["Outputs"]["SiteCspReportOnlyPolicyId"]["Value"], {"Ref": "SiteCspReportOnlyPolicy"})
+        self.assertEqual(self.t["Outputs"]["JoinCspFunctionArn"]["Value"], {"Fn::GetAtt": ["JoinCspFunction", "FunctionARN"]})
+        script = (ROOT / "scripts" / "infra" / "add-csp-headers.sh").read_text()
+        for key in ("SiteCspPolicyId", "SiteCspReportOnlyPolicyId", "JoinCspFunctionArn"):
+            self.assertIn(key, script)
+        self.assertEqual([n for n, r in self.r.items() if r["Type"] == "AWS::CloudFront::Distribution"], [], "the distribution is not stack-managed")
+
     def test_gsi1_key_schema_unchanged(self):
         # auth/src/linkstore.js writes GSI1SK on LINK# items because GSI1 needs BOTH keys (HFY-R58 (6)); keep the schema stable.
         gsi = self.r["Table"]["Properties"]["GlobalSecondaryIndexes"][0]
