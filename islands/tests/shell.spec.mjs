@@ -527,3 +527,26 @@ test("slots: a second fill replaces the first (the old one is cleaned up) and a 
   await expect(page.locator('#hfy-shell-root [data-slot="chat"]')).toHaveCount(0);
   expect(await page.evaluate(() => window.__log)).toContain("cleanup b");
 });
+
+// The joint 375px layout of .hfy-bar__end (HFY-TSK-143, review DL-13): the bell, chat, gear and account slots together, each target at
+// least 44px, in that order, inside the viewport with no horizontal overflow. The fillers are stubs standing in for the inbox and chat islands.
+test("375 joint layout: .hfy-bar__end holds bell, chat, gear and avatar in order, each a 44px target, with no overflow", async ({ page }) => {
+  await hermetic(page, { signedIn: true });
+  await page.goto("/about/?hfy_flags=shellV2,navMe", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('#hfy-shell-root [data-hfy-account="signed-in"]')).toBeVisible();
+  await expect(gearOf(page)).toBeVisible();
+  await page.evaluate(stub("chat"));
+  await page.evaluate(stub("bell"));
+  await expect(page.locator('#hfy-shell-root [data-slot="bell"] button')).toBeVisible();
+  expect(await slotOrder(page)).toEqual(["bell", "chat", "gear", "account"]);
+  const m = await page.evaluate(() => {
+    const end = document.querySelector("#hfy-shell-root .hfy-bar__end");
+    const targets = [...end.querySelectorAll("button, a")].map((e) => { const r = e.getBoundingClientRect(); return { n: (e.getAttribute("aria-label") || e.className || e.tagName) + "", w: r.width, h: r.height, right: r.right, left: r.left }; });
+    const bar = document.querySelector("#hfy-shell-root .hfy-bar").getBoundingClientRect();
+    return { targets, barRight: bar.right, endRight: end.getBoundingClientRect().right, scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth };
+  });
+  expect(m.targets.length).toBeGreaterThanOrEqual(4);
+  for (const t of m.targets) { expect(t.w).toBeGreaterThanOrEqual(43.5); expect(t.h).toBeGreaterThanOrEqual(43.5); expect(t.right, t.n).toBeLessThanOrEqual(m.innerW + 0.5); expect(t.left).toBeGreaterThanOrEqual(0); }
+  expect(m.endRight).toBeLessThanOrEqual(m.barRight + 0.5);
+  expect(m.scrollW).toBeLessThanOrEqual(m.innerW);
+});
