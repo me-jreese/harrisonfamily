@@ -1,6 +1,6 @@
 # Operate the sync store
 
-Pause the cloud record store, resume it, force the renderer to run, and bring back the records of a mistaken delete or withdraw. The tool is `api/scripts/sync-admin.mjs` (HFY-TSK-177). It is an operator script: it is never deployed, and no workflow runs it.
+Pause the cloud record store, resume it, switch the change feed on or off, force the renderer to run, and bring back the records of a mistaken delete or withdraw. The tool is `api/scripts/sync-admin.mjs` (HFY-TSK-177). It is an operator script: it is never deployed, and no workflow runs it.
 
 **io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume` and `resurrect` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
 
@@ -22,6 +22,19 @@ node scripts/sync-admin.mjs resume --apply --by <your-name> --table <app-table> 
 ```
 
 Each change is pinned to the value it read and writes one `AUDIT#sync-admin:` item. A second `pause` changes nothing. A store with no `SYNC#HEAD` item is refused: the seed creates it, and a script-made one would break the seed.
+
+## Switch the change feed on or off
+
+`feed-on` sets `SYNC#HEAD.changes_feed` to `true` (HFY-TSK-277). `GET /api/sync/changes` then serves the delta feed, and `GET /api/sync/meta` reports `changes_feed: true`, which lets the desktop add-on pull deltas instead of a full snapshot ([Install and run the Gramps sync addon](install-the-gramps-sync-addon.md#delta-pulls-the-change-feed)). `feed-off` sets it back to `false`; the add-on takes full snapshots again at its next run. The feed ships off. An absent attribute counts as off.
+
+```sh
+cd api
+node scripts/sync-admin.mjs feed-on --dry-run --table <app-table> --region <region>
+node scripts/sync-admin.mjs feed-on --apply --by <your-name> --table <app-table> --region <region>
+node scripts/sync-admin.mjs feed-off --apply --by <your-name> --table <app-table> --region <region>
+```
+
+Each change is pinned to the value it read and writes one `AUDIT#sync-admin:` item, like `pause`. Flip it on only after the `hfy-api` release that holds the route has executed (the route is `404 not_enabled` while the switch is off, and a build without the route answers `404 not_found`). A desktop that cannot use the feed (an old add-on, a `410`) falls back to snapshots by itself, so switching it off is never needed to keep the desktop working.
 
 ## Force a render
 

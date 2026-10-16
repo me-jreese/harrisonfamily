@@ -152,10 +152,12 @@ class FakeTree(runner.TreeAccess):
 
 
 def snapshot_bytes(tree_id, seq, heads, schema=21, redaction=1):
-    """A snapshot file as api/src/sync/pull.js buildSnapshot writes it; `heads` are dicts {class, handle, gramps_id, version, seq, deleted, obj}."""
+    """A snapshot file as api/src/sync/pull.js buildSnapshot writes it; `heads` are dicts {class, handle, gramps_id, version, seq, deleted, obj},
+    plus `expunged: True` on a head privacy-expunge emptied (HFY-TSK-204): the line carries the flag only then, and the flag is part of the body hash."""
     rows = sorted(heads, key=lambda h: (CLASS_RANK[h["class"]], h["handle"]))
     body = "".join(canonical.canonical_json({"class": h["class"], "handle": h["handle"], "gramps_id": h.get("gramps_id", ""), "version": h["version"],
-                                              "seq": h["seq"], "deleted": h.get("deleted", False), "obj": None if h.get("deleted") else h["obj"]}) + "\n"
+                                              "seq": h["seq"], "deleted": h.get("deleted", False), **({"expunged": True} if h.get("expunged") is True else {}),
+                                              "obj": None if h.get("deleted") else h["obj"]}) + "\n"
                    for h in rows)
     sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
     header = canonical.canonical_json({"type": "header", "tree_id": tree_id, "seq": seq, "schema": schema, "redaction": redaction,

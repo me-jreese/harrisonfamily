@@ -38,7 +38,7 @@ describe("argument handling and --help", () => {
   it("--help prints the usage and the io go-ahead rule, and touches nothing", () => {
     const out = execFileSync(process.execPath, [SCRIPT, "--help"], { encoding: "utf8" });
     expect(out).toBe(`${HELP}\n`);
-    for (const word of ["pause", "resume", "render", "resurrect", "--full", "--allow-mass-delete", "--prune-foreign", "--dry-run", "--apply"]) expect(out).toContain(word);
+    for (const word of ["pause", "resume", "feed-on", "feed-off", "render", "resurrect", "--full", "--allow-mass-delete", "--prune-foreign", "--dry-run", "--apply"]) expect(out).toContain(word);
     expect(out).toMatch(/IO'S GO-AHEAD IS REQUIRED/);
     expect(out).toMatch(/recorded verbatim in the worklog/);
   });
@@ -106,6 +106,40 @@ describe("pause and resume", () => {
     const none = world(null);
     await expect(run(args(["pause", "--apply"]), none.ctx)).rejects.toThrow(/no SYNC#HEAD/);
     expect(none.ddb.all()).toHaveLength(0);
+  });
+});
+
+describe("feed-on and feed-off (HFY-TSK-277)", () => {
+  it("--dry-run writes nothing; --apply sets SYNC#HEAD.changes_feed to the boolean true and audits, and feed-off reverses it", async () => {
+    const w = world();
+    expect(w.row("SYNC#HEAD", "META").changes_feed).toBeUndefined(); // absent = off
+    const before = w.snapshot();
+    await run(args(["feed-on", "--dry-run"]), w.ctx);
+    expect(w.snapshot()).toBe(before);
+    await run(args(["feed-on", "--apply", "--by", "operator-a"]), w.ctx);
+    expect(w.row("SYNC#HEAD", "META")).toMatchObject({ changes_feed: true, writes_enabled: true, seeded: true });
+    const audits = w.ddb.all().filter((r) => r.PK.startsWith("AUDIT#sync-admin:feed-on"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ op: "sync-admin.feed-on", principal: "operator-a", before: { changes_feed: null }, after: { changes_feed: true } });
+    const on = w.snapshot();
+    await run(args(["feed-on", "--apply"]), w.ctx); // already on: nothing to change
+    expect(w.snapshot()).toBe(on);
+    await run(args(["feed-off", "--apply"]), w.ctx);
+    expect(w.row("SYNC#HEAD", "META").changes_feed).toBe(false);
+    const off = w.snapshot();
+    await run(args(["feed-off", "--apply"]), w.ctx);
+    expect(w.snapshot()).toBe(off);
+  });
+  it("feed-off on a store where the switch was never set writes the explicit false; pause is untouched; a missing SYNC#HEAD is refused", async () => {
+    const w = world();
+    await run(args(["feed-off", "--apply"]), w.ctx);
+    expect(w.row("SYNC#HEAD", "META")).toMatchObject({ changes_feed: false, writes_enabled: true });
+    await expect(run(args(["feed-on", "--apply"]), world(null).ctx)).rejects.toThrow(/no SYNC#HEAD/);
+  });
+  it("takes --by and the common flags only", () => {
+    expect(() => args(["feed-on", "--dry-run", "--all"])).toThrow(/does not apply/);
+    expect(() => args(["feed-off", "--dry-run", "--full"])).toThrow(/does not apply/);
+    expect(args(["feed-on", "--apply", "--by", "x", "--table", "t", "--region", "r"])).toMatchObject({ command: "feed-on", apply: true, by: "x" });
   });
 });
 
