@@ -70,7 +70,7 @@ Runbook 19.5 is the addon's `restore` action, not a hand copy. Quit Gramps, then
 gramps/bin/hfy-sync restore <backup name> --tree "<tree name>"
 ```
 
-It checks the sha256 of the backup and its sidecar, moves the journal, WAL, SHM and lock aside, runs `PRAGMA integrity_check`, and restores the matching sidecar snapshot, so the next sync does not push the old values back as your edits. The Gramps window's **Restore backup...** shows the same command. Details: [Restore from a backup](install-the-gramps-sync-addon.md#8-restore-from-a-backup). The cloud is unaffected and restore writes nothing to it; the check after the restore shows what the website still has to give you again, and a push that would revert a website change is labelled and needs confirmation (D47).
+It checks the sha256 of the backup and its sidecar, moves the journal, WAL, SHM and lock aside, runs `PRAGMA integrity_check`, and restores the matching sidecar snapshot, so the next sync does not push the old values back as your edits. The Gramps window's **Restore backup...** refuses while the tree is open and shows the same command. After a recovery the window's **Rebase after a recovery...** runs the same re-base. Details: [Restore from a backup](install-the-gramps-sync-addon.md#8-restore-from-a-backup). The cloud is unaffected and restore writes nothing to it; the check after the restore shows what the website still has to give you again, and a push that would revert a website change is labelled and needs confirmation (D47).
 
 ### Upgrading Gramps
 
@@ -82,7 +82,7 @@ Runbook 19.7. **This writes app-table items and needs io's go-ahead.** `pause --
 
 ### When the cloud store is damaged
 
-Runbook 19.8 is store-scoped (`sync-store-recovery`), and it **writes app-table items at each `--apply`, each with io's go-ahead**. It never swaps `TABLE_NAME`. In short: `pause --all`; `rebuild-heads --to-seq N --dry-run`, then `--apply`, from the append-only log; if the log is damaged, restore the table by point in time to a side table and `copy-back` only `REC#`, `SYNC#`, `GID#` and `IDALIAS#` items; then `bump-tree-id`, `resume --all`. On the Mac the desktop refuses the recovered store (D11, D50) until `hfy-sync rebase` re-bases it. The seed after a re-seed carries `seed: true`. The full procedure, the order and the traps are in [Operate the sync store: Recover the store](operate-the-sync-store.md#recover-the-store).
+Runbook 19.8 is store-scoped (`sync-store-recovery`), and it **writes app-table items at each `--apply`, each with io's go-ahead**. It never swaps `TABLE_NAME`. In short: `pause --all`; `rebuild-heads --to-seq N --dry-run`, then `--apply`, from the append-only log; if the log is damaged, restore the table by point in time to a side table and `copy-back` only `REC#`, `SYNC#`, `GID#` and `IDALIAS#` items; then `bump-tree-id`, `resume --all`. On the Mac the desktop refuses the recovered store (D11, D50) until `hfy-sync rebase` re-bases it. A re-seed after a recovery runs as a seed session with `seed: true`: its batches are origin `seed` and silent. The full procedure, the order and the traps are in [Operate the sync store: Recover the store](operate-the-sync-store.md#recover-the-store).
 
 ### A lost laptop
 

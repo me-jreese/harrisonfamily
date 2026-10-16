@@ -2,7 +2,7 @@
 
 Every exit code of `hfy-sync`, every error code of the sync API, and the rows that BRD2 section 11.1 added to the sync error catalog (D44 to D52 and S19 to S22). It is the lookup for the operator runbook in [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md). The map from each catalog row to the tests that trigger it is [Sync error catalog and its tests](sync-error-catalog.md); the commands are in [Install the Gramps sync addon](../how-to/install-the-gramps-sync-addon.md) and [Operate the sync store](../how-to/operate-the-sync-store.md).
 
-A test (`api/test/sync-errors-reference.test.js`, in `cd api && npm test`) reads the sources and fails if an exit code or an API error code is missing from the two tables below. Add a code to the source and to this page together.
+A test (`api/test/sync-errors-reference.test.js`, in `cd api && npm test`) reads the sources and fails if an exit code or an API error code is missing from the two tables below. Add a code to the source and to this page together. The API check reads `api/src/sync/*.js` for a status followed by a quoted code; a code built in a variable or thrown through a helper is outside its reach, and another test fails if a sync-only code is thrown outside that folder.
 
 ## Exit codes
 
@@ -36,7 +36,7 @@ The sync routes answer `{error: {code, message, details?}}` with the status belo
 | 400 | `validation` | The request or an object does not match the schema; `details.violations` or `details.fields` point at the field |
 | 400 | `bad_cursor` | A change-feed or pull cursor is malformed |
 | 401 | `unauthenticated` | No valid bearer token |
-| 401 | `step_up_required` | The token has no step-up at all |
+| 401 | `step_up_required` | A conflict decision needs a sign-in within 300 seconds (`details.reason` `conflict_decision`); the page answers with a fresh sign-in |
 | 403 | `step_up_required` | A destructive batch needs a fresh step-up (`amr` `mfa` within 300 seconds); nothing is written (D07) |
 | 403 | `not_owner` | The caller is not in `gramps-owner` |
 | 403 | `not_allowed` | The status page is for the people who look after the site only |

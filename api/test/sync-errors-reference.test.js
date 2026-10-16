@@ -25,6 +25,9 @@ export function apiCodes(files) {
   return out;
 }
 
+// Reach: the sync API's codes live in api/src/sync (the test below pins that no sync-only code is thrown elsewhere in api/src). The web API's own
+// codes (api/src/records, routes.js and the rest) are documented in their route summaries, not on this page. Codes built in a variable or
+// thrown through a helper are outside the grep; the count floor in the first test guards against the grep going quiet.
 const syncFiles = readdirSync(join(repo, "api/src/sync")).filter((f) => f.endsWith(".js")).map((f) => [f, read(`api/src/sync/${f}`)]);
 
 describe("docs/reference/sync-errors.md", () => {
@@ -32,6 +35,12 @@ describe("docs/reference/sync-errors.md", () => {
     expect(exitCodes(read("gramps/hfygramps/addon/consts.py")).length).toBeGreaterThanOrEqual(10);
     expect(apiCodes(syncFiles).size).toBeGreaterThanOrEqual(40);
     expect([...apiCodes(syncFiles).keys()]).toEqual(expect.arrayContaining(["409 exists", "409 version_conflict", "503 sync_paused"]));
+  });
+
+  it("keeps the sync-only codes inside api/src/sync (the grep's reach)", () => {
+    const walk = (d) => readdirSync(join(repo, d), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(`${d}/${e.name}`) : e.name.endsWith(".js") ? [`${d}/${e.name}`] : []));
+    const strays = walk("api/src").filter((f) => !f.startsWith("api/src/sync/") && /[45]\d\d\s*,\s*"(sync_[a-z_]+|tree_mismatch|store_not_seeded|seed_[a-z_]+)"/.test(read(f)));
+    expect(strays).toEqual([]);
   });
 
   it("names every exit code of the addon, with its constant", () => {
