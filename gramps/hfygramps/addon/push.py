@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import consts, oauth, keychain, pushplan, pushstate, sidecar, status, transport
+from . import consts, decisions, oauth, keychain, pushplan, pushstate, sidecar, status, transport
 from .. import canonical, merge as M
 
 _RULE = re.compile(r"^[a-z][a-z0-9_.]{0,63}$")
@@ -228,6 +228,7 @@ class _Push:
         self.serial = 0
         self.limits = {}
         self.replayed = 0
+        self.acked = set()           # handles whose ops an acknowledged batch carried in this run (HFY-TSK-338: they release keep_desktop receipts)
         self.id_named = False        # the last refusal dropped ops that the server named by ID (it names one ID per answer)
 
     # ------------------------------------------------------------------------------------------------------- the client
@@ -294,7 +295,20 @@ class _Push:
                 stopped = not self._push_ops(ops)
         if not stopped and self.session_id:
             self._complete_session()
+        self._receipts()
         return self.settle(self._verdict())
+
+    def _receipts(self):
+        """HFY-TSK-338: the website's keep_desktop decisions a pull applied wait for the push that carries the desktop value. Receipt each one whose
+        object the website now holds as the desktop has it: its batch was acknowledged (this run or an earlier outbox row), or the two sides agree
+        already. An object with a conflict, a hold or a blocked change this run, or an op that was not carried, is not receipted. Best effort."""
+        plan = self.plan
+        try:
+            held = {c["handle"] for c in plan.conflicts} | {r["handle"] for r in plan.holds + plan.blocked + self.extra_holds + self.extra_blocked}
+            carried = (self.acked | set(plan.advance)) - held - ({op["handle"] for op in plan.ops + plan.destructive} - self.acked)
+            decisions.send_pending_receipts(self.side, self.client, carried, self.log)
+        except Exception:  # noqa: BLE001 - a receipt that fails is sent by the next push; the run's own result stands
+            self.log.line("push: decision receipts failed")
 
     def _members(self):
         """The member principals' Gramps IDs: the handshake's `member_person_ids` and config.json's, together; None if neither is a list."""
@@ -350,6 +364,7 @@ class _Push:
             if resp.headers.get("idempotent-replayed") == "true":
                 self.replayed += 1
             self._count_pushed(row["request"]["body"]["ops"])
+            self.acked.update(op["handle"] for op in row["request"]["body"]["ops"])
             self.log.line("push: outbox %s acked (%d ops)" % (row["key"][:12], n))
 
     def _count_pushed(self, ops):
@@ -481,6 +496,7 @@ class _Push:
                 continue
             pushstate.ack_batch(con, key, request, resp.body)
             self._count_pushed(body["ops"])
+            self.acked.update(op["handle"] for op in body["ops"])
             return "ok"
         for op in batch:                                    # the retry budget ran out with ops still unsent: hold them, so the verdict is partial
             self._hold(op, "server_refused")

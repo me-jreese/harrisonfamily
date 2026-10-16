@@ -15,7 +15,7 @@ import { createGroupResolver } from "../src/policy.js";
 import { SYNC_AUDIENCE, SYNC_CLIENT_ID, createSyncAuthenticator, requireConflictDecision } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
-import { buildSnapshot, cloudValueAt, cloudValueHash, conflictKey, decisionStaleReason, snapshotKey } from "../src/sync/pull.js";
+import { RECONCILE_ITEMS, buildSnapshot, cloudValueAt, cloudValueHash, conflictKey, decisionStaleReason, snapshotKey } from "../src/sync/pull.js";
 import { resetStoreView } from "../src/records/index.js";
 
 const OWNER = "I9001";
@@ -518,15 +518,8 @@ describe("POST /api/sync/conflicts/reconcile applies a decision only while the c
     expect(open.body.conflicts.map((c) => [c.id, c.state, c.history[0].reason])).toEqual([[CID(1), "open", "version_changed"]]);
     expect((await reconcile(w)).body).toMatchObject({ checked: 0, apply: [], reopened: [] });
   });
-  it("a hash mismatch at the same version reopens it: the add-on's observed value, or the head's own value at the path, differs from the one decided on", async () => {
-    const w = world();
-    await seeded(w);
-    await decide(w);
-    const observed = [{ class: "Person", handle: person(1).handle, path: "/primary_name/first_name", cloud: "Elm" }];
-    const r = await reconcile(w, { observed });
-    expect(r.body.apply).toEqual([]);
-    expect(r.body.reopened.map((c) => [c.id, c.reason, c.history.at(-1).reason])).toEqual([[CID(1), "value_changed", "value_changed"]]);
-    // the head alone (no observation): an in-place scrub keeps the version and changes the value
+  it("a hash mismatch at the same version reopens it: the head's own value at the path differs from the one decided on, and the add-on's word cannot say otherwise", async () => {
+    // the head alone: an in-place scrub keeps the version and changes the value
     const w2 = world();
     await seeded(w2);
     await decide(w2);
@@ -534,16 +527,35 @@ describe("POST /api/sync/conflicts/reconcile applies a decision only while the c
     const r2 = await reconcile(w2);
     expect(r2.body.reopened.map((c) => [c.id, c.history.at(-1).reason])).toEqual([[CID(1), "value_changed"]]);
     expect(stored(w2).state).toBe("open");
+    // the add-on's `observed` value never overrides a pointer the head resolves: a crafted one cannot make a valid decision look stale (or a stale one valid)
+    const w = world();
+    await seeded(w);
+    await decide(w);
+    const crafted = [{ class: "Person", handle: person(1).handle, path: "/primary_name/first_name", cloud: "Elm" }];
+    const r = await reconcile(w, { observed: crafted });
+    expect(r.body.reopened).toEqual([]);
+    expect(r.body.apply.map((c) => c.id)).toEqual([CID(1)]);
+    const w3 = world();
+    await seeded(w3);
+    await decide(w3);
+    touch(w3, (row) => ({ ...row, obj_json: JSON.stringify(named("Elm")) }));
+    const r3 = await reconcile(w3, { observed: [{ ...crafted[0], cloud: "Birch" }] });
+    expect(r3.body.reopened.map((c) => c.reason)).toEqual(["value_changed"]);
   });
-  it("an observed value equal to the decided one keeps the decision, and a pointer the head cannot resolve keeps the stored value", async () => {
+  it("a pointer the head cannot resolve (a keyed-list token) takes the add-on's observed value, else keeps the stored one", async () => {
     const w = world();
     await seeded(w);
     w.ddb.rows.set(`SYNC#CONFLICT#${CID(2)}\u0000META`, conflictRow(2, { paths: [{ path: "/event_ref_list/ref#0", base: "a", cloud: "b", desktop: "c" }] }));
     await decide(w);
     await decide(w, CID(2));
-    const r = await reconcile(w, { observed: [{ class: "Person", handle: person(1).handle, path: "/primary_name/first_name", cloud: "Birch" }] });
-    expect(r.body.apply.map((c) => c.id).sort()).toEqual([CID(1), CID(2)]);
-    expect(r.body.reopened).toEqual([]);
+    const at = { class: "Person", handle: person(1).handle, path: "/event_ref_list/ref#0" };
+    const same = await reconcile(w, { dry: true, observed: [{ ...at, cloud: "b" }] });
+    expect(same.body.apply.map((c) => c.id).sort()).toEqual([CID(1), CID(2)]);
+    expect(same.body.reopened).toEqual([]);
+    expect((await reconcile(w, { dry: true })).body.apply.map((c) => c.id).sort()).toEqual([CID(1), CID(2)]); // nothing observed: the stored value stands
+    const other = await reconcile(w, { observed: [{ ...at, cloud: "z" }] });
+    expect(other.body.apply.map((c) => c.id)).toEqual([CID(1)]);
+    expect(other.body.reopened.map((c) => [c.id, c.reason])).toEqual([[CID(2), "value_changed"]]);
   });
   it("dry: true (a check run) reports what it would reopen and writes nothing", async () => {
     const w = world();
@@ -605,6 +617,98 @@ describe("POST /api/sync/conflicts/reconcile applies a decision only while the c
     expect((await reconcile(w)).body).toMatchObject({ checked: 0, apply: [], reopened: [] });
     expect(stored(w).state).toBe("resolved");
   });
+  it("a keep_desktop decision whose own push carried the chosen value is settled, not reopened: it is stamped applied (a dry run only reports it)", async () => {
+    const w = world();
+    await seeded(w);
+    await decide(w, CID(1), "keep_desktop");
+    await w.push([{ op: "update", class: "Person", handle: person(1).handle, base_version: 1, obj: named("Cedar") }]); // the desktop value, at version 2
+    const dry = await reconcile(w, { dry: true });
+    expect(dry.body).toMatchObject({ apply: [], reopened: [], dry: true });
+    expect(dry.body.settled.map((c) => c.id)).toEqual([CID(1)]);
+    expect(stored(w).applied_at).toBeUndefined();
+    const r = await reconcile(w);
+    expect(r.body).toMatchObject({ checked: 1, apply: [], reopened: [] });
+    expect(r.body.settled.map((c) => [c.id, c.state, c.applied_at])).toEqual([[CID(1), "resolved", new Date(NOW).toISOString()]]);
+    expect(stored(w)).toMatchObject({ state: "resolved", applied_outcome: "applied" });
+    expect(w.rows("AUDIT#conflict:").filter((a) => a.op === "sync.conflict.applied")).toHaveLength(1);
+    expect((await reconcile(w)).body).toMatchObject({ checked: 0, settled: [] });
+    // the receipt that arrives later is the same stamp
+    expect((await w.call("POST", `/sync/conflicts/${CID(1)}/applied`, {})).status).toBe(200);
+    expect(w.rows("AUDIT#conflict:").filter((a) => a.op === "sync.conflict.applied")).toHaveLength(1);
+  });
+  it("settling needs the desktop value in the head at every path: another value, a keep_cloud decision or a path the server cannot follow still reopens", async () => {
+    const w = world();
+    await seeded(w);
+    w.ddb.rows.set(`SYNC#CONFLICT#${CID(2)}\u0000META`, conflictRow(2));
+    w.ddb.rows.set(`SYNC#CONFLICT#${CID(3)}\u0000META`, conflictRow(3, { paths: [{ path: "/event_ref_list/ref#0", base: "a", cloud: "b", desktop: "c" }] }));
+    await decide(w, CID(1), "keep_desktop");
+    await decide(w, CID(2), "keep_cloud");
+    await decide(w, CID(3), "keep_desktop");
+    await w.push([{ op: "update", class: "Person", handle: person(1).handle, base_version: 1, obj: named("Cedar") }]);
+    const r = await reconcile(w);
+    expect(r.body.settled.map((c) => c.id)).toEqual([CID(1)]);
+    expect(r.body.reopened.map((c) => [c.id, c.reason]).sort()).toEqual([[CID(2), "version_changed"], [CID(3), "version_changed"]]);
+    const w2 = world();
+    await seeded(w2);
+    await decide(w2, CID(1), "keep_desktop");
+    await w2.push([{ op: "update", class: "Person", handle: person(1).handle, base_version: 1, obj: named("Elm") }]); // neither the cloud value decided against nor the desktop's
+    expect((await reconcile(w2)).body).toMatchObject({ settled: [], reopened: [{ id: CID(1), reason: "version_changed" }] });
+  });
+  it("walks a long backlog in calls: a cursor for the rest, and an older pending decision behind more than 500 applied ones is still found", async () => {
+    const w = world();
+    await seeded(w);
+    await decide(w); // CID(1): pending, the oldest
+    const total = 520;
+    for (let n = 0; n < total; n += 1) {
+      const id = CID(1000 + n);
+      w.ddb.rows.set(`SYNC#CONFLICT#${id}\u0000META`, conflictRow(2, {
+        ...conflictKey(id), GSI1PK: "SYNCCONFLICT#resolved", GSI1SK: `2026-10-14T00:${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}.000Z#${id}`,
+        state: "resolved", decision: "keep_cloud", applied_at: "2026-10-14T01:00:00.000Z", applied_outcome: "applied",
+      }));
+    }
+    const first = await reconcile(w, { dry: true });
+    expect(first.body).toMatchObject({ checked: 0, more: true });
+    expect(typeof first.body.next).toBe("string");
+    const second = await reconcile(w, { dry: true, after: first.body.next });
+    expect(second.body.apply.map((c) => c.id)).toEqual([CID(1)]);
+    expect(second.body).toMatchObject({ more: false, next: null });
+    expect(err(await reconcile(w, { after: "not a cursor" }))).toEqual({ status: 400, error: "bad_cursor" });
+    expect(err(await reconcile(w, { after: 5 }))).toEqual({ status: 400, error: "validation" });
+  });
+  it("a call weighs at most RECONCILE_ITEMS decisions and hands back a cursor; a reopened one leaves the queue, so the next call goes on past it", async () => {
+    const w = world();
+    await seeded(w);
+    const total = RECONCILE_ITEMS + 10;
+    for (let n = 0; n < total; n += 1) {
+      const id = CID(2000 + n);
+      w.ddb.rows.set(`SYNC#CONFLICT#${id}\u0000META`, conflictRow(2, {
+        ...conflictKey(id), GSI1PK: "SYNCCONFLICT#resolved", GSI1SK: `2026-10-14T00:00:${String(n).padStart(2, "0")}.000Z#${id}`, state: "resolved", decision: "keep_cloud", cloud_version: 1, resolved_at: "2026-10-14T00:00:00.000Z",
+      })); // no hash: each is reopened
+    }
+    const a = await reconcile(w);
+    expect(a.body).toMatchObject({ checked: RECONCILE_ITEMS, more: true, failed: 0 });
+    expect(a.body.reopened).toHaveLength(RECONCILE_ITEMS);
+    const b = await reconcile(w, { after: a.body.next });
+    expect(b.body).toMatchObject({ checked: 10, more: false, next: null });
+    expect(b.body.reopened).toHaveLength(10);
+    expect(w.rows("SYNC#CONFLICT#").filter((r) => r.state === "resolved")).toHaveLength(0);
+  });
+  it("one decision that cannot be written does not stop the others: it is counted in failed and offered again on the next call", async () => {
+    const w = world();
+    await seeded(w);
+    for (const n of [1, 2, 3]) {
+      w.ddb.rows.set(`SYNC#CONFLICT#${CID(n)}\u0000META`, conflictRow(n, { state: "resolved", GSI1PK: "SYNCCONFLICT#resolved", decision: "keep_cloud", cloud_version: 1, resolved_at: "2026-10-14T00:00:00.000Z" }));
+    }
+    w.ddb.failNext("ThrottlingError", 1); // the first reopen (the newest, CID(3)) is refused by the store
+    const r = await reconcile(w);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ checked: 3, failed: 1 });
+    expect(r.body.reopened.map((c) => c.id)).toEqual([CID(2), CID(1)]);
+    expect(stored(w, 3).state).toBe("resolved");
+    const again = await reconcile(w);
+    expect(again.body).toMatchObject({ checked: 1, failed: 0 });
+    expect(again.body.reopened.map((c) => c.id)).toEqual([CID(3)]);
+  });
   it("the receipt: 409 not_resolved for an open or reopened conflict, 404 for an unknown id, 400 for a bad outcome; moot is accepted", async () => {
     const w = world();
     await seeded(w);
@@ -631,7 +735,7 @@ describe("POST /api/sync/conflicts/reconcile applies a decision only while the c
   it("is a sync-bearer route that works while the store is paused; a bad body is 400, no sign-in is 401, a non-owner 403, the switch off 404", async () => {
     const w = world({ head: { writes_enabled: false } });
     expect((await reconcile(w)).status).toBe(200);
-    for (const body of [{ observed: "x" }, { observed: [{ class: "Nope", handle: "a", path: "/x" }] }, { observed: [{ class: "Person", handle: "a", path: 3 }] }, { observed: new Array(501).fill({ class: "Person", handle: "a", path: "/x" }) }, { dry: "yes" }]) {
+    for (const body of [{ observed: "x" }, { after: 7 }, { observed: [{ class: "Nope", handle: "a", path: "/x" }] }, { observed: [{ class: "Person", handle: "a", path: 3 }] }, { observed: new Array(501).fill({ class: "Person", handle: "a", path: "/x" }) }, { dry: "yes" }]) {
       expect(err(await reconcile(w, body)), JSON.stringify(body).slice(0, 40)).toEqual({ status: 400, error: "validation" });
     }
     expect(err(await reconcile(w, undefined, { tok: "" }))).toEqual({ status: 401, error: "unauthenticated" });

@@ -240,25 +240,39 @@ class FakeCloud:
         self.conflicts.append(item)
         return item
 
-    def reconcile_decisions(self, observed, dry=False):
+    def reconcile_decisions(self, observed, dry=False, after=None):
         """The website's reconcile route: checks each pending decision with its own rule (decisions.stale_reason, which the shared vectors pin to
-        the website's), reopens the stale ones unless `dry`."""
+        the website's), reopens the stale ones unless `dry`. Values come from the head wherever the pointer resolves, from `observed` only for a
+        pointer it cannot follow. A keep_desktop decision whose head already holds the desktop value is `settled` (stamped applied unless `dry`)."""
         from hfygramps.addon import decisions as D
 
         self.calls.append("reconcile")
-        self.reconcile_calls.append({"observed": copy.deepcopy(observed), "dry": dry})
+        self.reconcile_calls.append({"observed": copy.deepcopy(observed), "dry": dry, "after": after})
         if self.reconcile_error is not None:
             raise self.reconcile_error
         seen = {(o["class"], o["handle"], o["path"]): o["cloud"] for o in observed}
-        apply, reopened = [], []
+        apply, reopened, settled = [], [], []
         for d in self.conflicts:
             if d["state"] != "resolved" or d.get("applied_at") or d["decision"] not in D.APPLICABLE:
                 continue
             head = self.heads.get(d["handle"])
-            paths = [{"path": p["path"], "cloud": seen.get((d["class"], d["handle"], p["path"]), p.get("cloud"))} for p in d["paths"]]
+            live = head is not None and not head["deleted"] and head["obj"] is not None
+            paths = []
+            for p in d["paths"]:
+                v = D.cloud_value_at(head["obj"], p["path"]) if live else D._UNRESOLVED
+                if v is not D._UNRESOLVED:
+                    paths.append({"path": p["path"], "cloud": v})
+                else:
+                    paths.append({"path": p["path"], "cloud": seen.get((d["class"], d["handle"], p["path"]), p.get("cloud"))})
             why = None if self.force_apply else D.stale_reason(d, head["version"] if head else None, paths)
             if why is None:
                 apply.append(copy.deepcopy(d))
+                continue
+            if d["decision"] == "keep_desktop" and live and d["paths"] and all(
+                    D.cloud_value_at(head["obj"], p["path"]) is not D._UNRESOLVED and D.cloud_value_at(head["obj"], p["path"]) == p.get("desktop") for p in d["paths"]):
+                if not dry:
+                    d["applied_at"] = "2026-10-15T00:00:00.000Z"
+                settled.append(copy.deepcopy(d))
                 continue
             if not dry:
                 d["history"].append({"decision": d["decision"], "cloud_version": d["cloud_version"], "reason": why})
@@ -266,7 +280,8 @@ class FakeCloud:
                     d[k] = None
                 d["state"], d["reopened_at"] = "open", "2026-10-15T00:00:00.000Z"
             reopened.append(dict(copy.deepcopy(d), reason=why))
-        return {"checked": len(apply) + len(reopened), "apply": apply, "reopened": reopened, "more": False, "dry": dry}
+        return {"checked": len(apply) + len(reopened) + len(settled), "apply": apply, "reopened": reopened, "settled": settled,
+                "more": False, "next": None, "dry": dry}
 
     def decision_applied(self, cid, outcome):
         self.calls.append("applied:%s" % outcome)

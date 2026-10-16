@@ -117,9 +117,47 @@ class AppliedOnMatch(DecisionCase):
         self.assertEqual(json.dumps(e.tree.objects()[self.handle], sort_keys=True), before, "the desktop value stays")
         self.assertEqual(doc["counts"]["push_pending"], 1, "and goes to the website on the next push")
         self.assertEqual(self.rows(), [("resolved", "keep_desktop", d["id"], "/text")])
-        self.assertEqual(e.cloud.receipts, [(d["id"], "applied")])
+        self.assertEqual(e.cloud.receipts, [], "the desktop value is not in the website yet: the push receipts it, not this pull")
+        self.assertEqual(self.meta(D.RECEIPTS_KEY), [{"id": d["id"], "class": "Note", "handle": self.handle}])
         ops = e.preview(doc)["to_website"]
         self.assertEqual([(o["handle"], o["op"]) for o in ops], [(self.handle, "update")])
+
+    def test_a_second_pull_before_the_push_holds_the_decision_as_awaiting_the_push_and_sends_nothing(self):
+        e = self.env
+        d = self.decide("keep_desktop")
+        self.pull()
+        doc = self.pull()
+        self.assertEqual([(x["id"], x["status"], x["reason"]) for x in self.decisions_of(doc)], [(d["id"], "held", "awaiting_push")])
+        self.assertEqual(e.cloud.receipts, [], "not receipted as moot either: the website still has to get the desktop value")
+        self.assertEqual(self.meta(D.RECEIPTS_KEY), [{"id": d["id"], "class": "Note", "handle": self.handle}])
+        self.assertEqual(self.text(), "The desktop's wording.")
+
+    def test_after_the_push_moved_the_website_the_decision_is_settled_not_reopened_and_the_waiting_receipt_is_dropped(self):
+        e = self.env
+        desktop = copy.deepcopy(e.tree.objects()[self.handle]["text"])
+        e.cloud.decide("Note", self.handle, [dict(self.cloud_paths[0], desktop=desktop)], "keep_desktop")
+        self.pull()
+        site = copy.deepcopy(e.cloud.heads[self.handle]["obj"])
+        site["text"] = copy.deepcopy(desktop)   # what the push put in the website (its version moved)
+        e.cloud.put(site)
+        doc = self.pull()
+        self.assertEqual(e.cloud.conflicts[0]["state"], "resolved", "not reopened")
+        self.assertIsNotNone(e.cloud.conflicts[0]["applied_at"], "the website stamped it applied itself")
+        self.assertEqual(e.cloud.receipts, [])
+        self.assertEqual(self.meta(D.RECEIPTS_KEY), [])
+        self.assertEqual(self.decisions_of(doc), [])
+        self.assertEqual(self.text(), "The desktop's wording.")
+
+    def test_a_decision_the_website_reopened_meanwhile_loses_its_waiting_receipt(self):
+        e = self.env
+        d = self.decide("keep_desktop")
+        self.pull()
+        site = copy.deepcopy(e.cloud.heads[self.handle]["obj"])
+        set_text(site, "A third wording.")   # somebody else changed the website: not the desktop value
+        e.cloud.put(site)
+        doc = self.pull()
+        self.assertEqual(e.cloud.conflicts[0]["state"], "open")
+        self.assertEqual(self.meta(D.RECEIPTS_KEY), [])
 
     def test_the_website_is_asked_with_the_value_the_merge_found_at_each_open_conflict_path(self):
         e = self.env
@@ -236,6 +274,16 @@ class HeldAndMoot(DecisionCase):
         self.assertEqual((self.text(), self.rows(), json.dumps(e.cloud.conflicts, sort_keys=True)), before)
         self.assertEqual(e.cloud.receipts, [])
 
+    def test_a_decision_the_desktop_never_saw_is_held_and_offered_again_not_dropped_as_moot(self):
+        e = self.env
+        other = by_gid(load_cloud_objs(e), "N0001")["handle"]
+        d = e.cloud.decide("Note", other, [{"path": "/text", "cloud": copy.deepcopy(e.cloud.heads[other]["obj"]["text"])}], "keep_cloud")
+        for _ in range(2):
+            doc = self.pull()
+            self.assertEqual([(x["id"], x["status"], x["reason"]) for x in self.decisions_of(doc)], [(d["id"], "held", "no_local_conflict")])
+            self.assertEqual(e.cloud.receipts, [])
+        self.assertEqual(self.meta("web_decisions")["counts"]["held"], 1, "and it shows in the report")
+
     def test_a_decision_with_no_conflict_left_on_the_desktop_is_receipted_as_moot(self):
         e = self.env
         d = self.decide("keep_cloud")
@@ -328,14 +376,64 @@ class Robustness(DecisionCase):
         e.cloud.reconcile_decisions = lambda observed, dry=False: ["not", "a", "dict"]
         self.assertEqual(self.pull()["exit_code"], 20)
 
-    def test_a_whole_object_conflict_is_not_decided_from_the_web(self):
+    def test_a_whole_object_conflict_is_held_not_decided_from_the_web(self):
         e = self.env
         d = e.cloud.decide("Note", self.handle, [{"path": "", "cloud": copy.deepcopy(e.cloud.heads[self.handle]["obj"])}], "keep_cloud")
         before = self.text()
         doc = self.pull()
         self.assertEqual(self.text(), before)
-        self.assertEqual([x["status"] for x in self.decisions_of(doc)], ["moot"], "no desktop conflict is at that path, so nothing here to apply")
-        self.assertEqual(e.cloud.receipts, [(d["id"], "moot")])
+        self.assertEqual([(x["status"], x["reason"]) for x in self.decisions_of(doc)], [("held", "whole_object")], "the Gramps window resolves it: shown, not dropped")
+        self.assertEqual(e.cloud.receipts, [])
+
+    def test_the_calls_go_on_while_the_website_says_more_and_stop_at_the_budget(self):
+        e = self.env
+        d = self.decide("keep_cloud")
+        asked = []
+        real = type(e.cloud).reconcile_decisions
+
+        def paged(observed, dry=False, after=None):
+            asked.append(after)
+            answer = real(e.cloud, observed, dry=dry)
+            if after is None:
+                return {"apply": [], "reopened": [], "settled": [], "more": True, "next": "c1"}
+            return dict(answer, more=after != "c1" and False)
+
+        e.cloud.reconcile_decisions = paged
+        doc = self.pull()
+        self.assertEqual(asked, [None, "c1"])
+        self.assertEqual(self.text(), "The website's wording.", "the decision on the second page is applied")
+        self.assertEqual([x["status"] for x in self.decisions_of(doc)], ["applied"])
+        # a website that never stops saying more is asked MAX_RECONCILE_CALLS times, and the run goes on
+        e.cloud.conflicts[0]["applied_at"] = None
+        asked.clear()
+        e.cloud.reconcile_decisions = lambda observed, dry=False, after=None: (asked.append(after) or {"apply": [], "reopened": [], "more": True, "next": "n%d" % len(asked)})
+        self.assertEqual(self.pull()["exit_code"], 0)
+        self.assertEqual(len(asked), D.MAX_RECONCILE_CALLS)
+
+    def test_an_error_on_a_later_call_keeps_what_the_earlier_ones_found(self):
+        e = self.env
+        self.decide("keep_cloud")
+        real = type(e.cloud).reconcile_decisions
+
+        def flaky(observed, dry=False, after=None):
+            if after is None:
+                return dict(real(e.cloud, observed, dry=dry), more=True, next="c1")
+            raise transport.TransportError("unavailable", consts.EXIT_TEMPORARY, status=503)
+
+        e.cloud.reconcile_decisions = flaky
+        doc = self.pull()
+        self.assertEqual([x["status"] for x in self.decisions_of(doc)], ["applied"])
+        self.assertEqual(self.meta("web_decisions")["error"], "unavailable")
+
+    def test_the_value_to_check_is_the_heads_own_wherever_the_pointer_resolves(self):
+        class Head:
+            deleted = False
+            obj = {"text": {"string": "from the head"}, "event_ref_list": []}
+
+        paths = [{"path": "/text/string", "cloud": "stored"}, {"path": "/event_ref_list/ref#0", "cloud": "stored too"}]
+        got = D._current(paths, [("/text/string", {"cloud": "from the merge"}), ("/event_ref_list/ref#0", {"cloud": "from the merge"})], Head())
+        self.assertEqual([p["cloud"] for p in got], ["from the head", "from the merge"], "the merge's value only where the head cannot be followed")
+        self.assertEqual([p["cloud"] for p in D._current(paths, [], Head())], ["from the head", "stored too"])
 
     def test_the_sidecar_report_and_preview_hold_ids_and_words_only(self):
         e = self.env

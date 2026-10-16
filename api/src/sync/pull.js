@@ -306,15 +306,31 @@ export function cloudValueAt(obj, path) {
   return { value: node === undefined ? null : node };
 }
 
-/** The conflict's paths with the CURRENT cloud values: what the add-on observed, else the head's own value at the pointer, else the stored one. */
+/**
+ * The conflict's paths with the CURRENT cloud values: the head's own value at the pointer wherever the pointer resolves (the add-on's word never
+ * overrides what the store holds), else the add-on's `observed` value for a path the server cannot follow (a keyed-list token, a derived view key),
+ * else the stored one.
+ */
 function currentPaths(item, head, observed) {
   return (Array.isArray(item.paths) ? item.paths : []).map((p) => {
-    const seen = observed.get(observedKey(item.class, item.handle, p?.path));
-    if (seen !== undefined) return { path: p.path, cloud: seen };
-    if (head === undefined || head === null) return { path: p?.path, cloud: null };
-    if (head.deleted === true || head.obj_json == null) return { path: p?.path, cloud: null };
+    if (head === undefined || head === null || head.deleted === true || head.obj_json == null) {
+      const seen = observed.get(observedKey(item.class, item.handle, p?.path));
+      return { path: p?.path, cloud: seen !== undefined ? seen : null };
+    }
     const at = cloudValueAt(JSON.parse(head.obj_json), p?.path);
-    return at ? { path: p.path, cloud: at.value } : p;
+    if (at) return { path: p.path, cloud: at.value };
+    const seen = observed.get(observedKey(item.class, item.handle, p?.path));
+    return seen !== undefined ? { path: p.path, cloud: seen } : p;
+  });
+}
+/** True when the head holds, at every path of a keep_desktop conflict, the desktop value the admin chose: the push already carried it. A path the server cannot follow proves nothing. */
+function headHoldsDesktop(item, head) {
+  const paths = Array.isArray(item.paths) ? item.paths : [];
+  if (!paths.length || head === undefined || head === null || head.deleted === true || head.obj_json == null) return false;
+  const obj = JSON.parse(head.obj_json);
+  return paths.every((p) => {
+    const at = cloudValueAt(obj, p?.path);
+    return at !== null && canonicalJson(at.value) === canonicalJson(p.desktop === undefined ? null : p.desktop);
   });
 }
 const observedKey = (cls, handle, path) => `${cls}\u0000${handle}\u0000${path}`;
@@ -371,28 +387,36 @@ export async function syncConflictDecision(c) {
 // ---- reconcile on a pull (HFY-TSK-338, SI-30) -----------------------------------------------------------------------------
 export const RECONCILE_PAGE = 100;
 export const RECONCILE_PAGES = 5;
+export const RECONCILE_ITEMS = 50;
 export const OBSERVED_MAX = 500;
 export const APPLIED_OUTCOMES = Object.freeze(["applied", "moot"]);
 const APPLICABLE = Object.freeze(["keep_cloud", "keep_desktop"]);
 
-/** The resolved decisions nobody has applied yet, newest first (the applied ones pile up at the old end), over at most RECONCILE_PAGES pages; `more` when pages were left. */
-async function pendingDecisions(store) {
+/**
+ * The resolved decisions nobody has applied yet, newest first (the applied ones pile up at the old end). One call looks at no more than
+ * RECONCILE_ITEMS pending decisions and RECONCILE_PAGES pages; `next` is then a cursor (the last item looked at) the caller sends back as `after`
+ * to go on from there, and null when the queue is done. So a long backlog of applied items never hides an older pending decision: it takes more calls.
+ */
+async function pendingDecisions(store, after) {
   const out = [];
-  let start;
-  let more = false;
+  let start = after ? decodeCursor(after, "resolved") : undefined;
+  let next = null;
   for (let page = 0; page < RECONCILE_PAGES; page += 1) {
     const r = await store.ddb.send(new store.cmds.QueryCommand({
       TableName: store.table, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk", ExpressionAttributeValues: { ":pk": "SYNCCONFLICT#resolved" },
       ScanIndexForward: false, Limit: RECONCILE_PAGE, ...(start ? { ExclusiveStartKey: start } : {}),
     }));
-    for (const it of r.Items ?? []) {
+    const items = r.Items ?? [];
+    for (let i = 0; i < items.length; i += 1) {
+      const it = items[i];
       if (typeof it.PK === "string" && CONFLICT_PK.test(it.PK) && it.state === "resolved" && !it.applied_at && APPLICABLE.includes(it.decision)) out.push(it);
+      if (out.length >= RECONCILE_ITEMS && (i < items.length - 1 || r.LastEvaluatedKey)) return { items: out, next: encodeCursor(it) };
     }
+    if (!r.LastEvaluatedKey || !items.length) return { items: out, next: null };
     start = r.LastEvaluatedKey;
-    if (!start) break;
-    more = page === RECONCILE_PAGES - 1;
+    next = encodeCursor(items.at(-1));
   }
-  return { items: out, more };
+  return { items: out, next };
 }
 
 /** Reopens one resolved conflict: state open again, the old decision moved into `history` (never dropped), one audit row. Returns the new view, or null when it moved meanwhile. */
@@ -422,15 +446,41 @@ async function reopenConflict(store, item, reason, actor, at) {
   return conflictView({ ...rest, state: "open", reopened_at: at, history });
 }
 
+/** Stamps `applied_at` on a resolved decision (it stays resolved; reconcile skips it from then on). Returns the item as stored, or null when it is no longer resolved. Idempotent. */
+async function stampApplied(store, item, outcome, actor, at, reason) {
+  const id = item.PK.slice("SYNC#CONFLICT#".length);
+  const key = conflictKey(id);
+  try {
+    await transact(store.ddb, store.cmds, store.table, {
+      updates: [{
+        key, tag: "conflict:applied", condition: "#s = :resolved AND attribute_not_exists(#ap)", update: "SET #ap = :at, #ao = :o",
+        names: { "#s": "state", "#ap": "applied_at", "#ao": "applied_outcome" }, values: { ":resolved": "resolved", ":at": at, ":o": outcome },
+      }],
+      puts: [{ item: { ...auditItem({ op: "sync.conflict.applied", id: `conflict:${id}`, principalId: actor, at, before: { state: "resolved" }, after: { state: "resolved", outcome, ...(reason ? { reason } : {}) } }, store.uid(), store.table), origin: "desktop" } }],
+    }, store.txnOpts);
+  } catch (e) {
+    if (e instanceof TxnCancelled && e.conditionFailed) {
+      const again = (await store.ddb.send(new store.cmds.GetCommand({ TableName: store.table, Key: key, ConsistentRead: true }))).Item;
+      return again?.state === "resolved" && again.applied_at ? again : null;
+    }
+    if (e instanceof TxnCancelled) throw retryable();
+    throw e;
+  }
+  return { ...item, applied_at: at, applied_outcome: outcome };
+}
+
 /**
- * POST /api/sync/conflicts/reconcile {observed?: [{class, handle, path, cloud}], dry?: true} (sync bearer; the add-on calls it on every pull).
+ * POST /api/sync/conflicts/reconcile {observed?: [{class, handle, path, cloud}], dry?: true, after?: cursor} (sync bearer; the add-on calls it on every pull).
  * Every resolved keep_cloud or keep_desktop decision that has not been applied is checked against the cloud as it is now (SI-30): the head's
  * version must be the one stored with the decision, and the cloud values at the conflict's paths must hash to the stored `cloud_value_hash`. The
- * values are the add-on's `observed` ones where it sends them (it computed them with the merge, which knows keyed-list paths), else the head's own
- * value at the path's pointer, else the stored value. A decision that still applies is returned in `apply`; one that does not is reopened (state
- * open again, the old decision kept in `history`) and returned in `reopened` with its `reason`, and nothing is applied for it. With `dry: true`
- * (a `check` run) nothing is written: `reopened` lists what a real pull would reopen. Answers `{checked, apply, reopened, more, dry}`; `more` is
- * true when the page budget ended before the pending decisions did.
+ * values are the head's own at the path's pointer; `observed` (the add-on computed them with the merge, which knows keyed-list paths) is used only
+ * for a pointer the server cannot follow, and the stored value stands where neither is there. A decision that still applies is returned in `apply`;
+ * one that does not is reopened (state open again, the old decision kept in `history`) and returned in `reopened` with its `reason`, and nothing is
+ * applied for it. One exception: a keep_desktop decision whose version or value moved because the desktop's own push carried the chosen value (the head
+ * now holds the desktop value at every path) is `settled`, not reopened: it is stamped applied (unless `dry`). With `dry: true` (a `check` run)
+ * nothing is written: `reopened` and `settled` list what a real pull would do. One call weighs at most RECONCILE_ITEMS decisions; an item that fails
+ * to read or write is counted in `failed` and left for the next call. Answers `{checked, apply, reopened, settled, failed, more, next, dry}`; `next` is
+ * the cursor to send as `after` for the rest (null, and `more` false, when the queue is done).
  */
 export async function syncConflictsReconcile(c) {
   c.sync.checkTree();
@@ -438,6 +488,8 @@ export async function syncConflictsReconcile(c) {
   if (c.body !== undefined && c.body !== null && !isObj(c.body)) throw bad("body");
   const dry = c.body?.dry === true;
   if (c.body?.dry !== undefined && typeof c.body.dry !== "boolean") throw bad("dry");
+  const after = c.body?.after;
+  if (after !== undefined && after !== null && (typeof after !== "string" || after.length > 512)) throw bad("after");
   const rawObserved = c.body?.observed;
   const observed = new Map();
   if (rawObserved !== undefined) {
@@ -447,26 +499,40 @@ export async function syncConflictsReconcile(c) {
       observed.set(observedKey(o.class, o.handle, o.path), o.cloud === undefined ? null : o.cloud);
     }
   }
-  const { items: pending, more } = await pendingDecisions(store);
+  const { items: pending, next } = await pendingDecisions(store, after || undefined);
   const at = new Date(store.now()).toISOString();
   const apply = [];
   const reopened = [];
+  const settled = [];
+  let failed = 0;
   for (const item of pending) {
-    const head = CLASSES.includes(item.class) && typeof item.handle === "string" ? await getRecordItem(store, item.class, item.handle) : undefined;
-    const version = Number.isInteger(head?.version) ? head.version : null;
-    const reason = decisionStaleReason(item, { version, paths: currentPaths(item, head, observed) });
-    if (reason === null) { apply.push(conflictView(item)); continue; }
-    if (dry) { reopened.push({ ...conflictView(item), reason }); continue; }
-    const view = await reopenConflict(store, item, reason, c.actor.id, at);
-    if (view) reopened.push({ ...view, reason });
+    try {
+      const head = CLASSES.includes(item.class) && typeof item.handle === "string" ? await getRecordItem(store, item.class, item.handle) : undefined;
+      const version = Number.isInteger(head?.version) ? head.version : null;
+      const reason = decisionStaleReason(item, { version, paths: currentPaths(item, head, observed) });
+      if (reason === null) { apply.push(conflictView(item)); continue; }
+      if (item.decision === "keep_desktop" && (reason === "version_changed" || reason === "value_changed") && headHoldsDesktop(item, head)) {
+        if (dry) { settled.push(conflictView(item)); continue; }
+        const done = await stampApplied(store, item, "applied", c.actor.id, at, "desktop_value_in_cloud");
+        if (done) settled.push(conflictView(done));
+        continue;
+      }
+      if (dry) { reopened.push({ ...conflictView(item), reason }); continue; }
+      const view = await reopenConflict(store, item, reason, c.actor.id, at);
+      if (view) reopened.push({ ...view, reason });
+    } catch (e) {
+      failed += 1;
+      store.log?.warn?.("a decision could not be weighed; left for the next call", logSafeError(e, { route: "sync.conflicts.reconcile" }));
+    }
   }
-  return ok({ checked: pending.length, apply, reopened, more, dry });
+  return ok({ checked: pending.length, apply, reopened, settled, failed, more: next !== null, next, dry });
 }
 
 /**
  * POST /api/sync/conflicts/:id/applied {outcome?: "applied" | "moot"} (sync bearer): the add-on's receipt for a decision it applied, or found moot
- * (no matching conflict on the desktop any more). The conflict stays `resolved`; `applied_at` keeps it out of the next reconcile, which matters for
- * a keep_desktop decision, whose own push moves the cloud head. Idempotent. 404 for an unknown id; 409 not_resolved for a conflict that was reopened.
+ * (no matching conflict on the desktop in any state). A keep_desktop decision is receipted only after the push that carries the desktop value
+ * succeeded. The conflict stays `resolved`; `applied_at` keeps it out of the next reconcile, which matters for a keep_desktop decision, whose own
+ * push moves the cloud head. Idempotent. 404 for an unknown id; 409 not_resolved for a conflict that was reopened.
  */
 export async function syncConflictApplied(c) {
   c.sync.checkTree();
@@ -476,28 +542,12 @@ export async function syncConflictApplied(c) {
   if (c.body !== undefined && c.body !== null && !isObj(c.body)) throw bad("body");
   const outcome = c.body?.outcome === undefined ? "applied" : c.body.outcome;
   if (!APPLIED_OUTCOMES.includes(outcome)) throw bad("outcome", `outcome must be one of ${APPLIED_OUTCOMES.join(", ")}`);
-  const key = conflictKey(id);
-  const item = (await store.ddb.send(new store.cmds.GetCommand({ TableName: store.table, Key: key, ConsistentRead: true }))).Item;
+  const item = (await store.ddb.send(new store.cmds.GetCommand({ TableName: store.table, Key: conflictKey(id), ConsistentRead: true }))).Item;
   if (!item) throw new HttpError(404, "not_found", "no such conflict");
   if (item.state !== "resolved") throw new HttpError(409, "not_resolved", "this conflict is not decided");
   if (item.applied_at) return ok(conflictView(item));
   const at = new Date(store.now()).toISOString();
-  try {
-    await transact(store.ddb, store.cmds, store.table, {
-      updates: [{
-        key, tag: "conflict:applied", condition: "#s = :resolved AND attribute_not_exists(#ap)", update: "SET #ap = :at, #ao = :o",
-        names: { "#s": "state", "#ap": "applied_at", "#ao": "applied_outcome" }, values: { ":resolved": "resolved", ":at": at, ":o": outcome },
-      }],
-      puts: [{ item: { ...auditItem({ op: "sync.conflict.applied", id: `conflict:${id}`, principalId: c.actor.id, at, before: { state: "resolved" }, after: { state: "resolved", outcome } }, store.uid(), store.table), origin: "desktop" } }],
-    }, store.txnOpts);
-  } catch (e) {
-    if (e instanceof TxnCancelled && e.conditionFailed) {
-      const again = (await store.ddb.send(new store.cmds.GetCommand({ TableName: store.table, Key: key, ConsistentRead: true }))).Item;
-      if (again?.state === "resolved" && again.applied_at) return ok(conflictView(again));
-      throw new HttpError(409, "not_resolved", "this conflict is not decided");
-    }
-    if (e instanceof TxnCancelled) throw retryable();
-    throw e;
-  }
-  return ok(conflictView({ ...item, applied_at: at }));
+  const done = await stampApplied(store, item, outcome, c.actor.id, at);
+  if (!done) throw new HttpError(409, "not_resolved", "this conflict is not decided");
+  return ok(conflictView(done));
 }

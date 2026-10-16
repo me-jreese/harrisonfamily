@@ -138,6 +138,7 @@ class FakeCloud:
         self.aliases = []
         self.writes_enabled = True
         self.heartbeats = []
+        self.decision_receipts = []   # (conflict id, outcome) of every POST /api/sync/conflicts/:id/applied (HFY-TSK-338)
         self.on_batch = None        # called (no arguments) before a new batch is checked: a website-side edit that races the push
         self.replays = []           # the keys that were answered from a stored receipt
         self.id_block = {c: "%s8000-%s8999" % (p, p) for c, p in pushplan.DEFAULT_BLOCK_PREFIX.items()}
@@ -181,6 +182,10 @@ class FakeCloud:
         if path == "/api/sync/status":
             self.heartbeats.append(body)
             return _Resp(204, None)
+        m = re.match(r"^/api/sync/conflicts/([^/]+)/applied$", path)
+        if m:
+            self.decision_receipts.append((m.group(1), (body or {}).get("outcome")))
+            return _Resp(200, {"id": m.group(1)})
         raise err(404, "not_found")
 
     def _log(self, method, path, body):

@@ -17,8 +17,11 @@ decision kept as history) and nothing is applied.
                transaction and the sidecar update are the pull's own.
     settle     after the plan: a pin the merge closed is applied; one that still conflicts (a composite conflict, or the desktop value
                changed again) is held and stays open.
-    receipt    after the sidecar commit, `POST /api/sync/conflicts/:id/applied` for each applied decision, and for a decision with no
-               conflict left on the desktop (`moot`), so the website offers it no more.
+    receipt    after the sidecar commit, `POST /api/sync/conflicts/:id/applied` for each applied `keep_cloud` decision, and for a decision
+               the desktop has a conflict row for in some state but none open (`moot`), so the website offers it no more. A `keep_desktop`
+               decision is receipted by the PUSH, after the batch that carries the desktop value succeeded (`send_pending_receipts`): until
+               then it waits in `meta.web_receipts` and a pull holds it as `awaiting_push`. A decision with no desktop row at all is held
+               (`no_local_conflict`), not dropped, so it is offered again and shows in the preview.
 
 Not handled: a conflict on the whole object (path ""), which the Gramps window resolves. Reports hold ids, pointers and reasons, never values.
 Standard library only.
@@ -26,6 +29,7 @@ Standard library only.
 import hashlib
 import json
 import re
+import urllib.parse
 
 from .. import canonical
 from .. import merge as M
@@ -37,6 +41,11 @@ _UNRESOLVED = object()
 
 #: What a report says about a decision. `apply` is only a plan: `settle` turns it into `applied` or `held`.
 APPLY, APPLIED, REOPENED, HELD, MOOT = "apply", "applied", "reopened", "held", "moot"
+
+#: `meta.web_receipts`: [{"id", "class", "handle"}], the applied keep_desktop decisions whose receipt waits for the push that carries the value.
+RECEIPTS_KEY = "web_receipts"
+#: Reconcile calls one pull makes at most (the website weighs a bounded number of decisions per call and hands back a cursor).
+MAX_RECONCILE_CALLS = 20
 
 
 def cloud_value_hash(paths):
@@ -109,10 +118,11 @@ class Entry:
 class Outcome:
     """What the decisions of one run come to. `overrides` {(handle, path): base_json or None} rewrite the pins the plan merges with."""
 
-    def __init__(self, entries=(), dry=False, error=None):
+    def __init__(self, entries=(), dry=False, error=None, settled=()):
         self.entries = list(entries)
         self.dry = dry
         self.error = error
+        self.settled = list(settled)   # ids the website stamped applied itself (the desktop value was already in its head)
         self.overrides = {}
         for e in self.entries:
             e.planned = e.status == APPLY   # only a decision planned with a rewritten pin can be settled
@@ -170,32 +180,69 @@ def collect(ctx, cloud, plan):
     """The decisions this run weighs, from the website, against `plan` (a plan made without any decision) and the cloud state `ctx.snap`.
 
     Returns an Outcome. A website that has no reconcile route (an older one), or that does not answer, gives an empty Outcome: a decision is
-    never needed for a pull to be right, and what is not applied now is offered again on the next run.
+    never needed for a pull to be right, and what is not applied now is offered again on the next run. The website weighs a bounded number of
+    decisions per call and answers `next` while more are pending: the calls go on up to MAX_RECONCILE_CALLS, then the rest waits for the next run.
     """
     fn = getattr(cloud, "reconcile_decisions", None)
     if fn is None:
         return Outcome()
-    try:
-        answer = fn(_observed(plan), dry=ctx.dry)
-    except transport.TransportError as exc:
-        ctx.log.line("decisions: skipped (%s)" % exc.code)
-        return Outcome(error=exc.code)
-    if not isinstance(answer, dict):
-        ctx.log.line("decisions: skipped (bad_answer)")
-        return Outcome(error="bad_answer")
-    return _weigh(ctx, plan, answer)
+    observed = _observed(plan)
+    merged = {"apply": [], "reopened": [], "settled": []}
+    after = None
+    error = None
+    for call in range(MAX_RECONCILE_CALLS):
+        try:
+            answer = fn(observed, dry=ctx.dry) if after is None else fn(observed, dry=ctx.dry, after=after)
+        except transport.TransportError as exc:
+            ctx.log.line("decisions: skipped (%s)" % exc.code if call == 0 else "decisions: stopped early (%s)" % exc.code)
+            error = exc.code
+            break
+        if not isinstance(answer, dict):
+            ctx.log.line("decisions: skipped (bad_answer)" if call == 0 else "decisions: stopped early (bad_answer)")
+            error = "bad_answer"
+            break
+        for k in merged:
+            if isinstance(answer.get(k), list):
+                merged[k].extend(answer[k])
+        nxt = answer.get("next")
+        if not (answer.get("more") is True and isinstance(nxt, str) and nxt and nxt != after):
+            break
+        after = nxt
+    else:
+        ctx.log.line("decisions: more are pending than one run weighs; the rest waits for the next run")
+    if error is not None and not any(merged.values()):
+        return Outcome(error=error)
+    return _weigh(ctx, plan, merged, error)
 
 
-def _weigh(ctx, plan, answer):
+def _pending_receipts(side):
+    """The `web_receipts` rows that are well formed."""
+    from . import sidecar
+
+    rows = sidecar.meta_json(side, RECEIPTS_KEY, [])
+    return [r for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("handle"), str)] if isinstance(rows, list) else []
+
+
+def _known_here(side, cls, handle, paths, cloud_id):
+    """True when the sidecar has a conflict row, in ANY state, for this website conflict or for one of its paths: the desktop knew the conflict
+    (and has since closed it, so the decision is moot). No row at all means the desktop never saw it, which is not the same as moot."""
+    marks = ",".join("?" * len(paths)) if paths else None
+    sql = "SELECT 1 FROM conflicts WHERE cloud_conflict_id = ?"
+    args = [cloud_id]
+    if marks:
+        sql += " OR (class = ? AND handle = ? AND path IN (%s))" % marks
+        args += [cls, handle] + list(paths)
+    return side.execute(sql + " LIMIT 1", args).fetchone() is not None
+
+
+def _weigh(ctx, plan, answer, error=None):
     by_id = {c["id"]: c for c in plan.conflicts}
     snap = ctx.snap
     claimed = set()
     entries = []
-    server_reopened = {}
-    for row in answer.get("reopened") or []:
-        if isinstance(row, dict) and isinstance(row.get("id"), str):
-            server_reopened[row["id"]] = row
+    awaiting = {r["id"] for r in _pending_receipts(ctx.side)}
     rows = [("apply", r) for r in answer.get("apply") or []] + [("reopened", r) for r in answer.get("reopened") or []]
+    settled = [r["id"] for r in answer.get("settled") or [] if isinstance(r, dict) and isinstance(r.get("id"), str)]
     for kind, d in rows:
         if not isinstance(d, dict) or not isinstance(d.get("id"), str):
             continue
@@ -215,21 +262,31 @@ def _weigh(ctx, plan, answer):
             entry.status, entry.reason = REOPENED, str(d.get("reason") or "")
             entries.append(entry)
             continue
+        if d["id"] in awaiting:
+            # applied by an earlier pull; the desktop value is not in the website yet. The push receipts it, and nothing is applied twice.
+            entry.status, entry.reason = HELD, "awaiting_push"
+            entries.append(entry)
+            continue
         head = snap.by_handle.get(handle)
         version = head.version if head is not None else None
         stale = stale_reason(dict(d, state="resolved"), version, _current(paths, entry.matched, head))
         if stale is not None:
             entry.status, entry.reason = HELD, "changed_since_check"
+        elif any(p["path"] == "" for p in paths):
+            entry.status, entry.reason = HELD, "whole_object"   # the Gramps window resolves a whole-object conflict; shown, not dropped
         elif not entry.matched:
-            entry.status = MOOT
+            if _known_here(ctx.side, cls, handle, [p["path"] for p in paths], d["id"]):
+                entry.status = MOOT                              # the desktop had this conflict and has closed it
+            else:
+                entry.status, entry.reason = HELD, "no_local_conflict"   # the desktop has not seen it (yet): offered again, never dropped
         elif any(local["id"] in claimed for _p, local in entry.matched):
             entry.status, entry.reason = MOOT, "superseded"
         entries.append(entry)
         if entry.status == APPLY:
             claimed.update(local["id"] for _p, local in entry.matched)
-    # a decision the website returned neither way (applied meanwhile, or past its page budget) is simply not weighed
+    # a decision the website returned neither way (applied meanwhile, or past its call budget) is simply not weighed
     ctx.log.line("decisions: %s" % " ".join("%s=%d" % kv for kv in sorted(Outcome(entries).summary().items())))
-    return Outcome(entries, dry=ctx.dry)
+    return Outcome(entries, dry=ctx.dry, error=error, settled=settled)
 
 
 def _last_decision(d):
@@ -239,20 +296,23 @@ def _last_decision(d):
 
 
 def _current(paths, matched, head):
-    """The conflict's paths with the cloud values of this run: the merge's where this desktop has the conflict, else the snapshot head's own
-    value at the pointer, else the stored one. The same order as the website's `currentPaths`."""
+    """The conflict's paths with the cloud values of this run: the snapshot head's own value at the pointer wherever it resolves (the website
+    does the same: nobody's word overrides what the store holds), else the merge's value where this desktop has the conflict, else the stored
+    one. The same order as the website's `currentPaths`."""
     seen = {path: c.get("cloud") for path, c in matched}
     out = []
     for p in paths:
         path = p["path"]
-        if path in seen:
-            out.append({"path": path, "cloud": seen[path]})
-            continue
         if head is None or head.deleted or head.obj is None:
-            out.append({"path": path, "cloud": None})
+            out.append({"path": path, "cloud": seen.get(path)})
             continue
         v = cloud_value_at(head.obj, path)
-        out.append(p if v is _UNRESOLVED else {"path": path, "cloud": v})
+        if v is not _UNRESOLVED:
+            out.append({"path": path, "cloud": v})
+        elif path in seen:
+            out.append({"path": path, "cloud": seen[path]})
+        else:
+            out.append(p)
     return out
 
 
@@ -261,7 +321,7 @@ def _current(paths, matched, head):
 
 def persist(side, outcome, now):
     """In the pull's sidecar transaction: link each decision's desktop conflicts to the website's conflict, record the decision on the ones
-    applied, and keep the last run's report in `meta.web_decisions` (ids, reasons and counts)."""
+    applied, keep the keep_desktop receipts that wait for the push, and keep the last run's report in `meta.web_decisions` (ids, reasons and counts)."""
     from . import sidecar
 
     for e in outcome.entries:
@@ -271,6 +331,15 @@ def persist(side, outcome, now):
                              (e.decision, e.cloud_id, now, c["id"]))
             elif e.status in (REOPENED, HELD):
                 side.execute("UPDATE conflicts SET cloud_conflict_id = ? WHERE id = ? AND state IN ('open', 'parked')", (e.cloud_id, c["id"]))
+    before = _pending_receipts(side)
+    gone = set(outcome.settled) | {e.cloud_id for e in outcome.by_status(REOPENED)}
+    waiting = {r["id"]: r for r in before if r["id"] not in gone}
+    for e in outcome.by_status(APPLIED):
+        if e.decision == "keep_desktop":
+            waiting[e.cloud_id] = {"id": e.cloud_id, "class": e.cls, "handle": e.handle}
+    after = [waiting[k] for k in sorted(waiting)]
+    if after != before:
+        sidecar.set_meta_json(side, RECEIPTS_KEY, after)
     report = {"at": now, "counts": outcome.summary(),
               "reopened": [e.report() for e in outcome.by_status(REOPENED)], "held": [e.report() for e in outcome.by_status(HELD)]}
     if outcome.entries or outcome.error:
@@ -279,15 +348,42 @@ def persist(side, outcome, now):
 
 
 def acknowledge(ctx, cloud, outcome):
-    """The receipts: `applied` for each applied decision, `moot` for one with no conflict left here. A receipt that fails is logged and left; the
-    next pull offers the decision again (a keep_cloud one finds nothing to do and is receipted then)."""
+    """The receipts of a pull: `applied` for each applied keep_cloud decision, `moot` for one whose desktop conflict is closed. A keep_desktop
+    decision is not receipted here: its value reaches the website with the push, which receipts it (`send_pending_receipts`). A receipt that
+    fails is logged and left; the next pull offers the decision again (a keep_cloud one finds nothing to do and is receipted then)."""
     fn = getattr(cloud, "decision_applied", None)
     if fn is None:
         return
     for e in outcome.entries:
-        if e.status not in (APPLIED, MOOT):
+        if e.status not in (APPLIED, MOOT) or (e.status == APPLIED and e.decision == "keep_desktop"):
             continue
         try:
             fn(e.cloud_id, "applied" if e.status == APPLIED else "moot")
         except transport.TransportError as exc:
             ctx.log.line("decisions: receipt not sent (%s)" % exc.code)
+
+
+def send_pending_receipts(side, client, handles, log):
+    """The push's half: for each keep_desktop decision waiting in `meta.web_receipts` whose object is in `handles` (the objects whose desktop
+    value the website now holds: a batch that carried them was acknowledged, or the two sides agree), `POST /api/sync/conflicts/:id/applied`.
+    A 404 or 409 (unknown, or reopened by the website) drops the row; any other failure leaves it for the next push. Returns the number sent."""
+    from . import sidecar
+
+    pending = _pending_receipts(side)
+    keep, sent = [], 0
+    for r in pending:
+        if r["handle"] not in handles:
+            keep.append(r)
+            continue
+        try:
+            client.post("/api/sync/conflicts/%s/applied" % urllib.parse.quote(r["id"], safe=""), {"outcome": "applied"})
+            sent += 1
+        except transport.TransportError as exc:
+            if exc.status in (404, 409):
+                continue
+            log.line("decisions: receipt not sent (%s)" % exc.code)
+            keep.append(r)
+    if len(keep) != len(pending):
+        sidecar.set_meta_json(side, RECEIPTS_KEY, keep)
+        side.commit()
+    return sent

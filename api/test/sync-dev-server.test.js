@@ -446,7 +446,13 @@ describe("the sync routes through the in-memory table and the directory store", 
     const tok = (await login(dev)).access_token;
     const { tree_id: tree } = await (await api(dev, tok, "POST", "/sync/bind", { body: BIND })).json();
     const post = (b) => fetch(`${dev.origin}/_dev/conflicts`, { method: "POST", body: JSON.stringify(b) });
-    for (const bad of [{}, { class: "Nope", handle: "a".repeat(28), paths: [{ path: "/x" }] }, { class: "Note", handle: "a".repeat(28), paths: [] }, { class: "Note", handle: "a".repeat(28), paths: ["x"] }]) {
+    for (const bad of [{}, { class: "Nope", handle: "a".repeat(28), paths: [{ path: "/x" }] }, { class: "Note", handle: "a".repeat(28), paths: [] }, { class: "Note", handle: "a".repeat(28), paths: ["x"] },
+      // the production limits: a handle of the record shape, a known kind and source, bounded strings and paths, a pointer that starts with a slash
+      { class: "Note", handle: "short", paths: [{ path: "/x" }] }, { class: "Note", handle: "A".repeat(28), paths: [{ path: "/x" }] }, { class: "Note", handle: "a".repeat(80), paths: [{ path: "/x" }] },
+      { class: "Note", handle: "a".repeat(28), kind: "weird", paths: [{ path: "/x" }] }, { class: "Note", handle: "a".repeat(28), source: "elsewhere", paths: [{ path: "/x" }] },
+      { class: "Note", handle: "a".repeat(28), gramps_id: "N".repeat(40), paths: [{ path: "/x" }] }, { class: "Note", handle: "a".repeat(28), paths: [{ path: "x" }] },
+      { class: "Note", handle: "a".repeat(28), paths: [{ path: "/" + "x".repeat(600) }] }, { class: "Note", handle: "a".repeat(28), paths: [{ path: "/x", cloud: "y".repeat(3000) }] },
+      { class: "Note", handle: "a".repeat(28), paths: new Array(21).fill({ path: "/x" }) }]) {
       expect((await post(bad)).status, JSON.stringify(bad)).toBe(400);
     }
     const made = await post({ class: "Note", handle: "a".repeat(28), gramps_id: "N0001", paths: [{ path: "/text", base: "one", cloud: "two", desktop: "three" }] });

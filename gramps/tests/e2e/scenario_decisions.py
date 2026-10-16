@@ -4,7 +4,7 @@ An admin decides a parked conflict on the website. The decision stores {cloud_ve
 website's record is still that version with those values, and otherwise the website reopens the conflict and nothing is applied.
 
     keep website      the decision is applied by the next pull: the desktop takes the website's value, the conflict closes, the website gets a receipt
-    keep desktop      the desktop value stays, goes up in the next push, and the website has the receipt
+    keep desktop      the desktop value stays and goes up in the next push; the push (not the pull) sends the receipt
     version moved     the website changed the record after the decision: the conflict is open again (the old decision in its history), nothing applied
     same version      a scrub changed the values at the same version: reopened as well
     check             a check reports what it would reopen and writes nothing, on either side
@@ -76,13 +76,21 @@ class Decisions(PullE2E):
         self.assertEqual((proc.returncode, doc["result"], doc["counts"]["push_pending"]), (0, "ok", 1), proc.stdout + proc.stderr)
         self.assertEqual(self.local_note_text(), "The desktop's version.")
         self.assertEqual(self.table("SELECT state, decision FROM conflicts"), [("resolved", "keep_desktop")])
-        self.assertIsNotNone(self.website_conflict(conflict["id"])["applied_at"])
+        self.assertIsNone(self.website_conflict(conflict["id"])["applied_at"], "no receipt yet: the desktop value is not in the website")
+        self.assertEqual(len(self.calls("/applied")), 0)
         self.assertEqual(self.cloud.heads()[handle]["obj"]["text"]["string"], "The website's version.", "not pushed yet")
+        proc, held = self.hfy("pull", "--yes")   # a second pull before the push neither reopens it nor receipts it
+        self.assertEqual((proc.returncode, held["result"]), (0, "ok"), proc.stdout + proc.stderr)
+        self.assertEqual([(x["status"], x["reason"]) for x in self.preview(held)["decisions"]], [("held", "awaiting_push")])
+        self.assertEqual(self.website_conflict(conflict["id"])["state"], "resolved")
         proc, pushed = self.hfy("push", "--yes")
         # the fixture holds nine private fields back from every push, so the run is `partial` (held) and sends the rest
         self.assertEqual((proc.returncode, pushed["result"], pushed["counts"]["conflicts_open"]), (20, "partial", 0), proc.stdout + proc.stderr)
         self.assertEqual(self.cloud.heads()[handle]["obj"]["text"]["string"], "The desktop's version.")
-        # the push moved the website's record, and the decision is not reopened for it: it was receipted
+        # the push carried the desktop value, and then the push receipted the decision
+        self.assertIsNotNone(self.website_conflict(conflict["id"])["applied_at"])
+        self.assertEqual(len(self.calls("/applied")), 1)
+        # the push moved the website's record, and the decision is not reopened for it
         proc, after = self.hfy("pull", "--yes")
         self.assertEqual((proc.returncode, after["result"]), (0, "ok"), proc.stdout + proc.stderr)
         self.assertEqual(self.website_conflict(conflict["id"])["state"], "resolved")

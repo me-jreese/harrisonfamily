@@ -74,7 +74,8 @@ import { createGroupResolver } from "../src/policy.js";
 import { createSyncAuthenticator, SYNC_CLIENT_ID } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { CONFLICT_STATES, conflictKey, conflictView } from "../src/sync/pull.js";
-import { CLASSES, headKey, logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
+import { HANDLE_SHAPE } from "../src/records/ops.js";
+import { CLASSES, headKey,logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
 import { resetStoreView } from "../src/records/index.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 
@@ -605,16 +606,21 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
     }
     if (path === "/_dev/conflicts" && method === "POST") {
       const b = parsed();
-      const okPath = (p) => p !== null && typeof p === "object" && !Array.isArray(p) && typeof p.path === "string";
-      if (!b || !CLASSES.includes(b.class) || typeof b.handle !== "string" || !Array.isArray(b.paths) || !b.paths.length || !b.paths.every(okPath)) {
-        return json(400, { error: "validation", message: "send {class, handle, paths: [{path, base?, cloud?, desktop?}], kind?, gramps_id?}" });
+      // The wire limits of a stored conflict (sync.md 4.2): the class, the kind and the source are enumerated, the strings are capped.
+      const kinds = ["field", "composite", "list", "delete_edit", "identity", "integrity"];
+      const sources = ["desktop_parked", "proposal_stale"];
+      const val = (v) => v === undefined || v === null || (JSON.stringify(v) ?? "").length <= 2048;
+      const okPath = (p) => p !== null && typeof p === "object" && !Array.isArray(p) && typeof p.path === "string" && p.path.length <= 512 && (p.path === "" || p.path.startsWith("/")) && val(p.base) && val(p.cloud) && val(p.desktop);
+      const okStr = (v, max) => v === undefined || (typeof v === "string" && v.length <= max);
+      if (!b || !CLASSES.includes(b.class) || typeof b.handle !== "string" || !HANDLE_SHAPE.test(b.handle) || !Array.isArray(b.paths) || !b.paths.length || b.paths.length > 20 || !b.paths.every(okPath)
+        || !okStr(b.gramps_id, 32) || (b.kind !== undefined && !kinds.includes(b.kind)) || (b.source !== undefined && !sources.includes(b.source))) {
+        return json(400, { error: "validation", message: "send {class, handle, paths: [{path, base?, cloud?, desktop?}] (1 to 20), kind?, gramps_id?, source?} with a known class, kind and source" });
       }
       const id = uid().replace(/[^A-Za-z0-9]/g, "").slice(0, 26).padEnd(26, "0");
       const openedAt = new Date(now()).toISOString();
       const item = {
         ...conflictKey(id), GSI1PK: "SYNCCONFLICT#open", GSI1SK: `${openedAt}#${id}`, entity: "syncconflict", class: b.class, handle: b.handle,
-        gramps_id: typeof b.gramps_id === "string" ? b.gramps_id : "", kind: typeof b.kind === "string" ? b.kind : "field",
-        source: typeof b.source === "string" ? b.source : "desktop_parked", state: "open", opened_at: openedAt,
+        gramps_id: b.gramps_id ?? "", kind: b.kind ?? "field", source: b.source ?? "desktop_parked", state: "open", opened_at: openedAt,
         paths: b.paths.map((p) => ({ path: p.path, base: p.base ?? null, cloud: p.cloud ?? null, desktop: p.desktop ?? null })),
       };
       await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: item }));

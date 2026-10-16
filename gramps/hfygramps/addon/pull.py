@@ -62,11 +62,14 @@ class Cloud:
     def fetch(self, url):
         return self.http.get_bytes(media.check_download_url(url))
 
-    def reconcile_decisions(self, observed, dry=False):
-        """POST /api/sync/conflicts/reconcile (HFY-TSK-338): the website's decisions that still apply, and the ones it reopened (decisions.py)."""
+    def reconcile_decisions(self, observed, dry=False, after=None):
+        """POST /api/sync/conflicts/reconcile (HFY-TSK-338): the website's decisions that still apply, the ones it reopened and the keep_desktop ones
+        it settled (decisions.py). `after` is the cursor of a previous answer that said `more`."""
         body = {"observed": observed}
         if dry:
             body["dry"] = True
+        if after:
+            body["after"] = after
         answer = self.client.post("/api/sync/conflicts/reconcile", body).body
         return answer if isinstance(answer, dict) else None
 
