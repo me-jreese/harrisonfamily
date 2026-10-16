@@ -356,3 +356,31 @@ describe("copy", () => {
     assert.equal(sameRect(null, [1, 2, 3, 4]), false);
   });
 });
+
+describe("the toast's undo (HFY-TSK-345)", () => {
+  it("sends the returned inverse ops as they are, so it writes no text the save did not write", async () => {
+    const { undoBody } = await import("../src/lib/editor-save.js");
+    const undo = { base_versions: { "Person/x": 2 }, ops: [{ id: "inv:1", op: "remove", obj: "Person/x", path: "/media_list/0" }] };
+    const body = undoBody({ target: "Person/x", undo });
+    assert.deepEqual(body.ops, undo.ops);
+    assert.deepEqual(Object.keys(body).sort(), ["base_versions", "ops", "target"]);
+  });
+  it("the undo window ends after its 10 minutes and with no undo at all", async () => {
+    const { undoLeftMs } = await import("../src/lib/editor-save.js");
+    const t0 = 1_000_000;
+    const toast = { undo: { ops: [] }, undoUntil: t0 + 600_000 };
+    assert.equal(undoLeftMs(toast, t0), 600_000);
+    assert.equal(undoLeftMs(toast, t0 + 599_999), 1);
+    assert.equal(undoLeftMs(toast, t0 + 600_000), 0);
+    assert.equal(undoLeftMs(toast, t0 + 900_000), 0);
+    assert.equal(undoLeftMs({ undo: null, undoUntil: t0 + 5 }, t0), 0);
+    assert.equal(undoLeftMs(null, t0), 0);
+  });
+  it("a failed undo is a conflict, a refusal or a transient error the member can retry", async () => {
+    const { problemFor } = await import("../src/lib/editor-save.js");
+    assert.equal(problemFor({ status: 409, code: "version_conflict" }, {}).conflict, true);
+    assert.equal(problemFor({ status: 503 }, {}).transient, true);
+    assert.equal(problemFor({ status: 429 }, {}).transient, true);
+    assert.equal(problemFor({ status: 422, code: "validation" }, {}).transient, false);
+  });
+});

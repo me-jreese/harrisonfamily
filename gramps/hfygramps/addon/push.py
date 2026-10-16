@@ -693,7 +693,7 @@ class _Push:
 
     def _complete_session(self):
         try:
-            self.client.post("/api/sync/sessions/%s/complete" % self.session_id, {})
+            resp = self.client.post("/api/sync/sessions/%s/complete" % self.session_id, {})
         except transport.TransportError as exc:
             if exc.status == 422 and exc.code in ("integrity_violation", "withdrawn_reference"):
                 for item in _detail_list(exc, "violations"):
@@ -706,6 +706,12 @@ class _Push:
                 pushstate.del_meta(self.side, "open_session")
                 return
             raise
+        # The marker the website writes when it completes a session takes a seq of its own, and the desktop made it: the gramplet's "changes
+        # waiting" count must not read it as a website edit (HFY-TSK-343). Recorded in the commit that closes the session, so a crash between
+        # the two leaves the session open and the next run completes it again (the website answers the same seq) and records it then.
+        seq = resp.body.get("seq") if isinstance(getattr(resp, "body", None), dict) else None
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            pushstate.record_own_seq(self.side, seq)
         pushstate.del_meta(self.side, "open_session")
         self.log.line("push: session completed")
 

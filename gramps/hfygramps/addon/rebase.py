@@ -153,6 +153,8 @@ def _write_sidecar(ctx, plan, cloud_tree, summary):
         side.execute("DELETE FROM meta WHERE key = 'open_session'")  # the push session the old store opened (pushstate): the new store never heard of it
         if sidecar.has_table(side, "pulled"):
             side.execute("DELETE FROM pulled")  # the revert labels compare against pulls from the old tree
+        if sidecar.has_table(side, "own_pushes"):
+            side.execute("DELETE FROM own_pushes")  # the seqs the old store gave this desktop's pushes: the new store hands the same numbers to website edits (HFY-TSK-343)
         sidecar.set_meta(side, "cloud_tree_id", cloud_tree)
         sidecar.set_meta(side, "last_pull_seq", snap.seq)
         sidecar.set_meta(side, "last_snapshot_sha256", snap.body_sha256)

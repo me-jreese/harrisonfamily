@@ -69,6 +69,14 @@ for (const [name, viewport] of VIEWPORTS) {
       await sheet(page).locator("[data-hfy-save]").click();
       await expect(panel(page).locator("[data-hfy-tag-toast]")).toContainText("sent for review");
       await audit(page, "tag-sent");
+      // a tag on one's own record saves now: the toast offers undo, a 44px target
+      await draw(page, [50, 50], [80, 80]);
+      await pickPerson(page, "alder", "Alder Testwood");
+      await panel(page).locator("[data-hfy-tag-save]").click();
+      await sheet(page).locator("[data-hfy-save]").click();
+      await expect(panel(page).locator("[data-hfy-tag-undo]")).toBeVisible();
+      await targets44(page, "#mediaLightbox [data-hfy-tag-undo]", 1);
+      await audit(page, "tag-saved-undo");
       await ctx.close();
     });
   });
