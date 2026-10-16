@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """hfy-sync: the command-line wrapper of the Gramps website-sync addon (sync.md 8.2, 8.7, 13.2).
 
-    hfy-sync <status|login|check|pull|push|sync|bind> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--json]
+    hfy-sync <status|login|check|pull|push|sync|bind> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]
+    hfy-sync restore <backup> [--tree NAME] [--json]
 
 It runs `Gramps -O <tree> -a tool -p name=hfy_sync,action=...`, then maps the run's status.json to an exit code. Gramps' own
 cli_tool swallows exceptions and exits 0, so the exit code comes from status.json (the `exit_code` field), and a missing file or
 one with another run's `run_id` is exit 70 (D41). Before Gramps starts it refuses, without opening the tree in Gramps: a
 `--force-unlock` flag (64, D02), a tree whose database schema is not supported (78, D04: Gramps would otherwise upgrade it
 on open) and a tree that is open elsewhere (75, D01: the `lock` file). CLI `sync`, `pull` and `push` are dry runs unless `--yes`.
+`sync --yes --plan RUN_ID` applies only when the new plan equals the preview that run wrote (exit 10 otherwise; headless runbook 19.3).
+`restore <backup>` needs no Gramps process: with Gramps closed and `<dbdir>/lock` absent it verifies the backup's sha256, moves the
+database files aside, copies the backup in, runs `PRAGMA integrity_check`, puts the sidecar saved with that backup back, and then runs
+`check` (a dry run) so that you read what the next sync would do before it does it.
 
 Environment:
   HFY_GRAMPS_CMD   the Gramps command, split like a shell line (default /Applications/Gramps.app/Contents/MacOS/Gramps).
@@ -27,6 +32,7 @@ import sys
 _HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE)))
 
+from hfygramps.addon import backup as backup_mod  # noqa: E402
 from hfygramps.addon import consts, paths, preflight, status  # noqa: E402
 
 DEFAULT_GRAMPS = "/Applications/Gramps.app/Contents/MacOS/Gramps"
@@ -35,13 +41,14 @@ DEFAULT_GRAMPS = "/Applications/Gramps.app/Contents/MacOS/Gramps"
 def _usage(message=None):
     if message:
         print("hfy-sync: %s" % message, file=sys.stderr)
-    print("usage: hfy-sync <%s> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--json]" % "|".join(consts.ACTIONS), file=sys.stderr)
+    print("usage: hfy-sync <%s> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]\n       hfy-sync restore <backup>"
+          % "|".join(a for a in consts.ACTIONS if a != "restore"), file=sys.stderr)
     return consts.EXIT_USAGE
 
 
 def parse(argv):
-    """(action, tree_name, yes, dry_run, allow_deletes, as_json, force_unlock, step_up) or an error string."""
-    action = tree = None
+    """(action, tree_name, yes, dry_run, allow_deletes, as_json, force_unlock, step_up, plan, backup) or an error string."""
+    action = tree = plan = backup = None
     flags = {"--yes": False, "--dry-run": False, "--allow-deletes": False, "--json": False, "--step-up": False}
     force = False
     it = iter(argv)
@@ -54,15 +61,25 @@ def parse(argv):
             tree = next(it, None)
             if not tree:
                 return "--tree needs a name"
+        elif tok == "--plan":
+            plan = next(it, None)
+            if not plan or not paths.valid_dbid(plan):
+                return "--plan needs the run id of a preview"
         elif tok.startswith("-"):
             return "unknown option %s" % tok
         elif action is None:
             action = tok
+        elif action == "restore" and backup is None:
+            backup = tok
         else:
             return "unexpected argument %s" % tok
     if action not in consts.ACTIONS and not force:
         return "unknown or missing action"
-    return action, tree, flags["--yes"], flags["--dry-run"], flags["--allow-deletes"], flags["--json"], force, flags["--step-up"]
+    if action == "restore" and not backup and not force:
+        return "restore needs the name of a backup (see the backups folder of the tree's sync state)"
+    if plan and action not in ("sync", "pull"):
+        return "--plan goes with sync or pull"
+    return action, tree, flags["--yes"], flags["--dry-run"], flags["--allow-deletes"], flags["--json"], force, flags["--step-up"], plan, backup
 
 
 LOCKED = "locked"  # _schema_of: another process (Gramps) holds a write lock on the tree's database
@@ -97,7 +114,7 @@ def main(argv):
     parsed = parse(argv)
     if isinstance(parsed, str):
         return _usage(parsed)
-    action, tree_name, yes, dry_run, allow_deletes, as_json, force, step_up = parsed
+    action, tree_name, yes, dry_run, allow_deletes, as_json, force, step_up, plan, backup = parsed
     environ = os.environ
     tree_name = tree_name or environ.get("HFY_SYNC_TREE")
     if not tree_name:
@@ -134,17 +151,26 @@ def main(argv):
         return refuse("D02")  # before Gramps could break the lock
     if os.path.exists(os.path.join(tree_dir, "lock")):
         return refuse("D01")  # open elsewhere: the remedy is closing it, whatever its schema
+    if action == "restore":
+        return _restore(environ, tp, dbid, tree_dir, tree_name, backup, run_id, as_json)
     schema = _schema_of(tree_dir)
     if schema == LOCKED:
         return refuse("D01")
     if schema not in consts.SUPPORTED_DB_SCHEMAS:
         return refuse("D04")  # before Gramps could upgrade the tree on open
-
     # CLI sync, pull and push only look unless --yes (sync.md 8.2)
     effective_dry = 1 if dry_run or (action in ("sync", "pull", "push", "bind") and not yes) else 0
-    options = "name=hfy_sync,action=%s,dry_run=%d,allow_deletes=%d,yes=%d,step_up=%d,run_id=%s" % (
-        action, effective_dry, 1 if allow_deletes else 0, 1 if yes else 0, 1 if step_up else 0, run_id)
-    cmd = shlex.split(environ.get("HFY_GRAMPS_CMD") or DEFAULT_GRAMPS) + ["-O", tree_name, "-a", "tool", "-p", options]
+    return _run_gramps(environ, tp, tree_dir, tree_name, action, effective_dry, allow_deletes, yes, step_up, plan or "", run_id, as_json, refuse)
+
+
+def _run_gramps(environ, tp, tree_dir, tree_name, action, effective_dry, allow_deletes, yes, step_up, plan, run_id, as_json, refuse):
+    """`Gramps -O <tree> -a tool -p name=hfy_sync,...`, then status.json -> exit code (D41 when it is missing or another run's)."""
+    options = "name=hfy_sync,action=%s,dry_run=%d,allow_deletes=%d,yes=%d,step_up=%d,run_id=%s%s" % (
+        action, effective_dry, 1 if allow_deletes else 0, 1 if yes else 0, 1 if step_up else 0, run_id, ",plan=%s" % plan if plan else "")
+    extra = ""
+    if environ.get("HFY_SYNC_TEST") == "1" and environ.get("HFY_SYNC_UI"):
+        extra = ",ui=%s" % environ["HFY_SYNC_UI"]  # test seam: run as the GUI does (conflicts stay open instead of parked)
+    cmd = shlex.split(environ.get("HFY_GRAMPS_CMD") or DEFAULT_GRAMPS) + ["-O", tree_name, "-a", "tool", "-p", options + extra]
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
     except OSError as exc:
@@ -163,6 +189,34 @@ def main(argv):
         return consts.EXIT_INTERNAL
     print(json.dumps(doc, sort_keys=True) if as_json else status.summary_line(doc))
     return code
+
+
+def _restore(environ, tp, dbid, tree_dir, tree_name, backup, run_id, as_json):
+    """`hfy-sync restore <backup>` (error catalog D46): see backup.restore, then a dry-run check so the next sync is read before it runs."""
+    started = status.utc_now()
+    tp.ensure()
+    code = None
+    try:
+        try:
+            lines = preflight.ps_lines(environ)
+        except Exception:  # noqa: BLE001 - a ps failure must not decide a run; the tree's lock file still protects it
+            lines = None
+        outcome = backup_mod.restore(tree_dir, tp, backup, ps_lines=lines)
+        doc = status.build(run_id, "restore", "cli", dbid, True, consts.OK, consts.EXIT_OK, started, status.utc_now(), versions={})
+    except backup_mod.BackupError as exc:
+        res = "refused" if exc.exit_code in (consts.EXIT_USAGE, consts.EXIT_CONFIG, consts.EXIT_TEMPORARY) else "failed"
+        doc = status.build(run_id, "restore", "cli", dbid, False, res, exc.exit_code, started, status.utc_now(),
+                           error={"code": exc.code, "message": exc.message}, next_action=exc.next_action)
+        outcome = None
+    with preflight.StateLock(tp.lock) as lock:
+        if lock.acquired:
+            status.write(tp, doc)
+    print(json.dumps(doc, sort_keys=True) if as_json else status.summary_line(doc))
+    if outcome is None:
+        return doc["exit_code"]
+    # The dry-run check after the restore: it shows what the next sync would do, and (BRD2 SI-03) pushes nothing.
+    check_id = status.new_run_id()
+    return _run_gramps(environ, tp, tree_dir, tree_name, "check", 1, False, False, False, "", check_id, as_json, lambda c: consts.EXIT_TEMPORARY)
 
 
 if __name__ == "__main__":
