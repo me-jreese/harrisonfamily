@@ -21,7 +21,7 @@ You need:
 
 - **Node 22 or later.** [`islands/package.json`](../../islands/package.json) declares `"node": ">=22"`.
 - **The AWS CLI, with credentials for `us-west-2`** that allow `codeartifact:GetAuthorizationToken` on the `io` domain and `sts:GetServiceBearerToken`. Installing the packages also needs `codeartifact:ReadFromRepository` on the `io-kit` repository, because the token carries the permissions of the principal that requested it.
-- **Google Chrome, for the test checks only.** [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs) launches the `chrome` channel unless `PW_CHANNEL` names another. See [How to run the test suites](run-the-tests.md).
+- **Playwright's headless shell, for the test checks only.** [`islands/playwright.config.mjs`](../../islands/playwright.config.mjs) launches the `chromium-headless-shell` channel unless `PW_CHANNEL` names another (`PW_CHANNEL=chrome` opts in to the installed Google Chrome for a one-off run). See [How to run the test suites](run-the-tests.md).
 
 A clean checkout already holds the committed output, so you can [preview](#4-preview-the-site-locally) it without building. The preview server is a dev dependency, though, so run `npm ci` in `islands/` once first: step 1, then `(cd islands && npm ci)` from the repository root in the same shell (the install half of [step 2](#2-build)).
 
@@ -233,7 +233,7 @@ In a second terminal, from the repository root:
 | A flag stays on or off for every page in the tab. | The override lasts for the tab. | Press **turn off** in the banner, open `/?hfy_flags=`, or close the tab. |
 | Island changes do not show after a rebuild. | The page still links the old `?v=`, or the browser or the service worker served a cached copy. | View the page source: if its `?v=` values did not change, the build did not write that page, so build again. Otherwise bypass or unregister the worker in DevTools, and check that the server runs with `-c-1`. |
 | `node build.mjs --site <dir>` exits `2`. | The directory has no `index.html`, or `--site` has no value. | Pass the absolute path of a copy of `11ty/`. |
-| Playwright cannot launch a browser. | Google Chrome is not installed. | Install Chrome, or set `PW_CHANNEL` (see [How to run the test suites](run-the-tests.md)). |
+| Playwright cannot launch a browser. | The headless shell is not installed. | `npx playwright install chromium-headless-shell`, or set `PW_CHANNEL` (see [How to run the test suites](run-the-tests.md)). |
 
 ## Limits
 

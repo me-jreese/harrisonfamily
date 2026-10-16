@@ -12,6 +12,10 @@ export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   reporter: "list",
-  use: { baseURL: origin, channel: process.env.PW_CHANNEL || "chrome", viewport: { width: 375, height: 812 } },
+  // Local runs share io's daily machine: Playwright's bundled headless shell (never the system Chrome app), at most two workers, no
+  // parallel files. PW_CHANNEL=chrome is an explicit opt-in for a one-off run. CI keeps Playwright's own worker default.
+  fullyParallel: false,
+  workers: process.env.CI ? undefined : 2,
+  use: { baseURL: origin, channel: process.env.PW_CHANNEL || "chromium-headless-shell", viewport: { width: 375, height: 812 } },
   webServer: { command: `npx http-server "${site}" -p ${port} -a 127.0.0.1 -s -c-1`, url: `${origin}/`, reuseExistingServer: true, timeout: 30_000 }
 });
