@@ -4,6 +4,11 @@ Done before the backup so the one local transaction can set `Media.path`. A file
 downloaded again, which also makes a run after a crash between the download and the sidecar update cost one API call per file. A
 failed download defers only that Media object (and what refers to it) to the next run. A Media with no cloud blob (`404 no_blob`:
 a held or placeholder file) still syncs its metadata; it just has no local path.
+
+The verified bytes are checked once more before anything is written (BRD2 D2-06: the desktop re-checks GPS on download): a JPEG, PNG or
+TIFF that carries an EXIF GPS position, or an empty file, is HELD. `download` then returns ``{"held": <rule>}``, nothing is written, and
+the Media object syncs without a local path; the pull records a hold with guidance. The Media's own metadata is not lost, and a good
+local file is never replaced by a held one.
 """
 import hashlib
 import os
@@ -11,11 +16,11 @@ import re
 import tempfile
 import urllib.parse
 
-from . import consts, transport
+from . import consts, mediafile, transport
 from .backup import sha256_file
 
 _HANDLE = re.compile(consts.HANDLE_PATTERN)
-EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/tiff": ".tif", "application/pdf": ".pdf"}
+EXTENSIONS = mediafile.EXTENSIONS
 
 
 def safe_path(media_root, handle, ext):
@@ -74,7 +79,8 @@ def _write_atomic(path, data):
 
 
 def download(cloud, handle, media_root):
-    """Downloads one Media file. Returns {"path", "sha256", "md5", "size", "fresh"} or None for a Media with no blob.
+    """Downloads one Media file. Returns {"path", "sha256", "md5", "size", "fresh"}, {"held": rule, ...} (see above) or None for a Media
+    with no blob.
 
     Raises transport.TransportError for anything else (the caller defers the object) and ValueError when the bytes do not match the
     checksums the website announced (nothing is written).
@@ -105,5 +111,8 @@ def download(cloud, handle, media_root):
     if hashlib.sha256(data).hexdigest() != info["sha256"] or (info.get("md5") and hashlib.md5(data).hexdigest() != info["md5"]) \
             or (isinstance(info.get("size"), int) and len(data) != info["size"]):
         raise ValueError("the downloaded file does not match the checksums the website announced")
+    rule = mediafile.hold_for_bytes(data)
+    if rule:
+        return {"held": rule, "sha256": info["sha256"], "md5": info.get("md5", ""), "size": len(data), "fresh": False}
     _write_atomic(path, data)
     return {"path": path, "sha256": info["sha256"], "md5": info.get("md5", ""), "size": len(data), "fresh": True}

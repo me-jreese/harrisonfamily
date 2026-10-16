@@ -1,6 +1,6 @@
 # gramps
 
-Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231), the projection, the merge engine (HFY-TSK-242) the desktop addon skeleton (HFY-TSK-179), its transport and sign-in (HFY-TSK-180) and the push (HFY-TSK-206) are the last sections; other tasks add the rest of the addon beside them.
+Code and tests for the Gramps side of the sync design (HFY-PLN-002). This page covers the synthetic fixture tree and its test lane (HFY-TSK-228) and the site renderer (HFY-TSK-229); the schema export (HFY-TSK-231), the projection, the merge engine (HFY-TSK-242) the desktop addon skeleton (HFY-TSK-179), its transport and sign-in (HFY-TSK-180) and the push (HFY-TSK-206) and media files (HFY-TSK-207) are the last sections; other tasks add the rest of the addon beside them.
 
 Every value under `gramps/tests/fixtures/` is fictional. Phones are 555-01xx, mail is example.org, addresses are documentation-style, names are invented. Never copy a record, date, name or contact detail from the real tree into this directory (D-03).
 
@@ -318,11 +318,38 @@ Member principals come from the handshake's optional `member_person_ids` and fro
 
 **A website change the desktop has not pulled.** If the website changed an object the desktop also changed, the merged object is pushed (both edits land in one run, with no 409), and its base row is left as it was: the next pull takes the website's edit, and the desktop's own edit is then already in the cloud. Advancing the base to the pushed object would make the next run read the missing website edit as a desktop revert. An object only the website changed is left for the pull and its base row is not touched.
 
-**Not in this build.** Blobs (`addon-media`: a Media object is pushed as metadata with no blob); the withdraw-and-expunge push that the pull's privacy incidents offer (`sidecar.open_incidents`; the push does not send it yet); mirroring parked conflicts to the website (the sync API has no route that creates one); the Gramps-window dialogs (`addon-gui-preview`); and a `sync` that pushes after it pulls (`sync` is the pull half). A projection of the whole tree takes about a second per hundred objects, once per run.
+**Not in this build.** The withdraw-and-expunge push that the pull's privacy incidents offer (`sidecar.open_incidents`; the push does not send it yet); mirroring parked conflicts to the website (the sync API has no route that creates one); the Gramps-window dialogs (`addon-gui-preview`); and a `sync` that pushes after it pulls (`sync` is the pull half). A projection of the whole tree takes about a second per hundred objects, once per run.
 
 ```bash
 python3 -m unittest discover gramps/tests/unit -p test_addon_push.py       # CI: about two minutes
 gramps/tests/e2e/run.sh scenario_push.py                                   # Mac with Gramps 6.0.6, node 22 and api/node_modules
+```
+
+### Media files
+
+HFY-TSK-207 (`addon-media`; sync.md 5.5, 9 and 8.3 steps 6 and 11; BRD2 D2-06 and 11.1 7.2; review SI-31) carries a Media object's file with its metadata, both ways. `Media.path` never leaves the Mac. Standard library only, Python 3.9 compatible, no Gramps import in the core.
+
+| Path | What it is |
+| --- | --- |
+| `hfygramps/addon/mediafile.py` | What the bytes on disk are, pure: `inspect(path)` gives a state (`ok`, `missing`, `unreadable`, `empty`, `placeholder`, `too_large`, `unsupported`, `gps`), the MD5 and SHA-256, the type (from the bytes, not the name) and `exif_gps`. `exif_gps` ports the website's `tiffHasGpsPosition` (JPEG APP1, PNG `eXIf`, TIFF, any `Exif\0\0` header, plain XMP) and fails closed on EXIF it cannot read. A Dropbox placeholder is the `com.dropbox.placeholder` attribute or the macOS dataless flag, detected without reading the file. `resolve` reads a path as Gramps does (a relative path under the base media path, `~` expanded); `collect` maps handles to `inspect` results. |
+| `hfygramps/addon/mediaup.py` | `annotate` (called by `pushplan.build_plan`): the `blob` of every Media op, the blob-only update of an unchanged object whose file is new, the holds for a file that cannot go, the warnings. `upload`: presign, PUT, one more try with a new presign. `media_local` rows (`load_rows`, `record`). |
+| `hfygramps/addon/media.py` | The download (described with the pull), now with the EXIF and empty-file check on the verified bytes. |
+| `hfy_sync/hfy_sync_tool.py` | `GrampsTree.media_files()`: `mediafile.collect` over the tree's Media with Gramps' own base media path (`gramps.gen.utils.file.media_path`). |
+| `tests/unit/test_addon_media_up.py` | CI: the file checks (every EXIF container, both byte orders, placeholders, base paths) and the push against `push_support.FakeCloud`, which now has a staging area, the served keys apart, the signed PUT and the finalize-after-commit of `api/src/sync/media.js`. |
+| `tests/e2e/scenario_media.py` | The end-to-end lane against the real dev server (its presigner and its finalize): the signed upload, the held fixture files, the forced 409 after an upload, an empty file over a good blob, and the download checks. |
+
+**Up.** The push reads every Media file once per run (`media_files()`), so the projection sends the MD5 of the bytes on disk as `Media.checksum` whatever Gramps stored (a stale Gramps checksum is only a `warnings` entry in the preview, and the file is called `unreadable` to the merge when it cannot be read, so its checksum is never compared). For each Media op whose file the website does not hold yet (the sidecar's `media_local` row is missing or names other bytes), the op carries `blob = {sha256, md5, size, content_type}`. Just before the batch that names it the addon calls `POST /api/sync/media/presign` (the website signs `Content-Type` and `x-amz-checksum-sha256`; the addon refuses an answer whose signed checksum is not its own, and sends only those two headers, never the bearer token) and PUTs the bytes to `media/.staging/<handle>/<sha256>`. S3 rejects a body that does not hash to the signed value. A 4xx from S3 gets one more try with a new presign (D31), and so does a `422 blob_not_uploaded` or `blob_mismatch` from the Media op (the staged object vanished or is not the claimed one: the blob is uploaded again and the batch re-sent, once per Media); after that the Media op, and every op that refers to a new Media of that kind, is held for the next run (`media_upload_failed`, `media_dependency_deferred`). The file is read again at upload time and must still hash to what the plan said (`media_file_changed` otherwise). The website then checks the staged object with `HeadObject`, commits the Media op, and only then copies the object into `media/<handle><ext>` and deletes the staging object (`finalizeBlobs`), so a refused or conflicting op (a 409 after the upload, a privacy refusal) leaves the served blob and the head's `blob` as they were: members never see new bytes with old details, and `head.blob.sha256` is always the SHA-256 of the object at `media/<handle><ext>`. A replay of the batch under the same `Idempotency-Key` finishes a finalize that failed. The `media_local` row (`origin` `up`) is written only from the acknowledgement, in `_send` and in the outbox replay.
+
+**Held.** A file that is missing, unreadable, 0 bytes, a Dropbox placeholder, over 25 MB or a type the website does not take is held: the Media op still goes, with `blob = {"state": "missing"}`, and the website keeps any blob it already has (`apply.js`), so a good cloud blob is never replaced by an empty one. The hold says what to do (`consts.HOLD_MESSAGES`: make the folder available offline, fix the path). When the website already holds bytes for the handle (a `media_local` row) a file that has since gone empty or online-only is not reported. A file with EXIF GPS is held whole: the projection holds it by its mime (`media.exif_gps.hold`) and `annotate` holds it by its bytes, so a blank mime does not let it through; the same goes for a PDF (`media.pdf.hold`). A file that becomes available later is uploaded by an update of its own, even if the object did not change.
+
+**Down.** A Media created or changed on the website (including a graduated comment photo) is downloaded before the backup, so the one transaction can set `Media.path`. The presigned GET must be https (or loopback http), the bytes must match the announced SHA-256, MD5 and size, and then `mediafile.hold_for_bytes` runs: a file with EXIF GPS, or an empty one, is not written. The Media object is still applied, without a path, and the pull records the hold (`media.exif_gps.hold`) and ends partial (exit 20, `review_preview`). Downloads go to `media_root` (`config.json`, default `~/Pictures/hfy-sync-media`) as `<handle><ext>`; the sidecar's `media_local` maps handle to path, sha256 and md5. io may move a file and repoint the path in Gramps: that is a local change and is never pushed.
+
+**Closure (deploy target io-mac).** The addon reaches io's Mac only through seed-and-shadow (the first install) or an io-run update (runbook 19.1). Nothing in this task installs it there.
+
+```bash
+python3 -m unittest discover gramps/tests/unit -p test_addon_media_up.py   # CI
+python3 -m unittest discover gramps/tests/unit -p test_addon_media.py      # CI (the download side)
+gramps/tests/e2e/run.sh scenario_media.py                                  # Mac with Gramps 6.0.6, node 22 and api/node_modules
 ```
 
 ### The rebase (D50)
