@@ -482,6 +482,12 @@ class SyncInfra(unittest.TestCase):
         self.assertLessEqual(role["MaxSessionDuration"], 3600)
         res = sorted(sub(x).split("}/", 1)[1] for x in by_sid(self.r["BreakGlassRole"], "DataPrefixes")["Resource"])
         self.assertEqual(res, sorted(f"{d}/*" for d in DATA_PREFIXES))
+        # HFY-TSK-204: privacy-expunge deletes the noncurrent versions of rendered keys through this role, on the same data prefixes and no others
+        self.assertIn("s3:DeleteObjectVersion", by_sid(self.r["BreakGlassRole"], "DataPrefixes")["Action"])
+        lst = by_sid(self.r["BreakGlassRole"], "DataPrefixList")
+        self.assertEqual(sorted(lst["Action"]), ["s3:ListBucket", "s3:ListBucketVersions"])
+        self.assertEqual(sorted(lst["Condition"]["StringLike"]["s3:prefix"]), sorted(f"{d}/*" for d in DATA_PREFIXES))
+        self.assertEqual(by_sid(self.r["BreakGlassRole"], "VersioningStatus")["Action"], "s3:GetBucketVersioning")
         for s in statements(self.r["BreakGlassRole"]):
             self.assertNotIn("config/", str(s.get("Resource")))
             self.assertNotIn("uploads/", str(s.get("Resource")))

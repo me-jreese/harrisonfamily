@@ -104,6 +104,7 @@ Some family-voice UI strings name a family contact by initial: in the islands, `
 - Writing or deleting items in the app table by hand, for example deleting a `PASSKEY#` credential or writing the `FAMILY#` records that sign a member out on every device.
 - Running the live login-flow suites against production.
 - Any real (non `--dry-run`) run of `api/scripts/sync-admin.mjs` (`pause`, `resume`, `render`, `resurrect`) and of `api/scripts/contrib-backfill.mjs`. Each writes app-table items or makes the renderer write site files. Record io's go-ahead verbatim in the worklog with the dry-run output ([Operate the sync store](docs/how-to/operate-the-sync-store.md)).
+- Any `--apply` of `api/scripts/expunge.mjs`. It deletes and rewrites store items and S3 object versions for good, and needs io's step-up (the owner's token with `auth_time` within 300 s) as well as the go-ahead. Run the dry run first and record both in the worklog ([Remove something from the cloud](docs/how-to/operate-the-sync-store.md#remove-something-from-the-cloud)).
 
 ## Operations that need io's G-prod approval
 

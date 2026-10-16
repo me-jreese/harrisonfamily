@@ -42,7 +42,7 @@ The dry run reads `SYNC#HEAD` and `SYNC#RENDER` (head seq, `rendered_seq`, mode,
 
 ## Resurrect a batch of deletes or withdraws
 
-A delete or withdraw tombstones the head at once, but the log still holds the version before it. `resurrect` re-creates the heads of one batch from that log, within the 72-hour grace that `privacy-expunge` keeps before it removes a withdrawn record's history.
+A delete or withdraw tombstones the head at once, but the log still holds the version before it. `resurrect` re-creates the heads of one batch from that log, within the 72-hour grace that a withdraw keeps before its history is expunged (a withdraw writes an `EXPUNGE#<Class>#<handle>` item due 72 hours later; `resurrect` deletes it, so a record that came back is never expunged).
 
 1. Find the `batch_id` of the mistaken batch (the `SYNC#BATCH#` receipt, or the audit item `AUDIT#records:<batch_id>`).
 2. Plan:
@@ -75,3 +75,42 @@ A delete or withdraw tombstones the head at once, but the log still holds the ve
 5. Run the dry run again. Every object must now read `already_live`. The renderer picks the new log entries up from the stream, or within 15 minutes from the schedule.
 
 The 35-day point-in-time recovery tail is separate: it cannot bring a record back through this tool, and the privacy text discloses it.
+
+## Remove something from the cloud
+
+`api/scripts/expunge.mjs` (HFY-TSK-204, BRD2 D2-33, runbook 19.11, catalog entry S19) removes a record, one value of a record, a proposal, a chat message or an upload from every cloud copy. Use it when a report or io finds sensitive data that reached the cloud. It is an operator script: it is never deployed, and no workflow runs it.
+
+**It is a dry run unless you pass `--apply`.** `--apply` needs io's step-up: the sync access token of the tree owner's fresh sign-in (`amr` `mfa`, `auth_time` within 300 seconds, a `gramps-owner`), in the environment variable `EXPUNGE_ACCESS_TOKEN`. The script verifies it against the auth edge's keys and the groups file before it writes anything, and refuses a stale or non-owner token. Pass the token in the environment, never as an argument. Each `--apply` writes one `AUDIT#expunge:<id>` item with the mode and counts only. The output names counts and classes, never a handle, an id or text. Record io's go-ahead verbatim in the worklog with the dry-run output. Never paste previews, backups or logs other than `status.json` into an agent session.
+
+| You want to remove | Command |
+| --- | --- |
+| A whole withdrawn or deleted record | `node scripts/expunge.mjs --record <Class>:<handle>` |
+| One value of a record (a note's text, a name part) | `node scripts/expunge.mjs --record <Class>:<handle> --path /text/string` |
+| A proposal and its discussion | `node scripts/expunge.mjs --proposal <ulid>` |
+| One chat message | `node scripts/expunge.mjs --chat <conv>:<seq>` |
+| An uploaded photo | `node scripts/expunge.mjs --upload uploads/posts/<ulid>/photo.jpg` |
+| Withdrawn records whose grace has passed | `node scripts/expunge.mjs --due` |
+
+Add `--apply` to the line you ran as a dry run. Common flags: `--table <app-table>`, `--region <region>`, `--sync-bucket <name>` and `--site-bucket <name>`.
+
+1. **Dry run first.** It reads and prints counts: log entries, heads, snapshot versions, shadow versions, noncurrent site versions. Check that the count of log entries matches the versions you expect.
+2. **Apply** after io's go-ahead, with `EXPUNGE_ACCESS_TOKEN` set.
+3. **Render again.** After a record or path expunge run `node scripts/sync-admin.mjs render --apply --full`, so the live files are rewritten from the store. The expunge does not move `seq`, so the renderer would not notice it on its own.
+4. **Check.** Run the dry run again: the log entries and heads read `0`.
+
+**Record, whole.** The record must already be a tombstone: a live one is refused (withdraw or delete it first). Every `SYNC#LOG` entry of the handle, found through `RECHIST` and the head's own seq, and the head get `obj_json` null and `expunged: true`; `hash` and `seq` stay. The open and decided sync conflicts of the handle lose their values. Then every snapshot under `snapshots/` is deleted with all its versions and the snapshot is rebuilt; the shadow copies (`render-shadow/<site key>`) of the record's file, of the pages that embed it and of the index files are deleted with all their versions; and, when the site bucket is versioned, the noncurrent versions of those keys are deleted there. The site bucket step needs the break-glass role `hfy-data-breakglass` (MFA, one hour), because the write guard denies `s3:DeleteObjectVersion` on the data prefixes to everyone else. The sync bucket and uploads run under your usual administrator credentials.
+
+**Record, one value (`--path`).** The pointer is RFC 6901 into the object, for example `/text/string`. In every log entry and in the head, a string becomes `--replacement` (default empty) and any other object member is removed; an array element that is not a string is refused, and so are `handle`, `_class` and `gramps_id`. This rewrites append-only history, an audited exception (SI-18). The hashes are recomputed and the version and seq do not move, so the desktop add-on sees a changed hash at an unchanged version and treats it as an expunge notice: it refreshes its base and holds the local value. The snapshot and shadow steps are the same as for a whole record.
+
+**What the epoch does.** Every record run raises `SYNC#HEAD.expunge_epoch` by one in the transaction that rewrites the head. The store view in every warm Lambda and the cached snapshot check it, so none of them can keep the removed value in memory or in `snapshots/`.
+
+**Proposal.** `PROP#<ulid>` META and every `IDX#` copy lose the proposal document and their index keys and stay as an expunged stub, so no list or page shows them. The proposal thread's comments and reactions are deleted, the audit rows of those comments keep who, what and when and lose the text they copied, and the comments' photos are deleted from the site bucket with every version. The `IDEM#` receipt expires in 24 hours and the inbox rows 90 days after they are read; neither holds proposal text.
+
+**Chat.** The chat hub nulls the message text through its admin route, then the `CHAT#<conv>` / `M#<seq>` mirror row is deleted. The hub goes first so that a later archive batch cannot write the text back. Set `CHAT_HUB_ADMIN_URL` (https) and `CHAT_HUB_ADMIN_TOKEN`. The route is `POST <url>/admin/expunge` with `{conv, seq}` and a bearer token; it answers `200 {nulled: 0|1}` or `404` when the hub holds no such message. `<conv>:<seq>` is the conversation id, a colon and the seq, for example `g:<id>:42`.
+
+**Upload.** Every version and delete marker of the object under `uploads/posts/` or `uploads/comments/`, and its `UPLOAD#` binding. A post that still names the photo keeps a dangling link: remove the attachment from the post as well.
+
+**Withdraws and the 72-hour grace.** A privacy withdraw tombstones the head at once (no read serves it, the next render removes the files) and writes `EXPUNGE#<Class>#<handle>`, due 72 hours later. Until then `sync-admin resurrect --include-withdrawn` can bring a mistaken mass withdraw back and cancels the schedule. After it, run `node scripts/expunge.mjs --due` (dry run, then `--apply`) at an interval you choose; nothing runs it for you. `--now` takes every scheduled item at once and exists for tests and for a withdraw that must not wait. A schedule item whose record is live again is dropped.
+
+**What it cannot reach.** The DynamoDB point-in-time recovery tail (35 days) keeps older copies of the table until they age out; so do backups taken outside this stack. The privacy text and this runbook say so, and nothing here shortens it.
+

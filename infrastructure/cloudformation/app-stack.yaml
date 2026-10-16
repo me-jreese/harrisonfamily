@@ -819,6 +819,9 @@ Resources:
           SITE_BUCKET: !Ref MediaBucket
 
   # Break-glass writer for the data prefixes once the bucket-policy deny is on (BRD2 11.4, PS-05, SI-15). io only, MFA required, one hour.
+  # It also lists and deletes object versions on those prefixes, which is how api/scripts/expunge.mjs removes the noncurrent copies of a rendered
+  # file (HFY-TSK-204, D2-33); the write guard denies s3:DeleteObjectVersion to everyone else. uploads/ and the sync bucket are not here: the
+  # expunge of an upload and of the snapshots and shadow copies runs under io's usual administrator credentials.
   BreakGlassRole:
     Type: AWS::IAM::Role
     Properties:
@@ -840,7 +843,7 @@ Resources:
             Statement:
               - Sid: DataPrefixes
                 Effect: Allow
-                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:GetObjectVersion, s3:DeleteObjectVersion]
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/*
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/family/*
@@ -850,11 +853,15 @@ Resources:
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/*
               - Sid: DataPrefixList
                 Effect: Allow
-                Action: s3:ListBucket
+                Action: [s3:ListBucket, s3:ListBucketVersions]
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
                 Condition:
                   StringLike:
                     "s3:prefix": ["person/*", "family/*", "event/*", "note/*", "place/*", "media/*"]
+              - Sid: VersioningStatus
+                Effect: Allow
+                Action: s3:GetBucketVersioning
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
 
 Outputs:
   FunctionUrl: { Description: Lambda Function URL (CloudFront origin), Value: !GetAtt FunctionUrl.FunctionUrl }
