@@ -4,7 +4,8 @@ import { cmds, createFakeDdb } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
-import { MemberCheckUnavailable, UNIT_BUDGET, createRekeyHook, markerKeys, pack, pendingAliases, registerRekeyHook, rekeyPending, rekeyPerson } from "../src/identity-rekey.js";
+import { MemberCheckUnavailable, UNIT_BUDGET, createRekeyHook, markerKeys, memberCheckFrom, pack, pendingAliases, registerRekeyHook, rekeyPending, rekeyPerson } from "../src/identity-rekey.js";
+import { createMemberSet } from "../src/notify.js";
 import { seedPosts } from "../src/content.js";
 import { MAX_TXN_ITEMS } from "../src/txn.js";
 import { mergesOn, parseArgs, rekey, run } from "../scripts/sync-admin.mjs";
@@ -204,6 +205,84 @@ describe("member principals are never re-keyed", () => {
     await expect(rekeyPerson(w.ctx, "I0001", "I0002")).rejects.toThrow();
     expect(w.row("REKEY#Person#I0001", "META")).toBeUndefined();
     expect(thread(w, "I0001").length).toBeGreaterThan(0);
+  });
+});
+
+// The production wiring (api/src/index.js): isMember = memberCheckFrom(createMemberSet({ load })). createMemberSet fails closed to an EMPTY set, so the
+// check must throw on an empty set; an `isMember` that answered false for everyone would move a real member's follows and comments for good.
+describe("the production member check (createMemberSet -> memberCheckFrom)", () => {
+  const silent = { error() {} };
+  const wired = (w, load, now) => ({ ...w.ctx, isMember: memberCheckFrom(createMemberSet({ load, now, log: silent })) });
+  const untouched = (w, old = 3) => { // seedData: two comments and a reaction under the old id
+    expect(w.row("REKEY#Person#I0001", "META")).toBeUndefined();
+    expect(thread(w, "I0001")).toHaveLength(old);
+    expect(thread(w, "I0002")).toHaveLength(1);
+    expect(w.row("RSUB#I0801", "REC#person:I0001")).toBeDefined();
+  };
+
+  it("a member list whose S3 read fails leaves the alias pending: nothing moves, no marker (it used to finish as done)", async () => {
+    const w = world();
+    seedData(w);
+    const ctx = wired(w, async () => { throw new Error("s3 down"); });
+    await expect(rekeyPerson(ctx, "I0001", "I0002")).rejects.toBeInstanceOf(MemberCheckUnavailable);
+    untouched(w);
+    expect((await rekeyPending(ctx))[0]).toMatchObject({ oldId: "I0001", state: "member_check_unavailable" });
+    untouched(w);
+    expect(await pendingAliases(ctx)).toEqual([expect.objectContaining({ oldId: "I0001", state: "new" })]);
+  });
+
+  it("a member list that loads empty (or with no valid ids) is treated the same way", async () => {
+    for (const body of [{}, [], { "a@example.test": 7, "b@example.test": "not a gramps id!" }]) {
+      const w = world();
+      seedData(w);
+      const ctx = wired(w, async () => body);
+      expect((await rekeyPending(ctx))[0]).toMatchObject({ state: "member_check_unavailable" });
+      untouched(w);
+    }
+  });
+
+  it("memberCheckFrom throws on anything but a non-empty set", async () => {
+    await expect(memberCheckFrom(async () => new Set())("I0001")).rejects.toBeInstanceOf(MemberCheckUnavailable);
+    await expect(memberCheckFrom(async () => undefined)("I0001")).rejects.toBeInstanceOf(MemberCheckUnavailable);
+    await expect(memberCheckFrom(async () => { throw new Error("x"); })("I0001")).rejects.toThrow("x");
+    expect(await memberCheckFrom(async () => new Set(["I0005"]))("I0001")).toBe(false);
+    expect(await memberCheckFrom(async () => new Set(["I0005"]))("I0005")).toBe(true);
+  });
+
+  it("once the list loads, a member old id is refused and a non-member old id is re-keyed", async () => {
+    const mine = world();
+    seedData(mine);
+    const refused = await rekeyPerson(wired(mine, async () => ({ "a@example.test": "I0001", "b@example.test": "I0005" })), "I0001", "I0002");
+    expect(refused).toMatchObject({ state: "refused", reason: "member_principal" });
+    expect(mine.row("REKEY#Person#I0001", "META")).toMatchObject({ state: "refused", evidence: "member_list" });
+    expect(thread(mine, "I0001")).toHaveLength(3);
+    const other = world();
+    seedData(other);
+    expect(await rekeyPerson(wired(other, async () => ({ "b@example.test": "I0005" })), "I0001", "I0002")).toMatchObject({ state: "done" });
+    expect(thread(other, "I0001")).toEqual([]);
+  });
+
+  it("a real merge while the list is unreadable commits and stays pending; the next batch after the list recovers finishes it", async () => {
+    const w = world();
+    const a = person(1);
+    await w.apply([create(a), create(person(2)), create(person(3))]);
+    w.put(comment("person:I0001", 1));
+    w.put(comment("person:I0001", 2));
+    w.put(comment("person:I0002", 3));
+    w.put(follow("I0801", "I0001"));
+    let up = false;
+    let t = 0;
+    const ctx = wired(w, async () => { if (!up) throw new Error("s3 down"); return { "b@example.test": "I0005" }; }, () => t);
+    w.hooks.registerAfterCommit(createRekeyHook(ctx));
+    await expect(w.apply([merge(a, "I0002")], "merge-1")).resolves.toMatchObject({ replayed: false });
+    expect(w.row("IDALIAS#Person#I0001", "META")).toMatchObject({ current_gramps_id: "I0002" });
+    untouched(w, 2);
+    up = true;
+    t = 10_000; // past createMemberSet's 5 s retry of a failed read
+    await w.apply([{ op: "update", class: "Person", handle: person(3).handle, base_version: 1, obj: { ...person(3), change: 2 } }], "next");
+    expect(w.row("REKEY#Person#I0001", "META")).toMatchObject({ state: "done" });
+    expect(thread(w, "I0001")).toEqual([]);
+    expect(thread(w, "I0002")).toHaveLength(3);
   });
 });
 

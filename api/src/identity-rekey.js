@@ -44,6 +44,17 @@ export class MemberCheckUnavailable extends Error {
   }
 }
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
+/**
+ * The `isMember` check for the production wiring: it answers from `listMembers()` (notify.js createMemberSet) but THROWS MemberCheckUnavailable when the
+ * set is empty. createMemberSet fails closed by returning an empty set (a failed S3 read, or a list that loaded empty), and an empty set answers
+ * "not a member" for every id, which would let the job move a real member's items. A throw leaves the alias pending (nothing moves, no marker); the
+ * next batch retries, and the set refreshes within seconds of a failed read.
+ */
+export const memberCheckFrom = (listMembers) => async (id) => {
+  const members = await listMembers();
+  if (!members || typeof members.has !== "function" || !(members.size > 0)) throw new MemberCheckUnavailable();
+  return members.has(id);
+};
 
 export const markerKeys = (oldId) => ({ PK: `REKEY#Person#${oldId}`, SK: "META" });
 export const OTD_HIDDEN = Object.freeze({ PK: "OTD#HIDDEN", SK: "META" });

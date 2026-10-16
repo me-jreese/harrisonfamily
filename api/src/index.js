@@ -23,7 +23,7 @@ import { createServiceAuthenticator } from "./chat.js";
 import { createSesMailer } from "./mailer.js";
 import { logSafeError } from "./http.js";
 import { registerRecordContributor } from "./record-contributor.js";
-import { registerRekeyHook } from "./identity-rekey.js";
+import { memberCheckFrom, registerRekeyHook } from "./identity-rekey.js";
 import { defaultHooks } from "./sync/hooks.js";
 import { createFanoutNotifier, createRecordFanout, isReplayEvent, isStreamEvent } from "./record-change-fanout.js";
 
@@ -196,8 +196,9 @@ export const createInboxStore = (client = ddb, commands = cmds, tableName = tabl
 registerRecordContributor({ ddb, cmds, table });
 
 // HFY-TSK-294 (identity-merge-rekey): after a desktop Person merge commits, the person-id-keyed social data moves to the survivor. An afterCommit hook, so it never
-// fails the push; member principals are never re-keyed (the job refuses such an alias). `isMember` is the userGrampsID member set.
-registerRekeyHook({ ddb, cmds, table, now: () => Date.now(), uid: () => ulid(Date.now()), isMember: async (id) => (await listMembers()).has(id), log: console }, defaultHooks);
+// fails the push; member principals are never re-keyed (the job refuses such an alias). `isMember` is the userGrampsID member set, and it THROWS when that set is
+// empty or unreadable (createMemberSet fails closed to an empty set, which would otherwise answer "not a member" for everyone): the alias then stays pending.
+registerRekeyHook({ ddb, cmds, table, now: () => Date.now(), uid: () => ulid(Date.now()), isMember: memberCheckFrom(listMembers), log: console }, defaultHooks);
 
 // The render-outbox consumer (src/record-change-fanout.js), the only source of record-change notifications. Triggered by the table stream (SYNC#RENDERED inserts) or a direct invoke
 // { source: "record-fanout", seq }; neither comes through the Function URL, so neither carries the origin header. Recipients are gated by recordSubsV1.
