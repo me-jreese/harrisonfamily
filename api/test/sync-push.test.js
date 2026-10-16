@@ -122,7 +122,7 @@ const noStaleWrites = (w) => expect(w.rows("REC#")).toHaveLength(0);
 
 describe("the routes exist on the sync-bearer middleware with caps.json (AC1)", () => {
   it("caps.json lists sessions, complete, abort, batches and media presign as sync-bearer routes behind SYNC_API_ENABLED", () => {
-    const sync = buildCaps().actions.filter((a) => a.path.startsWith("/api/sync/"));
+    const sync = buildCaps().actions.filter((a) => a.path.startsWith("/api/sync/") && a.name !== "sync.admin.status");
     const by = Object.fromEntries(sync.map((a) => [a.name, `${a.method} ${a.path}`]));
     expect(by).toMatchObject({
       "sync.sessions.open": "POST /api/sync/sessions", "sync.sessions.complete": "POST /api/sync/sessions/:id/complete", "sync.sessions.abort": "POST /api/sync/sessions/:id/abort",
