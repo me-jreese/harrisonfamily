@@ -20,8 +20,8 @@
         "css": "e9be417d"
       },
       "chat": {
-        "js": "af7b6798",
-        "css": "1386f4c3"
+        "js": "759e9c89",
+        "css": "e3bcd438"
       },
       "edit-entry": {
         "js": "fd4c177e",
