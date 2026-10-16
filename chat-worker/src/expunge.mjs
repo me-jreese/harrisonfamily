@@ -1,7 +1,7 @@
 // The hub half of the admin route (HFY-TSK-337): a mixin over the kit's ChatHub that nulls one message's text everywhere the hub
 // holds it, and makes every later read show that message as removed.
 //
-// What the hub keeps a message's text in (@io-kit/chat 0.1.6; the tests pin each place, and walk the object for any other):
+// What the hub keeps a message's text in (@io-kit/chat 0.3.0; the tests pin each place, and walk the object for any other):
 //   1. the `msg` table of the object's SQLite storage: `text` becomes NULL; `seq`, `from_uid`, `cmid`, `kind` and `ts` stay, so the
 //      order, the sender, a retried send's ack and the 30-day window do not move;
 //   2. the archive: the batch a drain is posting right now holds the text in memory, and the next batch is read from (1). An expunge

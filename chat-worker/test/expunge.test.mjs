@@ -34,6 +34,7 @@ const history = async (client, rid) => {
   await client.send({ t: "page", conv: DM, rid, limit: 50 });
   const batch = client.frames().slice(before).find((f) => f.t === "batch" && f.rid === rid);
   assert.ok(batch, "a batch came back");
+  assert.equal(decodeServerFrame(JSON.stringify(batch)).ok, true, "the kit's own client decoder accepts the batch, removed message included");
   return batch.msgs;
 };
 
@@ -184,13 +185,10 @@ test("kit pin: server.archiving is falsy at rest and a thenable while a drain ru
   }
 });
 
-test("kit pin: @io-kit/chat 0.1.6 rejects text:null in a history batch (the follow-up the runbook names). When this fails the kit accepts a removed message: delete the 'chat must be dark' warnings and make the client show 'message removed'", () => {
+test("kit pin: @io-kit/chat 0.3.0 decodes a removed message ({text:null, expunged:true}) in a history batch, so an expunge no longer needs chat dark", () => {
   const msg = { t: "batch", conv: DM, rid: "r1", more: false, msgs: [{ conv: DM, seq: 2, cmid: "c2", from: "I9002", ts: 1, kind: "msg", text: null, expunged: true }] };
   const res = decodeServerFrame(JSON.stringify(msg));
-  assert.equal(res.ok, false, "the pinned client decoder refuses text:null, so an expunge needs chat dark (chatV1 false) until the kit release");
-  assert.match(res.reason, /text/);
-  msg.msgs[0].text = "";
-  assert.equal(decodeServerFrame(JSON.stringify(msg)).ok, true, "the empty string is the only shape the 0.1.6 decoder takes");
+  assert.equal(res.ok, true, `the pinned client decoder takes a removed message: ${res.reason ?? ""}`);
 });
 
 // ------------------------------------------------------------------------------------------------------------ every copy, the read
@@ -290,6 +288,7 @@ test("a connected client's next history read shows the message as removed (text 
     assert.deepEqual(resumed.msgs.map((m) => m.seq), [2, 3]);
     assert.equal(resumed.msgs[0].text, null);
     assert.equal(resumed.msgs[0].expunged, true);
+    assert.equal(decodeServerFrame(JSON.stringify(resumed)).ok, true, "the resume batch decodes on the client too");
     // a retried send of the same cmid is still acked at its seq (the row is there, only the text is gone)
     await b.send({ t: "send", conv: DM, cmid: "c2", text: "anything" });
     assert.deepEqual(rowsOf(rig).map((r) => r.seq), [1, 2, 3], "no new row");
@@ -444,7 +443,7 @@ function fakeTable(items) {
 }
 
 test("privacy-expunge.mjs --chat --apply nulls the hub message through the Worker, then deletes the mirror row; a second run nulls nothing", async () => {
-  const { run, parseArgs, createHubClient, CHAT_CLIENT_WARNING } = await import("../../api/scripts/expunge.mjs");
+  const { run, parseArgs, createHubClient } = await import("../../api/scripts/expunge.mjs");
   const realFetch = globalThis.fetch;
   const rig = await bundledHub({ env: { CHAT_ADMIN_TOKEN: TOKEN } });
   const front = await serve(rig);
@@ -495,8 +494,8 @@ test("privacy-expunge.mjs --chat --apply nulls the hub message through the Worke
     assert.equal(table.rows.has(`${mirrorKey(3).PK}\u0000${mirrorKey(3).SK}`), true);
     assert.equal(rowsOf(rig)[2].text, "third message");
     assert.ok(!lines.join("\n").includes(SECRET_TEXT));
-    // every chat run (dry or applied) prints the client warning: 0.1.6 clients cannot load a history with a removed message
-    assert.ok(lines.some((l) => l === CHAT_CLIENT_WARNING && /dark/.test(l)));
+    // the kit 0.3.0 client shows a removed message, so a chat run prints no "only while chat is dark" warning
+    assert.ok(!lines.some((l) => /dark|WARNING/.test(l)));
     // a busy hub (503) is a retry, not a success: the script stops before the mirror row is deleted
     const busy = createHubClient({ url: "http://127.0.0.1:1/chat/v1", token: TOKEN, fetchImpl: async () => new Response('{"error":"archive_busy"}', { status: 503 }) });
     await assert.rejects(busy.nullMessage({ conv: DM, seq: 2 }), /run the same command again/);

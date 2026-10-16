@@ -109,7 +109,7 @@ test("package.json pins every dependency exactly, and the lockfile agrees (no CI
   for (const group of [pkg.dependencies, pkg.devDependencies]) {
     for (const [name, v] of Object.entries(group)) assert.match(v, /^\d+\.\d+\.\d+$/, `${name}@${v} is not an exact pin`);
   }
-  assert.match(pkg.dependencies["@io-kit/chat"], /^0\.1\.\d+$/);
+  assert.match(pkg.dependencies["@io-kit/chat"], /^0\.3\.\d+$/);
   const lock = json("package-lock.json");
   assert.equal(lock.lockfileVersion, 3);
   const rootPkg = lock.packages[""];
