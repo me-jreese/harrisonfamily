@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Idempotently attaches the site Content-Security-Policy (HFY-TSK-149, review PS-11) to the DEFAULT cache behavior, the one that
-# serves the HTML pages from the site bucket: default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors
-# 'none' (scripts/cloudfront/site-csp.json, with the script-src/style-src it needs for the inline head script). No cache behavior
+# serves the HTML pages from the site bucket. The directives live in scripts/cloudfront/site-csp.json. No cache behavior
 # and no path prefix is added. The /uploads/* sandbox CSP and the gated data behaviors are not touched.
 #
 # Two stack policies, one per stage (app-stack.yaml; the stack must be updated first, with io's go-ahead):
