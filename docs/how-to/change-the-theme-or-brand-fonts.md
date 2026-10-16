@@ -11,7 +11,7 @@ Placeholders used on this page: `<site>` is the site's host name. `<repo>` is th
 - **The island dependencies are installed, dev dependencies included.** Follow steps 1 and 2 of [Build and preview the islands](build-and-preview-the-islands.md#1-get-a-codeartifact-token): Node 22 or later, a `CODEARTIFACT_AUTH_TOKEN` in this shell, and `npm ci` in `islands/` without `--omit=dev`. The fonts come from the dev dependencies. Run every command on this page from the repository root, in that shell.
 - **For a sign-in stylesheet change, a token change or a font change, the `auth/` dependencies too:** `(cd auth && npm ci)`, in the same shell. Each of these can change the sign-in stylesheet.
 - **For `npm run test:contract`, the `api/` dependencies:** `(cd api && npm ci)`. One of the contract tests imports the API handler.
-- **Google Chrome.** The Playwright specs in `islands/` and the sign-in end-to-end test in `auth/` both launch the `chrome` channel. [Run the tests](run-the-tests.md#4-run-the-island-browser-tests-local) shows how to use Playwright's Chromium for the specs instead.
+- **Playwright's headless shell.** The Playwright specs in `islands/` and the sign-in end-to-end test in `auth/` both launch the `chromium-headless-shell` channel, not Google Chrome. [Run the tests](run-the-tests.md#4-run-the-island-browser-tests-local) shows how to install it and how to opt into Chrome.
 - **A branch tied to an HFY record**, as in [Deploy a site change](deploy-a-site-change.md#before-you-start). Agents also follow the lifecycle in [`AGENTS.md`](../../AGENTS.md).
 - **io's go-ahead and operator AWS credentials, if the sign-in stylesheet changes.** Redeploying `hfy-auth-edge` is a CloudFormation deploy of `<app-stack>`, which needs both ([Deploy the app stack](deploy-the-app-stack.md#before-you-start)). A Cloudflare purge needs io's go-ahead too.
 
@@ -142,7 +142,7 @@ The build prints `built <n> files into <scratch-site> (<m> written)`. If esbuild
 - To look at the copy yourself, serve it with `(cd islands && npx http-server <scratch-site> -p 8090 -a 127.0.0.1 -c-1)` and open <http://127.0.0.1:8090/>. Playwright reuses that server.
 - `(cd islands && HFY_SITE=<scratch-site> PW_PORT=8090 npm test)` runs every `node:test` suite and the specs against the copy in one go.
 
-If the sign-in stylesheet changed, run the sign-in pages in Chrome against the copy. A token or font change usually changes it too. This prints `changed` when it did:
+If the sign-in stylesheet changed, run the sign-in pages in the headless shell against the copy. A token or font change usually changes it too. This prints `changed` when it did:
 
 ```sh
 cmp -s 11ty/css/auth-edge.css <scratch-site>/css/auth-edge.css || echo changed
