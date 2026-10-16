@@ -2,6 +2,7 @@
 // guarantee behind them: no recovery touches an item outside REC#, SYNC#, GID# and IDALIAS#. In-memory DynamoDB fake, synthetic objects only.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SignJWT, importPKCS8 } from "jose";
+import { gunzipSync } from "node:zlib";
 import { cmds, createFakeDdb, makeApi, pem, ISSUER } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
@@ -10,7 +11,9 @@ import { createGroupResolver } from "../src/policy.js";
 import { ORIGINS, headKey, seqKey } from "../src/sync/store.js";
 import { canonicalJson } from "../src/shared/canonical.mjs";
 import { SYNC_PREFIXES, checkLog, foldLog, isSyncPartition } from "../src/sync/refold.js";
-import { AdminError, HELP, parseArgs, run } from "../scripts/sync-admin.mjs";
+import { rebuildStoreView, storeView, resetStoreView } from "../src/records/index.js";
+import { snapshotKey, syncSnapshot } from "../src/sync/pull.js";
+import { AdminError, COMMANDS, GRACE_MS, HELP, parseArgs, run } from "../scripts/sync-admin.mjs";
 import { RecoveryError, chunkLog, chunkOps, parseToSeq } from "../scripts/sync-recovery.mjs";
 
 const T = "hfy-app";
@@ -103,6 +106,18 @@ describe("argument handling (AC1, AC2, AC3)", () => {
   });
   it("--help names the recovery commands and says no command swaps TABLE_NAME", () => {
     for (const word of ["rebuild-heads", "copy-back", "bump-tree-id", "--to-seq", "--from-table", "--reseed", "pause     --all", "never swap TABLE_NAME"]) expect(HELP).toContain(word);
+  });
+  it("--help's go-ahead paragraph names every command that writes, the recovery commands included", () => {
+    const paragraph = HELP.slice(HELP.indexOf("IO'S GO-AHEAD IS REQUIRED"));
+    expect(paragraph.length).toBeGreaterThan(0);
+    for (const command of COMMANDS) expect(paragraph, command).toContain(command);
+    expect(paragraph).toMatch(/copy-back can undo writes made since its restore point, withdraws included/);
+  });
+  it("--include-withdrawn applies to rebuild-heads (as to resurrect) and to no other recovery command", () => {
+    expect(args(["rebuild-heads", "--to-seq", "3", "--dry-run", "--include-withdrawn"])).toMatchObject({ command: "rebuild-heads", includeWithdrawn: true });
+    expect(args(["rebuild-heads", "--to-seq", "3", "--dry-run"]).includeWithdrawn).toBeUndefined();
+    expect(() => args(["copy-back", "--from-table", SIDE, "--dry-run", "--include-withdrawn"])).toThrow(/does not apply/);
+    expect(() => args(["bump-tree-id", "--dry-run", "--include-withdrawn"])).toThrow(/does not apply/);
   });
   it("parseToSeq takes a number or head, never past the log's last seq", () => {
     expect(parseToSeq("head", 15)).toBe(15);
@@ -325,11 +340,13 @@ describe("rebuild-heads (AC2)", () => {
     const { p1, p4, n1 } = await history(w);
     addOutsiders(w.ddb);
     await w.batch([create(person(6)), create(note(6))]); // seq 16-17: created after N
-    // state at seq 12 (before the deletes of 13-15): p4 and n1 live, p3 not yet withdrawn, p6 and note 6 do not exist
+    // state at seq 12 (before the deletes of 13-15): p4 and n1 live, p3 not yet withdrawn, p6 and note 6 do not exist.
+    // p3's withdraw (a privacy withdraw) is NOT rolled back without --include-withdrawn: it stays withdrawn and is listed as refused.
     const logBefore = w.ddb.all().filter((i) => i.PK === "SYNC#LOG");
     const dry = await admin(w, ["rebuild-heads", "--to-seq", "12", "--dry-run"]);
-    expect(dry.plan.rollback.map((e) => [e.op, e.class])).toEqual([["create", "Person"], ["create", "Person"], ["delete", "Person"], ["create", "Note"], ["delete", "Note"]]);
-    expect(dry.plan.finalSeq).toBe(22);
+    expect(dry.plan.rollback.map((e) => [e.op, e.class])).toEqual([["create", "Person"], ["delete", "Person"], ["create", "Note"], ["delete", "Note"]]);
+    expect(dry.plan.refused).toEqual([{ key: `Person#${h(3)}`, reason: "withdrawn_private_needs_flag" }]);
+    expect(dry.plan.finalSeq).toBe(21);
     expect(w.row("SYNC#HEAD").seq).toBe(17); // a dry run moves nothing
     await expect(admin(w, ["rebuild-heads", "--to-seq", "12", "--apply"])).rejects.toThrow(/writes are not paused/);
     await pause(w);
@@ -339,12 +356,13 @@ describe("rebuild-heads (AC2)", () => {
     expect(outside(w.ddb)).toBe(outsideBefore);
     const log = w.ddb.all().filter((i) => i.PK === "SYNC#LOG").sort((a, b) => a.seq - b.seq);
     expect(log.slice(0, 17).map((e) => JSON.stringify(e))).toEqual(logBefore.sort((a, b) => a.seq - b.seq).map((e) => JSON.stringify(e))); // append-only
-    expect(log).toHaveLength(22);
+    expect(log).toHaveLength(21);
     expect(log.slice(17).every((e) => e.origin === "admin" && e.principal === "operator:sync-admin" && e.batch_id === "rebuild:12:17")).toBe(true);
-    expect(w.row("SYNC#HEAD")).toMatchObject({ seq: 22, writes_enabled: false });
-    expect(checkLog(log, 22).ok).toBe(true);
+    expect(w.row("SYNC#HEAD")).toMatchObject({ seq: 21, writes_enabled: false });
+    expect(checkLog(log, 21).ok).toBe(true);
     // the heads are the state at seq 12
     expect(w.row(`REC#Person#${p4.handle}`, "HEAD")).toMatchObject({ deleted: false, version: 3, origin: "admin" });
+    expect(w.row(`REC#Person#${h(3)}`, "HEAD")).toMatchObject({ deleted: true, version: 2 }); // p3 stays withdrawn: not republished
     expect(w.row(`REC#Note#${n1.handle}`, "HEAD")).toMatchObject({ deleted: false, version: 4 });
     expect(JSON.parse(w.row(`REC#Note#${n1.handle}`, "HEAD").obj_json).text.string).toBe("Edited");
     expect(w.row(`REC#Person#${h(6)}`, "HEAD")).toMatchObject({ deleted: true });
@@ -412,6 +430,96 @@ describe("rebuild-heads (AC2)", () => {
   });
 });
 
+// ---- a rollback does not republish what was withdrawn (the review of 275, finding 2) ------------------------------------------------
+describe("rebuild-heads --to-seq keeps resurrect's refusals", () => {
+  const withdrawnStore = async (w) => {
+    const [p1, p2] = [person(1), person(2)];
+    await w.batch([create(p1), create(p2)]); // seq 1-2
+    await w.batch([withdraw(p2, 1)]); // seq 3: a privacy withdraw (it schedules EXPUNGE#Person#<handle>)
+    return { p1, p2 };
+  };
+  const expungeItem = (w, p) => w.row(`EXPUNGE#Person#${p.handle}`);
+
+  it("a privacy withdraw stays withdrawn: refused, listed with its reason, nothing is re-created, and the store converges", async () => {
+    const w = world();
+    const { p2 } = await withdrawnStore(w);
+    expect(w.row(`REC#Person#${p2.handle}`, "HEAD")).toMatchObject({ deleted: true });
+    expect(expungeItem(w, p2)).toBeDefined();
+    const dry = await admin(w, ["rebuild-heads", "--to-seq", "2", "--dry-run"]);
+    expect(dry.plan.rollback).toEqual([]);
+    expect(dry.plan.refused).toEqual([{ key: `Person#${p2.handle}`, reason: "withdrawn_private_needs_flag" }]);
+    expect(dry.plan.withdrawn).toEqual([]);
+    expect(dry.plan.writes).toBe(0);
+    expect(w.text()).toMatch(new RegExp(`refused\\s+left as is Person ${p2.handle}: withdrawn_private_needs_flag`));
+    expect(w.text()).toMatch(/1 deleted or withdrawn object\(s\) would have been re-created by this rollback; they stay tombstones/);
+    expect(w.text()).not.toMatch(/WARNING/);
+    await pause(w);
+    const seqBefore = w.row("SYNC#HEAD").seq;
+    await admin(w, ["rebuild-heads", "--to-seq", "2", "--apply"]);
+    expect(w.row("SYNC#HEAD").seq).toBe(seqBefore); // nothing was appended
+    expect(w.row(`REC#Person#${p2.handle}`, "HEAD")).toMatchObject({ deleted: true, version: 2 });
+    expect(w.rows("SYNC#ADMIN")[0]).toMatchObject({ op: "sync-admin.rebuild-heads", refused: 1, withdrawn_recreated: 0 });
+    expect((await admin(w, ["rebuild-heads", "--to-seq", "head", "--dry-run"])).plan.writes).toBe(0);
+  });
+
+  it("--include-withdrawn re-creates it inside the 72-hour grace, prints resurrect's WARNING, and leaves the expunge schedule to expunge --due", async () => {
+    const w = world();
+    const { p2 } = await withdrawnStore(w);
+    const dry = await admin(w, ["rebuild-heads", "--to-seq", "2", "--dry-run", "--include-withdrawn"]);
+    expect(dry.plan.refused).toEqual([]);
+    expect(dry.plan.withdrawn).toEqual([`Person#${p2.handle}`]);
+    expect(dry.plan.rollback.map((e) => [e.op, e.handle])).toEqual([["create", p2.handle]]);
+    expect(w.text()).toMatch(/WARNING: 1 of these are privacy withdraws \(reason private\)\. Re-creating them puts the record back in the store and the next render republishes it\. Proceed only on io's explicit go-ahead/);
+    await pause(w);
+    await admin(w, ["rebuild-heads", "--to-seq", "2", "--apply", "--include-withdrawn"]);
+    expect(w.row(`REC#Person#${p2.handle}`, "HEAD")).toMatchObject({ deleted: false, version: 3 });
+    expect(w.rows("SYNC#ADMIN")[0]).toMatchObject({ refused: 0, withdrawn_recreated: 1 });
+    expect(expungeItem(w, p2)).toBeDefined(); // unlike resurrect, the schedule item stays: expunge --due skips a live head and drops it
+    expect((await admin(w, ["rebuild-heads", "--to-seq", "head", "--dry-run"])).plan.writes).toBe(0);
+  });
+
+  it("a withdraw past the 72-hour grace is refused whatever the flag: its expunge is queued", async () => {
+    const w = world();
+    const { p2 } = await withdrawnStore(w);
+    w.clock.advance(GRACE_MS + 60_000);
+    for (const flag of [[], ["--include-withdrawn"]]) {
+      const dry = await admin(w, ["rebuild-heads", "--to-seq", "2", "--dry-run", ...flag]);
+      expect(dry.plan.rollback).toEqual([]);
+      expect(dry.plan.refused).toEqual([{ key: `Person#${p2.handle}`, reason: flag.length ? "past_grace" : "withdrawn_private_needs_flag" }]);
+    }
+    // the same rollback, just inside the grace, is allowed with the flag
+    const inside = world();
+    await withdrawnStore(inside);
+    inside.clock.advance(GRACE_MS - 60_000);
+    expect((await admin(inside, ["rebuild-heads", "--to-seq", "2", "--dry-run", "--include-withdrawn"])).plan.refused).toEqual([]);
+  });
+
+  it("a merge and a Media are refused too, and an ordinary delete of any age is still rolled back", async () => {
+    const w = world({ head: { seq: 0, seeded: true, writes_enabled: true, live_heads: 0, merges_enabled: true, tree_id: "00000000-0000-4000-8000-000000000001" } });
+    const [loser, survivor, doomed, n1] = [person(1), person(2), person(3), note(1)];
+    await w.batch([create(loser), create(survivor), create(doomed), create(n1), create(media(1), { blob: BLOB })]); // seq 1-5
+    await w.batch([del(loser, 1, { reason: "merge", merged_into: survivor.gramps_id }), del(media(1), 1, { reason: "cleanup" }), del(doomed, 1, { reason: "cleanup" }), del(n1, 1, { reason: "cleanup" })]); // seq 6-9
+    w.clock.advance(GRACE_MS * 10); // long past any grace: a plain delete is rolled back whatever its age
+    for (const flag of [[], ["--include-withdrawn"]]) {
+      const dry = await admin(w, ["rebuild-heads", "--to-seq", "5", "--dry-run", ...flag]);
+      expect(dry.plan.refused).toEqual([
+        { key: `Person#${loser.handle}`, reason: "merge" },
+        { key: `Media#${media(1).handle}`, reason: "media_blob_not_in_log" },
+      ]);
+      expect(dry.plan.rollback.map((e) => [e.op, e.class, e.handle])).toEqual([["create", "Person", doomed.handle], ["create", "Note", n1.handle]]);
+    }
+    expect(w.text()).toMatch(/refused\s+left as is Person .*: merge/);
+    expect(w.text()).toMatch(/refused\s+left as is Media .*: media_blob_not_in_log/);
+    await pause(w);
+    await admin(w, ["rebuild-heads", "--to-seq", "5", "--apply"]);
+    expect(w.row(`REC#Person#${loser.handle}`, "HEAD")).toMatchObject({ deleted: true });
+    expect(w.row(`REC#Media#${media(1).handle}`, "HEAD")).toMatchObject({ deleted: true });
+    expect(w.row(`REC#Person#${doomed.handle}`, "HEAD")).toMatchObject({ deleted: false });
+    expect(w.row(`REC#Note#${n1.handle}`, "HEAD")).toMatchObject({ deleted: false });
+    expect((await admin(w, ["rebuild-heads", "--to-seq", "head", "--dry-run"])).plan.writes).toBe(0);
+  });
+});
+
 // ---- copy-back ------------------------------------------------------------------------------------------------------------------
 /** A live table whose change log is damaged, and a side table that is its point-in-time copy from before the damage. */
 async function twoTables() {
@@ -441,6 +549,8 @@ describe("copy-back (AC3)", () => {
     expect(t.w.text()).toMatch(/dry run: nothing written/);
     expect(t.w.text()).toMatch(/no other partition is read for writing or touched/);
     expect(t.w.text()).toMatch(/seq 16 will be used again.*RECFAN#.*can be dropped/); // the restore is behind the live log: say what that does to notifications
+    expect(t.w.text()).toMatch(/expunge_epoch: live 0, restore point 0: written as 1, so every warm store view, cached snapshot, graph build and desktop delta cache/);
+    expect(dry.plan.epoch).toBe(1);
     expect(dump(t.w.ddb.all())).toBe(before);
     await expect(t.run(["copy-back", "--from-table", SIDE, "--apply"])).rejects.toThrow(/writes are not paused/);
     expect(dump(t.w.ddb.all())).toBe(before);
@@ -459,16 +569,19 @@ describe("copy-back (AC3)", () => {
     expect(dump(liveSync)).toBe(dump(sideSync));
     expect(t.w.row("SYNC#LOG", seqKey(4))).toBeDefined(); // the hole is filled
     expect(t.w.row(`REC#Person#${h(7)}`, "HEAD")).toBeUndefined(); // the write made after the restore point is gone from the store (the desktop rebases)
-    expect(t.w.row("SYNC#HEAD")).toMatchObject({ writes_enabled: false, seq: 15 });
+    expect(t.w.row("SYNC#HEAD")).toMatchObject({ writes_enabled: false, seq: 15, expunge_epoch: 1 }); // 0 on both sides, so 0 + 1: the restore moved seq backwards
     expect(t.side.rows.get("SYNC#HEAD\u0000META").writes_enabled).toBe(true); // the side table itself is only read
+    expect(t.side.rows.get("SYNC#HEAD\u0000META").expunge_epoch).toBeUndefined();
     expect(t.w.rows("SYNC#ADMIN")).toHaveLength(1);
-    expect(t.w.rows("SYNC#ADMIN")[0]).toMatchObject({ op: "sync-admin.copy-back", by: "operator-a", from_table: SIDE });
+    expect(t.w.rows("SYNC#ADMIN")[0]).toMatchObject({ op: "sync-admin.copy-back", by: "operator-a", from_table: SIDE, expunge_epoch: 1 });
     // the restored store is consistent: its log is whole and its heads equal the fold
     const again = await t.run(["rebuild-heads", "--to-seq", "head", "--dry-run"]);
     expect(again.plan.writes).toBe(0);
     // converged: a second copy-back has nothing to do
     const second = await t.run(["copy-back", "--from-table", SIDE, "--dry-run"]);
     expect(second.plan.puts + second.plan.deletes).toBe(0);
+    expect(second.plan.epoch).toBe(1); // the epoch is not raised again when nothing else differs
+    expect(t.w.text()).toMatch(/expunge_epoch: live 1, restore point 0: stays 1 \(nothing else differs\)/);
   });
 
   it("deletes sync items the side table lacks, but never the audit trail of earlier recoveries", async () => {
@@ -513,6 +626,106 @@ describe("copy-back (AC3)", () => {
     const big = Array.from({ length: 10 }, (_, i) => ({ PK: "SYNC#LOG", SK: seqKey(i + 1), obj_json: "x".repeat(900_000) }));
     expect(chunkLog(big).map((c) => c.length)).toEqual([3, 3, 3, 1]);
     expect(chunkLog([])).toEqual([]);
+  });
+});
+
+// ---- copy-back moves seq backwards: the caches of the abandoned timeline must go (the review of 275, finding 1) -----------------
+describe("copy-back raises SYNC#HEAD.expunge_epoch", () => {
+  const headWith = (expunge_epoch) => ({ seq: 0, seeded: true, writes_enabled: true, live_heads: 0, tree_id: "00000000-0000-4000-8000-000000000001", ...(expunge_epoch === undefined ? {} : { expunge_epoch }) });
+  /** A live table and a side table that hold the same history up to seq 3; the live one then runs on to seq 5 (the abandoned timeline). */
+  async function rewound({ liveEpoch, sideEpoch } = {}) {
+    const live = world({ head: headWith(liveEpoch) });
+    const side = world({ head: headWith(sideEpoch) });
+    for (const w of [live, side]) {
+      await w.batch([create(person(1)), create(person(2))]); // seq 1-2
+      await w.batch([update(person(1, { gender: 0 }), 1)]); // seq 3: the restore point
+    }
+    await live.batch([update(person(2, { gender: 0 }), 1)]); // seq 4: abandoned by the restore
+    await live.batch([create(person(3))]); // seq 5: abandoned
+    const ddb = multiDdb({ [T]: live.ddb, [SIDE]: side.ddb });
+    const ctx = { ...live.ctx, ddb };
+    return { live, side, ctx, view: { ddb: live.ddb, cmds, table: T }, go: (argv) => run(args(argv), ctx) };
+  }
+  const recover = async (t) => {
+    await t.go(["pause", "--all", "--apply"]);
+    await t.go(["copy-back", "--from-table", SIDE, "--apply"]);
+    await t.go(["bump-tree-id", "--apply"]);
+    await t.go(["resume", "--all", "--apply"]);
+  };
+  const liveHandles = (view) => view.live().map((x) => x.handle.slice(-2)).sort().join(",");
+
+  it("writes max(live, restore point) + 1, whichever side is ahead, and says so in the dry run", async () => {
+    for (const [liveEpoch, sideEpoch, expected] of [[undefined, undefined, 1], [3, 2, 4], [1, 5, 6], [4, undefined, 5]]) {
+      const t = await rewound({ liveEpoch, sideEpoch });
+      const dry = await t.go(["copy-back", "--from-table", SIDE, "--dry-run"]);
+      expect(dry.plan.epoch, `${liveEpoch}/${sideEpoch}`).toBe(expected);
+      expect(t.live.text()).toContain(`expunge_epoch: live ${liveEpoch ?? 0}, restore point ${sideEpoch ?? 0}: written as ${expected}`);
+      expect(t.live.row("SYNC#HEAD").expunge_epoch).toBe(liveEpoch); // a dry run writes nothing
+      await t.go(["pause", "--all", "--apply"]);
+      await t.go(["copy-back", "--from-table", SIDE, "--apply"]);
+      expect(t.live.row("SYNC#HEAD")).toMatchObject({ expunge_epoch: expected, seq: 3, writes_enabled: false });
+      const again = await t.go(["copy-back", "--from-table", SIDE, "--dry-run"]);
+      expect([again.plan.puts, again.plan.deletes, again.plan.epoch]).toEqual([0, 0, expected]);
+    }
+  });
+
+  it("a warm store view of the abandoned timeline is dropped: after the recovery and one new write it equals the log, not the view it had", async () => {
+    const t = await rewound();
+    const warm = await storeView(t.view); // the warm Lambda container's view, built before the recovery
+    expect([warm.seq, liveHandles(warm)]).toEqual([5, "01,02,03"]);
+    await recover(t);
+    expect(t.live.row("SYNC#HEAD")).toMatchObject({ seq: 3, expunge_epoch: 1 });
+    await t.live.batch([create(person(9))]); // reuses seq 4
+    expect(t.live.row("SYNC#HEAD").seq).toBe(4);
+    const after = await storeView(t.view);
+    expect(after).not.toBe(warm);
+    const fresh = await rebuildStoreView(t.view);
+    expect([after.seq, liveHandles(after)]).toEqual([4, "01,02,09"]);
+    expect([after.seq, liveHandles(after)]).toEqual([fresh.seq, liveHandles(fresh)]);
+    // control: the same recovery without the epoch raise leaves the warm view where it was (the hazard the epoch closes)
+    const stale = await rewound();
+    const staleWarm = await storeView(stale.view);
+    await recover(stale);
+    stale.live.ddb.rows.set("SYNC#HEAD\u0000META", { ...stale.live.row("SYNC#HEAD"), expunge_epoch: undefined });
+    await stale.live.batch([create(person(9))]);
+    expect(await storeView(stale.view)).toBe(staleWarm);
+    resetStoreView(stale.view);
+  });
+
+  it("the snapshot cache of the abandoned timeline is never served, on the warm container or on a cold one", async () => {
+    const t = await rewound();
+    const objects = new Map();
+    const s3 = {
+      send: async (cmd) => {
+        const name = cmd.constructor.name;
+        const k = cmd.input.Key;
+        if (name === "HeadObjectCommand") {
+          if (!objects.has(k)) throw Object.assign(new Error("not found"), { name: "NotFound" });
+          return { Metadata: objects.get(k).Metadata };
+        }
+        if (name === "PutObjectCommand") {
+          objects.set(k, { Metadata: cmd.input.Metadata, Body: cmd.input.Body });
+          return {};
+        }
+        throw new Error(`fake s3: unsupported ${name}`);
+      },
+    };
+    const snapshot = () => syncSnapshot({ sync: { checkTree() {}, head: t.live.row("SYNC#HEAD"), store: { ...t.view, s3, syncBucket: "sync-bucket.test", presignGet: async () => "https://presign.test/x", now: () => t.live.clock.now() } } });
+    const handlesIn = (seq) => [...new Set([...gunzipSync(objects.get(snapshotKey(seq)).Body).toString("utf8").matchAll(/"handle":"([0-9a-f]{28})"/g)].map((m) => m[1].slice(-2)))].sort().join(",");
+
+    expect((await snapshot()).body.seq).toBe(5); // the abandoned timeline's snapshot is cached at seq 5
+    expect(handlesIn(5)).toBe("01,02,03");
+    await recover(t);
+    await t.live.batch([create(person(9))]); // seq 4 on the new timeline
+    const warmAnswer = await snapshot(); // the same container, after the recovery
+    expect(warmAnswer.body.seq).toBe(t.live.row("SYNC#HEAD").seq);
+    expect(warmAnswer.body.seq).toBe(4);
+    expect(handlesIn(4)).toBe("01,02,09");
+    await t.live.batch([create(person(10))]); // seq 5: the new timeline reaches the seq the cached file is named for
+    resetStoreView(t.view); // a cold container
+    const cold = await snapshot();
+    expect(cold.body.seq).toBe(5);
+    expect(handlesIn(5)).toBe("01,02,09,0a"); // not the abandoned timeline's 01,02,03
   });
 });
 

@@ -10,7 +10,7 @@
 //
 // Pure functions over plain items: no DynamoDB and no clock, so the same code serves the operator tool (scripts/sync-admin.mjs
 // rebuild-heads) and its tests. Nothing here returns object text to a caller that prints: the tool names classes, opaque handles and counts.
-import { CLASSES, OP_KINDS, aliasItem, gidClaimItem, gidRetiredItem, headItem, headKey, logItem, seqKey, sha256 } from "./store.js";
+import { CLASSES, EXPUNGE_GRACE_MS, OP_KINDS, aliasItem, gidClaimItem, gidRetiredItem, headItem, headKey, logItem, seqKey, sha256 } from "./store.js";
 import { canonicalJson } from "../shared/canonical.mjs";
 
 export const PRINCIPAL = "operator:sync-admin";
@@ -19,6 +19,12 @@ export const SYNC_PREFIXES = Object.freeze(["REC#", "SYNC#", "GID#", "IDALIAS#"]
 /** The audit trail of the recovery tools lives in a SYNC# partition that no recovery copies over or deletes. */
 export const ADMIN_PK = "SYNC#ADMIN";
 export const isSyncPartition = (pk) => typeof pk === "string" && SYNC_PREFIXES.some((p) => pk.startsWith(p)) && pk !== ADMIN_PK;
+
+/** The grace a privacy withdraw keeps before its history may be expunged (the same 72 hours as store.js EXPUNGE_GRACE_MS). */
+export const WITHDRAW_GRACE_MS = EXPUNGE_GRACE_MS;
+/** The warning `resurrect` and `rebuild-heads` print when privacy-withdrawn records are being put back (one text, so the two cannot drift). */
+export const withdrawWarning = (n) =>
+  `WARNING: ${n} of these are privacy withdraws (reason private). Re-creating them puts the record back in the store and the next render republishes it. Proceed only on io's explicit go-ahead for the withdrawn records.`;
 
 const pk = (item) => `${item.PK}\u0000${item.SK}`;
 const same = (a, b) => canonicalJson(a) === canonicalJson(b);
@@ -164,16 +170,25 @@ export function foldLog(entries, { toSeq = Infinity, blobs = new Map(), aliases:
  * delete (the object did not exist then), an update back to the older text, or a create over a tombstone. They carry origin `admin`,
  * principal operator:sync-admin and one batch id, like `resurrect`.
  *
- * Returns { entries, skipped, media }:
- *   entries  the appended log entries ([] when toSeq is the tail or nothing differs)
- *   skipped  the "Class#handle" keys left as they are because privacy-expunge rewrote the entry at `toSeq` or at the tail (its object text
- *            is gone on purpose, so a rollback could neither restore it nor tell what it was, and must not write a live entry without it)
- *   media    the Media "Class#handle" keys rolled back to different text while live: the blob descriptor lives on the head, not in the log,
- *            so such a head keeps its newest blob, which may no longer match the older text
+ * A create over a tombstone brings back what a delete or withdraw removed, so it keeps the refusals `sync-admin resurrect` (planOne) keeps:
+ *   withdrawn_private_needs_flag  the tail is a privacy withdraw and `includeWithdrawn` is not set: re-creating it republishes a withdrawn record
+ *   merge                         the tail is the delete of a merge: the alias and the survivor are the merge's business
+ *   media_blob_not_in_log         the object is a Media: its blob descriptor is on the head, which the delete dropped, and not in the log
+ *   past_grace                    the tail is a privacy withdraw older than the 72-hour grace: its expunge is queued, and no flag brings it back
+ * A refused object keeps its tombstone and is listed. The delete of any other class is rolled back whatever its age (that is what the command is for).
+ *
+ * Returns { entries, skipped, refused, withdrawn, media }:
+ *   entries    the appended log entries ([] when toSeq is the tail or nothing differs)
+ *   skipped    the "Class#handle" keys left as they are because privacy-expunge rewrote the entry at `toSeq` or at the tail (its object text
+ *              is gone on purpose, so a rollback could neither restore it nor tell what it was, and must not write a live entry without it)
+ *   refused    [{ key, reason }] the tombstones left as they are for one of the reasons above
+ *   withdrawn  the "Class#handle" keys of privacy withdraws that `includeWithdrawn` re-creates (the caller prints the warning)
+ *   media      the Media "Class#handle" keys rolled back to different text while live: the blob descriptor lives on the head, not in the log,
+ *              so such a head keeps its newest blob, which may no longer match the older text
  */
-export function planRollback(entries, toSeq, { at, batchId }) {
+export function planRollback(entries, toSeq, { at, batchId, includeWithdrawn = false }) {
   const tailSeq = entries.length;
-  const out = { entries: [], skipped: [], media: [] };
+  const out = { entries: [], skipped: [], refused: [], withdrawn: [], media: [] };
   if (toSeq >= tailSeq) return out;
   const tail = foldLog(entries).state;
   const target = foldLog(entries, { toSeq }).state;
@@ -188,6 +203,19 @@ export function planRollback(entries, toSeq, { at, batchId }) {
     const wasLive = was && !was.deleted;
     const sameState = wasLive ? !cur.deleted && cur.entry.obj_json === was.entry.obj_json && cur.entry.gramps_id === was.entry.gramps_id : cur.deleted;
     if (sameState) continue;
+    if (wasLive && cur.deleted) {
+      const withdraw = cur.entry.op === "withdraw";
+      const reason = cur.entry.reason === "merge" ? "merge"
+        : withdraw && !includeWithdrawn ? "withdrawn_private_needs_flag"
+        : cur.entry.class === "Media" ? "media_blob_not_in_log"
+        : withdraw && !(Date.parse(at) - Date.parse(cur.entry.at) <= WITHDRAW_GRACE_MS) ? "past_grace"
+        : undefined;
+      if (reason) {
+        out.refused.push({ key, reason });
+        continue;
+      }
+      if (withdraw) out.withdrawn.push(key);
+    }
     const seq = tailSeq + out.entries.length + 1;
     const base = { seq, batch_id: batchId, class: cur.entry.class, handle: cur.entry.handle, version: cur.entry.version + 1, base_version: cur.entry.version, principal: PRINCIPAL, origin: "admin", at };
     if (wasLive) {

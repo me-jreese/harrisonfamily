@@ -1,6 +1,7 @@
 // Store-scoped recovery for the cloud record store (HFY-TSK-275; review SI-04; BRD2 19.8). Imported by sync-admin.mjs, which owns the CLI.
 //
-//   rebuild-heads --to-seq N   refold REC#, GID# and IDALIAS# in place from the append-only SYNC#LOG (src/sync/refold.js).
+//   rebuild-heads --to-seq N   refold REC#, GID# and IDALIAS# in place from the append-only SYNC#LOG (src/sync/refold.js). A rollback does not bring
+//                              back a privacy withdraw (unless --include-withdrawn, and then only inside the 72-hour grace), a merge or a Media.
 //   copy-back --from-table T   when the log itself is damaged: copy only REC#, SYNC#, GID# and IDALIAS# items from a side table
 //                              (a point-in-time restore of the app table to a NEW table) back into the live table.
 //   bump-tree-id [--reseed]    give the store a new tree_id: every desktop gets 403 tree_mismatch and runs `hfy-sync rebase`.
@@ -15,7 +16,7 @@
 // SYNC#ADMIN item per run (a partition no recovery overwrites or deletes). Output names classes, opaque handles, field names, versions and
 // counts: never object text and never a gramps_id.
 import { randomUUID } from "node:crypto";
-import { PRINCIPAL, ADMIN_PK, SYNC_PREFIXES, checkLog, diffItems, foldLog, isSyncPartition, itemPk, planRollback } from "../src/sync/refold.js";
+import { PRINCIPAL, ADMIN_PK, SYNC_PREFIXES, checkLog, diffItems, foldLog, isSyncPartition, itemPk, planRollback, withdrawWarning } from "../src/sync/refold.js";
 import { headKey, seqKey } from "../src/sync/store.js";
 
 export class RecoveryError extends Error {}
@@ -26,6 +27,7 @@ const LOG_CHUNK = 20;
 const SHOWN = 30;
 const TABLE_NAME = /^[A-Za-z0-9_.-]{3,255}$/;
 const iso = (now) => new Date(now()).toISOString();
+const epochOf = (head) => (Number.isInteger(head?.expunge_epoch) ? head.expunge_epoch : 0); // SYNC#HEAD.expunge_epoch, absent = 0 (the rule of every consumer)
 const bytes = (item) => Buffer.byteLength(JSON.stringify(item));
 
 const get = async ({ ddb, cmds }, table, Key) => (await ddb.send(new cmds.GetCommand({ TableName: table, Key, ConsistentRead: true }))).Item;
@@ -119,7 +121,7 @@ export function parseToSeq(value, headSeq) {
  * When toSeq is behind the log's tail the store is rolled back to that seq by appended admin entries (planRollback), so the log stays
  * append-only and heads == fold(log) holds afterwards.
  */
-export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
+export async function rebuildHeads(ctx, { apply, toSeq, by = "operator", includeWithdrawn = false }) {
   const { log, table } = ctx;
   const head = await get(ctx, table, headKey());
   if (!head) throw new RecoveryError("there is no SYNC#HEAD item: the store is not initialised, so there is nothing to rebuild");
@@ -133,7 +135,7 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
     throw new RecoveryError(`the log is damaged (${check.problems.length}${check.problems.length >= 50 ? "+" : ""} problem(s)), so the heads cannot be refolded from it: restore a side table and use copy-back (docs/how-to/operate-the-sync-store.md)`);
   }
   const at = iso(ctx.now);
-  const { entries: rollback, skipped, media: mediaRolled } = planRollback(entries, target, { at, batchId: `rebuild:${target}:${headSeq}` });
+  const { entries: rollback, skipped, refused, withdrawn, media: mediaRolled } = planRollback(entries, target, { at, batchId: `rebuild:${target}:${headSeq}`, includeWithdrawn });
   const stored = await readSync(ctx, table);
   const storedHeads = byPrefix(stored, "REC#");
   const blobs = new Map([...storedHeads.values()].filter((i) => i.class === "Media" && i.deleted !== true && i.blob !== undefined).map((i) => [`${i.class}#${i.handle}`, i.blob]));
@@ -153,18 +155,21 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
   log(`idalias: ${dAliases.unchanged} match, ${dAliases.puts.length} to write, ${dAliases.deletes.length} to delete`);
   log(`live_heads: ${countable ? (liveFix ? `stored ${liveFix.from}, folded ${liveFix.to}: will be corrected` : `${folded.live}, correct`) : "not counted; left as it is"}`);
   if (skipped.length) log(`note: ${skipped.length} object(s) were expunged by a privacy erasure at or after seq ${target}; their text is gone from the log, so they are left as they are (expunged: left as is)`);
+  if (refused.length) log(`note: ${refused.length} deleted or withdrawn object(s) would have been re-created by this rollback; they stay tombstones (refused, reasons below). Privacy withdraws need --include-withdrawn and io's explicit go-ahead; a merge, a Media and a withdraw past the 72-hour grace are not brought back by this tool`);
   if (mediaRolled.length) log(`note: ${mediaRolled.length} live Media head(s) go back to older text but keep their newest blob descriptor (it is not in the log); check each file's sha256 and size afterwards`);
   const mediaRewritten = dHeads.puts.filter((p) => p.item.class === "Media" && p.item.deleted !== true && p.item.blob !== undefined).length;
   if (mediaRewritten && !mediaRolled.length) log(`note: ${mediaRewritten} live Media head(s) are rewritten with the blob descriptor the store holds; check each file's sha256 and size afterwards`);
   if (folded.blobsUnknown) log(`note: ${folded.blobsUnknown} live Media head(s) have no blob descriptor in the store; the log does not hold it, so they are written without one`);
   if (folded.mergeAliasesUnknown) log(`note: ${folded.mergeAliasesUnknown} merge alias(es) have no survivor id in the store or the log; written with none`);
   listLines(log, "expunged", skipped.map((k) => `left as is ${k.split("#")[0]} ${k.slice(k.indexOf("#") + 1)}`));
+  listLines(log, "refused ", refused.map((r) => `left as is ${r.key.split("#")[0]} ${r.key.slice(r.key.indexOf("#") + 1)}: ${r.reason}`));
   listLines(log, "rollback", rollback.map((e) => `${e.op} ${e.class} ${e.handle} v${e.version} (seq ${e.seq})`));
+  if (withdrawn.length) log(withdrawWarning(withdrawn.length));
   listLines(log, "head   ", [...dHeads.puts.map((p) => `put ${p.item.class} ${p.item.handle} v${p.item.version} (${fieldNote(p)})`), ...dHeads.deletes.map((d) => `delete ${d.item.class} ${d.item.handle}`)]);
   listLines(log, "gid    ", [...dGids.puts.map((p) => `put ${p.item.class} (${fieldNote(p)})`), ...dGids.deletes.map((d) => `delete ${d.item.class}`)]);
   listLines(log, "idalias", [...dAliases.puts.map((p) => `put ${p.item.class} (${fieldNote(p)})`), ...dAliases.deletes.map((d) => `delete ${d.item.class}`)]);
   const writes = dHeads.puts.length + dHeads.deletes.length + dGids.puts.length + dGids.deletes.length + dAliases.puts.length + dAliases.deletes.length + rollback.length + (liveFix ? 1 : 0);
-  const plan = { target, headSeq, finalSeq, rollback, skipped, media: mediaRolled, heads: dHeads, gids: dGids, aliases: dAliases, liveFix, writes };
+  const plan = { target, headSeq, finalSeq, rollback, skipped, refused, withdrawn, media: mediaRolled, heads: dHeads, gids: dGids, aliases: dAliases, liveFix, writes };
   log(`plan: ${writes === 0 ? "nothing to change: the heads already equal the log" : `${writes} write(s)`}`);
   if (!apply) {
     log("dry run: nothing written");
@@ -200,7 +205,7 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
     written += chunk.length;
     log(`applied: ${chunk.length} item(s) (${written} of ${ops.length})`);
   }
-  const detail = { to_seq: target, head_seq: headSeq, final_seq: finalSeq, appended: rollback.length, heads_written: dHeads.puts.length, heads_deleted: dHeads.deletes.length, gid_written: dGids.puts.length, gid_deleted: dGids.deletes.length, alias_written: dAliases.puts.length, alias_deleted: dAliases.deletes.length };
+  const detail = { to_seq: target, head_seq: headSeq, final_seq: finalSeq, appended: rollback.length, refused: refused.length, withdrawn_recreated: withdrawn.length, heads_written: dHeads.puts.length, heads_deleted: dHeads.deletes.length, gid_written: dGids.puts.length, gid_deleted: dGids.deletes.length, alias_written: dAliases.puts.length, alias_deleted: dAliases.deletes.length };
   const last = [auditPut(ctx, "rebuild-heads", by, at, detail)];
   if (liveFix) {
     last.unshift({
@@ -219,7 +224,9 @@ export async function rebuildHeads(ctx, { apply, toSeq, by = "operator" }) {
 /**
  * Copies the sync partitions of a side table (a PITR restore of the app table to a new name) into the live table: puts what differs,
  * deletes what the side table lacks, and touches nothing outside REC#, SYNC#, GID# and IDALIAS#. SYNC#HEAD comes across with
- * writes_enabled forced to false, so the restored store stays paused until bump-tree-id, the desktop rebases and `resume`.
+ * writes_enabled forced to false, so the restored store stays paused until bump-tree-id, the desktop rebases and `resume`, and with
+ * expunge_epoch set to max(live, restore point) + 1: the restore moves seq backwards, and the epoch is the one value every cache of the
+ * store (the store view, snapshots/, the graph marker, the desktop's delta cache) already checks besides seq.
  */
 export async function copyBack(ctx, { apply, fromTable, by = "operator" }) {
   const { log, table } = ctx;
@@ -236,10 +243,21 @@ export async function copyBack(ctx, { apply, fromTable, by = "operator" }) {
   const tgtHead = await get(ctx, table, headKey());
   const src = await readSync(ctx, fromTable);
   const tgt = await readSync(ctx, table);
-  const expected = new Map();
-  for (const item of src) expected.set(itemPk(item), item.PK === "SYNC#HEAD" ? { ...item, writes_enabled: false } : item);
   const stored = new Map(tgt.map((i) => [itemPk(i), i]));
-  const d = diffItems(expected, stored);
+  // SYNC#HEAD comes across paused, and with expunge_epoch above both the live table's and the restore point's. Every consumer of the store
+  // keys its cache on that epoch (the store view of each warm Lambda, snapshots/<seq>.jsonl.gz, the graph render marker, the desktop's
+  // delta cache), and the restore moves seq BACKWARDS, where seq alone cannot tell a cache of the abandoned timeline from the new one.
+  // Once nothing else differs the epoch is left where it is, so a second run finds the store converged (the head is not bumped again).
+  const liveEpoch = epochOf(tgtHead);
+  const restoredEpoch = epochOf(srcHead);
+  const withEpoch = (item, epoch) => (epoch > 0 || item.expunge_epoch !== undefined ? { ...item, expunge_epoch: epoch } : item); // an absent epoch stays absent while it is 0
+  const expectedFor = (epoch) => new Map(src.map((item) => [itemPk(item), item.PK === "SYNC#HEAD" ? withEpoch({ ...item, writes_enabled: false }, epoch) : item]));
+  let epoch = Math.max(liveEpoch, restoredEpoch);
+  let d = diffItems(expectedFor(epoch), stored);
+  if (d.puts.length + d.deletes.length > 0) {
+    epoch += 1;
+    d = diffItems(expectedFor(epoch), stored);
+  }
   const part = (p) => ({ puts: d.puts.filter((x) => x.item.PK.startsWith(p)).length, deletes: d.deletes.filter((x) => x.item.PK.startsWith(p)).length });
   log(`copy-back: side table has ${src.length} sync item(s) and a log of ${srcEntries.length} entr${srcEntries.length === 1 ? "y" : "ies"} (seq ${srcHead.seq ?? 0}); the live table has ${tgt.length} sync item(s), log seq ${tgtHead?.seq ?? "none"}`);
   for (const p of SYNC_PREFIXES) {
@@ -253,10 +271,12 @@ export async function copyBack(ctx, { apply, fromTable, by = "operator" }) {
     log(`note: the live log reached seq ${liveSeq} and the restore holds ${restoredSeq}, so ${liveSeq > restoredSeq + 1 ? `seqs ${restoredSeq + 1}..${liveSeq} will` : `seq ${liveSeq} will`} be used again by new writes. The notification claims (RECFAN#) of ${liveSeq > restoredSeq + 1 ? "those seqs are" : "that seq are"} outside the sync partitions and stay: notifications for the reused seq(s) can be dropped as already sent (docs/how-to/operate-the-sync-store.md)`);
   }
   log(`SYNC#HEAD: written with writes_enabled false${tgtHead?.tree_id !== srcHead.tree_id ? "; its tree_id differs from the live table's" : ""}`);
+  const bumped = epoch > Math.max(liveEpoch, restoredEpoch);
+  log(`expunge_epoch: live ${liveEpoch}, restore point ${restoredEpoch}: ${bumped ? `written as ${epoch}, so every warm store view, cached snapshot, graph build and desktop delta cache built on the abandoned timeline is dropped (the restore moves seq backwards, which seq alone cannot show them)` : `stays ${epoch} (nothing else differs)`}`);
   const what = (item) => [`${item.PK.split("#")[0]}#`, item.class, item.PK.startsWith("REC#") ? item.handle : undefined].filter(Boolean).join(" ");
   listLines(log, "write ", d.puts.map((p) => `${what(p.item)} (${fieldNote(p)})`));
   listLines(log, "delete", d.deletes.map((x) => what(x.item)));
-  const plan = { puts: d.puts.length, deletes: d.deletes.length, unchanged: d.unchanged };
+  const plan = { puts: d.puts.length, deletes: d.deletes.length, unchanged: d.unchanged, epoch };
   log(`plan: ${plan.puts + plan.deletes === 0 ? "nothing to copy" : `${plan.puts} to write, ${plan.deletes} to delete`}`);
   if (!apply) {
     log("dry run: nothing written");
@@ -275,7 +295,7 @@ export async function copyBack(ctx, { apply, fromTable, by = "operator" }) {
     log(`applied: ${chunk.length} item(s) (${written} of ${ops.length})`);
   }
   const at = iso(ctx.now);
-  const final = [auditPut(ctx, "copy-back", by, at, { from_table: fromTable, written: plan.puts, deleted: plan.deletes })];
+  const final = [auditPut(ctx, "copy-back", by, at, { from_table: fromTable, written: plan.puts, deleted: plan.deletes, expunge_epoch: epoch })];
   if (headPut) {
     final.unshift({ Put: { TableName: table, Item: headPut.item, ConditionExpression: "#we = :f", ExpressionAttributeNames: { "#we": "writes_enabled" }, ExpressionAttributeValues: { ":f": false } } });
   }

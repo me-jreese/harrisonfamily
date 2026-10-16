@@ -7,7 +7,7 @@
 //   node scripts/sync-admin.mjs feed-off --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs render   --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
 //   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
-//   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--include-withdrawn] [--by <name>]
 //   node scripts/sync-admin.mjs copy-back  --from-table <side-table> --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs bump-tree-id [--reseed] --dry-run|--apply [--by <name>]
 //   common: [--table hfy-app] [--region us-west-2]
@@ -18,7 +18,9 @@
 //   resume     sets it back to true.
 //   rebuild-heads, copy-back, bump-tree-id   the store-scoped recovery (HFY-TSK-275, review SI-04; src/sync/refold.js, scripts/sync-recovery.mjs,
 //              docs/how-to/operate-the-sync-store.md). They never swap TABLE_NAME and touch only REC#, SYNC#, GID# and IDALIAS# items;
-//              every --apply needs the store paused first.
+//              every --apply needs the store paused first. rebuild-heads --to-seq N keeps resurrect's refusals: a privacy withdraw stays withdrawn
+//              unless --include-withdrawn is passed (and then only inside the 72-hour grace), and a merge or a Media is never brought back.
+//              copy-back raises SYNC#HEAD.expunge_epoch, which drops every cache built on the abandoned timeline.
 //   feed-on    sets SYNC#HEAD.changes_feed to true (HFY-TSK-277): GET /api/sync/changes then serves the ARCH-B delta feed and /api/sync/meta
 //              reports changes_feed: true, which tells the add-on it may pull deltas. feed-off sets it back to false (absent counts as off);
 //              the add-on then takes full snapshots again at its next run. The feed ships off; flipping it is io's go-ahead like the others.
@@ -29,9 +31,10 @@
 //              payload; it invokes nothing.
 //   resurrect  re-creates the heads of the deletes and withdraws of one batch from the append-only log (see below).
 //
-// EVERY --apply IS A PRODUCTION WRITE (pause, resume and resurrect write app-table items; render makes the renderer write and delete site
-// files). It runs only after io's go-ahead in the session, recorded verbatim in the worklog together with the dry-run output (AGENTS.md;
-// BRD2 10.2 rule 15; review DL-28). The G-seed approval covers setting writes_enabled for the seed, nothing else. Always run --dry-run first.
+// EVERY --apply IS A PRODUCTION WRITE (pause, resume, feed-on, feed-off, resurrect, rebuild-heads, copy-back and bump-tree-id write app-table
+// items, and the last three are the store recovery; render makes the renderer write and delete site files). It runs only after io's
+// go-ahead in the session, recorded verbatim in the worklog together with the dry-run output (AGENTS.md; BRD2 10.2 rule 15; review DL-28).
+// The G-seed approval covers setting writes_enabled for the seed, nothing else. Always run --dry-run first.
 //
 // resurrect. A delete or withdraw tombstones the head at once (the log keeps the version before it). For each such op of the batch this
 // plans a new head at the next version, with a new log entry (op create, origin admin, principal operator:sync-admin, base_version the
@@ -55,9 +58,10 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
 import { batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
+import { WITHDRAW_GRACE_MS, withdrawWarning } from "../src/sync/refold.js";
 import { RecoveryError, bumpTreeId, copyBack, rebuildHeads } from "./sync-recovery.mjs";
 
-export const GRACE_MS = 72 * 3600 * 1000;
+export const GRACE_MS = WITHDRAW_GRACE_MS; // 72 hours: the expunge grace of a withdraw (store.js EXPUNGE_GRACE_MS)
 export const CHUNK = 20; // 2 fixed items + 4 per object (head, log, id claim, cancelled expunge) stays under the 100-item transaction limit
 export const PRINCIPAL = "operator:sync-admin";
 export const DEFAULT_FUNCTION = "hfy-sync-render";
@@ -349,7 +353,7 @@ async function resurrect(ctx, { apply, batch, by = "operator", includeWithdrawn 
   for (const p of ok) log(`  will re-create  ${p.ref.class} ${p.ref.handle} (tombstone v${p.ref.version} ${p.ref.op} -> v${p.ref.version + 1}, from v${p.prior.version})`);
   for (const p of refused) log(`  refused         ${p.ref.class} ${p.ref.handle} (v${p.ref.version} ${p.ref.op}): ${p.reason}`);
   const wd = ok.filter((p) => p.ref.op === "withdraw").length;
-  if (wd > 0) log(`WARNING: ${wd} of these are privacy withdraws (reason private). Re-creating them puts the record back in the store and the next render republishes it. Proceed only on io's explicit go-ahead for the withdrawn records.`);
+  if (wd > 0) log(withdrawWarning(wd));
   log(`plan: ${ok.length} to re-create, ${refused.length} refused`);
   if (!apply) {
     log("dry run: nothing written");
@@ -377,19 +381,20 @@ Usage:
   node scripts/sync-admin.mjs feed-off  --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs render    --dry-run|--apply (--full | --allow-mass-delete | --prune-foreign) [--function <name>]
   node scripts/sync-admin.mjs resurrect --batch <batch_id> --dry-run|--apply [--include-withdrawn] [--by <name>]
-  node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs rebuild-heads --to-seq <N|head> --dry-run|--apply [--include-withdrawn] [--by <name>]
   node scripts/sync-admin.mjs copy-back --from-table <side-table> --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs bump-tree-id [--reseed] --dry-run|--apply [--by <name>]
 Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --apply is required (once).
 pause --all stops every writer of the store at once (the switch is store-wide); the recovery commands (rebuild-heads, copy-back, bump-tree-id)
 refuse --apply until the store is paused, and never swap TABLE_NAME. -h/--help prints this.
 
-IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off and resurrect) or makes the renderer write and
-delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
+IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off, resurrect, rebuild-heads, copy-back and
+bump-tree-id; the last three are the store recovery, and a copy-back can undo writes made since its restore point, withdraws included) or makes the
+renderer write and delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
 (AGENTS.md; review DL-28). Always run --dry-run first. See docs/how-to/operate-the-sync-store.md.
 `;
 
-const COMMANDS = ["pause", "resume", "feed-on", "feed-off", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
+export const COMMANDS = ["pause", "resume", "feed-on", "feed-off", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
 
 export function parseArgs(argv) {
   const out = { command: undefined, apply: undefined, table: process.env.TABLE_NAME ?? "hfy-app", region: process.env.AWS_REGION ?? "us-west-2" };
@@ -430,7 +435,7 @@ export function parseArgs(argv) {
     "feed-off": ["by"],
     render: ["full", "allowMassDelete", "pruneForeign", "functionName"],
     resurrect: ["by", "batch", "includeWithdrawn"],
-    "rebuild-heads": ["by", "toSeq"],
+    "rebuild-heads": ["by", "toSeq", "includeWithdrawn"],
     "copy-back": ["by", "fromTable"],
     "bump-tree-id": ["by", "reseed"],
   }[out.command];
