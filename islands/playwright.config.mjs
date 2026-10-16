@@ -12,6 +12,9 @@ export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   reporter: "list",
-  use: { baseURL: origin, channel: process.env.PW_CHANNEL || "chrome", viewport: { width: 375, height: 812 } },
+  // Shared daily machine: bundled headless shell by default, capped parallelism. PW_CHANNEL=chrome is a one-off opt-in.
+  fullyParallel: false,
+  workers: process.env.CI ? undefined : 2,
+  use: { baseURL: origin, channel: process.env.PW_CHANNEL || "chromium-headless-shell", viewport: { width: 375, height: 812 } },
   webServer: { command: `npx http-server "${site}" -p ${port} -a 127.0.0.1 -s -c-1`, url: `${origin}/`, reuseExistingServer: true, timeout: 30_000 }
 });
