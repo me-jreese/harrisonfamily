@@ -3,8 +3,9 @@
 //   POST /api/admin/deletes    { targets: ["Person:<handle>", ...], base_versions: { "<key>": <version> }, remove_references?: boolean, dry_run?: boolean }
 //   GET  /api/admin/duplicates ?limit=1-100 (default 50) &cursor=
 //
-// io answered Q2-15 yes: an ADMIN may delete a Person, Family, Event, Place, Source, Citation or Media from the website. It is the desktop's
-// delete, not a new kind of write. This module compiles the request into EditOps and then takes the same pipeline as POST /api/changes
+// Per the Q2-15 decision-sheet default (yes), pending io's recorded answer: an ADMIN may delete a Person, Family, Event, Place, Source, Citation or
+// Media from the website. The route ships dark (flag adminDelete, default off); the flag is not flipped until io's answer is recorded, and on a
+// decline the task closes as superseded and the flag stays off. It is the desktop's delete, not a new kind of write. This module compiles the request into EditOps and then takes the same pipeline as POST /api/changes
 // (planChanges(): the stored objects, the engine, the R-18/R-19 guard, the field classes, the Gramps semantics and schema, the size budget;
 // commit(): one applyBatch transaction with the Idempotency-Key receipt), so a delete is judged by the rules every other edit is:
 //   - a member is 403 not_allowed, whatever the flag says (the flag only decides whether the route exists at all: a dark route is 404);
@@ -12,11 +13,17 @@
 //     change, and nothing here can turn it off;
 //   - the delete/withdraw budget is the validator's (more than 10 objects, or 5 % of the live heads, in one rolling 24 hours). The web has no
 //     stronger step-up to lift it with, so over the budget the delete is 403 delete_budget (the desktop sync carries the larger purges);
+//   - the Person behind a sign-in is never deleted here: a target whose gramps_id is the admin's own, or any member's or admin's (the allowlist and
+//     admin lists), is 409 cannot_delete_account_person, with no flag to force it. Deleting it would orphan a login, and its gramps_id could never
+//     be recreated. Unlink the account first (the access-request admin routes), then delete in Gramps on the desktop;
 //   - a Person's gramps_id is retired for ever by applyBatch (store-apply-core, SI-02): a delete never frees it, and a later create over it is
 //     409 gramps_id_retired;
 //   - the Gramps symmetry checks (the two sides of every family link, a parent who is not also a child, no dangling handle) run on the result.
 //
-// What a delete takes with it, as Gramps' own delete queries do, and no more:
+// What a delete takes with it, and no more. The AC's "remove_references or refuse" covers every OTHER referrer; three cases are cascaded because
+// the alternative is a record that cannot stand on its own. They are a deliberate choice, NOT taken from the design files (editing 3.2 inventories
+// fields and says nothing on cascades) and not checked against the Gramps desktop source (not available to this task): io should confirm them at
+// the Q2-15 / flag-flip review, and a cascade-added record always appears in the dry-run plan with its `why`, so no admin is surprised by one:
 //   - a Source takes its Citations (a Citation cannot exist without its Source);
 //   - a Person or Family takes an Event that nothing else uses (an exclusive Event would otherwise outlive the person it describes);
 //   - a Person takes a Family that the delete leaves with no parent and no child.
@@ -26,7 +33,9 @@
 //
 // The queue (GET /api/admin/duplicates) lists pairs of people the duplicate matcher (duplicates.js) thinks may be one person. It is READ-ONLY and
 // writes no record: there is no "flagged" state, and a merge stays a desktop operation. It exists so io, merging in Gramps, starts from a list.
-// It lists the whole tree, so it keeps the duplicate matcher's privacy contract (a candidate's lifespan never carries a year the record API
+// The pairs are recomputed from the live tree on every request and the cursor is an offset into that list, so pages are NOT a stable snapshot: if
+// people are added, changed or deleted between two pages, a pair can be skipped or shown twice. That is accepted for an admin-only queue read by
+// one person who re-reads it; `total` is the count at the time of each page. It lists the whole tree, so it keeps the duplicate matcher's privacy contract (a candidate's lifespan never carries a year the record API
 // would withhold): a living person, or one whose status is unknown, has no lifespan in a row (the years still count toward the score, on the
 // server, and the names are shown as everywhere else). A person is "living" by the edit bundle's display hint: no death event, and no birth
 // year or a birth within the last 110 years. Only a person with a recorded death, or born longer ago than that, shows a lifespan.
@@ -72,6 +81,37 @@ function requireAdmin(c) {
   if (!editingOn()) throw new HttpError(404, "not_found", "no such route");
   if (c.actor?.admin !== true) {
     throw problem(403, "not_allowed", "only an admin can do this on the website", { errors: [{ pointer: "", code: "admin", detail: "deleting records and the possible-duplicate queue are for admins" }] });
+  }
+}
+
+// ---- the people behind sign-ins ---------------------------------------------------------------------------------------------------------
+/**
+ * The gramps_ids a delete may never remove: the admin's own, and every member's and admin's (store.accountIds, wired from the member and admin
+ * lists). It fails closed: with no list wired, or an empty one (the member list reads as empty when its source is unavailable), the route answers
+ * 503 rather than guess which Persons back a login.
+ */
+async function accountIdsOf(c) {
+  const src = c.store?.accountIds;
+  const ids = typeof src === "function" ? await src() : null;
+  if (!(ids instanceof Set) || ids.size === 0) throw problem(503, "unavailable", "the list of accounts is unavailable, so a person cannot be deleted right now; try again in a minute");
+  return new Set([...ids, ...(typeof c.actor?.id === "string" ? [c.actor.id] : [])]);
+}
+
+/** 409 cannot_delete_account_person when a Person target is the record behind the admin's own or any member's or admin's sign-in. */
+async function refuseAccountPeople(c, parsed) {
+  const people = parsed.targets.filter((t) => classOf(t) === "Person");
+  if (!people.length) return;
+  const accounts = await accountIdsOf(c);
+  const hit = [];
+  for (const k of people) {
+    const [cls, handle] = keyParts(k);
+    const head = await get(c.store, cls, handle);
+    if (head && accounts.has(gidOf(head.obj))) hit.push(k);
+  }
+  if (hit.length) {
+    throw problem(409, "cannot_delete_account_person", "a person who signs in to the site cannot be deleted here; unlink the account first, then delete in Gramps on the desktop", {
+      errors: hit.map((k) => ({ obj: k, pointer: "/targets", code: "account_person", detail: "this person is the record behind a sign-in" })),
+    });
   }
 }
 
@@ -298,6 +338,7 @@ export async function adminDeletesPost(c) {
     const item = await readIdem(ctx, c.actor.id, parsed.key);
     if (item) return replayOf(item, hash);
   }
+  await refuseAccountPeople(c, parsed);
   const compiled = await compileDelete(ctx, parsed);
   const req = { target: compiled.target, base_versions: compiled.base_versions, ops: compiled.ops, note: undefined, route: "auto", dry_run: parsed.dry_run, key: parsed.key, intent };
   const planned = await planChanges(c, req, nowMs, guard, { skipRateLimit: true });

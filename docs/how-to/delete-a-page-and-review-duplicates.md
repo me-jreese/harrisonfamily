@@ -1,11 +1,12 @@
 # How to delete a page and review possible duplicates
 
-Use this page as an admin to delete a person, family, event, place, source, source citation or photo on the website, and to read the list of people who may be in the tree twice. Both exist because io answered yes to "should admins delete objects on the web" (Q2-15). Merging stays in Gramps on the desktop. For how a delete is checked and stored, see [API: Admin deletes and the possible-duplicate queue](../reference/api.md#admin-deletes-and-the-possible-duplicate-queue).
+Use this page as an admin to delete a person, family, event, place, source, source citation or photo on the website, and to read the list of people who may be in the tree twice. Both follow Q2-15, "should admins delete objects on the web", on its decision-sheet default (yes); the flag is not turned on until io's answer is recorded. Merging stays in Gramps on the desktop. For how a delete is checked and stored, see [API: Admin deletes and the possible-duplicate queue](../reference/api.md#admin-deletes-and-the-possible-duplicate-queue).
 
 ## Before you start
 
 - **You are an admin.** Your Gramps ID is in the `hfy-admin` group of `config/groups.json`. The server decides this, not the page: a member who calls the route gets `403 not_allowed`.
 - **The flag and the switch are on.** The `delete` card and the `possible duplicates` tab need the `adminDelete` flag, and every request needs the `HfyEditing` stack parameter set to `on` ([Turn on editing](turn-on-editing.md)). While the flag is off the routes answer `404` and the page shows nothing. To try it in one tab before it is on for everyone, use the preview override ([Turn a flag on in one browser tab](toggle-a-feature-flag.md#turn-a-flag-on-in-one-browser-tab)); the server honours that override only for members of the `uat` group.
+- **Not the person behind a sign-in.** A person who signs in to the site (yours, a member's or another admin's) cannot be deleted here: the sheet says `this person signs in to the site`. Unlink the account first, then delete in Gramps on the desktop.
 - **A recent sign-in.** Deleting needs a sign-in from the last 15 minutes. If yours is older, the sheet says `sign in again` and gives a link; after signing in, open the card again.
 - **The budget.** At most 10 records, or 5 % of the live records, can be deleted in any 24 hours. The sheet shows the day's count. Past the limit the delete button is off; delete the rest in Gramps on the desktop, or wait.
 
@@ -27,7 +28,7 @@ If you press `delete for good` twice, or the answer is lost and you press it aga
 
 1. Open `/me/review/` and choose the `possible duplicates` tab. It lists pairs of people whose names are close (the same surname and given name, a one-letter slip, a nickname that starts the other name) and whose genders and birth years do not rule them out.
 2. Open each person's page from the links, and compare.
-3. For a pair that is the same person, merge them in Gramps on the desktop and sync. The tab shows pairs and changes nothing: there is no flag to set, no list of dismissed pairs, and the list is worked out again on every visit, so a pair that is not the same person stays on it.
+3. For a pair that is the same person, merge them in Gramps on the desktop and sync. The tab shows pairs and changes nothing: there is no flag to set, no list of dismissed pairs, and the list is worked out again on every visit, so a pair that is not the same person stays on it. Pages of the list are not a stable snapshot: if the tree changes while you page through, a pair can be skipped or shown twice; reload the tab to start again. The tab needs only `adminDelete`, but the other tabs on that page need `recordEdit` or `proposalReview`, so with those off it shows `possible duplicates` alone.
 
 ## When it does not work
 
@@ -35,6 +36,7 @@ If you press `delete for good` twice, or the answer is lost and you press it aga
 | --- | --- | --- |
 | `sign in again to confirm` | Your sign-in is older than 15 minutes. | Follow `sign in`, then open the card again. |
 | `too many things were deleted in the last 24 hours…` | The budget is used up. | Use Gramps on the desktop, or wait for the count to fall. |
+| `this person signs in to the site…` | The page is the record behind an account. | Unlink the account, then delete in Gramps on the desktop. |
 | `this page changed after you opened it` | Someone saved a change after you opened the editor. | Reload the page, look again, and delete if it is still right. |
 | `this would touch too many pages at once` | The delete reaches more than 24 records. | Delete in smaller steps, or use Gramps on the desktop. |
 | `some pages still point at this…` | A link exists that the website cannot remove by itself. | Use Gramps on the desktop. |

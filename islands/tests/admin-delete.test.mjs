@@ -89,6 +89,7 @@ describe("words for every error", () => {
   it("the others, in plain words", () => {
     assert.match(problemFor(e(403, "delete_budget")).text, /use gramps on the desktop/);
     assert.equal(problemFor(e(409, "version_conflict")).reload, true);
+    assert.match(problemFor(e(409, "cannot_delete_account_person")).text, /signs in to the site.*unlink the account/);
     assert.match(problemFor(e(409, "still_referenced")).text, /gramps on the desktop/);
     assert.match(problemFor(e(413, "too_large")).text, /more than 24/);
     assert.match(problemFor(e(403, "not_allowed")).text, /only an admin/);

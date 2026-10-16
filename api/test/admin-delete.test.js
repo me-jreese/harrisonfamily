@@ -63,13 +63,13 @@ function tree(extra = []) {
 }
 
 const state = { flags: { adminDelete: true } };
-async function world({ clock = () => Date.now(), extra = [], admins = [ADMIN], seed } = {}) {
+async function world({ clock = () => Date.now(), extra = [], admins = [ADMIN], members = ["I0900", "I0901"], seed } = {}) {
   const txns = [];
   const hooks = createHookRegistry();
   const w = makeApi({
     admins, log: q, clock, flags: async () => ({ ...state.flags }),
     intercept: async (cmd) => { if (cmd.constructor.name === "TransactWriteCommand") txns.push(structuredClone(cmd.input)); },
-    extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} } },
+    extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), listMembers: async () => new Set(members), txnOpts: { sleep: async () => {} } },
   });
   w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 0, seeded: true, writes_enabled: true });
   let t = Date.parse("2026-10-14T00:00:00Z");
@@ -103,6 +103,52 @@ async function world({ clock = () => Date.now(), extra = [], admins = [ADMIN], s
 const writes = (w) => w.ddb.calls.filter((c) => /^(Put|Update|Delete|TransactWrite)Command$/.test(c)).length;
 const err = (r) => ({ status: r.status, error: r.body?.error });
 const mk = (w, objs, extra = {}) => ({ targets: objs.map(key), base_versions: w.bv(...objs), ...extra });
+
+describe("the person behind a sign-in is never deleted (review: account guard)", () => {
+  const people = (w) => ({ dad: w.tr.dad, other: w.tr.other, orla: w.tr.orphans[0] });
+
+  it("refuses a target that is the admin's own person, 409 cannot_delete_account_person, in a dry run and for real, and writes nothing", async () => {
+    const w = await world({ admins: ["I0001"] }); // the admin signs in as the person I0001 (the father in the tree)
+    const tok = await w.authToken("I0001", Math.floor(Date.now() / 1000) - 120);
+    const body = mk(w, [w.tr.dad]);
+    for (const [extra, opts] of [[{ dry_run: true }, {}], [{}, { idem: "own-1" }]]) {
+      const r = await w.call("POST", "/api/admin/deletes", { token: tok, body: { ...body, remove_references: true, ...extra }, headers: opts.idem ? { "idempotency-key": opts.idem } : {} });
+      expect(err(r)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+      expect(r.body.errors).toEqual([expect.objectContaining({ obj: key(w.tr.dad), code: "account_person" })]);
+    }
+    expect(w.gone(w.tr.dad)).toBe(false);
+    expect(w.txns).toEqual([]);
+  });
+
+  it("refuses a person another member or admin signs in as, and a batch holding one of them deletes none of the targets", async () => {
+    const w = await world({ members: ["I0004"], admins: [ADMIN, "I0002"] });
+    const { other, orla } = people(w);
+    const r1 = await w.del(ADMIN, mk(w, [other], { remove_references: true }), { idem: "mem-1" }); // I0004 is a member
+    expect(err(r1)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    const r2 = await w.del(ADMIN, mk(w, [w.tr.mum], { remove_references: true }), { idem: "adm-1" }); // I0002 is an admin
+    expect(err(r2)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    const r3 = await w.del(ADMIN, mk(w, [orla, other], { remove_references: true }), { idem: "mix-1" });
+    expect(err(r3)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    expect(r3.body.errors.map((e) => e.obj)).toEqual([key(other)]);
+    expect([other, w.tr.mum, orla].map((o) => w.gone(o))).toEqual([false, false, false]);
+    expect(w.txns).toEqual([]);
+  });
+
+  it("deletes a person nobody signs in as, and only guards Person targets (an Event or a Place is not looked up in the lists)", async () => {
+    const w = await world();
+    expect((await w.del(ADMIN, mk(w, [w.tr.orphans[0]]), { idem: "ok-1" })).status).toBe(201);
+    expect((await w.del(ADMIN, mk(w, [w.tr.orphans[3]]), { idem: "ok-2" })).status).toBe(201); // Place
+    expect(w.gone(w.tr.orphans[0])).toBe(true);
+  });
+
+  it("fails closed: an empty or unavailable account list is 503 for a Person target, and not asked for any other class", async () => {
+    const w = await world({ members: [] });
+    const r = await w.del(ADMIN, mk(w, [w.tr.orphans[0]]), { idem: "e-0" });
+    expect(err(r)).toEqual({ status: 503, error: "unavailable" });
+    expect(w.gone(w.tr.orphans[0])).toBe(false);
+    expect((await w.del(ADMIN, mk(w, [w.tr.orphans[3]]), { idem: "e-1" })).status).toBe(201);
+  });
+});
 
 describe("who may use it, and when (AC1)", () => {
   it("a member gets 403 not_allowed on both routes, and nothing is written", async () => {

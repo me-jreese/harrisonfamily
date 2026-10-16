@@ -20,9 +20,10 @@ function List({ title, note, items, id }) {
 }
 
 /** The delete sheet's state machine: planning -> ready -> deleting -> done, or error from any of them (a retryable error goes back to deleting under the same key). */
-function useDelete({ cls, bundle }) {
+function useDelete({ cls, bundle, refetch }) {
   const [sheet, setSheet] = useState(null);
   const keyRef = useRef(null);
+  const baseRef = useRef(null); // the key and version the dry run was made on: the delete sends the same pair
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const set = useCallback((next) => { if (live.current) setSheet(next); }, []);
@@ -30,7 +31,10 @@ function useDelete({ cls, bundle }) {
     keyRef.current = newIdempotencyKey();
     set({ phase: "planning" });
     try {
-      const body = await api.post("/admin/deletes", deleteBody({ key: bundle.key, version: bundle.version, dryRun: true }));
+      // The version the editor loaded may be stale (a save from this same page bumps it), so the sheet re-reads the record when it opens.
+      const fresh = refetch ? await refetch() : bundle;
+      baseRef.current = { key: fresh.key, version: fresh.version };
+      const body = await api.post("/admin/deletes", deleteBody({ ...baseRef.current, dryRun: true }));
       set({ phase: "ready", view: planView(body) });
     } catch (e) {
       set({ phase: "error", problem: problemFor(e) });
@@ -44,7 +48,7 @@ function useDelete({ cls, bundle }) {
     set({ phase: "deleting", view });
     try {
       // One key for this sheet: if the answer is lost, the same click replays the receipt instead of deleting twice.
-      await api.post("/admin/deletes", deleteBody({ key: bundle.key, version: bundle.version }), { headers: { "Idempotency-Key": keyRef.current } });
+      await api.post("/admin/deletes", deleteBody({ ...baseRef.current }), { headers: { "Idempotency-Key": keyRef.current } });
       set(null);
       return true;
     } catch (e) {
@@ -55,8 +59,8 @@ function useDelete({ cls, bundle }) {
   return { sheet, open, confirm, close: () => set(null), cls };
 }
 
-export function DeletePanel({ cls, bundle, signInHref }) {
-  const flow = useDelete({ cls, bundle });
+export function DeletePanel({ cls, bundle, signInHref, refetch }) {
+  const flow = useDelete({ cls, bundle, refetch });
   const [gone, setGone] = useState(false);
   const ref = useRef(null);
   const { sheet } = flow;

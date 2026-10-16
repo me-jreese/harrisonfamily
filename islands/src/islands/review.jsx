@@ -3,7 +3,7 @@
 // "my suggestions" and "about my page" (everyone, with recordEdit). A list and a detail card: from 64rem a 40/60 split, under it the list and the
 // card are two views (the card has a back link and its actions in a sticky footer). The server enforces actor.admin on the queue whatever the flag
 // says; here a member never gets the tab, and no queue request is made for them. The static page keeps its "not available yet" note until this
-// bundle runs, and feature-flags.js loads the bundle only with one of the two flags on, so with both off nothing here is requested (HFY-R8).
+// bundle runs, and feature-flags.js loads the bundle with one of the two flags (or adminDelete, for the duplicates tab) on, so with both off nothing here is requested (HFY-R8).
 import "./review.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGateInbox } from "@io-kit/gates/react";

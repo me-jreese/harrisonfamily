@@ -36,7 +36,7 @@ const PAIRS = {
 };
 
 /** `del(req, s)` may answer a POST /api/admin/deletes itself (return {status, json}); the default answers the plan, or 201 for the real delete. */
-async function stub(page, { flags = {}, admin = true, session = "I9099", del = null, dups = PAIRS, dupsStatus = 200 } = {}) {
+async function stub(page, { flags = {}, admin = true, session = "I9099", del = null, dups = PAIRS, dupsStatus = 200, rereadVersion = 4 } = {}) {
   const s = { deletes: [], dupGets: [], bundleGets: 0, changes: [] };
   await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { ...FLAGS, recordEdit: true, proposalReview: true, adminDelete: true, ...flags } }));
@@ -50,7 +50,9 @@ async function stub(page, { flags = {}, admin = true, session = "I9099", del = n
   await page.route("**/api/edit/schema/Person", (r) => r.fulfill({ json: { class: "Person", schema: EDIT_SCHEMAS.Person, sha256: "0".repeat(64), schemaHash: "0".repeat(64) } }));
   await page.route("**/api/edit/Person/*", (r) => {
     s.bundleGets += 1;
-    return r.fulfill({ json: { key: "Person:hsyn0001", version: 4, etag: "Person:hsyn0001@4", obj: OBJ, related: {}, relation: "other", viewer: { admin }, policy: POLICY, pending: [], customTypes: {}, schemaHash: "0".repeat(64) } });
+    // The first read is the editor's own load; a later one is the sheet re-reading the version when it opens (rereadVersion, default the same).
+    const version = s.bundleGets > 1 ? rereadVersion : 4;
+    return r.fulfill({ json: { key: "Person:hsyn0001", version, etag: `Person:hsyn0001@${version}`, obj: OBJ, related: {}, relation: "other", viewer: { admin }, policy: POLICY, pending: [], customTypes: {}, schemaHash: "0".repeat(64) } });
   });
   await page.route("**/api/changes", (r) => { s.changes.push(r.request().url()); return r.fulfill({ status: 500, json: { error: "unexpected" } }); });
   await page.route("**/api/admin/deletes", async (r) => {
@@ -114,6 +116,17 @@ for (const [name, viewport] of VIEWPORTS) {
         const box = await page.locator(sel).boundingBox();
         expect(box.height).toBeGreaterThanOrEqual(44);
       }
+    });
+
+    test("the sheet re-reads the version when it opens, so a save from the same page does not make the delete a version conflict", async ({ page }) => {
+      const s = await openEditor(page, { rereadVersion: 7 });
+      if (name === "375") await page.locator('#sec-delete button.hfy-editor__toggle').click();
+      await page.locator("[data-hfy-delete-open]").click();
+      await expect(sheet(page)).toHaveAttribute("data-hfy-delete-sheet", "ready");
+      await page.locator("[data-hfy-delete-confirm]").click();
+      await expect(page.locator("[data-hfy-admin-done]")).toBeVisible();
+      expect(s.bundleGets).toBe(2);
+      expect(s.deletes.map((d) => d.body.base_versions["Person:hsyn0001"])).toEqual([7, 7]);
     });
 
     test("keep it closes the sheet and nothing is deleted", async ({ page }) => {
@@ -203,6 +216,14 @@ test.describe("the duplicates tab, other cases", () => {
     await expect(page.locator("[data-hfy-review-ready]")).toBeVisible();
     await expect(page.locator('[data-hfy-tab="duplicates"]')).toHaveCount(0);
     expect(s.dupGets).toEqual([]);
+  });
+  test("adminDelete alone (recordEdit and proposalReview off) still loads the page, with the duplicates tab only", async ({ page }) => {
+    const s = await stub(page, { flags: { recordEdit: false, proposalReview: false } });
+    await page.goto("/me/review/?tab=duplicates", { waitUntil: "domcontentloaded" });
+    await expect(page.locator('[data-hfy-tab="duplicates"]')).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-hfy-tab]")).toHaveCount(1);
+    await expect(page.locator("[data-hfy-pair]")).toHaveCount(2);
+    expect(s.dupGets).toEqual(["?limit=50"]);
   });
   test("a member never has it", async ({ page }) => {
     const s = await stub(page, { admin: false, session: "I9001" });

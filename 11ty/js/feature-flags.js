@@ -20,7 +20,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "496c6be1",
+        "js": "0ab4ac98",
         "css": "9e0815ba"
       },
       "family": {
@@ -84,7 +84,7 @@
         "css": "890fde1c"
       },
       "review": {
-        "js": "f2883480",
+        "js": "108b2aae",
         "css": "f6c66152"
       },
       "search": {
@@ -872,9 +872,10 @@
 
   // HFY-TSK-259: the review island fills the static /me/review/ page. proposalReview opens the admins' "to review" tab; recordEdit opens "my
   // suggestions" and "about my page" (the island reads both flags and /api/me itself and shows only the tabs the viewer has). With neither flag on
-  // the bundle is not requested and the page keeps its "not available yet" note.
+  // the bundle is not requested and the page keeps its "not available yet" note. adminDelete (HFY-TSK-295) also opens it: the admins' "possible duplicates"
+  // tab lives on this page, and the island shows a non-admin the "not available" line.
   resolveFlags().then((flags) => {
-    if (flags.proposalReview !== true && flags.recordEdit !== true) return;
+    if (flags.proposalReview !== true && flags.recordEdit !== true && flags.adminDelete !== true) return;
     if (/^\/me\/review\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("review", { onError() { /* the page keeps its "not available yet" note */ } });
     }

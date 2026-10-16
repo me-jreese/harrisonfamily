@@ -260,7 +260,7 @@ function Editor({ route }) {
         ))}
         {showDelete && (
           <Section section={DELETE_SECTION} open={openSet.has(DELETE_SECTION.id)} onToggle={toggle}>
-            <DeletePanel cls={route.cls} bundle={bundle} signInHref={signInHref} />
+            <DeletePanel cls={route.cls} bundle={bundle} signInHref={signInHref} refetch={fetchBundle} />
           </Section>
         )}
       </div>

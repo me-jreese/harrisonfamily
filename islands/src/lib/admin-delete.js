@@ -107,6 +107,7 @@ export function problemFor(err) {
   if (code === "delete_budget") return { ...base, text: COPY.overBudget };
   if (code === "version_conflict") return { ...base, text: "this page changed after you opened it. reload the page and look again before deleting.", reload: true };
   if (code === "still_referenced") return { ...base, text: "some pages still point at this and can't be cleaned up from here. use gramps on the desktop." };
+  if (code === "cannot_delete_account_person") return { ...base, text: "this person signs in to the site, so they can't be deleted here. unlink the account first, then delete in gramps on the desktop." };
   if (code === "too_large") return { ...base, text: "this would touch too many pages at once (more than 24). use gramps on the desktop." };
   if (code === "not_allowed" || status === 403) return { ...base, text: "only an admin can delete things on the website." };
   if (status === 404) return { ...base, text: "that page is already gone." };

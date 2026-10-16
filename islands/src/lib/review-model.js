@@ -94,7 +94,7 @@ export const TAB_IDS = Object.freeze(["review", "mine", "about", "duplicates"]);
 /**
  * The tabs a viewer gets. "to review" needs an admin AND `proposalReview`: a member never has the tab, and no queue request is made for one
  * (the server enforces actor.admin whatever the flag says). "my suggestions" and "about my page" need `recordEdit`. "possible duplicates" needs an admin
- * AND `adminDelete` (the page bundle itself loads only with proposalReview or recordEdit, feature-flags.js).
+ * AND `adminDelete` (the page bundle loads with any of proposalReview, recordEdit or adminDelete, js/feature-flags.js).
  */
 export function tabsFor({ admin = false, flags = {} } = {}) {
   const out = [];
