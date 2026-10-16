@@ -15,7 +15,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from test_addon_push import PushCase  # noqa: E402
-from hfygramps.addon import pushstate, sidecar  # noqa: E402
+from hfygramps.addon import consts, decisions, pushstate, sidecar, transport  # noqa: E402
+import push_support as PS  # noqa: E402
 
 NAME = "/primary_name/first_name"
 SCRUBBED = "[removed]"
@@ -134,6 +135,81 @@ class PinsFromThePull(PushCase):
             self.assertEqual([c["state"] for c in pushstate.open_conflicts(con)], ["open"])
         finally:
             con.close()
+
+
+class WebDecisionReceipts(PushCase):
+    """HFY-TSK-338: a keep_desktop decision a pull applied is receipted by the push that carries the desktop value, not by the pull."""
+
+    def wait_for_push(self, *handles):
+        con = self.sidecar()
+        try:
+            sidecar.set_meta_json(con, decisions.RECEIPTS_KEY, [{"id": "%026d" % (i + 1), "class": "Person", "handle": h} for i, h in enumerate(handles)])
+            con.commit()
+        finally:
+            con.close()
+
+    def waiting(self):
+        con = self.sidecar()
+        try:
+            return [r["handle"] for r in sidecar.meta_json(con, decisions.RECEIPTS_KEY, [])]
+        finally:
+            con.close()
+
+    def edit(self, h):
+        self.tree.edit(h, lambda o: o["primary_name"].__setitem__("first_name", "Edited"))
+
+    def test_the_receipt_goes_after_the_batch_that_carries_the_value_and_only_for_that_object(self):
+        self.seed()
+        a = self.a_person()
+        b = "unrelated000000000000000a1"   # an object this push neither carried nor finds in agreement
+        self.wait_for_push(a, b)
+        self.edit(a)
+        self.push()
+        self.assertEqual(self.cloud.heads[a]["obj"]["primary_name"]["first_name"], "Edited")
+        self.assertEqual(self.cloud.decision_receipts, [("%026d" % 1, "applied")], "a was pushed; nothing says b's value reached the website")
+        self.assertEqual(self.waiting(), [b])
+
+    def test_a_dry_run_sends_no_receipt_and_the_real_push_does(self):
+        self.seed()
+        a = self.a_person()
+        self.wait_for_push(a)
+        self.edit(a)
+        self.push(dry_run=True)
+        self.assertEqual((self.cloud.decision_receipts, self.waiting()), ([], [a]))
+        self.push()
+        self.assertEqual(self.waiting(), [])
+
+    def test_a_refused_object_is_not_receipted(self):
+        self.seed()
+        a = self.a_person()
+        self.wait_for_push(a)
+        self.edit(a)
+        self.cloud.refuse_privacy = {a}
+        self.push()
+        self.assertEqual(self.cloud.heads[a]["version"], 1)
+        self.assertEqual((self.cloud.decision_receipts, self.waiting()), ([], [a]))
+
+    def test_a_receipt_that_fails_never_fails_the_push_and_is_sent_by_the_next_one(self):
+        self.seed()
+        a = self.a_person()
+        self.wait_for_push(a)
+        self.edit(a)
+        self.cloud.fail_with.append(("/api/sync/conflicts/", PS.err(503, "unavailable")))
+        doc = self.push()
+        self.assertEqual(self.cloud.heads[a]["version"], 2)
+        self.assertIn(doc["result"], ("ok", "partial"))
+        self.assertEqual(self.waiting(), [a])
+        self.push()  # nothing to push: the two sides agree, so the object is receipted now
+        self.assertEqual((self.cloud.decision_receipts, self.waiting()), ([("%026d" % 1, "applied")], []))
+
+    def test_a_decision_the_website_reopened_or_does_not_know_is_dropped(self):
+        self.seed()
+        a = self.a_person()
+        self.wait_for_push(a)
+        self.edit(a)
+        self.cloud.fail_with.append(("/api/sync/conflicts/", PS.err(409, "not_resolved")))
+        self.push()
+        self.assertEqual(self.waiting(), [])
 
 
 if __name__ == "__main__":

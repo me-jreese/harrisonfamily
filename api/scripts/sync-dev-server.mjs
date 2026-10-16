@@ -26,6 +26,10 @@
 //                            it rewrites one live head's object (and its log entry) in place at the SAME version and seq and raises
 //                            SYNC#HEAD.expunge_epoch by one, which is what an expunge does, so the addon's expunge-notice path (a changed hash at
 //                            an unchanged version) runs end to end.
+//                            POST /_dev/conflicts {class, handle, paths: [{path, base?, cloud?, desktop?}], kind?, gramps_id?, source?} (HFY-TSK-338) opens one conflict
+//                            in the queue, as the desktop's mirror will (synthetic values only): 200 {id, ...}. GET /_dev/conflicts?state=open|resolved|dismissed lists the
+//                            queue in the wire shape of /api/sync/conflicts, for a scenario that checks a decision, a reopening or a receipt. The decision itself is the real
+//                            POST /api/sync/conflicts/:id/decision, which a scenario sends with the website owner's step-up session.
 //                            addon-push (HFY-TSK-206) uses /_dev/apply, /_dev/items, the writes_enabled, seeded and merges_enabled switches, the
 //                            auth knobs and the snapshot half of the presigned store; addon-pull-apply (HFY-TSK-205) uses the media half of the
 //                            store and /_dev/scrub. The token-lifetime knob and the step-up and lost-response-replay scenarios are still reserved
@@ -69,7 +73,9 @@ import { applyBatch } from "../src/sync/apply.js";
 import { createGroupResolver } from "../src/policy.js";
 import { createSyncAuthenticator, SYNC_CLIENT_ID } from "../src/sync/auth.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
-import { CLASSES, headKey, logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
+import { CONFLICT_STATES, conflictKey, conflictView } from "../src/sync/pull.js";
+import { HANDLE_SHAPE } from "../src/records/ops.js";
+import { CLASSES, headKey,logKey, objectJson, recKey, sha256 } from "../src/sync/store.js";
 import { resetStoreView } from "../src/records/index.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 
@@ -597,6 +603,34 @@ async function startInner({ port = 0, host = "127.0.0.1", dataDir, logFile, owne
         if (e instanceof HttpError) return json(e.status, { error: e.code, message: e.message, ...(e.details !== undefined ? { details: e.details } : {}) });
         throw e;
       }
+    }
+    if (path === "/_dev/conflicts" && method === "POST") {
+      const b = parsed();
+      // The wire limits of a stored conflict (sync.md 4.2): the class, the kind and the source are enumerated, the strings are capped.
+      const kinds = ["field", "composite", "list", "delete_edit", "identity", "integrity"];
+      const sources = ["desktop_parked", "proposal_stale"];
+      const val = (v) => v === undefined || v === null || (JSON.stringify(v) ?? "").length <= 2048;
+      const okPath = (p) => p !== null && typeof p === "object" && !Array.isArray(p) && typeof p.path === "string" && p.path.length <= 512 && (p.path === "" || p.path.startsWith("/")) && val(p.base) && val(p.cloud) && val(p.desktop);
+      const okStr = (v, max) => v === undefined || (typeof v === "string" && v.length <= max);
+      if (!b || !CLASSES.includes(b.class) || typeof b.handle !== "string" || !HANDLE_SHAPE.test(b.handle) || !Array.isArray(b.paths) || !b.paths.length || b.paths.length > 20 || !b.paths.every(okPath)
+        || !okStr(b.gramps_id, 32) || (b.kind !== undefined && !kinds.includes(b.kind)) || (b.source !== undefined && !sources.includes(b.source))) {
+        return json(400, { error: "validation", message: "send {class, handle, paths: [{path, base?, cloud?, desktop?}] (1 to 20), kind?, gramps_id?, source?} with a known class, kind and source" });
+      }
+      const id = uid().replace(/[^A-Za-z0-9]/g, "").slice(0, 26).padEnd(26, "0");
+      const openedAt = new Date(now()).toISOString();
+      const item = {
+        ...conflictKey(id), GSI1PK: "SYNCCONFLICT#open", GSI1SK: `${openedAt}#${id}`, entity: "syncconflict", class: b.class, handle: b.handle,
+        gramps_id: b.gramps_id ?? "", kind: b.kind ?? "field", source: b.source ?? "desktop_parked", state: "open", opened_at: openedAt,
+        paths: b.paths.map((p) => ({ path: p.path, base: p.base ?? null, cloud: p.cloud ?? null, desktop: p.desktop ?? null })),
+      };
+      await ddb.send(new cmds.PutCommand({ TableName: DEV_TABLE, Item: item }));
+      return json(200, conflictView(item));
+    }
+    if (path === "/_dev/conflicts" && method === "GET") {
+      const state = url.searchParams.get("state") ?? "open";
+      if (!CONFLICT_STATES.includes(state)) return json(400, { error: "validation", message: "state must be open, resolved or dismissed" });
+      const r = await ddb.send(new cmds.QueryCommand({ TableName: DEV_TABLE, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk", ExpressionAttributeValues: { ":pk": `SYNCCONFLICT#${state}` } }));
+      return json(200, { state, conflicts: (r.Items ?? []).map(conflictView) });
     }
     if (path === "/_dev/auth" && method === "PATCH") {
       const b = parsed();

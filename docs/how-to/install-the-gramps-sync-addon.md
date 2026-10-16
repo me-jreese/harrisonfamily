@@ -73,9 +73,24 @@ gramps/bin/hfy-sync pull --tree "<tree name>" --yes
 What a run never does on its own:
 
 - It does not decide a conflict. A conflict (you and the website both changed the same field, a website change to the year of a birth you hold a day and month for, a website delete of an object that holds desktop-only data) leaves both sides as they are and stays open on every later run until the two sides agree or you decide it in the Gramps window. The command line parks it and exits `20`.
+- It does not apply a website decision unless the website's value is still the one it was made against ([Web decisions on a pull](#web-decisions-on-a-pull)).
 - It does not apply a website delete. A delete needs `--allow-deletes`, and more than 10 deletes or 5 % of the tree are never applied by the command line.
 - It does not apply a pulled object that shows a date of birth you hold. Every pulled object is scanned for the dates of birth in your tree. A hit is skipped, counted as a privacy incident (`privacy_incidents` in `status.json`, counts only), and offered as a withdraw-and-expunge push, which `push` does not send yet. Exit `20`, `next_action: review_incidents`.
 - It does not push a value the website scrubbed. If the website scrubs an object in place (the same version, a different hash), the sidecar follows the website and your local value is held, so it is never sent back.
+
+#### Web decisions on a pull
+
+The owner can decide a parked conflict on the website (`/admin/sync/`: keep the website's value, or keep the desktop's). The decision stores the version of the website's record and a hash of the website's values at the conflict's paths when it was made (SI-30). Every `check`, `pull` and `sync` asks the website which decisions are waiting (`POST /api/sync/conflicts/reconcile`), and applies one **only while the website's value is still the one it was made against**:
+
+| The website's record | What the run does |
+| --- | --- |
+| Is the version the decision names, with the same values at the conflict's paths | Applies it. `keep website`: your value at that path is replaced by the website's. `keep desktop`: your value stays and goes up in the next `push`. Either way the conflict closes (`decision` is recorded in the sidecar). The run sends the website a receipt for `keep website`; for `keep desktop` the receipt waits for the `push` that carries your value, so a push that fails leaves the decision pending (the run shows it as `held`, reason `awaiting_push`) |
+| Has a newer version (`version_changed`), has other values at the same version, for example after a scrub (`value_changed`), or the decision carries no hash to check (`no_hash`) | Applies **nothing**. The website reopens the conflict (open again, with the old decision kept in its history, and the note "cloud value changed" on `/admin/sync/`), and your conflict stays open |
+| Agrees with the website's answer but not with the snapshot this run planned from | The decision is held for this run (`held`, reason `changed_since_check`) and checked again on the next |
+
+The decision is applied the way a change is: the run plans again with the decided conflict closed in the direction chosen, so the preview, the backup, the one Gramps transaction and the sidecar update are the ordinary ones, and a run with `--plan` needs a preview that already shows it. A conflict that still conflicts after the decision (a birth date with a day and month only you hold, or a value you changed again) is `held` with the reason `conflict_remains` and stays open for the Gramps window. A decision about a conflict that the desktop knew and has closed (you made the two sides agree first) is receipted as `moot`. A decision about a conflict the desktop has no record of at all is not dropped: it is `held` with the reason `no_local_conflict`, shown in the preview and offered again on the next run. A conflict on a whole object (a delete against an edit) is `held` with the reason `whole_object` and is resolved in the Gramps window. The website weighs at most 50 decisions per call and the add-on keeps asking while it says there are more.
+
+Where to read it: the preview file has a `decisions` list (`id`, `decision`, `status` of `applied`, `reopened`, `held` or `moot`, `reason`, the paths and the desktop conflict ids; ids and words, never values), and a `check` lists what it would do (`applied` means "would apply") and `reopened` what a real run would reopen, without changing the website. After a real run the sidecar keeps the last report in `meta.web_decisions` (counts, and the reopened and held ones) and links each desktop conflict to the website's in `conflicts.cloud_conflict_id`. The run log has one line, `decisions: applied=… held=… moot=… reopened=…`. A website that does not have the route, or does not answer it, is skipped with one log line (`decisions: skipped (<code>)`) and the pull goes on.  This behaviour is in the add-on version that has `decisions.py`; an add-on installed before it never reads a decision, and an update reaches a Mac only through the seed-and-shadow copy or an update you run ([step 1](#1-install-or-update-the-addon)).
 
 #### Delta pulls (the change feed)
 
@@ -180,6 +195,7 @@ python3 -m unittest discover gramps/tests/unit          # anywhere: the runtime,
 gramps/tests/gramps/run.sh test_addon_skeleton.py test_addon_pull.py   # a Mac with Gramps 6.0.6: the real Gramps on copies of the fixture tree
 gramps/tests/e2e/run.sh scenario_pull.py scenario_rebase.py   # the same, against the local sync dev server (needs node 22 and api/node_modules)
 gramps/tests/e2e/run.sh scenario_push.py                # the same Mac, plus node 22 and api/node_modules: the push against the local dev server
+gramps/tests/e2e/run.sh scenario_decisions.py           # the same: a web conflict decision applied, or reopened because the website moved (HFY-TSK-338)
 ```
 
 The second command makes a throwaway Gramps home, installs the addon into it, and drives the Gramps command line and the wrapper on copies of the synthetic fixture tree. It never opens your real trees or the real `~/Library/Application Support` folders. Add `test_addon_skeleton.py` to a `run.sh` call to run only it; with no argument `run.sh` runs every Gramps test.

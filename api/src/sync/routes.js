@@ -15,7 +15,7 @@ import { batchesPush, sessionsAbort, sessionsComplete, sessionsOpen } from "./pu
 import { syncMediaPresign } from "./media.js";
 import { syncAdminStatus } from "./admin.js";
 import { syncChanges } from "./changes.js";
-import { syncConflictDecision, syncConflictsList, syncMediaDownload, syncSnapshot, syncStatus } from "./pull.js";
+import { syncConflictApplied, syncConflictDecision, syncConflictsList, syncConflictsReconcile, syncMediaDownload, syncSnapshot, syncStatus } from "./pull.js";
 
 const ok = (body, status = 200) => ({ status, body });
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -159,6 +159,9 @@ export const SYNC_ROUTES = [
   { ...SYNC_ROUTE_BASE, name: "sync.status", method: "POST", path: "/sync/status", pausedOk: true, summary: "The desktop's heartbeat after each run {client_instance_id, dbid, fingerprint, addon_version, gramps_version, schema, last_run}: 204 (sync bearer, gramps-owner; no MCP tool)", handler: syncStatus },
   { ...SYNC_ROUTE_BASE, name: "sync.conflicts.list", method: "GET", path: "/sync/conflicts", summary: "The conflict queue ?state=open|resolved|dismissed&limit&cursor: {state, conflicts, next_cursor} (sync bearer, gramps-owner; no MCP tool)", handler: syncConflictsList },
   { ...SYNC_ROUTE_BASE, name: "sync.conflicts.decision", method: "POST", path: "/sync/conflicts/:id/decision", pausedOk: true, cookieOwner: true, summary: "Record a decision {decision: keep_cloud|keep_desktop|manual}: gramps-owner plus step-up (auth_time within 300 s; an hfy-admin cookie alone is refused); stores {cloud_version, cloud_value_hash}; 409 already_resolved (sync bearer; no MCP tool)", handler: syncConflictDecision },
+  // HFY-TSK-338 (sync-conflict-decision-apply, SI-30): on a pull the add-on asks which decisions still apply and tells the cloud which it applied. Both write only the conflict item and an audit row, so they keep working while the store is paused.
+  { ...SYNC_ROUTE_BASE, name: "sync.conflicts.reconcile", method: "POST", path: "/sync/conflicts/reconcile", pausedOk: true, summary: "On a pull: check every resolved keep_cloud or keep_desktop decision against the cloud as it is now {observed?: [{class, handle, path, cloud}], dry?, after?}: {checked, apply, reopened, settled, failed, more, next, dry} (at most 50 decisions per call; send `next` back as `after` while `more`). A decision applies only while the cloud head's version and the cloud values at its paths still match the stored {cloud_version, cloud_value_hash}; otherwise the conflict is reopened (open again, the old decision kept in history) and nothing is applied; a keep_desktop decision whose own push put the desktop value in the head is settled, not reopened (sync bearer, gramps-owner; no MCP tool)", handler: syncConflictsReconcile },
+  { ...SYNC_ROUTE_BASE, name: "sync.conflicts.applied", method: "POST", path: "/sync/conflicts/:id/applied", pausedOk: true, summary: "The add-on's receipt for a decision it applied or found moot {outcome?: applied|moot}: stamps applied_at so the next reconcile skips it; 200 the conflict, 404 not_found, 409 not_resolved (sync bearer, gramps-owner; no MCP tool)", handler: syncConflictApplied },
   // HFY-TSK-279 (sync-admin-status-page): the cookie side of /admin/sync/. Session auth (no bearer): hfy-admin or gramps-owner reads it; the decision route above also takes the gramps-owner's session plus step-up.
   { name: "sync.admin.status", method: "GET", path: "/sync/admin/status", gate: syncGate(), summary: "The admin sync page's read {desktop, website, conflicts, batches} (session cookie; hfy-admin or gramps-owner, else 403 not_allowed; no MCP tool)", handler: syncAdminStatus },
 ];

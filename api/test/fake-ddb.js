@@ -148,7 +148,11 @@ export function createFakeDdb() {
     if (i.ScanIndexForward === false) items.reverse();
     if (i.ExclusiveStartKey) {
       const at = items.findIndex((r) => kk(r) === kk(i.ExclusiveStartKey));
-      items = items.slice(at + 1);
+      if (at === -1 && i.IndexName === "GSI1" && typeof i.ExclusiveStartKey.GSI1SK === "string") {
+        // like DynamoDB, a start key whose item is gone (it moved to another partition meanwhile) resumes at that key's position in the index order
+        const k = i.ExclusiveStartKey.GSI1SK;
+        items = items.filter((r) => (i.ScanIndexForward === false ? r.GSI1SK < k : r.GSI1SK > k));
+      } else items = items.slice(at + 1);
     }
     const limit = i.Limit ?? Infinity;
     const page = items.slice(0, limit);
