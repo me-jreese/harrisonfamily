@@ -1,4 +1,4 @@
-// /me/review/: the review island (HFY-TSK-259, flags proposalReview and recordEdit; HFY-PLN-002 editing.md section 9.2, BRD2 R-06 and R-07).
+// /me/review/: the review island (HFY-TSK-259, flags proposalReview and recordEdit, and adminDelete for the duplicates tab, HFY-TSK-295; HFY-PLN-002 editing.md section 9.2, BRD2 R-06 and R-07).
 // Three tabs: "to review" (admins with proposalReview: the approval queue, oldest first, on the kit's `useGateInbox` over the proposal gate source),
 // "my suggestions" and "about my page" (everyone, with recordEdit). A list and a detail card: from 64rem a 40/60 split, under it the list and the
 // card are two views (the card has a back link and its actions in a sticky footer). The server enforces actor.admin on the queue whatever the flag

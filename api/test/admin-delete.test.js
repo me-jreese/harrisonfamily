@@ -7,6 +7,7 @@ import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { ROUTES } from "../src/routes.js";
+import { grantAllow, revokeAllow } from "../src/allowlist-store.js";
 import { budgetVerdict } from "../src/sync/validator.js";
 import { cleanOps, DELETABLE_CLASSES } from "../src/records/admin-delete.js";
 import { SMALL_TREE, findDuplicatePairs, summarizePerson } from "../src/records/duplicates.js";
@@ -63,12 +64,12 @@ function tree(extra = []) {
 }
 
 const state = { flags: { adminDelete: true } };
-async function world({ clock = () => Date.now(), extra = [], admins = [ADMIN], members = ["I0900", "I0901"], seed } = {}) {
+async function world({ clock = () => Date.now(), extra = [], admins = [ADMIN], members = ["I0900", "I0901"], seed, intercept } = {}) {
   const txns = [];
   const hooks = createHookRegistry();
   const w = makeApi({
     admins, log: q, clock, flags: async () => ({ ...state.flags }),
-    intercept: async (cmd) => { if (cmd.constructor.name === "TransactWriteCommand") txns.push(structuredClone(cmd.input)); },
+    intercept: async (cmd) => { if (cmd.constructor.name === "TransactWriteCommand") txns.push(structuredClone(cmd.input)); await intercept?.(cmd); },
     extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), listMembers: async () => new Set(members), txnOpts: { sleep: async () => {} } },
   });
   w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 0, seeded: true, writes_enabled: true });
@@ -132,6 +133,61 @@ describe("the person behind a sign-in is never deleted (review: account guard)",
     expect(r3.body.errors.map((e) => e.obj)).toEqual([key(other)]);
     expect([other, w.tr.mum, orla].map((o) => w.gone(o))).toEqual([false, false, false]);
     expect(w.txns).toEqual([]);
+  });
+
+  // An access-request approval writes an active ALLOW# item whose sub is the Person's gramps_id, and no line of io's S3 file (api/src/access-requests.js),
+  // so the member list does not name that person: the guard reads the table for each Person target.
+  const allow = (w, sub, email, extra = {}) => grantAllow(w.ddb, cmds, TABLE, { email, sub, source: "access-request", requestId: `req-${sub}`, at: "2026-10-01T00:00:00.000Z", by: ADMIN, uid: `u-${email}`, ...extra });
+
+  it("refuses a person whose sign-in is only an active ALLOW# item (not in the member list), in a dry run and for real, and writes nothing", async () => {
+    const w = await world({ members: ["I0900"] });
+    await allow(w, "I0004", "dale.member@example.com");
+    const body = mk(w, [w.tr.other], { remove_references: true });
+    const dry = await w.del(ADMIN, { ...body, dry_run: true });
+    expect(err(dry)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    const r = await w.del(ADMIN, body, { idem: "allow-1" });
+    expect(err(r)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    expect(r.body.errors).toEqual([expect.objectContaining({ obj: key(w.tr.other), code: "account_person" })]);
+    expect(w.gone(w.tr.other)).toBe(false);
+    expect(w.rows("GID#").some((x) => x.retired === true)).toBe(false); // the id was not retired
+    expect(w.txns).toEqual([]);
+  });
+
+  it("refuses the ALLOW# person in a batch with others, and names only that person", async () => {
+    const w = await world({ members: ["I0900"] });
+    await allow(w, "I0004", "dale.member@example.com");
+    const r = await w.del(ADMIN, mk(w, [w.tr.orphans[0], w.tr.other], { remove_references: true }), { idem: "allow-2" });
+    expect(err(r)).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    expect(r.body.errors.map((e) => e.obj)).toEqual([key(w.tr.other)]);
+    expect([w.tr.orphans[0], w.tr.other].map((o) => w.gone(o))).toEqual([false, false]);
+    expect(w.txns).toEqual([]);
+  });
+
+  it("a held second email (effectiveAt ahead) still counts: the person is a member through the grant", async () => {
+    const w = await world({ members: ["I0900"] });
+    await allow(w, "I0004", "dale.second@example.com", { effectiveAt: "2099-01-01T00:00:00.000Z" });
+    expect(err(await w.del(ADMIN, mk(w, [w.tr.other]), { idem: "allow-3" }))).toEqual({ status: 409, error: "cannot_delete_account_person" });
+    expect(w.gone(w.tr.other)).toBe(false);
+  });
+
+  it("a revoked ALLOW# item is no sign-in, and another person's grant does not reach this one", async () => {
+    const w = await world({ members: ["I0900"] });
+    await allow(w, "I0004", "dale.member@example.com");
+    await revokeAllow(w.ddb, cmds, TABLE, { email: "dale.member@example.com", sub: "I0004", at: "2026-10-02T00:00:00.000Z", by: ADMIN, uid: "u-rev" });
+    await allow(w, "I0003", "cedar.member@example.com"); // the child (3), not the target
+    expect((await w.del(ADMIN, mk(w, [w.tr.other], { remove_references: true }), { idem: "allow-4" })).status).toBe(201);
+    expect(w.gone(w.tr.other)).toBe(true);
+  });
+
+  it("fails closed on a table error: 503 for a Person target, nothing written, and the table is not asked for any other class", async () => {
+    let down = false;
+    const w = await world({ members: ["I0900"], intercept: async (cmd) => { if (down && cmd.constructor.name === "QueryCommand" && cmd.input.IndexName === "GSI1") throw new Error("table down"); } });
+    down = true;
+    const r = await w.del(ADMIN, mk(w, [w.tr.orphans[0]]), { idem: "allow-5" });
+    expect(err(r)).toEqual({ status: 503, error: "unavailable" });
+    expect(w.gone(w.tr.orphans[0])).toBe(false);
+    expect(w.txns).toEqual([]);
+    expect((await w.del(ADMIN, mk(w, [w.tr.orphans[3]]), { idem: "allow-6" })).status).toBe(201); // a Place: no ALLOW# lookup
   });
 
   it("deletes a person nobody signs in as, and only guards Person targets (an Event or a Place is not looked up in the lists)", async () => {

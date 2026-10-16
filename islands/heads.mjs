@@ -43,7 +43,7 @@ export const PAGES = [
   "edit/index.html",
   // the relationship wizard page (relationshipWizard, HFY-TSK-158)
   "edit/family/index.html",
-  // the review page (proposalReview and recordEdit, HFY-TSK-259)
+  // the review page (proposalReview, recordEdit and adminDelete, HFY-TSK-259 and HFY-TSK-295)
   "me/review/index.html",
   // the family requests page (accessRequests, HFY-TSK-264)
   "me/requests/index.html",

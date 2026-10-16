@@ -14,7 +14,8 @@
 //   - the delete/withdraw budget is the validator's (more than 10 objects, or 5 % of the live heads, in one rolling 24 hours). The web has no
 //     stronger step-up to lift it with, so over the budget the delete is 403 delete_budget (the desktop sync carries the larger purges);
 //   - the Person behind a sign-in is never deleted here: a target whose gramps_id is the admin's own, or any member's or admin's (the allowlist and
-//     admin lists), is 409 cannot_delete_account_person, with no flag to force it. Deleting it would orphan a login, and its gramps_id could never
+//     admin lists), or the sub of an active ALLOW# item in the table (an access-request approval writes that item and no line of the S3 file), is
+//     409 cannot_delete_account_person, with no flag to force it. Deleting it would orphan a login, and its gramps_id could never
 //     be recreated. Unlink the account first (the access-request admin routes), then delete in Gramps on the desktop;
 //   - a Person's gramps_id is retired for ever by applyBatch (store-apply-core, SI-02): a delete never frees it, and a later create over it is
 //     409 gramps_id_retired;
@@ -44,6 +45,7 @@
 // updates) against `plan.max_objects` (one applyBatch, 24), and `budget.adding` is every record deleted, the cascade's included, against the
 // rolling delete budget. A record the cascade adds carries `why`, so the sheet names it.
 import { HttpError } from "../http.js";
+import { listAllowBySub } from "../allowlist-store.js";
 import { SyncError } from "../sync/errors.js";
 import { DESTRUCTIVE_LIMIT, DESTRUCTIVE_SHARE, budgetVerdict } from "../sync/validator.js";
 import { MAX_OPS as MAX_BATCH_OBJECTS, getSyncHead } from "../sync/store.js";
@@ -86,15 +88,32 @@ function requireAdmin(c) {
 
 // ---- the people behind sign-ins ---------------------------------------------------------------------------------------------------------
 /**
- * The gramps_ids a delete may never remove: the admin's own, and every member's and admin's (store.accountIds, wired from the member and admin
- * lists). It fails closed: with no list wired, or an empty one (the member list reads as empty when its source is unavailable), the route answers
- * 503 rather than guess which Persons back a login.
+ * The gramps_ids a delete may never remove, from the lists: the admin's own, and every member's and admin's (store.accountIds, wired from the
+ * member and admin lists, io's S3 files). It fails closed: with no list wired, or an empty one (the member list reads as empty when its source
+ * is unavailable), the route answers 503 rather than guess which Persons back a login. A sign-in that exists only as a DynamoDB ALLOW# item
+ * (an access-request approval writes one and no S3 line) is not in these lists; hasAllowGrant() covers it, one Person at a time.
  */
 async function accountIdsOf(c) {
   const src = c.store?.accountIds;
   const ids = typeof src === "function" ? await src() : null;
   if (!(ids instanceof Set) || ids.size === 0) throw problem(503, "unavailable", "the list of accounts is unavailable, so a person cannot be deleted right now; try again in a minute");
   return new Set([...ids, ...(typeof c.actor?.id === "string" ? [c.actor.id] : [])]);
+}
+
+/**
+ * True when `gid` has an active ALLOW# grant in the table (state "active", sub equal to the gramps_id; a held second email counts too, because
+ * it becomes a sign-in on its own). A revoked item is not a sign-in. Strictly one GSI1 Query per Person target (at most MAX_TARGETS). Fails
+ * closed: a table error is 503, never "no grant", so an outage cannot let the Person behind a login be deleted.
+ */
+async function hasAllowGrant(c, gid) {
+  let items;
+  try {
+    items = await listAllowBySub(c.store.ddb, c.store.cmds, c.store.table, gid);
+  } catch (e) {
+    c.store.log?.error?.("admin delete: allowlist table unavailable", e instanceof Error ? e.name : "error");
+    throw problem(503, "unavailable", "the list of accounts is unavailable, so a person cannot be deleted right now; try again in a minute");
+  }
+  return items.some((it) => it.state === "active" && it.sub === gid);
 }
 
 /** 409 cannot_delete_account_person when a Person target is the record behind the admin's own or any member's or admin's sign-in. */
@@ -106,7 +125,9 @@ async function refuseAccountPeople(c, parsed) {
   for (const k of people) {
     const [cls, handle] = keyParts(k);
     const head = await get(c.store, cls, handle);
-    if (head && accounts.has(gidOf(head.obj))) hit.push(k);
+    if (!head) continue;
+    const gid = gidOf(head.obj);
+    if (accounts.has(gid) || (gid && (await hasAllowGrant(c, gid)))) hit.push(k);
   }
   if (hit.length) {
     throw problem(409, "cannot_delete_account_person", "a person who signs in to the site cannot be deleted here; unlink the account first, then delete in Gramps on the desktop", {

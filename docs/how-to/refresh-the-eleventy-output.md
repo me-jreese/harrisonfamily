@@ -93,7 +93,7 @@ For these, `missing or different` usually means only that a build has changed th
 | `11ty/me/index.html` | `public/me/index.html` | The settings hub (`navMe`, HFY-TSK-091). Standalone, like the notifications page. |
 | `11ty/me/links/index.html` | `public/me/links/index.html` | The profile links editor (`profileLinks`, HFY-TSK-217). Standalone, like the notifications page. |
 | `11ty/me/inbox/index.html` | `public/me/inbox/index.html` | The notification inbox page (`inboxV1`, HFY-TSK-185). Standalone, like the notifications page. |
-| `11ty/me/review/index.html` | `public/me/review/index.html` | The suggestions page (`proposalReview` and `recordEdit`, HFY-TSK-259). Standalone, like the notifications page. `me/` is already in the refresh's rsync excludes, so the refresh never deletes it. |
+| `11ty/me/review/index.html` | `public/me/review/index.html` | The suggestions page (`proposalReview`, `recordEdit` and `adminDelete`, HFY-TSK-259 and HFY-TSK-295). Standalone, like the notifications page. `me/` is already in the refresh's rsync excludes, so the refresh never deletes it. |
 | `11ty/me/requests/index.html` | `public/me/requests/index.html` | The family requests page (`accessRequests`, HFY-TSK-264): the admins' queue of requests to join. Standalone, like the notifications page. `me/` is already in the refresh's rsync excludes (HFY-R46), so the refresh never deletes it. |
 | `11ty/tree/index.html` | `public/tree/index.html` | The family tree page (`familyViz`, HFY-TSK-201). Standalone, like the notifications page. |
 | `11ty/edit/index.html` | `public/edit/index.html` | The record editor page (`recordEdit`, HFY-TSK-212). Standalone, like the notifications page. |
