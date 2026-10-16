@@ -54,12 +54,13 @@ _HANDLE_GETTERS = {
 }
 _ITER_HANDLES = {cls: "iter_%s_handles" % cls.lower() for cls in consts.CLASSES}  # every class has one (DbReadBase)
 _GETTER = {cls: "get_%s_from_handle" % cls.lower() for cls in consts.CLASSES}
+_RAW_GETTER = {cls: "get_raw_%s_data" % cls.lower() for cls in consts.CLASSES}  # the stored json_data dict, no Gramps object built
 _COMMIT = {cls: "commit_%s" % cls.lower() for cls in consts.CLASSES}
 _REMOVE = {cls: "remove_%s" % cls.lower() for cls in consts.CLASSES}
 
 
 class GrampsTree(runner.TreeAccess):
-    """The open Gramps database as the runner sees it. Reads only handles and the marker; no object content."""
+    """The open Gramps database as the runner sees it. status and bind read only handles and the marker; check, pull and push read the objects; only the pull writes them."""
 
     def __init__(self, db, uistate=None):
         self.db = db
@@ -83,14 +84,18 @@ class GrampsTree(runner.TreeAccess):
         return out
 
     def objects(self):
-        """Every primary object as the dict Gramps stores (`json_data`), the same shape synthetic-tree.jsonl has."""
+        """Every primary object as the dict Gramps stores (`json_data`), the same shape synthetic-tree.jsonl has.
+
+        It goes through the raw getters and builds no Gramps object. Measured on the fixture tree (scenario_push's dry run): a read through
+        the object getters changed `sqlite.db` when the tree closed in a process with a random hash seed, such as the Gramps window,
+        where the raw getters left it byte for byte."""
         out = {}
         for cls in consts.CLASSES:
-            get = getattr(self.db, _GETTER[cls])
+            get = getattr(self.db, _RAW_GETTER[cls])
             for handle in getattr(self.db, _ITER_HANDLES[cls])():
-                obj = get(handle)
-                if obj is not None:
-                    out[handle] = object_to_dict(obj)
+                data = get(handle)
+                if data is not None:
+                    out[handle] = data
         return out
 
     def _read(self, cls, handle):

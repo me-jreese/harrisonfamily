@@ -29,6 +29,7 @@ if GRAMPS_DIR not in sys.path:
 from hfygramps import canonical  # noqa: E402
 from hfygramps import projection as PR  # noqa: E402
 from hfygramps.addon import binding, consts, paths, runner, sidecar, transport  # noqa: E402
+from hfygramps.addon import plan as plan_mod  # noqa: E402
 
 CLASS_RANK = {c: i for i, c in enumerate(consts.CLASSES)}
 CLOUD_TREE = "11111111-2222-4333-8444-555555555555"
@@ -45,7 +46,10 @@ def load_fixture():
 
 
 def project_all(objects, **kw):
-    return {h: p for h, p in PR.project_tree(copy.deepcopy(list(objects.values())), **kw)[0].items() if p is not None}
+    """What a push sends, and so what the website holds: the projection with every person's back-links made to agree with the projected
+    families (`plan.symmetric`). The website refuses a tree where they disagree, so a fake cloud never holds one."""
+    proj = PR.project(copy.deepcopy(list(objects.values())), **kw)
+    return {h: p for h, p in plan_mod.symmetric(proj.projected, proj.holds).items() if p is not None}
 
 
 class FakeTree(runner.TreeAccess):

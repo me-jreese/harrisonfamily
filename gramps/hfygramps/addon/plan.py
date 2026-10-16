@@ -15,6 +15,9 @@ without Gramps. What it adds to the merge engine:
   `reverts a website change (origin)`; the GUI needs a confirmation for it and the CLI parks it.
 * The mass-delete guard (sync.md 17): more than 10 incoming deletes, or more than 5 % of the local objects, are never applied by the
   CLI (nor by the GUI without a confirmation).
+* Symmetry (`symmetric`). The projection removes a private ChildRef from its family but leaves the child's back-link, and the website
+  refuses a session whose people and families disagree, so the push drops that back-link from the projected person. The pull plans
+  its own pending pushes from the same projection and must drop it too, or a pushed tree reads as having a change waiting for ever.
 * The plan hash that `sync --yes --plan <run_id>` compares (headless runbook 19.3).
 
 Standard library only; Python 3.9 compatible except for what `hfygramps.merge` and `projection` already require.
@@ -136,6 +139,36 @@ def dob_hit(obj, index, policy, fields=None):
             if isinstance(v, str) and v and index.text_hit(v):
                 return True
     return False
+
+
+# ---------------------------------------------------------------------------------------------------------------- symmetry
+
+
+def symmetric(projected, holds=()):
+    """``projected`` with every person's back-links made to agree with the projected families. The projection removes a private
+    ChildRef from its family but leaves the child's ``parent_family_list`` pointing at that family, and the website refuses a session
+    whose people and families disagree (422 ``integrity.symmetry.child`` at completion). A person's link to a family that does not
+    list the person is dropped from the projected person (never the other way round, so no content is lost; the lift brings the link
+    back, because the local object still has it). The dropped link would also have shown that the private relationship exists.
+    Objects the projection holds whole keep their cloud copy untouched.
+
+    The push (`pushplan.build_plan`) and the pull (`build`, for the pushes it reports as waiting) both apply it, so the two halves of a
+    sync agree about what is pending."""
+    held = {x["handle"] for x in holds if x.get("scope") == "object"}
+    out = dict(projected)
+    for h, o in projected.items():
+        if not isinstance(o, dict) or o.get("_class") != "Person" or h in held:
+            continue
+        fixed = dict(o)
+        for key, listed in (("parent_family_list", lambda f: h in [c.get("ref") for c in f.get("child_ref_list") or ()]),
+                            ("family_list", lambda f: h in (f.get("father_handle"), f.get("mother_handle")))):
+            keep = [fh for fh in o.get(key) or () if not isinstance(projected.get(fh), dict) or projected[fh].get("_class") != "Family"
+                    or listed(projected[fh])]
+            if keep != list(o.get(key) or ()):
+                fixed[key] = keep
+        if fixed != o:
+            out[h] = fixed
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------- reverts
@@ -312,7 +345,7 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
     # ---- project, merge
     local_list = list(local.values())
     proj = PR.project(local_list, base=base, files=files, released=released, sticky=sticky, policy=pol)
-    lp = proj.projected
+    lp = symmetric(proj.projected, proj.holds)
     plan.sticky = proj.sticky
     plan.holds = proj.holds
 
@@ -320,7 +353,8 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
         objs = [obj if o.get("handle") == obj.get("handle") else o for o in local_list]
         if obj.get("handle") not in local:
             objs.append(obj)
-        return PR.project(objs, base=base, files=files, released=released, sticky=sticky, policy=pol).projected.get(obj["handle"])
+        again = PR.project(objs, base=base, files=files, released=released, sticky=sticky, policy=pol)
+        return symmetric(again.projected, again.holds).get(obj["handle"])
 
     tr = M.merge_tree(base, local, lp, cloud, versions=versions, pins=pins, project_fn=project_one, mode=mode,
                       allow_deletes=allow_deletes, sticky=sticky, policy=pol, cloud_is_delta=False)

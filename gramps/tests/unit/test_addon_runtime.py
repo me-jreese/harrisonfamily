@@ -461,12 +461,8 @@ class RunnerRefusals(HomeCase):
         self.assertNotIn("boom", str(doc), "no message text from the exception")
         self.assertEqual(paths.read_json(self.tp(tree).status)["exit_code"], 70)
 
-    def test_push_is_not_in_this_build_and_69(self):
-        self.assert_refused(self.run_tool(FakeTree(), action="push"), "not_enabled", 69, "none")
-        self.assert_refused(self.run_tool(self.bound_tree(), action="push"), "not_enabled", 69, "none")
-
     def test_the_pull_actions_on_an_unbound_tree_say_bind_first(self):
-        for action in ("check", "pull", "sync"):
+        for action in ("check", "pull", "sync", "push"):  # push is built (HFY-TSK-206) and says the same
             self.assert_refused(self.run_tool(FakeTree(), action=action), "unbound", 78, "bind")
 
     def test_restore_through_the_tool_is_refused_because_the_tree_is_open(self):

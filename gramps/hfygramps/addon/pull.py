@@ -568,6 +568,6 @@ def _final(ctx, plan):
     if att:
         return ("partial", consts.EXIT_PARTIAL, att[2], {"code": att[0], "message": att[1]})
     if ctx.options.action == "sync" and plan.counts["push_pending"]:
-        return ("partial", consts.EXIT_PARTIAL, "none", {"code": "push_unavailable",
-                "message": "%d desktop change(s) are waiting to go to the website; this build of the addon cannot push yet." % plan.counts["push_pending"]})
+        return ("partial", consts.EXIT_PARTIAL, "none", {"code": "push_pending",
+                "message": "%d desktop change(s) are waiting to go to the website; `sync` only pulls, so run hfy-sync push to send them." % plan.counts["push_pending"]})
     return (consts.OK, consts.EXIT_OK, "none", None)
