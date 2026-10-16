@@ -1,6 +1,6 @@
 // Tests for scripts/ci/check-sync-catalog.mjs (HFY-TSK-150). CodeArtifact-free: runs in the io-kit CI `tests` list.
 //   - the real map in this repository is complete, current and points at tests that exist
-//   - a gap, an unknown row ID, a renamed test, a file outside the suites and a stale reference page each fail, in a throwaway repository
+//   - a gap, an unknown row ID, a renamed or skipped test, a file outside the suites, an unmapped wire code and a stale reference page each fail, in a throwaway repository
 //   - the declaration finder reads Python methods, JavaScript titles (any quote style, no template titles) and infra labels
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { check, declaredNames, expectedIds, MAP_PATH, DOC_PATH, DOC_START, DOC_END, renderDoc } from '../check-sync-catalog.mjs';
+import { check, declaredNames, expectedIds, MAP_PATH, DOC_PATH, DOC_START, DOC_END, WIRE_START, WIRE_END, WIRE_KEYS, renderDoc, renderWire } from '../check-sync-catalog.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'ci', 'check-sync-catalog.mjs');
@@ -21,7 +21,7 @@ function fixture() {
     mkdirSync(dirname(join(root, rel)), { recursive: true });
     writeFileSync(join(root, rel), text);
   };
-  put('gramps/tests/unit/test_a.py', 'class T:\n    def test_one(self):\n        pass\n');
+  put('gramps/tests/unit/test_a.py', 'import unittest\nclass T(unittest.TestCase):\n    def test_one(self):\n        pass\n');
   put('api/test/b.test.js', 'it("the title with \\"quotes\\"", () => {});\ndescribe("x", () => { it(\'single\', () => {}); });\n');
   put('scripts/infra/test/c.inc.sh', 'CURRENT="label one"\n');
   const tests = [
@@ -33,9 +33,13 @@ function fixture() {
   expectedIds().forEach((id, i) => {
     rows[id] = { failure: `row ${id}`, tests: [tests[i % tests.length]] };
   });
-  const map = { version: 1, rows };
+  const wire = {};
+  WIRE_KEYS.forEach((key, i) => {
+    wire[key] = { failure: `wire ${key}`, tests: [tests[i % tests.length]] };
+  });
+  const map = { version: 1, rows, wire };
   put(MAP_PATH, JSON.stringify(map, null, 2));
-  put(DOC_PATH, `# Page\n\n${DOC_START}\n\n${renderDoc(map)}\n\n${DOC_END}\n`);
+  put(DOC_PATH, `# Page\n\n${DOC_START}\n\n${renderDoc(map)}\n\n${DOC_END}\n\n${WIRE_START}\n\n${renderWire(map)}\n\n${WIRE_END}\n`);
   return { root, map, put, write: (m) => put(MAP_PATH, JSON.stringify(m, null, 2)) };
 }
 
@@ -91,9 +95,9 @@ describe('a throwaway repository', () => {
       f.map.rows.D30.failure = '  ';
       f.write(f.map);
       const p = problemsOf(f.root);
-      assert.ok(p.includes('gap: D07 has no entry'), p.join('\n'));
-      assert.ok(p.includes('gap: S03 has no test'), p.join('\n'));
-      assert.ok(p.includes('gap: D30 has no failure text'), p.join('\n'));
+      assert.ok(p.includes('gap: row D07 has no entry'), p.join('\n'));
+      assert.ok(p.includes('gap: row S03 has no test'), p.join('\n'));
+      assert.ok(p.includes('gap: row D30 has no failure text'), p.join('\n'));
     } finally {
       rmSync(f.root, { recursive: true, force: true });
     }
@@ -116,7 +120,7 @@ describe('a throwaway repository', () => {
   it('fails on a renamed test, a missing file and a file outside the suites', () => {
     const f = fixture();
     try {
-      f.put('gramps/tests/unit/test_a.py', 'class T:\n    def test_renamed(self):\n        pass\n');
+      f.put('gramps/tests/unit/test_a.py', 'class T(object):\n    def test_renamed(self):\n        pass\n');
       f.map.rows.D02.tests = [{ file: 'gramps/tests/unit/gone.py', name: 'test_one' }];
       f.map.rows.D03.tests = [{ file: 'scripts/ci/check-sync-catalog.mjs', name: 'check' }];
       f.map.rows.D04.tests = [{ file: '../outside.py', name: 'test_one' }];
@@ -128,6 +132,45 @@ describe('a throwaway repository', () => {
       assert.ok(p.some((x) => x.startsWith('D04') && x.includes('inside the repository')), p.join('\n'));
     } finally {
       rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails on a wire code with no entry, no test or no failure text, and on an unknown wire code', () => {
+    const f = fixture();
+    try {
+      delete f.map.wire['409 renumber_blocked'];
+      f.map.wire['403 step_up_required'].tests = [];
+      f.map.wire['422 withdrawn_reference'].failure = '';
+      f.map.wire['418 teapot'] = f.map.wire['409 reserved_id_block'];
+      f.write(f.map);
+      const p = problemsOf(f.root);
+      assert.ok(p.includes('gap: wire code 409 renumber_blocked has no entry'), p.join('\n'));
+      assert.ok(p.includes('gap: wire code 403 step_up_required has no test'), p.join('\n'));
+      assert.ok(p.includes('gap: wire code 422 withdrawn_reference has no failure text'), p.join('\n'));
+      assert.ok(p.some((x) => x.startsWith('unknown wire code "418 teapot"')), p.join('\n'));
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when the map has no wire object, and when a wire test is renamed', () => {
+    const f = fixture();
+    try {
+      const { wire, ...rest } = f.map;
+      f.write(rest);
+      assert.ok(problemsOf(f.root).some((x) => x.includes('has no "wire" object')));
+      f.write({ ...rest, wire: { ...wire, '422 withdrawn_reference': { failure: 'x', tests: [{ file: 'api/test/b.test.js', name: 'gone' }] } } });
+      assert.ok(problemsOf(f.root).some((x) => x.startsWith('422 withdrawn_reference: api/test/b.test.js :: gone: no such test')));
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it('maps every wire code the validator answers with', () => {
+    const map = JSON.parse(readFileSync(join(REPO, MAP_PATH), 'utf8'));
+    assert.deepEqual(Object.keys(map.wire).sort(), [...WIRE_KEYS].sort());
+    for (const rule of ['id.shape', 'id.reserved_name', 'integrity.unresolved_reference', 'integrity.symmetry.spouse', 'integrity.symmetry.child', 'integrity.index_range', 'schema.*', 'media.rect.*', 'reserved_id_block', 'renumber_blocked', 'gramps_id_retired', 'step_up_required', 'withdrawn_reference', 'heads_unknown']) {
+      assert.ok(WIRE_KEYS.some((k) => k.endsWith(rule) || k.includes(` ${rule}`)), rule);
     }
   });
 
@@ -183,7 +226,7 @@ describe('a throwaway repository', () => {
       f.write(f.map);
       const r = spawnSync(process.execPath, [SCRIPT, '--root', f.root], { encoding: 'utf8' });
       assert.equal(r.status, 1);
-      assert.match(r.stderr, /gap: D01 has no entry/);
+      assert.match(r.stderr, /gap: row D01 has no entry/);
       assert.match(r.stderr, /1 problem\(s\)/);
       assert.equal(spawnSync(process.execPath, [SCRIPT, '--nope'], { encoding: 'utf8' }).status, 2);
     } finally {
@@ -193,15 +236,42 @@ describe('a throwaway repository', () => {
 });
 
 describe('declaredNames', () => {
-  it('reads Python methods and functions, indented or not', () => {
-    const names = declaredNames('x.py', 'def top(a):\n    pass\nclass T:\n    def test_a(self):\n        pass\n    async def test_b(self):\n        pass\n');
-    assert.deepEqual([...names].sort(), ['test_a', 'test_b', 'top']);
+  it('reads the test methods of a class with a base class, and nothing else in a Python file', () => {
+    const names = declaredNames('x.py', 'def test_top(a):\n    pass\nclass T(unittest.TestCase):\n    def test_a(self):\n        pass\n    async def test_b(self):\n        pass\n    def helper(self):\n        pass\nclass Bare:\n    def test_c(self):\n        pass\n');
+    assert.deepEqual([...names].sort(), ['test_a', 'test_b']);
   });
 
-  it('reads JavaScript titles in any quote style and skips template titles', () => {
-    const text = 'it("double", f);\ntest(\'single \\\'q\\\'\', f);\nit(`tick`, f);\nit(`has ${x}`, f);\nit.skip("skipped", f);\nit(\n  "wrapped",\n  f);\n';
+  it('leaves out a Python test under an unconditional skip, keeps one under skipIf, and ends a class at the next top-level statement', () => {
+    const text = [
+      'class T(Base):',
+      '    @unittest.skip("later")',
+      '    def test_skipped(self):',
+      '        pass',
+      '    @unittest.skipIf(False, "never")',
+      '    def test_conditional(self):',
+      '        pass',
+      '    @unittest.expectedFailure',
+      '    def test_expected_failure(self):',
+      '        pass',
+      '    def test_plain(self):',
+      '        pass',
+      'def after(): pass',
+      'class U(Base):',
+      '    def test_in_u(self):',
+      '        pass',
+      '@unittest.skip("whole class")',
+      'class V(Base):',
+      '    def test_in_v(self):',
+      '        pass',
+      '',
+    ].join('\n');
+    assert.deepEqual([...declaredNames('x.py', text)].sort(), ['test_conditional', 'test_in_u', 'test_plain']);
+  });
+
+  it('reads JavaScript titles in any quote style, skips template titles and skip or todo calls', () => {
+    const text = 'it("double", f);\ntest(\'single \\\'q\\\'\', f);\nit(`tick`, f);\nit(`has ${x}`, f);\nit.skip("skipped", f);\nit.todo("todo", f);\nit(\n  "wrapped",\n  f);\n';
     const names = declaredNames('x.test.js', text);
-    assert.deepEqual([...names].sort(), ['double', "single 'q'", 'skipped', 'tick', 'wrapped']);
+    assert.deepEqual([...names].sort(), ['double', "single 'q'", 'tick', 'wrapped']);
   });
 
   it('reads infra labels and nothing in another file type', () => {

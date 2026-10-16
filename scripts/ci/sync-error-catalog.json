@@ -560,7 +560,7 @@
       ]
     },
     "D39": {
-      "failure": "Unknown class or field from the cloud",
+      "failure": "Unknown class or field from the cloud (top-level fields only: an unknown key nested inside a list element is not detected)",
       "tests": [
         {
           "file": "gramps/tests/unit/test_sync_catalog_rows.py",
@@ -1000,7 +1000,7 @@
       ]
     },
     "S15": {
-      "failure": "Head hash mismatch on read",
+      "failure": "Head hash mismatch on read (only the renderer reads the log, so only it skips the entry and alarms; the snapshot is built from the head rows with no per-entry hash check, and api/src/sync/refold.js reports hash_mismatch on a rebuild)",
       "tests": [
         {
           "file": "gramps/tests/unit/test_render_lambda_catalog_rows.py",
@@ -1120,6 +1120,178 @@
         {
           "file": "api/test/sync-push.test.js",
           "name": "S22: a delete-heavy desktop batch needs the step-up (stale auth is 403 step_up_required, nothing written); with it the deletes commit and count against the budget"
+        }
+      ]
+    }
+  },
+  "wire": {
+    "422 integrity_violation id.shape": {
+      "failure": "A gramps_id that is not a safe file name (characters outside the allowed set, a dot run, too long) is refused before anything is written",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a gramps_id that is not a safe file name is refused"
+        }
+      ]
+    },
+    "422 integrity_violation id.reserved_name": {
+      "failure": "A gramps_id that is a reserved file name, in any case, for any class, is refused",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "reserved names are matched without regard to case, and for every class"
+        }
+      ]
+    },
+    "422 integrity_violation integrity.unresolved_reference": {
+      "failure": "A reference that resolves nowhere (store view, batch or the open session's expected set) is refused with its pointer",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a reference that resolves nowhere is 422 integrity_violation with its pointer"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a reference resolves in its own class only"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "every reference list is followed: event refs, media refs, citations, lds ordinances, family parents, place, source"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "the desktop's reference to one does not resolve: 422 integrity_violation, not withdrawn_reference"
+        }
+      ]
+    },
+    "422 integrity_violation integrity.symmetry.spouse": {
+      "failure": "A person lists a family that does not name the person, or a family names a spouse who does not list it (web origins; the desktop is checked when its session completes)",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a person that lists a family which does not name it is refused, naming the person"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "removing the person's side of a link while the family still has it is refused"
+        }
+      ]
+    },
+    "422 integrity_violation integrity.symmetry.child": {
+      "failure": "A family lists a child whose parent_family_list does not name it, or the reverse",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "child links are symmetric too, both ways"
+        }
+      ]
+    },
+    "422 integrity_violation integrity.index_range": {
+      "failure": "birth_ref_index or death_ref_index points outside the person's event_ref_list",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "birth_ref_index and death_ref_index must be in range for a web origin"
+        }
+      ]
+    },
+    "400 validation schema.*": {
+      "failure": "An object does not match the Gramps schema: an unknown key or a wrong type, with the rule schema.<keyword> and a pointer in details.violations",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "refuses an unknown key and a wrong type with the schema pointer, 400 validation"
+        }
+      ]
+    },
+    "400 validation media.rect.*": {
+      "failure": "A MediaRef.rect is not null or four ordered integers 0-100, or is the full frame (rules media.rect.full_frame and media.rect.degenerate_or_float), in details.violations",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "rect: a fraction never reaches the validator: the store's canonical JSON refuses it first (400 validation)"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "rect on the media list of other classes is checked too"
+        }
+      ]
+    },
+    "409 reserved_id_block": {
+      "failure": "The desktop supplies a gramps_id from the block the website mints from, on a create or an update",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "the edges of the block: 8000 and 8999 are in, 7999 and 9000 and 18000 are out; a lower-case prefix and leading zeros are still the block"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a desktop or seed update that moves an object into the block is 409 reserved_id_block; keeping an id already there, or moving out of the block, is fine"
+        }
+      ]
+    },
+    "409 renumber_blocked": {
+      "failure": "A person's gramps_id changes (Person IDs are permanent), with or without the provisional renumber flag",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a Person's gramps_id cannot change: 409 renumber_blocked, with or without the provisional renumber flag"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "there is no escape hatch: createValidator() takes no allowRenumber, and the renumber flag is refused with any validator"
+        }
+      ]
+    },
+    "409 gramps_id_retired": {
+      "failure": "A create or update reuses the gramps_id of a retired person for a different handle, or recreates the retired person",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a create or update that reuses a retired Person gramps_id for a different handle is 409 gramps_id_retired"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "the retired person itself is not recreated through a batch"
+        }
+      ]
+    },
+    "403 step_up_required": {
+      "failure": "A destructive batch (a desktop delete, or more than 10 deletes and withdraws, or more than 5 percent of the live heads) needs a fresh step-up; nothing is written",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a batch of 11 withdraws without step-up is 403 step_up_required; with step-up, and at 10, it is not"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a desktop delete needs a step-up even below the budget (D07); other origins' single delete does not, and a withdraw does not"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "step-up is asked for before the version check: a stale destructive batch learns nothing"
+        }
+      ]
+    },
+    "403 step_up_required heads_unknown": {
+      "failure": "The live-head count of a tree that has taken writes is missing or unusable, so every destructive batch fails closed and needs a step-up (reason heads_unknown)",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a non-empty tree whose live_heads is missing, negative or not an integer fails closed: every destructive batch needs a step-up (heads_unknown)"
+        }
+      ]
+    },
+    "422 withdrawn_reference": {
+      "failure": "A web write references a handle that was withdrawn (in the store or earlier in the same batch); the desktop's reference is a plain integrity_violation",
+      "tests": [
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "a handle withdrawn earlier in the same batch counts as withdrawn"
+        },
+        {
+          "file": "api/test/sync-validator.test.js",
+          "name": "the desktop's reference to one does not resolve: 422 integrity_violation, not withdrawn_reference"
         }
       ]
     }
