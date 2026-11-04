@@ -6,7 +6,8 @@
 //   Q2-16 behaviours (Enter sends with no Send button, `q`, the flashes, no auto-open, no policy change); pacing; the contact-info line;
 //   the paste block; /chat/ two-pane, a pop-out and a deep link; 375: the chat slot entry, the roster and the conversation, the bottom
 //   bar hidden only in a conversation, 16px inputs, 44px targets, no horizontal scroll; a refused member; a signed-out reader; the
-//   title-bar and flash contrast in both schemes; axe on every surface.
+//   title-bar and flash contrast in both schemes; the options-menu text and the focus ring on a bar, the "+n more" chip, the selected
+//   row and a plain row in both schemes (P10, P2-R77, HFY-TSK-362); axe on every surface.
 // Run:  HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/chat.spec.mjs --workers=1
 import { test, expect } from "@playwright/test";
 import { axeViolations } from "./axe.mjs";
@@ -19,6 +20,84 @@ const FLAGS = { authV2: true, shellV2: true, navMe: true, notifyV2: true, search
 const CONV = dm(ME, PAT);
 const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 const calm = (page) => page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
+
+// ---- Contrast in the real browser (P10, P2-R77, HFY-TSK-362): WCAG 2.1 ratios from computed colours, never from the tokens' names. ----
+const SCHEMES = ["light", "dark"];
+const ratio = (a, b) => contrast(parseColor(a), parseColor(b));
+const setScheme = async (page, scheme) => {
+  await page.evaluate((s) => document.documentElement.setAttribute("data-theme", s), scheme);
+  await calm(page);
+};
+/** An element's text colour, what it sits on (the first opaque background up the tree: a bare control is painted by its parent) and its outline. */
+const painted = (loc) => loc.evaluate((el) => {
+  const opaque = (c) => {
+    const m = /^rgba?\(([^)]*)\)$/.exec(c);
+    if (!m) return false;
+    const p = m[1].split(/[\s,/]+/).filter(Boolean);
+    return p.length < 4 || parseFloat(p[3]) === 1;
+  };
+  let bg = null;
+  for (let n = el; n && !bg; n = n.parentElement) {
+    const c = getComputedStyle(n).backgroundColor;
+    if (opaque(c)) bg = c;
+  }
+  const cs = getComputedStyle(el);
+  return {
+    color: cs.color,
+    bg,
+    outlineStyle: cs.outlineStyle,
+    outlineColor: cs.outlineColor,
+    outlineWidth: parseFloat(cs.outlineWidth),
+    outlineOffset: parseFloat(cs.outlineOffset),
+    atRest: !el.matches(":hover, :focus-visible"),
+    focusVisible: el.matches(":focus-visible"),
+  };
+});
+/** The theme's accent bar and surface for the chat as the browser resolves them in the current scheme. */
+const chatTokens = (page) => page.evaluate(() => {
+  const cs = getComputedStyle(document.querySelector(".io-chat"));
+  return { bar: cs.getPropertyValue("--io-chat-bar").trim(), bg: cs.getPropertyValue("--io-chat-bg").trim() };
+});
+/** Menu items at rest read against the menu they sit on: 4.5:1 text (WCAG 2.1 1.4.3), light and dark. The kit sets no colour on the menu, so an item in the title bar inherited the bar's text colour. */
+async function expectMenuText(page, items, label) {
+  await page.mouse.move(0, 0);
+  expect(await items.count(), `${label}: items`).toBeGreaterThan(0);
+  for (const scheme of SCHEMES) {
+    await setScheme(page, scheme);
+    const rest = (await Promise.all((await items.all()).map(painted))).filter((m) => m.atRest);
+    expect(rest.length, `${label}: items at rest, ${scheme}`).toBeGreaterThan(0);
+    for (const m of rest) expect(ratio(m.color, m.bg), `${label} item text, ${scheme}`).toBeGreaterThanOrEqual(4.5);
+  }
+}
+/** Keyboard-focus `loc` in the current scheme and read its ring: a solid outline at least 3:1 (WCAG 2.1 1.4.11) against what it sits on. */
+async function focusRing(page, loc, label) {
+  await page.keyboard.press("Tab"); // a key first, so the script focus below is a keyboard focus and matches :focus-visible
+  await loc.focus();
+  const m = await painted(loc);
+  expect(m.focusVisible, `${label}: keyboard focus`).toBe(true);
+  expect(m.outlineStyle, `${label}: outline style`).toBe("solid");
+  expect(m.outlineWidth, `${label}: outline width`).toBeGreaterThan(0);
+  return { ...m, ratio: ratio(m.outlineColor, m.bg), inset: m.outlineOffset === -m.outlineWidth };
+}
+/** The ring on an accent bar, the "+n more" chip, a selected row or a focused menu item: at least 3:1, drawn inside, on the bar colour. */
+async function expectBarRing(page, loc, label) {
+  for (const scheme of SCHEMES) {
+    await setScheme(page, scheme);
+    const r = await focusRing(page, loc, label);
+    expect(parseColor(r.bg), `${label}: sits on the bar, ${scheme}`).toEqual(parseColor((await chatTokens(page)).bar));
+    expect(r.ratio, `${label} ring, ${scheme}`).toBeGreaterThanOrEqual(3);
+    expect(r.inset, `${label}: ring is inside the bar, ${scheme}`).toBe(true); // outside, half of it falls on the surface around the bar
+  }
+}
+/** The ring on a plain row: at least 3:1 against the surface, and not the bar colour. */
+async function expectRowRing(page, loc, label) {
+  for (const scheme of SCHEMES) {
+    await setScheme(page, scheme);
+    const r = await focusRing(page, loc, label);
+    expect(parseColor(r.bg), `${label}: a plain row is not on the bar, ${scheme}`).not.toEqual(parseColor((await chatTokens(page)).bar));
+    expect(r.ratio, `${label} ring, ${scheme}`).toBeGreaterThanOrEqual(3);
+  }
+}
 
 /** Stubs on the context (so a pop-out window gets them too): flags, the edge session, the refresh, the API, and the hub for the sockets. */
 async function wire(context, { flag = true, session = ME, hub = null, refuse = null, exp = null } = {}) {
@@ -401,6 +480,72 @@ test.describe("1280", () => {
     expect(await axeViolations(page, { include: "#hfy-chat-root" })).toEqual([]);
     hub.dispose();
   });
+
+  test("P10: the options menu text reads at 4.5:1 and the focus ring at 3:1 on a title bar, a selected row and a plain row, in both schemes", async ({ page, context }) => {
+    const hub = chatHub();
+    hub.virtual(PAT);
+    hub.virtual("I9003");
+    await wire(context, { hub });
+    await page.goto("/contact/", { waitUntil: "domcontentloaded" });
+    await expect(panel(page)).toBeVisible();
+    await panel(page).getByRole("button", { name: /Pat Example/ }).click();
+    await expect(moles(page)).toHaveCount(1);
+    const mole = moles(page).first();
+    // the options menu of a title bar: its items had no colour of their own and inherited the bar's text colour (the bar's own pair)
+    await mole.getByRole("button", { name: /options for Pat Example/ }).click();
+    const menu = page.getByTestId("io-chat-options-menu");
+    await expect(menu).toBeVisible();
+    await expectMenuText(page, menu.locator(".io-chat-menu-item"), "options (1280)");
+    // a menu item that is hovered or focused turns to the bar pair; its ring is drawn inside the bar colour too
+    await expectBarRing(page, menu.locator(".io-chat-menu-item").first(), "focused menu item");
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    // a title bar that is flashing or highlighted is painted in the flash colour: the ring (the bar's text colour) keeps 3:1 there too
+    for (const scheme of SCHEMES) {
+      await setScheme(page, scheme);
+      const t = await page.evaluate(() => {
+        const cs = getComputedStyle(document.querySelector(".io-chat-panel"));
+        return { flash: cs.getPropertyValue("--io-chat-flash").trim(), barFg: cs.getPropertyValue("--io-chat-bar-fg").trim() };
+      });
+      expect(ratio(t.barFg, t.flash), `ring on the flash colour, ${scheme}`).toBeGreaterThanOrEqual(3);
+    }
+    // the focus ring on the bars: the roster panel's title bar, the mole's title and its control buttons
+    await expectBarRing(page, panel(page).getByRole("button", { name: "chat" }), "panel title bar");
+    await expectBarRing(page, mole.locator(".io-chat-bar-title"), "mole title bar");
+    await expectBarRing(page, mole.getByRole("button", { name: /options for Pat Example/ }), "mole options button");
+    // a plain row sits on the surface
+    await expectRowRing(page, panel(page).getByRole("button", { name: /Alex Example/ }), "plain row");
+    // /chat/ two-pane: the roster marks the open chat as the selected row, painted in the bar colour
+    await page.goto(`/chat/?c=${encodeURIComponent(CONV)}`, { waitUntil: "domcontentloaded" });
+    const chatPage = page.getByTestId("io-chat-page");
+    await expect(chatPage).toHaveAttribute("data-layout", "two-pane");
+    const selected = chatPage.locator('.io-chat-person[aria-current="true"]');
+    await expect(selected).toHaveCount(1);
+    await expectBarRing(page, selected, "selected row");
+    await expectRowRing(page, chatPage.locator(".io-chat-person").filter({ hasText: "Alex Example" }), "plain row (/chat/)");
+    hub.dispose();
+  });
+
+  test("P10: the '+n more' chip and its list keep the same pairs: the ring is inside the chip at 3:1 and the list text is 4.5:1", async ({ page, context }) => {
+    // 720px is a desktop dock (43rem and up) with room for one chat, so the second one folds into the chip
+    await page.setViewportSize({ width: 720, height: 800 });
+    const hub = chatHub();
+    hub.virtual(PAT);
+    hub.virtual("I9003");
+    await wire(context, { hub });
+    await page.goto("/contact/", { waitUntil: "domcontentloaded" });
+    await expect(panel(page)).toBeVisible();
+    await panel(page).getByRole("button", { name: "chat" }).click(); // the roster starts folded below 64rem
+    await panel(page).getByRole("button", { name: /Pat Example/ }).click();
+    await panel(page).getByRole("button", { name: /Alex Example/ }).click();
+    const chip = page.locator(".io-chat-more > button.io-chat-bar");
+    await expect(chip).toBeVisible();
+    await expect(moles(page)).toHaveCount(1);
+    await expectBarRing(page, chip, "+n more chip");
+    await chip.click();
+    await expectMenuText(page, page.locator("#" + (await chip.getAttribute("aria-controls")) + " .io-chat-menu-item"), "+n more list");
+    hub.dispose();
+  });
 });
 
 test.describe("375", () => {
@@ -506,6 +651,32 @@ test.describe("375", () => {
     await expect(chatPage.locator(".io-chat-page-roster")).toBeVisible();
     await expect(page.locator("html")).not.toHaveClass(/hfy-chat-convo/);
     expect(new URL(page.url()).searchParams.has("c")).toBe(false);
+    hub.dispose();
+  });
+
+  test("P10: at 375 the page's options menu reads at 4.5:1 and the focus ring at 3:1 on the title bar, its name link and a plain row, in both schemes", async ({ page, context }) => {
+    const hub = chatHub();
+    hub.virtual(PAT);
+    await wire(context, { hub });
+    await page.goto("/chat/", { waitUntil: "domcontentloaded" });
+    const chatPage = page.getByTestId("io-chat-page");
+    // the roster: a plain row sits on the surface
+    await expectRowRing(page, chatPage.locator(".io-chat-person").filter({ hasText: "Pat Example" }), "plain row (375)");
+    await chatPage.locator(".io-chat-person").filter({ hasText: "Pat Example" }).click();
+    await expect(chatPage.locator(".io-chat-bar-heading")).toHaveText("Pat Example");
+    // the options menu in the page's title bar
+    await chatPage.getByRole("button", { name: /options for Pat Example/ }).click();
+    const menu = page.getByTestId("io-chat-options-menu");
+    await expect(menu).toBeVisible();
+    await expectMenuText(page, menu.locator(".io-chat-menu-item"), "options (375)");
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    // the focus ring on the page's title bar: its back and options buttons and the name link in its heading
+    await expectBarRing(page, chatPage.getByRole("button", { name: "back to chats" }), "page back button");
+    await expectBarRing(page, chatPage.getByRole("button", { name: /options for Pat Example/ }), "page options button");
+    const nameLink = chatPage.locator(".io-chat-bar-heading a.io-chat-name-link");
+    await expect(nameLink).toHaveCount(1);
+    await expectBarRing(page, nameLink, "page name link");
     hub.dispose();
   });
 });

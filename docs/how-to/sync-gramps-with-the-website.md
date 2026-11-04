@@ -112,7 +112,7 @@ Runbook 19.11. Use this when sensitive data reached the cloud: a date of birth i
 
 Two time limits apply, and the privacy text says both:
 
-- **The 72-hour withdraw grace.** Marking a record Gramps-private (or otherwise withdrawing it) hides it at once and the next render removes its files, but its history is expunged only after 72 hours, and only when io runs `expunge.mjs --due`. Until then `sync-admin.mjs resurrect --include-withdrawn` brings a mistaken withdraw back. Nothing runs the expunge for you, so run `--due` at least weekly.
+- **The 72-hour withdraw grace.** Marking a record Gramps-private (or otherwise withdrawing it) hides it at once and the next render removes its files, but the scheduled expunge of its history comes due after 72 hours and runs only when io runs `expunge.mjs --due` (a `--record` removal or `--due --now` can go sooner). Until then `sync-admin.mjs resurrect --include-withdrawn` brings a mistaken withdraw back. Nothing runs the expunge for you, so run `--due` at least weekly.
 - **The 35-day point-in-time tail.** DynamoDB point-in-time recovery keeps older copies of the table for 35 days, and nothing here shortens that. After a restore to a point before an expunge, run the expunge again ([Operate the sync store](operate-the-sync-store.md#recover-the-store), step 4).
 
 After a record or path expunge: render again (`render --apply --full`), let the graph follow, then sweep the noncurrent site versions. The steps are in the linked procedure.

@@ -57,6 +57,26 @@
 .io-chat-page-main > .io-chat-bar > .io-chat-dot { margin-inline: var(--io-chat-gap-sm); flex: none; }
 /* A presence dot on the accent bar (a title bar, the selected row) is ringed in the bar's text colour, so green on blue stays visible. */
 .io-chat-bar .io-chat-dot, .io-chat-person[aria-current="true"] .io-chat-dot { outline: thin solid var(--io-chat-bar-fg); }
+/* P10 (P2-R77, HFY-TSK-362): two contrast failures measured in the real browser (WCAG 2.1, light and dark, at 375 and 1280).
+   1. The options menu opens inside the title bar and the kit sets no colour on it, so its items inherited the bar's text colour onto the
+      menu's own surface: 1.00 in light and 1.13 in dark against the 4.5 floor. The menu takes the page text colour. A hovered or focused
+      item still turns to the bar pair, which is the kit's own .io-chat-menu-item rule.
+   2. The kit rings a focused control in --io-chat-focus, which the theme makes the bar colour in light (1.00) and a yellow of 1.39 against
+      the bar in dark. No one colour reaches 3 against both the bar and the surface, so wherever the control is painted on the bar colour
+      (a title bar's buttons and links, the "+n more" chip, the selected row, a focused menu item) the ring is drawn inside the control, in
+      the bar's own text colour: the bar pair, 6.22 in light and 8.24 in dark. A plain row sits on the surface and keeps --io-chat-focus,
+      drawn inside too, so its ring does not move when the selection does. tests/chat.spec.mjs measures both. */
+.io-chat .io-chat-menu { color: var(--io-chat-fg); }
+.io-chat .io-chat-bar :is(button, a):focus-visible,
+.io-chat button.io-chat-bar:focus-visible,
+.io-chat .io-chat-person[aria-current="true"]:focus-visible,
+.io-chat .io-chat-menu-item:focus-visible {
+  outline-color: var(--io-chat-bar-fg);
+  outline-offset: calc(-1 * var(--io-chat-focus-ring));
+}
+.io-chat .io-chat-person:focus-visible { outline-offset: calc(-1 * var(--io-chat-focus-ring)); }
+/* The participant-name link draws its ring at the theme's control width (a.io-chat-name-link:focus-visible, below), so its inset is that width. */
+.io-chat .io-chat-bar a.io-chat-name-link:focus-visible { outline-offset: calc(-1 * var(--io-control-focus-ring)); }
 /* A one-line placeholder: the narrow mole would otherwise grow the box to three lines of hint. The box takes the row's width (the
    hint never sizes it) and keeps growing taller with the text (the kit's field-sizing). */
 .io-chat-field > .io-chat-input { flex: 1 1 0; width: 0; min-width: 0; }
