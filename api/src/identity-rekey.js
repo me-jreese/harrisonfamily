@@ -7,8 +7,18 @@
 //   follows       RSUB#<principal>/REC#person:<old> + RECSUB#   -> person:<new>; a principal who already follows <new> (or is <new>) just loses the old follow
 //   hidden items  OTD#HIDDEN META ids "birth:<old>"             -> "birth:<new>" (deduplicated; "evt:<handle>" ids carry no person id)
 //   post indexes  POST#<id> IDX#SUBJECT (GSI1 SUBJECT#person:<old>) and the post.subject copy on the post's three items
+//   ledger        CONTRIB#<author>/E#<ulid> comment events whose ref.thread (and subject) is person:<old> -> person:<new> (HFY-TSK-357, ruling P2-R82)
 //
-// NEVER re-keyed: member-principal identities (PLINKS#, CONTRIB#, INBOX#, ALLOW# items, userGrampsID, the session sub). The desktop add-on
+// The ledger step only rewrites the `ref.thread` / `subject` attributes of an event inside the author's own partition; the CONTRIB#<author> partition key
+// is the member principal and never moves. It is found through the comments now under the survivor (comment.contrib.id + comment.author.id), so a crash
+// between the comment move and the event update, or an alias processed before this step existed, is finished by the next run. It runs only while
+// SYNC#HEAD.merges_enabled is true (dark behind the merges flag, P2-R82). No comment text is read or rewritten: the event copies none (privacy by construction).
+// An event cannot outlive its comment: comments.delete and the post delete revoke the credit (revokeOps deletes the event) in the same transaction as the
+// comment delete, comments are hard-deleted (no tombstone) and an edit keeps comment.contrib, so every live event is reachable from a live C# row. The scan
+// reads one event per credited comment of the survivor's thread on each pass, so its cost grows with that thread, not with the number of stale events; the
+// re-read is what makes a crash between the comment move and the event update self-healing, so it is kept.
+//
+// NEVER re-keyed: member-principal identities (PLINKS#, CONTRIB# partitions, INBOX#, ALLOW# items, userGrampsID, the session sub). The desktop add-on
 // refuses to merge a member principal away (addon-push, hold D51), and this job refuses the alias too when it finds any trace of the old id
 // as a principal: the alias is marked `refused` and nothing moves.
 //
@@ -22,7 +32,8 @@
 import { logSafeError } from "./http.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
 import { commentGuard, hasPendingPhoto } from "./comments.js";
-import { aliasKey } from "./sync/store.js";
+import { aliasKey, getSyncHead } from "./sync/store.js";
+import { eventKeys, getEvent } from "./contrib.js";
 import { allowSubKey } from "./shared/allowlist-store.mjs";
 import { subSubject, rsubKeys, recsubGsi } from "./subscriptions.js";
 import { postKeys, gsiSubject } from "./keys.js";
@@ -60,7 +71,7 @@ export const markerKeys = (oldId) => ({ PK: `REKEY#Person#${oldId}`, SK: "META" 
 export const OTD_HIDDEN = Object.freeze({ PK: "OTD#HIDDEN", SK: "META" });
 
 const threadPk = (id) => `THREAD#person:${id}`;
-const nothing = () => ({ comments: 0, reactions: 0, follows: 0, followsDropped: 0, hidden: 0, posts: 0 });
+const nothing = () => ({ comments: 0, reactions: 0, follows: 0, followsDropped: 0, hidden: 0, posts: 0, contrib: 0 });
 
 async function queryAll(ctx, input) {
   const out = [];
@@ -155,7 +166,72 @@ async function planPosts(ctx, oldId, newId) {
   return { units, more };
 }
 
+/** Comment rows (C#) of `person:<id>`'s thread that carry a credit link: [{ author, eventId }]. */
+async function creditedComments(ctx, id) {
+  const { items, more } = await queryAll(ctx, { KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)", ExpressionAttributeValues: { ":pk": threadPk(id), ":sk": "C#" } });
+  const out = [];
+  for (const it of items) {
+    const author = it.comment?.author?.id;
+    const eventId = it.comment?.contrib?.id;
+    if (typeof author === "string" && author !== "" && typeof eventId === "string" && eventId !== "") out.push({ author, eventId });
+  }
+  return { credited: out, more };
+}
+
+/** The credit events of comments now under `newId` whose ref.thread still names `person:<oldId>`. */
+async function staleEvents(ctx, oldId, newId) {
+  const { credited, more } = await creditedComments(ctx, newId);
+  const stale = [];
+  for (const { author, eventId } of credited) {
+    const ev = await getItem(ctx, eventKeys(author, eventId));
+    if (ev?.ref?.thread === `person:${oldId}`) stale.push(ev);
+  }
+  return { stale, more };
+}
+
+async function planContrib(ctx, oldId, newId) {
+  const { stale, more } = await staleEvents(ctx, oldId, newId);
+  const from = `person:${oldId}`;
+  const to = `person:${newId}`;
+  const units = stale.map((ev) => {
+    // guarded on the thread it read: a concurrent writer (or a re-run that already moved it) cancels the update and the next pass re-plans
+    const subject = ev.subject === from;
+    return {
+      updates: [{
+        key: { PK: ev.PK, SK: ev.SK },
+        update: subject ? "SET #r.#t = :n, #s = :n" : "SET #r.#t = :n",
+        condition: "attribute_exists(PK) AND #r.#t = :o",
+        names: { "#r": "ref", "#t": "thread", ...(subject ? { "#s": "subject" } : {}) },
+        values: { ":o": from, ":n": to },
+      }],
+      t: { contrib: 1 },
+    };
+  });
+  return { units, more };
+}
+
 const PLANNERS = [planThread, planFollows, planHidden, planPosts];
+/** The ledger step is dark behind the merges flag (P2-R82): SYNC#HEAD.merges_enabled must be literally true. */
+export const mergesEnabled = async (ctx) => (await getSyncHead(ctx))?.merges_enabled === true;
+
+/**
+ * What a re-key of the pending aliases would move, as counts only (no ids, no names): thread items (comments and reactions) still under an old id,
+ * and ledger entries (the credit events of those comments, plus events still naming an old thread). An upper bound for refused aliases: the member
+ * check needs a member list the dry run does not have.
+ */
+export async function previewRekey(ctx, opts = {}) {
+  const out = { aliases: 0, threadItems: 0, ledgerEntries: 0, ledgerEnabled: await mergesEnabled(ctx) };
+  for (const p of await pendingAliases(ctx, opts)) {
+    const target = await liveSurvivor(ctx, p.newId);
+    if (!target) continue;
+    out.aliases += 1;
+    out.threadItems += (await queryAll(ctx, { KeyConditionExpression: "PK = :pk", ExpressionAttributeValues: { ":pk": threadPk(p.oldId) } })).items.length;
+    if (!out.ledgerEnabled) continue;
+    for (const { author, eventId } of (await creditedComments(ctx, p.oldId)).credited) if (await getItem(ctx, eventKeys(author, eventId))) out.ledgerEntries += 1;
+    out.ledgerEntries += (await staleEvents(ctx, p.oldId, target)).stale.length;
+  }
+  return out;
+}
 
 // ---- applying ---------------------------------------------------------------------------------------------------------------------------
 
@@ -258,9 +334,10 @@ export async function rekeyPerson(ctx, oldId, newId, { batchId } = {}) {
   }
   let counts = nothing();
   let clean = false;
+  const planners = (await mergesEnabled(ctx)) ? [...PLANNERS, planContrib] : PLANNERS;
   for (let pass = 0; pass < MAX_PASSES && !clean; pass += 1) {
     clean = true;
-    for (const planner of PLANNERS) {
+    for (const planner of planners) {
       const r = await runStep(ctx, planner, oldId, newId);
       counts = add(counts, r.tally);
       if (r.remaining || r.more) clean = false;
