@@ -12,7 +12,7 @@ Keychain item. The exception: the website rotates the refresh token on every ref
 an hour of use: one TokenManager is kept for the life of the Model) the rotated refresh token is saved to the Keychain item that
 already exists. This is the same code every run uses. The gramplet never deletes the Keychain item (a refused refresh shows the
 sign-in prompt and leaves the item for the next run to judge), and it does not ask while a sync run holds state.lock, so it cannot
-race a run on the rotating token. io has not yet confirmed this exception is acceptable (open item on HFY-TSK-278).
+race a run on the rotating token. io confirmed this exception (ruling P2-R80): the gramplet may write the refreshed token to the existing Keychain item and nothing else.
 
 It asks the website at most once every POLL_INTERVAL_S and only while the gramplet is visible; a failed ask counts as an ask, so a
 broken network is not retried faster. With no saved sign-in it shows a sign-in prompt, not an error. Everything shown is a code,
