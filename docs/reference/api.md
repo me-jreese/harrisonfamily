@@ -512,7 +512,7 @@ HFY-TSK-178 (BRD2 D2-02, D2-16; review SI-20, DL-18, PS-06). `applyBatch()` runs
 1. The caller is neither the owner (their member id is `:id`) nor an admin: `403 forbidden`, before the body is looked at.
 2. `links` is not an object, or `version` is not a non-negative integer: `400 validation`.
 3. An admin who is not the owner gives any platform a value other than `null` or a blank string: `403 forbidden` ("an admin can only clear links"). An admin who owns the page has the owner's rights.
-4. Every field goes through `validateLinks` in [`shared/profile-links.mjs`](../../shared/profile-links.mjs), the one validator for the API and the browser (surfaces.md 6.2). A failure is `422 validation`, and `details.fields` lists each failed field as `{field, code, suggest?, message?}`. A value of a known platform that is not a string fails as `invalid_url` before the validator runs. Nothing is written.
+4. Every field goes through `validateLinks` from the `links` field of `@io-kit/profile` (wired in [`api/src/links.js`](../../api/src/links.js)), the one validator for the API and the browser (surfaces.md 6.2). A failure is `422 validation`, and `details.fields` lists each failed field as `{field, code, suggest?, message?}`. A value of a known platform that is not a string fails as `invalid_url` before the validator runs. Nothing is written.
 5. The body's `version` differs from the stored one (`0` when there is no item): `409 conflict`, with the stored `{links, version, updatedAt?}` in `details.current`.
 
 ```json
