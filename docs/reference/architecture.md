@@ -8,6 +8,7 @@ The region is `us-west-2`, except for the parts that AWS requires in `us-east-1`
 
 ```text
 browser ──HTTPS──▶ Cloudflare (proxies <site>) ──HTTPS──▶ CloudFront <distribution-id>   (ACM certificate in us-east-1)
+  │  /chat/ws*, /chat/v1/*: a Cloudflare Worker route answers these ahead of CloudFront (Worker hfy-chat-worker, below)
   ├─ /api/*  ──X-Origin-Verify──▶ Function URL ▶ Lambda hfy-api
   ├─ /auth/*,
   │  /.well-known/oauth-authorization-server*
@@ -41,9 +42,13 @@ hfy-auth-edge   ▶ DynamoDB hfy-app (refresh tokens, links, passkeys and their 
                 ▶ Google signing keys, to verify GIS ID tokens (the kit's Google provider)
 hfy-edge-gate   ▶ JWKS from https://<site>/auth/.well-known/jwks.json (back through Cloudflare and CloudFront)
 hfy-mcp-edge401 ▶ nothing; it edits the response it is given
+hfy-chat-worker ▶ Durable Object ChatHub (its own SQLite storage, at Cloudflare)
+                ▶ JWKS from https://<site>/auth/.well-known/jwks.json (back through Cloudflare and CloudFront)
+                ▶ https://<site>/api/chat/* with an ES256 service token (back through Cloudflare and CloudFront, to hfy-api)
+                ▶ any other request on its two routes goes on to CloudFront with fetch(request)
 ```
 
-The diagram shows every outbound dependency of the app stack's two functions and of the two Lambda@Edge functions. Passkey credentials and challenges are stored by the auth edge, in the same table as its other records; nothing on the API side reads them.
+The diagram shows every outbound dependency of the app stack's two functions, of the two Lambda@Edge functions and of the chat Worker. Passkey credentials and challenges are stored by the auth edge, in the same table as its other records; nothing on the API side reads them.
 
 - **Sign-in path.** Sign-in goes through the auth edge. The legacy `/api/check-allowed` path is retired: HFY-TSK-317 removed its callers, and HFY-TSK-326 deleted its Lambda and API Gateway on 2026-10-14 ([Retired check-allowed route](#retired-check-allowed-route)); `authV2` decides only whether a page keeps the edge session fresh. The committed [`11ty/_data/flags.json`](../../11ty/_data/flags.json) sets `authV2` and the other five flags to `true` (HFY-TSK-069). `curl -s https://<site>/_data/flags.json | jq .authV2` shows the value the site serves.
 - **Gate history.** The production cutover ran on 2026-10-12: the site with `authV2` on was deployed first, and the private data gate was attached after it (HFY-TSK-069, HFY-R67; [How to cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md)). A signed-out `curl -s -o /dev/null -w '%{http_code}' https://<site>/person/index.json` returns `401` while the gate is attached. When it is not, it returns `200` if the request reaches S3, or `404` if the repo's default-deny `HFYAppendIndex` answers it ([Gate rollback](#request-routing), [HFYAppendIndex](#hfyappendindex)).
@@ -78,7 +83,7 @@ One CloudFront distribution, `<distribution-id>`, serves the whole site, with Cl
 
 ### The chat Worker routes (not CloudFront behaviors)
 
-Two paths leave the distribution's routing. A Cloudflare Worker route on the same host answers `<site>/chat/ws*` and `<site>/chat/v1/*` ahead of CloudFront, and every other path, `/chat/` and `/chat/index.html` included, reaches CloudFront unchanged. The Worker ([`chat-worker/`](../../chat-worker/)) verifies the `io_id` cookie and the exact `Origin`, then hands the `ChatHub` Durable Object a new request that carries only `x-chat-uid` and `x-chat-exp`. A request on those paths that is not the upgrade or `GET /chat/v1/health` goes on to CloudFront with `fetch(request)`, as if the route did not exist. The routes are created once in the Cloudflare zone and verified, not created, by the deploy pipeline. The repository does not record whether they exist: check the zone's Worker-route list. [Build, test and stage the chat Worker](../how-to/deploy-the-chat-worker.md) covers the bundle; [Edge and origin design](../explanation/edge-and-origin-design.md#the-chat-worker-route-is-the-one-path-ahead-of-cloudfront) covers why.
+Two paths leave the distribution's routing. A Cloudflare Worker route on the same host answers `<site>/chat/ws*` and `<site>/chat/v1/*` ahead of CloudFront, and every other path, `/chat/` and `/chat/index.html` included, reaches CloudFront unchanged. A request on those two paths that the Worker does not own goes on to CloudFront with `fetch(request)`, as if the route did not exist. The Worker and the service behind it are in [The chat Worker](#the-chat-worker); [Edge and origin design](../explanation/edge-and-origin-design.md#the-deliberate-exception-the-chat-worker-routes) covers why. The routes live in the Cloudflare zone, not in the distribution, so `aws cloudfront get-distribution-config` does not show them. The repository does not record whether they exist: check the zone's Worker-route list ([Check where the Worker stands](../how-to/deploy-the-chat-worker.md#check-where-the-worker-stands)).
 
 The managed policies the scripts use:
 
@@ -265,13 +270,30 @@ A private S3 bucket in `us-east-1` that holds the gate's code. `<code-bucket>` c
 
 | Function | Variables set by the stack |
 | --- | --- |
-| `hfy-api` | `TABLE_NAME`, `SESSION_JWKS_URL`, `ORIGIN_VERIFY`, `SESSION_ISSUER`, `SESSION_AUDIENCE`, `SESSION_COOKIE`, `ADMIN_LIST_BUCKET`, `ADMIN_LIST_KEY`, `MEDIA_BUCKET`, `MEDIA_PUBLIC_BASE`, and `VAPID_SECRET` only when `HasVapid` is true |
+| `hfy-api` | `TABLE_NAME`, `SESSION_JWKS_URL`, `ORIGIN_VERIFY`, `SESSION_ISSUER`, `SESSION_AUDIENCE`, `SESSION_COOKIE`, `ADMIN_LIST_BUCKET`, `ADMIN_LIST_KEY`, `MEDIA_BUCKET`, `MEDIA_PUBLIC_BASE`, `CHAT_SERVICE_PUBLIC_KEYS`, and `VAPID_SECRET` only when `HasVapid` is true |
 | `hfy-auth-edge` | `AUTH_TABLE`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `GOOGLE_CLIENT_ID`, `MCP_REDIRECT_URIS`, `MCP_RESOURCES`, `MCP_CORS_ORIGINS`, `ORIGIN_VERIFY`, `ADMIN_LIST_KEY` |
 | `hfy-edge-gate` | None. Lambda@Edge has no environment variables. The issuer, audience, JWKS URL, cookie name (`io_id`), login path (`/auth/login`) and JWKS cache timings are baked into the zip from [`edge-gate/gate.config.json`](../../edge-gate/gate.config.json) |
 | `hfy-mcp-edge401` | None |
 
 - **Not set by the stack.** `hfy-api` also reads `GROUPS_BUCKET`, `GROUPS_KEY` and the `MCP_*` variables (`MCP_RESOURCE_URL`, `MCP_AUDIENCE`, `MCP_TOKEN_ISSUER`, `MCP_CLIENT_IDS`, `MCP_SCOPES`). The stack sets none of them, so their code defaults apply; see [MCP server: Configuration](mcp-server.md#configuration). `hfy-auth-edge` also reads `MCP_CLIENT_ID` and `EDGE_MANIFEST_PATH` when they are set; the stack sets neither.
 - **Edge manifest.** The auth edge's remaining settings come from [`auth/edge.manifest.json`](../../auth/edge.manifest.json), which is packaged with the code. They include the issuer, audience, signing-key secret name, key ID and allowlist location. They also include the sign-in pages' `theme`, which has `cssUrl` (the versioned `auth-edge.css`) and `fontOrigins` (`self`), and their family-voice `copy`. For the API routes and the edge endpoints, see [API](api.md) and [Identity services](identity-services.md).
+
+### The chat Worker
+
+Code: [`chat-worker/`](../../chat-worker/) (the entry [`src/index.mjs`](../../chat-worker/src/index.mjs), the config [`wrangler.toml`](../../chat-worker/wrangler.toml) and the committed bundle [`dist/`](../../chat-worker/dist/)). It runs on Cloudflare Workers, not in AWS, and is not part of any stack.
+
+| Part | What it is |
+| --- | --- |
+| Worker | Script `hfy-chat-worker`. The `workers.dev` hostname and preview URLs are off, so the only entrances are the two routes. Observability and invocation logs are off. |
+| Routes | `<site>/chat/ws*` and `<site>/chat/v1/*`, created in the site's Cloudflare zone by the deploy. |
+| What it answers | The WebSocket upgrade on `/chat/ws`, `GET /chat/v1/health` (an unauthenticated `{ok, version, protocol}`), and `POST /chat/v1/admin/expunge` only while its admin secret is set. |
+| Durable Object | One `ChatHub`, bound as `CHAT_HUB`, SQLite-backed (migration `v1`, `new_sqlite_classes`) and created with the `wnam` location hint and no jurisdiction. A class is never renamed or deleted. It holds the conversations. |
+| Session check | The exact `Origin`, the kill switch `CHAT_ENABLED`, the `io_id` cookie against the auth edge's JWKS, then the UAT list. The hub gets only `x-chat-uid` and `x-chat-exp`. |
+| Gate on who may chat | `CHAT_OPEN_TO` is `uat` in the committed config, so only the members in `CHAT_UAT_SUBJECTS` connect, appear in the directory or receive pushes, and an empty list lets nobody in. `all` opens chat to every eligible member. The island flag `chatV1` in [`11ty/_data/flags.json`](../../11ty/_data/flags.json) is separate; the Worker's gate holds whatever the flag says. |
+| Service key | The hub signs its calls to `hfy-api` with an ES256 key. The private half is the Worker secret `CHAT_SERVICE_PRIVATE_KEY`, and the token's `kid` is the var `CHAT_SERVICE_KID`. |
+| `ChatServicePublicKeys` | The app-stack parameter (env `CHAT_SERVICE_PUBLIC_KEYS` on `hfy-api`) holding a JSON array of `{kid, spki}`, the public halves `hfy-api` trusts for `/api/chat/*`. Empty, it refuses every service call with `401`, which keeps those routes dormant ([API: the chat service routes](api.md#the-chat-service-routes)). It is public, so it is a parameter and not a Secrets Manager secret. |
+| Admin token | The Worker secret `CHAT_ADMIN_TOKEN`, a second secret, opens the expunge route ([Operate the sync store](../how-to/operate-the-sync-store.md)). |
+| Who deploys it | By hand, from the committed bundle, with wrangler: no workflow builds, tests or deploys it. The same deploy creates the routes and sets the service key. The parameter is set by a separate, io-approved change set. [Build, test, stage and deploy the chat Worker](../how-to/deploy-the-chat-worker.md) is the procedure and [Rotate the chat service key](../how-to/rotate-the-chat-service-key.md) the key's rotation. |
 
 ### IAM
 
@@ -454,6 +476,7 @@ Template: [`infrastructure/cloudformation/app-stack.yaml`](../../infrastructure/
 | `JoinSesIdentityArn` | Empty | The verified SES identity of the join subdomain that sends access-request mail from the auth edge; drives `HasJoinSes` and the edge's `ses:SendEmail` grant |
 | `JoinFromAddress` | Empty | The bare `From` address on that identity (`JOIN_FROM_ADDRESS`); the grant is conditioned on it |
 | `JoinSesConfigurationSet` | Empty | The configuration set for access-request mail only (`JOIN_SES_CONFIGURATION_SET`); required whenever `JoinSesIdentityArn` is set (the stack refuses one without the other), and the code route answers `503 unavailable` while it is empty |
+| `ChatServicePublicKeys` | Empty | `CHAT_SERVICE_PUBLIC_KEYS` on `hfy-api`: a JSON array of `{kid, spki}`, the chat Worker's service public keys. Empty refuses every chat service call. Parameter-only changes use `--use-previous-template` ([Deploy the Worker to production](../how-to/deploy-the-chat-worker.md#6-trust-the-keys-public-half-in-the-app-stack)) |
 | `JoinBounceAlarmName`, `JoinComplaintAlarmName` | `hfy-ses-access-request-bounce-rate`, `hfy-ses-access-request-complaint-rate` | The CloudWatch alarms the code route reads (`JOIN_MAIL_ALARMS`); the edge may call `cloudwatch:DescribeAlarms` (read-only, on `*`: the call is list-style and AWS may not honor an alarm ARN for it; the code asks for these two names only, and the RG-4 route smoke checks the real IAM behavior) |
 
 #### Conditions
@@ -600,13 +623,14 @@ Nothing else is granted. CI cannot write under `uploads/`. It also cannot update
 | Uploads to `<code-bucket>` and `<edge-code-bucket>` | Manual, after the package scripts |
 | Secrets Manager secrets | [`scripts/infra/create-origin-verify.sh`](../../scripts/infra/create-origin-verify.sh), [`scripts/infra/create-session-key.sh`](../../scripts/infra/create-session-key.sh); others, such as the VAPID secret, by hand |
 | Cloudflare zone configuration (DNS, proxying, any Cache Rules, cache purges) | Cloudflare dashboard or API; not in the repo |
+| The chat Worker `hfy-chat-worker`, its two routes, its Durable Object and its two Worker secrets | `wrangler` by hand, from the committed [`chat-worker/dist/`](../../chat-worker/dist/) ([Build, test, stage and deploy the chat Worker](../how-to/deploy-the-chat-worker.md)). The routes come from `wrangler.toml` at deploy time. |
 | GitHub OIDC provider | Pre-existing; referenced by ARN |
 
 ## Secrets
 
 The secrets inventory is owned by [Private data and secrets](private-data-and-secrets.md): each secret's name, contents, readers, creator and rotation are listed under [Secrets Manager](private-data-and-secrets.md#secrets-manager), [Google Cloud](private-data-and-secrets.md#google-cloud-legacy-deleted), [GitHub repository secrets](private-data-and-secrets.md#github-repository-secrets) and [Local-only tokens and environment variables](private-data-and-secrets.md#local-only-tokens-and-environment-variables).
 
-This page covers only where secrets shape the system: the `X-Origin-Verify` header under [Origins](#origins) and [`ORIGIN_VERIFY`](#origin_verify), the `SigningKey` and `Secrets` statements under [IAM](#iam), and the [`HasVapid` condition](#conditions). The API holds no signing key; it verifies sessions against the edge's JWKS ([API: Session verification](api.md#session-verification)), and so does the data gate.
+This page covers only where secrets shape the system: the `X-Origin-Verify` header under [Origins](#origins) and [`ORIGIN_VERIFY`](#origin_verify), the `SigningKey` and `Secrets` statements under [IAM](#iam), and the [`HasVapid` condition](#conditions). The chat Worker's two secrets, `CHAT_SERVICE_PRIVATE_KEY` and `CHAT_ADMIN_TOKEN`, are Cloudflare Worker secrets, not Secrets Manager secrets ([The chat Worker](#the-chat-worker)). The API holds no signing key; it verifies sessions against the edge's JWKS ([API: Session verification](api.md#session-verification)), and so does the data gate.
 
 ## Discrepancies in the code
 
@@ -623,4 +647,4 @@ This page covers only where secrets shape the system: the `X-Origin-Verify` head
 
 - [Why one CloudFront distribution fronts everything](../explanation/edge-and-origin-design.md), [The identity model](../explanation/identity-model.md), [How member content stays accountable](../explanation/member-content-design.md), [The privacy model for family data](../explanation/family-data-privacy.md), [Why releases ship through a pipeline and feature flags](../explanation/release-model.md)
 - [Codebase map](codebase-map.md), [API](api.md), [MCP server](mcp-server.md), [Identity services](identity-services.md), [Theme and asset build](theme-and-asset-build.md), [Repository operations](repository-operations.md), [Private data and secrets](private-data-and-secrets.md), [Cost estimate](cost-estimate.md)
-- [How to stand up the static site](../how-to/stand-up-the-static-site.md), [How to deploy the app stack](../how-to/deploy-the-app-stack.md), [How to deploy and update the Lambda@Edge functions](../how-to/deploy-the-edge-functions.md), [How to cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md), [How to publish a change to the HFYAppendIndex CloudFront Function](../how-to/publish-the-cloudfront-function.md), [How to connect an MCP client](../how-to/connect-an-mcp-client.md), [How to turn on push notifications](../how-to/turn-on-push-notifications.md), [How to rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md), [How to rotate the session signing key](../how-to/rotate-the-session-signing-key.md), [How to diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md)
+- [How to stand up the static site](../how-to/stand-up-the-static-site.md), [How to deploy the app stack](../how-to/deploy-the-app-stack.md), [How to deploy and update the Lambda@Edge functions](../how-to/deploy-the-edge-functions.md), [How to cut over to authV2 and the private data gate](../how-to/cut-over-to-the-private-data-gate.md), [How to publish a change to the HFYAppendIndex CloudFront Function](../how-to/publish-the-cloudfront-function.md), [How to connect an MCP client](../how-to/connect-an-mcp-client.md), [How to turn on push notifications](../how-to/turn-on-push-notifications.md), [How to rotate the origin-verify secret](../how-to/rotate-the-origin-verify-secret.md), [How to build, test, stage and deploy the chat Worker](../how-to/deploy-the-chat-worker.md), [How to rotate the chat service key](../how-to/rotate-the-chat-service-key.md), [How to rotate the session signing key](../how-to/rotate-the-session-signing-key.md), [How to diagnose sign-in and API failures](../how-to/diagnose-sign-in-and-api-failures.md)
