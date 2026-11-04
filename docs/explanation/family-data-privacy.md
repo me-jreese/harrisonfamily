@@ -52,7 +52,17 @@ After the cutover to the cloud store, the desktop addon is the first line of def
 - **Photos** with location data, photos tied to a birth event, and PDFs are held until io releases them.
 - **Other dates** are stored in full but published as a year only.
 
-Three layers enforce it: the addon before sending, the server on every write, and the renderer on every file it writes. A hit on the server is a refusal with a rule and a pointer, never the value. What reached the cloud by mistake is removed with the expunge ([Where the family data lives](family-data-source-of-truth.md#removing-something)); backups keep older copies for 35 days.
+Three layers enforce it: the addon before sending, the server on every write, and the renderer on every file it writes. A hit on the server is a refusal with a rule and a pointer, never the value. What reached the cloud by mistake is removed with the expunge ([Where the family data lives](family-data-source-of-truth.md#removing-something)); backups keep older copies for a while (see below).
+
+### Removed data and backups
+
+Something removed from the site disappears from the live copies at once. A withdrawn record is erased for good after a 72-hour grace period, so a mistaken mass withdraw can be undone. Backups are the exception, and the [privacy page](../../11ty/privacy/index.html) (section 7) says so in plain words:
+
+- **Database backups:** the app table has DynamoDB point-in-time recovery on (`PointInTimeRecoveryEnabled` in `app-stack.yaml`), which keeps up to 35 days. A removed item can survive there for up to 35 days, then expires on its own.
+- **Chat:** the chat Worker's SQLite-backed Durable Object keeps point-in-time recovery for 30 days, per Cloudflare's [SQLite storage API documentation](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api) (read 2026-11-03). A removed chat message can survive there for up to 30 days. The DynamoDB mirror of chat falls under the 35-day tail above.
+- **Not backups:** S3 noncurrent versions of snapshots and the render shadow expire after 1 day, and the expunge removes upload versions directly.
+
+The page promises no more than this. Recheck the Cloudflare figure when you next touch the chat text: it is the provider's number, not ours.
 
 ## One bucket for the site and the data
 

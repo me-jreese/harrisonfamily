@@ -95,10 +95,14 @@ REQUIRED = [
     ("sharing: no selling or sharing beyond the listed providers", "privacy", [
         "Still no selling or sharing beyond these.",
     ]),
-    ("removal from the cloud, with the 35-day backup tail", "privacy", [
+    ("removal from the cloud, with the 35-day and 30-day backup tails", "privacy", [
         "To have something removed from the site and its cloud storage (a detail on a family page, a suggestion, a chat message or a photo),",
         "The admin can remove it from every copy we keep in the cloud: the change history, saved snapshots, the chat copy and stored photos.",
-        "Our database's automatic backups go back 35 days, so a removed item can stay in those backups for up to 35 days before they age out.",
+        "Something the admin removes disappears from those live copies at once.",
+        "its history is erased for good after a 72-hour grace period, in case it was taken down by mistake.",
+        "Our database keeps automatic backups that go back 35 days, so a removed item can stay in those backups for up to 35 days.",
+        "The chat service keeps its own recovery copies for 30 days, so a removed chat message can stay there for up to 30 days.",
+        "Backup copies expire on their own after that.",
         "Ask for a suggestion, a chat message or a photo you added to be removed from the cloud (section 7).",
     ]),
 ]
