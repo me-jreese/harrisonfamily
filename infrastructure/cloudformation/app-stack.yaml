@@ -327,13 +327,14 @@ Resources:
   # HTML pages) and detaches it to roll back. Report-only first: the browser reports what the enforced policy would block and
   # blocks nothing. Override:false so a response that already carries its own CSP (none does today) keeps it. The strings are
   # scripts/cloudfront/site-csp.json "base" (pinned by test_app_stack.py). The /uploads/* sandbox CSP above is a separate policy
-  # on a separate behavior and is unchanged.
+  # on a separate behavior and is unchanged. CloudFront refuses a Comment over 128 characters only when it creates the policy, so
+  # template validation and cfn-lint pass it and the change set fails mid-execute (HFY-TSK-361); test_app_stack.py checks the limits.
   SiteCspReportOnlyPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
       ResponseHeadersPolicyConfig:
         Name: !Sub ${FunctionName}-site-csp-report-only
-        Comment: "harrisonfamily HTML pages: Content-Security-Policy-Report-Only (HFY-TSK-149); /join/ is swapped to its Turnstile variant by JoinCspFunction"
+        Comment: "harrisonfamily HTML pages: report-only Content-Security-Policy; JoinCspFunction swaps in the Turnstile variant under /join/"
         CustomHeadersConfig:
           Items:
             - Header: Content-Security-Policy-Report-Only
@@ -344,7 +345,7 @@ Resources:
     Properties:
       ResponseHeadersPolicyConfig:
         Name: !Sub ${FunctionName}-site-csp
-        Comment: "harrisonfamily HTML pages: enforced Content-Security-Policy (HFY-TSK-149); /join/ is swapped to its Turnstile variant by JoinCspFunction"
+        Comment: "harrisonfamily HTML pages: enforced Content-Security-Policy; JoinCspFunction swaps in the Turnstile variant under /join/"
         SecurityHeadersConfig:
           ContentSecurityPolicy:
             ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'"
