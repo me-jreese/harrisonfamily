@@ -71,7 +71,7 @@ This takes the policy and the `/join/` function off the default behavior, and th
 
 ## When a page needs a new source
 
-Change [`site-csp.json`](../../scripts/cloudfront/site-csp.json), the two policy strings in `app-stack.yaml` and the `JOIN_CSP` string in `join-csp.js` together; `site-csp.test.mjs` and `test_app_stack.py` fail until they agree. Then run the crawl, update the stack, and step through report-only again. The v3 map's `worker-src 'self'` went in this way (`viz-v3-csp-worker`).
+Change [`site-csp.json`](../../scripts/cloudfront/site-csp.json), the two policy strings in `app-stack.yaml` and the `JOIN_CSP` string in `join-csp.js` together; `site-csp.test.mjs` and `test_app_stack.py` fail until they agree. Keep each policy's `Comment` at 128 characters or fewer: CloudFront refuses a longer one only when the change set creates the policy, so template validation and `cfn-lint` pass it and the update fails and rolls back; `test_app_stack.py` (`CreateTimeLimits`) catches it offline. Then run the crawl, update the stack, and step through report-only again. The v3 map's `worker-src 'self'` went in this way (`viz-v3-csp-worker`).
 
 ## The worker-src stage (HFY-TSK-310, viz-v3-csp-worker)
 
