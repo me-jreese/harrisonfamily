@@ -9,7 +9,7 @@
 // printed.
 //
 // Usage (from the repository root; needs `npm ci` in islands/ and `npx playwright install chromium-headless-shell` once):
-//   node scripts/infra/check-csp-live.mjs [--site https://harrisonfamily.us] [--pages /,/join/] [--json]
+//   node scripts/infra/check-csp-live.mjs [--site https://harrisonfamily.us] [--pages /,/join/] [--json] [--ignore-host <host>]...
 // Exit: 0 only when every page loaded (HTTP 200, or an expected landing page after a redirect) under a CSP header with zero violations;
 // 1 when any page failed that test; 2 for a usage or setup error. Docs: docs/how-to/add-the-site-content-security-policy.md#live-check
 // The summarising and exit-code logic below is pure and unit-tested without a browser (scripts/cloudfront/test/check-csp-live.test.mjs).
@@ -27,7 +27,7 @@ const trimSlash = (p) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
 
 /** Parse argv (without node and the script). Throws an Error with a usage message on bad input. */
 export function parseArgs(argv) {
-  const out = { site: DEFAULT_SITE, pages: DEFAULT_PAGES.slice(), json: false, help: false };
+  const out = { site: DEFAULT_SITE, pages: DEFAULT_PAGES.slice(), json: false, help: false, ignoreHosts: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -37,6 +37,11 @@ export function parseArgs(argv) {
     if (a === "--json") out.json = true;
     else if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--site") out.site = value();
+    else if (a === "--ignore-host") {
+      const h = value().trim().toLowerCase();
+      if (!h || /[/:\s]/.test(h)) throw new Error("--ignore-host takes a bare host name such as static.example.com");
+      if (!out.ignoreHosts.includes(h)) out.ignoreHosts.push(h);
+    }
     else if (a === "--pages") {
       const list = value().split(",").map((p) => p.trim()).filter(Boolean).map((p) => (p.startsWith("/") ? p : `/${p}`));
       if (!list.length) throw new Error("--pages needs at least one path");
@@ -114,16 +119,19 @@ export function isExpectedLanding(requestedPath, finalUrl, siteOrigin) {
  * Returns { ok, exitCode, site, totals, pages: [...], groups: [...] }; `pages[i].ok` is true only when it loaded (HTTP 200 at an expected
  * landing), carried a CSP header, and had zero site violations and zero console violation messages.
  */
-export function summarize(results, { site = DEFAULT_SITE } = {}) {
+export function summarize(results, { site = DEFAULT_SITE, ignoreHosts = [] } = {}) {
   const origin = new URL(site).origin;
   const groups = new Map();
   const pages = results.map((r) => {
     const all = (r.violations || []).map((v) => normalizeViolation(v, origin));
-    const mine = all.filter((v) => v.scope === "site");
-    const foreign = all.length - mine.length;
+    const ignored = (host) => ignoreHosts.includes(String(host).toLowerCase());
+    const mine = all.filter((v) => v.scope === "site" && !ignored(v.blockedHost));
+    const foreign = all.filter((v) => v.scope !== "site").length;
     const blocking = mine.filter((v) => v.disposition === "enforce").length;
     const reportOnly = mine.length - blocking;
-    const consoleKinds = (r.consoleMessages || []).map(classifyConsole);
+    const consoleKinds = (r.consoleMessages || [])
+      .filter((m) => !ignoreHosts.some((h) => String(m).toLowerCase().includes(`//${h}`)))
+      .map(classifyConsole);
     const consoleViolations = consoleKinds.filter((k) => k === "violation").length;
     const consoleNotices = consoleKinds.filter((k) => k === "notice").length;
     const policy = r.policy || policyOf(r.headers);
@@ -206,7 +214,8 @@ export function jsonLine(summary, at = new Date().toISOString()) {
 const USAGE = `Usage: node scripts/infra/check-csp-live.mjs [--site <https url>] [--pages </a,/b/>] [--json]
   Loads each page signed out at 375 and 1280 wide in Playwright's bundled headless shell and counts CSP violations.
   Exit 0 only when every page loaded with zero violations; 1 otherwise; 2 for a usage or setup error.
-  --json prints only the machine-readable JSON line.`;
+  --json prints only the machine-readable JSON line.
+  --ignore-host <host> leaves out violations whose blocked host is exactly <host> (repeatable, default none).`;
 
 // Reports every violation to Node (so it survives a redirect) and keeps a copy in window.__csp.
 const INIT_SCRIPT = () => {
@@ -274,7 +283,7 @@ export async function main(argv = process.argv.slice(2)) {
       }
     }
   } finally { await browser.close().catch(() => {}); }
-  const summary = summarize(results, { site: opts.site });
+  const summary = summarize(results, { site: opts.site, ignoreHosts: opts.ignoreHosts });
   if (!opts.json) console.log(formatTable(summary) + "\n");
   console.log(jsonLine(summary));
   return exitCodeOf(summary);

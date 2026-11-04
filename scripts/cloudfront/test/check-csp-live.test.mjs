@@ -146,10 +146,25 @@ test("parseArgs: defaults, --site, --pages, --json; bad input throws", () => {
   assert.equal(d.json, false);
   assert.ok(["/", "/join/", "/auth/login", "/family-login/", "/posts/", "/privacy/", "/terms/", "/about/", "/contact/", "/logged-out/", "/search/", "/chat/", "/me/"].every((p) => d.pages.includes(p)));
   const o = parseArgs(["--site", "https://site.example/ignored/path", "--pages", "/join/, privacy/,/join/", "--json"]);
-  assert.deepEqual(o, { site: "https://site.example", pages: ["/join/", "/privacy/"], json: true, help: false });
+  assert.deepEqual(o, { site: "https://site.example", pages: ["/join/", "/privacy/"], json: true, help: false, ignoreHosts: [] });
   assert.equal(parseArgs(["--site", "http://127.0.0.1:8089"]).site, "http://127.0.0.1:8089");
   assert.throws(() => parseArgs(["--site", "http://site.example"]), /https/);
   assert.throws(() => parseArgs(["--site", "not a url"]), /not a URL/);
   assert.throws(() => parseArgs(["--pages"]), /needs a value/);
   assert.throws(() => parseArgs(["--click"]), /unknown option/);
+});
+
+test("--ignore-host: repeatable, exact host only; ignored violations (and their console lines) do not fail the run", () => {
+  assert.deepEqual(parseArgs(["--ignore-host", "Static.Example.com", "--ignore-host", "b.example", "--ignore-host", "b.example"]).ignoreHosts, ["static.example.com", "b.example"]);
+  assert.throws(() => parseArgs(["--ignore-host"]), /needs a value/);
+  assert.throws(() => parseArgs(["--ignore-host", "https://x.example"]), /bare host/);
+  const beacon = viol({ blockedURI: "https://static.example.com/beacon.min.js" });
+  const msg = "Loading the script 'https://static.example.com/beacon.min.js' violates the following Content Security Policy directive: \"script-src 'self'\".";
+  const run = (opts) => summarize([load("/", { violations: [beacon], consoleMessages: [msg] })], { site: SITE, ...opts });
+  assert.equal(run({}).exitCode, 1);
+  const ign = run({ ignoreHosts: ["static.example.com"] });
+  assert.equal(ign.exitCode, 0);
+  assert.equal(ign.totals.violations, 0);
+  assert.equal(ign.totals.consoleViolations, 0);
+  assert.equal(run({ ignoreHosts: ["example.com"] }).exitCode, 1);
 });
