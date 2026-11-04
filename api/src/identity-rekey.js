@@ -13,6 +13,10 @@
 // is the member principal and never moves. It is found through the comments now under the survivor (comment.contrib.id + comment.author.id), so a crash
 // between the comment move and the event update, or an alias processed before this step existed, is finished by the next run. It runs only while
 // SYNC#HEAD.merges_enabled is true (dark behind the merges flag, P2-R82). No comment text is read or rewritten: the event copies none (privacy by construction).
+// An event cannot outlive its comment: comments.delete and the post delete revoke the credit (revokeOps deletes the event) in the same transaction as the
+// comment delete, comments are hard-deleted (no tombstone) and an edit keeps comment.contrib, so every live event is reachable from a live C# row. The scan
+// reads one event per credited comment of the survivor's thread on each pass, so its cost grows with that thread, not with the number of stale events; the
+// re-read is what makes a crash between the comment move and the event update self-healing, so it is kept.
 //
 // NEVER re-keyed: member-principal identities (PLINKS#, CONTRIB# partitions, INBOX#, ALLOW# items, userGrampsID, the session sub). The desktop add-on
 // refuses to merge a member principal away (addon-push, hold D51), and this job refuses the alias too when it finds any trace of the old id

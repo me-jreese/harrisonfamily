@@ -369,6 +369,15 @@ describe("sync-admin: rekey and merges-on", () => {
     expect(w.row("SYNC#HEAD", "META").merges_enabled).toBe(false);
   });
 
+  it("merges-on --apply reminds the operator to resweep; the dry run does not", async () => {
+    const w = world({ head: { merges_enabled: false } });
+    const lines = [];
+    await mergesOn({ ...actx(w), log: (m) => lines.push(m) }, { apply: false });
+    expect(lines.join("\n")).not.toMatch(/resweep/);
+    await mergesOn({ ...actx(w), log: (m) => lines.push(m) }, { apply: true });
+    expect(lines.join("\n")).toMatch(/rekey --apply --resweep/);
+  });
+
   it("a refused alias does not block merges-on (it is settled), and rekey takes no other flags", async () => {
     const w = world({ members: ["I0001"], head: { merges_enabled: false } });
     w.put(alias("I0001", "I0002"));
@@ -610,7 +619,7 @@ describe("the contribution ledger follows the thread (P2-R82)", () => {
     const before = snapshot(w);
     const r = await rekey({ ...w.ctx, log: (m) => lines.push(m) }, { apply: false });
     expect(r).toMatchObject({ planned: true, pending: 1, threadItems: 2, ledgerEntries: 2 });
-    expect(lines.join("\n")).toMatch(/2 thread item\(s\) and 2 ledger entries would move/);
+    expect(lines.join("\n")).toMatch(/at most 2 thread item\(s\) and 2 ledger entries would move/);
     expect(lines.join("\n")).not.toMatch(/I000|I09|person:/);
     expect(snapshot(w)).toBe(before);
   });

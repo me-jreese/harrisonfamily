@@ -138,7 +138,10 @@ export async function mergesOn(ctx, o) {
   const pending = await pendingAliases(ctx);
   if (pending.length > 0 && o.apply) throw new AdminError(`merges-on refused: ${pending.length} merge alias(es) have an unfinished re-key (run rekey --apply first)`);
   if (pending.length > 0) ctx.log(`merges-on: ${pending.length} merge alias(es) have an unfinished re-key; --apply would be refused`);
-  return setMerges(ctx, true, o);
+  const r = await setMerges(ctx, true, o);
+  // The ledger step of the re-key (P2-R82) is dark while the switch is off, so an alias that finished before this flip kept its events on the old thread.
+  if (r.changed && o.apply) ctx.log("merges-on: aliases that finished before this flip have not had their contribution-ledger events moved; run rekey --apply --resweep once (see operate-the-sync-store)");
+  return r;
 }
 export const mergesOff = (ctx, o) => setMerges(ctx, false, o);
 
@@ -151,7 +154,7 @@ export async function rekey(ctx, { apply, members, retryRefused, resweep }) {
   if (!apply && pending.length > 0) {
     // counts only: thread items and ledger entries that would follow the survivor (P2-R82); never ids or names
     const p = await previewRekey(ctx, opts);
-    ctx.log(`rekey: ${p.threadItems} thread item(s) and ${p.ledgerEntries} ledger entr${p.ledgerEntries === 1 ? "y" : "ies"} would move${p.ledgerEnabled ? "" : " (ledger step off: merges_enabled is not true)"}`);
+    ctx.log(`rekey: at most ${p.threadItems} thread item(s) and ${p.ledgerEntries} ledger entr${p.ledgerEntries === 1 ? "y" : "ies"} would move (aliases of member principals are refused by --apply and move nothing)${p.ledgerEnabled ? "" : " (ledger step off: merges_enabled is not true)"}`);
     return { planned: true, pending: pending.length, apply, threadItems: p.threadItems, ledgerEntries: p.ledgerEntries };
   }
   if (!apply || pending.length === 0) return { planned: !apply, pending: pending.length, apply };
