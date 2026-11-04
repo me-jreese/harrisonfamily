@@ -1,6 +1,6 @@
 """Carrying out a person's decisions on conflicts, in the same run (sync.md 13.1, BRD2 11.1 6.5; review SI-09).
 
-The Gramps window lists each conflict with its choices. The command line never decides one. A decision is carried out by planning the
+The Gramps window lists each conflict with its choices. The command line never decides one, and the window pre-selects Skip for every conflict (P2-R78). A decision is carried out by planning the
 pull a second time over inputs that already contain the answer, so the merge engine's own rules (lift, projection, the push) produce
 the result and nothing here re-implements them:
 
@@ -9,7 +9,7 @@ the result and nothing here re-implements them:
     take website    the desktop object gets the website's value at the path (``merge.set_local_value``), and the pin's base becomes that
                     value too, so the two sides converge
     skip            nothing changes; the conflict stays open and pinned
-    date            a composite date conflict offers three: keep mine; take the website year and keep my day and month (the default);
+    date            a composite date conflict offers three: keep mine; take the website year and keep my day and month;
                     take the website value and clear my day and month (needs an extra confirmation). ``merge.resolve_date`` says what the
                     desktop and the website hold afterwards
     delete vs edit  the website deleted an object the desktop holds data for: keep mine drops the base so the object is created again on
@@ -44,8 +44,19 @@ def conflict_type(c):
     return KIND_FIXED
 
 
+SKIP_DEFAULT_NOTE = ("Skip for now is already chosen for every conflict. Nothing changes until you pick Keep mine or Take website "
+                     "yourself, because a field edited in both places deserves a look from you first. A skipped conflict stays open.")
+
+
 def choices(c):
-    """The offers for one conflict, in the order the window shows them: ``[{id, label, default, needs_confirmation, detail}]``."""
+    """The offers for one conflict, in the order the window shows them: ``[{id, label, default, needs_confirmation, detail}]``.
+
+    The default is decided here, once (ruling P2-R78): every conflict kind is pre-selected as Skip, so nothing is applied until a person
+    picks Keep mine or Take website. Keep mine and Take website stay explicit choices."""
+    return [dict(ch, default=ch["id"] == SKIP) for ch in _offers(c)]
+
+
+def _offers(c):
     kind = conflict_type(c)
     skip = {"id": SKIP, "label": "Skip for now", "default": False, "needs_confirmation": False, "detail": "Nothing changes; the conflict stays open."}
     if kind == KIND_DATE:

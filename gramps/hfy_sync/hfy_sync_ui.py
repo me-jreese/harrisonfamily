@@ -334,6 +334,8 @@ class SyncWindow:
         box.set_margin_start(18)
         if not section["rows"]:
             box.pack_start(_label(_("Nothing here."), css="hfy-dim"), False, False, 0)
+        if section.get("note"):
+            box.pack_start(_label(section["note"], wrap=True, css="hfy-dim"), False, False, 0)
         for row in section["rows"]:
             box.pack_start(self._row(section["id"], row), False, False, 0)
         exp.add(box)

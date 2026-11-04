@@ -62,10 +62,10 @@ class GuiFlow(P.PushCase):
             rv = flow.review()
             self.assertIsNone(rv.refusal, rv.refusal)
             (row,) = [r for r in rv.model["by_id"]["conflicts"]["rows"] if r["handle"] == birth["handle"]]
-            self.assertEqual(row["default"], "take_year_keep_daymonth")
+            self.assertEqual(row["default"], "skip", "P2-R78: nothing is pre-selected but Skip")
             self.assertTrue(row["diffs"][0]["yours_local_only"])
             self.assertIn(str(dv[0]), row["diffs"][0]["yours"], "the yours column shows the local day")
-            banner = flow.apply(rv, {row["id"]: {"choice": row["default"]}})
+            banner = flow.apply(rv, {row["id"]: {"choice": "take_year_keep_daymonth"}})
             self.assertTrue(banner["ok"], banner)
             return banner
 

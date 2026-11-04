@@ -64,6 +64,37 @@ class Base(PushCase):
         return "\n".join(out)
 
 
+class TheDefaultIsSkip(unittest.TestCase):
+    """One place decides the default (decide.choices), one conflict kind at a time (P2-R78)."""
+
+    CASES = {
+        decide.KIND_FIELD: {"kind": "field", "path": "/primary_name/first_name", "class": "Person", "handle": "h", "base": "a", "cloud": "b", "local": "c"},
+        "composite": {"kind": "composite", "path": "/primary_name", "class": "Person", "handle": "h", "base": {"x": 1}, "cloud": {"x": 2}, "local": {"x": 3}},
+        "list": {"kind": "list", "path": "/alternate_names", "class": "Person", "handle": "h", "base": [1], "cloud": [2], "local": [3]},
+        decide.KIND_DATE: {"kind": "field", "path": "/date", "class": "Event", "handle": "h", "base": {"_class": "Date"}, "cloud": {"_class": "Date"},
+                           "local": {"_class": "Date"}},
+        decide.KIND_DELETE: {"kind": "delete_edit", "class": "Note", "handle": "h", "cloud": M.TOMBSTONE},
+        decide.KIND_FIXED: {"kind": "identity", "class": "Person", "handle": "h"},
+    }
+
+    def test_every_kind_pre_selects_skip_and_only_skip(self):
+        for name, c in self.CASES.items():
+            ch = decide.choices(c)
+            self.assertEqual([x["id"] for x in ch if x["default"]], ["skip"], name)
+            self.assertIn("skip", [x["id"] for x in ch], name)
+
+    def test_keep_mine_and_take_website_stay_explicit_choices(self):
+        for name in (decide.KIND_FIELD, "composite", "list", decide.KIND_DELETE):
+            ids = [x["id"] for x in decide.choices(self.CASES[name])]
+            self.assertIn("keep_mine", ids, name)
+            self.assertIn("take_website", ids, name)
+        self.assertIn("take_year_keep_daymonth", [x["id"] for x in decide.choices(self.CASES[decide.KIND_DATE])])
+
+    def test_a_missing_decision_reads_as_skip(self):
+        self.assertEqual(decide._normal(None), ("skip", False))
+        self.assertEqual(decide._normal({}), ("skip", False))
+
+
 class TheModel(Base):
     def setup_changes(self):
         self.seed()
@@ -126,7 +157,10 @@ class TheModel(Base):
         c = self.conflict_row(rv)
         self.assertEqual([x["id"] for x in c["choices"]], ["keep_mine", "take_website", "skip"])
         self.assertEqual([x["label"] for x in c["choices"]], ["Keep mine", "Take website", "Skip for now"])
-        self.assertEqual(c["default"], "keep_mine")
+        self.assertEqual(c["default"], "skip")      # P2-R78
+        self.assertEqual([x["id"] for x in c["choices"] if x["default"]], ["skip"])
+        self.assertEqual(self.section(rv, "conflicts")["note"], decide.SKIP_DEFAULT_NOTE)
+        self.assertIn("Skip for now is already chosen", self.section(rv, "conflicts")["note"])
 
     def test_the_check_changes_nothing_and_stores_no_value(self):
         self.setup_changes()
@@ -251,6 +285,20 @@ class Decisions(Base):
         self.assertEqual((self.name_here(), self.name_there()), ("Mine", "Theirs"))
         self.assertEqual(self.rows("SELECT state, decision FROM conflicts WHERE id = ?", cid), [("parked", None)])
 
+    def test_a_command_line_sync_with_yes_and_no_explicit_choice_applies_nothing_for_a_conflict(self):  # P2-R78
+        fl, rv = self.conflict()
+        cid = self.conflict_row(rv)["id"]
+        doc = self.pull("sync", mode="cli", yes=True)
+        self.assertEqual((doc["result"], doc["exit_code"]), ("partial", 20), doc)
+        self.assertEqual((self.name_here(), self.name_there()), ("Mine", "Theirs"))
+        self.assertEqual(self.rows("SELECT state, decision FROM conflicts WHERE id = ?", cid), [("parked", None)])
+
+    def test_the_window_default_applied_as_is_changes_nothing(self):  # P2-R78
+        fl, rv = self.conflict()
+        row = self.conflict_row(rv)
+        fl.apply(rv, {row["id"]: {"choice": row["default"]}})
+        self.assertEqual((self.name_here(), self.name_there()), ("Mine", "Theirs"))
+
     def test_no_decision_is_the_same_as_skip(self):
         fl, rv = self.conflict()
         fl.apply(rv, {})
@@ -309,12 +357,12 @@ class CompositeDate(Base):
     def cloud_date(self):
         return self.cloud.heads[self.birth["handle"]]["obj"]["date"]["dateval"][:3]
 
-    def test_a_composite_date_conflict_offers_three_choices_and_the_default_keeps_my_day_and_month(self):  # AC6
+    def test_a_composite_date_conflict_offers_three_choices_and_skip_is_the_default(self):  # AC6
         self.assertEqual(self.row["type"], decide.KIND_DATE)
         self.assertEqual([x["id"] for x in self.row["choices"]], ["keep_mine", "take_year_keep_daymonth", "clear_daymonth", "skip"])
         self.assertEqual([x["label"] for x in self.row["choices"]][:3],
                          ["Keep mine", "Take the website year and keep my day and month", "Take the website value and clear my day and month"])
-        self.assertEqual(self.row["default"], "take_year_keep_daymonth")
+        self.assertEqual(self.row["default"], "skip")      # P2-R78
         by = {x["id"]: x for x in self.row["choices"]}
         self.assertTrue(by["clear_daymonth"]["needs_confirmation"])
         self.assertFalse(by["take_year_keep_daymonth"]["needs_confirmation"])
@@ -327,7 +375,7 @@ class CompositeDate(Base):
         self.assertEqual(d["website"], str(self.dv[2] + 1))
         self.assertEqual(d["base"], str(self.dv[2]))
 
-    def test_the_default_takes_the_website_year_and_keeps_the_local_day_and_month(self):  # AC6, review SI-09
+    def test_choosing_the_website_year_takes_it_and_keeps_the_local_day_and_month(self):  # AC6, review SI-09
         banner = self.fl.apply(self.rv, {self.row["id"]: {"choice": "take_year_keep_daymonth"}})
         self.assertTrue(banner["ok"], banner)
         self.assertEqual(self.local_date(), [self.dv[0], self.dv[1], self.dv[2] + 1])

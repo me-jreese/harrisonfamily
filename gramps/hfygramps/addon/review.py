@@ -332,6 +332,7 @@ def build_model(pull_pv, push_pv, ctx, header=None):
         row["default"] = next((x["id"] for x in row["choices"] if x["default"]), decide.SKIP)
         rows.append(row)
     sec_conf = _section("conflicts", "Conflicts", rows, "")
+    sec_conf["note"] = decide.SKIP_DEFAULT_NOTE if rows else ""
 
     # ---- held back
     rows, seen = [], set()
