@@ -97,13 +97,23 @@ case "$1 $2" in
     if [ -f "$STUB_DIR/stack-$key" ]; then cat "$STUB_DIR/stack-$key"; else echo None; fi ;;
   "secretsmanager get-secret-value")
     if [ -f "$STUB_DIR/secret" ]; then cat "$STUB_DIR/secret"; else echo "ResourceNotFoundException" >&2; exit 254; fi ;;
-  "sts get-caller-identity") cat "$STUB_DIR/account" 2>/dev/null || echo 123456789012 ;;
+  "sts get-caller-identity")
+    if [ "$(arg query "$@" 2>/dev/null || true)" = Arn ]; then cat "$STUB_DIR/caller-arn" 2>/dev/null || echo "arn:aws:iam::123456789012:user/io-example"
+    else cat "$STUB_DIR/account" 2>/dev/null || echo 123456789012; fi ;;
   "s3api get-bucket-policy")
     if [ -f "$STUB_DIR/bucket-policy.json" ]; then jq -c . "$STUB_DIR/bucket-policy.json"
     else echo "An error occurred (NoSuchBucketPolicy) when calling the GetBucketPolicy operation: The bucket policy does not exist" >&2; exit 254; fi ;;
   "s3api put-bucket-policy")
     pol=$(arg policy "$@"); cp "${pol#file://}" "$STUB_DIR/bucket-policy.json"; printf 'put %s\n' "$(arg bucket "$@")" >> "$STUB_DIR/policy-writes.log" ;;
   "s3api delete-bucket-policy") rm -f "$STUB_DIR/bucket-policy.json"; printf 'delete %s\n' "$(arg bucket "$@")" >> "$STUB_DIR/policy-writes.log" ;;
+  "iam get-role")
+    if [ -f "$STUB_DIR/bg-role.json" ]; then cat "$STUB_DIR/bg-role.json"; else echo "An error occurred (NoSuchEntity) when calling the GetRole operation" >&2; exit 254; fi ;;
+  "iam list-role-policies")
+    if [ -f "$STUB_DIR/bg-policies.json" ]; then cat "$STUB_DIR/bg-policies.json"; else echo '{"PolicyNames":[]}'; fi ;;
+  "iam get-role-policy")
+    if [ -f "$STUB_DIR/bg-policy.json" ]; then cat "$STUB_DIR/bg-policy.json"; else echo "NoSuchEntity" >&2; exit 254; fi ;;
+  "iam get-credential-report")
+    if [ -f "$STUB_DIR/cred-report.b64" ]; then cat "$STUB_DIR/cred-report.b64"; else echo "An error occurred (ReportNotPresent) when calling the GetCredentialReport operation" >&2; exit 254; fi ;;
   "iam simulate-custom-policy")
     python3 - "$(arg policy-input-list "$@")" "$(arg resource-policy "$@")" "$(arg caller-arn "$@")" "$(arg action-names "$@")" "$(arg resource-arns "$@")" <<'PY'
 import fnmatch, json, sys
