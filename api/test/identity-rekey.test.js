@@ -121,7 +121,7 @@ describe("idempotency and the transaction budget", () => {
     w.ctx.ddb = { ...w.ddb, send: async (c) => { sent.push(c.constructor.name); return raw(c); } };
     const again = await rekeyPerson(w.ctx, "I0001", "I0002");
     expect(again.state).toBe("done");
-    expect(again.counts).toEqual({ comments: 0, reactions: 0, follows: 0, followsDropped: 0, hidden: 0, posts: 0 });
+    expect(again.counts).toEqual({ comments: 0, reactions: 0, follows: 0, followsDropped: 0, hidden: 0, posts: 0, contrib: 0 });
     // only the marker and its audit are written again; every data row is as it was
     expect(JSON.stringify(w.ddb.all().filter(data))).toBe(before);
     expect(w.row("REKEY#Person#I0001", "META").counts).toMatchObject({ comments: 2, reactions: 1, follows: 1, hidden: 1, posts: 1 });
@@ -369,6 +369,15 @@ describe("sync-admin: rekey and merges-on", () => {
     expect(w.row("SYNC#HEAD", "META").merges_enabled).toBe(false);
   });
 
+  it("merges-on --apply reminds the operator to resweep; the dry run does not", async () => {
+    const w = world({ head: { merges_enabled: false } });
+    const lines = [];
+    await mergesOn({ ...actx(w), log: (m) => lines.push(m) }, { apply: false });
+    expect(lines.join("\n")).not.toMatch(/resweep/);
+    await mergesOn({ ...actx(w), log: (m) => lines.push(m) }, { apply: true });
+    expect(lines.join("\n")).toMatch(/rekey --apply --resweep/);
+  });
+
   it("a refused alias does not block merges-on (it is settled), and rekey takes no other flags", async () => {
     const w = world({ members: ["I0001"], head: { merges_enabled: false } });
     w.put(alias("I0001", "I0002"));
@@ -459,5 +468,159 @@ describe("review fixes: fail-closed member check, pending photos, diagnostics, h
     w.put({ PK: "OTD#HIDDEN", SK: "META", ids: ["birth:I0001"], note: "synthetic", updatedBy: "x" });
     await rekeyPerson(w.ctx, "I0001", "I0002");
     expect(w.row("OTD#HIDDEN", "META")).toMatchObject({ ids: ["birth:I0002"], note: "synthetic", updatedBy: "x", version: 1 });
+  });
+});
+
+// HFY-TSK-357 (merge-follow-threads, ruling P2-R82): the credit events of comments follow the thread to the survivor.
+describe("the contribution ledger follows the thread (P2-R82)", () => {
+  const eid = (n) => `01HZZZZZZZZZZZZZZZZZZZ9${String(n).padStart(3, "0")}`;
+  const event = (author, n, thread, extra = {}) => ({
+    PK: `CONTRIB#${author}`, SK: `E#${eid(n)}`, GSI1PK: "CONTRIBS", GSI1SK: eid(n), entity: "contrib", id: eid(n), kind: "comment",
+    actor: { id: author, label: "Synthetic" }, at: "2026-10-01T00:00:00.000Z", weight: 1, photos: 0, via: "ui",
+    ref: { type: "comment", id: ulid(n), thread }, subject: thread, ...extra,
+  });
+  const credited = (thread, n, author) => comment(thread, n, { author: { id: author, label: "Synthetic" }, contrib: { id: eid(n) } });
+  function seedLedger(w) {
+    w.put(alias("I0001", "I0002"));
+    w.put(credited("person:I0001", 1, "I0900"));
+    w.put(credited("person:I0001", 2, "I0901"));
+    w.put(credited("person:I0002", 3, "I0900"));
+    w.put(credited("person:I0003", 4, "I0900")); // an unrelated person's thread
+    w.put(event("I0900", 1, "person:I0001"));
+    w.put(event("I0901", 2, "person:I0001", { hidden: true }));
+    w.put(event("I0900", 3, "person:I0002"));
+    w.put(event("I0900", 4, "person:I0003"));
+    w.put({ PK: "CSTAT#person:I0900", SK: "TOTAL", n: 3, n_comment: 3 });
+  }
+  const ev = (w, author, n) => w.row(`CONTRIB#${author}`, `E#${eid(n)}`);
+
+  it("moves ref.thread and subject of the comment events, keeps hidden flags, counters and the alias, and leaves unrelated persons alone", async () => {
+    const w = world();
+    seedLedger(w);
+    const r = await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(r).toMatchObject({ state: "done", counts: { comments: 2, contrib: 2 } });
+    expect(ev(w, "I0900", 1)).toMatchObject({ ref: { type: "comment", id: ulid(1), thread: "person:I0002" }, subject: "person:I0002", PK: "CONTRIB#I0900", GSI1PK: "CONTRIBS" });
+    expect(ev(w, "I0901", 2)).toMatchObject({ ref: { thread: "person:I0002" }, subject: "person:I0002", hidden: true });
+    expect(ev(w, "I0900", 3).ref.thread).toBe("person:I0002");
+    expect(ev(w, "I0900", 4)).toMatchObject({ ref: { thread: "person:I0003" }, subject: "person:I0003" });
+    expect(w.row("CSTAT#person:I0900", "TOTAL")).toMatchObject({ n: 3, n_comment: 3 });
+    expect(w.row("IDALIAS#Person#I0001", "META")).toMatchObject({ current_gramps_id: "I0002", reason: "merge" });
+    expect(w.ddb.all().filter((x) => x.PK.startsWith("CONTRIB#")).map((x) => x.PK).sort()).toEqual(["CONTRIB#I0900", "CONTRIB#I0900", "CONTRIB#I0900", "CONTRIB#I0901"]);
+  });
+
+  it("preserves counts and ordering of the survivor's thread, and rewrites no comment text (the contact-info guard is not run)", async () => {
+    const w = world();
+    seedLedger(w);
+    const bodyOf = (id, n) => w.row(`THREAD#person:${id}`, `C#${ulid(n)}`).comment.body;
+    w.put(credited("person:I0001", 5, "I0900"));
+    w.row("THREAD#person:I0001", `C#${ulid(5)}`).comment.body = "call 555-0100 or write a@b.example"; // R-18 would flag this on a write
+    w.put(event("I0900", 5, "person:I0001"));
+    await rekeyPerson(w.ctx, "I0001", "I0002");
+    const sks = thread(w, "I0002").map((x) => x.SK).sort(); // the store returns a partition in SK order; the fake in insertion order
+    expect(sks).toEqual([1, 2, 3, 5].map((n) => `C#${ulid(n)}`));
+    expect(bodyOf("I0002", 5)).toBe("call 555-0100 or write a@b.example");
+    expect(bodyOf("I0002", 1)).toBe("synthetic 1");
+    expect(JSON.stringify(ev(w, "I0900", 5))).not.toMatch(/555|synthetic/);
+  });
+
+  it("a second run is a no-op, even with the marker cleared", async () => {
+    const w = world();
+    seedLedger(w);
+    await rekeyPerson(w.ctx, "I0001", "I0002");
+    const data = (x) => !/^(REKEY#|AUDIT#rekey)/.test(x.PK);
+    const before = JSON.stringify(w.ddb.all().filter(data));
+    const again = await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(again.counts).toMatchObject({ comments: 0, contrib: 0 });
+    expect(JSON.stringify(w.ddb.all().filter(data))).toBe(before);
+  });
+
+  it("a failure in the middle resumes: the comments moved, the ledger update threw, the next run finishes it", async () => {
+    const w = world();
+    seedLedger(w);
+    const raw = w.ddb.send.bind(w.ddb);
+    const flaky = { ...w.ddb, send: async (c) => {
+      const items = c.input?.TransactItems ?? [];
+      if (c.constructor.name === "TransactWriteCommand" && items.some((i) => i.Update?.Key?.PK?.startsWith("CONTRIB#"))) throw new Error("boom");
+      return raw(c);
+    } };
+    await expect(rekeyPerson({ ...w.ctx, ddb: flaky }, "I0001", "I0002")).rejects.toThrow("boom");
+    expect(thread(w, "I0001")).toEqual([]); // the comments already moved
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0001"); // the events did not
+    expect(w.row("REKEY#Person#I0001", "META")).toBeUndefined();
+    const r = await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(r.state).toBe("done");
+    expect(thread(w, "I0001")).toEqual([]);
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0002");
+    expect(ev(w, "I0901", 2).ref.thread).toBe("person:I0002");
+  });
+
+  it("events of comments that moved before the ledger step existed (orphaned old thread) are picked up by a resweep", async () => {
+    const w = world();
+    seedLedger(w);
+    // a past run moved the comments and recorded done, but the events still name the old thread
+    w.put(credited("person:I0002", 1, "I0900"));
+    w.ddb.rows.delete(`THREAD#person:I0001\u0000C#${ulid(1)}`);
+    w.put(credited("person:I0002", 2, "I0901"));
+    w.ddb.rows.delete(`THREAD#person:I0001\u0000C#${ulid(2)}`);
+    w.put({ ...markerKeys("I0001"), entity: "rekey", state: "done", new_gramps_id: "I0002" });
+    expect(await rekeyPending(w.ctx)).toEqual([]);
+    await rekeyPending(w.ctx, { resweep: true });
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0002");
+    expect(ev(w, "I0901", 2).subject).toBe("person:I0002");
+  });
+
+  it("a comment with a pending photo graduation keeps its event on the old thread until the comment moves", async () => {
+    const w = world();
+    seedLedger(w);
+    const held = credited("person:I0001", 6, "I0900");
+    held.comment.attachments = [{ url: "u", graduated: { state: "pending" } }];
+    w.put(held);
+    w.put(event("I0900", 6, "person:I0001"));
+    const r = await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(r.state).toBe("partial");
+    expect(ev(w, "I0900", 6).ref.thread).toBe("person:I0001");
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0002");
+    delete w.row("THREAD#person:I0001", `C#${ulid(6)}`).comment.attachments;
+    expect((await rekeyPerson(w.ctx, "I0001", "I0002")).state).toBe("done");
+    expect(ev(w, "I0900", 6).ref.thread).toBe("person:I0002");
+  });
+
+  it("a chain follows to the live survivor: events end on the last person", async () => {
+    const w = world();
+    seedLedger(w);
+    w.put(alias("I0002", "I0005", { handle: h(2) }));
+    await rekeyPending(w.ctx);
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0005");
+    expect(ev(w, "I0900", 3).subject).toBe("person:I0005");
+  });
+
+  it("runs only while merges_enabled is true: with the flag off the comments still move but the ledger waits", async () => {
+    const w = world({ head: { merges_enabled: false } });
+    seedLedger(w);
+    const r = await rekeyPerson(w.ctx, "I0001", "I0002");
+    expect(r.counts.contrib).toBe(0);
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0001");
+    w.row("SYNC#HEAD", "META").merges_enabled = true;
+    await rekeyPending(w.ctx, { resweep: true });
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0002");
+  });
+
+  it("a refused (member) alias moves no events", async () => {
+    const w = world({ members: ["I0001"] });
+    seedLedger(w);
+    expect((await rekeyPerson(w.ctx, "I0001", "I0002")).state).toBe("refused");
+    expect(ev(w, "I0900", 1).ref.thread).toBe("person:I0001");
+  });
+
+  it("the operator dry run reports thread and ledger counts only, and writes nothing", async () => {
+    const w = world();
+    seedLedger(w);
+    const lines = [];
+    const before = snapshot(w);
+    const r = await rekey({ ...w.ctx, log: (m) => lines.push(m) }, { apply: false });
+    expect(r).toMatchObject({ planned: true, pending: 1, threadItems: 2, ledgerEntries: 2 });
+    expect(lines.join("\n")).toMatch(/at most 2 thread item\(s\) and 2 ledger entries would move/);
+    expect(lines.join("\n")).not.toMatch(/I000|I09|person:/);
+    expect(snapshot(w)).toBe(before);
   });
 });
