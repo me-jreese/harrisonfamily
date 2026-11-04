@@ -113,7 +113,8 @@ case "$1 $2" in
   "iam get-role-policy")
     if [ -f "$STUB_DIR/bg-policy.json" ]; then cat "$STUB_DIR/bg-policy.json"; else echo "NoSuchEntity" >&2; exit 254; fi ;;
   "iam get-credential-report")
-    if [ -f "$STUB_DIR/cred-report.b64" ]; then cat "$STUB_DIR/cred-report.b64"; else echo "An error occurred (ReportNotPresent) when calling the GetCredentialReport operation" >&2; exit 254; fi ;;
+    if [ "$(arg query "$@" 2>/dev/null || true)" = GeneratedTime ]; then cat "$STUB_DIR/cred-report.time" 2>/dev/null || echo "2026-11-20T18:20:00+00:00"
+    elif [ -f "$STUB_DIR/cred-report.b64" ]; then cat "$STUB_DIR/cred-report.b64"; else echo "An error occurred (ReportNotPresent) when calling the GetCredentialReport operation" >&2; exit 254; fi ;;
   "iam simulate-custom-policy")
     python3 - "$(arg policy-input-list "$@")" "$(arg resource-policy "$@")" "$(arg caller-arn "$@")" "$(arg action-names "$@")" "$(arg resource-arns "$@")" <<'PY'
 import fnmatch, json, sys
