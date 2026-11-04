@@ -14,8 +14,15 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 DRAFT = ROOT / "docs" / "drafts" / "privacy-terms-2026-10-update.md"
 PAGES = {"privacy": ROOT / "11ty" / "privacy" / "index.html", "terms": ROOT / "11ty" / "terms" / "index.html"}
+APP_STACK = ROOT / "infrastructure" / "cloudformation" / "app-stack.yaml"
+CHAT_WRANGLER = ROOT / "chat-worker" / "wrangler.toml"
+# The chat recovery sentence is for the public page at the chat flip (HFY-TSK-267): chat is not live, and the page must not announce it.
+CHAT_RECOVERY_SENTENCE = ("The chat service (Cloudflare) keeps its own recovery copies; Cloudflare says they reach back 30 days, "
+                          "so a removed chat message can stay there for up to 30 days.")
 APPROVAL = 'Approved by io under Q8 ("all approved. proceed."), 2026-10-13; fact-checked per P2-R24/P2-R28.'
-LAST_UPDATED = "Last updated: October 13, 2026"
+# Each page's date follows the publish date of its own last change: privacy changed again on 2026-11-03 (P2-R79, HFY-TSK-359, section 7);
+# terms did not, so it keeps the date of the amendment.
+LAST_UPDATED = {"privacy": "Last updated: November 3, 2026", "terms": "Last updated: October 13, 2026"}
 CONTACT = "info [@] harrisonfamily [DOT] us"
 
 # (section the amendment must cover, page, sentences of the approved text that state it)
@@ -95,10 +102,13 @@ REQUIRED = [
     ("sharing: no selling or sharing beyond the listed providers", "privacy", [
         "Still no selling or sharing beyond these.",
     ]),
-    ("removal from the cloud, with the 35-day backup tail", "privacy", [
+    ("removal from the cloud, with the 72-hour grace and the 35-day backup tail", "privacy", [
         "To have something removed from the site and its cloud storage (a detail on a family page, a suggestion, a chat message or a photo),",
         "The admin can remove it from every copy we keep in the cloud: the change history, saved snapshots, the chat copy and stored photos.",
-        "Our database's automatic backups go back 35 days, so a removed item can stay in those backups for up to 35 days before they age out.",
+        "Something the admin removes is gone from the copies we use day to day as soon as the admin has finished removing it.",
+        "If a whole family record is taken down, it disappears from the site at once, and its history is kept for a 72-hour grace period, in case it was taken down by mistake; the admin then erases it by hand, which can take longer than 72 hours.",
+        "Our database keeps automatic backups that go back 35 days, so a removed item can stay in those backups for up to 35 days.",
+        "Backup copies expire on their own after that.",
         "Ask for a suggestion, a chat message or a photo you added to be removed from the cloud (section 7).",
     ]),
 ]
@@ -121,6 +131,8 @@ RETIRED = {
         "All data is stored and processed in the United States", "which stores static site and data assets", "[D0T]",
         # section 5 lists the providers that receive data; "Still no selling or sharing beyond these." replaces the absolute claim
         "transmit user data to any third parties",
+        # P2-R79 review: the grace is not a floor, so "and never sooner" is false; the chat recovery copies wait for the chat flip
+        "never sooner", "recovery copies", "Cloudflare says they reach back", "disappears from those live copies at once",
     ],
     "terms": [
         "invitation-only", "whitelist", "Attempt to bypass Google Sign-In", "Google Sign-In is used only for authentication",
@@ -239,7 +251,7 @@ class PrivacyTermsPages(unittest.TestCase):
         for name in PAGES:
             with self.subTest(page=name):
                 text = self.pages[name][0]
-                self.assertIn(f"{LAST_UPDATED} · Contact: {CONTACT}", text)
+                self.assertIn(f"{LAST_UPDATED[name]} · Contact: {CONTACT}", text)
                 self.assertNotIn("November 6, 2025", text)
 
     def test_section_4_has_no_empty_purpose_column(self):
@@ -269,6 +281,36 @@ class PrivacyTermsPages(unittest.TestCase):
             for phrase in phrases:
                 with self.subTest(page=name, phrase=phrase):
                     self.assertNotIn(phrase, text)
+
+    def test_each_pages_last_updated_date_is_in_the_draft(self):
+        for name, line in LAST_UPDATED.items():
+            with self.subTest(page=name):
+                self.assertIn(f'its line reads "{line}"' if name == "privacy" else f'its line stays "{line}"', self.draft)
+
+    def test_35_day_tail_rests_on_point_in_time_recovery(self):
+        # The page's 35-day backup sentence is only true while the app table keeps point-in-time recovery (35 days, the DynamoDB maximum).
+        stack = APP_STACK.read_text()
+        self.assertRegex(stack, r"PointInTimeRecoveryEnabled:\s*true")
+
+    def test_30_day_chat_tail_rests_on_a_sqlite_backed_durable_object(self):
+        # The docs' 30-day figure is Cloudflare's point-in-time recovery window for SQLite-backed Durable Objects. It holds only while the
+        # ChatHub class is created by `new_sqlite_classes` in the production migration and no migration creates a key-value class
+        # (`new_classes`). chat-worker/test/bundle.test.mjs pins the same through wrangler, but its install needs CodeArtifact and no workflow
+        # runs it, so this CI-run check reads the file's code lines (comments dropped; Python 3.10 has no tomllib).
+        code = "\n".join(l for l in CHAT_WRANGLER.read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("#"))
+        self.assertRegex(code, r'(?m)^\[\[migrations\]\]\ntag = "v1"\nnew_sqlite_classes = \["ChatHub"\]$')
+        self.assertRegex(code, r'(?m)^\[durable_objects\]\nbindings = \[\{ name = "CHAT_HUB", class_name = "ChatHub" \}\]$')
+        self.assertNotRegex(code, r"(?m)^\s*new_classes\s*=")
+
+    def test_the_chat_recovery_sentence_waits_for_the_chat_flip(self):
+        # Chat is not live, and the public page must not announce a feature that is not live. The sentence is recorded in the draft with the
+        # task that adds it (HFY-TSK-267), and in the explanation page and the chat Worker runbook, but it is not on the privacy page.
+        self.assertNotIn(CHAT_RECOVERY_SENTENCE, self.pages["privacy"][0])
+        self.assertIn(CHAT_RECOVERY_SENTENCE, self.draft)
+        self.assertIn("at the chat flip (task HFY-TSK-267)", self.draft)
+        for doc in ("docs/explanation/family-data-privacy.md", "docs/how-to/deploy-the-chat-worker.md"):
+            with self.subTest(doc=doc):
+                self.assertIn(CHAT_RECOVERY_SENTENCE, squash((ROOT / doc).read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":
