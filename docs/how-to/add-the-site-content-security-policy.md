@@ -45,13 +45,31 @@ Each page shows `content-security-policy-report-only`, and `/join/` shows the va
 
 What report-only can and cannot tell you:
 
-- **No report endpoint.** The policies carry no `report-uri` or `report-to`, so live report-only collects nothing. The live check is a person opening the pages with the browser console open (including `/join/` with the real Turnstile widget, which the crawl only stubs) and reading the violation messages. Adding an endpoint needs io's decision.
+- **No report endpoint.** The policies carry no `report-uri` or `report-to`, so live report-only collects nothing. The live check is a real browser loading the pages signed out: [Live check](#live-check) runs it. A person with the console open still covers what it cannot: signed-in pages and a hand-completed Turnstile widget on `/join/`. Adding an endpoint needs io's decision.
 - **`frame-ancestors` is ignored in report-only** (browsers log a console warning), so neither report-only nor the crawl can show it. Before enforcing, check by hand that nothing frames the site; `X-Frame-Options` is not sent.
 - **Chat WebSocket.** The crawl stubs the chat network, so check `/chat/` signed in by hand for a blocked `wss:` connection. Leave it in report-only for as long as io wants real traffic to be watched.
 
+## Live check
+
+Ruling P2-R81 allows enforcing only after at least 24 hours with zero blocking reports on `/join/` and the sign-in paths. [`check-csp-live.mjs`](../../scripts/infra/check-csp-live.mjs) makes that check repeatable (HFY-TSK-366). From the repository root, with `npm ci` done in `islands/` and the bundled shell installed (`cd islands && npx playwright install chromium-headless-shell`):
+
+```sh
+node scripts/infra/check-csp-live.mjs                                  # the default pages on the default site
+node scripts/infra/check-csp-live.mjs --site https://<site> --pages /join/,/auth/login --json
+```
+
+It opens each page signed out at 375 and 1280 wide, in a fresh browser context each time, in Playwright's bundled headless shell (never system Chrome). It waits for `load`, then about 3 seconds of idle. It prints one table (page, width, HTTP status, which CSP header the final document carried, violation counts, where a redirect landed) and, as its last line, a machine-readable JSON line with the same per-page counts and the violations grouped by page, directive and blocked host. `--json` prints only that line. It only loads pages: it never signs in, types, clicks or submits (it aborts any non-GET document navigation), and it leaves the Turnstile widget on `/join/` alone.
+
+- **Exit `0`** only when every page loaded (HTTP 200, at the page itself or at the sign-in pages, `/family-login/` or `/logged-out/` after a redirect), under a CSP header, with zero violations. Exit `1` means a page failed that test, and the table and the JSON line say which. Exit `2` is a usage or setup error (Playwright or the shell is missing).
+- **A violation** is a `securitypolicyviolation` event on a page of the site, with its effective directive, the blocked host (or `inline`, `eval`, `data:`, `blob:`) and its disposition. `report` is what the report-only policy would block once enforced: it blocks nothing today. `enforce` was blocked by an enforced policy already, such as the sign-in pages' own header. The console column counts Chrome's violation lines; other CSP console notes, such as `frame-ancestors` being ignored in report-only, are counted apart and do not fail the run. Events from another origin's frame (Turnstile's own iframe) follow that frame's policy, not ours, so they are counted apart too.
+- **`--ignore-host <host>`** (repeatable, default none) leaves out violations whose blocked host is exactly `<host>`, and the console lines naming it. The scheduled enforce gate passes `--ignore-host static.cloudflareinsights.com`, the one known benign violation (ruling P2-R88): the Cloudflare Web Analytics beacon that Cloudflare injects at its edge. Pass nothing else without a ruling.
+- **Read each violation before enforcing.** For every row, decide whether enforcing would break something a visitor sees (an image, a map tile, the Turnstile widget on `/join/`, a font) or only silences a beacon, and record that on the task. Either add the source to [`site-csp.json`](../../scripts/cloudfront/site-csp.json) as in [When a page needs a new source](#when-a-page-needs-a-new-source), or remove what injects it.
+- **Run it more than once.** One run is a snapshot. Run it repeatedly across the 24 hours and keep each result in the task's worklog.
+- **What it cannot see:** signed-in pages, `frame-ancestors` (ignored in report-only), a violation in a worker or a service worker's own context, and anything that happens only after a click. A zero from this script is the signed-out half of the check, not all of it.
+
 ## Stage 2: enforce
 
-Only after the crawl is at zero violations, the manual console check above is clean, and io says to enforce. `--site-url` is the gate probe (the script refuses without it):
+Only after the crawl is at zero violations, the [live check](#live-check) exits `0` across the P2-R81 window, the manual console check above is clean, and io says to enforce. `--site-url` is the gate probe (the script refuses without it):
 
 ```sh
 scripts/infra/add-csp-headers.sh --mode enforce --stack <app-stack> --distribution <distribution-id> --site-url https://<site> --dry-run
