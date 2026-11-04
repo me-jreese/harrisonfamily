@@ -206,6 +206,9 @@ export function gidDelete(cls, grampsId) {
   return gidKey(cls, grampsId);
 }
 
+/** GSI1 keys of an alias item: they list every alias of a class. Shared by the writer (aliasItem) and the alias-backfill command. */
+export const aliasGsi = (cls, oldId) => ({ GSI1PK: `IDALIAS#${cls}`, GSI1SK: oldId });
+
 export const aliasItem = (cls, oldId, f) => ({
   ...aliasKey(cls, oldId),
   entity: "idalias",
@@ -217,8 +220,7 @@ export const aliasItem = (cls, oldId, f) => ({
   batch_id: f.batch_id,
   at: f.at,
   // GSI1 lists every alias of a class, so the renderer can write a `mergedInto` stub for each (merge-alias-redirect).
-  GSI1PK: `IDALIAS#${cls}`,
-  GSI1SK: oldId,
+  ...aliasGsi(cls, oldId),
 });
 
 /** A withdraw's scheduled expunge: due EXPUNGE_GRACE_MS after the withdraw. Holds ids and times only, never object text. */

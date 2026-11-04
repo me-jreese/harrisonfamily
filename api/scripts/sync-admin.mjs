@@ -5,6 +5,7 @@
 //   node scripts/sync-admin.mjs resume   --all --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs feed-on  --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs feed-off --dry-run|--apply [--by <name>]
+//   node scripts/sync-admin.mjs alias-backfill --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs merges-on  --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs merges-off --dry-run|--apply [--by <name>]
 //   node scripts/sync-admin.mjs rekey    --dry-run|--apply [--members <id,id|none>] [--retry-refused] [--resweep]
@@ -30,6 +31,9 @@
 //   merges-on  sets SYNC#HEAD.merges_enabled to true (HFY-TSK-294): desktop Person merges stop being held and /api/sync/meta reports merges_enabled: true.
 //              Deploy the re-key job (api/src/identity-rekey.js) and the merge aliases first; --apply refuses while a merge alias still has an unfinished
 //              re-key. merges-off sets it back to false (absent counts as off).
+//   alias-backfill  (HFY-TSK-358, P2-R83) writes GSI1PK/GSI1SK on every IDALIAS# item that lacks them (items written before merge-alias-redirect), so
+//              the renderer's per-class alias listing sees them. Run it before merges-on. A dry run prints counts only (found, already indexed, would
+//              write, errors); --apply writes each missing pair under a condition that the pair is still absent, so a re-run or a resume is safe.
 //   rekey      runs the identity re-key for every merge alias that is not done (the afterCommit hook does this after each merge; this is the manual
 //              retry). A dry run only counts them; output is counts and states, never ids. --apply needs --members <gramps ids|none>: the CLI has no member list,
 //              so without it the job fails closed. --retry-refused re-evaluates aliases marked refused; --resweep also revisits done ones (late orphans).
@@ -66,7 +70,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
-import { batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
+import { aliasGsi, batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
 import { WITHDRAW_GRACE_MS, withdrawWarning } from "../src/sync/refold.js";
 import { pendingAliases, previewRekey, rekeyPending } from "../src/identity-rekey.js";
 import { RecoveryError, bumpTreeId, copyBack, rebuildHeads } from "./sync-recovery.mjs";
@@ -144,6 +148,67 @@ export async function mergesOn(ctx, o) {
   return r;
 }
 export const mergesOff = (ctx, o) => setMerges(ctx, false, o);
+
+// ---- alias-backfill ---------------------------------------------------------------------------------------------------
+/**
+ * HFY-TSK-358 (P2-R83). Finds every IDALIAS# item without GSI1PK/GSI1SK and writes them with the builder the alias writer uses (aliasGsi).
+ * A dry run counts and writes nothing. Output is counts only: never an id, class or key. Each write is conditional on the pair still being absent, so
+ * a re-run is idempotent and a run that stopped part-way resumes on whatever is still missing. A failed item is counted and the run goes on.
+ */
+export async function aliasBackfill(ctx, { apply, by = "operator" }) {
+  const { log, ddb, cmds, table } = ctx;
+  const items = [];
+  let key;
+  for (let i = 0; ; i += 1) {
+    if (i >= 100000) throw new AdminError("the alias scan did not end; stopping");
+    const r = await ddb.send(new cmds.ScanCommand({ TableName: table, FilterExpression: "begins_with(PK, :p0)", ExpressionAttributeValues: { ":p0": "IDALIAS#" }, ConsistentRead: true, ...(key ? { ExclusiveStartKey: key } : {}) }));
+    items.push(...(r.Items ?? []).filter((it) => typeof it.PK === "string" && it.PK.startsWith("IDALIAS#")));
+    key = r.LastEvaluatedKey;
+    if (!key) break;
+  }
+  // PK is IDALIAS#<Class>#<old_id>; the stored fields win, the key is the fallback.
+  const derive = (it) => {
+    const m = /^IDALIAS#([^#]+)#(.+)$/.exec(it.PK);
+    const cls = it.class ?? m?.[1];
+    const oldId = it.old_gramps_id ?? m?.[2];
+    return cls && oldId && typeof it.SK === "string" ? { cls, oldId } : null;
+  };
+  const missing = items.filter((it) => it.GSI1PK === undefined || it.GSI1SK === undefined);
+  const usable = missing.filter((it) => derive(it));
+  const unusable = missing.length - usable.length; // counted in the dry run too, so it shows before any apply
+  const counts = { found: items.length, alreadyIndexed: items.length - missing.length, wouldWrite: usable.length, written: 0, errors: unusable };
+  log(`alias-backfill: found ${counts.found}, already indexed ${counts.alreadyIndexed}, would write ${counts.wouldWrite}, errors ${counts.errors}`);
+  if (!apply) {
+    log("dry run: nothing written");
+    return { ...counts, planned: true, apply };
+  }
+  for (const it of usable) {
+    const { cls, oldId } = derive(it);
+    const g = aliasGsi(cls, oldId);
+    try {
+      await ddb.send(
+        new cmds.UpdateCommand({
+          TableName: table,
+          Key: { PK: it.PK, SK: it.SK },
+          UpdateExpression: "SET GSI1PK = :a, GSI1SK = :b",
+          ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(GSI1PK) OR attribute_exists(PK) AND attribute_not_exists(GSI1SK)",
+          ExpressionAttributeValues: { ":a": g.GSI1PK, ":b": g.GSI1SK },
+        }),
+      );
+      counts.written += 1;
+    } catch (e) {
+      if (e?.name === "ConditionalCheckFailedException") counts.alreadyIndexed += 1; // indexed meanwhile (a concurrent run or the writer)
+      else counts.errors += 1;
+    }
+  }
+  const at = iso(ctx.now);
+  if (counts.written > 0 || counts.errors > 0) {
+    const audit = await auditPut(ctx, `sync-admin:alias-backfill:${at}`, "sync-admin.alias-backfill", { missing: missing.length }, { written: counts.written, errors: counts.errors }, by, at);
+    await ddb.send(new cmds.PutCommand({ TableName: table, Item: audit }));
+  }
+  log(`alias-backfill: written ${counts.written}, errors ${counts.errors}${counts.errors > 0 ? " (run it again to resume)" : ""}`);
+  return { ...counts, apply };
+}
 
 /** The manual retry of the re-key job. Prints counts only. */
 export async function rekey(ctx, { apply, members, retryRefused, resweep }) {
@@ -423,6 +488,7 @@ Usage:
   node scripts/sync-admin.mjs resume    --all --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs feed-on   --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs feed-off  --dry-run|--apply [--by <name>]
+  node scripts/sync-admin.mjs alias-backfill --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs merges-on  --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs merges-off --dry-run|--apply [--by <name>]
   node scripts/sync-admin.mjs rekey     --dry-run|--apply [--members <id,id|none>] [--retry-refused] [--resweep]
@@ -435,13 +501,13 @@ Common: [--table hfy-app] [--region us-west-2]   Exactly one of --dry-run or --a
 pause --all stops every writer of the store at once (the switch is store-wide); the recovery commands (rebuild-heads, copy-back, bump-tree-id)
 refuse --apply until the store is paused, and never swap TABLE_NAME. -h/--help prints this.
 
-IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off, merges-on, merges-off, rekey, resurrect, rebuild-heads,
+IO'S GO-AHEAD IS REQUIRED. Every production --apply writes app-table items (pause, resume, feed-on, feed-off, alias-backfill, merges-on, merges-off, rekey, resurrect, rebuild-heads,
 copy-back and bump-tree-id; the last three are the store recovery, and a copy-back can undo writes made since its restore point, withdraws included) or makes the
 renderer write and delete site files (render). Run it only after io's go-ahead in the session, recorded verbatim in the worklog with the dry-run output
 (AGENTS.md; review DL-28). Always run --dry-run first. See docs/how-to/operate-the-sync-store.md.
 `;
 
-export const COMMANDS = ["pause", "resume", "feed-on", "feed-off", "merges-on", "merges-off", "rekey", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
+export const COMMANDS = ["pause", "resume", "feed-on", "feed-off", "alias-backfill", "merges-on", "merges-off", "rekey", "render", "resurrect", "rebuild-heads", "copy-back", "bump-tree-id"];
 
 export function parseArgs(argv) {
   const out = { command: undefined, apply: undefined, table: process.env.TABLE_NAME ?? "hfy-app", region: process.env.AWS_REGION ?? "us-west-2" };
@@ -483,6 +549,7 @@ export function parseArgs(argv) {
     resume: ["by", "all"],
     "feed-on": ["by"],
     "feed-off": ["by"],
+    "alias-backfill": ["by"],
     "merges-on": ["by"],
     "merges-off": ["by"],
     rekey: ["members", "retryRefused", "resweep"],
@@ -512,6 +579,8 @@ export async function run(args, ctx) {
       return feedOn(ctx, args);
     case "feed-off":
       return feedOff(ctx, args);
+    case "alias-backfill":
+      return aliasBackfill(ctx, args);
     case "merges-on":
       return mergesOn(ctx, args);
     case "merges-off":
@@ -541,7 +610,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else {
       const [{ DynamoDBClient }, lib] = await Promise.all([import("@aws-sdk/client-dynamodb"), import("@aws-sdk/lib-dynamodb")]);
       const ddb = lib.DynamoDBDocumentClient.from(new DynamoDBClient({ region: args.region }), { marshallOptions: { removeUndefinedValues: true } });
-      const cmds = { GetCommand: lib.GetCommand, QueryCommand: lib.QueryCommand, PutCommand: lib.PutCommand, ScanCommand: lib.ScanCommand, TransactWriteCommand: lib.TransactWriteCommand };
+      const cmds = { GetCommand: lib.GetCommand, QueryCommand: lib.QueryCommand, PutCommand: lib.PutCommand, ScanCommand: lib.ScanCommand, UpdateCommand: lib.UpdateCommand, TransactWriteCommand: lib.TransactWriteCommand };
       await run(args, { ddb, cmds, table: args.table, log: console.log, now: () => Date.now() });
     }
   } catch (e) {

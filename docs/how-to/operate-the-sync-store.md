@@ -2,7 +2,7 @@
 
 Pause the cloud record store, resume it, switch the change feed on or off, force the renderer to run, bring back the records of a mistaken delete or withdraw, and recover the store itself when its heads or its log are damaged. The tool is `api/scripts/sync-admin.mjs` (HFY-TSK-177, and HFY-TSK-275 for the recovery). It is an operator script: it is never deployed, and no workflow runs it.
 
-**io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume`, `feed-on`, `feed-off`, `merges-on`, `merges-off`, `rekey`, `resurrect`, `rebuild-heads`, `copy-back` and `bump-tree-id` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
+**io's go-ahead is required.** Every `--apply` is a production write: `pause`, `resume`, `feed-on`, `feed-off`, `alias-backfill`, `merges-on`, `merges-off`, `rekey`, `resurrect`, `rebuild-heads`, `copy-back` and `bump-tree-id` write app-table items, and `render` makes the renderer write and delete site files. Run `--apply` only after io's go-ahead in the session. Record that go-ahead verbatim in the worklog, with the dry-run output (AGENTS.md; review DL-28). The seed approval covers setting `writes_enabled` for the seed and nothing else. Run `--dry-run` first, every time. The output names classes, opaque handles, versions, reasons and counts, never record text or a Gramps ID.
 
 ## Before you start
 
@@ -44,10 +44,14 @@ Desktop Person merges are held (`409 merges_disabled`) until `SYNC#HEAD.merges_e
 cd api
 node scripts/sync-admin.mjs rekey --dry-run --table <app-table> --region <region>   # counts the aliases not done, and reports how many thread items and ledger entries would move (counts only, never ids or names)
 node scripts/sync-admin.mjs rekey --apply --members <id,id|none> --table <app-table> --region <region>     # the manual retry of the hook; the CLI has no member list, so --members is required (fails closed). Add --retry-refused to re-evaluate refused aliases, --resweep to revisit done ones
+node scripts/sync-admin.mjs alias-backfill --dry-run --table <app-table> --region <region>   # counts only: found, already indexed, would write, errors
+node scripts/sync-admin.mjs alias-backfill --apply --by <your-name> --table <app-table> --region <region>
 node scripts/sync-admin.mjs merges-on --dry-run --table <app-table> --region <region>
 node scripts/sync-admin.mjs merges-on --apply --by <your-name> --table <app-table> --region <region>
 node scripts/sync-admin.mjs merges-off --apply --by <your-name> --table <app-table> --region <region>
 ```
+
+`alias-backfill` (HFY-TSK-358, P2-R83) sits before `merges-on`. The merge-alias redirect lists aliases through `GSI1PK = IDALIAS#<Class>`, and `IDALIAS#` items written before it have no `GSI1PK`/`GSI1SK`. The command scans the `IDALIAS#` items and writes the missing pair, built by the same `aliasGsi` function the alias writer uses, under a condition that the pair is still absent. A dry run prints counts only and never an id; `--apply` needs io's go-ahead like the other write commands, writes one `AUDIT#sync-admin:alias-backfill` item, counts a failed item as an error and carries on, and is safe to re-run: a re-run writes only what is still missing, so run it again until `errors` is 0. Run the dry run, then the apply, after the `hfy-api` release and before `merges-on --apply`.
 
 `merges-on --apply` is refused while any merge alias has an unfinished re-key. Flip it on only after the `hfy-api` release that holds the re-key job and the merge-alias redirect has executed (RG-7); `GET /api/sync/meta` then reports `merges_enabled: true`, which lets the add-on push merges. The ledger step of the re-key is dark while the switch is off, so an alias that finished before the flip keeps its contribution-ledger events on the old thread: after `merges-on --apply`, run `rekey --apply --members <id,id|none> --resweep` once (the command prints a reminder).
 
