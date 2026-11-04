@@ -1,5 +1,6 @@
 """Static checks on infrastructure/cloudformation/*.yaml for the HFY-R58 infra rulings. Offline; run via scripts/infra/test/run.sh
 or: python3 -m unittest scripts/infra/test/test_app_stack.py"""
+import copy
 import json
 import pathlib
 import re
@@ -231,6 +232,172 @@ class AppStack(unittest.TestCase):
         gsi = self.r["Table"]["Properties"]["GlobalSecondaryIndexes"][0]
         self.assertEqual(gsi["IndexName"], "GSI1")
         self.assertEqual(gsi["KeySchema"], [{"AttributeName": "GSI1PK", "KeyType": "HASH"}, {"AttributeName": "GSI1SK", "KeyType": "RANGE"}])
+
+
+# Limits the services enforce only when they create or update the resource (HFY-TSK-361). ValidateTemplate, cfn-lint and the checks above
+# do not see them, so a 139-character response headers policy Comment passed every offline check and then failed the 2026-11-04 change
+# set mid-execute with "The parameter Comment is too big" (the stack rolled back; nothing changed in production). Sources, AWS documentation
+# read 2026-11-04: CloudFormation resource reference for AWS::CloudFront::ResponseHeadersPolicy (ResponseHeadersPolicyConfig.Comment "cannot be
+# longer than 128 characters"), AWS::CloudFront::Function (Name `[a-zA-Z0-9-_]{1,64}`, FunctionConfig.Comment "cannot be longer than 128
+# characters"), AWS::Lambda::EventInvokeConfig (MaximumRetryAttempts 0-2, MaximumEventAgeInSeconds 60-21600), the CloudFront quotas page
+# (custom headers per policy 10, header name 256, header value 1,783, all names and values together 10,240, a Content-Security-Policy
+# value 1,783, function size 10 KB) and the CloudFormation quotas page (template Description 1,024 bytes, parameter Description 4,000
+# characters, 200 parameters, 200 outputs, 500 resources, template 51,200 bytes in a request or 1 MB from S3).
+CLOUDFRONT_COMMENT_MAX = 128
+CLOUDFRONT_FUNCTION_NAME = re.compile(r"[a-zA-Z0-9\-_]{1,64}")
+CLOUDFRONT_FUNCTION_CODE_MAX = 10 * 1024  # bytes
+# The reference documents no maximum for a response headers policy Name (only "required" and "unique in this AWS account"). 128 is this
+# repository's own cap, matching the Comment, so a name built from FunctionName stays well inside anything CloudFront is likely to apply.
+RESPONSE_HEADERS_POLICY_NAME_MAX = 128
+CUSTOM_HEADERS_MAX = 10
+HEADER_NAME_MAX = 256
+HEADER_VALUE_MAX = 1783
+CUSTOM_HEADERS_TOTAL_MAX = 10240
+CFN_TEMPLATE_BYTES_FROM_S3_MAX = 1_000_000  # "1 MB"; a request body is capped at 51,200 bytes (see docs/how-to/deploy-the-app-stack.md)
+
+
+def resolve_text(template, value, where):
+    """A Name or Comment as the service sees it: a literal, or !Sub over this template's own parameters' defaults. Anything else is an
+    error, so the check can never pass by skipping a value it could not read."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and set(value) == {"Fn::Sub"} and isinstance(value["Fn::Sub"], str):
+        def fill(match):
+            param = template["Parameters"].get(match.group(1))
+            if param is None or "Default" not in param:
+                raise AssertionError(f"{where}: cannot resolve ${{{match.group(1)}}} offline; use a literal or a parameter with a Default")
+            return str(param["Default"])
+        return re.sub(r"\$\{([^}]+)\}", fill, value["Fn::Sub"])
+    raise AssertionError(f"{where}: cannot resolve {value!r} offline")
+
+
+def create_time_limit_violations(template):
+    """Every limit above that the template breaks, as readable strings; empty when it is inside all of them."""
+    bad = []
+    for name, res in template["Resources"].items():
+        props = res.get("Properties", {})
+        if res["Type"] == "AWS::CloudFront::ResponseHeadersPolicy":
+            cfg = props["ResponseHeadersPolicyConfig"]
+            comment = resolve_text(template, cfg.get("Comment", ""), f"{name} Comment")
+            if len(comment) > CLOUDFRONT_COMMENT_MAX:
+                bad.append(f"{name}: Comment is {len(comment)} characters, CloudFront allows {CLOUDFRONT_COMMENT_MAX}")
+            policy_name = resolve_text(template, cfg["Name"], f"{name} Name")
+            if not 1 <= len(policy_name) <= RESPONSE_HEADERS_POLICY_NAME_MAX:
+                bad.append(f"{name}: Name is {len(policy_name)} characters, this repository allows 1 to {RESPONSE_HEADERS_POLICY_NAME_MAX}")
+            items = cfg.get("CustomHeadersConfig", {}).get("Items", [])
+            if len(items) > CUSTOM_HEADERS_MAX:
+                bad.append(f"{name}: {len(items)} custom headers, CloudFront allows {CUSTOM_HEADERS_MAX}")
+            total = 0
+            for item in items:
+                total += len(item["Header"]) + len(item["Value"])
+                if len(item["Header"]) > HEADER_NAME_MAX:
+                    bad.append(f"{name}: header name {item['Header'][:40]}... is {len(item['Header'])} characters, CloudFront allows {HEADER_NAME_MAX}")
+                if len(item["Value"]) > HEADER_VALUE_MAX:
+                    bad.append(f"{name}: value of {item['Header']} is {len(item['Value'])} characters, CloudFront allows {HEADER_VALUE_MAX}")
+            if total > CUSTOM_HEADERS_TOTAL_MAX:
+                bad.append(f"{name}: custom header names and values total {total} characters, CloudFront allows {CUSTOM_HEADERS_TOTAL_MAX}")
+            csp = cfg.get("SecurityHeadersConfig", {}).get("ContentSecurityPolicy", {}).get("ContentSecurityPolicy", "")
+            if len(csp) > HEADER_VALUE_MAX:
+                bad.append(f"{name}: Content-Security-Policy is {len(csp)} characters, CloudFront allows {HEADER_VALUE_MAX}")
+        elif res["Type"] == "AWS::CloudFront::Function":
+            fn_name = resolve_text(template, props["Name"], f"{name} Name")
+            if not CLOUDFRONT_FUNCTION_NAME.fullmatch(fn_name):
+                bad.append(f"{name}: Name {fn_name!r} does not match {CLOUDFRONT_FUNCTION_NAME.pattern}")
+            comment = resolve_text(template, props["FunctionConfig"]["Comment"], f"{name} Comment")
+            if len(comment) > CLOUDFRONT_COMMENT_MAX:
+                bad.append(f"{name}: Comment is {len(comment)} characters, CloudFront allows {CLOUDFRONT_COMMENT_MAX}")
+            code_bytes = len(props["FunctionCode"].encode())
+            if code_bytes > CLOUDFRONT_FUNCTION_CODE_MAX:
+                bad.append(f"{name}: FunctionCode is {code_bytes} bytes, CloudFront allows {CLOUDFRONT_FUNCTION_CODE_MAX}")
+        elif res["Type"] == "AWS::Lambda::EventInvokeConfig":
+            retries = props.get("MaximumRetryAttempts", 2)
+            age = props.get("MaximumEventAgeInSeconds", 21600)
+            if not 0 <= retries <= 2:
+                bad.append(f"{name}: MaximumRetryAttempts {retries} is outside 0 to 2")
+            if not 60 <= age <= 21600:
+                bad.append(f"{name}: MaximumEventAgeInSeconds {age} is outside 60 to 21600")
+    for pname, param in template.get("Parameters", {}).items():
+        if len(param.get("Description", "")) > 4000:
+            bad.append(f"parameter {pname}: Description is {len(param['Description'])} characters, CloudFormation allows 4000")
+    if len(template.get("Description", "").encode()) > 1024:
+        bad.append("template Description is over 1,024 bytes")
+    for section, cap in (("Parameters", 200), ("Outputs", 200), ("Resources", 500)):
+        if len(template.get(section, {})) > cap:
+            bad.append(f"{len(template[section])} entries in {section}, CloudFormation allows {cap}")
+    return bad
+
+
+class CreateTimeLimits(unittest.TestCase):
+    """HFY-TSK-361: the limits above, checked on the template as committed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.t = load("app-stack.yaml")
+
+    def test_template_is_inside_the_create_time_limits(self):
+        self.assertEqual(create_time_limit_violations(self.t), [])
+
+    def test_the_two_site_csp_policies_name_and_comment_fit(self):
+        # the failed update, asserted directly: a stack that creates these policies must get past CloudFront's create call
+        for name in ("SiteCspReportOnlyPolicy", "SiteCspPolicy"):
+            cfg = self.t["Resources"][name]["Properties"]["ResponseHeadersPolicyConfig"]
+            self.assertLessEqual(len(cfg["Comment"]), CLOUDFRONT_COMMENT_MAX, name)
+            self.assertGreater(len(cfg["Comment"]), 0, name)
+        fn = self.t["Resources"]["JoinCspFunction"]["Properties"]
+        self.assertLessEqual(len(fn["FunctionConfig"]["Comment"]), CLOUDFRONT_COMMENT_MAX)
+
+    def test_template_fits_cloudformations_s3_template_limit(self):
+        # Above 51,200 bytes `aws cloudformation deploy --template-file` needs --s3-bucket (the CLI refuses otherwise); 1 MB is the hard cap.
+        size = len((CFN / "app-stack.yaml").read_bytes())
+        self.assertLess(size, CFN_TEMPLATE_BYTES_FROM_S3_MAX)
+
+    def test_the_check_fails_on_the_comments_of_the_failed_update(self):
+        # The strings of change set rg-dark-373c772df8e6 (139 and 136 characters), kept here so the check cannot be weakened unnoticed.
+        old_report_only = ("harrisonfamily HTML pages: Content-Security-Policy-Report-Only (HFY-TSK-149); "
+                           "/join/ is swapped to its Turnstile variant by JoinCspFunction")
+        old_enforced = ("harrisonfamily HTML pages: enforced Content-Security-Policy (HFY-TSK-149); "
+                        "/join/ is swapped to its Turnstile variant by JoinCspFunction")
+        self.assertEqual((len(old_report_only), len(old_enforced)), (139, 136))
+        old = copy.deepcopy(self.t)
+        old["Resources"]["SiteCspReportOnlyPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]["Comment"] = old_report_only
+        old["Resources"]["SiteCspPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]["Comment"] = old_enforced
+        found = create_time_limit_violations(old)
+        self.assertEqual(len(found), 2, found)
+        self.assertTrue(any("SiteCspReportOnlyPolicy: Comment is 139" in v for v in found), found)
+        self.assertTrue(any("SiteCspPolicy: Comment is 136" in v for v in found), found)
+
+    def test_the_check_sees_each_other_limit_it_claims_to_enforce(self):
+        def broken(edit):
+            t = copy.deepcopy(self.t)
+            edit(t["Resources"])
+            return create_time_limit_violations(t)
+
+        cfg = lambda r: r["SiteCspPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
+        fn = lambda r: r["JoinCspFunction"]["Properties"]
+        invoke = lambda r: r["GraphRenderInvokeConfig"]["Properties"]
+        cases = {
+            "Name is 129": lambda r: cfg(r).update(Name="n" * 129),
+            "Comment is 129": lambda r: fn(r)["FunctionConfig"].update(Comment="c" * 129),
+            "does not match": lambda r: fn(r).update(Name="hfy.join.csp"),
+            "FunctionCode is": lambda r: fn(r).update(FunctionCode="//" + "x" * CLOUDFRONT_FUNCTION_CODE_MAX),
+            "Content-Security-Policy is 1784": lambda r: cfg(r)["SecurityHeadersConfig"]["ContentSecurityPolicy"].update(ContentSecurityPolicy="x" * 1784),
+            "MaximumRetryAttempts 3": lambda r: invoke(r).update(MaximumRetryAttempts=3),
+            "MaximumEventAgeInSeconds 30": lambda r: invoke(r).update(MaximumEventAgeInSeconds=30),
+        }
+        for expected, edit in cases.items():
+            found = broken(edit)
+            self.assertTrue(any(expected in v for v in found), (expected, found))
+        too_many = copy.deepcopy(self.t)
+        too_many["Resources"]["SiteCspReportOnlyPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]["CustomHeadersConfig"]["Items"] = [
+            {"Header": f"X-Test-{i}", "Value": "v", "Override": False} for i in range(CUSTOM_HEADERS_MAX + 1)]
+        self.assertTrue(any("custom headers, CloudFront allows 10" in v for v in create_time_limit_violations(too_many)))
+
+    def test_the_check_refuses_a_value_it_cannot_read(self):
+        # a Name built from a pseudo parameter cannot be measured offline: fail loudly rather than skip it
+        t = copy.deepcopy(self.t)
+        t["Resources"]["SiteCspPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]["Name"] = {"Fn::Sub": "${AWS::StackName}-site-csp"}
+        with self.assertRaises(AssertionError):
+            create_time_limit_violations(t)
 
 
 DATA_PREFIXES = ["person", "family", "event", "note", "place", "media"]

@@ -587,7 +587,7 @@ Paths:
 - [`scripts/cloudfront/test/`](../../scripts/cloudfront/test/): `node:test` suite `append-index.test.mjs` and its case table `append-index.cases.json`.
 - [`scripts/infra/test/`](../../scripts/infra/test/):
   - `run.sh`: offline tests for `scripts/infra`, `scripts/ci/package-edge-gate.sh`, `scripts/ci/package-render.sh`, `scripts/check-deployment-sync.sh`, the repo-owned `11ty/` paths and the CloudFront Function.
-  - `test_app_stack.py`: static checks on `app-stack.yaml` and `github-roles.yaml`.
+  - `test_app_stack.py`: static checks on `app-stack.yaml` and `github-roles.yaml`, among them `CreateTimeLimits`, which holds the template to the CloudFront and CloudFormation limits that the services enforce only when they create the resource (a response headers policy or function `Comment` of at most 128 characters, the function name pattern and code size, header sizes, the Lambda async invoke ranges), HFY-TSK-361.
   - `test_edge_gate_stack.py` and `test_mcp_edge401_stack.py`: static checks on the two us-east-1 templates.
   - `test_privacy_terms_pages.py`: `11ty/privacy/index.html` and `11ty/terms/index.html` carry each required section of the approved privacy and terms amendment, `docs/drafts/privacy-terms-2026-10-update.md` (HFY-TSK-239).
   - `stub/aws`, `cf-echo.jq`, `fixtures/live-like.json` and `fixtures/live-with-uploads.json`: test doubles.
