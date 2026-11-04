@@ -11,13 +11,15 @@
 #   post   After the rehearsal: the session length has passed since --assumed-at (an INFERENCE from the time io supplies and the role's
 #          session length; the script cannot see live sessions), the role's last-used time is consistent with that, this shell holds no
 #          break-glass credentials, and the principal's access keys are as expected, judged from a credential report generated after the
-#          session ended (io runs aws iam generate-credential-report just before; the script never does).
+#          session ended. IAM answers a generate request made within four hours of the previous report with that report, so such a report
+#          can exist only four hours after the one the pre-check read. The script never generates one; io does.
 # Options:
 #   --role-name NAME          default hfy-data-breakglass
 #   --bucket NAME             site bucket for the write guard check; default: the bucket the role's own policy names (the stack's MediaBucket).
 #                             If given, it must be the bucket the role's policy names, or the pre-check fails.
 #   --principal-user NAME     IAM user io signs in as, for the credential report row; default: the user of the current caller identity
-#   --expect-active-keys N    post: fail unless the principal has exactly N active access keys (compare with the count the pre-check printed)
+#   --expect-active-keys N    post: fail unless the principal has exactly N active access keys (compare with the count the pre-check printed);
+#                             it also fails when no fresh credential report can be read, so it never passes without checking the keys
 #   --assumed-at ISO8601      post (required): UTC time io ran assume-role, for example 2026-11-20T17:05:00Z
 #   --now ISO8601             override the clock; test-only, refused unless HFY_TEST_CLOCK=1 is set
 #   --help
@@ -28,7 +30,7 @@ umask 077
 
 ROLE=hfy-data-breakglass; BUCKET=""; USER_NAME=""; EXPECT_KEYS=""; ASSUMED_AT=""; NOW=""; MODE=""
 EXPECT_SESSION=3600
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 { if (/^#/) print; else exit }' "$0" | sed 's/^# \{0,1\}//'; }
 
 if [ $# -eq 0 ]; then usage >&2; exit 2; fi
 case "$1" in
@@ -207,8 +209,11 @@ PY
         T0R=$(epoch "$ASSUMED_AT") || { echo "--assumed-at must look like 2026-11-20T17:05:00Z" >&2; exit 2; }
         if [ -n "$GEN_T" ] && [ "$GEN_T" -gt $((T0R + EXPECT_SESSION)) ]; then REPORT_FRESH=yes; else REPORT_FRESH=no; fi
         if [ "$REPORT_FRESH" = no ]; then
-          if [ -n "$EXPECT_KEYS" ]; then fail "the credential report predates the end of the session (or its time is unknown): generate a new credential report (IAM generate-credential-report), wait for it, and rerun"
-          else warn "the credential report may predate the end of the session: generate a new credential report (IAM generate-credential-report) before the post-check"; fi
+          # IAM returns the previous report for any request within four hours of it, so generating one does not help until the previous
+          # report is four hours old. The generation time of the report this run read is printed above.
+          STALE_HINT="IAM answers a generate request made within four hours of the previous report with that same report: once the generation time printed above is four hours old and the session has ended, io runs IAM generate-credential-report, waits for COMPLETE and reruns; this script never generates one"
+          if [ -n "$EXPECT_KEYS" ]; then fail "the credential report predates the end of the session (or its time is unknown), so the key count was not checked: $STALE_HINT"
+          else warn "the credential report may predate the end of the session: $STALE_HINT"; fi
         fi
       fi
       if [ "$MODE" = post ] && [ -n "$EXPECT_KEYS" ] && [ "$REPORT_FRESH" = yes ]; then
@@ -216,6 +221,8 @@ PY
         else fail "the principal has $ACTIVE_KEYS active access key(s), expected $EXPECT_KEYS"; fi
       fi
     fi
+  elif [ "$MODE" = post ] && [ -n "$EXPECT_KEYS" ]; then
+    fail "no credential report could be read (none generated, expired, or this identity may not read it), so --expect-active-keys was not checked: io runs IAM generate-credential-report, waits for COMPLETE and reruns; this script never generates one"
   else
     warn "no credential report is available; io may generate one (IAM generate-credential-report) and rerun. This script does not."
   fi

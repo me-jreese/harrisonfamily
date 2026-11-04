@@ -45,6 +45,10 @@ eq "an option without a value" "$RC" 2
 bg_run --help
 eq "--help exits 0" "$RC" 0
 contains "--help prints usage" "$OUT" "Usage: rehearse-break-glass.sh pre"
+contains "--help prints the whole comment header" "$OUT" "Needs aws, jq, python3"
+lacks "--help prints no code line: set -euo pipefail" "$OUT" "set -euo pipefail"
+lacks "--help prints no code line: umask" "$OUT" "umask 077"
+lacks "--help prints no code line: EXPECT_SESSION" "$OUT" "EXPECT_SESSION"
 check "no AWS call was made by any refusal" test ! -f "$STUB_DIR/calls.log"
 bg_seed; bg_run post --assumed-at yesterday
 eq "post refuses a malformed --assumed-at" "$RC" 2
@@ -161,9 +165,12 @@ echo "2026-11-20T16:00:00+00:00" > "$STUB_DIR/cred-report.time"
 bg_run post --assumed-at 2026-11-20T17:00:00Z --now 2026-11-20T18:30:00Z --expect-active-keys 1 --principal-user io-example
 eq "a credential report older than the session end fails the key check" "$RC" 1
 contains "says to generate a report" "$OUT" "predates the end of the session"
+contains "...and that the key count was not checked" "$OUT" "the key count was not checked"
+contains "...and states the four-hour rule" "$OUT" "within four hours of the previous report"
 bg_run post --assumed-at 2026-11-20T17:00:00Z --now 2026-11-20T18:30:00Z --principal-user io-example
 eq "...without --expect-active-keys it is only a warning" "$RC" 0
 contains "warns" "$OUT" "WARN  the credential report may predate"
+contains "...with the four-hour rule" "$OUT" "within four hours of the previous report"
 echo "2026-11-20T18:20:00+00:00" > "$STUB_DIR/cred-report.time"
 bg_run post --assumed-at 2026-11-20T17:00:00Z --now 2026-11-20T18:30:00Z --expect-active-keys 1 --principal-user io-example
 eq "a fresh report with the expected key count passes" "$RC" 0
@@ -182,6 +189,22 @@ contains "last use after the expected end warns" "$OUT" "WARN  the role was last
 jq '.Role.RoleLastUsed = {LastUsedDate: "2026-11-20T10:00:00+00:00"}' "$STUB_DIR/bg-role.json" > "$STUB_DIR/x" && mv "$STUB_DIR/x" "$STUB_DIR/bg-role.json"
 bg_run post --assumed-at 2026-11-20T17:00:00Z --now 2026-11-20T18:30:00Z
 contains "last use before assumed-at warns" "$OUT" "WARN  the role was last used before --assumed-at"
+
+CURRENT="break-glass rehearsal: no credential report"
+new_stub; bg_seed; bg_guard
+rm -f "$STUB_DIR/cred-report.b64"
+bg_run post --assumed-at 2026-11-20T17:00:00Z --now 2026-11-20T18:30:00Z --expect-active-keys 1 --principal-user io-example
+eq "no readable credential report fails --expect-active-keys: it must not pass without checking the keys" "$RC" 1
+contains "names the unchecked key count" "$OUT" "FAIL  no credential report could be read"
+contains "...and that --expect-active-keys was not checked" "$OUT" "--expect-active-keys was not checked"
+lacks "...and no key line passed" "$OUT" "none was left behind"
+contains "the other post checks still ran" "$OUT" "PASS  the session has expired"
+bg_run post --assumed-at 2026-11-20T17:00:00Z --now 2026-11-20T18:30:00Z --principal-user io-example
+eq "without --expect-active-keys a missing report is only a warning" "$RC" 0
+contains "...and warns" "$OUT" "WARN  no credential report is available"
+bg_run pre
+eq "the pre-check treats a missing report as a warning" "$RC" 0
+contains "...and warns" "$OUT" "WARN  no credential report is available"
 
 CURRENT="break-glass rehearsal: read-only"
 check "the runs made AWS calls to inspect" test -s "$BG_ALL_CALLS"
