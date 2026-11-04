@@ -68,7 +68,7 @@ import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
 import { batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
 import { WITHDRAW_GRACE_MS, withdrawWarning } from "../src/sync/refold.js";
-import { pendingAliases, rekeyPending } from "../src/identity-rekey.js";
+import { pendingAliases, previewRekey, rekeyPending } from "../src/identity-rekey.js";
 import { RecoveryError, bumpTreeId, copyBack, rebuildHeads } from "./sync-recovery.mjs";
 
 export const GRACE_MS = WITHDRAW_GRACE_MS; // 72 hours: the expunge grace of a withdraw (store.js EXPUNGE_GRACE_MS)
@@ -148,6 +148,12 @@ export async function rekey(ctx, { apply, members, retryRefused, resweep }) {
   const pending = await pendingAliases(ctx, opts);
   const refused = pending.filter((p) => p.state === "refused").length;
   ctx.log(`rekey: ${pending.length} merge alias(es) not done${opts.retryRefused ? " (including refused)" : ""}`);
+  if (!apply && pending.length > 0) {
+    // counts only: thread items and ledger entries that would follow the survivor (P2-R82); never ids or names
+    const p = await previewRekey(ctx, opts);
+    ctx.log(`rekey: ${p.threadItems} thread item(s) and ${p.ledgerEntries} ledger entr${p.ledgerEntries === 1 ? "y" : "ies"} would move${p.ledgerEnabled ? "" : " (ledger step off: merges_enabled is not true)"}`);
+    return { planned: true, pending: pending.length, apply, threadItems: p.threadItems, ledgerEntries: p.ledgerEntries };
+  }
   if (!apply || pending.length === 0) return { planned: !apply, pending: pending.length, apply };
   // The CLI has no member list of its own: the operator names the member ids (userGrampsID values) or `none`. Without it the job fails closed.
   const isMember = ctx.isMember ?? (members ? async (id) => members.includes(id) : undefined);
