@@ -71,14 +71,14 @@ def _offers(c):
     if kind == KIND_FIELD:
         take_loses = c.get("kind") == "composite"
         return [
-            {"id": KEEP_MINE, "label": "Keep mine", "default": True, "needs_confirmation": False,
+            {"id": KEEP_MINE, "label": "Keep mine", "default": False, "needs_confirmation": False,
              "detail": "Your value stays and goes to the website."},
             {"id": TAKE_WEBSITE, "label": "Take website", "default": False, "needs_confirmation": take_loses,
              "detail": "The website's value replaces yours." + (" Details that stay only on this computer are removed too." if take_loses else "")},
             skip]
     if kind == KIND_DELETE:
         return [
-            {"id": KEEP_MINE, "label": "Keep mine", "default": True, "needs_confirmation": False,
+            {"id": KEEP_MINE, "label": "Keep mine", "default": False, "needs_confirmation": False,
              "detail": "The object stays in Gramps and is created again on the website."},
             {"id": TAKE_WEBSITE, "label": "Take website (delete here)", "default": False, "needs_confirmation": True,
              "detail": "The object is deleted from Gramps, with everything only this computer holds for it."},

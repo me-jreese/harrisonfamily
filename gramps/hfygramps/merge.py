@@ -831,7 +831,10 @@ DEFAULT_DATE_CHOICE = "take_year_keep_daymonth"
 
 
 def date_choices():
-    """The three offers for a composite date conflict, in the order the GUI shows them (13.1, BRD2 11.1)."""
+    """The three offers for a composite date conflict, in the order the GUI shows them (13.1, BRD2 11.1).
+
+    The ``default`` flag is the merge engine's fallback for ``resolve_date`` with no choice. The window's pre-selection is decided in
+    ``hfygramps.addon.decide.choices`` alone, which pre-selects Skip for every kind (ruling P2-R78)."""
     return [
         {"id": "keep_mine", "label": "Keep mine", "default": False, "needs_confirmation": False},
         {"id": "take_year_keep_daymonth", "label": "Take the website year and keep my day and month", "default": True,
