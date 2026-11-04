@@ -56,7 +56,7 @@ Three layers enforce it: the addon before sending, the server on every write, an
 
 ### Removed data and backups
 
-Something removed from the site disappears from the live copies at once. A withdrawn record is erased for good after a 72-hour grace period, so a mistaken mass withdraw can be undone. Backups are the exception, and the [privacy page](../../11ty/privacy/index.html) (section 7) says so in plain words:
+Something removed from the site disappears from the live copies at once. A withdrawn record's history is erased only after a 72-hour grace period, and only when the admin runs the expunge (nothing runs it automatically, so 72 hours is a minimum), so a mistaken mass withdraw can be undone. Backups are the exception, and the [privacy page](../../11ty/privacy/index.html) (section 7) says so in plain words:
 
 - **Database backups:** the app table has DynamoDB point-in-time recovery on (`PointInTimeRecoveryEnabled` in `app-stack.yaml`), which keeps up to 35 days. A removed item can survive there for up to 35 days, then expires on its own.
 - **Chat:** the chat Worker's SQLite-backed Durable Object keeps point-in-time recovery for 30 days, per Cloudflare's [SQLite storage API documentation](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api) (read 2026-11-03). A removed chat message can survive there for up to 30 days. The DynamoDB mirror of chat falls under the 35-day tail above.

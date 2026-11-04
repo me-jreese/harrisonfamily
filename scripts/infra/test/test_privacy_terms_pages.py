@@ -99,9 +99,9 @@ REQUIRED = [
         "To have something removed from the site and its cloud storage (a detail on a family page, a suggestion, a chat message or a photo),",
         "The admin can remove it from every copy we keep in the cloud: the change history, saved snapshots, the chat copy and stored photos.",
         "Something the admin removes disappears from those live copies at once.",
-        "its history is erased for good after a 72-hour grace period, in case it was taken down by mistake.",
+        "its history is erased by the admin after a 72-hour grace period, in case it was taken down by mistake, and never sooner.",
         "Our database keeps automatic backups that go back 35 days, so a removed item can stay in those backups for up to 35 days.",
-        "The chat service keeps its own recovery copies for 30 days, so a removed chat message can stay there for up to 30 days.",
+        "The chat service keeps its own recovery copies for 30 days, so a removed chat message can stay there for up to 30 days, and our own database copy of chat falls under the 35 days above.",
         "Backup copies expire on their own after that.",
         "Ask for a suggestion, a chat message or a photo you added to be removed from the cloud (section 7).",
     ]),
@@ -273,6 +273,11 @@ class PrivacyTermsPages(unittest.TestCase):
             for phrase in phrases:
                 with self.subTest(page=name, phrase=phrase):
                     self.assertNotIn(phrase, text)
+
+    def test_35_day_tail_rests_on_point_in_time_recovery(self):
+        # The page's 35-day backup sentence is only true while the app table keeps point-in-time recovery (35 days, the DynamoDB maximum).
+        stack = (ROOT / "infrastructure" / "cloudformation" / "app-stack.yaml").read_text()
+        self.assertRegex(stack, r"PointInTimeRecoveryEnabled:\s*true")
 
 
 if __name__ == "__main__":
