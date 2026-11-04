@@ -1,7 +1,7 @@
 // Profile links for the islands (HFY-TSK-217; HFY-PLN-002 surfaces 6.4, R-16 and R-17): the copy, the chip text and the editor's pure
 // helpers. The validator is the one the API runs, shared/profile-links.mjs, bundled here: the editor's blur check and the API's 422
 // give the same code for the same input. No DOM and no CSS in this file.
-import { ERROR_CODES, PLATFORMS, validateLink } from "../../../shared/profile-links.mjs";
+import { ERROR_CODES, PLATFORMS, validateLink } from "@io-kit/profile";
 
 export { ERROR_CODES, PLATFORMS, validateLink };
 

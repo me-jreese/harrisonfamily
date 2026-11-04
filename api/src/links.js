@@ -5,17 +5,22 @@
 // The owner (actor.id === :id) may set or clear any platform. An admin may only clear (null). Anyone else is 403. The version is optimistic
 // concurrency: a stale one is 409 with the current item. A no-op body (nothing would change) is 200 with the current view and no write.
 // An invalid :id is 400 (the spec leaves the status open); a well-formed id with no item reads as empty (no person-existence check).
-// The validator is the shared module the editor runs too (src/shared/profile-links.mjs).
+// HFY-TSK-363: the field policy (owner sets or clears, admin clear-only), the merge and the validation are @io-kit/profile's "links" field; this
+// module keeps the DynamoDB item, the version check and the audit transaction, behind a ProfileStore adapter over the PLINKS# item.
 import { isDeepStrictEqual } from "node:util";
 import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact } from "./txn.js";
-import { validateLinks, PLATFORMS } from "./shared/profile-links.mjs";
+import { ProfileError, createProfileKit, uploadedMediaAvatar } from "@io-kit/profile";
 
 export const LINKS_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const linksKeys = (id) => ({ PK: `PLINKS#${id}`, SK: "META" });
 export const linksAuditId = (id) => `plinks:${id}`;
 
 const isBlank = (v) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+// The one registered field: the member's own links, saved directly; an admin may only clear (R-16). No display toggle: links show whenever set.
+export const LINKS_FIELD = Object.freeze({ id: "links", type: "links", edit_policy: "direct", visibility_tier: "member", display_toggle: false, admin_mode: "clear_only" });
+// HFY has no profile-picture route yet: the uploaded_media adapter is registered over gramps media, whose lookup and save arrive with the picture task.
+const avatar = uploadedMediaAvatar({ lookup: async () => null, save: async () => { throw new HttpError(405, "unsupported", "profile pictures are not available yet"); } });
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const view = (item) => ({ links: item?.links ?? {}, version: item?.version ?? 0 });
 const currentOf = (item) => ({ ...view(item), ...(item?.updatedAt ? { updatedAt: item.updatedAt } : {}) });
@@ -43,21 +48,20 @@ export function createLinks({ ddb, cmds, table, actor, now, uid }) {
       if (!isPlain(input)) throw new HttpError(400, "validation", "links must be an object of platform to link or null");
       if (!Number.isInteger(version) || version < 0) throw new HttpError(400, "validation", "version must be a non-negative integer");
       const touched = Object.keys(input);
-      if (!owner && touched.some((k) => !isBlank(input[k]))) throw new HttpError(403, "forbidden", "an admin can only clear links");
-      for (const k of touched) {
-        if (!PLATFORMS.includes(k)) continue; // reported by validateLinks as unknown_platform
-        if (!isBlank(input[k]) && typeof input[k] !== "string") throw new HttpError(422, "validation", "invalid links", { fields: [{ field: k, code: "invalid_url" }] });
-      }
-      const checked = validateLinks(input);
-      if (!checked.ok) throw new HttpError(422, "validation", "some links are not valid", { fields: checked.fields });
-
       const before = await read(id);
-      if ((before?.version ?? 0) !== version) throw conflict(before);
-      const links = { ...(before?.links ?? {}) };
-      for (const [k, v] of Object.entries(checked.links)) {
-        if (v === null) delete links[k];
-        else links[k] = v;
+      let links = before?.links ?? {};
+      const store = {
+        get: async () => ({ principal: id, fields: { links: { displayed: false, ...(before?.links ? { value: before.links } : {}) } } }),
+        put: async (row) => { links = row.fields.links?.value ?? {}; },
+      };
+      const kit = createProfileKit({ fields: [LINKS_FIELD], tiers: ["member"], store, avatar, now: () => new Date(now()) });
+      try {
+        await kit.putValue(id, "links", input, actor);
+      } catch (e) {
+        if (e instanceof ProfileError) throw new HttpError(e.status, e.code, e.message, e.details);
+        throw e;
       }
+      if ((before?.version ?? 0) !== version) throw conflict(before);
       // A body that changes nothing (empty, or clears of platforms that are not set) writes nothing: no version bump, no audit item.
       if (isDeepStrictEqual(links, before?.links ?? {})) return view(before);
       const at = new Date(now()).toISOString();

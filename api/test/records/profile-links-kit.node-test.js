@@ -1,4 +1,4 @@
-// surf-links-validator: shared/profile-links.mjs against shared/profile-links.cases.json (surfaces.md 6.2), plus validateLinks.
+// surf-links-validator (HFY-TSK-363: now the @io-kit/profile validator) against shared/profile-links.cases.json (surfaces.md 6.2), plus validateLinks.
 // Runs under `node --test shared/` (shared.test.mjs imports it); api/test/profile-links.test.js runs the same table from src/shared/.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -7,11 +7,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ERROR_CODES, LINKEDIN_PUB_MESSAGE, PLATFORM_DOMAINS, PLATFORMS, SHORTENERS, validateLink, validateLinks,
-} from "./profile-links.mjs";
-import { CONTACT_HOSTS } from "./privacy-guard.mjs";
+} from "@io-kit/profile";
+import { CONTACT_HOSTS } from "../../src/shared/privacy-guard.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const { cases } = JSON.parse(readFileSync(join(dir, "profile-links.cases.json"), "utf8"));
+const { cases } = JSON.parse(readFileSync(join(dir, "../../../shared/profile-links.cases.json"), "utf8"));
 
 test("the table holds at least 150 cases and covers every platform, every error code and the R-17 matrix (AC2)", () => {
   assert.ok(cases.length >= 150, `${cases.length} cases`);
