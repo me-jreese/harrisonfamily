@@ -641,7 +641,7 @@ Code note: [`keys.js`](../../api/src/keys.js) exports `commentKeys` (`COMMENT#<i
 
 ## Contributions ledger
 
-[`contrib.js`](../../api/src/contrib.js) credits members for what they add, and takes the credit back when it is deleted. Each credit is an event under `CONTRIB#<principal>` plus five counter updates, and they commit in the same `TransactWriteItems` call as the write that earned them ([item layout](architecture.md#item-layout)). The ledger is written whatever the `contribV1` flag says; the flag only gates the routes that read it.
+[`contrib.js`](../../api/src/contrib.js) credits members for what they add, and takes the credit back when it is deleted. Each credit is an event under `CONTRIB#<principal>` plus five counter updates, and they commit in the same `TransactWriteItems` call as the write that earned them ([item layout](architecture.md#item-layout)). The ledger is written whatever the `contribV1` flag says; the flag only gates the routes that read it. A person merge moves a comment's event with it: the post-merge re-key rewrites `ref.thread` (and `subject`) from `person:<old>` to `person:<survivor>` on the comment events, in place and only while `merges_enabled` is `true` (HFY-TSK-357, ruling P2-R82; [Open person merges](../how-to/operate-the-sync-store.md#open-person-merges)).
 
 | Write | Ledger change |
 | --- | --- |
@@ -1122,7 +1122,7 @@ A delete is a tombstone, as on the desktop: the record's earlier versions stay i
 | Batch receipt | `SYNC#BATCH#<batch_id>` | `META` | `SYNCBATCH` / `<at>#<batch_id>` | `request_hash`, `seq_from`, `seq_to`, `results`. Kept for ever |
 | gramps_id guard | `GID#<Class>#<gramps_id>` | `META` | - | `handle`, and for a retired id `retired: true` and `reason` |
 | ID alias | `IDALIAS#<Class>#<old_gramps_id>` | `META` | `GSI1PK` `IDALIAS#<Class>`, `GSI1SK` the old id | `handle`, `current_gramps_id`, `reason` (`merge` or `renumber`). Written for Person ids only. The renderer lists them on GSI1 and writes `person/<old>.json = {mergedInto}` for each whose survivor has a page ([the render Lambda](sync-render.md#merged-person-stubs)); `GET /api/records/Person/by-id/<old>` answers the same. Both follow an alias chain to its last live person |
-| Re-key marker | `REKEY#Person#<old_gramps_id>` | `META` | - | `state` (`done`, `partial` or `refused`), `new_gramps_id`, `batch_id`, `counts`, `reason` and `evidence` when refused. Written by the post-merge re-key (HFY-TSK-294, `src/identity-rekey.js`); sync recovery never touches it |
+| Re-key marker | `REKEY#Person#<old_gramps_id>` | `META` | - | `state` (`done`, `partial` or `refused`), `new_gramps_id`, `batch_id`, `counts` (`comments`, `reactions`, `follows`, `followsDropped`, `hidden`, `posts` and `contrib`, the ledger events re-pointed to the survivor's thread while `merges_enabled` is `true`, HFY-TSK-357), `reason` and `evidence` when refused. Written by the post-merge re-key (HFY-TSK-294, `src/identity-rekey.js`); sync recovery never touches it |
 | Destructive budget | `SYNC#BUDGET#<yyyymmddhh>` | `META` | - | `count` of delete and withdraw ops committed in that UTC hour, and a `ttl` three days out. Written only by a batch that has one |
 | Batch audit | `AUDIT#records:<batch_id>` | `<at>#<uid>` | `AUDIT` / same as SK | `op: "records.batch"`, `before` and `after` lists of `{class, handle, version}` |
 

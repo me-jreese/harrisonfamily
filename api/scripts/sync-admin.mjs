@@ -72,7 +72,7 @@ import { randomUUID } from "node:crypto";
 import { auditItem, assertTxnSize } from "../src/txn.js";
 import { aliasGsi, batchKey, expungeKey, gidClaimItem, gidKey, headItem, headKey, logItem, logKey, recKey, seqKey, sha256 } from "../src/sync/store.js";
 import { WITHDRAW_GRACE_MS, withdrawWarning } from "../src/sync/refold.js";
-import { pendingAliases, rekeyPending } from "../src/identity-rekey.js";
+import { pendingAliases, previewRekey, rekeyPending } from "../src/identity-rekey.js";
 import { RecoveryError, bumpTreeId, copyBack, rebuildHeads } from "./sync-recovery.mjs";
 
 export const GRACE_MS = WITHDRAW_GRACE_MS; // 72 hours: the expunge grace of a withdraw (store.js EXPUNGE_GRACE_MS)
@@ -142,7 +142,10 @@ export async function mergesOn(ctx, o) {
   const pending = await pendingAliases(ctx);
   if (pending.length > 0 && o.apply) throw new AdminError(`merges-on refused: ${pending.length} merge alias(es) have an unfinished re-key (run rekey --apply first)`);
   if (pending.length > 0) ctx.log(`merges-on: ${pending.length} merge alias(es) have an unfinished re-key; --apply would be refused`);
-  return setMerges(ctx, true, o);
+  const r = await setMerges(ctx, true, o);
+  // The ledger step of the re-key (P2-R82) is dark while the switch is off, so an alias that finished before this flip kept its events on the old thread.
+  if (r.changed && o.apply) ctx.log("merges-on: aliases that finished before this flip have not had their contribution-ledger events moved; run rekey --apply --resweep once (see operate-the-sync-store)");
+  return r;
 }
 export const mergesOff = (ctx, o) => setMerges(ctx, false, o);
 
@@ -213,6 +216,12 @@ export async function rekey(ctx, { apply, members, retryRefused, resweep }) {
   const pending = await pendingAliases(ctx, opts);
   const refused = pending.filter((p) => p.state === "refused").length;
   ctx.log(`rekey: ${pending.length} merge alias(es) not done${opts.retryRefused ? " (including refused)" : ""}`);
+  if (!apply && pending.length > 0) {
+    // counts only: thread items and ledger entries that would follow the survivor (P2-R82); never ids or names
+    const p = await previewRekey(ctx, opts);
+    ctx.log(`rekey: at most ${p.threadItems} thread item(s) and ${p.ledgerEntries} ledger entr${p.ledgerEntries === 1 ? "y" : "ies"} would move (aliases of member principals are refused by --apply and move nothing)${p.ledgerEnabled ? "" : " (ledger step off: merges_enabled is not true)"}`);
+    return { planned: true, pending: pending.length, apply, threadItems: p.threadItems, ledgerEntries: p.ledgerEntries };
+  }
   if (!apply || pending.length === 0) return { planned: !apply, pending: pending.length, apply };
   // The CLI has no member list of its own: the operator names the member ids (userGrampsID values) or `none`. Without it the job fails closed.
   const isMember = ctx.isMember ?? (members ? async (id) => members.includes(id) : undefined);
