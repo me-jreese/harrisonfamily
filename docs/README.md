@@ -88,6 +88,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Backfill the contributions ledger](how-to/backfill-the-contributions-ledger.md) — credit the posts and comments written before the ledger, rebuild the counters, and check a second run changes nothing.
 - [Operate the sync store](how-to/operate-the-sync-store.md) — pause and resume store writes, force a render (`--full`, `--allow-mass-delete`, `--prune-foreign`) and resurrect a mistaken delete or withdraw, each with a dry run and only with io's go-ahead.
 - [Rotate the session signing key](how-to/rotate-the-session-signing-key.md) — replace the auth edge's signing key, which invalidates every outstanding `io_id` and MCP access token.
+- [Rehearse the break-glass sign-in](how-to/rehearse-the-break-glass-sign-in.md) — io's dry run of the `hfy-data-breakglass` role with MFA, with the agent's read-only pre- and post-checks.
 - [Rotate the origin-verify secret](how-to/rotate-the-origin-verify-secret.md) — replace the CloudFront-to-Lambda shared secret with the shortest possible `403` window.
 - [Rotate the Google sign-in client](how-to/rotate-the-google-client.md) — move both sign-in paths to a new Google OAuth web client.
 - [Diagnose sign-in and API failures](how-to/diagnose-sign-in-and-api-failures.md) — symptom-first checks and fixes for sign-in, `/api/*`, `/auth/*`, the private data gate and the MCP server.
