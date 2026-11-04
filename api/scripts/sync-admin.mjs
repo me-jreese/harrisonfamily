@@ -163,22 +163,24 @@ export async function aliasBackfill(ctx, { apply, by = "operator" }) {
     key = r.LastEvaluatedKey;
     if (!key) break;
   }
+  // PK is IDALIAS#<Class>#<old_id>; the stored fields win, the key is the fallback.
+  const derive = (it) => {
+    const m = /^IDALIAS#([^#]+)#(.+)$/.exec(it.PK);
+    const cls = it.class ?? m?.[1];
+    const oldId = it.old_gramps_id ?? m?.[2];
+    return cls && oldId && typeof it.SK === "string" ? { cls, oldId } : null;
+  };
   const missing = items.filter((it) => it.GSI1PK === undefined || it.GSI1SK === undefined);
-  const counts = { found: items.length, alreadyIndexed: items.length - missing.length, wouldWrite: missing.length, written: 0, errors: 0 };
-  log(`alias-backfill: found ${counts.found}, already indexed ${counts.alreadyIndexed}, would write ${counts.wouldWrite}`);
+  const usable = missing.filter((it) => derive(it));
+  const unusable = missing.length - usable.length; // counted in the dry run too, so it shows before any apply
+  const counts = { found: items.length, alreadyIndexed: items.length - missing.length, wouldWrite: usable.length, written: 0, errors: unusable };
+  log(`alias-backfill: found ${counts.found}, already indexed ${counts.alreadyIndexed}, would write ${counts.wouldWrite}, errors ${counts.errors}`);
   if (!apply) {
     log("dry run: nothing written");
     return { ...counts, planned: true, apply };
   }
-  for (const it of missing) {
-    // PK is IDALIAS#<Class>#<old_id>; the stored fields win, the key is the fallback.
-    const m = /^IDALIAS#([^#]+)#(.+)$/.exec(it.PK);
-    const cls = it.class ?? m?.[1];
-    const oldId = it.old_gramps_id ?? m?.[2];
-    if (!cls || !oldId || typeof it.SK !== "string") {
-      counts.errors += 1;
-      continue;
-    }
+  for (const it of usable) {
+    const { cls, oldId } = derive(it);
     const g = aliasGsi(cls, oldId);
     try {
       await ddb.send(
@@ -186,7 +188,7 @@ export async function aliasBackfill(ctx, { apply, by = "operator" }) {
           TableName: table,
           Key: { PK: it.PK, SK: it.SK },
           UpdateExpression: "SET GSI1PK = :a, GSI1SK = :b",
-          ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(GSI1PK)",
+          ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(GSI1PK) OR attribute_exists(PK) AND attribute_not_exists(GSI1SK)",
           ExpressionAttributeValues: { ":a": g.GSI1PK, ":b": g.GSI1SK },
         }),
       );
@@ -197,8 +199,8 @@ export async function aliasBackfill(ctx, { apply, by = "operator" }) {
     }
   }
   const at = iso(ctx.now);
-  if (counts.written > 0) {
-    const audit = await auditPut(ctx, `sync-admin:alias-backfill:${at}`, "sync-admin.alias-backfill", { missing: counts.wouldWrite }, { written: counts.written, errors: counts.errors }, by, at);
+  if (counts.written > 0 || counts.errors > 0) {
+    const audit = await auditPut(ctx, `sync-admin:alias-backfill:${at}`, "sync-admin.alias-backfill", { missing: missing.length }, { written: counts.written, errors: counts.errors }, by, at);
     await ddb.send(new cmds.PutCommand({ TableName: table, Item: audit }));
   }
   log(`alias-backfill: written ${counts.written}, errors ${counts.errors}${counts.errors > 0 ? " (run it again to resume)" : ""}`);

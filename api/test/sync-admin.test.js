@@ -455,6 +455,21 @@ describe("alias-backfill (HFY-TSK-358, P2-R83)", () => {
     expect(await run(args(["alias-backfill", "--dry-run"]), w2.ctx)).toMatchObject({ found: 2, alreadyIndexed: 0, wouldWrite: 2 });
   });
 
+  it("counts unusable and half-indexed items; the dry run reports errors and --apply repairs the half-indexed one", async () => {
+    const w = world();
+    seed(w, 1, false);
+    const half = aliasRow(2, false);
+    w.ddb.rows.set(`${half.PK}\u0000META`, { ...half, GSI1PK: "IDALIAS#Person" });
+    const bad = { PK: "IDALIAS#", SK: "META", entity: "idalias" };
+    w.ddb.rows.set(`${bad.PK}\u0000META`, bad);
+    const dry = await run(args(["alias-backfill", "--dry-run"]), w.ctx);
+    expect(dry).toMatchObject({ found: 3, wouldWrite: 2, errors: 1, planned: true });
+    expect(w.lines.join("\n")).toMatch(/would write 2, errors 1/);
+    expect(await run(args(["alias-backfill", "--apply"]), w.ctx)).toMatchObject({ written: 2, errors: 1 });
+    expect(w.row(half.PK, "META").GSI1SK).toBe("I9002");
+    expect(w.ddb.all().some((r) => r.PK.startsWith("AUDIT#sync-admin:alias-backfill"))).toBe(true);
+  });
+
   it("--apply writes the keys the alias writer builds, audits once, and a re-run is idempotent", async () => {
     const w = world();
     for (const n of [1, 2, 3, 4, 5]) seed(w, n, n === 5);
