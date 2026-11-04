@@ -389,3 +389,104 @@ describe("resurrect", () => {
     await expect(run(args(["resurrect", "--batch", "nosuchbatch", "--dry-run"]), w.ctx)).rejects.toThrow(/no SYNC#BATCH receipt/);
   });
 });
+
+describe("alias-backfill (HFY-TSK-358, P2-R83)", () => {
+  const aliasRow = (n, withGsi) => ({
+    PK: `IDALIAS#Person#I9${String(n).padStart(3, "0")}`,
+    SK: "META",
+    entity: "idalias",
+    class: "Person",
+    old_gramps_id: `I9${String(n).padStart(3, "0")}`,
+    handle: h(n),
+    current_gramps_id: "I0001",
+    reason: "merge",
+    batch_id: "b1",
+    at: "2026-10-01T00:00:00.000Z",
+    ...(withGsi ? { GSI1PK: "IDALIAS#Person", GSI1SK: `I9${String(n).padStart(3, "0")}` } : {}),
+  });
+  const seed = (w, n, withGsi) => w.ddb.rows.set(`${aliasRow(n, withGsi).PK}\u0000META`, aliasRow(n, withGsi));
+  const gsiOf = (w, n) => w.row(aliasRow(n).PK, "META");
+  // Hands the scan back two items at a time so the pagination loop is exercised.
+  const paged = (ddb) => ({
+    async send(cmd) {
+      if (cmd.constructor.name !== "ScanCommand") return ddb.send(cmd);
+      const all = (await ddb.send(cmd)).Items.sort((a, b) => (a.PK < b.PK ? -1 : 1));
+      const start = cmd.input.ExclusiveStartKey ? all.findIndex((r) => r.PK === cmd.input.ExclusiveStartKey.PK) + 1 : 0;
+      const page = all.slice(start, start + 2);
+      return { Items: page, ...(start + 2 < all.length ? { LastEvaluatedKey: { PK: page.at(-1).PK, SK: "META" } } : {}) };
+    },
+  });
+
+  it("parses with the standard flags only: exactly one of --dry-run/--apply, --by, nothing else", () => {
+    expect(args(["alias-backfill", "--dry-run"])).toMatchObject({ command: "alias-backfill", apply: false });
+    expect(args(["alias-backfill", "--apply", "--by", "op"])).toMatchObject({ apply: true, by: "op" });
+    expect(() => args(["alias-backfill"])).toThrow(AdminError);
+    expect(() => args(["alias-backfill", "--dry-run", "--apply"])).toThrow(/exactly one/);
+    expect(() => args(["alias-backfill", "--apply", "--members", "none"])).toThrow(/does not apply/);
+    expect(() => args(["alias-backfill", "--apply", "--all"])).toThrow(/does not apply/);
+    expect(HELP).toMatch(/alias-backfill/);
+  });
+
+  it("nothing to do: no aliases, then only indexed aliases", async () => {
+    const w = world();
+    const before = w.snapshot();
+    expect(await run(args(["alias-backfill", "--apply"]), w.ctx)).toMatchObject({ found: 0, wouldWrite: 0, written: 0, errors: 0 });
+    seed(w, 1, true);
+    const snap = w.snapshot();
+    expect(await run(args(["alias-backfill", "--apply"]), w.ctx)).toMatchObject({ found: 1, alreadyIndexed: 1, wouldWrite: 0, written: 0 });
+    expect(w.snapshot()).toBe(snap);
+    expect(before).not.toBe(snap);
+    expect(w.ddb.all().some((r) => r.PK.startsWith("AUDIT#sync-admin:alias-backfill"))).toBe(false);
+  });
+
+  it("the dry run counts some or all missing, writes nothing and names no id", async () => {
+    const w = world();
+    seed(w, 1, true);
+    seed(w, 2, false);
+    seed(w, 3, false);
+    const before = w.snapshot();
+    expect(await run(args(["alias-backfill", "--dry-run"]), w.ctx)).toMatchObject({ found: 3, alreadyIndexed: 1, wouldWrite: 2, planned: true });
+    expect(w.snapshot()).toBe(before);
+    expect(w.lines.join("\n")).toMatch(/found 3, already indexed 1, would write 2/);
+    expect(w.lines.join("\n")).not.toMatch(/I9\d{3}|IDALIAS|Person/);
+    const w2 = world();
+    seed(w2, 1, false);
+    seed(w2, 2, false);
+    expect(await run(args(["alias-backfill", "--dry-run"]), w2.ctx)).toMatchObject({ found: 2, alreadyIndexed: 0, wouldWrite: 2 });
+  });
+
+  it("--apply writes the keys the alias writer builds, audits once, and a re-run is idempotent", async () => {
+    const w = world();
+    for (const n of [1, 2, 3, 4, 5]) seed(w, n, n === 5);
+    w.ctx.ddb = paged(w.ddb); // pagination: three pages
+    expect(await run(args(["alias-backfill", "--apply", "--by", "op-a"]), w.ctx)).toMatchObject({ found: 5, alreadyIndexed: 1, wouldWrite: 4, written: 4, errors: 0 });
+    for (const n of [1, 2, 3, 4]) expect(gsiOf(w, n)).toMatchObject({ GSI1PK: "IDALIAS#Person", GSI1SK: aliasRow(n).old_gramps_id, reason: "merge", handle: h(n) });
+    const audits = w.ddb.all().filter((r) => r.PK.startsWith("AUDIT#sync-admin:alias-backfill"));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ principal: "op-a", after: { written: 4, errors: 0 } });
+    const snap = w.snapshot();
+    expect(await run(args(["alias-backfill", "--apply"]), w.ctx)).toMatchObject({ found: 5, alreadyIndexed: 5, written: 0 });
+    expect(w.snapshot()).toBe(snap);
+  });
+
+  it("a partial failure is counted, the run goes on, and the next run resumes on what is left", async () => {
+    const w = world();
+    for (const n of [1, 2, 3]) seed(w, n, false);
+    const failing = aliasRow(2).PK;
+    const flaky = { send: async (cmd) => { if (cmd.constructor.name === "UpdateCommand" && cmd.input.Key.PK === failing) throw new Error("boom"); return w.ddb.send(cmd); } };
+    const r1 = await run(args(["alias-backfill", "--apply"]), { ...w.ctx, ddb: flaky });
+    expect(r1).toMatchObject({ found: 3, written: 2, errors: 1 });
+    expect(w.lines.join("\n")).toMatch(/run it again to resume/);
+    expect(gsiOf(w, 2).GSI1PK).toBeUndefined();
+    const r2 = await run(args(["alias-backfill", "--apply"]), w.ctx);
+    expect(r2).toMatchObject({ found: 3, alreadyIndexed: 2, wouldWrite: 1, written: 1, errors: 0 });
+    expect(gsiOf(w, 2).GSI1PK).toBe("IDALIAS#Person");
+  });
+
+  it("an item indexed between the scan and the write counts as indexed and is not overwritten", async () => {
+    const w = world();
+    seed(w, 1, false);
+    const racing = { send: async (cmd) => { if (cmd.constructor.name === "UpdateCommand") w.ddb.rows.set(`${aliasRow(1).PK}\u0000META`, aliasRow(1, true)); return w.ddb.send(cmd); } };
+    expect(await run(args(["alias-backfill", "--apply"]), { ...w.ctx, ddb: racing })).toMatchObject({ written: 0, alreadyIndexed: 1, errors: 0 });
+  });
+});
