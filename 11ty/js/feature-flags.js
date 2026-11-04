@@ -8,11 +8,11 @@
   const ASSET_V = {
     "islands": {
       "about-cta": {
-        "js": "1155991f",
+        "js": "d7a08602",
         "css": "11377c0e"
       },
       "access-requests": {
-        "js": "9340fb6d",
+        "js": "584d6b02",
         "css": "ed4e0505"
       },
       "admin-sync": {
@@ -20,7 +20,7 @@
         "css": "e9be417d"
       },
       "chat": {
-        "js": "1167070e",
+        "js": "307faa0a",
         "css": "37325073"
       },
       "edit-entry": {
@@ -28,11 +28,11 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "6d5116fc",
+        "js": "e1fcf641",
         "css": "4cd750ae"
       },
       "family": {
-        "js": "fb7dc1c9",
+        "js": "ae7b6ab2",
         "css": "e52fd206"
       },
       "family-entry": {
@@ -52,7 +52,7 @@
         "css": "38a33f05"
       },
       "join": {
-        "js": "1d776988",
+        "js": "6db91857",
         "css": "88b160fb"
       },
       "join-entry": {
@@ -60,27 +60,27 @@
         "css": "e44c3a91"
       },
       "links-editor": {
-        "js": "6ed42a5f",
+        "js": "154de5d5",
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "b624c26e",
+        "js": "15f0c129",
         "css": "307f6c65"
       },
       "notifications": {
-        "js": "dbde126f",
+        "js": "c15f7c97",
         "css": "be703fb4"
       },
       "person": {
-        "js": "988d6ba3",
+        "js": "e216bc0e",
         "css": "92f22fd0"
       },
       "person-links": {
-        "js": "e276ff96",
+        "js": "2d7aa8ba",
         "css": "fcacbc39"
       },
       "photo-tag-edit": {
-        "js": "87c0cb53",
+        "js": "7bcffffe",
         "css": "7bf60ae7"
       },
       "photo-tags": {
@@ -88,15 +88,15 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "9194d3b9",
+        "js": "396b8421",
         "css": "890fde1c"
       },
       "review": {
-        "js": "0d600d85",
+        "js": "ec4f424a",
         "css": "f6c66152"
       },
       "search": {
-        "js": "b7969997",
+        "js": "8aee6a4a",
         "css": "9e007813"
       },
       "settings": {
@@ -104,7 +104,7 @@
         "css": "be4f0b90"
       },
       "shell": {
-        "js": "f308fe0b",
+        "js": "ef1cad19",
         "css": "6aa10a05"
       },
       "timeline": {
@@ -118,7 +118,7 @@
     },
     "theme": "f103422b",
     "manifest": "c0f9b5fc",
-    "sw": "ab81fe04"
+    "sw": "7be3a8e5"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

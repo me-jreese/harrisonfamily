@@ -9,7 +9,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { boundedText, cleanText, isRecord } from "./validate.mjs";
 import "./privacy-guard.test.mjs"; // `node --test shared/` runs only this file (package.json main), so per-module suites hang off it
-import "./profile-links.test.mjs";
 import "./legacy-form.test.mjs";
 import "./edit-guard.test.mjs";
 import "./canonical.test.mjs";

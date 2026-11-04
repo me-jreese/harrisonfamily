@@ -1,8 +1,8 @@
-// surf-links-validator: hfy-api loads the profile-links validator from src/shared/ (a symlink here, real files in the zip) and
+// surf-links-validator: hfy-api loads the profile-links validator from @io-kit/profile (HFY-TSK-363; it was src/shared/profile-links.mjs) and
 // every case of shared/profile-links.cases.json holds there (surfaces.md 6.2; the API's 422 details.fields come from validateLinks).
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { validateLink, validateLinks } from "../src/shared/profile-links.mjs";
+import { validateLink, validateLinks } from "@io-kit/profile";
 
 const { cases } = JSON.parse(readFileSync(new URL("../../shared/profile-links.cases.json", import.meta.url), "utf8"));
 

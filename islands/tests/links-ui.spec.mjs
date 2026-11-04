@@ -5,7 +5,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { axeViolations } from "./axe.mjs";
-import { validateLinks } from "../../shared/profile-links.mjs";
+import { validateLinks } from "@io-kit/profile";
 
 const PERSON = JSON.parse(readFileSync(new URL("./fixtures/person-legacy.json", import.meta.url), "utf8"));
 const VIEWPORTS = [["375", { width: 375, height: 812 }], ["1280", { width: 1280, height: 800 }]];
