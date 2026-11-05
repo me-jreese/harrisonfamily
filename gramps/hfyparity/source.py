@@ -45,11 +45,16 @@ def read_stripped_handles(path: str) -> "set[str]":
         finally:
             con.close()
         table = json.loads(row[0]) if row else {}
-    except (sqlite3.Error, OSError, ValueError, TypeError):
+    except Exception:  # noqa: BLE001 - a hostile or damaged file (deeply nested JSON raises RecursionError) is "unreadable", never a traceback
         raise StrippedSidecarUnreadable()
-    if not isinstance(table, dict):
+    try:
+        if not isinstance(table, dict):
+            raise StrippedSidecarUnreadable()
+        return {h for h in table if isinstance(h, str) and _HANDLE.match(h)}
+    except StrippedSidecarUnreadable:
+        raise
+    except Exception:  # noqa: BLE001
         raise StrippedSidecarUnreadable()
-    return {h for h in table if isinstance(h, str) and _HANDLE.match(h)}
 
 
 def scan_dir(root: str) -> Dict[str, Path]:

@@ -10,7 +10,9 @@ older detector did not read is now found, so it is held with the setting off and
 Standard library only; Python 3.9 compatible.
 """
 import os
+import shutil
 import struct
+import tempfile
 import sys
 import time
 import tracemalloc
@@ -307,6 +309,211 @@ class TheDetector(unittest.TestCase):
     def test_the_download_check_finds_them_too(self):
         data = LS.jpeg(exif_subifd_tiff())
         self.assertEqual(mediafile.hold_for_bytes(data), mediafile.GPS_RULE)
+
+
+def lying(tiff, count, order="<"):
+    """The TIFF with the entry count of IFD0 written over: larger than the data (the real entries come first, as a reader that stops at the end sees them)."""
+    t = bytearray(tiff)
+    struct.pack_into(order + "H", t, struct.unpack_from(order + "I", t, 4)[0], count)
+    return bytes(t)
+
+
+class LyingCounts(unittest.TestCase):
+    """An IFD0 entry count larger than the data hid the GPS pointer from both detectors while readers still read the position."""
+
+    def test_the_entries_that_fit_are_read_and_the_photo_is_held_never_sent(self):
+        for order in "<>":
+            for count in (300, 513, 65535):
+                bad = lying(LS.build_tiff(order), count, order)
+                for data, ct in ((LS.jpeg(bad), JPEG), (LS.png(tiff=bad), PNG)):
+                    self.assertEqual(mediafile.assess(data, ct), "location", (order, count, ct))
+                    self.assertTrue(mediafile.exif_gps(data, ct))
+                    out, _why = mediafile.strip_copy(data, ct)
+                    self.assertIsNone(out, "the add-on does not rebuild a TIFF whose count lies: the photo is held")
+
+    def test_a_lying_count_with_no_pointer_among_the_entries_is_held_as_unreadable_not_as_having_a_position(self):
+        for count in (300, 513, 65535):
+            bad = lying(LS.build_tiff("<", gps=False), count)
+            for data, ct in ((LS.jpeg(bad), JPEG), (LS.png(tiff=bad), PNG)):
+                self.assertEqual(mediafile.assess(data, ct), "unreadable", (count, ct))
+                self.assertEqual(mediafile.hold_for_bytes(data), "media_scan_unreadable")
+        d = tempfile.mkdtemp(prefix="hfy-lie-")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "a.jpg")
+        open(path, "wb").write(LS.jpeg(lying(LS.build_tiff("<", gps=False), 300)))
+        for on in (False, True):
+            info = mediafile.inspect(path, strip_location=on)
+            self.assertEqual((info["state"], info["scan"]), ("gps", "unreadable"))
+            self.assertNotIn("location_stripped", info)
+
+    def test_a_gps_ifd_whose_count_lies_counts_as_a_position(self):
+        tiff = bytearray(LS.build_tiff("<"))
+        ifd0 = struct.unpack_from("<I", tiff, 4)[0]
+        n = struct.unpack_from("<H", tiff, ifd0)[0]
+        for i in range(n):
+            if struct.unpack_from("<H", tiff, ifd0 + 2 + 12 * i)[0] == 0x8825:
+                gps = struct.unpack_from("<I", tiff, ifd0 + 2 + 12 * i + 8)[0]
+                struct.pack_into("<H", tiff, gps, 5000)
+        self.assertEqual(mediafile.assess(LS.jpeg(bytes(tiff)), JPEG), "location")
+
+
+class VendorXmp(unittest.TestCase):
+    """XMP positions under names without "gps" went into a copy; any property named like a position is blanked, and a coordinate-shaped text holds the photo."""
+
+    def xmp_with(self, attrs=b"", body=b""):
+        return LS.xmp_packet(gps=False).replace(b' exif:DateTimeOriginal', attrs + b' exif:DateTimeOriginal', 1).replace(b"</rdf:Description>", body + b"</rdf:Description>", 1)
+
+    def strip_both(self, xmp, compress=True):
+        for data, ct in ((LS.jpeg(tiff_main(), xmp), JPEG), (LS.png(tiff=tiff_main(), xmp=xmp, compress_xmp=compress), PNG)):
+            out, why = locstrip.strip(data, ct)
+            self.assertIsNotNone(out, why)
+            self.assertFalse(mediafile.exif_gps(out, ct))
+            yield out, ct
+
+    def test_dji_target_and_vendor_latitude_longitude_properties_are_blanked(self):
+        attrs = (b' drone-dji:LRFTargetLat="12.3460" drone-dji:LRFTargetLon="65.4330" vnd:Latitude="12.3456" vnd:Longitude="65.4321"'
+                 b' vnd:AltitudeMeters="98.7" vnd:GeoTag="x" vnd:Position="y" vnd:Coordinates="z"')
+        for out, _ct in self.strip_both(self.xmp_with(attrs)):
+            for word in (b"LRFTarget", b"Latitude", b"Longitude", b"Altitude", b"GeoTag", b"Position", b"Coordinates", b"12.3460", b"65.4330"):
+                self.assertNotIn(word, out)
+
+    def test_element_form_and_nested_values_are_blanked(self):
+        body = b"<vnd:Latitude>12.3456</vnd:Latitude><vnd:Where><vnd:Lon>65.4321</vnd:Lon></vnd:Where><vnd:Geo rdf:parseType=\"Resource\"><rdf:value>x</rdf:value></vnd:Geo>"
+        for out, _ct in self.strip_both(self.xmp_with(body=body)):
+            for word in (b"Latitude", b"vnd:Lon", b"vnd:Geo", b"65.4321"):
+                self.assertNotIn(word, out)
+
+    def test_harmless_properties_are_kept(self):
+        attrs = b' tiff:Orientation="1" crs:Translation="0.5" xmp:Rating="5" photoshop:City="Fakeville"'
+        for out, ct in self.strip_both(self.xmp_with(attrs, b"<dc:subject><rdf:Bag><rdf:li>family</rdf:li></rdf:Bag></dc:subject>"), compress=False):
+            for word in (b"tiff:Orientation", b"crs:Translation", b"xmp:Rating", b"Fakeville", b"<rdf:Bag>", b"exif:DateTimeOriginal"):
+                self.assertIn(word, out, ct)
+
+    def test_a_coordinate_shaped_text_in_a_property_not_named_like_one_holds_the_photo(self):
+        for text in (b"at 37.5712 -122.0809", b"37.5712, -122.0809", b"37 deg 34' N"):
+            xmp = self.xmp_with(body=b"<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">" + text + b"</rdf:li></rdf:Alt></dc:description>")
+            for data, ct in ((LS.jpeg(tiff_main(), xmp), JPEG), (LS.png(tiff=tiff_main(), xmp=xmp), PNG)):
+                self.assertIsNone(locstrip.strip(data, ct)[0], text)
+
+    def test_a_second_xmp_packet_holds_the_photo(self):
+        two = LS.segment(0xE1, b"http://ns.adobe.com/xap/1.0/\x00" + LS.xmp_packet(gps=False))
+        self.assertIsNone(locstrip.strip(LS.jpeg(tiff_main(), LS.xmp_packet(gps=False), extra_segments=two), JPEG)[0])
+
+
+def quad_segment(nsig):
+    """A comment of ``nsig`` raw TIFF headers that all point at one IFD0 of 512 GPS pointers, each pointing into a region that reads as 512-entry
+    IFDs of harmless tags. No position anywhere; walked naively it takes minutes."""
+    sigs = nsig * 8
+    ifd0_at = sigs
+    region_at = ifd0_at + 2 + 512 * 12 + 4
+    region_len = 6200 + sigs + 64
+    payload = bytearray(region_at + region_len)
+    for k in range(nsig):
+        payload[8 * k:8 * k + 4] = b"II*\x00"
+        struct.pack_into("<I", payload, 8 * k + 4, ifd0_at - 8 * k)
+    struct.pack_into("<H", payload, ifd0_at, 512)
+    for i in range(512):
+        struct.pack_into("<HHII", payload, ifd0_at + 2 + 12 * i, 0x8825, 4, 1, region_at + 16)
+    payload[region_at:region_at + region_len] = b"\x00\x02" * (region_len // 2)
+    return bytes(payload)
+
+
+class WorkLimits(unittest.TestCase):
+    """No file costs more than a fixed amount of work: past it the photo is held with its own reason, quickly."""
+
+    def timed(self, data, ct):
+        t0 = time.time()
+        scan = mediafile.assess(data, ct)
+        out, why = mediafile.strip_copy(data, ct)
+        self.assertLess(time.time() - t0, 1.0)
+        return scan, out, why
+
+    def test_a_pile_of_tiff_headers_pointing_at_pointer_tables(self):
+        for n_segments, nsig in ((1, 64), (2, 250)):
+            data = LS.jpeg(tiff_main(), extra_segments=LS.segment(0xFE, quad_segment(nsig)) * n_segments)
+            scan, out, _why = self.timed(data, JPEG)
+            self.assertIn(scan, ("limit", "location"))
+            self.assertIsNone(out)
+        scan, _out, _why = self.timed(LS.jpeg(None, extra_segments=LS.segment(0xFE, quad_segment(250)) * 2), JPEG)
+        self.assertEqual(scan, "limit", "a photo with no other sign of a position is held as too much to check, not as having one")
+
+    def test_many_large_text_chunks(self):
+        base = LS.png(tiff=tiff_main())
+        iend = base.rindex(b"IEND") - 4
+        for text, kind in ((b"a" * (4 * 1024 * 1024 - 16), b"Comment"), (b"\nicc\n 2000000\n" + b"0" * (4 * 1024 * 1024 - 32), b"Raw profile type icc")):
+            chunk = LS.chunk(b"zTXt", kind + b"\x00\x00" + zlib.compress(text, 9))
+            scan, out, _why = self.timed(base[:iend] + chunk * 8 + base[iend:], PNG)
+            self.assertIn(scan, ("limit", "location"))
+            self.assertIsNone(out)
+
+    def test_many_xmp_properties_with_long_values(self):
+        attrs = b"".join(b' exif:GPSA%d="%s"' % (i, b"x" * 8000) for i in range(256))
+        data = LS.png(tiff=tiff_main(), xmp=LS.xmp_packet(gps=False).replace(b' exif:DateTimeOriginal', attrs + b' exif:DateTimeOriginal', 1), compress_xmp=True)
+        _scan, out, _why = self.timed(data, PNG)
+        self.assertIsNone(out)
+
+    def test_the_legacy_reading_is_bounded_too(self):
+        """Thousands of GPS pointers into thousands of different IFDs, in many Exif headers."""
+        order = "<"
+        n = 1000
+        base = 8 + 2 + 12 * n + 4
+        t = bytearray(base + n * 16)
+        t[0:4] = b"II*\x00"
+        struct.pack_into("<I", t, 4, 8)
+        struct.pack_into("<H", t, 8, n)
+        for i in range(n):
+            struct.pack_into("<HHII", t, 10 + 12 * i, 0x8825, 4, 1, base + 12 * (i % 700))
+        data = LS.jpeg(bytes(t), extra_segments=b"".join(LS.segment(0xFE, b"Exif\x00\x00" + bytes(t)) for _ in range(4)))
+        self.timed(data, JPEG)   # whatever it answers, it answers in well under a second
+
+
+class NoFalseHolds(unittest.TestCase):
+    """Files with no position at all are not held, and a file held for another reason says so."""
+
+    def gps_tiff(self, entries):
+        return LS.assemble("<", [("ifd0", [LS.asc("<", 0x010F, LS.MAKE), LS.ref(0x8769, "ifd", "exif"), LS.ref(0x8825, "ifd", "gps")], None),
+                                 ("exif", [(0x9003, 2, len(LS.DATE) + 1, LS.DATE + b"\x00")], None), ("gps", entries, None)], {})
+
+    def test_a_no_fix_gps_ifd_is_not_a_position(self):
+        nofix = [(0x0000, 1, 4, b"\x02\x03\x00\x00"), (0x0007, 5, 3, LS.rational_bytes("<", ((13, 1), (14, 1), (1516, 100)))), (0x0009, 2, 2, b"V\x00"),
+                 (0x0012, 2, 7, b"WGS-84\x00"), (0x001D, 2, 11, b"2001:02:03\x00")]
+        tiff = self.gps_tiff(nofix)
+        self.assertFalse(mediafile.exif_gps(LS.jpeg(tiff), JPEG))
+        self.assertFalse(mediafile.exif_gps(tiff, "image/tiff"))
+        self.assertFalse(mediafile.exif_gps(LS.jpeg(tiff, extra_segments=LS.segment(0xE2, b"MPF\x00" + b"\x00" * 16)) + b"\x00", JPEG))
+        sea_level = [(0x0000, 1, 4, b"\x02\x03\x00\x00"), (0x0006, 5, 1, LS.rational_bytes("<", ((0, 1),)))]
+        self.assertFalse(mediafile.exif_gps(LS.jpeg(self.gps_tiff(sea_level)), JPEG))
+        self.assertTrue(mediafile.exif_gps(LS.jpeg(self.gps_tiff(sea_level[:1] + [(0x0006, 5, 1, LS.rational_bytes("<", ((1234, 10),)))])), JPEG))
+
+    def test_a_tiff_is_walked_from_its_header_and_its_pixels_are_not_searched(self):
+        pixels = (b"II*\x00" + b"\x10" * 12) * 400
+        tiff = LS.assemble("<", [("ifd0", [(0x0100, 3, 1, struct.pack("<H", 64) + b"\x00\x00"), (0x0111, 4, 1, ("blob", "px")), (0x0117, 4, 1, ("bloblen", "px"))], None)],
+                           {"px": pixels})
+        t0 = time.time()
+        self.assertEqual(mediafile.assess(tiff, "image/tiff"), "")
+        self.assertLess(time.time() - t0, 0.5)
+
+    def test_large_text_chunks_under_the_cap_and_a_large_icc_raw_profile_are_not_held(self):
+        base = LS.png(tiff=LS.build_tiff(gps=False))
+        iend = base.rindex(b"IEND") - 4
+        text = LS.chunk(b"zTXt", b"Comment\x00\x00" + zlib.compress(b"a" * (5 * 1024 * 1024), 9))
+        icc = LS.chunk(b"zTXt", b"Raw profile type icc\x00\x00" + zlib.compress(b"\nicc\n 2621440\n" + b"00" * 2621440, 9))
+        for chunk in (text, icc):
+            self.assertEqual(mediafile.assess(base[:iend] + chunk + base[iend:], PNG), "")
+
+    def test_text_above_the_cap_is_held_as_too_much_to_check_not_as_a_position(self):
+        base = LS.png(tiff=LS.build_tiff(gps=False))
+        iend = base.rindex(b"IEND") - 4
+        data = base[:iend] + LS.chunk(b"zTXt", b"Comment\x00\x00" + zlib.compress(b"a" * (9 * 1024 * 1024), 9)) + base[iend:]
+        self.assertEqual(mediafile.assess(data, PNG), "limit")
+        self.assertEqual(mediafile.hold_for_bytes(data), "media_scan_limit")
+
+    def test_a_held_photo_with_no_known_position_says_so_in_its_hold(self):
+        from hfygramps.addon import consts
+        for rule in ("media_scan_unreadable", "media_scan_limit"):
+            self.assertIn("not known to have one", consts.HOLD_MESSAGES[rule])
+            self.assertNotIn("remove the location", consts.HOLD_MESSAGES[rule])
+            self.assertIn(rule, consts.DOWNLOAD_HOLD_RULES)
 
 
 if __name__ == "__main__":

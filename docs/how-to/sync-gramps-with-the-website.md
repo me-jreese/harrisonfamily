@@ -101,7 +101,7 @@ gramps/bin/hfy-sync settings --tree "<tree name>" --strip-location on --yes
 gramps/bin/hfy-sync push --tree "<tree name>" --json                       # the look: counts.media_location_stripped_pending is the number of photos that would go without a location
 ```
 
-`hfy-sync settings ... --strip-location off --yes` turns it off again. What it removes, how the check works and what stays held are in [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md#9-push-the-trees-changes). When you review the shadow render against the legacy export, give the report the same count: [Account for media sent without their location](review-the-shadow-parity-report.md#account-for-media-sent-without-their-location).
+`hfy-sync settings ... --strip-location off --yes` turns it off again. If the website ends up with another file for one of these photos, the sync lists it as held back until you choose (`hfy-sync stripped --accept-website-file <Gramps ID> --yes` or `--send-again <Gramps ID> --yes`). What it removes, how the check works, the limits and what stays held are in [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md#9-push-the-trees-changes). When you review the shadow render against the legacy export, give the report the same count: [Account for media sent without their location](review-the-shadow-parity-report.md#account-for-media-sent-without-their-location).
 
 ### Restore from a backup
 

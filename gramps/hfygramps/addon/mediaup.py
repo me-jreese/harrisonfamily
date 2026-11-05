@@ -125,9 +125,16 @@ def annotate(plan, files, rows, local, cloud, actions):
     plan.uploads, plan.warnings = {}, []
     plan.media_stripped, plan.media_stripped_pending = 0, 0
     for x in plan.holds:
-        # strip_location is on and the photo still could not go (a TIFF, or a file the strip cannot take with certainty): say so
-        if x["class"] == CLASS and x["rule"] == GPS_RULE and (files.get(x["handle"]) or {}).get("strip_refused"):
-            x["detail"] = consts.LOCATION_NOT_STRIPPED_MESSAGES.get(files[x["handle"]]["strip_refused"]) or consts.LOCATION_NOT_STRIPPED_MESSAGES["*"]
+        if x["class"] != CLASS or x["rule"] != GPS_RULE:
+            continue
+        info = files.get(x["handle"]) or {}
+        rule = mediafile.SCAN_RULES.get(info.get("scan"))
+        if rule and rule != GPS_RULE:
+            # held, but NOT known to have a position: its metadata cannot be read with certainty, or is too much to check. Own rule, own words.
+            x["rule"], x["detail"] = rule, consts.HOLD_MESSAGES[rule]
+        elif info.get("strip_refused"):
+            # strip_location is on and the photo has a position but could not go (a TIFF, or a file the strip cannot take with certainty)
+            x["detail"] = consts.LOCATION_NOT_STRIPPED_MESSAGES.get(info["strip_refused"]) or consts.LOCATION_NOT_STRIPPED_MESSAGES["*"]
     ops = {o["handle"]: o for o in plan.ops if o["class"] == CLASS}
     whole_held = {x["handle"] for x in plan.holds + plan.blocked if x["class"] == CLASS}
     for handle, obj in sorted(local.items()):

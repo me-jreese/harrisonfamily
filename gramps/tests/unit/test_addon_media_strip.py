@@ -436,6 +436,124 @@ class DetectorInThePush(StripCase):
         self.assertEqual(self.disk(path), original)
 
 
+class ScanHolds(StripCase):
+    """A photo held because its metadata cannot be read, or is too much to check, says that: its own rule and words, not "remove the location"."""
+
+    def test_unreadable_and_over_the_limit_have_their_own_rules_with_the_setting_off_and_on(self):
+        import test_addon_locstrip_leaks as LK
+        self.seed()
+        lying, _p1 = self.add_photo(LS.jpeg(LK.lying(LS.build_tiff("<", gps=False), 300)), gid="O0111", name="new/lying.jpg")
+        heavy, _p2 = self.add_photo(LS.jpeg(None, extra_segments=LS.segment(0xFE, LK.quad_segment(250)) * 2), gid="O0112", name="new/heavy.jpg")
+        for on in (False, True):
+            self.set_strip(on)
+            doc = self.push()
+            held = self.holds()
+            self.assertEqual((held[lying][0], held[heavy][0]), ("media_scan_unreadable", "media_scan_limit"), on)
+            for handle in (lying, heavy):
+                self.assertIn("not known to have one", held[handle][1])
+                self.assertNotIn("remove the location", held[handle][1])
+                self.assertNotIn(handle, self.cloud.heads)
+            self.assertEqual(doc["counts"]["media_location_stripped"], mediafile.stripped_count(self.tree.media_files()) if on else 0)
+
+    def test_a_photo_with_a_position_the_strip_cannot_rebuild_keeps_the_location_words(self):
+        import test_addon_locstrip_leaks as LK
+        self.seed()
+        handle, _path = self.add_photo(LS.jpeg(LK.lying(LS.build_tiff("<"), 300)), gid="O0113", name="new/lying-gps.jpg")
+        self.set_strip(True)
+        self.push()
+        rule, detail = self.holds()[handle]
+        self.assertEqual(rule, "media.exif_gps.hold")
+        self.assertIn("could not remove it", detail)
+
+
+class StrippedCommand(StripCase):
+    """`hfy-sync stripped`: the way out of a photo the pull keeps listing as held back."""
+
+    def setUp(self):
+        StripCase.setUp(self)
+        root = paths.gramps_data_root(self.env)
+        os.makedirs(os.path.join(root, "grampsdb", self.tree.dbid), exist_ok=True)
+        with open(os.path.join(root, "grampsdb", self.tree.dbid, "name.txt"), "w", encoding="utf-8") as fh:
+            fh.write(self.tree.name)
+        loader = importlib.machinery.SourceFileLoader("hfy_sync_cli2", os.path.join(PS.GRAMPS, "bin", "hfy-sync"))
+        spec = importlib.util.spec_from_loader("hfy_sync_cli2", loader)
+        self.cli = importlib.util.module_from_spec(spec)
+        loader.exec_module(self.cli)
+        cfg = paths.read_json(paths.config_path(self.env))
+        cfg["media_root"] = os.path.join(self.tmp, "mroot")
+        paths.atomic_write_json(paths.config_path(self.env), cfg)
+        self.seed()
+        self.handle, self.path = self.add_photo(LS.jpeg(LS.build_tiff(), LS.xmp_packet()), gid="O0120")
+        self.set_strip(True)
+        self.push()
+        self.original = self.disk(self.path)
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env), redirect_stdout(out), redirect_stderr(err):
+            code = self.cli.main(["stripped", "--tree", self.tree.name] + list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def recorded(self):
+        con = self.sidecar()
+        try:
+            return set(mediaup.stripped_map(con))
+        finally:
+            con.close()
+
+    def test_it_counts_and_prints_no_id(self):
+        code, out, _err = self.run_cli()
+        self.assertEqual(code, 0)
+        self.assertIn("photo(s) recorded as sent without their location", out)
+        self.assertNotIn(self.handle, out)
+
+    def test_accept_the_website_file_is_a_look_without_yes_and_then_the_pull_takes_it(self):
+        self.cloud.edit(self.handle, lambda o: o.update(checksum="e" * 32))
+        DLView.calls = []
+        from hfygramps.addon import runner
+        def pull():
+            self.n += 1
+            return runner.run(self.tree, "cli", runner.Options("pull", yes=True), run_id="r%02d" % self.n, argv=["gramps"], environ=self.env,
+                              services={"cloud": DLView(self.cloud)})
+        pull()
+        self.assertEqual(DLView.calls, [], "held back while the record stands")
+        code, out, _err = self.run_cli("--accept-website-file", "O0120")
+        self.assertEqual((code, self.handle in self.recorded()), (consts.EXIT_DRY_RUN_CHANGES, True))
+        self.assertIn("would forget", out)
+        code, out, _err = self.run_cli("--accept-website-file", "O0120", "--yes")
+        self.assertEqual((code, self.handle in self.recorded()), (0, False))
+        pull()
+        self.assertEqual(DLView.calls, [self.handle], "now the website's file is the one the pull takes")
+        self.assertEqual(self.disk(self.path), self.original, "the original file itself is still untouched")
+
+    def test_send_again_forgets_that_the_website_holds_the_copy_and_the_next_push_uploads_it(self):
+        puts = len(self.cloud.puts)
+        code, _out, _err = self.run_cli("--send-again", "O0120")
+        self.assertEqual((code, len(self.rows("SELECT 1 FROM media_local WHERE handle = ?", self.handle))), (consts.EXIT_DRY_RUN_CHANGES, 1))
+        code, _out, _err = self.run_cli("--send-again", "O0120", "--yes")
+        self.assertEqual((code, self.rows("SELECT 1 FROM media_local WHERE handle = ?", self.handle)), (0, []))
+        self.push()
+        self.assertGreater(len(self.cloud.puts), puts, "the copy is uploaded again")
+        self.assertEqual(self.disk(self.path), self.original)
+
+    def test_bad_input_and_a_running_sync(self):
+        self.assertEqual(self.run_cli("--accept-website-file", "O0120", "--send-again", "O0120")[0], consts.EXIT_USAGE)
+        self.assertEqual(self.run_cli("--accept-website-file")[0], consts.EXIT_USAGE)
+        self.assertEqual(self.run_cli("--accept-website-file", "NOPE", "--yes")[0], consts.EXIT_CONFIG)
+        from hfygramps.addon import preflight
+        tp = paths.TreePaths(self.tree.dbid, self.env)
+        with preflight.StateLock(tp.lock) as lock:
+            self.assertTrue(lock.acquired)
+            self.assertEqual(self.run_cli("--accept-website-file", "O0120", "--yes")[0], consts.EXIT_TEMPORARY)
+        self.assertIn(self.handle, self.recorded())
+
+    def test_the_held_back_words_name_the_way_out(self):
+        text = consts.HOLD_MESSAGES["media_stripped_replaced"]
+        self.assertIn("hfy-sync stripped --accept-website-file", text)
+        self.assertIn("--send-again", text)
+        self.assertIn("every sync", text)
+
+
 @unittest.skipIf(NODE is None, "node is not installed")
 class TheWebsiteAgrees(unittest.TestCase):
     """api/src/upload-guard.js findLocation, the website's own detector, run on the copies (its S3 and HTTP imports are replaced by stubs

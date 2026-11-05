@@ -57,6 +57,9 @@ HOLD_RULES = {
     "unsupported": "media_blob_unsupported",
 }
 GPS_RULE = "media.exif_gps.hold"  # the projection's own rule id for the same thing
+# What a scan can say that is not "clean" (``assess``) and the hold rule that says it. "unreadable" and "limit" hold a photo that is NOT known to
+# have a position (its metadata cannot be read with certainty, or is too much to check): they have rules of their own and their own words.
+SCAN_RULES = {"location": GPS_RULE, "unreadable": "media_scan_unreadable", "limit": "media_scan_limit"}
 
 
 # ------------------------------------------------------------------------------------------------------------------ types
@@ -84,9 +87,11 @@ _GPS_POSITION_TAGS = (0x0002, 0x0004, 0x0014, 0x0016)  # GPSLatitude, GPSLongitu
 _XMP_MARKERS = (b"GPSLatitude", b"GPSLongitude", b"GPSDestLatitude", b"GPSDestLongitude")
 
 
-def tiff_has_gps(b, start=0, end=None):
+def tiff_has_gps(b, start=0, end=None, strict=False):
     """True when the TIFF structure at ``b[start:end]`` has a GPS IFD with a position. Every read is bounds-checked. Not a TIFF: False.
-    A GPS pointer whose IFD cannot be read, or a position tag of an odd type, counts as a position (fail closed)."""
+    A GPS pointer whose IFD cannot be read, or a position tag of an odd type, counts as a position (fail closed). An IFD that declares more
+    entries than the data holds is read as far as the data goes (as readers do); when no GPS pointer is among those entries it counts as a
+    position, or with ``strict`` raises ``locstrip.Unreadable`` (the photo is held, but nothing says it has a position). Work is bounded."""
     end = len(b) if end is None else min(end, len(b))
     if start + 8 > end:
         return False
@@ -111,15 +116,20 @@ def tiff_has_gps(b, start=0, end=None):
     if u16(2) != 42:
         return False
 
+    bud = locstrip.budget()
+
     def entries(ifd):
+        """(the entries that fit, whether the declared count fits) or None when not even the count can be read."""
         n = u16(ifd)
-        if n is None or n > 1000 or ifd + 2 + n * 12 > size:
+        if n is None:
             return None
+        use = min(n, max(0, (size - ifd - 2) // 12), 1000)
+        bud.take("entries", use)
         out = []
-        for i in range(n):
+        for i in range(use):
             at = ifd + 2 + i * 12
             out.append((u16(at), u16(at + 2), u32(at + 4), u32(at + 8)))
-        return out
+        return out, use == n
 
     def position_present(entry):
         _tag, kind, count, value = entry
@@ -133,21 +143,27 @@ def tiff_has_gps(b, start=0, end=None):
                 return True
         return False
 
-    seen = set()
+    seen, gps_read = set(), set()
     ifd = u32(4)
     hops = 0
     while ifd and hops < 4 and ifd not in seen:
         seen.add(ifd)
-        listing = entries(ifd)
-        if listing is None:
+        got = entries(ifd)
+        if got is None:
             return False
+        listing, fits = got
         for entry in listing:
-            if entry[0] == _GPS_POINTER:
+            if entry[0] == _GPS_POINTER and entry[3] not in gps_read:
+                gps_read.add(entry[3])
                 gps = entries(entry[3])
-                if gps is None:
-                    return True  # a GPS IFD that cannot be read
-                if any(e[0] in _GPS_POSITION_TAGS and position_present(e) for e in gps):
+                if gps is None or not gps[1]:
+                    return True  # a GPS IFD that cannot be read, or whose count lies
+                if any(e[0] in _GPS_POSITION_TAGS and position_present(e) for e in gps[0]):
                     return True
+        if not fits:
+            if strict:
+                raise locstrip.Unreadable()
+            return True  # the entries that do not fit could be the ones that point at a position
         ifd = u32(ifd + 2 + len(listing) * 12)
         hops += 1
     return False
@@ -157,7 +173,7 @@ def _exif_has_gps(b, start, end):
     """An EXIF payload: with or without the ``Exif\\0\\0`` prefix."""
     if b[start:start + 6] == b"Exif\x00\x00":
         start += 6
-    return tiff_has_gps(b, start, end)
+    return tiff_has_gps(b, start, end, strict=True)
 
 
 def _xmp_has_gps(text):
@@ -204,7 +220,7 @@ def _generic_has_gps(b):
         at = b.find(b"Exif\x00\x00", start)
         if at < 0:
             break
-        if tiff_has_gps(b, at + 6):
+        if tiff_has_gps(b, at + 6, strict=True):
             return True
         start = at + 6
     return _xmp_has_gps(b)
@@ -225,10 +241,12 @@ def _png_has_gps(b):
             return True
         if kind == b"zTXt":
             try:
-                if _xmp_has_gps(locstrip.inflate_bounded(body.split(b"\x00", 1)[1][1:])):
+                text = locstrip.inflate_bounded(body.split(b"\x00", 1)[1][1:])
+                locstrip.budget().take("inflated", len(text))
+                if _xmp_has_gps(text):
                     return True
             except locstrip.TooBig:
-                return True  # more text than any camera writes: not examined, so not known to be free of a position
+                raise locstrip.ScanLimit()  # more text than any camera writes: not examined (held, as "too much to check")
             except (zlib.error, IndexError):
                 pass
         if kind == b"IEND":
@@ -237,26 +255,40 @@ def _png_has_gps(b):
     return False
 
 
-def exif_gps(data, content_type=None):
-    """True when the bytes of a JPEG, PNG or TIFF carry a GPS position in EXIF (or XMP), by this module's own reading or by
-    ``locstrip.has_location_signal`` (HFY-TSK-374). ``content_type`` defaults to the sniffed type; other types are not read (a PDF or GIF
-    has no EXIF)."""
+def assess(data, content_type=None):
+    """What a JPEG, PNG or TIFF shows about a position: ``"location"`` (a GPS position, found by this module's own reading of the first IFD
+    chain, an ``Exif`` header and four plain-text names, or by ``locstrip.assess_signal``, which reads every IFD of every TIFF structure in
+    the metadata, deflated and UTF-16 XMP, hex raw profiles, other vendors' names), ``"unreadable"`` (a structure that cannot be read with
+    certainty and could hide one: an IFD that declares more entries than the data holds), ``"limit"`` (more work than the file's budget
+    allows), or ``""``. Other types are not read (a PDF or GIF has no EXIF). The work is bounded (``locstrip.Budget``)."""
     ct = content_type or sniff(data[:16])
-    try:
-        if ct == "image/jpeg":
-            found = _jpeg_has_gps(data) or _generic_has_gps(data)
-        elif ct == "image/png":
-            found = _png_has_gps(data) or _generic_has_gps(data)
-        elif ct == "image/tiff":
-            found = tiff_has_gps(data) or _xmp_has_gps(data)
-        else:
-            return False
-        # HFY-TSK-374: the checks above read the IFD0 chain, an Exif header and four plain-text names. The signal walks every IFD of every
-        # TIFF structure in the metadata (the Exif sub-IFD, a raw block behind any header), deflated and UTF-16 text, hex raw profiles and
-        # the GPS names of other vendors, so a photo they miss is held (setting off) or stripped and checked (setting on), not sent as it is.
-        return found or locstrip.has_location_signal(data, ct)
-    except (struct.error, IndexError, ValueError):
-        return True  # an image whose metadata cannot be walked is not known to be free of a position
+    if ct not in ("image/jpeg", "image/png", "image/tiff"):
+        return ""
+    with locstrip.scope():
+        unreadable = False
+        try:
+            if ct == "image/jpeg":
+                found = _jpeg_has_gps(data) or _generic_has_gps(data)
+            elif ct == "image/png":
+                found = _png_has_gps(data) or _generic_has_gps(data)
+            else:
+                found = tiff_has_gps(data, strict=True) or _xmp_has_gps(data)
+        except locstrip.ScanLimit:
+            return "limit"
+        except (locstrip.Unreadable, struct.error, IndexError, ValueError):
+            found, unreadable = False, True  # an image whose metadata cannot be walked is not known to be free of a position
+        if found:
+            return "location"
+        signal = locstrip.assess_signal(data, ct)
+        return signal or ("unreadable" if unreadable else "")
+
+
+def exif_gps(data, content_type=None):
+    """True when the bytes of a JPEG, PNG or TIFF carry a GPS position in EXIF (or XMP), or cannot be read with certainty or need more work than
+    the budget allows (``assess``): the photo is held either way. HFY-TSK-374: the reading was widened, so a photo whose position only sat in
+    the Exif sub-IFD, deflated or UTF-16 XMP, a hex raw profile or behind an ``Exif\\0\\xff`` header is held (setting off) or stripped and
+    checked (setting on), not sent as it is."""
+    return bool(assess(data, content_type))
 
 
 def strip_copy(data, content_type=None):
@@ -267,7 +299,10 @@ def strip_copy(data, content_type=None):
         out, reason = locstrip.strip(data, ct)
         if out is None:
             return None, reason
-        if exif_gps(out, ct) or locstrip.has_location_residue(out, ct):
+        scan = assess(out, ct)
+        if scan == "limit":
+            return None, locstrip.LIMIT
+        if scan or locstrip.has_location_residue(out, ct):
             return None, locstrip.VERIFY_FAILED
         return out, ""
     except Exception:  # noqa: BLE001 - fail closed: nothing escapes
@@ -283,9 +318,7 @@ def hold_for_bytes(data):
     """The hold rule for the bytes of a downloaded blob (nothing is written when it is not None): empty, or a position in the EXIF."""
     if not data:
         return HOLD_RULES["empty"]
-    if exif_gps(data):
-        return GPS_RULE
-    return None
+    return SCAN_RULES.get(assess(data))
 
 
 # --------------------------------------------------------------------------------------------------------- placeholders
@@ -383,12 +416,15 @@ def inspect(path, strip_location=False):
     info.update(readable=True, size=len(data), md5=hashlib.md5(data).hexdigest(), sha256=hashlib.sha256(data).hexdigest())
     ct = sniff(data[:16])
     info["content_type"] = ct or ""
-    info["exif_gps"] = exif_gps(data, ct)
+    info["scan"] = assess(data, ct)
+    info["exif_gps"] = bool(info["scan"])
     info["state"] = "gps" if info["exif_gps"] else ("ok" if ct else "unsupported")
-    if info["exif_gps"] and strip_location:
+    if info["scan"] == "location" and strip_location:
         copy, reason = strip_copy(data, ct)
         if copy is None:
             info["strip_refused"] = reason
+            if reason == locstrip.LIMIT:
+                info["scan"] = "limit"  # not known to have a position either way: its own words
             return info
         info.update(location_stripped=True, local_md5=info["md5"], local_sha256=info["sha256"], local_size=info["size"],
                     md5=hashlib.md5(copy).hexdigest(), sha256=hashlib.sha256(copy).hexdigest(), size=len(copy),

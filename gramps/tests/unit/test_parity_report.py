@@ -748,6 +748,22 @@ class MediaLocationStripped(unittest.TestCase):
         code, doc = report_with(legacy, shadow, "--expect-stripped", "5", "--stripped-sidecar", self.sidecar_with(None))
         self.assertEqual((code, doc["stripped"]["explained"]), (20, 0), "a sidecar that recorded none explains none")
 
+    def test_a_hostile_sidecar_is_a_usage_error_not_a_traceback(self):
+        import sqlite3
+        legacy, shadow = pair_with_stripped_photo()
+        folder = tempfile.mkdtemp(prefix="hfy-parity-hostile-")
+        self.addCleanup(shutil.rmtree, folder, True)
+        for name, value in (("nested", "[" * 200000 + "]" * 200000), ("deep-object", '{"a":' * 100000 + "1" + "}" * 100000), ("blob", b"\x00\x01"), ("int", 5)):
+            path = os.path.join(folder, name + ".sqlite")
+            con = sqlite3.connect(path)
+            con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value)")
+            con.execute("INSERT INTO meta VALUES ('media_location_stripped', ?)", (value,))
+            con.commit()
+            con.close()
+            code, cap = run_cli(legacy, shadow, ["--expect-stripped", "1", "--stripped-sidecar", path])
+            self.assertEqual(code, 64, name)
+            self.assertNotIn("Traceback", cap.out.getvalue() + cap.err.getvalue())
+
     def test_a_bad_sidecar_or_one_without_the_count_is_a_usage_error_that_prints_no_path(self):
         legacy, shadow = pair_with_stripped_photo()
         for extra in (["--expect-stripped", "1", "--stripped-sidecar", "/nonexistent/secret-folder/state.sqlite"],

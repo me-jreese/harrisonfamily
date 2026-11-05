@@ -136,7 +136,7 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
             return fail(EXIT_USAGE, "stripped_sidecar_needs_expect_stripped")
         try:
             stripped_handles = source.read_stripped_handles(args.stripped_sidecar)
-        except source.StrippedSidecarUnreadable:
+        except Exception:  # noqa: BLE001 - StrippedSidecarUnreadable, and anything else a hostile file can raise: one code word, no traceback
             return fail(EXIT_USAGE, "stripped_sidecar_unreadable")
 
     prefix = None
