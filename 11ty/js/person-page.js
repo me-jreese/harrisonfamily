@@ -1047,7 +1047,7 @@
       const label = event.label && event.label !== "Event" ? escapeHtml(String(event.label).toLowerCase()) : VOICE.event;
       const description = event.description ? `<span class="timeline-note">${escapeHtml(event.description)}</span>` : "";
       const place = event.place && event.place.displayName ? `<span class="timeline-place">${escapeHtml(event.place.displayName)}</span>` : "";
-      const date = event.date && event.date.text ? escapeHtml(event.date.text) : VOICE.dateUnknown;
+      const date = eventDateLabel(event.date);
       return `
         <li class="timeline-row">
           <span class="timeline-date">${date}</span>
@@ -1060,6 +1060,17 @@
 
     container.innerHTML = `<ol class="timeline-rows">${rows}</ol>`;
     return true;
+  }
+
+  // The date of a Life row (HFY-TSK-373, sync design 5.2): the archive's text as it is. The cloud renderer blanks `text` on every
+  // birth-like event and keeps the structured `year`, so with no text a positive whole `year` is shown as digits and nothing else:
+  // never a month or a day, and nothing else of the date object. With neither, the unknown wording.
+  function eventDateLabel(date) {
+    if (date && date.text) {
+      return escapeHtml(date.text);
+    }
+    const year = date ? date.year : null;
+    return Number.isSafeInteger(year) && year > 0 ? String(year) : VOICE.dateUnknown;
   }
 
   function toggleSection(sectionId, shouldShow) {
