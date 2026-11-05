@@ -101,7 +101,7 @@ describe("the routes", () => {
     expect(w.postRows(p.id)[0].post.moderation).toBeUndefined();
   });
 
-  it("answer 400 self_moderation on your own post and comment, 404 for an unknown item, 409 for a stale version, 422 for the targets and actions that wait", async () => {
+  it("answer 400 self_moderation on your own post and comment, 404 for an unknown item, 409 for a stale version, 422 for the targets that wait", async () => {
     const w = await world();
     const mine = await w.post({}, "admin");
     const r = await w.hide("admin", { kind: "post", id: mine.id });
@@ -127,10 +127,6 @@ describe("the routes", () => {
     for (const kind of ["note", "mediaref", "media"]) {
       const t = await w.call("admin", "POST", "/api/moderation", { body: { target: { kind, id: "h1" }, action: "hide" } });
       expect([t.status, t.body.error]).toEqual([422, "unsupported_target"]);
-    }
-    for (const action of ["request_changes", "ask"]) {
-      const t = await w.call("admin", "POST", "/api/moderation", { body: { target: { kind: "post", id: p.id }, action, note: "please add the year" } });
-      expect([t.status, t.body.error]).toEqual([422, "unsupported_action"]);
     }
     expect(w.rows("MOD#")).toHaveLength(0);
   });

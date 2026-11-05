@@ -96,9 +96,11 @@ export function createHandler(deps) {
         return members.size ? new Set([...members, ...(deps.getAdmins ? await deps.getAdmins() : [])]) : new Set();
       } : undefined };
     // A post whose thread holds a photo with a graduation under way is not deleted (409 graduation_pending): the thread purge would take the comment the retry needs.
-    const content = createContentSource({ ...base, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload, beforeDelete: (post) => refusePendingGraduation(base, `post:${post.id}`) });
+    // hfy-moderation-ask-api: an author's edit that answers a request_changes or an ask tells the asking admin (moderation_resolved) after the commit; it never fails the edit.
+    const onModerationResolved = (n) => afterCommit("moderation resolved notification", () => notifier.onModeration({ kind: "resolved", ...n }));
+    const content = createContentSource({ ...base, onModerationResolved, audit: deps.audit, mediaPublicBase: deps.mediaPublicBase, guard, checkUpload, beforeDelete: (post) => refusePendingGraduation(base, `post:${post.id}`) });
     const comments = createCommentSource({
-      ...base, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
+      ...base, onModerationResolved, viewer: toCommentPrincipal(actor), audit: deps.commentAudit, maxLength: deps.maxCommentLength ?? 1000, guard,
       photos: uploadPhotosFor({ ddb, cmds, table, bucket: mediaBucket, base: deps.mediaPublicBase, now, s3: deps.s3 }), // HEAD + checkLocation + UPLOAD# binding for comment photos
       getPost: (id) => content.get(id),
       // A proposal:<ulid> thread: dark with HFY_EDITING, and visible only inside the proposal's visibility set (the proposer, admins, owners of the targeted pages).

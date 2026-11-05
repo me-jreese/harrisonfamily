@@ -8,7 +8,7 @@ import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
 import { contribOps, emptyOps, getEvent, hideOps, mergeOps, mergedSize, revokeOps } from "./contrib.js";
 import { createGuard, pointer } from "./guard.js";
 import { normalizeNew } from "./comment-photos.js";
-import { closeModOps, commentHidden, isAdminViewer, moderationPrivileged, normalizeModerate, openModOps, shownAttachments, targetKey } from "./moderation.js";
+import { closeModOps, commentHidden, hrefOf, isAdminViewer, moderationPrivileged, normalizeModerate, openModOps, shownAttachments, targetKey } from "./moderation.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26}|proposal:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -58,7 +58,7 @@ export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: act
  * 404 to everyone but an admin (HFY-TSK-178, BRD2 PS-06), so a withdraw hides the discussion with the page. Without it no person thread is hidden.
  * `via` is the origin stamped on the contribution event: "ui" for HTTP, "mcp" for an MCP tool call (handler.invoke).
  */
-export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdrawn, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, proposalVisible, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
+export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdrawn, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, proposalVisible, onCreated, onModerationResolved, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
   // `grad_v` and `mod_v` are the graduation and moderation write counters (commentGuard): they never leave the store. Everyone but the author and
@@ -318,6 +318,10 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
         put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...commentGuard(c) },
         ops: mergeOps(resolved, await eventOps(c, next)),
       });
+      // The edit answered an ask: the asking admin hears of it once the transaction has committed (the hook never fails the edit).
+      if (c.moderation && !next.moderation && c.moderation.state !== "hidden") {
+        await onModerationResolved?.({ target: targetKey({ kind: "comment", id, thread: t }), item: "comment", authorId: c.author.id, askedBy: c.moderation.by?.id, by: { id: who.id, label: who.label }, navigate: hrefOf({ kind: "comment", id, thread: t }) });
+      }
       return view(next);
     },
     // Not gated on post visibility: an author or admin can always remove a comment, even under a withdrawn post.
