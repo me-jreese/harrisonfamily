@@ -24,7 +24,8 @@ const KB = 1024;
 export const BUDGET = {
   navigatorJs: 35 * KB,
   navigatorCss: 15 * KB,
-  entryJs: 60 * KB
+  entryJs: 60 * KB,
+  kinshipJs: 10 * KB
 };
 
 const read = (f) => readFileSync(f, "utf8");
@@ -86,6 +87,22 @@ test("the island entry and its own chunks are at most 60 KB gzip, excluding the 
   for (const f of m.entryOwn) assert.ok(!shellSet.has(f), `${f} is loaded by the shell but counted in the entry`);
 });
 
+// HFY-TSK-307 (viz-v2-kinship-ui, viz.md section 11): the "how are we related?" chunk, lazy behind the pill, is at most 10 KB gzip JS. It is measured
+// as what it adds once the page is up: its static closure minus the shell's chunks and minus what the entry already loads.
+test("the v2 kinship UI chunk is lazy and at most 10 KB gzip JS", (t) => {
+  const entry = join(out, "tree.js");
+  const shellSet = staticClosure(join(out, "shell.js"));
+  const entrySet = staticClosure(entry);
+  const kin = dynamicTargets(entry).filter((f) => /\/chunks\/tree-kinship-[A-Za-z0-9_-]+\.js$/.test(f.split("\\").join("/")));
+  assert.equal(kin.length, 1, "tree.js must import exactly one tree-kinship chunk dynamically");
+  assert.ok(!entrySet.has(kin[0]), "the kinship chunk is a static import of the entry: it is not lazy");
+  const own = minus(minus(staticClosure(kin[0]), shellSet), entrySet);
+  const bytes = sum(own);
+  t.diagnostic(`kinship JS ${kb(bytes)} of ${kb(BUDGET.kinshipJs)} (${[...own].map((f) => f.slice(out.length + 1)).join(", ")})`);
+  assert.ok(bytes > 512, "the kinship chunk measured as nearly empty: the test is not looking at the chunk");
+  assert.ok(bytes <= BUDGET.kinshipJs, `kinship JS is ${kb(bytes)} gzip, over the 10 KB budget`);
+});
+
 // A guard, not a proof of removal: at the time of writing no 120 KB line existed in this repo (a grep over islands/tests found none), so there was nothing to delete.
 test("the old 120 KB chart-chunk budget line is gone from the tests", () => {
   const old = new RegExp(["120 ?KB", "120 ?\\* ?1024", "120_?000", "122880"].join("|"), "i");
@@ -94,6 +111,6 @@ test("the old 120 KB chart-chunk budget line is gone from the tests", () => {
   }
 });
 
-test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry)", () => {
-  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024 });
+test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk)", () => {
+  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024 });
 });

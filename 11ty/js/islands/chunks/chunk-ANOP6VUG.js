@@ -1,1 +1,0 @@
-import{a as f}from"./chunk-KGYSJ4KE.js";import{c as l}from"./chunk-N5FF4XJO.js";var e=l(f(),1);function u(){let[n,o]=(0,e.useState)(void 0);return(0,e.useEffect)(()=>{let t=!0,r=window.HFYFeatureFlags?.resolveFlags;return Promise.resolve(typeof r=="function"?r():{}).then(s=>{t&&o(s&&typeof s=="object"?s:{})},()=>{t&&o({})}),()=>{t=!1}},[]),n}export{u as a};
