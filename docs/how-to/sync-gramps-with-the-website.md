@@ -44,7 +44,7 @@ This is runbook 19.2. It writes the cloud store: the Apply at the end pushes the
 5. **Bind the website's store to the tree, once** ([below](#bind-the-websites-store-to-the-tree)). Close the tree in Gramps, then from the command line: `gramps/bin/hfy-sync cloud-bind --tree "<tree name>"` (a look, exit `10`), then the same with `--yes`. This writes app-table items (the store's binding and its audit record), so run it only after the G-seed message in step 1; until sync is enabled it exits `69`. Without it `check` and `Apply` stop with exit `78` and `cloud_unbound`.
 6. **Check** (a dry run). Read the **To the website** list: everything is a create. Held items name the rule and the characters to edit in Gramps.
 7. **Apply.** It opens a push session, uploads the blobs and completes the session. This writes app-table items.
-8. The orchestrator runs the shadow render and sends the parity report. Approve the cutover only after you have read it ([Cut over to the cloud store](#cut-over-to-the-cloud-store)).
+8. The orchestrator runs the shadow render and tells you when it is done. Stage a legacy export and run the parity report on your Mac ([Review the shadow parity report](review-the-shadow-parity-report.md)); it prints counts only, and you send those back. Approve the cutover only after you have read it ([Cut over to the cloud store](#cut-over-to-the-cloud-store)).
 
 #### Bind the website's store to the tree
 
@@ -154,7 +154,7 @@ The cutover is io's decision (gate G-cutover) and the order below is fixed: **de
 
 Before you start:
 
-- The seed is done, the shadow render ran, and io approved its parity report.
+- The seed is done, the shadow render ran, and io approved its parity report ([Review the shadow parity report](review-the-shadow-parity-report.md)).
 - `RENDER_MODE` is `shadow`, and the hfy-sync-render, hfy-graph-render, hfy-api and `hfy-data-breakglass` roles exist (`BreakGlassRoleArn` is an output of `<app-stack>`).
 - Your credentials can read and write the bucket policy of `<site-bucket>` and, for the simulation, call `iam:SimulateCustomPolicy`.
 - You know what the bucket policy holds now: the script keeps every statement that is not its own, and `--dry-run` shows them.
