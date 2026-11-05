@@ -60,6 +60,23 @@ test("each lifeline is a button; choosing it opens the navigator focused on that
   await expect(page.locator("[data-tree-focus='I8020'] h2")).toHaveText("Wren Alder");
 });
 
+test("Back after choosing a lifeline returns to the lifelines of the earlier focus; focus lands on the navigator heading", async ({ page }) => {
+  await open(page);
+  await life(page).getByRole("button", { name: /^Wren Alder,/ }).click();
+  await expect(page).toHaveURL(/focus=I8020/);
+  await expect(page.locator("#hfy-tree-focus-name")).toBeFocused();
+  await page.goBack();
+  await expect(page).toHaveURL(/focus=I8010/);
+  await expect(life(page)).toBeVisible();
+});
+
+test("the lifelines chunk failing falls back to the cards", async ({ page }) => {
+  await page.route("**/chunks/tree-lifelines-*.js", (r) => r.abort());
+  await open(page);
+  await expect(page.locator("family-navigator, [data-tree-focus]").first()).toBeVisible();
+  await expect(life(page)).toHaveCount(0);
+});
+
 test("a 2,000-person graph: at most 40 lifelines, and the rest collapse into '+N more in <name>'s family' buttons that re-centre", async ({ page }) => {
   await open(page, { graph: BIG, sub: "I99999", url: "/tree/?view=lifelines" });
   await expect(life(page)).toBeVisible();

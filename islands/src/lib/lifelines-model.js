@@ -20,13 +20,12 @@
 //
 // The 40-line cap (ADR 4.3). The view holds the focus person, their parents, and their descendants with the partners that make the unions,
 // breadth first, until `maxLines` lines are placed. A family that does not fit collapses into a "+N more in <name>'s family" row (a button that
-// re-centres on that person), so a branch is never silently dropped. Collapse rows are not lines; at most MAX_MORE are kept (the largest first):
-// every shown person is still a button that opens the navigator on them.
+// re-centres on that person), so a branch is never silently dropped. Collapse rows are not lines; every collapsed family gets one, and its N is
+// everyone hidden under it, so nothing is dropped and nothing is undercounted. Every shown person is still a button that opens the navigator on them.
 //
 // Decades only: the axis is whole decades; no era band exists in this task (viz-v2-time-eras, Q2-14).
 
 export const MAX_LINES = 40;
-export const MAX_MORE = 8;
 
 const isNum = (n) => typeof n === "number" && Number.isFinite(n);
 
@@ -87,21 +86,39 @@ export function buildLifelines(graph, focus, { maxLines = MAX_LINES, today = new
   const parentIds = graph.parents(focus).map((p) => p.id).slice(0, 2);
   for (const id of parentIds) add(id);
   add(focus);
-  const collapsed = new Map(); // person id -> how many people of their family are not shown
+  const hiddenRoots = new Map(); // person id -> the partners and children of their unions that did not fit
   const queue = [focus];
   while (queue.length) {
     const x = queue.shift();
-    let hidden = 0;
+    const roots = [];
     for (const u of orderedUnions(graph, x)) {
-      if (u.partner && !shown.has(u.partner) && !add(u.partner)) hidden += 1;
+      if (u.partner && !shown.has(u.partner) && !add(u.partner)) roots.push(u.partner);
       for (const c of u.children) {
         if (shown.has(c.id)) continue;
-        if (add(c.id)) queue.push(c.id); else hidden += 1;
+        if (add(c.id)) queue.push(c.id); else roots.push(c.id);
       }
     }
-    if (hidden) collapsed.set(x, hidden);
+    if (roots.length) hiddenRoots.set(x, roots);
   }
-  const keepMore = new Set([...collapsed].sort((a, b) => b[1] - a[1]).slice(0, MAX_MORE).map(([id]) => id));
+  // N counts everyone hidden under the branch: each hidden partner or child and all they lead to (their partners and descendants), each person once,
+  // credited to the first branch (breadth first) that reaches them. So the shown lines plus every N are the people reachable from the focus.
+  const claimed = new Set();
+  const collapsed = new Map(); // person id -> how many people of their family are not shown
+  for (const [x, roots] of hiddenRoots) {
+    let n = 0;
+    const stack = [...roots];
+    while (stack.length) {
+      const id = stack.pop();
+      if (shown.has(id) || claimed.has(id) || !graph.has(id)) continue;
+      claimed.add(id);
+      n += 1;
+      for (const u of graph.unionsOf(id)) {
+        if (u.partner) stack.push(u.partner);
+        for (const c of u.children) stack.push(c.id);
+      }
+    }
+    if (n) collapsed.set(x, n);
+  }
 
   // Phase 2: depth first, so a family reads together: the person, then each union's partner and children (and theirs).
   const rows = [];
@@ -128,7 +145,7 @@ export function buildLifelines(graph, focus, { maxLines = MAX_LINES, today = new
       const to = Math.max(...nodes, ...kids);
       if (u.year !== null && to > from) unions.push({ key: u.union.id, year: u.year, from, to, nodes, kids });
     }
-    if (keepMore.has(id)) rows.push({ type: "more", id, name: graph.person(id).name, count: collapsed.get(id), depth: depth + 1 });
+    if (collapsed.has(id)) rows.push({ type: "more", id, name: graph.person(id).name, count: collapsed.get(id), depth: depth + 1 });
     return own;
   };
 

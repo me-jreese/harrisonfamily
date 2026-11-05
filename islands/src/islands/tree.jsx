@@ -250,6 +250,7 @@ export function TreeApp() {
   // "cards" | "outline": ?view=, else what this browser remembered, else the cards (lib/tree-view.js; storage failures are survived there).
   const [view, setView] = useState(() => initialView(location.search));
   const viewRef = useRef(view);
+  const fromLifeline = useRef(false);
   viewRef.current = view;
   // The cards chunk could not load (or the browser refused the element): outline-only for the rest of this page view.
   const [chartFailed, setChartFailed] = useState(false);
@@ -313,6 +314,11 @@ export function TreeApp() {
       setFocus(focusParam(location.search));
       // The view is the reader's choice, not part of a history entry: an older entry's address must not flip it back.
       const v = viewParam(location.search);
+      if (fromLifeline.current && v === LIFELINES_VIEW) {
+        fromLifeline.current = false;
+        setView(LIFELINES_VIEW);
+        return;
+      }
       if (v && v !== viewRef.current) history.replaceState(null, "", viewUrl(location, viewRef.current));
     };
     addEventListener("popstate", onPop);
@@ -346,17 +352,25 @@ export function TreeApp() {
     if (resolved && resolved.id && resolved.id !== focusParam(location.search)) history.replaceState(null, "", focusUrl(location, resolved.id));
   }, [resolved]);
   const onView = useCallback((v) => {
+    fromLifeline.current = false;
     setView(v);
     writeStoredView(v);
     history.replaceState(null, "", viewUrl(location, v));
   }, []);
   // Choosing a lifeline opens the navigator (the cards view) on that person. The view is switched in the address without storing it: the reader's
   // remembered view stays what they picked on the toggle.
+  // The lifelines entry in the history is left as it was and a new entry is pushed for the cards, so Back returns to the focus and the lifelines the
+  // reader was on (`fromLifeline` lets the popstate handler restore that one view change). Focus moves to the navigator's heading, because the
+  // lifeline button that was clicked is gone.
   const onLifeline = useCallback((id) => {
+    via.current = "list";
+    fromLifeline.current = true;
+    const next = new URL(focusUrl(location, id), location.origin);
+    history.pushState(null, "", viewUrl(next, "cards"));
     setView("cards");
-    history.replaceState(null, "", viewUrl(location, "cards"));
-    onFocus(id);
-  }, [onFocus]);
+    setFocus(id);
+    setTimeout(() => document.getElementById("hfy-tree-focus-name")?.focus(), 0);
+  }, []);
   const [spoken, setSpoken] = useState("");
   const announced = useRef(null);
   useEffect(() => {
@@ -385,7 +399,7 @@ export function TreeApp() {
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (
         <>
-          <ViewToggle view={shown} onChoose={onView} lifelines={timeOn} />
+          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || shown === "pending"} />
           {shown === LIFELINES_VIEW || shown === "pending" ? (
             Lifelines && shown === LIFELINES_VIEW
               ? <Lifelines graph={graph} focus={resolved.id} onPick={onLifeline} onRecentre={onFocus} />

@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { MAX_LINES, MAX_MORE, axisOf, buildLifelines, fadeWidth, markOf, unionYear, xOf } from "../src/lib/lifelines-model.js";
+import { MAX_LINES, axisOf, buildLifelines, fadeWidth, markOf, unionYear, xOf } from "../src/lib/lifelines-model.js";
 import { parseGraph } from "../src/lib/family-graph.js";
 import { synthGraph } from "./fixtures/graph-synth.mjs";
 
@@ -90,12 +90,28 @@ test("at most 40 lines for a 2,000-person graph, and what does not fit collapses
   assert.ok(m.lineCount <= 40 && m.lineCount === m.rows.filter((r) => r.type === "line").length);
   assert.ok(m.lineCount >= 30, "the budget is used");
   const more = m.rows.filter((r) => r.type === "more");
-  assert.ok(more.length >= 1 && more.length <= MAX_MORE);
+  assert.ok(more.length >= 1);
   for (const r of more) assert.ok(r.count >= 1 && g.has(r.id) && m.rows.some((x) => x.type === "line" && x.id === r.id));
   // a smaller cap shows fewer lines and still never drops a family silently
   const small = buildLifelines(g, focus, { maxLines: 5, today: TODAY });
   assert.ok(small.lineCount <= 5);
   assert.ok(small.rows.some((r) => r.type === "more"));
+});
+
+test("the shown lines plus every '+N more' are exactly the people reachable from the focus", () => {
+  const g = parseGraph(JSON.stringify(synthGraph(2000)));
+  const focus = g.defaultFocus();
+  const reach = new Set([...g.parents(focus).slice(0, 2).map((p) => p.id), focus]);
+  const stack = [focus];
+  while (stack.length) {
+    const id = stack.pop();
+    for (const u of g.unionsOf(id)) for (const x of [u.partner, ...u.children.map((c) => c.id)]) if (x && !reach.has(x)) { reach.add(x); stack.push(x); }
+  }
+  for (const maxLines of [40, 12, 5]) {
+    const m = buildLifelines(g, focus, { maxLines, today: TODAY });
+    const more = m.rows.filter((r) => r.type === "more").reduce((n, r) => n + r.count, 0);
+    assert.equal(m.lineCount + more, reach.size, `maxLines ${maxLines}`);
+  }
 });
 
 test("a focus not in the graph is empty; every person appears once", () => {
