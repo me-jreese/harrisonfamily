@@ -36,6 +36,14 @@ export const TEMPLATES = Object.freeze({
   prompt_generic: "no dates for today yet. know when something happened in the family? add it to someone's page.",
 });
 
+// DECK ADDITION, NEEDS io / DESIGN SIGN-OFF: the browse-only prompt (recordEdit off) and the archive/prompt-tier heading are not in the
+// section 4.2 deck, which has only the targeted and generic edit prompts. They live here so the voice stays in one place and the copy test covers them.
+export const BROWSE_PROMPT = Object.freeze({
+  targeted: "have a look at {a} and {b} and the rest of the family.",
+  generic: "no dates for today yet. have a look around the family.",
+});
+export const FALLBACK_HEADING = "on this day";
+
 /** "year" for 1, "years" otherwise. */
 export const yearWord = (n) => (n === 1 ? "year" : "years");
 
@@ -89,6 +97,12 @@ export function renderPostParts(post) {
   return fill(TEMPLATES[id], { n: post.n, author: { name: post.author?.label ?? "", grampsId: post.author?.id } });
 }
 export const renderPost = (post) => join(renderPostParts(post));
+
+/** The browse-only prompt as parts (recordEdit off): sends nobody to an editor. */
+export function renderBrowsePromptParts(prompt) {
+  const [a, b] = prompt?.people ?? [];
+  return prompt?.kind === "add_day" && a && b ? fill(BROWSE_PROMPT.targeted, { a, b }) : fill(BROWSE_PROMPT.generic);
+}
 
 /** The prompt as parts: targeted when it carries two people, generic otherwise. */
 export function renderPromptParts(prompt) {

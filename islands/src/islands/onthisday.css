@@ -1,0 +1,69 @@
+/* Homepage on this day (onthisday.jsx, HFY-TSK-218). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*, --io-radius-* and
+   --io-typography-* (theme-lint no-literal-token-values). A raised card in a 40rem measure (10 x space-9). Celebrations take the gold
+   accent on the glyph; remembering rows stay in ink, in their own group under a quiet label, never gold. Targets are at least 44px. */
+.hfy-otd {
+  box-sizing: border-box;
+  margin-block: var(--io-space-6);
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-md);
+  line-height: var(--io-typography-leading-relaxed);
+}
+.hfy-otd__inner {
+  box-sizing: border-box;
+  max-width: calc(10 * var(--io-space-9));
+  padding: var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-lg);
+  background: var(--io-color-semantic-surface-raised);
+}
+.hfy-otd__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--io-space-2) var(--io-space-3); margin-bottom: var(--io-space-3); }
+.hfy-otd .hfy-otd__h { margin: 0; font-size: var(--io-typography-size-xl); line-height: var(--io-typography-leading-tight); }
+.hfy-otd__date { margin: 0; color: var(--io-color-semantic-text-dim); }
+.hfy-otd__rows { margin: 0; padding: 0; list-style: none; }
+.hfy-otd__row { display: flex; align-items: flex-start; gap: var(--io-space-3); padding-block: var(--io-space-2); }
+.hfy-otd__glyph { flex: none; width: var(--io-space-6); height: var(--io-space-6); margin-top: var(--io-space-1); color: var(--io-color-semantic-text-dim); }
+.hfy-otd__row[data-tone="celebrate"] .hfy-otd__glyph { color: var(--io-color-semantic-accent-secondary); }
+.hfy-otd__row[data-tone="remember"] .hfy-otd__glyph { color: var(--io-color-semantic-text); }
+.hfy-otd__body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.hfy-otd__line, .hfy-otd__ago, .hfy-otd__excerpt, .hfy-otd__prompt { margin: 0; }
+.hfy-otd__ago { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
+.hfy-otd .hfy-otd__name { font-family: var(--io-typography-font-display); }
+.hfy-otd__remembering { margin-top: var(--io-space-3); }
+.hfy-otd__label { margin: 0; color: var(--io-color-semantic-text-dim); font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-otd__remembering .hfy-otd__line { color: var(--io-color-semantic-text); }
+
+.hfy-otd__more, .hfy-otd__btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-otd__btn { border-color: var(--io-color-semantic-border); color: var(--io-color-semantic-text); }
+.hfy-otd__more:hover, .hfy-otd__btn:hover { border-color: var(--io-color-semantic-border-strong); }
+.hfy-otd__more:focus-visible, .hfy-otd__btn:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-otd__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2); margin-top: var(--io-space-2); }
+.hfy-otd__ask { margin-right: var(--io-space-2); }
+
+.hfy-otd__archive { display: flex; gap: var(--io-space-3); margin-top: var(--io-space-3); padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); }
+.hfy-otd__thumb { flex: none; width: calc(1.5 * var(--io-space-9)); height: calc(1.5 * var(--io-space-9)); border-radius: var(--io-radius-sm); object-fit: cover; }
+.hfy-otd__excerpt { color: var(--io-color-semantic-text-dim); }
+.hfy-otd__open, .hfy-otd__footer {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  color: var(--io-color-semantic-link);
+  font-weight: var(--io-typography-weight-semibold);
+}
+.hfy-otd__open:hover, .hfy-otd__footer:hover { color: var(--io-color-semantic-link-hover); }
+.hfy-otd__prompt { margin-top: var(--io-space-2); }
+.hfy-otd__footer { margin-top: var(--io-space-2); }
