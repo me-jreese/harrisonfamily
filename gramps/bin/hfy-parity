@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """hfy-parity: the counts-only parity report of the shadow render against a legacy export (HFY-TSK-370).
 
-    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--json]
+    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--json]
 
-Exit codes: 0 no difference, 10 only explained differences, 20 an unexplained difference, 64 usage, 69 shadow output unreachable
+Exit codes: 0 no difference, 10 only explained differences, 20 an unexplained difference, 64 usage (a bad --expect-holds too), 69 shadow output unreachable
 or empty, 70 internal error, 78 legacy folder missing or empty. It prints counts only, never a key, id, name, path or value.
 Standard library only; written for Python 3.9 or later (macOS' python3). See docs/how-to/review-the-shadow-parity-report.md.
 """

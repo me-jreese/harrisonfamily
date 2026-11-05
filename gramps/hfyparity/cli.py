@@ -1,12 +1,12 @@
 """hfy-parity: the arguments, the counts-only report and the exit codes (HFY-TSK-370). Standard library only.
 
-    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--json]
+    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--json]
 
 Exit codes:
     0   no difference at all (a difference that only the normalisation of generatedAt and index order hides does not count)
     10  differences exist and every one is explained by a rule
     20  at least one difference is unexplained
-    64  usage error
+    64  usage error (a negative or non-integer --expect-holds included)
     69  the shadow output is unreachable or holds none of the renderer's files
     70  an internal error (the exception class is printed, never its message)
     78  the legacy folder is missing or holds none of the files to compare
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -46,12 +47,22 @@ class _Parser(argparse.ArgumentParser):
         raise SystemExit(EXIT_USAGE)
 
 
+def _holds_count(text: str) -> int:
+    """--expect-holds: a plain non-negative integer in ASCII digits. Anything else is a usage error (the value is never echoed)."""
+    if not re.fullmatch(r"[0-9]+", text):
+        raise argparse.ArgumentTypeError("not a count")
+    return int(text)
+
+
 def _parser(err: TextIO) -> _Parser:
     parser = _Parser(prog="hfy-parity", allow_abbrev=False, err=err, description=(
         "Counts-only parity report: the shadow render against a legacy export staged at the same moment."))
     parser.add_argument("--legacy", required=True, metavar="DIR", help="the staged legacy export (person/, event/, ... at its top)")
     parser.add_argument("--shadow", required=True, metavar="DIR_OR_S3_PREFIX",
                         help="a local folder, or s3://<bucket>/render-shadow/ (downloaded read-only with your own AWS profile)")
+    parser.add_argument("--expect-holds", type=_holds_count, default=None, metavar="N",
+                        help="the add-on's own count of objects it held whole (counts.holds of `hfy-sync check`): up to N "
+                             "whole-object absences, and their index entries, are explained as held-object; more stay unexplained")
     parser.add_argument("--json", action="store_true", help="print the counts as JSON")
     return parser
 
@@ -77,6 +88,9 @@ def format_report(result: Dict[str, Any], exit_code: int) -> str:
         for rule, row in result["rules"].items():
             lines.append("%-26s %14d %8d %14d  %s" % (rule, row["only_in_legacy"], row["changed"], row["only_in_render"],
                                                       _pairs(row["areas"])))
+    if "holds" in result:
+        lines += ["", "held objects: allowed %d, whole-object absences explained %d" % (
+            result["holds"]["allowed"], result["holds"]["explained"])]
     if result["normalised"]:
         lines += ["", "normalised, not differences: " + _pairs(result["normalised"])]
     if result["unexplained_by_area"]:
@@ -129,7 +143,7 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
             shadow = source.scan_dir(args.shadow)
             if not any(compare_mod.is_owned(key) for key in shadow):
                 return fail(EXIT_SHADOW, "shadow_empty")
-            result = compare_mod.compare(legacy, shadow, policy)
+            result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds)
         else:
             previous = None
             try:
@@ -145,7 +159,7 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
                     shadow = source.scan_dir(tmp)
                     if not any(compare_mod.is_owned(key) for key in shadow):
                         return fail(EXIT_SHADOW, "shadow_empty")
-                    result = compare_mod.compare(legacy, shadow, policy)
+                    result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds)
             finally:
                 if previous is not None:
                     signal.signal(signal.SIGTERM, previous)

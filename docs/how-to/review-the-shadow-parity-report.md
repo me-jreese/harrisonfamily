@@ -20,7 +20,7 @@ AWS_PROFILE=product-lead gramps/bin/hfy-parity \
 echo "exit code: $?"
 ```
 
-`--shadow` also takes a local folder, for a shadow output you have already downloaded. `--json` prints the same counts as JSON. The prefix must end in `render-shadow/`; any other prefix is refused before anything is downloaded.
+`--shadow` also takes a local folder, for a shadow output you have already downloaded. `--json` prints the same counts as JSON. `--expect-holds <n>` accounts for the objects the add-on held ([Account for the objects the add-on held](#account-for-the-objects-the-add-on-held)). The prefix must end in `render-shadow/`; any other prefix is refused before anything is downloaded.
 
 The first line is the verdict (`identical`, `explained` or `unexplained`). A small table of counts follows, by class and by rule.
 
@@ -31,7 +31,7 @@ The first line is the verdict (`identical`, `explained` or `unexplained`). A sma
 | `0` | No difference at all. | Nothing to review. |
 | `10` | Differences exist and every one is explained by a rule below. | Read the rule table. The exposure rules (`note-newly-visible`, `text-gate-withheld`) are the ones that change what the site shows. |
 | `20` | At least one difference is unexplained. | Send the counts back. Do not approve the cutover on this report. |
-| `64` | Usage error. | Check the two options. |
+| `64` | Usage error. | Check the options. `--expect-holds` takes a whole number of 0 or more; a negative or non-integer value is refused. |
 | `69` | The shadow output is unreachable or holds none of the renderer's files. | Check the profile, the bucket and the prefix, and that the orchestrator ran the shadow render. |
 | `70` | An internal error. The line names the exception class only. | Send the line back. |
 | `78` | The legacy folder is missing, or holds none of the files to compare. | Check the path; the folder must hold `person/`, `event/` and the rest at its top. |
@@ -50,13 +50,15 @@ The rule table counts the explained files by rule, with the area they sit in (`p
 | --- | --- | --- |
 | `excluded-place` | A street-level or home-like place has no file in the shadow output, leaves `place/index.json`, and every reference to it points at the nearest kept ancestor. The excluded places are the legacy place files whose type matches the redaction policy. | Q2-02 item 2, sync design 5.3 |
 | `media-held-mime` | A Media object of a held type (a PDF) has no `media/<handle>.json` and no index entry. | Q2-02 item 6, sync design 5.5 |
-| `birth-date-scrub` | A birth-like event's date text is a bare year or empty where the legacy export had a day or month. | Q2-02 item 1, sync design 5.2 |
+| `birth-date-scrub` | A birth-like event's date text is a bare year or empty where the legacy export had a day or month, or is empty where the legacy export had a bare year or any other text, with the event's `year` unchanged. It is counted on the event file and on the matching entry of a person file. | Q2-02 item 1, sync design 5.2 |
+| `media-held-binary` | A Media object whose binary the add-on held, or whose original is missing, reads `missing` true with a null `checksum` and `size` where the legacy export had a checksum. All of these must hold, on the same handle: a legacy checksum, `missing` true and a null checksum and size in the shadow. It is counted on the media file, its `media/index.json` entry and the `primaryPhoto` and `mediaGallery` entries of person files. A media entry whose other fields differ stays unexplained. | Sync design 5.5, BRD2 11.1 |
 | `place-coordinates-rounded` | Latitude and longitude are rounded to two decimals. | BRD2 11.1 (PS-15) |
 | `place-code-local` | A postal code below the administrative level is blank. | BRD2 11.1 (PS-15) |
 | `note-newly-visible` | A note the legacy export left empty has text. This is the exposure change the design asks you to review. | Sync design 11.3 |
 | `text-gate-withheld` | The renderer's text gate withheld free text the legacy export published: note text, an event description, a media title, a place URL or a citation title. | Sync design 5.3 and 5.4 |
 | `tree-svg-frozen` | A person's `familyTreeMedia` differs: the family-tree SVGs are legacy and frozen. | Sync design 11.5 |
 | `merged-person-stub` | The shadow output holds a `{mergedInto}` stub for a retired person ID. | [The render Lambda](../reference/sync-render.md#merged-person-stubs) |
+| `held-object` | An object the add-on held whole has a legacy file and no shadow file, and its entry left the area's index. Only with `--expect-holds <n>`: up to `n` such files (person, family, event, note, place or media) and their index entries are explained, and any beyond `n` stay unexplained. Without the option nothing is explained this way. | Sync design 5.4 and 5.5; [Account for the objects the add-on held](#account-for-the-objects-the-add-on-held) |
 
 Two kinds of noise are normalised and are not differences. They have their own line, never change the exit code, and a file that differs only by them is not counted as a difference: `index-generated-at` (the `generatedAt` stamp of an index file) and `index-order` (the order of index entries).
 
@@ -64,12 +66,47 @@ The renderer does not own media binaries, `media/faces/*`, the tree SVGs, `perso
 
 An unexplained count comes with its area and, for a changed file, the schema field name that differs, never a value. Read them like this:
 
-- `only_in_legacy` in `person`, `family`, `event`, `note` or `media`: an object the redaction projection did not send (a private object, a held object, an object only held objects reference). The report cannot tell which rule held it. Compare the count with the holds that **Check** reported on your Mac; they should match.
+- `only_in_legacy` in `person`, `family`, `event`, `note` or `media`: an object the redaction projection did not send (a private object, a held object, an object only held objects reference). The report cannot tell which rule held it unless you give it the add-on's count with `--expect-holds`; see [Account for the objects the add-on held](#account-for-the-objects-the-add-on-held).
 - `only_in_render`: the shadow output holds a file the legacy export does not. Nothing in the design explains it, so every one is a finding.
 - `changed` with a field such as `displayName` or `date`: the two sides disagree on a value no rule covers. Every one is a finding.
 - `bytes_only`: the JSON is equal and the bytes differ (a serialisation difference). `bad_json`: a file on one side does not parse. `unowned_key`: the shadow output holds a key the renderer must never write.
 
 To look at a file behind a count, use your own tools on your Mac (the two folders are there). Do not paste file names, IDs or values anywhere.
+
+## Account for the objects the add-on held
+
+The add-on keeps some objects off the website whole (an object that holds a phone number, rule `scan.phone`, for example). The legacy export still publishes them, so each shows as an `only_in_legacy` file, with one entry gone from its area's index. The report cannot tell such a file from a private or a stray one by looking at the output. You tell it how many the add-on held, and it explains that many.
+
+**Read the add-on's count.** Run the check on the Mac that holds the tree, with Gramps closed. It writes a preview and changes nothing else ([Install and run the Gramps sync addon](install-the-gramps-sync-addon.md)):
+
+```sh
+cd ~/harrisonfamily
+gramps/bin/hfy-sync check --json
+```
+
+The JSON is the run's `status.json` document. Its `counts.holds` is the number to use. The one-line form without `--json` does not print it, and `status.json` in the tree's sync state folder holds the same `counts`. Use the check of the same moment as the export, with no edit in Gramps between them.
+
+**Give it to the report as `--expect-holds`:**
+
+```sh
+cd ~/harrisonfamily
+AWS_PROFILE=product-lead gramps/bin/hfy-parity \
+  --legacy <project>/workspace-local/harrisonfamily-frontend \
+  --shadow s3://<sync-bucket>/render-shadow/ \
+  --expect-holds <n>
+echo "exit code: $?"
+```
+
+Replace `<n>` with the number from the check. The value must be a whole number of 0 or more, or the command exits `64`.
+
+The report then takes up to `<n>` whole files from the `only_in_legacy` absences that no other rule explains (person, family, event, note, place and media files only) and explains them as `held-object`, together with the index entries that left `person/index.json`, `person/search-index.json`, `place/index.json` or `media/index.json` with them. An excluded place and a held-type media file keep their own rules and do not use the allowance. It adds a line, `held objects: allowed <n>, whole-object absences explained <k>`, and a `held-object` row to the rule table; `--json` carries the same two counts under `holds`.
+
+Read it like this:
+
+- **`k` equals `<n>`, exit `10`:** every held object is accounted for.
+- **`k` is below `<n>`:** the add-on's count is only an allowance. `counts.holds` also counts a hold that kept a single field back from an object that was still published, so it can be larger than the number of absent files. A smaller `k` is expected in that case; it is not a finding on its own.
+- **More absences than `<n>`:** the extra files stay unexplained and the exit code is `20`. Which files count as the first `<n>` is the order of their keys, so only the totals and the areas of the explained rows mean anything; do not read the unexplained area line as naming the held ones.
+- **No `--expect-holds`:** nothing changes. Every such absence is unexplained.
 
 ## Send it back
 
