@@ -801,7 +801,7 @@ class ServerRefusals(PushCase):
     def test_an_unbound_cloud_and_an_unbound_tree_are_refused(self):
         self.cloud.dbid = None
         doc = self.push()
-        self.assertEqual((doc["exit_code"], doc["error"]["code"], doc["next_action"]), (78, "cloud_unbound", "bind"))
+        self.assertEqual((doc["exit_code"], doc["error"]["code"], doc["next_action"]), (78, "cloud_unbound", "cloud_bind"))
         fresh = PS.PushTree(dbid="cc33dd44")
         self.cloud.dbid = "cc33dd44"
         other_env = dict(self.env, HOME=self.tmp + "-unbound", GRAMPSHOME=self.tmp + "-unbound/gh")

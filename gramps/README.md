@@ -206,7 +206,7 @@ python3 -m coverage report -m                                            # 100 %
 
 ## The desktop addon skeleton
 
-HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. Its first real actions were `status`, `bind` and `login` (the transport and sign-in section below). HFY-TSK-205 adds the pull side: `check`, `pull`, the pull half of `sync`, and `restore` (the pull section below). HFY-TSK-206 adds `push` (the push section below). The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
+HFY-TSK-179 is the frame of the `hfy_sync` Gramps addon (sync.md section 8): registration, the `hfy-sync` command-line wrapper, the per-tree sidecar, `status.json`, and the refusals that stop a run before it touches anything. Its first real actions were `status`, `bind` and `login` (the transport and sign-in section below); `cloud-bind` (HFY-TSK-369) follows `login` ([Binding the website's store](#binding-the-websites-store)). HFY-TSK-205 adds the pull side: `check`, `pull`, the pull half of `sync`, and `restore` (the pull section below). HFY-TSK-206 adds `push` (the push section below). The how-to is [Install and run the Gramps sync addon](../docs/how-to/install-the-gramps-sync-addon.md).
 
 | Path | What it is |
 | --- | --- |
@@ -253,6 +253,41 @@ HFY-TSK-180 adds the network layer the later actions call, and the one action th
 **Sign-in.** `hfy-sync login` (`--step-up` adds `prompt=login&max_age=300`) opens the browser at `/auth/authorize` for the `hfy-sync-desktop` client, resource `<server>/api/sync` (`https://harrisonfamily.us/api/sync` for the production server; derived from the configured server so the token audience always names the host that receives it), scope `sync`. The server URL must be a bare origin (a path is refused). The loopback server takes one callback: it checks the `Host` header, the `state` (constant time) and the issuer (`iss` is required, because the auth server always sends it, RFC 9207), then closes. Each accepted connection has a 5 s socket timeout, so a silent client (a browser preconnect) cannot stall the five-minute wait. The refresh token is written by `security -i` with the command on **stdin**, so it never shows in `ps`; the item is generic-password service `us.harrisonfamily.hfy_sync`, account `<issuer>|owner`, and is created with `-T <the Gramps bundle's Python>` so no other program reads it silently; and the write is read back. **Deviation from sync.md 6:** the account is `<issuer>|owner`, not `<issuer>|<sub>`, because the refresh path has to find the item before it holds any token (so any `sub`); one item per issuer, and a new sign-in replaces it. io to confirm or ask for a `sub` index. `security add-generic-password -U` keeps an existing item's access list, so a sign-in deletes any existing item first and creates it fresh (so `-T` always applies, including after a Gramps upgrade moves the bundled Python); rotation keeps `-U` so a failed write cannot lose the only copy of the new token. The real `security -i` quoting, `-T` and read-back behaviour is verified only against a fake in unit tests; the real-Keychain smoke test belongs to the io-mac closure step. Reading is `security find-generic-password -w`. A rotated refresh token is written and read back **before** the access token that came with it is used; if that fails the new access token is dropped. `invalid_grant` (a reused or revoked token, or 30 days idle) asks for a new sign-in (exit `77`) and removes the dead item, but only if the Keychain still holds the token that was sent: when another process (the wrapper and a Gramps run) rotated it first, the newer token is kept and the refresh retried once with it (no lock file; the retry covers the race). A `401` from an API call refreshes once and replays the request when it is safe to repeat (a `GET`, or a call with an `Idempotency-Key`). A locked Keychain is D42: exit `77` from the command line. `hfy-sync login` needs the tree closed in Gramps like every command-line action.
 
 **The Cloudflare probe (DL-31).** `gramps/tests/gramps/gramps-shim.sh --script gramps/scripts/probe-cloudflare.py` sends one `GET /api/sync/meta` from the bundled Python with no token. On 2026-10-14, from Python 3.13.2 in Gramps 6.0.6: default store roots `0`, fallback used, `CERT_REQUIRED`; with the addon's agent the answer was the origin's house-format error (`404`, `not_found`, no sync route deployed yet) with no `cf-mitigated` header; with urllib's default agent it was Cloudflare's own `403`, `error code: 1010`. Run it again after the sync routes are live (the answer should then be `401`) and before the seed; a WAF skip rule for `/api/sync/*` stays the fallback if Cloudflare ever challenges the named agent too.
+
+### Binding the website's store
+
+`hfy-sync bind` marks the tree on this Mac and sends nothing. The website's store starts with no tree bound to it, and until it is, `check`, `pull`, `push` and `rebase` stop at the handshake with exit `78`, the code word `cloud_unbound` and `next_action` `cloud_bind`. HFY-TSK-369 adds the step that fixes it, `hfy-sync cloud-bind`: run it once, after `bind` and `login` and before the first `check`. The code is `hfygramps/addon/cloudbind.py`; `tests/unit/test_addon_cloudbind.py` runs it over a fake wire under the real transport, token manager and error mapping.
+
+```sh
+gramps/bin/hfy-sync cloud-bind --tree "<tree name>"          # a look: exit 10, no network, no sign-in used
+gramps/bin/hfy-sync cloud-bind --tree "<tree name>" --yes    # POST /api/sync/bind
+```
+
+The look prints the field names and their byte lengths and no value: `POST /api/sync/bind would send: dbid (N bytes), fingerprint (64 bytes), tree_name_sha256 (64 bytes)`. With `--yes` the call is `POST /api/sync/bind {dbid, fingerprint, tree_name_sha256}` and no `rebind`, through the same `transport.Client` and the same owner sign-in (`oauth.TokenManager`, the refresh token in the Keychain) as every other action; the module has no credential code. `dbid` and `fingerprint` are the values the local `bind` stored in the sidecar's meta, so a repeat names the same tree to the server, which compares both; `tree_name_sha256` is the sha256 of the tree's display name as UTF-8, the digest the end-to-end lane sends (`tests/e2e/e2e_case.py`). The call carries no `X-HFY-Tree-Id`, because none exists before the bind. It changes neither the tree nor the sync state; the run is a row in the sidecar's `runs` table that the gramplet's "Last sync" ignores.
+
+The server answers `409 already_bound` for this tree and for another one alike, so on a 409 the action asks `GET /api/sync/meta` which tree the store is bound to: the same `dbid` and `fingerprint` is a success, anything else (or an answer it cannot read) is not.
+
+| Outcome | Exit | Code word | What to do |
+| --- | --- | --- | --- |
+| Bound (`200` or `201`) | `0` | none | Run `check` |
+| `409 already_bound` and the store is bound to this tree | `0` | `already_bound` (in `status.json` `counts`) | Nothing: run `check` |
+| `409 already_bound` and the store is bound to another tree | `78` | `bound_other_tree` | Open the tree the website is bound to. Binding another tree on purpose is a rebind, which needs a fresh sign-in; it is not part of `cloud-bind` |
+| `403 not_owner` | `78` | `not_owner` | `hfy-sync login` with the owner's account |
+| `403 step_up_required` | `77` | `step_up_required` | `hfy-sync login --step-up` |
+| No saved sign-in, `401`, a revoked or expired sign-in, a locked Keychain | `77` | `not_signed_in`, `unauthenticated`, `invalid_grant`, `keychain_unavailable` | `hfy-sync login`; unlock the Keychain |
+| `404 not_enabled`, `503 sync_paused` | `69` | `not_enabled`, `sync_paused` | Wait: the website's sync is switched off or paused. Nothing is wrong on this Mac |
+| Network failure, `5xx`, a busy `503` | `75` | `network`, `retryable`, the status code word | Run it again in a moment |
+| `400`, `413`, `422` | `65` | `validation` and the like | Nothing was stored; run `status` and `check`, and ask io |
+| `426`, an addon older than the website wants | `78` | `upgrade_required` | Update the addon |
+| The Mac's trust file does not verify the certificate | `78` | `tls_verify_failed` | See the TLS paragraph above; never work around it |
+| The tree is not bound on this Mac | `78` | `unbound` | `hfy-sync bind --yes` first |
+| The sidecar names another tree, or its fingerprint is not one the server accepts | `78` | `D03`, `D13` | Open the bound tree; or rebase |
+| `config.json` names a server that is not an `https` origin | `78` | `config_unreadable` | Fix or remove it |
+| `200` with an answer that has no tree id | `70` | `bad_bind_answer` | Run `check` to see whether the bind took |
+
+`69` and `78` are different questions. `69` is the website's switch: sync is not enabled or writes are paused, which is for the orchestrator to change, so wait. `78` is a mismatch to fix: the store is bound to a different tree, the sign-in is not the owner's, the addon is too old, or the store has no tree bound yet. `check`, `pull`, `push` and `rebase` answer `78` with `cloud_unbound` for the last case, and that always means this step has not run. The same codes keep the meaning they have for those actions (`transport.map_error`).
+
+Nothing the action prints, logs or stores holds a value. `status.json`, the run log, the sidecar row and the summary line carry field names, byte lengths and a code word; a unit test plants a tree name, an id, the digest, a cloud tree id and tokens, runs every outcome and fails if any of them shows up. (`status.json` names the tree's folder in `tree.dbid` for every action, as its contract says; nothing else does.)
 
 ### The pull
 

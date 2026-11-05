@@ -365,7 +365,7 @@ class _Push:
             raise PushStop(refused("D05", consts.EXIT_CONFIG, "update_addon", "The website's redaction version differs from this addon's. Update the addon first."))
         bound = meta.get("bound")
         if not isinstance(bound, dict) or not meta.get("tree_id"):
-            raise PushStop(refused("cloud_unbound", consts.EXIT_CONFIG, "bind", "The website is not bound to a tree yet. Bind it first (seed-and-shadow)."))
+            raise PushStop(refused("cloud_unbound", consts.EXIT_CONFIG, "cloud_bind", consts.CLOUD_UNBOUND_MESSAGE))
         if bound.get("dbid") != self.tree.dbid:
             raise PushStop(refused("D03", consts.EXIT_CONFIG, "open_bound_tree", consts.REFUSALS["D03"][2]))
         known = pushstate.get_text(self.side, "cloud_tree_id")
