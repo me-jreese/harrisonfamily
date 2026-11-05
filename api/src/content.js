@@ -128,7 +128,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
   }
   async function visible(id) {
     const p = await fetchStored(id);
-    if (!p || !canView(p, actor)) throw new ContentError("not_found", `no post ${id}`, { id });
+    if (!p || !canView(p, actor)) throw new ContentError("not_found", "no such post");
     return p;
   }
   /**

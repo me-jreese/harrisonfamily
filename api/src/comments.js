@@ -87,7 +87,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
   // Only create may name a new thread; any other op on a malformed/unknown thread id is not_found.
   const checkThread = (t, create = false) => {
     if (typeof t !== "string" || !SUBJECT_RE.test(t)) {
-      throw create ? new CommentError("validation", "invalid thread id", "threadId") : new CommentError("not_found", `thread ${t}`);
+      throw create ? new CommentError("validation", "invalid thread id", "threadId") : new CommentError("not_found", "no such thread");
     }
   };
   // A post:<id> thread is exactly as visible as its post: a draft, withdrawn or deleted post hides its whole discussion
@@ -97,21 +97,21 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
     try {
       await getPost(t.slice(5));
     } catch (e) {
-      if (e instanceof ContentError && e.code === "not_found") throw new CommentError("not_found", `thread ${t}`);
+      if (e instanceof ContentError && e.code === "not_found") throw new CommentError("not_found", "no such thread");
       throw e;
     }
   }
   // A proposal:<id> thread is exactly as visible as its proposal; anyone outside its visibility set gets not_found, as for a proposal that does not exist.
   async function checkProposalVisible(t) {
     if (!t.startsWith("proposal:")) return;
-    if (!proposalVisible || (await proposalVisible(t.slice(9))) !== true) throw new CommentError("not_found", `thread ${t}`);
+    if (!proposalVisible || (await proposalVisible(t.slice(9))) !== true) throw new CommentError("not_found", "no such thread");
   }
   // A person:<id> thread of a withdrawn person is hidden from everyone but an admin: list, create, edit and react answer not_found. An admin keeps
   // reading and moderating it. A failed lookup is an error, never an open thread.
   async function checkPersonVisible(t) {
     if (!t.startsWith("person:") || typeof isWithdrawn !== "function") return;
     if (viewer?.roles?.includes("admin")) return;
-    if (await isWithdrawn(t.slice(7))) throw new CommentError("not_found", `thread ${t}`);
+    if (await isWithdrawn(t.slice(7))) throw new CommentError("not_found", "no such thread");
   }
   const checkVisible = async (t) => {
     await checkPostVisible(t);
@@ -120,9 +120,9 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
   };
   async function getComment(t, id) {
     checkThread(t);
-    if (typeof id !== "string" || !ID_RE.test(id)) throw new CommentError("not_found", `comment ${id}`);
+    if (typeof id !== "string" || !ID_RE.test(id)) throw new CommentError("not_found", "no such comment");
     const c = (await ddb.send(new cmds.GetCommand({ TableName: table, Key: cKey(t, id) }))).Item?.comment;
-    if (!c || !seen(c)) throw new CommentError("not_found", `comment ${id}`);
+    if (!c || !seen(c)) throw new CommentError("not_found", "no such comment");
     return c;
   }
   /** The hideOps that move the comment's contribution event to where `after` leaves the comment (out of the feed while it is hidden), or undefined. */
@@ -416,7 +416,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
       let owner;
       if (target.startsWith("comment:")) owner = (await getComment(t, target.slice(8))).author.id;
       else if (target !== "root") {
-        if (target.startsWith("attachment:")) throw new CommentError("not_found", target);
+        if (target.startsWith("attachment:")) throw new CommentError("not_found", "no such target");
         throw new CommentError("validation", "unknown target", "target");
       }
       if (owner === who.id && !allowSelfReact) throw new CommentError("self_react", "cannot react to your own item");

@@ -1,0 +1,18 @@
+{
+  "comment": "HFY-TSK-276 (log-hygiene-suite, review PS-20): the synthetic values every captured-log test plants. Shared by api/test/log-hygiene.test.js, gramps/tests/unit/test_render_log_hygiene.py and chat-worker/test/log-hygiene.test.mjs. Synthetic only: no real person, date or number. The needles are what a log line, an error body or SYNC#RENDER.last_error must never hold.",
+  "dob": "1911-03-27",
+  "phone": "(415) 555-0199",
+  "note": "Synthetic note zq7xmarker: the recipe box is in the cedar chest",
+  "needles": [
+    "1911-03-27",
+    "03/27/1911",
+    "March 27, 1911",
+    "27 Mar 1911",
+    "(415) 555-0199",
+    "415-555-0199",
+    "415.555.0199",
+    "4155550199",
+    "zq7xmarker",
+    "recipe box is in the cedar chest"
+  ]
+}
