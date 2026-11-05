@@ -801,7 +801,7 @@ No new GSI. Partition hot spots: `CSTAT#site` (handled by the conflict retry) an
 | `subscriptions.put` | PUT `/subscriptions/person/:id` | Follow | 400 self_subscribe, 404 |
 | `subscriptions.remove` | DELETE `/subscriptions/person/:id` | Unfollow | — |
 | `comments.list` (changed) | GET `/comments?subject=&order=asc\|desc&cursor=&limit=` | Order option | 400 cursor_invalid (cursor from the other order) |
-| `comments.create` / `comments.update` (changed) | POST / PATCH `/comments…` | Attachments, photo-only comments | 400 validation (attachments, upload_missing), 400 contact_info |
+| `comments.create` / `comments.update` (changed) | POST / PATCH `/comments…` | Attachments, photo-only comments | 400 validation (attachments, upload_missing), 422 contact_info |
 | `uploads.presign` (changed) | POST `/uploads` `{…, purpose}` | Comment photo prefix | 400 validation |
 | `contributions.list` | GET `/contributions?author=` | Person feed | 400 |
 | `contributions.stats` | GET `/contributions/stats?author=` | Per-person count | — |
