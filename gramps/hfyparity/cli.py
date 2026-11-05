@@ -1,12 +1,12 @@
 """hfy-parity: the arguments, the counts-only report and the exit codes (HFY-TSK-370). Standard library only.
 
-    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--json]
+    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--expect-stripped <n> [--stripped-sidecar <state.sqlite>]] [--json]
 
 Exit codes:
     0   no difference at all (a difference that only the normalisation of generatedAt and index order hides does not count)
     10  differences exist and every one is explained by a rule
     20  at least one difference is unexplained
-    64  usage error (a negative or non-integer --expect-holds included)
+    64  usage error (a negative or non-integer --expect-holds or --expect-stripped included)
     69  the shadow output is unreachable or holds none of the renderer's files
     70  an internal error (the exception class is printed, never its message)
     78  the legacy folder is missing or holds none of the files to compare
@@ -63,6 +63,13 @@ def _parser(err: TextIO) -> _Parser:
     parser.add_argument("--expect-holds", type=_holds_count, default=None, metavar="N",
                         help="the add-on's own count of objects it held whole (counts.holds of `hfy-sync check`): up to N "
                              "whole-object absences, and their index entries, are explained as held-object; more stay unexplained")
+    parser.add_argument("--expect-stripped", type=_holds_count, default=None, metavar="N",
+                        help="the add-on's own count of media it sent without their GPS location (counts.media_location_stripped of "
+                             "`hfy-sync push`): up to N media whose checksum differs from the legacy export's are explained as "
+                             "media-location-stripped; more stay unexplained")
+    parser.add_argument("--stripped-sidecar", default=None, metavar="STATE_SQLITE",
+                        help="with --expect-stripped: the add-on's state.sqlite of the tree (read-only). Only the media it recorded as "
+                             "sent without their location can be explained; no handle is printed")
     parser.add_argument("--json", action="store_true", help="print the counts as JSON")
     return parser
 
@@ -91,6 +98,9 @@ def format_report(result: Dict[str, Any], exit_code: int) -> str:
     if "holds" in result:
         lines += ["", "held objects: allowed %d, whole-object absences explained %d" % (
             result["holds"]["allowed"], result["holds"]["explained"])]
+    if "stripped" in result:
+        lines += ["", "media sent without their location: allowed %d, media explained %d" % (
+            result["stripped"]["allowed"], result["stripped"]["explained"])]
     if result["normalised"]:
         lines += ["", "normalised, not differences: " + _pairs(result["normalised"])]
     if result["unexplained_by_area"]:
@@ -120,6 +130,15 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else EXIT_USAGE
 
+    stripped_handles = None
+    if args.stripped_sidecar is not None:
+        if args.expect_stripped is None:
+            return fail(EXIT_USAGE, "stripped_sidecar_needs_expect_stripped")
+        try:
+            stripped_handles = source.read_stripped_handles(args.stripped_sidecar)
+        except Exception:  # noqa: BLE001 - StrippedSidecarUnreadable, and anything else a hostile file can raise: one code word, no traceback
+            return fail(EXIT_USAGE, "stripped_sidecar_unreadable")
+
     prefix = None
     if args.shadow.startswith("s3://"):
         prefix = source.normalise_prefix(args.shadow)
@@ -143,7 +162,8 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
             shadow = source.scan_dir(args.shadow)
             if not any(compare_mod.is_owned(key) for key in shadow):
                 return fail(EXIT_SHADOW, "shadow_empty")
-            result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds)
+            result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds,
+                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles)
         else:
             previous = None
             try:
@@ -159,7 +179,8 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
                     shadow = source.scan_dir(tmp)
                     if not any(compare_mod.is_owned(key) for key in shadow):
                         return fail(EXIT_SHADOW, "shadow_empty")
-                    result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds)
+                    result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds,
+                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles)
             finally:
                 if previous is not None:
                     signal.signal(signal.SIGTERM, previous)

@@ -18,6 +18,12 @@ The push sends a Media object's metadata as an op and its blob beside it. Two ha
               the staged object, commits, and copies it into ``media/<handle><ext>`` itself (api/src/sync/media.js ``finalizeBlobs``), so a
               refused or conflicting op leaves the served blob and its metadata as they were. The addon never writes to a served key.
 
+strip_location (HFY-TSK-374): when the tree's setting is on, ``mediafile.inspect`` reports a JPEG or PNG held only for its GPS position
+as the location-free COPY it would be (``location_stripped``). ``annotate`` then treats it as a normal ``upload`` of the copy's bytes:
+the Media checksum, the blob descriptor, the presign and the ``media_local`` row all carry the copy's MD5, SHA-256 and size, and
+``record_stripped`` adds local SHA-256 -> uploaded SHA-256 to the sidecar's meta. The file on this Mac and the Gramps database are never
+written; the next run builds the same copy, finds the row and uploads nothing.
+
 ``media_local`` (``handle, path, md5, sha256, size, origin``) remembers the bytes the website holds for a handle: ``cloud`` after a
 download (the pull), ``up`` after an acknowledged push. A file that equals its row is not uploaded again. Standard library only;
 Python 3.9 compatible.
@@ -67,6 +73,31 @@ def matches(row, info):
     return bool(row) and bool(info.get("sha256")) and row.get("sha256") == info["sha256"] and row.get("md5") == info["md5"]
 
 
+def record_stripped(con, handle, local_sha256, uploaded_sha256, uploaded_md5="", commit=True):
+    """The sidecar remembers that the website holds a location-free copy (``uploaded_sha256``, ``uploaded_md5``) of the file whose SHA-256 on
+    this Mac is ``local_sha256`` (HFY-TSK-374): meta ``media_location_stripped`` = {handle: [local, uploaded, uploaded md5]}. Hashes only;
+    the file is never touched. The pull reads it (``plan._blob_changed``): that checksum on the website is never a change to download."""
+    from . import sidecar
+
+    table = sidecar.meta_json(con, "media_location_stripped", {})
+    if not isinstance(table, dict):
+        table = {}
+    table[handle] = [local_sha256, uploaded_sha256, uploaded_md5]
+    sidecar.set_meta_json(con, "media_location_stripped", table)
+    if commit:
+        con.commit()
+
+
+def stripped_map(con):
+    """{handle: (local sha256, uploaded sha256, uploaded md5)} from ``record_stripped`` (an older row has two items)."""
+    from . import sidecar
+
+    table = sidecar.meta_json(con, "media_location_stripped", {})
+    if not isinstance(table, dict):
+        return {}
+    return {h: tuple(v) for h, v in table.items() if isinstance(v, list) and len(v) in (2, 3) and all(isinstance(x, str) for x in v)}
+
+
 def descriptor(info):
     """The ``blob`` of a Media op (api/src/sync/media.js ``blobDescriptor``): what the desktop says it uploaded."""
     return {"sha256": info["sha256"], "md5": info["md5"], "size": info["size"], "content_type": info["content_type"]}
@@ -92,6 +123,22 @@ def annotate(plan, files, rows, local, cloud, actions):
     Fills ``plan.uploads`` ({handle: info}), ``plan.warnings`` and ``plan.media_up``.
     """
     plan.uploads, plan.warnings = {}, []
+    plan.media_stripped, plan.media_stripped_pending = 0, 0
+    for x in plan.holds:
+        if x["class"] != CLASS or x["rule"] != GPS_RULE:
+            continue
+        info = files.get(x["handle"]) or {}
+        rule = mediafile.SCAN_RULES.get(info.get("scan"))
+        if rule and rule != GPS_RULE:
+            # held, but NOT known to have a position: its metadata cannot be read with certainty, or is too much to check. Own rule, own words.
+            x["rule"], x["detail"] = rule, consts.HOLD_MESSAGES[rule]
+        elif info.get("strip_refused") == "icc":
+            x["rule"], x["detail"] = "media_icc_text", consts.HOLD_MESSAGES["media_icc_text"]
+        elif info.get("strip_refused") == "structure":
+            x["rule"], x["detail"] = "media_structure", consts.HOLD_MESSAGES["media_structure"]
+        elif info.get("strip_refused"):
+            # strip_location is on and the photo has a position but could not go (a TIFF, or a file the strip cannot take with certainty)
+            x["detail"] = consts.LOCATION_NOT_STRIPPED_MESSAGES.get(info["strip_refused"]) or consts.LOCATION_NOT_STRIPPED_MESSAGES["*"]
     ops = {o["handle"]: o for o in plan.ops if o["class"] == CLASS}
     whole_held = {x["handle"] for x in plan.holds + plan.blocked if x["class"] == CLASS}
     for handle, obj in sorted(local.items()):
@@ -103,7 +150,8 @@ def annotate(plan, files, rows, local, cloud, actions):
         info = files[handle]
         row = rows.get(handle)
         stored = obj.get("checksum")
-        if info.get("readable") and info.get("md5") and isinstance(stored, str) and stored and stored != info["md5"]:
+        disk_md5 = info.get("local_md5") or info.get("md5")  # what Gramps' own checksum is compared with: the file on this Mac, not the copy
+        if info.get("readable") and disk_md5 and isinstance(stored, str) and stored and stored != disk_md5:
             plan.warnings.append({"class": CLASS, "handle": handle, "rule": "media_checksum_stale",
                                   "detail": "Gramps has an old checksum for this file; the file's own MD5 is sent instead."})
         op = ops.get(handle)
@@ -115,6 +163,8 @@ def annotate(plan, files, rows, local, cloud, actions):
             continue
         elif state == "ok":
             if matches(row, info):
+                if info.get("location_stripped"):
+                    plan.media_stripped += 1  # a count: the website already holds this photo's location-free copy
                 continue
             if op is None:
                 head = cloud.get(handle)
@@ -125,6 +175,8 @@ def annotate(plan, files, rows, local, cloud, actions):
                 ops[handle] = op
             op["blob"] = descriptor(info)
             plan.uploads[handle] = info
+            if info.get("location_stripped"):
+                plan.media_stripped_pending += 1  # a count: this push would send its location-free copy
         elif row is None:
             # The file cannot go: the metadata does and the blob is held.
             plan.holds.append(_hold(handle, mediafile.HOLD_RULES.get(state, "media_blob_unreadable")))
@@ -143,12 +195,21 @@ def annotate(plan, files, rows, local, cloud, actions):
 
 
 def read_verified(info):
-    """The bytes of the planned file, or Deferred('media_file_changed') when they are not the bytes the plan hashed."""
+    """The bytes of the planned file (for a photo sent without its location: of its location-free copy, built again here from the file and
+    checked against the plan), or Deferred('media_file_changed') when they are not the bytes the plan hashed."""
     try:
         with open(info["path"], "rb") as fh:
             data = fh.read(mediafile.MAX_BYTES + 1)
     except OSError:
         raise Deferred("media_blob_unreadable")
+    if info.get("location_stripped"):
+        # The file on this Mac must be the one the plan hashed; the copy is built again from it, in memory, and must be the copy the plan hashed.
+        if len(data) != info["local_size"] or hashlib.sha256(data).hexdigest() != info["local_sha256"] \
+                or hashlib.md5(data).hexdigest() != info["local_md5"]:
+            raise Deferred("media_file_changed")
+        data, _reason = mediafile.strip_copy(data, info["content_type"])
+        if data is None:
+            raise Deferred("media_location_not_removed")
     if len(data) != info["size"] or hashlib.sha256(data).hexdigest() != info["sha256"] or hashlib.md5(data).hexdigest() != info["md5"]:
         raise Deferred("media_file_changed")
     return data

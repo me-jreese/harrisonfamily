@@ -98,6 +98,8 @@ class Plan:
         self.uploads = {}         # {Media handle: mediafile.inspect dict}: the blobs this push uploads before the ops that name them
         self.warnings = []        # {"class", "handle", "rule", "detail"}: things to tell io that hold nothing back (a stale Gramps checksum)
         self.media_up = 0
+        self.media_stripped = 0   # Media whose file the website already holds as a copy without its location (a count; HFY-TSK-374)
+        self.media_stripped_pending = 0  # Media whose location-free copy this push would send
 
     def counts(self):
         out = {"create": 0, "update": 0, "delete": 0}

@@ -96,6 +96,8 @@ def describe_run(doc):
     lines.append(_("Waiting to go to the website: %(n)d.") % {"n": c.get("push_pending", 0)})
     lines.append(_("Open conflicts: %(n)d. Held back: %(b)d. Privacy incidents: %(i)d.") % {
         "n": c.get("conflicts_open", 0), "b": c.get("blocked", 0), "i": c.get("privacy_incidents", 0)})
+    if c.get("media_location_stripped"):
+        lines.append(_("Photos sent without their location: %(n)d.") % {"n": c["media_location_stripped"]})
     error = doc.get("error") or {}
     if error:
         lines.append("%s: %s" % (error.get("code", ""), error.get("message", "")))

@@ -104,10 +104,11 @@ class GrampsTree(runner.TreeAccess):
 
         A Media path is read as Gramps reads it: absolute as it is, else under the tree's base media path (`Tools > Media Manager`'s
         base path, `db.get_mediapath()`; GLib's Pictures folder when the tree has none). `Media.path` stays on this Mac. The files are
-        only read, never changed; a placeholder is detected without reading it."""
+        only read, never changed; a placeholder is detected without reading it. With the tree's setting ``strip_location`` (config.json, set by
+        the runner) a JPEG or PNG held only for its GPS position is described by its location-free copy; the file and Media.path stay as they are."""
         base = media_path(self.db)
         raw = (self.db.get_raw_media_data(h) for h in self.db.iter_media_handles())
-        return mediafile.collect([m for m in raw if m is not None], base)
+        return mediafile.collect([m for m in raw if m is not None], base, strip_location=bool(getattr(self, "strip_location", False)))
 
     def _read(self, cls, handle):
         # Gramps raises HandleError for a handle that is not there (a create the plan is about to make), where the fakes return None.

@@ -248,6 +248,7 @@ class _Push:
         self.id_named = False        # the last refusal dropped ops that the server named by ID (it names one ID per answer)
         self.files = {}              # {Media handle: mediafile.inspect dict}: the bytes on disk, read once per run
         self.staged = set()          # (handle, sha256) already at their staging key in this run
+        self.stripped_sent = 0       # location-free copies the website acknowledged in this run (HFY-TSK-374)
         self.deferred_media = set()  # new Media whose upload failed: what refers to them waits for the next run
         self.blob_retries = {}       # Media handle -> how many times the website could not find its staged blob this run
         self.base_handles = set()
@@ -449,7 +450,8 @@ class _Push:
                 o["gramps_id"] = gid
         doc = {
             "schema": 1, "run_id": self.run_id, "action": "push", "created_at": self.now(), "cloud_seq": snap.seq,
-            "counts": dict(plan.counts(), media_up=plan.media_up), "ops": ops, "holds": plan.holds, "warnings": plan.warnings, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
+            "counts": dict(plan.counts(), media_up=plan.media_up, media_location_stripped=plan.media_stripped,
+                           media_location_stripped_pending=plan.media_stripped_pending), "ops": ops, "holds": plan.holds, "warnings": plan.warnings, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
             "step_up_fresh": bool(self.step_up), "sticky": sorted(plan.sticky), "mass_delete": bool(plan.mass_delete),
             "conflicts": [{"id": c["id"], "class": c["class"], "handle": c["handle"], "path": c["path"], "kind": c["kind"]} for c in plan.conflicts],
             "plan_sha256": hashlib.sha256(json.dumps(ops, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
@@ -460,6 +462,8 @@ class _Push:
         paths_.atomic_write_json(path, doc)
         self.counts["pushed"] = plan.counts()
         self.counts["media_up"] = plan.media_up
+        self.counts["media_location_stripped"] = plan.media_stripped
+        self.counts["media_location_stripped_pending"] = plan.media_stripped_pending
         self.counts["conflicts_open"] = len(plan.conflicts)
         self.counts["holds"] = len(plan.holds)
         self.counts["blocked"] = len(plan.blocked)
@@ -598,6 +602,10 @@ class _Push:
             info = self.plan.uploads.get(op["handle"]) if self.plan is not None else None
             path = (info or self.files.get(op["handle"]) or {}).get("path") or ""
             mediaup.record(self.side, op["handle"], path, blob["md5"], blob["sha256"], blob["size"], origin="up")
+            seen = info or self.files.get(op["handle"]) or {}
+            if seen.get("location_stripped") and seen.get("sha256") == blob["sha256"]:
+                mediaup.record_stripped(self.side, op["handle"], seen["local_sha256"], blob["sha256"], blob["md5"])
+                self.stripped_sent += 1
             self.counts["media_up"] += 1
 
     def _hold(self, op, rule, blocked=False, path=""):
@@ -746,6 +754,8 @@ class _Push:
                 holds = pushplan._unique(plan.holds + plan.blocked + self.extra_holds + self.extra_blocked)
                 pushstate.sync_holds(con, holds, self.now(), self.pathless)
                 self.counts["conflicts_open"] = len(pushstate.open_conflicts(con))
+                self.counts["media_location_stripped"] = plan.media_stripped + self.stripped_sent   # the website holds the copy: acknowledged only
+                self.counts["media_location_stripped_pending"] = max(0, plan.media_stripped_pending - self.stripped_sent)
                 self.counts["holds"] = len(pushplan._unique(plan.holds + self.extra_holds))
                 self.counts["blocked"] = len(pushplan._unique(plan.blocked + self.extra_blocked))
                 if sum(self.counts["pushed"].values()):

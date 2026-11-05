@@ -3,6 +3,8 @@
 
     hfy-sync <status|login|check|pull|push|sync|bind|cloud-bind|rebase> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]
     hfy-sync restore <backup> [--tree NAME] [--json]
+    hfy-sync settings [--tree NAME] [--strip-location on|off] [--yes] [--json]
+    hfy-sync stripped [--tree NAME] [--accept-website-file GRAMPS_ID | --send-again GRAMPS_ID] [--yes] [--json]
 
 It runs `Gramps -O <tree> -a tool -p name=hfy_sync,action=...`, then maps the run's status.json to an exit code. Gramps' own
 cli_tool swallows exceptions and exits 0, so the exit code comes from status.json (the `exit_code` field), and a missing file or
@@ -15,6 +17,17 @@ on open) and a tree that is open elsewhere (75, D01: the `lock` file). CLI `sync
 `restore <backup>` needs no Gramps process: with Gramps closed and `<dbdir>/lock` absent it verifies the backup's sha256, moves the
 database files aside, copies the backup in, runs `PRAGMA integrity_check`, puts the sidecar saved with that backup back, and then runs
 `check` (a dry run) so that you read what the next sync would do before it does it.
+
+`settings` reads or changes this tree's setting in config.json and never opens Gramps. `--strip-location on` makes the push send a COPY of a
+JPEG or PNG that is held only for its GPS location, built without the location (HFY-TSK-374); the file on this Mac and the Gramps database
+are never changed, and the setting is never sent to the website. It is off until you turn it on. Without `--yes` it only says what it would
+change (exit 10); a run of the sync holds state.lock, so a change waits for it (exit 75). `settings` with no option shows the value.
+
+`stripped` is for a photo sent as a copy without its location (HFY-TSK-374) after the website got another file for it: the pull lists it as
+held back on every run, and leaves your original and its link alone. With no option it only counts the photos the sync state records as sent
+that way. `--accept-website-file GRAMPS_ID` forgets that record, so the next pull downloads the website's file and points the photo at it;
+`--send-again GRAMPS_ID` forgets that the website holds your copy, so the next push uploads it again over the website's file. Both only say what
+they would do until `--yes`, and wait for a running sync (exit 75). It never opens Gramps and never changes the tree.
 
 Environment:
   HFY_GRAMPS_CMD   the Gramps command, split like a shell line (default /Applications/Gramps.app/Contents/MacOS/Gramps).
@@ -43,7 +56,9 @@ DEFAULT_GRAMPS = "/Applications/Gramps.app/Contents/MacOS/Gramps"
 def _usage(message=None):
     if message:
         print("hfy-sync: %s" % message, file=sys.stderr)
-    print("usage: hfy-sync <%s> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]\n       hfy-sync restore <backup>"
+    print("usage: hfy-sync <%s> [--tree NAME] [--yes] [--dry-run] [--allow-deletes] [--step-up] [--plan RUN_ID] [--json]\n       hfy-sync restore <backup>\n"
+          "       hfy-sync settings [--tree NAME] [--strip-location on|off] [--yes] [--json]\n"
+          "       hfy-sync stripped [--tree NAME] [--accept-website-file GRAMPS_ID | --send-again GRAMPS_ID] [--yes] [--json]"
           % "|".join(a for a in consts.ACTIONS if a != "restore"), file=sys.stderr)
     return consts.EXIT_USAGE
 
@@ -112,7 +127,190 @@ def _refusal_doc(run_id, action, dbid, code):
     return status.build(run_id, action, "cli", dbid, False, "refused", exit_code, now, now, error=error, next_action=next_action)
 
 
+def _settings(argv):
+    """`hfy-sync settings [--tree NAME] [--strip-location on|off] [--yes] [--json]`: the per-tree switch of config.json. Prints the value
+    (on or off) and nothing else; changes the file only with --yes, under the tree's run lock, keeping every other key."""
+    tree = value = None
+    yes = as_json = False
+    it = iter(argv)
+    for tok in it:
+        if tok == "--tree":
+            tree = next(it, None)
+            if not tree:
+                return _usage("--tree needs a name")
+        elif tok == "--strip-location":
+            value = next(it, None)
+            if value not in ("on", "off"):
+                return _usage("--strip-location needs on or off")
+        elif tok == "--yes":
+            yes = True
+        elif tok == "--json":
+            as_json = True
+        else:
+            return _usage("unknown option or argument for settings")
+    environ = os.environ
+    try:
+        config = paths.read_json(paths.config_path(environ))
+        if config is not None and not isinstance(config, dict):
+            raise ValueError("config.json is not an object")
+    except ValueError:
+        print("hfy-sync: config.json is unreadable (config_unreadable). Fix or remove it.", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    tree = tree or environ.get("HFY_SYNC_TREE") or (config or {}).get("tree_name")
+    if not tree:
+        return _usage("give the tree with --tree NAME (or set HFY_SYNC_TREE)")
+    found = paths.find_tree(tree, environ)
+    if found is None:
+        print("hfy-sync: no Gramps tree with that name under this Gramps home", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    dbid = found[0]
+    if config is None or config.get("dbid") != dbid:
+        print("hfy-sync settings: this tree is not bound on this Mac yet (hfy-sync bind --yes first); nothing was changed.", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    current = config.get(consts.STRIP_LOCATION_KEY) is True
+    wanted = current if value is None else value == "on"
+    code, note = consts.EXIT_OK, ""
+    if wanted != current:
+        if not yes:
+            code, note = consts.EXIT_DRY_RUN_CHANGES, "would change; run again with --yes to change it"
+        else:
+            tp = paths.TreePaths(dbid, environ)
+            tp.ensure()
+            with preflight.StateLock(tp.lock) as lock:
+                if not lock.acquired:
+                    print("hfy-sync settings: another website sync run is in progress. Wait for it to finish; nothing was changed.", file=sys.stderr)
+                    return consts.EXIT_TEMPORARY
+                latest = paths.read_json(tp.config)
+                if not isinstance(latest, dict) or latest.get("dbid") != dbid:
+                    return consts.EXIT_CONFIG
+                latest[consts.STRIP_LOCATION_KEY] = wanted
+                paths.atomic_write_json(tp.config, latest)
+            current = wanted
+            note = "changed"
+    shown = current if not note.startswith("would") else wanted
+    if as_json:
+        print(json.dumps({"setting": consts.STRIP_LOCATION_KEY, "value": "on" if current else "off", "wanted": "on" if shown else "off",
+                          "changed": note == "changed", "exit": code}, sort_keys=True))
+    else:
+        print("hfy-sync settings: %s %s%s" % (consts.STRIP_LOCATION_KEY, "on" if shown else "off", " (%s)" % note if note else ""))
+    return code
+
+
+def _stripped(argv):
+    """`hfy-sync stripped [--tree NAME] [--accept-website-file GRAMPS_ID | --send-again GRAMPS_ID] [--yes] [--json]`: see the module docstring."""
+    tree = accept = again = None
+    yes = as_json = False
+    it = iter(argv)
+    for tok in it:
+        if tok == "--tree":
+            tree = next(it, None)
+            if not tree:
+                return _usage("--tree needs a name")
+        elif tok in ("--accept-website-file", "--send-again"):
+            value = next(it, None)
+            if not value or value.startswith("-"):
+                return _usage("%s needs the Gramps ID of the photo" % tok)
+            if tok == "--send-again":
+                again = value
+            else:
+                accept = value
+        elif tok == "--yes":
+            yes = True
+        elif tok == "--json":
+            as_json = True
+        else:
+            return _usage("unknown option or argument for stripped")
+    if accept and again:
+        return _usage("give --accept-website-file or --send-again, not both")
+    environ = os.environ
+    try:
+        config = paths.read_json(paths.config_path(environ))
+        if config is not None and not isinstance(config, dict):
+            raise ValueError("config.json is not an object")
+    except ValueError:
+        print("hfy-sync: config.json is unreadable (config_unreadable). Fix or remove it.", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    tree = tree or environ.get("HFY_SYNC_TREE") or (config or {}).get("tree_name")
+    if not tree:
+        return _usage("give the tree with --tree NAME (or set HFY_SYNC_TREE)")
+    found = paths.find_tree(tree, environ)
+    if found is None:
+        print("hfy-sync: no Gramps tree with that name under this Gramps home", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    dbid = found[0]
+    tp = paths.TreePaths(dbid, environ)
+    if config is None or config.get("dbid") != dbid or not os.path.exists(tp.sidecar):
+        print("hfy-sync stripped: this tree is not bound on this Mac yet (hfy-sync bind --yes first); nothing was changed.", file=sys.stderr)
+        return consts.EXIT_CONFIG
+    from hfygramps.addon import mediaup, sidecar
+
+    tp.ensure()
+    with preflight.StateLock(tp.lock) as lock:
+        if not lock.acquired:
+            print("hfy-sync stripped: another website sync run is in progress. Wait for it to finish; nothing was changed.", file=sys.stderr)
+            return consts.EXIT_TEMPORARY
+        try:
+            con = sidecar.open_checked(tp.sidecar)
+        except sidecar.SidecarError:
+            print("hfy-sync stripped: the sync state is damaged (D13); nothing was changed.", file=sys.stderr)
+            return consts.EXIT_CONFIG
+        try:
+            recorded = mediaup.stripped_map(con)
+            wanted = accept or again
+            code, note, count = consts.EXIT_OK, "", len(recorded)
+            if wanted:
+                handle = base_json = None
+                for h, obj_json in con.execute("SELECT handle, obj_json FROM base WHERE class = 'Media' AND deleted = 0"):
+                    try:
+                        if json.loads(obj_json or "null").get("gramps_id") == wanted:
+                            handle, base_json = h, obj_json
+                            break
+                    except (ValueError, AttributeError):
+                        continue
+                if handle is None:
+                    print("hfy-sync stripped: no photo with that Gramps ID in the sync state; nothing was changed.", file=sys.stderr)
+                    return consts.EXIT_CONFIG
+                if accept:
+                    entry = recorded.get(handle)
+                    row = con.execute("SELECT md5 FROM media_local WHERE handle = ?", (handle,)).fetchone()
+                    mine = entry[2] if entry and len(entry) > 2 else (row[0] if row else "")
+                    on_website = json.loads(base_json or "null").get("checksum") if base_json else None
+                    if entry is not None and mine and on_website == mine:
+                        print("hfy-sync stripped: the website's file for that photo is still your copy; there is nothing to accept. Nothing was changed.")
+                        return consts.EXIT_OK
+                    effect = handle in recorded
+                    todo = "forget that the website's file for it is your copy; the next pull downloads the website's file and points the photo at it"
+                else:
+                    row = con.execute("SELECT 1 FROM media_local WHERE handle = ?", (handle,)).fetchone()
+                    effect = row is not None
+                    todo = "forget that the website holds your copy; the next push uploads it again over the website's file"
+                if not effect:
+                    note = "nothing to change for that photo"
+                elif not yes:
+                    code, note = consts.EXIT_DRY_RUN_CHANGES, "would %s; run again with --yes" % todo
+                else:
+                    if accept:
+                        table = sidecar.meta_json(con, "media_location_stripped", {})
+                        table.pop(handle, None)
+                        sidecar.set_meta_json(con, "media_location_stripped", table)
+                    else:
+                        con.execute("DELETE FROM media_local WHERE handle = ?", (handle,))
+                    con.commit()
+                    note = "done: " + todo
+        finally:
+            con.close()
+    if as_json:
+        print(json.dumps({"recorded": count, "exit": code, "note": note}, sort_keys=True))
+    else:
+        print("hfy-sync stripped: %d photo(s) recorded as sent without their location%s" % (count, " (%s)" % note if note else ""))
+    return code
+
+
 def main(argv):
+    if argv and argv[0] == "stripped":
+        return _stripped(argv[1:])
+    if argv and argv[0] == "settings":
+        return _settings(argv[1:])
     parsed = parse(argv)
     if isinstance(parsed, str):
         return _usage(parsed)

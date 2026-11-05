@@ -143,13 +143,35 @@ HOLD_MESSAGES.update({
     "media_upload_refused": "The website refused the file for this photo or document, so it was not sent.",
     "media_file_changed": "The file for this photo or document changed while the sync ran, so it was not sent. Run the push again.",
     "media_cloud_copy_differs": "The file for this photo or document changed on this Mac and can no longer be sent, so the website keeps the copy it has. Check the file, then sync again.",
+    "media_location_not_removed": "The location could not be removed from a copy of this photo with certainty, so it was not sent. Nothing on this Mac changed.",
+    "media_stripped_replaced": "The website has another file for this photo than the copy this Mac sent. It was not downloaded, so your original and its link in Gramps stay as they are, "
+                               "and this stays listed on every sync until you choose. To take the website's file instead: hfy-sync stripped --accept-website-file <Gramps ID of the photo> --yes. "
+                               "To send your copy again: hfy-sync stripped --send-again <Gramps ID> --yes (then push).",
+    "media_structure": "This photo's file has a part the add-on cannot account for in a copy (extra bytes inside the picture data or after it, tables nothing uses, a chunk or header "
+                       "with odd values, or an unusual layout), so the photo was not sent. Nothing on this Mac changed. Save a copy of the photo (any editor's Save As), then sync.",
+    "media_icc_text": "This photo's colour profile has a part this add-on cannot follow with certainty in a copy (an unknown tag, a number out of range, or bytes that are not part of "
+                      "the profile), so the photo was not sent. Nothing on this Mac changed. Save the photo without its colour profile, or with a standard one, then sync.",
+    "media_scan_unreadable": "The photo's metadata could not be read with certainty (a damaged or unusual structure), so it was not checked for a location and the photo was not sent. "
+                             "It is not known to have one. Save a copy of the photo without its metadata, then sync.",
+    "media_scan_limit": "The photo has more metadata than can be checked in reasonable time, so it was not checked for a location and the photo was not sent. "
+                        "It is not known to have one. Save a copy of the photo without its metadata, then sync.",
     "media_dependency_deferred": "This record refers to a photo or document whose file could not be uploaded, so it was not sent. Run the push again.",
 })
+
+# A photo that is held for its GPS position while the per-tree setting `strip_location` is on (TIFF, or a file the strip cannot take with certainty).
+LOCATION_NOT_STRIPPED_MESSAGES = {
+    "tiff": "This TIFF photo has a location in it. The website copy cannot be made without it (TIFF is not rewritten), so the photo was not sent. "
+            "Remove the location info from the file, then sync.",
+    "*": "This photo has a location in it and the add-on could not make a copy without it with certainty (a part of the file it does not know, or damaged), "
+         "so the photo was not sent. Remove the location info from the file, then sync.",
+}
+# config.json key (per tree, default off): send a copy of a JPEG or PNG without its GPS location instead of holding it (HFY-TSK-374)
+STRIP_LOCATION_KEY = "strip_location"
 
 # The holds only a real run finds (the dry `check` and `push` that the Gramps window reads cannot): the pull reads the bytes of a media file
 # it downloads (so a photo with a position, or an empty file, is held there), and the push finds out that a file or a record could not be
 # sent. The window reads these from the sidecar's holds table, as the last run left them (review.run_holds).
-DOWNLOAD_HOLD_RULES = ("media.exif_gps.hold", "media_blob_empty")
+DOWNLOAD_HOLD_RULES = ("media.exif_gps.hold", "media_blob_empty", "media_scan_unreadable", "media_scan_limit")
 SEND_FAILED_RULES = ("media_upload_failed", "media_upload_refused", "media_file_changed", "media_dependency_deferred", "server_refused")
 
 # A Media handle names a file on this disk (`media_root/<handle><ext>`) and sits in a URL path, so it is held to a strict shape wherever

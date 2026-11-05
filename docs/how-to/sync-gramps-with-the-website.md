@@ -89,6 +89,20 @@ gramps/bin/hfy-sync sync --tree "<tree name>" --yes --plan <run_id>
 
 Runbook 19.4. Open the Website sync window and pick per field. Held items name the rule and the characters to edit in Gramps. The command line never decides a conflict: it parks it and exits `20`, and the path stays pinned until you decide it in the window.
 
+### Send photos that have a location without it
+
+By default a JPEG, PNG or TIFF photo with a GPS position is held: the website gets the Media's details and not the photo (`media.exif_gps.hold`), and you remove the location from the file before it can go. To keep the location in your files and in Gramps and still put the photo on the website, turn on the per-tree setting `strip_location`. The push then uploads a COPY of each JPEG or PNG that is held only for its position. The copy has minimal metadata: the picture byte for byte, its colour profile and its Orientation, and nothing else (no camera data, no dates, no comments, no XMP, no place names). It is image-lossless and not metadata-lossless. Your file, `Media.path` and the Gramps database are never written, and the setting never leaves this Mac. A TIFF, or a photo the add-on cannot read with certainty (a depth map or a motion clip after the image, an application segment it does not know, extended XMP), stays held.
+
+```sh
+cd ~/harrisonfamily
+gramps/bin/hfy-sync settings --tree "<tree name>"                         # shows: strip_location off
+gramps/bin/hfy-sync settings --tree "<tree name>" --strip-location on      # looks only, exit 10
+gramps/bin/hfy-sync settings --tree "<tree name>" --strip-location on --yes
+gramps/bin/hfy-sync push --tree "<tree name>" --json                       # the look: counts.media_location_stripped_pending is the number of photos that would go without a location
+```
+
+`hfy-sync settings ... --strip-location off --yes` turns it off again. If the website ends up with another file for one of these photos, the sync lists it as held back until you choose (`hfy-sync stripped --accept-website-file <Gramps ID> --yes` or `--send-again <Gramps ID> --yes`). What it removes, how the check works, the limits and what stays held are in [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md#9-push-the-trees-changes). When you review the shadow render against the legacy export, give the report the same count: [Account for media sent without their location](review-the-shadow-parity-report.md#account-for-media-sent-without-their-location).
+
 ### Restore from a backup
 
 Runbook 19.5 is the addon's `restore` action, not a hand copy. Quit Gramps, then:

@@ -450,7 +450,8 @@ def banner(docs, undo=True):
         c = (push.get("counts") or {}).get("pushed") or {}
         lines.append("Pushed to the website: %d new, %d changed, %d deleted." % (c.get("create", 0), c.get("update", 0), c.get("delete", 0)))
         counts = push.get("counts") or {}
-        for key, text in (("conflicts_open", "Conflicts parked: %d."), ("holds", "Held back: %d."), ("blocked", "Blocked: %d.")):
+        for key, text in (("conflicts_open", "Conflicts parked: %d."), ("holds", "Held back: %d."), ("blocked", "Blocked: %d."),
+                          ("media_location_stripped", "Photos sent without their location: %d.")):
             if counts.get(key):
                 lines.append(text % counts[key])
     for d in (pull, push):

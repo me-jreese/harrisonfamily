@@ -198,7 +198,7 @@ class StatusFile(HomeCase):
         self.assertEqual(sorted(k for k in doc if k != "versions"),
                          sorted(["schema", "run_id", "action", "mode", "dry_run", "started_at", "finished_at", "result", "exit_code",
                                  "tree", "cloud", "counts", "backup", "error", "next_action"]))
-        self.assertEqual(sorted(doc["counts"]), sorted(["pulled", "pushed", "conflicts_open", "holds", "blocked", "media_up", "media_down"]))
+        self.assertEqual(sorted(doc["counts"]), sorted(["pulled", "pushed", "conflicts_open", "holds", "blocked", "media_up", "media_down", "media_location_stripped", "media_location_stripped_pending"]))
         self.assertEqual(doc["tree"], {"dbid": "ab12cd34", "bound": True})
         self.assertEqual(doc["cloud"], {"head_seq": 0, "snapshot_seq": 0})
         with self.assertRaises(ValueError):
