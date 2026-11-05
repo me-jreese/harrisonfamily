@@ -144,3 +144,27 @@ test("the lifelines chunk is lazy and at most 25 KB gzip JS and 5 KB gzip CSS, w
   const pkg = JSON.parse(read(join(testsDir, "..", "package.json")));
   if (pkg.dependencies["d3-shape"]) assert.equal(pkg.dependencies["d3-shape"], "3.2.0", "d3-shape is exact-pinned at 3.2.0");
 });
+
+// HFY-TSK-272 (viz-v2-bigtree, viz ADR 9.2): the whole-family poster is its own lazy chunk, at most 30 KB gzip JS and 5 KB gzip CSS, and the
+// island carries no layout engine (the layout is precomputed at build time by graph/; d3-dag is a build-time dependency there only).
+export const BIGTREE_BUDGET = { js: 30 * KB, css: 5 * KB };
+
+test("the poster chunk is lazy, at most 30 KB gzip JS and 5 KB gzip CSS, and no d3-dag module is in the bundle", (t) => {
+  const entry = join(out, "tree.js");
+  const posters = dynamicTargets(entry).filter((f) => /\/chunks\/tree-bigtree-[A-Za-z0-9_-]+\.js$/.test(f.split("\\").join("/")));
+  assert.equal(posters.length, 1, "tree.js must import exactly one tree-bigtree chunk dynamically");
+  assert.ok(!staticClosure(entry).has(posters[0]), "the poster chunk is a static import of the entry: it is not lazy");
+  const set = minus(staticClosure(posters[0]), staticClosure(join(out, "shell.js")));
+  const js = sum(set);
+  // The poster's rules are in the page's one stylesheet (tree.css imports lib/tree-bigtree.css); its own source is what the 5 KB bounds.
+  const cssSrc = gzipSync(readFileSync(join(testsDir, "..", "src", "lib", "tree-bigtree.css"))).length;
+  t.diagnostic(`poster JS ${kb(js)} of ${kb(BIGTREE_BUDGET.js)}; CSS ${kb(cssSrc)} of ${kb(BIGTREE_BUDGET.css)}`);
+  assert.ok(js > 512, "the poster chunk measured as nearly empty: the test is not looking at it");
+  assert.ok(js <= BIGTREE_BUDGET.js, `poster JS is ${kb(js)} gzip, over the 30 KB budget`);
+  assert.ok(cssSrc <= BIGTREE_BUDGET.css, `poster CSS is ${kb(cssSrc)} gzip, over the 5 KB budget`);
+  // no d3-dag anywhere in the built bundles, nor in the islands' dependencies or lockfile
+  const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : /\.(js|css)$/.test(e.name) ? [join(d, e.name)] : []));
+  for (const f of walk(out)) assert.doesNotMatch(read(f), /d3-dag|javascript-lp-solver|\bsugiyama\b|layeringSimplex|decrossTwoLayer/, `${f.slice(out.length + 1)} carries layout-engine code`);
+  const pkg = read(join(testsDir, "..", "package.json")) + read(join(testsDir, "..", "package-lock.json"));
+  assert.doesNotMatch(pkg, /d3-dag/, "d3-dag is in the islands' package.json or lockfile");
+});
