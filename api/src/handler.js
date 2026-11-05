@@ -21,6 +21,7 @@ import { circleIds, loadProposal, visibleProposal } from "./records/proposal-sto
 import { getSyncHead, isPersonWithdrawn } from "./sync/store.js";
 import { createAccessRequests } from "./access-requests.js";
 import { createGraduation } from "./graduate.js";
+import { createModeration } from "./moderation.js";
 import { createChatService, serviceUnauthenticated } from "./chat.js";
 import { createCompositeMemberReader } from "./allowlist-store.js";
 
@@ -142,11 +143,13 @@ export function createHandler(deps) {
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, notifier, guard, now, uid, log, via,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
+    // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
+    const moderation = createModeration({ ddb, cmds, table, actor, content, comments, notifier, afterCommit });
     const links = createLinks(base);
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, comments, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, comments, moderation, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**
