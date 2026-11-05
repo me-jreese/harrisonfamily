@@ -18,7 +18,6 @@ import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
 import { useFlags } from "../lib/use-flags.js";
 import { initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
-import { useFlags } from "../lib/use-flags.js";
 
 export const COPY = {
   prepared: "the family tree is being prepared. you can find anyone through search.",
