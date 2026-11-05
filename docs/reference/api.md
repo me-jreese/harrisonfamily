@@ -40,6 +40,7 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
 | [`contrib-read.js`](../../api/src/contrib-read.js) | The contributions read side: `createContribReader` (the `list`, `stats` and `site` behind `/contributions`), the pure feed-line rule `pickLine` with its `CANDIDATES` and `lineText`, `hrefOf`, and the default `proposalVisible`. See [Contributions read API](#contributions-read-api). |
 | [`links.js`](../../api/src/links.js) | Profile links: `createLinks` (the `get` and `put` behind `/people/:id/links`), `LINKS_ID_RE`, `linksKeys` and `linksAuditId`. Its policy and validation are the `@io-kit/profile` `links` field. See [Profile links](#profile-links). |
+| [`onthisday/`](../../api/src/onthisday/) | On this day: the pure builder (`build.js`) and selector (`select.js`), and the API around them (HFY-TSK-194): `service.js` (`createOnThisDay`: the `get`, `hide` and `unhide` behind the three `onthisday.*` routes, the lazy rebuild and the hidden list), `store.js` (the `OTD#INDEX` item, its gzip body and its build lease), `source.js` (the `OnThisDaySource` contract, the interim adapter over `person/index.json` and `person/<id>.json`) and `posts.js` (the past-year posts tier). See [On this day](#on-this-day). |
 | [`guard.js`](../../api/src/guard.js) | The R-18 contact-information guard on post and comment text: `createGuard`, `GuardError`, `guardDobFromEnv`. See [Contact-information guard](#contact-information-guard). |
 | [`upload-guard.js`](../../api/src/upload-guard.js) | `checkLocation(bucket, key)`: refuses an upload whose stored bytes carry location metadata. See [Location check](#location-check). `headUpload(bucket, key)`: the `HeadObject` of a comment photo, with a 2 s timeout. See [Comment photos](#comment-photos). |
 | [`txn.js`](../../api/src/txn.js) | Audit item builder, `transact()` (puts, deletes, updates, condition checks, `ClientRequestToken`, conflict retry), `mapCancellationReasons`, `counterUpdate`, `mergeUpdates`, `assertTxnSize`, `GSI1` paging. |
@@ -215,6 +216,9 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `accessRequests.secondEmail` | POST | `/second-email/:id` | body `{response: "confirm" \| "object"}` | `200` `{state, effective}` or `{state: "revoked"}` | The member whose account got a second email, not an admin route. NOT behind the `accessRequests` flag, so a running hold stays answerable if the flag is turned off. Its gate, `secondEmailGate()`, declares the switch `ACCESS_REQUESTS` with the rule it enforces before the handler: `401` signed out, then a lookup of the request, and `404` for anyone but the held member, or when the lookup fails. `409 window_closed` after 72 hours of a delivered notice. |
 | `links.get` | GET | `/people/:id/links` | none | `200` `{links, version, can: {edit}}` | Any member. Behind `requireFeature("profileLinks")`. See [Profile links](#profile-links). |
 | `links.put` | PUT | `/people/:id/links` | body `links` (platform to string or `null`), `version` | `200` `{links, version}` | Owner sets or clears; an admin only clears. Behind `requireFeature("profileLinks")`. |
+| `onthisday.get` | GET | `/onthisday` | query `date` (`YYYY-MM-DD`, a real day) and `tzOffset` (whole minutes within +-840, `Date.getTimezoneOffset()` sign, default `0`) | `200` `{date, tier, items, posts, prompt, indexVersion, stale}` | Any member. Behind `requireFeature("onThisDay")`, not an MCP tool. `400 validation` for a bad date or offset, `503 unavailable` when there is no index and the build failed. See [On this day](#on-this-day). |
+| `onthisday.hide` | POST | `/onthisday/hide` | body `{itemId}` (`evt:<handle>` or `birth:<gramps id>`) | `204` | An admin, or a member whose own Gramps ID is among the item's people. `403 forbidden` for anyone else (also for an id the index does not hold), `404` for an admin and an unknown id, `400 validation`. Idempotent. Behind `requireFeature("onThisDay")`. |
+| `onthisday.unhide` | DELETE | `/onthisday/hide/:itemId` | none | `204` | The same rule as `onthisday.hide`. Idempotent. Behind `requireFeature("onThisDay")`. |
 | `subscriptions.get` | GET | `/subscriptions` | query `subject` (`person:<gramps_id>`) | `200` `{subject, subscribed}` | `400` for a bad subject. Shares its path with `subscriptions.list`: `?subject=` picks this route. Behind `requireFeature("recordSubsV1")`. Not an MCP tool. See [Record follows](#record-follows). |
 | `subscriptions.list` | GET | `/subscriptions` | query `cursor`, `limit` (1 to 100, default 25) | `200` `{items: [{subject, created_at}], cursor}` | My follows, newest first; `400 cursor_invalid`. Behind `recordSubsV1`. Not an MCP tool. |
 | `subscriptions.put` | PUT | `/subscriptions/person/:id` | body `{}` | `200` `{subject, subscribed: true}` | Idempotent. `404` for an unknown person, `400 self_subscribe` for your own page, `503` if the person lookup fails. Behind `recordSubsV1`. |
@@ -233,9 +237,9 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, the two `adminDeletes.post` and `adminDuplicates.list` routes, with `requireFeature("adminDelete")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, the two `adminDeletes.post` and `adminDuplicates.list` routes, with `requireFeature("adminDelete")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three `onthisday.*` routes, with `requireFeature("onThisDay")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
-Eleven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`, and the editing routes `edit.get`, `changes.post`, `proposals.list` and `proposals.get` (HFY-TSK-211). See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the four `subscriptions.*` routes, the three `contributions.*` routes, the two records routes, `edit.schema`, the two `relationships.*` routes, the two admin routes (`adminDeletes.post`, `adminDuplicates.list`), `proposals.amend`, `proposals.withdraw` and `proposals.decide` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
+Eleven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`, and the editing routes `edit.get`, `changes.post`, `proposals.list` and `proposals.get` (HFY-TSK-211). See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the three `onthisday.*` routes, the four `subscriptions.*` routes, the three `contributions.*` routes, the two records routes, `edit.schema`, the two `relationships.*` routes, the two admin routes (`adminDeletes.post`, `adminDuplicates.list`), `proposals.amend`, `proposals.withdraw` and `proposals.decide` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
 ## The chat service routes
 
@@ -530,6 +534,47 @@ After the checks:
 
 **R-18.** Profile links do not go through `guard.js`. The validator applies R-18 itself: every field refuses contact channels (`contact_channel`), and handles, URL paths, queries and fragments are scanned with the shared detector's `scanText` (`contact_info`). The hit is reported only as a field code, never as the matched text. The website field also refuses every host of the six platforms (R-17).
 
+## On this day
+
+[`onthisday/`](../../api/src/onthisday/) serves the homepage module. The design is HFY-PLN-002 surfaces.md section 4; this section is what the code does. The three routes are session routes behind `requireFeature("onThisDay")`: dark (`404`) to everyone outside the `uat` group until the flag is on.
+
+### The response
+
+`GET /api/onthisday?date=YYYY-MM-DD&tzOffset=<minutes>` answers `{date, tier, items, posts, prompt, indexVersion, stale}`. `tier` is `day`, `week`, `year`, `archive` or `prompt`; `items` are at most three index items (with `emoji` on at most one celebrate row, and `lifeState` on each person); `posts` holds at most one past-year post; `prompt` is `{kind: "add_day", itemId, people}` or `{kind: "generic"}` when fewer than two items show; `stale` is `true` when the index served is older than the source. The selection is the pure `selectOnThisDay`, so one date always gives one answer.
+
+`tzOffset` is `Date.prototype.getTimezoneOffset()` of the viewer: minutes from local time to UTC, positive west of UTC (`420` for UTC-7). It decides the viewer's local day for the past-year posts, and defaults to `0`. A date that is not a real calendar day, or an offset that is not whole minutes within +-840, is `400 validation`.
+
+### The index item and its lazy rebuild
+
+One item holds the index: `OTD#INDEX` / `V1`, with `schema`, `sourceVersion`, `policyVersion`, `generatedAt`, `size` and `body`, the gzip JSON of the `hfy.onthisday.v1` index (the builder's `report` is never stored). There is no scheduler.
+
+1. A parsed copy lives in Lambda memory for 5 minutes, shared by every request of the container, and concurrent requests share one load.
+2. On a miss the item and the source's `version()` are read together. The same `sourceVersion` serves.
+3. A missing item or a changed version takes the lease: `UpdateItem SET buildingUntil = now + 60 s` under `attribute_not_exists(buildingUntil) OR buildingUntil < :now`. The winner builds, stores the body under `buildingUntil = :mine` (which replaces the item, so it also ends the lease) and serves it. Any number of concurrent callers, in one container or several, give exactly one build.
+4. A lease loser serves the stale body with `stale: true`. With no body it waits 1 s and reads again, up to 8 times, then answers `503`.
+5. A failed build serves the stale body with `stale: true`, and the lease is left to run out, which is the back-off. With no body the answer is `503 unavailable`.
+6. A stored body built under another `policyVersion` is never served, stale or not. A compressed body above 300 KB fails the build; month sharding (`V1#MM`) is not built, because the interim year tier is about 10 KB.
+
+### Sources
+
+`OnThisDaySource` is `{version(), events(), persons()}` (`snapshot()` optionally returns all three from one read, and `collectSource` prefers it). The interim adapter, `createInterimSource`, reads `person/index.json` (its ETag is the version) and then `person/<id>.json` 16 at a time through the API role's `PersonRecords` grant. It gives the year tier only, because published person JSON is year-only (HFY-R76). Its rules:
+
+- Event types come from `events[].type.code`. A date counts as exact only when its text is blank or a bare year; `about`, `before`, `after` and ranges are skipped by the builder.
+- A person's own event is used only when no other person's file lists the same handle. A published person event carries no role, so a shared event could belong to a witness.
+- A marriage comes from the family blocks only: the father is the groom and the mother the bride. A spouse who is not published leaves the pair short and the builder skips it.
+- A person with no file is skipped; any other read failure fails the build, and the stale index serves.
+- Published JSON holds nothing Gramps-private, so every row is `private: false`.
+
+The record-store adapter that gives the day and week tiers is a later task (`surf-onthisday-store-source`); it implements the same interface.
+
+### Past-year posts
+
+The archive tier reads `GSI1PK = POSTS`, `GSI1SK BETWEEN ulidFloor(dayStart) AND ulidCeil(dayEnd)`, one Query per past year back to 2025 (at most 25 years, 50 posts each), with each day derived from `tzOffset`. A year with no such day (February 29) is skipped. Each candidate must be `published` (drafts and withdrawn posts never), pass the content kit's `canView` and `moderationVisible`, not be on the hidden list, and not name a birthday: a post whose title, body or photo alt text matches `BIRTHDAY_KEYWORDS` from `privacy-guard.mjs` (as a whole word, case-insensitive) is skipped. Attachments with `moderation.hidden` are stripped, and a post left with no text and no photo is skipped. A post is served as `{id, n, author: {id, label}, excerpt, photo?: {url, alt}}`, text only, for the island to render as text nodes. If the Query fails the answer still comes from the index.
+
+### Hiding
+
+`POST /api/onthisday/hide` `{itemId}` adds the id to `OTD#HIDDEN` / `META` (`ids`, `version`); `DELETE /api/onthisday/hide/:itemId` removes it. Both need an admin, or a member whose own Gramps ID is one of the item's people in the index. The list change and an `AUDIT#otd:<item id>` item (`onthisday.hide` or `onthisday.unhide`) are one `TransactWriteItems` call, guarded by the list's `version`; a lost race reads the list again. A change that changes nothing writes nothing. Hidden ids are removed from every tier on every request, including the cached copy.
+
 ## Contact-information guard
 
 R-18 (HFY-PLN-002 BRD2 section 5.2): personal contact information is never stored. [`guard.js`](../../api/src/guard.js) runs the shared detector, [`shared/privacy-guard.mjs`](../../shared/privacy-guard.mjs) (`rejectContactInfo`), on every free-text field of today's member write paths:
@@ -634,6 +679,7 @@ What the items hold:
 - Comment items carry `entity: "comment"` and `comment`.
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
 - Profile links items (`PLINKS#<gramps-id>` / `META`), one per person, carry `entity: "plinks"`, `links` (as in [Links object](#links-object)), `version`, `updatedAt` and `updatedBy` (the member id of the last writer). A person whose links were never written has no item.
+- The on-this-day index (`OTD#INDEX` / `V1`) and hidden list (`OTD#HIDDEN` / `META`) are described under [On this day](#on-this-day).
 - Audit items are listed under [Audit records](#audit-records).
 - Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post` or `comment`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post or comment of the same purpose attaches the upload, then `attached` (the post or comment id) instead of `ttl`. See [Upload binding](#upload-binding) and [Comment photos](#comment-photos).
 - Contribution events and counters are listed under [Contributions ledger](#contributions-ledger). A credited post or comment carries `contrib: { id }`, the id of its event, on every stored copy.
@@ -724,7 +770,7 @@ Every post create, update, visibility change and delete, every comment create, e
 
 | Attribute | Value |
 | --- | --- |
-| `PK` | `AUDIT#<record id>`: the post id, the comment id, or `plinks:<gramps-id>` for a person's profile links |
+| `PK` | `AUDIT#<record id>`: the post id, the comment id, `plinks:<gramps-id>` for a person's profile links, or `otd:<item id>` for an on-this-day item |
 | `SK` | `<at>#<ulid>` |
 | `GSI1PK`, `GSI1SK` | `AUDIT`, and the same value as `SK` |
 | `entity` | `audit` |
@@ -741,6 +787,7 @@ Every post create, update, visibility change and delete, every comment create, e
 | Post | `create`, `update`, `visibility`, `delete` |
 | Comment | `create`, `edit`, `delete`, `graduate` (id is the comment id; `before` and `after` hold `{attachment, graduated}`) |
 | Profile links | `links.clear` when the body names platforms only to clear them, `links.update` for any other change |
+| On-this-day item | `onthisday.hide` and `onthisday.unhide` (`before` and `after` hold `{hidden}`; ids only, no names) |
 
 The data change and its audit item are written in a single `TransactWriteItems` call (`transact` in `txn.js`). Both land or neither does, so a failed write leaves no audit item.
 

@@ -120,6 +120,23 @@ export const ROUTES = defineRoutes([
     gate: requireFeature("profileLinks"),
     handler: async (c) => ok(await c.links.put(c.params.id, c.body)),
   },
+  // On this day (HFY-TSK-194, surf-onthisday-api; surfaces.md 4.4), dark until onThisDay is on (or the caller is uat). Session routes with no MCP tool and no policy row.
+  // The hide and unhide rule is the same for both: an admin, or a member whose own gramps id is among the item's people (403 otherwise).
+  {
+    name: "onthisday.get", method: "GET", path: "/onthisday", summary: "On this day for ?date=YYYY-MM-DD (a real day) and ?tzOffset=<minutes, Date.getTimezoneOffset(), within +-840, default 0>: {date, tier, items, posts, prompt, indexVersion, stale}; 400 for a bad date or offset, 503 when there is no index and the build failed (no MCP tool)",
+    gate: requireFeature("onThisDay"),
+    handler: async (c) => ok(await c.onThisDay.get(c.query)),
+  },
+  {
+    name: "onthisday.hide", method: "POST", path: "/onthisday/hide", summary: "Hide an on-this-day item {itemId} (evt:<handle> or birth:<gramps id>): 204; an admin, or a member who is one of the item's people; 403 otherwise, 404 for an admin and an unknown id (no MCP tool)",
+    gate: requireFeature("onThisDay"),
+    handler: async (c) => { await c.onThisDay.hide(c.body.itemId); return ok(undefined, 204); },
+  },
+  {
+    name: "onthisday.unhide", method: "DELETE", path: "/onthisday/hide/:itemId", summary: "Show a hidden on-this-day item again: 204, idempotent; an admin, or a member who is one of the item's people (no MCP tool)",
+    gate: requireFeature("onThisDay"),
+    handler: async (c) => { await c.onThisDay.unhide(c.params.itemId); return ok(undefined, 204); },
+  },
   // The contributions read side (hfy-contrib-read-api; social.md 7.5), dark until contribV1 is on (or the caller is uat). No `mcp` member and
   // no policy row. contributions.stats and contributions.site share a path: `?author=` picks the first, its absence the second.
   {
@@ -382,7 +399,7 @@ export const ROUTES = defineRoutes([
 
 /** Normalizes registry entries (MCP member, auth, write, path matcher). Exported so tests can mount extra routes through the same shape. */
 export function defineRoutes(list) {
-  return list.map((r) => ({ ...r, ...(MCP[r.name] ? { mcp: MCP[r.name] } : {}), auth: r.auth ?? "session", write: r.method !== "GET", re: new RegExp(`^${r.path.replace(/:[a-z_]+/g, "([^/]+)")}$`), keys: [...r.path.matchAll(/:([a-z_]+)/g)].map((m) => m[1]) }));
+  return list.map((r) => ({ ...r, ...(MCP[r.name] ? { mcp: MCP[r.name] } : {}), auth: r.auth ?? "session", write: r.method !== "GET", re: new RegExp(`^${r.path.replace(/:[A-Za-z_]+/g, "([^/]+)")}$`), keys: [...r.path.matchAll(/:([A-Za-z_]+)/g)].map((m) => m[1]) }));
 }
 
 /**
@@ -424,6 +441,6 @@ export function buildCaps() {
     comments: { reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param: "required on PATCH/DELETE/react (query or body)" },
     mcp: { resource: MCP_RESOURCE, tools: ROUTES.filter((r) => r.mcp).map((r) => ({ name: r.mcp.tool, action: r.name, write: r.write })) },
     notifications: { types: NOTIFY_TYPES, default_level: 0 },
-    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear", "graduate"] },
+    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear", "graduate", "onthisday.hide", "onthisday.unhide"] },
   };
 }

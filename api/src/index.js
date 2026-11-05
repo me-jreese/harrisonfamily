@@ -1,7 +1,7 @@
 // Lambda entry point: wires real AWS clients. Handler is `src/index.handler`.
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoNotificationStore, DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
@@ -25,6 +25,7 @@ import { logSafeError } from "./http.js";
 import { registerRecordContributor } from "./record-contributor.js";
 import { memberCheckFrom, registerRekeyHook } from "./identity-rekey.js";
 import { defaultHooks } from "./sync/hooks.js";
+import { s3InterimSource } from "./onthisday/source.js";
 import { createFanoutNotifier, createRecordFanout, isReplayEvent, isStreamEvent } from "./record-change-fanout.js";
 
 const env = process.env;
@@ -237,6 +238,8 @@ export const handler = async (event, context) => {
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
+      // HFY-TSK-194: the on-this-day index is built from the published person data (the interim year-tier source) until the record-store source is selected (RG-5).
+      onThisDaySource: s3InterimSource({ s3, cmds: { GetObjectCommand, HeadObjectCommand }, bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", log: console }),
       features, isOwner, mailer, requesterMailer, personFacts, readEntries, idPolicy,
       ...p,
     });
