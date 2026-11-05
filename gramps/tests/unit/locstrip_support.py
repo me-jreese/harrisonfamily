@@ -13,7 +13,7 @@ LON = ((122, 1), (4, 1), (5151, 100))
 MAKE = b"SYNTHCAM"
 DATE = b"2001:02:03 04:05:06"
 MAKER_NOTE = b"SYNTHMAKERNOTE0"
-SCAN = bytes(range(7, 250)) * 3 + b"\x12\x34\x56"      # the stand-in for the entropy-coded picture data (no 0xFF bytes in it)
+SCAN = bytes((i * 37 + 11) % 251 for i in range(729)) + b"\x12\x34\x56"      # the stand-in for the entropy-coded picture data (no 0xFF bytes in it)
 JFIF = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
 
 
@@ -153,7 +153,7 @@ def jpeg(tiff=None, xmp=None, extra_segments=b"", scan=SCAN):
         out += segment(0xE1, b"Exif\x00\x00" + tiff)
     if xmp is not None:
         out += segment(0xE1, b"http://ns.adobe.com/xap/1.0/\x00" + xmp)
-    out += extra_segments + segment(0xDB, b"\x00" + bytes(range(1, 65))) + segment(0xC0, b"\x08\x00\x10\x00\x10\x01\x01\x11\x00")
+    out += extra_segments + segment(0xDB, b"\x00" + bytes((i * 7 + 3) % 200 + 1 for i in range(64))) + segment(0xC0, b"\x08\x00\x10\x00\x10\x01\x01\x11\x00")
     return out + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + scan + b"\xff\xd9"
 
 
@@ -165,9 +165,12 @@ def chunk(kind, body):
     return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
 
 
-def png(tiff=None, xmp=None, compress_xmp=False, text=None):
-    """A 1x1 greyscale PNG with an optional eXIf chunk, an XMP iTXt chunk (deflated or not) and a tEXt chunk."""
+def png(tiff=None, xmp=None, compress_xmp=False, text=None, icc=None, extra=b""):
+    """A 1x1 greyscale PNG with an optional eXIf chunk, an iCCP chunk, an XMP iTXt chunk (deflated or not), a tEXt chunk and ``extra`` chunks."""
     out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+    if icc is not None:
+        out += chunk(b"iCCP", b"prof\x00\x00" + zlib.compress(icc))
+    out += extra
     if tiff is not None:
         out += chunk(b"eXIf", tiff)
     if xmp is not None:
@@ -193,3 +196,47 @@ def coordinate_bytes():
     """Every byte string a leftover coordinate would be: the packed rationals in both byte orders and the XMP text."""
     out = [rational_bytes(o, LAT) for o in "<>"] + [rational_bytes(o, LON) for o in "<>"]
     return out + [b"37,33.4242N", b"122,4.5151W", b"1234/10"]
+
+
+def icc_profile(desc="Test sRGB", cprt="No copyright, use freely", extra_tag=None, text_kind="mluc", size_lie=0, gap=b""):
+    """A small valid ICC profile: header, tag table, desc, cprt, wtpt, the three colorants and three gamma curves. ``extra_tag`` is (signature, data)."""
+    def pad(b):
+        return b + b"\x00" * (-len(b) % 4)
+
+    def mluc(text):
+        u = text.encode("utf-16-be")
+        return pad(b"mluc\x00\x00\x00\x00" + struct.pack(">II", 1, 12) + b"enUS" + struct.pack(">II", len(u), 28) + u)
+
+    def text_tag(text):
+        return pad(b"text\x00\x00\x00\x00" + text.encode("latin-1") + b"\x00")
+
+    def desc_tag(text):
+        a = text.encode("latin-1") + b"\x00"
+        return pad(b"desc\x00\x00\x00\x00" + struct.pack(">I", len(a)) + a + struct.pack(">II", 0, 0) + struct.pack(">HB", 0, 0) + b"\x00" * 67)
+
+    def xyz(x, y, z):
+        return b"XYZ \x00\x00\x00\x00" + struct.pack(">3i", x, y, z)
+
+    curve = pad(b"curv\x00\x00\x00\x00" + struct.pack(">IH", 1, 0x0233))
+    make = {"mluc": mluc, "text": text_tag, "desc": desc_tag}[text_kind]
+    tags = [(b"desc", make(desc)), (b"cprt", make(cprt)), (b"wtpt", xyz(63190, 65536, 54061)), (b"rXYZ", xyz(28484, 14319, 904)),
+            (b"gXYZ", xyz(25360, 46088, 6522)), (b"bXYZ", xyz(9404, 5120, 46737)), (b"rTRC", curve), (b"gTRC", curve), (b"bTRC", curve)]
+    if extra_tag:
+        tags.append(extra_tag)
+    table_end = 132 + 12 * len(tags)
+    pos, table, body = table_end, b"", b""
+    for sig, data in tags:
+        data = pad(data)
+        table += sig + struct.pack(">II", pos, len(data))
+        body += data
+        pos += len(data)
+    size = pos + len(gap)
+    header = (struct.pack(">I", size + size_lie) + b"lcms" + b"\x02\x10\x00\x00" + b"mntrRGB XYZ " + b"\x00" * 12 + b"acsp" + b"APPL" + b"\x00" * 24
+              + struct.pack(">3i", 63190, 65536, 54061) + b"lcms" + b"\x00" * 16 + b"\x00" * 28)
+    return header + struct.pack(">I", len(tags)) + table + body + gap
+
+
+def icc_segments(profile, chunk_size=65000):
+    """The APP2 segments that carry an ICC profile."""
+    chunks = [profile[i:i + chunk_size] for i in range(0, len(profile), chunk_size)] or [b""]
+    return b"".join(segment(0xE2, b"ICC_PROFILE\x00" + bytes([i + 1, len(chunks)]) + c) for i, c in enumerate(chunks))

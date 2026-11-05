@@ -132,6 +132,8 @@ def annotate(plan, files, rows, local, cloud, actions):
         if rule and rule != GPS_RULE:
             # held, but NOT known to have a position: its metadata cannot be read with certainty, or is too much to check. Own rule, own words.
             x["rule"], x["detail"] = rule, consts.HOLD_MESSAGES[rule]
+        elif info.get("strip_refused") == "icc":
+            x["rule"], x["detail"] = "media_icc_text", consts.HOLD_MESSAGES["media_icc_text"]
         elif info.get("strip_refused"):
             # strip_location is on and the photo has a position but could not go (a TIFF, or a file the strip cannot take with certainty)
             x["detail"] = consts.LOCATION_NOT_STRIPPED_MESSAGES.get(info["strip_refused"]) or consts.LOCATION_NOT_STRIPPED_MESSAGES["*"]

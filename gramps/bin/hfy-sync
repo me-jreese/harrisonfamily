@@ -259,11 +259,11 @@ def _stripped(argv):
             wanted = accept or again
             code, note, count = consts.EXIT_OK, "", len(recorded)
             if wanted:
-                handle = None
+                handle = base_json = None
                 for h, obj_json in con.execute("SELECT handle, obj_json FROM base WHERE class = 'Media' AND deleted = 0"):
                     try:
                         if json.loads(obj_json or "null").get("gramps_id") == wanted:
-                            handle = h
+                            handle, base_json = h, obj_json
                             break
                     except (ValueError, AttributeError):
                         continue
@@ -271,6 +271,13 @@ def _stripped(argv):
                     print("hfy-sync stripped: no photo with that Gramps ID in the sync state; nothing was changed.", file=sys.stderr)
                     return consts.EXIT_CONFIG
                 if accept:
+                    entry = recorded.get(handle)
+                    row = con.execute("SELECT md5 FROM media_local WHERE handle = ?", (handle,)).fetchone()
+                    mine = entry[2] if entry and len(entry) > 2 else (row[0] if row else "")
+                    on_website = json.loads(base_json or "null").get("checksum") if base_json else None
+                    if entry is not None and mine and on_website == mine:
+                        print("hfy-sync stripped: the website's file for that photo is still your copy; there is nothing to accept. Nothing was changed.")
+                        return consts.EXIT_OK
                     effect = handle in recorded
                     todo = "forget that the website's file for it is your copy; the next pull downloads the website's file and points the photo at it"
                 else:

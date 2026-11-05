@@ -49,8 +49,8 @@ RULES: Dict[str, Dict[str, str]] = {
         "source": "sync.md 5.5, BRD2 11.1",
     },
     "media-location-stripped": {
-        "summary": "A Media entry's file reached the website as a copy without its GPS location, so its checksum (and its size, when "
-                   "the copy is shorter) differs from the legacy export's, which holds the original. Seen on the media file, its "
+        "summary": "A Media entry's file reached the website as a copy with minimal metadata (no location), so its checksum and, as the copy is "
+                   "shorter, its size differ from the legacy export's, which holds the original. Seen on the media file, its "
                    "media/index.json entry and a person's primaryPhoto and mediaGallery[]. Counted only under --expect-stripped <n>, "
                    "the add-on's own counts.media_location_stripped: up to n media (same handle on both sides, a checksum and a size "
                    "present on both, the checksum differing) are explained; the media beyond n stay unexplained.",

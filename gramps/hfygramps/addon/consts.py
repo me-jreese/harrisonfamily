@@ -147,6 +147,8 @@ HOLD_MESSAGES.update({
     "media_stripped_replaced": "The website has another file for this photo than the copy this Mac sent. It was not downloaded, so your original and its link in Gramps stay as they are, "
                                "and this stays listed on every sync until you choose. To take the website's file instead: hfy-sync stripped --accept-website-file <Gramps ID of the photo> --yes. "
                                "To send your copy again: hfy-sync stripped --send-again <Gramps ID> --yes (then push).",
+    "media_icc_text": "This photo's colour profile has something this add-on does not accept in a copy (a text that is not a plain name, a number that looks like a position, "
+                      "or a part it cannot read), so the photo was not sent. Nothing on this Mac changed. Save the photo without its colour profile, or with a standard one, then sync.",
     "media_scan_unreadable": "The photo's metadata could not be read with certainty (a damaged or unusual structure), so it was not checked for a location and the photo was not sent. "
                              "It is not known to have one. Save a copy of the photo without its metadata, then sync.",
     "media_scan_limit": "The photo has more metadata than can be checked in reasonable time, so it was not checked for a location and the photo was not sent. "
@@ -158,8 +160,8 @@ HOLD_MESSAGES.update({
 LOCATION_NOT_STRIPPED_MESSAGES = {
     "tiff": "This TIFF photo has a location in it. The website copy cannot be made without it (TIFF is not rewritten), so the photo was not sent. "
             "Remove the location info from the file, then sync.",
-    "*": "This photo has a location in it and the add-on could not remove it from a copy with certainty, so the photo was not sent. "
-         "Remove the location info from the file, then sync.",
+    "*": "This photo has a location in it and the add-on could not make a copy without it with certainty (a part of the file it does not know, or damaged), "
+         "so the photo was not sent. Remove the location info from the file, then sync.",
 }
 # config.json key (per tree, default off): send a copy of a JPEG or PNG without its GPS location instead of holding it (HFY-TSK-374)
 STRIP_LOCATION_KEY = "strip_location"

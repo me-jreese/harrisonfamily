@@ -1,18 +1,19 @@
-"""The location strip (HFY-TSK-374): a lossless copy of a JPEG or PNG without its GPS position, or no copy at all.
+"""The minimal-metadata copy (HFY-TSK-374): a JPEG or PNG is rebuilt from an allowlist, or it is not copied at all.
 
     cd gramps/tests/unit && python3 -m unittest test_addon_locstrip
 
-Every image here is built from fabricated bytes and a fabricated position (locstrip_support.py); no real photo is read. The strip works
-on bytes, so these tests never touch a file. Pillow, when it is installed, decodes the copies as a second opinion; nothing needs it.
-Standard library only otherwise; Python 3.9 compatible.
+Every image here is built from fabricated bytes and a fabricated position (locstrip_support.py); no real photo is read. The copy keeps the
+picture-side parts byte for byte, a rebuilt JFIF/Adobe header, an Exif with the Orientation tag alone, and a checked ICC profile; everything
+else is dropped. Pillow, when it is installed, decodes the copies as a second opinion; nothing needs it. Python 3.9 compatible.
 """
 import hashlib
+import io
 import os
 import random
 import struct
 import sys
 import unittest
-import xml.etree.ElementTree as ET
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -22,179 +23,166 @@ import locstrip_support as LS  # noqa: E402
 from hfygramps.addon import locstrip, mediafile  # noqa: E402
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageCms
 except ImportError:  # pragma: no cover - optional second opinion
-    Image = None
+    Image = ImageCms = None
 
 JPEG, PNG = "image/jpeg", "image/png"
+PICTURE_JPEG = lambda parts: [(m, p) for m, p in parts if m is None or m in locstrip._STRUCTURAL]  # noqa: E731
+PICTURE_PNG = lambda chunks: [(k, b) for k, b, _c in chunks if k in locstrip._PNG_COPIED]  # noqa: E731
+EXTRA = (LS.segment(0xFE, b"a comment") + LS.segment(0xED, b"Photoshop 3.0\x00" + b"8BIM\x04\x04\x00\x00\x00\x00\x00\x04" + b"abcd")
+         + LS.segment(0xE3, b"META\x00\x00" + b"x" * 30) + LS.segment(0xE0, b"JFXX\x00\x10" + b"t" * 20) + LS.segment(0xE2, b"MPF\x00" + b"\x00" * 16))
 
 
 def thumbnail(order="<"):
-    """A tiny JPEG that carries an Exif APP1 with a GPS IFD of its own: the thumbnail inside IFD1."""
     return LS.jpeg(LS.build_tiff(order, gps=True))
 
 
 class Checks(unittest.TestCase):
-    """The assertions every successful strip must pass."""
-
-    def assertClean(self, out, ct):
-        self.assertFalse(mediafile.exif_gps(out, ct), "the add-on's own detector finds no position")
-        self.assertFalse(locstrip.has_location_residue(out, ct), "the independent scan finds no position")
-        for token in LS.coordinate_bytes():
-            self.assertNotIn(token, out, "no coordinate bytes are left in the file")
-        self.assertNotIn(b"gps", out.lower().replace(b"\x00", b"")[:4096] if ct == JPEG else b"", "no GPS word in the metadata")
-
     def strip_ok(self, data, ct):
         before = hashlib.sha256(data).hexdigest()
         out, reason = locstrip.strip(data, ct)
         self.assertEqual(hashlib.sha256(data).hexdigest(), before, "the input is never changed")
         self.assertIsNotNone(out, reason)
         self.assertEqual(reason, "")
+        self.assertFalse(mediafile.exif_gps(out, ct), "the add-on's detector finds nothing in the copy")
+        self.assertFalse(locstrip.has_location_residue(out, ct), "and neither does the list-based scan")
+        for token in LS.coordinate_bytes():
+            self.assertNotIn(token, out, "no coordinate bytes are left in the file")
         return out
+
+    def jpeg_kinds(self, out):
+        return [m for m, _p in locstrip._jpeg_parts(out) if m is not None and m not in locstrip._STRUCTURAL]
 
 
 class Jpeg(Checks):
-    def test_exif_gps_is_removed_and_everything_else_is_the_original(self):
+    def test_the_copy_is_the_minimal_one_and_the_picture_parts_are_the_originals(self):
         for order in "<>":
-            tiff = LS.build_tiff(order)
-            data = LS.jpeg(tiff)
-            self.assertTrue(mediafile.exif_gps(data, JPEG))
+            data = LS.jpeg(LS.build_tiff(order, thumb=thumbnail(order)), LS.xmp_packet(), extra_segments=EXTRA)
             out = self.strip_ok(data, JPEG)
-            self.assertClean(out, JPEG)
-            self.assertEqual(len(out), len(data), "the copy is exactly as long: no length or offset had to change")
-            at = LS.scan_start(data)
-            self.assertEqual(out[at:], data[at:], "the compressed picture data and the end of the file are byte for byte the original's")
-            head = data.index(b"Exif\x00\x00")
-            self.assertEqual(out[:head], data[:head], "every segment before the Exif is untouched")
-            self.assertEqual(out[at - 80:at], data[at - 80:at], "and so are the segments after it")
+            self.assertEqual(self.jpeg_kinds(out), [0xE0, 0xE1], "a JFIF and an Exif, nothing else")
+            self.assertEqual(PICTURE_JPEG(locstrip._jpeg_parts(out)), PICTURE_JPEG(locstrip._jpeg_parts(data)), "tables, scan data: byte for byte")
+            self.assertLess(len(out), len(data))
+            exif = dict(locstrip._jpeg_parts(out))[0xE1]
+            self.assertEqual(exif, b"Exif\x00\x00" + locstrip._exif_tiff(order, 6), "Orientation, in the original's byte order, and nothing else")
+            self.assertEqual(out[out.rindex(b"\xff\xda"):], data[data.rindex(b"\xff\xda"):], "from the scan header to the end the bytes are the original's")
 
-    def test_every_other_exif_tag_keeps_its_value(self):
-        for order in "<>":
-            data = LS.jpeg(LS.build_tiff(order))
+    def test_no_orientation_no_exif_and_an_invalid_one_is_no_orientation(self):
+        no_orientation = LS.assemble("<", [("ifd0", [LS.asc("<", 0x010F, LS.MAKE)], None)], {})
+        self.assertNotIn(0xE1, self.jpeg_kinds(self.strip_ok(LS.jpeg(no_orientation), JPEG)))
+        for typ, count, value in ((3, 1, 9), (3, 1, 0), (4, 1, 6), (3, 2, 6)):
+            tiff = LS.assemble("<", [("ifd0", [(0x0112, typ, count, struct.pack("<I" if typ == 4 else "<HH", *((value,) if typ == 4 else (value, 0))))], None)], {})
+            self.assertNotIn(0xE1, self.jpeg_kinds(self.strip_ok(LS.jpeg(tiff), JPEG)), (typ, count, value))
+
+    def test_every_other_part_is_dropped_and_the_dropped_content_does_not_survive(self):
+        data = LS.jpeg(LS.build_tiff(), LS.xmp_packet(), extra_segments=EXTRA + LS.segment(0xFE, b"taken at 37.5712 -122.0809"))
+        out = self.strip_ok(data, JPEG)
+        for dropped in (b"a comment", b"Photoshop", b"META", b"JFXX", b"MPF", b"xmpmeta", b"SYNTHCAM", b"SYNTHMAKERNOTE", b"37.5712", b"2001:02:03"):
+            self.assertNotIn(dropped, out)
+
+    def test_jfif_is_rebuilt_without_a_thumbnail_and_adobe_is_kept(self):
+        jfif = LS.segment(0xE0, b"JFIF\x00\x01\x02\x01\x00\x48\x00\x48\x02\x02" + b"\x11" * 12)
+        adobe = LS.segment(0xEE, b"Adobe\x00\x64\x00\x00\x00\x00\x01" + b"junk")
+        data = LS.jpeg(None, extra_segments=adobe).replace(LS.JFIF, b"\xff\xd8" + jfif, 1)
+        out = self.strip_ok(data, JPEG)
+        parts = dict(locstrip._jpeg_parts(out))
+        self.assertEqual(parts[0xE0], b"JFIF\x00\x01\x02\x01\x00\x48\x00\x48\x00\x00", "version, units, densities kept; thumbnail size 0, no thumbnail")
+        self.assertEqual(parts[0xEE], b"Adobe\x00\x64\x00\x00\x00\x00\x01")
+
+    def test_a_progressive_file_keeps_every_scan(self):
+        body, eoi = LS.jpeg(LS.build_tiff())[:-2], b"\xff\xd9"
+        scan2 = LS.segment(0xFE, b"between") + LS.segment(0xC4, b"\x00" + bytes(16) + b"") + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + b"\x11\x22\x33"
+        data = body + scan2 + eoi
+        out = self.strip_ok(data, JPEG)
+        self.assertEqual(PICTURE_JPEG(locstrip._jpeg_parts(out)), PICTURE_JPEG(locstrip._jpeg_parts(data)))
+        self.assertNotIn(b"between", out)
+
+    def test_trailing_zero_padding_is_not_a_second_picture(self):
+        self.strip_ok(LS.jpeg(LS.build_tiff()) + b"\x00" * 9, JPEG)
+
+    def test_an_icc_profile_is_kept_byte_for_byte_also_in_pieces(self):
+        for profile, size in ((LS.icc_profile(), 65000), (LS.icc_profile(text_kind="text"), 65000), (LS.icc_profile(text_kind="desc"), 65000),
+                              (LS.icc_profile(), 200)):
+            data = LS.jpeg(LS.build_tiff(), extra_segments=LS.icc_segments(profile, size))
             out = self.strip_ok(data, JPEG)
-            start = out.index(b"Exif\x00\x00") + 6
-            tags = LS.read_tags(out[start:start + len(LS.build_tiff(order))])
-            self.assertIsNone(tags["gps"], "no GPS IFD")
-            self.assertNotIn(0x8825, tags["ifd0"], "and no pointer to one")
-            before = LS.read_tags(LS.build_tiff(order))
-            self.assertEqual({t: v for t, v in before["ifd0"].items() if t != 0x8825}, tags["ifd0"])
-            self.assertEqual(before["exif"], tags["exif"])
-            self.assertEqual(tags["ifd0"][0x010F][2], LS.MAKE + b"\x00")
-            self.assertEqual(tags["ifd0"][0x0112][2][:2], struct.pack(order + "H", 6), "the orientation")
-            self.assertEqual(tags["exif"][0x927C][2], LS.MAKER_NOTE, "the maker note is not touched")
+            self.assertIn(0xE2, self.jpeg_kinds(out))
+            self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out)), profile)
 
-    def test_xmp_gps_is_blanked_in_both_spellings_and_the_rest_of_the_packet_stays(self):
-        for style in ("attribute", "element"):
-            xmp = LS.xmp_packet(style=style)
-            data = LS.jpeg(xmp=xmp)
-            self.assertTrue(mediafile.exif_gps(data, JPEG) or b"GPSLatitude" in data)
-            out = self.strip_ok(data, JPEG)
-            self.assertClean(out, JPEG)
-            self.assertEqual(len(out), len(data))
-            text = out[out.index(b"<?xpacket begin"):out.index(b"<?xpacket end")].decode("latin-1")
-            root = ET.fromstring(text[text.index("<x:xmpmeta"):])         # still well-formed XML
-            self.assertIn("Synthetic title", ET.tostring(root, encoding="unicode"))
-            self.assertIn('exif:DateTimeOriginal="2001-02-03T04:05:06"', text)
-            at = LS.scan_start(data)
-            self.assertEqual(out[at:], data[at:])
-
-    def test_exif_and_xmp_together(self):
-        data = LS.jpeg(LS.build_tiff(), LS.xmp_packet())
-        out = self.strip_ok(data, JPEG)
-        self.assertClean(out, JPEG)
-        at = LS.scan_start(data)
-        self.assertEqual((len(out), out[at:]), (len(data), data[at:]))
-
-    def test_a_thumbnail_inside_the_exif_is_cleaned_too(self):
-        thumb = thumbnail()
-        self.assertTrue(mediafile.exif_gps(LS.jpeg(LS.build_tiff(gps=False, thumb=thumb)), JPEG), "the detector sees the thumbnail's Exif")
-        data = LS.jpeg(LS.build_tiff(gps=False, thumb=thumb))
-        out = self.strip_ok(data, JPEG)
-        self.assertClean(out, JPEG)
-        self.assertEqual(len(out), len(data))
-        both = LS.jpeg(LS.build_tiff(gps=True, thumb=thumb))
-        out2 = self.strip_ok(both, JPEG)
-        self.assertClean(out2, JPEG)
-        self.assertEqual(out2[out2.index(b"\xff\xd8", 3):out2.index(b"\xff\xd8", 3) + 2], b"\xff\xd8", "the thumbnail is still a JPEG")
-
-    def test_a_gps_pointer_in_ifd1_is_removed(self):
-        data = LS.jpeg(LS.build_tiff(gps=False, thumb=LS.jpeg(), gps_in_ifd1=True))
-        out = self.strip_ok(data, JPEG)
-        self.assertClean(out, JPEG)
-
-    def test_a_clean_file_comes_back_as_it_was(self):
-        data = LS.jpeg(LS.build_tiff(gps=False), LS.xmp_packet(gps=False))
-        self.assertFalse(mediafile.exif_gps(data, JPEG))
-        self.assertEqual(self.strip_ok(data, JPEG), data)
+    def test_an_icc_profile_the_add_on_does_not_accept_holds_the_photo(self):
+        bad = {
+            "a coordinate in the description": LS.icc_profile(desc="Shot at 12.3456, 65.4321"),
+            "a position word": LS.icc_profile(desc="Latitude profile"),
+            "a long number": LS.icc_profile(desc="Profile 1234567890"),
+            "a text outside the alphabet": LS.icc_profile(cprt="by <someone>; 12 N"),
+            "a coordinate in a text tag": LS.icc_profile(text_kind="text", cprt="N12.3460 E65.4330"),
+            "an unknown tag type": LS.icc_profile(extra_tag=(b"zzzz", b"data\x00\x00\x00\x00" + b"II*\x00" + b"x" * 20)),
+            "an xml dict": LS.icc_profile(extra_tag=(b"meta", b"dict\x00\x00\x00\x00" + b"x" * 12)),
+            "bytes between the tags": LS.icc_profile(gap=b"\x00\x00\x00\x00hidden text 12.3456"),
+            "a wrong size field": LS.icc_profile(size_lie=4),
+        }
+        for label, profile in bad.items():
+            out, reason = locstrip.strip(LS.jpeg(LS.build_tiff(), extra_segments=LS.icc_segments(profile)), JPEG)
+            self.assertEqual((out, reason), (None, "icc"), label)
+        broken = LS.segment(0xE2, b"ICC_PROFILE\x00\x01\x02" + LS.icc_profile())          # chunk 1 of 2, chunk 2 missing
+        self.assertEqual(locstrip.strip(LS.jpeg(LS.build_tiff(), extra_segments=broken), JPEG), (None, "icc"))
 
     @unittest.skipIf(Image is None, "Pillow is not installed")
-    def test_pillow_reads_the_copy_and_finds_no_gps_and_the_same_picture(self):
-        import io
+    def test_a_phone_style_photo_keeps_its_orientation_and_its_real_icc_profile_and_pillow_reads_the_copy(self):
         buf = io.BytesIO()
-        Image.new("RGB", (16, 16), (10, 20, 30)).save(buf, "JPEG")
+        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        Image.new("RGB", (16, 16), (10, 20, 30)).save(buf, "JPEG", icc_profile=profile)
         plain = buf.getvalue()
-        data = plain[:2] + LS.segment(0xE1, b"Exif\x00\x00" + LS.build_tiff("<")) + plain[2:]
+        after_soi = plain[:2]
+        rest = plain[2:]
+        data = after_soi + LS.segment(0xE1, b"Exif\x00\x00" + LS.build_tiff("<", thumb=thumbnail())) + LS.segment(0xE1, b"http://ns.adobe.com/xap/1.0/\x00" + LS.xmp_packet()) + rest
         self.assertTrue(Image.open(io.BytesIO(data)).getexif().get_ifd(0x8825))
         out = self.strip_ok(data, JPEG)
-        exif = Image.open(io.BytesIO(out)).getexif()
-        self.assertEqual(dict(exif.get_ifd(0x8825)), {})
-        self.assertEqual(exif.get(0x010F), LS.MAKE.decode())
-        self.assertEqual(exif.get(0x0112), 6)
-        self.assertEqual(list(Image.open(io.BytesIO(out)).convert("RGB").getdata()), list(Image.open(io.BytesIO(plain)).convert("RGB").getdata()))
-        self.assertEqual(out[out.index(b"\xff\xda"):], plain[plain.index(b"\xff\xda"):])
+        image = Image.open(io.BytesIO(out))
+        exif = image.getexif()
+        self.assertEqual((exif.get(0x0112), dict(exif.get_ifd(0x8825)), exif.get(0x010F)), (6, {}, None), "Orientation only")
+        self.assertEqual(image.info.get("icc_profile"), profile, "the colour profile is the original's")
+        self.assertEqual(list(image.convert("RGB").getdata()), list(Image.open(io.BytesIO(plain)).convert("RGB").getdata()), "the same pixels")
+        self.assertNotIn("xmp", image.info)
 
 
 class Png(Checks):
-    def check_chunks(self, data, out, changed):
-        a, b = LS.png_chunks(data), LS.png_chunks(out)
-        self.assertEqual([c[0] for c in a], [c[0] for c in b], "the same chunks in the same order")
-        for (kind, body, crc, _ok), (_k, body2, crc2, ok2) in zip(a, b):
-            self.assertTrue(ok2, "every chunk CRC is valid")
-            if kind not in changed:
-                self.assertEqual((body, crc), (body2, crc2), "an untouched chunk (IDAT included) is copied as it was")
+    def kinds(self, out):
+        return [k for k, _b, _c in locstrip._chunks(out)]
 
-    def test_exif_gps_is_removed_from_the_exif_chunk(self):
+    def test_the_copy_is_the_minimal_one_and_the_picture_chunks_are_the_originals(self):
         for order in "<>":
-            data = LS.png(tiff=LS.build_tiff(order))
-            self.assertTrue(mediafile.exif_gps(data, PNG))
+            extra = (LS.chunk(b"gAMA", struct.pack(">I", 45455)) + LS.chunk(b"pHYs", struct.pack(">IIB", 2835, 2835, 1)) + LS.chunk(b"tIME", struct.pack(">HBBBBB", 2001, 2, 3, 4, 5, 6))
+                     + LS.chunk(b"sPLT", b"name\x00\x08" + b"\x00" * 6) + LS.chunk(b"zxIf", b"\x00" + zlib.compress(LS.build_tiff(">"))) + LS.chunk(b"vpAg", b"\x00" * 9))
+            data = LS.png(tiff=LS.build_tiff(order), xmp=LS.xmp_packet(), compress_xmp=True, text=b"Comment\x00at 37.5712 -122.0809", icc=LS.icc_profile(), extra=extra)
             out = self.strip_ok(data, PNG)
-            self.assertClean(out, PNG)
-            self.check_chunks(data, out, {b"eXIf"})
-            self.assertEqual(len(out), len(data))
-            tags = LS.read_tags(dict((c[0], c[1]) for c in LS.png_chunks(out))[b"eXIf"])
-            self.assertIsNone(tags["gps"])
-            self.assertEqual(tags["ifd0"][0x010F][2], LS.MAKE + b"\x00")
+            self.assertEqual(self.kinds(out), [b"IHDR", b"iCCP", b"gAMA", b"pHYs", b"eXIf", b"IDAT", b"IEND"])
+            self.assertEqual(PICTURE_PNG(locstrip._chunks(out)), PICTURE_PNG(locstrip._chunks(data)))
+            self.assertTrue(all(c[3] for c in LS.png_chunks(out)), "every CRC is valid")
+            self.assertEqual(dict((k, b) for k, b, _c in locstrip._chunks(out))[b"eXIf"], locstrip._exif_tiff(order, 6))
+            for dropped in (b"tEXt", b"iTXt", b"tIME", b"sPLT", b"zxIf", b"vpAg", b"37.5712", b"xmpmeta"):
+                self.assertNotIn(dropped, out)
 
-    def test_xmp_gps_is_blanked_plain_and_deflated(self):
-        for compress in (False, True):
-            for style in ("attribute", "element"):
-                data = LS.png(xmp=LS.xmp_packet(style=style), compress_xmp=compress)
-                out = self.strip_ok(data, PNG)
-                self.assertClean(out, PNG)
-                self.check_chunks(data, out, {b"iTXt"})
-                body = dict((c[0], c[1]) for c in LS.png_chunks(out))[b"iTXt"]
-                text = body[body.index(b"\x00\x00\x00\x00", 18) + 4:] if not compress else None
-                if text is not None:
-                    self.assertIn(b"exif:DateTimeOriginal", text)
-                    self.assertNotIn(b"GPS", text)
+    def test_an_exif_prefix_in_the_chunk_is_read_and_no_orientation_means_no_chunk(self):
+        out = self.strip_ok(LS.png(tiff=b"Exif\x00\x00" + LS.build_tiff("<")), PNG)
+        self.assertEqual(dict((k, b) for k, b, _c in locstrip._chunks(out))[b"eXIf"], locstrip._exif_tiff("<", 6))
+        no_orientation = LS.assemble("<", [("ifd0", [LS.asc("<", 0x010F, LS.MAKE)], None)], {})
+        self.assertNotIn(b"eXIf", self.kinds(self.strip_ok(LS.png(tiff=no_orientation), PNG)))
 
-    def test_exif_and_xmp_together(self):
-        data = LS.png(tiff=LS.build_tiff(), xmp=LS.xmp_packet(), compress_xmp=True)
-        out = self.strip_ok(data, PNG)
-        self.assertClean(out, PNG)
-        self.check_chunks(data, out, {b"eXIf", b"iTXt"})
-
-    def test_a_clean_png_comes_back_as_it_was(self):
-        data = LS.png(tiff=LS.build_tiff(gps=False), xmp=LS.xmp_packet(gps=False))
-        self.assertEqual(self.strip_ok(data, PNG), data)
+    def test_an_iccp_that_is_not_accepted_holds_the_photo(self):
+        for profile in (LS.icc_profile(desc="Shot at 12.3456, 65.4321"), LS.icc_profile(extra_tag=(b"zzzz", b"data\x00\x00\x00\x00" + b"x" * 12))):
+            self.assertEqual(locstrip.strip(LS.png(tiff=LS.build_tiff(), icc=profile), PNG), (None, "icc"))
+        bad_keyword = LS.chunk(b"iCCP", b"12.3456, 65.4321\x00\x00" + zlib.compress(LS.icc_profile()))
+        data = LS.png(tiff=LS.build_tiff())
+        iend = data.rindex(b"IEND") - 4
+        self.assertEqual(locstrip.strip(data[:iend] + bad_keyword + data[iend:], PNG), (None, "icc"))
 
     @unittest.skipIf(Image is None, "Pillow is not installed")
-    def test_pillow_decodes_the_copy(self):
-        import io
-        out = self.strip_ok(LS.png(tiff=LS.build_tiff(), xmp=LS.xmp_packet()), PNG)
+    def test_pillow_decodes_the_copy_and_reads_the_orientation(self):
+        out = self.strip_ok(LS.png(tiff=LS.build_tiff(), xmp=LS.xmp_packet(), icc=LS.icc_profile()), PNG)
         image = Image.open(io.BytesIO(out))
         image.load()
-        self.assertEqual(image.size, (1, 1))
+        self.assertEqual((image.size, image.getexif().get(0x0112), dict(image.getexif().get_ifd(0x8825))), ((1, 1), 6, {}))
+        self.assertEqual(image.info.get("icc_profile"), LS.icc_profile())
 
 
 class FailsClosed(Checks):
@@ -204,57 +192,57 @@ class FailsClosed(Checks):
         self.assertTrue(why)
         if reason:
             self.assertEqual(why, reason)
+        self.assertIsNone(mediafile.strip_copy(data, ct)[0])
 
-    def test_a_tiff_is_never_rewritten(self):
-        tiff = LS.build_tiff()
-        self.assertTrue(mediafile.exif_gps(tiff, "image/tiff"))
-        self.refused(tiff, "image/tiff", "tiff")
-
-    def test_other_types_are_not_touched(self):
+    def test_a_tiff_is_never_rewritten_and_other_types_are_not_touched(self):
+        self.refused(LS.build_tiff(), "image/tiff", "tiff")
         self.refused(b"GIF89a....", "image/gif", "unsupported")
         self.refused(b"%PDF-1.4", "application/pdf", "unsupported")
 
-    def test_a_gps_pointer_to_nowhere_is_not_guessed_at(self):
-        tiff = bytearray(LS.build_tiff())
-        n = struct.unpack_from("<H", tiff, 8)[0]
-        for i in range(n):
-            if struct.unpack_from("<H", tiff, 10 + 12 * i)[0] == 0x8825:
-                struct.pack_into("<I", tiff, 10 + 12 * i + 8, 0x00FFFFF0)
-        self.refused(LS.jpeg(bytes(tiff)), JPEG)
-
-    def test_an_unknown_value_type_in_the_gps_ifd_is_refused(self):
-        tiff = bytearray(LS.build_tiff())
-        gps_at = struct.unpack_from("<I", tiff, 10 + 12 * 4 + 8)[0]          # IFD0's fifth entry is the GPS pointer
-        struct.pack_into("<H", tiff, gps_at + 2 + 2, 99)                        # the first GPS entry's type
-        self.refused(LS.jpeg(bytes(tiff)), JPEG)
-
-    def test_truncated_segments_and_missing_scans_are_refused(self):
+    def test_a_jpeg_it_cannot_follow_is_held(self):
         data = LS.jpeg(LS.build_tiff())
-        self.refused(data[:data.index(b"Exif") + 20], JPEG)
-        self.refused(data[:LS.scan_start(data)], JPEG)
+        self.refused(data[:data.index(b"Exif") + 20], JPEG)                  # a cut segment
+        self.refused(data[:LS.scan_start(data)], JPEG)                         # no scan
+        self.refused(data[:-2], JPEG)                                          # no end of image
         self.refused(b"\xff\xd8", JPEG)
-        self.refused(LS.png(tiff=LS.build_tiff())[:-5], PNG)
-        self.refused(b"\x89PNG\r\n\x1a\n", PNG)
+        self.refused(data + b"x", JPEG)                                        # a byte after the end of the image
+        self.refused(data + LS.jpeg(LS.build_tiff(gps=False)), JPEG)           # a second picture
+        for marker in (0x02, 0xC8, 0xF0, 0xD0, 0xD8, 0x01):                    # reserved, JPG, JPGn, RST outside a scan, SOI, TEM
+            self.refused(LS.jpeg(LS.build_tiff(), extra_segments=b"\xff" + bytes([marker]) + b"\x00\x04ab"), JPEG)
 
-    def test_extended_xmp_and_raw_profile_text_with_a_position_stay_held(self):
-        ext = LS.segment(0xE1, b"http://ns.adobe.com/xmp/extension/\x00" + b"0" * 40 + b'exif:GPSLatitude="1,2N"')
-        self.refused(LS.jpeg(LS.build_tiff(), extra_segments=ext), JPEG)
-        self.refused(LS.png(tiff=LS.build_tiff(), text=b"Raw profile type exif\x00hex"), PNG)
-
-    def test_a_gps_word_in_a_comment_keeps_the_photo_held(self):
-        data = LS.jpeg(LS.build_tiff(), extra_segments=LS.segment(0xFE, b"taken with the GPS Cam"))
-        self.refused(data, JPEG, "verify_failed")
-
-    def test_a_looping_ifd_is_refused(self):
-        tiff = bytearray(LS.build_tiff(thumb=LS.jpeg()))
-        ifd1 = struct.unpack_from("<I", tiff, 8 + 2 + 12 * 5)[0]                # IFD0's next-IFD offset
-        n1 = struct.unpack_from("<H", tiff, ifd1)[0]
-        struct.pack_into("<I", tiff, ifd1 + 2 + 12 * n1, 8)                     # IFD1 points back at IFD0
+    def test_an_exif_it_cannot_read_to_its_orientation_holds_the_photo(self):
+        tiff = bytearray(LS.build_tiff("<"))
+        ifd0 = struct.unpack_from("<I", tiff, 4)[0]
+        struct.pack_into("<H", tiff, ifd0, 65535)
         self.refused(LS.jpeg(bytes(tiff)), JPEG)
+        self.refused(LS.png(tiff=bytes(tiff)), PNG)
+        twice = LS.assemble("<", [("ifd0", [(0x0112, 3, 1, struct.pack("<HH", 6, 0)), (0x0112, 3, 1, struct.pack("<HH", 3, 0))], None)], {})
+        self.refused(LS.jpeg(twice), JPEG)
+        self.refused(LS.jpeg(b"MM\x00*" + b"\x00" * 3), JPEG)               # not a TIFF at all
+
+    def test_a_png_it_cannot_follow_is_held(self):
+        data = LS.png(tiff=LS.build_tiff())
+        iend = data.rindex(b"IEND") - 4
+        self.refused(data[:-5], PNG)
+        self.refused(b"\x89PNG\r\n\x1a\n", PNG)
+        self.refused(data + b"\x00", PNG)                                      # a byte after IEND
+        self.refused(data + LS.build_tiff(">"), PNG)
+        bad = bytearray(data)
+        bad[-20] ^= 1
+        self.refused(bytes(bad), PNG)                                          # a wrong CRC
+        self.refused(data[:iend] + LS.chunk(b"Zzzz", b"x") + data[iend:], PNG)  # an unknown CRITICAL chunk
+        for kind in (b"acTL", b"fcTL", b"fdAT"):                               # an animation: dropping frames would change the picture
+            self.refused(data[:iend] + LS.chunk(kind, b"\x00" * 8) + data[iend:], PNG)
+        self.refused(data[:iend] + LS.chunk(b"gAMA", b"\x00") + data[iend:], PNG)  # a fixed-size chunk of the wrong size
+
+    def test_the_copy_of_a_clean_file_is_made_the_same_way(self):
+        out = self.strip_ok(LS.jpeg(LS.build_tiff(gps=False), LS.xmp_packet(gps=False)), JPEG)
+        self.assertEqual(self.jpeg_kinds(out), [0xE0, 0xE1])
 
 
 class Fuzz(Checks):
-    """Truncated and garbled files: the strip never raises, and never returns a copy that still has a position."""
+    """Truncated and garbled files: the strip never raises, and never returns a copy that a scan finds a position in or that still holds the
+    original's coordinate bytes."""
 
     def run_one(self, data, ct):
         try:
@@ -266,18 +254,19 @@ class Fuzz(Checks):
             return False
         self.assertFalse(mediafile.exif_gps(out, ct))
         self.assertFalse(locstrip.has_location_residue(out, ct))
-        # Orphaned coordinate bytes with no pointer or property name left to them (a garble can cut the pointer of an intact GPS IFD) are not a
-        # position any reader can find; the deterministic tests above look for the bytes themselves. Here the guarantee is the two scans.
+        for token in LS.coordinate_bytes():
+            self.assertNotIn(token, out)
         return True
 
     def bases(self):
         thumb = thumbnail()
         scan2 = LS.segment(0xFE, b"between the scans") + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + b"\x11\x22\x33"
         progressive = LS.jpeg(LS.build_tiff(), LS.xmp_packet())[:-2] + scan2 + b"\xff\xd9"
-        icc = LS.segment(0xE2, b"ICC_PROFILE\x00\x01\x01" + b"acsp" * 16) + LS.segment(0xEE, b"Adobe\x00\x64\x00\x00\x00\x00\x01")
-        return [(LS.jpeg(LS.build_tiff(), LS.xmp_packet()), JPEG), (LS.jpeg(LS.build_tiff(">", thumb=thumb), LS.xmp_packet(style="element")), JPEG),
+        icc = LS.icc_segments(LS.icc_profile()) + LS.segment(0xEE, b"Adobe\x00\x64\x00\x00\x00\x00\x01")
+        return [(LS.jpeg(LS.build_tiff(), LS.xmp_packet(), extra_segments=EXTRA), JPEG), (LS.jpeg(LS.build_tiff(">", thumb=thumb), LS.xmp_packet(style="element")), JPEG),
                 (progressive, JPEG), (LS.jpeg(LS.build_tiff(">"), LS.xmp_packet(), extra_segments=icc), JPEG),
-                (LS.png(tiff=LS.build_tiff(), xmp=LS.xmp_packet(), compress_xmp=True), PNG), (LS.png(tiff=LS.build_tiff(">"), xmp=LS.xmp_packet()), PNG)]
+                (LS.png(tiff=LS.build_tiff(), xmp=LS.xmp_packet(), compress_xmp=True, icc=LS.icc_profile()), PNG),
+                (LS.png(tiff=LS.build_tiff(">"), xmp=LS.xmp_packet(), text=b"Comment\x00hello"), PNG)]
 
     def test_every_truncation_is_refused_or_clean(self):
         for data, ct in self.bases():
@@ -288,7 +277,7 @@ class Fuzz(Checks):
         rng = random.Random(374)
         bases = self.bases()
         kept = 0
-        for _ in range(6000):
+        for _ in range(8000):
             data, ct = rng.choice(bases)
             buf = bytearray(data)
             for _k in range(rng.randint(1, 8)):

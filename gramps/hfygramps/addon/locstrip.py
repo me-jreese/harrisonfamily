@@ -1,45 +1,38 @@
-"""Remove the GPS location from a JPEG or PNG without touching the picture (HFY-TSK-374). Pure standard library; Python 3.9 compatible.
+"""A copy of a JPEG or PNG with minimal metadata, and the reading of a position (HFY-TSK-374). Pure standard library; Python 3.9 compatible.
 
 The Gramps tree and the file on this Mac are never changed: ``strip`` takes the bytes of a file and returns the bytes of a COPY, and the
-caller uploads the copy. The copy differs from the original only inside the metadata that carries a position:
+caller uploads the copy. The copy is BUILT from an allowlist, not cleaned: whatever is not named below is not in it.
 
-    JPEG   the compressed image data, every segment other than the APP1 ``Exif`` and APP1 XMP ones, and the file's length are byte for
-           byte the original's. In the Exif TIFF the GPS pointer (tag 0x8825) is taken out of its IFD (the IFD's entries move up, its
-           count drops by one, its next-IFD offset moves with it, the freed 12 bytes are zero), and the GPS IFD with every value it
-           points to is overwritten with zero bytes, so no coordinate is left in the file as an unreferenced leftover. Nothing else in
-           the TIFF moves, so every other tag keeps its offset and its value, and the segment keeps its length. A thumbnail JPEG
-           inside the TIFF (IFD1) is cleaned the same way. In the XMP packet every position property (a local name that starts with ``gps`` or
-           has a latitude, longitude, geo, coordinate, position or altitude word in it, any prefix: ``exif:GPSLatitude``,
-           ``drone-dji:LRFTargetLat``, ``vnd:Latitude``) is replaced by spaces, so the packet keeps its length and stays well-formed.
-    PNG    the same two changes inside the ``eXIf`` chunk and the ``XML:com.adobe.xmp`` iTXt chunk; the chunk CRC is computed again, and
-           a compressed XMP text is deflated again (that chunk's length may change). Every other chunk, ``IDAT`` included, is copied.
+    JPEG   kept, byte for byte: SOI, EOI, the frame, scan, restart, Huffman, quantisation and arithmetic tables and the compressed image data
+           (never decoded or encoded), and the later scans of a progressive file. Rebuilt: APP0 JFIF (its first 12 bytes, thumbnail size 0),
+           APP14 Adobe (its first 12 bytes, the colour transform), and an APP1 Exif that holds ONE tag, Orientation (0x0112, in the byte order the
+           original had), if the original had a valid one. Kept after a check: the APP2 ICC profile, if it parses, every tag has a type from a
+           list of numeric types or a short text from a conservative alphabet, and no byte is unaccounted for (see ``_check_icc``).
+           Dropped: every other APPn (XMP, standard and extended, IPTC/APP13, MPF, maker data, JFXX, thumbnails), every comment, every other Exif tag
+           (MakerNote, UserComment, ImageDescription, the GPS IFD...).
+    PNG    kept: IHDR, PLTE, tRNS, IDAT, IEND, gAMA, cHRM, sRGB, sBIT, bKGD, pHYs, cICP, mDCV, cLLI (fixed sizes), a checked iCCP, and an eXIf
+           rebuilt with Orientation only. Dropped: tEXt, zTXt, iTXt (XMP included), tIME, sPLT, hIST, every other eXIf tag, every unknown ancillary
+           chunk. The copy is image-lossless and NOT metadata-lossless.
     TIFF   is not rewritten: the strip returns the reason ``tiff`` and the file stays held.
 
-Fail closed: ``strip`` never raises. A file is only taken when its whole structure is one this module can follow and name:
+Fail closed: ``strip`` never raises, and holds (``(None, reason)``) a file whose structure it cannot follow with certainty: a marker or
+critical chunk it does not know, an animation (acTL), a wrong CRC, a missing or repeated IHDR/IEND, any byte after the end of the image but
+NULs, an Exif it cannot read to the Orientation tag (an IFD whose entry count does not fit), an ICC profile it does not accept (``icc``),
+and a file over the work budget (``limit``). Then the copy is checked as a structure, not by a list of bad words (``_verify_jpeg``,
+``_verify_png``): it is read again, its marker or chunk sequence must be a subset of the allowlist, the picture-side parts must equal the
+original's, the rebuilt parts must be exactly what was built, and over every metadata byte there must be no TIFF signature but the rebuilt
+Exif, no GPS or position name (UTF-8, UTF-16, UTF-32), no location atom and no coordinate-shaped text. ``has_location_residue`` (the earlier,
+stricter list-based reading) is run on the copy as well.
 
-    Work    one ``Budget`` per file bounds the IFD entries, TIFF headers, inflated bytes, XMP bytes and segments over all the checks together;
-           past it ``ScanLimit`` is raised and the photo is held as "too much to check" (``limit``). An IFD whose declared entry count is larger
-           than the data raises ``Unreadable`` unless a position is found among the entries that fit (``unreadable``).
-    JPEG   every marker segment from SOI to EOI is walked (the entropy-coded scans are skipped, a progressive file's later scans and the
-           segments between them included); only the markers a JPEG uses, and only these application segments, are accepted: JFIF/JFXX
-           (APP0), Exif and standard XMP (APP1), ICC_PROFILE and MPF (APP2), Ducky (APP12), Photoshop 3.0 (APP13), Adobe (APP14) and
-           comments. Any other APPn, any other APP1 (``Exif`` followed by anything but two NULs included), ANY extended-XMP segment, and
-           any byte after EOI but NULs (a second picture, a motion-photo video) hold the photo.
-    PNG    only the standard chunks are accepted (see ``_PNG_KINDS``): an unknown ancillary chunk (``zxIf``...), a ``Raw profile type``
-           text chunk and any byte after IEND hold the photo.
-    Other  an IFD that loops or points outside the data, an unknown value type, a GPS IFD it cannot read, XMP it cannot blank (UTF-16, a
-           DOCTYPE, more than ``_MAX_PROPERTIES`` GPS properties, a property whose end is not within ``_WINDOW`` bytes), and inflated
-           text above ``_MAX_INFLATED`` hold the photo.
+Reading a position (the add-on holds, or copies, a photo that HAS one): ``assess_signal`` reads every IFD of every TIFF structure in the metadata
+(a count that lies is read as far as the data goes), deflated and UTF-16 text, hex raw profiles, a location atom in a trailer, and in XMP any
+property whose NAME is a position (gps, lat, lon, lng, long, latitude, longitude, geo, coord, position, ``pos:``, northing, easting, breite,
+laenge, altitude, where, location, in any namespace) or whose VALUE is a coordinate pair (decimals, degrees and minutes, with N/S/E/W in any
+order, separated by a comma, a tab, a space, a slash or a semicolon); a comment and a text chunk are read for the values. One ``Budget`` per file
+bounds the work (IFD entries, TIFF headers, inflated bytes, XMP bytes, segments); past it ``ScanLimit`` is raised and the photo is held as "too
+much to check" (``limit``).
 
-``has_location_residue`` is the check the copy must pass (it is also run by the caller next to the add-on's detector): over every
-metadata byte of the copy (every JPEG segment, every PNG chunk but the picture data, inflated where compressed) it looks for ANY TIFF
-signature (``II*\\0`` / ``MM\\0*``) and walks it for a GPS pointer, for the letters ``gps`` (also as UTF-16, NULs removed), for the
-long GPS property names, for a ``©xyz`` location atom, and it repeats the structural rules above. ``has_location_signal`` is the
-looser, positive detector the add-on also uses to decide that a photo HAS a location (it finds what ``mediafile.exif_gps`` alone does
-not: GPS in the Exif sub-IFD, in deflated XMP, in a hex raw profile, behind an ``Exif\\0\\xff`` header, in UTF-16 XMP, DJI names).
-
-Only GPS fields go. A caption, a title or a place NAME in XMP or IPTC (``photoshop:City``, a "Location" text) is not a position and
-stays. Nothing here logs, prints or returns a value of the file: the reasons are code words.
+Nothing here logs, prints or returns a value of the file: the reasons are code words.
 """
 import re
 import struct
@@ -56,12 +49,12 @@ UNSUPPORTED = "unsupported"
 UNPARSEABLE = "unparseable"
 VERIFY_FAILED = "verify_failed"
 LIMIT = "limit"
+ICC = "icc"
 
 _GPS_POINTER = 0x8825
 _EXIF_POINTER = 0x8769
 _INTEROP_POINTER = 0xA005
 _SUB_IFDS = 0x014A
-_THUMB_OFFSET, _THUMB_LENGTH = 0x0201, 0x0202
 _TYPE_SIZE = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4}
 _LONGS = (4, 13)
 _POSITION_TAGS = (0x0002, 0x0004, 0x0014, 0x0016)  # GPSLatitude, GPSLongitude, GPSDestLatitude, GPSDestLongitude
@@ -72,10 +65,7 @@ _BUDGET_SIGNATURES = 256     # TIFF signatures walked in one file
 _BUDGET_INFLATED = 16 * 1024 * 1024   # bytes inflated in one file, all chunks together
 _BUDGET_XMP = 2 * 1024 * 1024         # XMP bytes blanked or checked in one file
 _BUDGET_PARTS = 20000        # segments and chunks of one file
-_MAX_DEPTH = 2          # a thumbnail JPEG inside the Exif, and no deeper
 _MAX_INFLATED = 8 * 1024 * 1024
-_MAX_PROPERTIES = 128   # location properties in one XMP packet; a camera writes a few dozen at most
-_WINDOW = 2048          # how far past a property's name its start tag, value or closing tag is looked for
 _MAX_SIGNATURES = 64    # TIFF signatures walked in one part of a file
 _XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
 _XMP_EXT_NS = b"http://ns.adobe.com/xmp/extension/\x00"
@@ -84,13 +74,10 @@ _XMP_KEYWORD = b"XML:com.adobe.xmp"
 
 _NAME_CHARS = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-:")
 _WHITE = b" \t\r\n"
-_GPS_WORD = re.compile(rb"gps", re.IGNORECASE)
 _TIFF_SIG = re.compile(rb"II\*\x00|MM\x00\*")
 _NEXT_MARKER = re.compile(rb"\xff+[\x01-\xcf\xd8-\xfe]")  # the first marker after entropy-coded data (not a stuffed 0xFF00, not RSTn)
 # Long names a chance match inside compressed picture data cannot produce (2**-70 per position or less).
 _LONG_TOKENS = re.compile(rb"GPSLatitude|GPSLongitude|GPSInfo|GPSAltitude|GPSDest|GPSVersionID|exif:GPS|GpsLat|GpsLong", re.IGNORECASE)
-# Two decimal numbers of the shape of a latitude and a longitude, or a degrees-minutes text, in free text (a comment, a description).
-_COORD_TEXT = re.compile(rb"[-+]?\d{1,3}\.\d{3,}\s*[,;/ ]\s*[-+]?\d{1,3}\.\d{3,}|\d{1,3}\s*(?:\xc2\xb0|\xb0|deg)\s*\d{1,2}\s*(?:'|\xe2\x80\xb2)", re.IGNORECASE)
 _POSITION_NAMES = re.compile(rb"gpslatitude|gpslongitude|gpsdestlatitude|gpsdestlongitude|gpslongtitude|latitude|longitude", re.IGNORECASE)
 
 # JPEG markers that carry a length and are not application segments: SOF0-15 but DHT/JPG/DAC, DHT, DAC, DQT, DNL, DRI, DHP, EXP, SOS, COM.
@@ -202,266 +189,6 @@ def _squash(text):
     return bytes(text).replace(b"\x00", b"").lower()
 
 
-# ------------------------------------------------------------------------------------------------------------------- TIFF
-
-
-class _Tiff:
-    """A TIFF structure at ``buf[start:end]``; every read is bounds-checked and raises ``_Refuse``."""
-
-    def __init__(self, buf, start, end):
-        if start < 0 or end > len(buf) or end - start < 8:
-            raise _Refuse()
-        order = bytes(buf[start:start + 2])
-        if order == b"II":
-            self.e = "<"
-        elif order == b"MM":
-            self.e = ">"
-        else:
-            raise _Refuse()
-        self.buf, self.start, self.size = buf, start, end - start
-        if self.u16(2) != 42:
-            raise _Refuse()
-
-    def u16(self, o):
-        if o < 0 or o + 2 > self.size:
-            raise _Refuse()
-        return struct.unpack_from(self.e + "H", self.buf, self.start + o)[0]
-
-    def u32(self, o):
-        if o < 0 or o + 4 > self.size:
-            raise _Refuse()
-        return struct.unpack_from(self.e + "I", self.buf, self.start + o)[0]
-
-    def ifd(self, off):
-        """([(tag, type, count, offset of the 4-byte value field)], next IFD offset) of the IFD at ``off``."""
-        n = self.u16(off)
-        if n > _MAX_ENTRIES or off + 2 + n * 12 + 4 > self.size:
-            raise _Refuse()
-        budget().take("entries", n)
-        entries = []
-        for i in range(n):
-            at = off + 2 + i * 12
-            entries.append((self.u16(at), self.u16(at + 2), self.u32(at + 4), at + 8))
-        return entries, self.u32(off + 2 + n * 12)
-
-    def region(self, entry):
-        """(offset, length) of the bytes an entry's value occupies: its own 4-byte field, or the data it points to."""
-        _tag, typ, count, field = entry
-        if typ not in _TYPE_SIZE or count > (1 << 24):
-            raise _Refuse()
-        size = _TYPE_SIZE[typ] * count
-        if size <= 4:
-            return field, size
-        off = self.u32(field)
-        if off < 8 or off + size > self.size:
-            raise _Refuse()
-        return off, size
-
-    def value_bytes(self, entry):
-        off, size = self.region(entry)
-        return bytes(self.buf[self.start + off:self.start + off + size])
-
-    def walk(self):
-        """{ifd offset: (entries, next offset)} of every IFD reachable from IFD0: the chain, the Exif, Interoperability and SubIFD
-        pointers. An IFD reached twice, too many IFDs, or one that cannot be read refuses."""
-        ifds = {}
-        queue = [self.u32(4)]
-        while queue:
-            off = queue.pop()
-            if off == 0:
-                continue
-            if off in ifds or len(ifds) >= _MAX_IFDS or off < 8:
-                raise _Refuse()
-            entries, nxt = self.ifd(off)
-            ifds[off] = (entries, nxt)
-            if nxt:
-                queue.append(nxt)
-            for entry in entries:
-                tag, typ, count, field = entry
-                if tag in (_EXIF_POINTER, _INTEROP_POINTER):
-                    if typ not in _LONGS or count != 1:
-                        raise _Refuse()
-                    queue.append(self.u32(field))
-                elif tag == _SUB_IFDS:
-                    if typ not in _LONGS or count > 16:
-                        raise _Refuse()
-                    base, _size = self.region(entry)
-                    queue.extend(self.u32(base + 4 * k) for k in range(count))
-        return ifds
-
-    def signature(self, ifds):
-        """{ifd offset: [(tag, type, count, value bytes)]}: what the differential check compares."""
-        return {off: [(e[0], e[1], e[2], self.value_bytes(e)) for e in entries] for off, (entries, _nxt) in sorted(ifds.items())}
-
-
-def _strip_tiff(buf, start, end, depth, edits):
-    """Takes the GPS IFD out of the TIFF at ``buf[start:end]``, in place and without changing its length. Cleans a thumbnail JPEG too."""
-    t = _Tiff(buf, start, end)
-    ifds = t.walk()
-    before = t.signature(ifds)
-
-    removals, gps_ifds = {}, set()
-    for off, (entries, _nxt) in ifds.items():
-        for i, entry in enumerate(entries):
-            if entry[0] == _GPS_POINTER:
-                if entry[1] not in _LONGS or entry[2] != 1:
-                    raise _Refuse()
-                gps_ifds.add(t.u32(entry[3]))
-                removals.setdefault(off, set()).add(i)
-
-    zero = []
-    blocks = [(off, off + 2 + len(entries) * 12 + 4) for off, (entries, _nxt) in ifds.items()]
-    for g in sorted(gps_ifds):
-        if g in ifds:
-            raise _Refuse()
-        entries, nxt = t.ifd(g)
-        if nxt:
-            raise _Refuse()
-        zero.append((g, 2 + len(entries) * 12 + 4))
-        for entry in entries:
-            off, size = t.region(entry)
-            if size > 4:
-                zero.append((off, size))
-    for off, size in zero:
-        if any(off < b_end and b_start < off + size for b_start, b_end in blocks):
-            raise _Refuse()  # a value of the GPS IFD sits inside another IFD: not a layout this understands
-
-    thumbs = []
-    for off, (entries, _nxt) in ifds.items():
-        by_tag = {e[0]: e for e in entries}
-        if _THUMB_OFFSET in by_tag and _THUMB_LENGTH in by_tag:
-            o, n = t.u32(by_tag[_THUMB_OFFSET][3]), t.u32(by_tag[_THUMB_LENGTH][3])
-            if n >= 4 and 8 <= o and o + n <= t.size and bytes(buf[start + o:start + o + 2]) == b"\xff\xd8":
-                thumbs.append((start + o, start + o + n))
-
-    for lo, hi in thumbs:
-        if depth + 1 > _MAX_DEPTH:
-            raise _Refuse()
-        _strip_jpeg(buf, lo, hi, depth + 1, [])
-
-    if not removals and not gps_ifds:
-        return bool(thumbs)
-    for off, size in zero:
-        buf[start + off:start + off + size] = bytes(size)
-    for off, idx in removals.items():
-        entries, nxt = ifds[off]
-        keep = [bytes(buf[start + off + 2 + i * 12:start + off + 2 + (i + 1) * 12]) for i in range(len(entries)) if i not in idx]
-        old_end = off + 2 + len(entries) * 12 + 4
-        block = struct.pack(t.e + "H", len(keep)) + b"".join(keep) + struct.pack(t.e + "I", nxt)
-        block += bytes(old_end - off - len(block))
-        if len(block) != old_end - off:
-            raise _Refuse()
-        buf[start + off:start + old_end] = block
-
-    after_tiff = _Tiff(buf, start, end)
-    after = after_tiff.signature(after_tiff.walk())
-    expected = {off: [row for i, row in enumerate(rows) if i not in removals.get(off, ())] for off, rows in before.items()}
-    if after != expected:
-        raise _Refuse(VERIFY_FAILED)  # something other than the GPS entries changed
-    return True
-
-
-# ------------------------------------------------------------------------------------------------------------------- XMP
-
-
-def _element_end(work, name_end, name):
-    """The index just past the element whose start tag has its name ending at ``name_end``: its own end for ``<x/>``, else its closing tag."""
-    i, quote, limit = name_end, 0, min(len(work), name_end + _WINDOW)
-    while i < limit:
-        c = work[i]
-        if quote:
-            if c == quote:
-                quote = 0
-        elif c in (0x22, 0x27):
-            quote = c
-        elif c == 0x3E:
-            break
-        elif c == 0x3C:
-            raise _Refuse()
-        i += 1
-    else:
-        raise _Refuse()
-    if work[i - 1] == 0x2F:
-        return i + 1
-    close = b"</" + name
-    j = work.find(close, i + 1, min(len(work), i + 1 + _WINDOW))
-    if j < 0:
-        raise _Refuse()
-    k = j + len(close)
-    while k < len(work) and work[k] in _WHITE:
-        k += 1
-    if k >= len(work) or work[k] != 0x3E:
-        raise _Refuse()
-    return k + 1
-
-
-def _attribute_end(work, name_end):
-    """The index just past ``="value"`` that follows an attribute name ending at ``name_end``."""
-    i = name_end
-    while i < len(work) and work[i] in _WHITE:
-        i += 1
-    if i >= len(work) or work[i] != 0x3D:
-        raise _Refuse()
-    i += 1
-    while i < len(work) and work[i] in _WHITE:
-        i += 1
-    if i >= len(work) or work[i] not in (0x22, 0x27):
-        raise _Refuse()
-    j = work.find(bytes([work[i]]), i + 1, min(len(work), i + 1 + _WINDOW))
-    if j < 0:
-        raise _Refuse()
-    return j + 1
-
-
-# A name that is a position: a local name that starts with "gps", or that has a latitude, longitude, geo, coordinate, position or altitude
-# word in it (split at capital letters: LRFTargetLat, vnd:Latitude, GeoTag), so a vendor's property carries no position into a copy either.
-_CAMEL = re.compile(rb"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
-_LOCATION_WORDS = frozenset([b"lat", b"latitude", b"lon", b"long", b"longitude", b"lng", b"geo", b"geotag", b"geolocation", b"geocode",
-                             b"coord", b"coords", b"coordinate", b"coordinates", b"position", b"altitude", b"gps"])
-# an attribute (name before = and a quote) or an element (name after <)
-_XML_NAME = re.compile(rb"(?:(?<=[\s\"'])((?:[A-Za-z_][\w.\-]*:)?[A-Za-z_][\w.\-]*)(?=\s*=\s*[\"'])|<((?:[A-Za-z_][\w.\-]*:)?[A-Za-z_][\w.\-]*))")
-
-
-def _location_name(qualified):
-    local = qualified.rsplit(b":", 1)[-1]
-    return local.lower().startswith(b"gps") or any(w.lower() in _LOCATION_WORDS for w in _CAMEL.findall(local))
-
-
-def _blank_xmp(buf, lo, hi):
-    """Replaces every position property of the XMP text in ``buf[lo:hi]`` with spaces of the same length (the packet stays well-formed): a
-    property named gps*, or with a latitude, longitude, geo, coordinate, position or altitude word in its name. The work is bounded: the packet
-    and all XMP of the file together are limited, at most ``_MAX_PROPERTIES`` properties, each looked for within ``_WINDOW`` bytes; past that
-    it refuses. What it refuses: a DOCTYPE or entity, UTF-16 text with a GPS word, a coordinate-shaped text left after the blanking."""
-    work = bytearray(buf[lo:hi])
-    budget().take("xmp", len(work))
-    if re.search(rb"<!(DOCTYPE|ENTITY)", work, re.IGNORECASE):
-        raise _Refuse()  # XMP has no DTD; an entity can hide a value from the property that uses it
-    pos, count = 0, 0
-    while True:
-        m = _XML_NAME.search(work, pos)
-        if m is None:
-            break
-        attribute = m.group(1) is not None
-        name = bytes(m.group(1) if attribute else m.group(2))
-        if not _location_name(name):
-            pos = m.end()
-            continue
-        count += 1
-        if count > _MAX_PROPERTIES:
-            raise _Refuse()
-        start = m.start() if attribute else m.start()
-        end = _attribute_end(work, m.end()) if attribute else _element_end(work, m.end(), name)
-        work[start:end] = b" " * (end - start)
-        pos = end
-    if b"gps" in _squash(work):
-        raise _Refuse()  # a GPS word this did not blank (a closing tag on its own, UTF-16, a comment)
-    if any(_location_name(m.group(1) or m.group(2)) for m in _XML_NAME.finditer(work)):
-        raise _Refuse()  # a position property left behind (a nested one)
-    if _coordinate_text(work):
-        raise _Refuse()  # a latitude/longitude pair or degrees-minutes text in what is left: it could be the value of a position
-    buf[lo:hi] = work
-
-
 # ------------------------------------------------------------------------------------------------------------------- JPEG
 
 
@@ -533,48 +260,6 @@ def _jpeg_layout(buf, lo, hi):
             pos = nxt.start()
 
 
-def _strip_jpeg(buf, lo, hi, depth, edits):
-    """Cleans the APP1 Exif and XMP segments of the JPEG at ``buf[lo:hi]`` in place; refuses what it cannot classify."""
-    segs, _end = _jpeg_layout(buf, lo, hi)
-    xmp_seen = 0
-    for marker, p, e in segs:
-        kind = _app_kind(marker, buf, p, e)
-        if kind is None or kind == "xmpext":
-            raise _Refuse()
-        if kind == "xmp":
-            xmp_seen += 1
-            if xmp_seen > 1:
-                raise _Refuse()  # a second XMP packet: nothing writes one, and it could carry what the first does not
-        if kind == "exif":
-            _strip_tiff(buf, p + 6, e, depth, edits)
-            edits.append((p + 6, e))
-        elif kind == "xmp":
-            _blank_xmp(buf, p + len(_XMP_NS), e)
-            edits.append((p + len(_XMP_NS), e))
-
-
-def _confined(original, copy, edits):
-    """True when ``copy`` equals ``original`` everywhere outside the ``edits`` ranges (and has the same length)."""
-    if len(copy) != len(original):
-        return False
-    cursor = 0
-    for lo, hi in sorted(edits):
-        if original[cursor:lo] != copy[cursor:lo]:
-            return False
-        cursor = max(cursor, hi)
-    return original[cursor:] == copy[cursor:]
-
-
-def _jpeg_copy(data):
-    buf = bytearray(data)
-    edits = []
-    _strip_jpeg(buf, 0, len(buf), 0, edits)
-    out = bytes(buf)
-    if not _confined(data, out, edits):
-        raise _Refuse(VERIFY_FAILED)
-    return out
-
-
 # -------------------------------------------------------------------------------------------------------------------- PNG
 
 
@@ -635,38 +320,71 @@ def _png_text(kind, body):
     raise _Refuse()
 
 
-def _png_copy(data):
-    pieces = [_PNG_SIG]
-    xmp_seen = 0
-    for kind, body, crc in _chunks(data):
-        if kind not in _PNG_KINDS:
-            raise _Refuse()  # an unknown chunk (zxIf, exIf, a vendor's) may hold a position this does not read
-        new = body
-        if kind == b"eXIf":
-            buf = bytearray(body)
-            start = 6 if bytes(buf[:6]) == b"Exif\x00\x00" else 0
-            _strip_tiff(buf, start, len(buf), 0, [])
-            new = bytes(buf)
-        elif kind == b"iTXt":
-            keyword, flag, method, text_at = _itxt_text_start(body)
-            if keyword == _XMP_KEYWORD:
-                xmp_seen += 1
-                if xmp_seen > 1:
-                    raise _Refuse()  # a second XMP chunk
-                if flag == 1 and method == 0:
-                    text = bytearray(_inflate(body[text_at:]))
-                    _blank_xmp(text, 0, len(text))
-                    new = body[:text_at] + zlib.compress(bytes(text), 9)
-                elif flag == 0:
-                    buf = bytearray(body)
-                    _blank_xmp(buf, text_at, len(buf))
-                    new = bytes(buf)
-                else:
-                    raise _Refuse()
-        if new != body:
-            crc = struct.pack(">I", zlib.crc32(kind + new) & 0xFFFFFFFF)
-        pieces.append(struct.pack(">I", len(new)) + kind + new + crc)
-    return b"".join(pieces)
+# ----------------------------------------------------------------------------------------------- position names and values
+
+# A property name is a position when its local name (split at capital letters, digits and underscores) has one of these words in it, or starts
+# with gps, or when its namespace prefix is ``pos``: LRFTargetLat, vnd:Latitude, geo:long, acme:Lng, target_lat, Northing, Breite, Laenge...
+_CAMEL = re.compile(rb"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_POSITION_TOKENS = frozenset([b"lat", b"latitude", b"lon", b"long", b"longitude", b"lng", b"geo", b"geotag", b"geolocation", b"geocode",
+                              b"coord", b"coords", b"coordinate", b"coordinates", b"position", b"northing", b"easting", b"breite",
+                              b"laenge", b"altitude", b"where", b"location", b"gps"])
+# an attribute (a name before = and a quote) or an element (a name after <); the values: ="..." / ='...' / >text<
+_XML_NAME = re.compile(rb"(?:(?<=[\s\"'])((?:[A-Za-z_][\w.\-]*:)?[A-Za-z_][\w.\-]*)(?=\s*=\s*[\"'])|<((?:[A-Za-z_][\w.\-]*:)?[A-Za-z_][\w.\-]*))")
+_XML_VALUE = re.compile(rb"=\s*\"([^\"]{1,512})\"|=\s*'([^']{1,512})'|>([^<>]{1,512})<")
+# the pieces of a coordinate: 12.3460 / N12.3460 / E 65 / 12.3460N / 65,25.926E / 12 deg 20 / 12\xb020; two of them close together are a pair
+_COORD_TOKEN = re.compile(rb"\d{1,3}\.\d{3,}|\b[NSEW]\s?-?\d{1,3}(?:[.,]\d+)?|\d{1,3}(?:[.,]\d+)?\s?[NSEW]\b|\d{1,3}\s?(?:\xc2\xb0|\xb0|deg)\s?\d{1,2}")
+_DIGITS = b"0123456789"
+
+
+def _position_name(qualified):
+    prefix, _sep, local = qualified.rpartition(b":")
+    if prefix.lower() == b"pos":
+        return True
+    low = local.decode("utf-8", "ignore").lower().replace("\u00e4", "ae")
+    if low == "gpsversionid":
+        return False  # a version number is not a position
+    if low.startswith("gps") or "laenge" in low or "breite" in low:
+        return True
+    return any(w.lower() in _POSITION_TOKENS for w in _CAMEL.findall(local))
+
+
+def _coord_value(text):
+    """True when ``text`` (the first 64 KiB of it) holds a coordinate pair: two pieces of a coordinate within 48 bytes of each other. NULs are
+    taken out first (UTF-16, UTF-32)."""
+    text = text[:65536]
+    if b"\x00" in text:
+        text = text.replace(b"\x00", b"")
+    if not any(d in text for d in _DIGITS):
+        return False
+    last = None
+    for m in _COORD_TOKEN.finditer(text):
+        if last is not None and m.start() - last <= 48:
+            return True
+        last = m.end()
+    return False
+
+
+def _xmp_has_position(text):
+    """True when an XMP text has a property named like a position or a value shaped like a coordinate pair (any namespace, any form)."""
+    budget().take("xmp", len(text))
+    if b"\x00" in text:
+        text = text.replace(b"\x00", b"")
+    for n, m in enumerate(_XML_NAME.finditer(text)):
+        if n > 50000:
+            raise ScanLimit()
+        if _position_name(m.group(1) or m.group(2)):
+            return True
+    for n, m in enumerate(_XML_VALUE.finditer(text)):
+        if n > 50000:
+            raise ScanLimit()
+        if _coord_value(m.group(1) or m.group(2) or m.group(3)):
+            return True
+    return False
+
+
+def _looks_like_xmp(text):
+    head = text[:8192]
+    return b"<x:xmpmeta" in head or b"<?xpacket" in head or b"xmlns:" in head or b"<rdf:" in head
 
 
 # ------------------------------------------------------------------------------------------------------- the checks of a copy
@@ -735,11 +453,8 @@ def _tiffs_have_gps(b, lo=0, hi=None):
 
 
 def _coordinate_text(text):
-    """A latitude/longitude pair or degrees-minutes text in ``text`` (also as UTF-16). A cheap test first: the pattern needs a decimal point or a degree sign."""
-    plain = text.replace(b"\x00", b"") if b"\x00" in text else text
-    if b"." not in plain and b"\xb0" not in plain and b"deg" not in plain.lower():
-        return False
-    return bool(_COORD_TEXT.search(plain))
+    """A coordinate pair (``_coord_value``) in ``text``, also as UTF-16."""
+    return _coord_value(text)
 
 
 def _words_show_gps(text):
@@ -1034,6 +749,13 @@ def _signal(data, ct, state):
         for lo, hi in spans:
             if tiffs(data, lo, hi, len(data)):
                 return True
+            if hi - lo > 4 and data[lo] == 0xFF and data[lo + 1] in (0xE1, 0xFE):
+                payload = data[lo + 4:hi]
+                if data[lo + 1] == 0xFE:
+                    if _coord_value(payload):
+                        return True  # a comment with a coordinate pair
+                elif not payload.startswith(b"Exif\x00") and _xmp_has_position(payload):
+                    return True      # an XMP packet (standard, extended, any header) with a position property or value
         if spans and spans[-1][1] == len(data) and spans[-1][0] > 2 and b"\xa9xyz" in data[spans[-1][0]:]:
             return True  # a location atom of a video trailer (a motion photo)
         return False
@@ -1052,6 +774,11 @@ def _signal(data, ct, state):
                 if kind in (b"tEXt", b"zTXt", b"iTXt"):
                     keyword, text = _png_text(kind, body)
                     views.append(text)
+                    if keyword == _XMP_KEYWORD or _looks_like_xmp(text):
+                        if _xmp_has_position(text):
+                            return True
+                    elif _coord_value(text):
+                        return True  # a text with a coordinate pair
                     if keyword.lower().startswith(b"raw profile"):
                         raw = _raw_profile(text)
                         if raw is not None:
@@ -1103,12 +830,374 @@ def has_location_signal(data, content_type):
     return bool(assess_signal(data, content_type))
 
 
+# ------------------------------------------------------------------------------------------------------------ the minimal copy
+
+_ICC_TYPES = frozenset([b"XYZ ", b"curv", b"para", b"sf32", b"mft1", b"mft2", b"mAB ", b"mBA ", b"chrm", b"cicp", b"dtim", b"meas", b"sig ",
+                        b"view", b"text", b"desc", b"mluc", b"vcgt", b"ui08", b"ui16", b"ui32", b"uf32"])
+_ICC_CHARS = re.compile(r"^[A-Za-z0-9 \-_.,():/%]*$")
+_ICC_WORDS = frozenset(["lat", "latitude", "lon", "long", "longitude", "lng", "gps", "geo", "coord", "coords", "coordinate", "coordinates", "position"])
+_ICC_MAX = 4 * 1024 * 1024
+_PNG_FIXED = {b"IHDR": (13,), b"gAMA": (4,), b"cHRM": (32,), b"sRGB": (1,), b"pHYs": (9,), b"cICP": (4,), b"mDCV": (24,), b"cLLI": (8,),
+              b"sBIT": (1, 2, 3, 4), b"bKGD": (1, 2, 6), b"IEND": (0,)}
+_PNG_COPIED = frozenset([b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND", b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"bKGD", b"pHYs", b"cICP", b"mDCV", b"cLLI"])
+_PNG_ANIMATION = frozenset([b"acTL", b"fcTL", b"fdAT"])
+
+
+def _seg(marker, payload):
+    return b"\xff" + bytes([marker]) + struct.pack(">H", len(payload) + 2) + payload
+
+
+def _icc_text(text):
+    """A text of an ICC tag must be short, in a conservative alphabet, and carry no coordinate and no position word."""
+    text = text.rstrip("\x00")
+    if len(text) > 200 or not _ICC_CHARS.match(text):
+        raise _Refuse(ICC)
+    if any(w in _ICC_WORDS for w in re.findall(r"[a-z]+", text.lower())) or re.search(r"\d{7,}", text):
+        raise _Refuse(ICC)
+    if _coord_value(text.encode("ascii")):
+        raise _Refuse(ICC)
+
+
+def _icc_zero(data):
+    if data.strip(b"\x00"):
+        raise _Refuse(ICC)
+
+
+def _icc_tag_text(data):
+    typ = data[:4]
+    if typ == b"text":
+        text, _nul, rest = data[8:].partition(b"\x00")
+        _icc_zero(rest)
+        _icc_text(text.decode("latin-1"))
+    elif typ == b"desc":
+        count = struct.unpack_from(">I", data, 8)[0] if len(data) >= 12 else 1 << 30
+        ascii_, rest = data[12:12 + count], data[12 + count:]
+        if len(ascii_) != count:
+            raise _Refuse(ICC)
+        head, _nul, tail = ascii_.partition(b"\x00")
+        _icc_zero(tail)
+        _icc_text(head.decode("latin-1"))
+        if not rest.strip(b"\x00"):
+            return
+        if len(rest) < 8 or rest[:4].strip(b"\x00abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+            raise _Refuse(ICC)
+        ucount = struct.unpack_from(">I", rest, 4)[0]
+        ustr, rest2 = rest[8:8 + 2 * ucount], rest[8 + 2 * ucount:]
+        if len(ustr) != 2 * ucount:
+            raise _Refuse(ICC)
+        try:
+            _icc_text(ustr.decode("utf-16-be"))
+        except UnicodeDecodeError:
+            raise _Refuse(ICC)
+        if not rest2.strip(b"\x00"):
+            return
+        if len(rest2) < 3 or rest2[2] > 67:
+            raise _Refuse(ICC)
+        mac = rest2[3:3 + 67]
+        head, _nul, tail = mac[:rest2[2]].partition(b"\x00")
+        _icc_zero(tail + mac[rest2[2]:] + rest2[3 + 67:])
+        _icc_text(head.decode("latin-1"))
+    else:  # mluc
+        n, size = struct.unpack_from(">II", data, 8) if len(data) >= 16 else (1 << 30, 0)
+        if size != 12 or n > 64 or 16 + 12 * n > len(data):
+            raise _Refuse(ICC)
+        used = [(0, 16 + 12 * n)]
+        for i in range(n):
+            lang, country, length, off = struct.unpack_from(">2s2sII", data, 16 + 12 * i)
+            if length % 2 or off < 16 + 12 * n or off + length > len(data) or (lang + country).strip(b"\x00abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+                raise _Refuse(ICC)
+            try:
+                _icc_text(data[off:off + length].decode("utf-16-be"))
+            except UnicodeDecodeError:
+                raise _Refuse(ICC)
+            used.append((off, off + length))
+        _icc_unaccounted(data, used)
+
+
+def _icc_unaccounted(data, used):
+    """Every byte of ``data`` that is in none of the ``used`` ranges must be zero."""
+    cursor = 0
+    for lo, hi in sorted(used):
+        if lo > cursor:
+            _icc_zero(data[cursor:lo])
+        cursor = max(cursor, hi)
+    _icc_zero(data[cursor:])
+
+
+def _check_icc(profile):
+    """Accepts an ICC profile only when it parses end to end and holds nothing it does not name: the size field is the length, the header's
+    reserved bytes are zero, the tag table fits, every tag has a type from ``_ICC_TYPES`` (numbers, curves, matrices, short texts), the text tags
+    ('text', 'desc', 'mluc') are short and in a conservative alphabet with no coordinate or position word, no byte lies outside the header, the
+    table and the tags unless it is zero. Anything else raises ``_Refuse("icc")``."""
+    n = len(profile)
+    try:
+        if n < 132 or n > _ICC_MAX or struct.unpack_from(">I", profile, 0)[0] != n or profile[36:40] != b"acsp" or profile[100:128].strip(b"\x00"):
+            raise _Refuse(ICC)
+        count = struct.unpack_from(">I", profile, 128)[0]
+        table_end = 132 + 12 * count
+        if count > 200 or table_end > n:
+            raise _Refuse(ICC)
+        used = [(0, table_end)]
+        for i in range(count):
+            _sig, off, size = struct.unpack_from(">4sII", profile, 132 + 12 * i)
+            if size < 8 or off < table_end or off + size > n:
+                raise _Refuse(ICC)
+            data = profile[off:off + size]
+            if data[:4] not in _ICC_TYPES or data[4:8] != b"\x00\x00\x00\x00":
+                raise _Refuse(ICC)
+            if data[:4] in (b"text", b"desc", b"mluc"):
+                _icc_tag_text(data)
+            used.append((off, off + size))
+        _icc_unaccounted(profile, used)
+    except (struct.error, ValueError):
+        raise _Refuse(ICC)
+
+
+def _orientation(tiff):
+    """(byte order, Orientation 1..8) of the first IFD of an Exif TIFF, or None when there is no valid one. An Exif it cannot read to the end of
+    IFD0 (an entry count that does not fit, a repeated Orientation tag) raises: the photo is held, as the Orientation cannot be told with certainty."""
+    if len(tiff) < 8 or tiff[:4] not in (b"II*\x00", b"MM\x00*"):
+        raise _Refuse()
+    order = "<" if tiff[:2] == b"II" else ">"
+    off = struct.unpack_from(order + "I", tiff, 4)[0]
+    if off == 0:
+        return None
+    if off < 8 or off + 2 > len(tiff):
+        raise _Refuse()
+    n = struct.unpack_from(order + "H", tiff, off)[0]
+    if off + 2 + 12 * n + 4 > len(tiff):
+        raise _Refuse()
+    budget().take("entries", n)
+    found, value = False, None
+    for i in range(n):
+        tag, typ, count = struct.unpack_from(order + "HHI", tiff, off + 2 + 12 * i)
+        if tag == 0x0112:
+            if found:
+                raise _Refuse()
+            found = True
+            number = struct.unpack_from(order + "H", tiff, off + 2 + 12 * i + 8)[0]
+            value = number if typ == 3 and count == 1 and 1 <= number <= 8 else None  # a value no reader accepts is no Orientation
+    return (order, value) if value else None
+
+
+def _exif_tiff(order, value):
+    """The whole Exif TIFF of the copy: IFD0 with one entry, Orientation, and no next IFD (26 bytes)."""
+    return ((b"II*\x00" if order == "<" else b"MM\x00*") + struct.pack(order + "IH", 8, 1) + struct.pack(order + "HHI", 0x0112, 3, 1)
+            + struct.pack(order + "H", value) + b"\x00\x00" + struct.pack(order + "I", 0))
+
+
+def _jpeg_parts(data):
+    """[(marker, payload)] of every marker segment from SOI to EOI, and (None, bytes) for the entropy-coded data after each SOS, in file order.
+    Raises ``_Refuse`` for anything it cannot follow: a marker that is not a segment marker of a JPEG, a cut segment, no EOI, and any byte after
+    EOI but NULs."""
+    n, pos, parts = len(data), 2, []
+    if data[:2] != b"\xff\xd8":
+        raise _Refuse()
+    while True:
+        budget().take("parts")
+        if pos + 2 > n or data[pos] != 0xFF:
+            raise _Refuse()
+        marker = data[pos + 1]
+        if marker == 0xFF:
+            pos += 1
+            continue
+        if marker == 0xD9:
+            if data[pos + 2:].strip(b"\x00"):
+                raise _Refuse()
+            return parts
+        if marker not in _STRUCTURAL and not 0xE0 <= marker <= 0xEF and marker != 0xFE:
+            raise _Refuse()
+        if pos + 4 > n:
+            raise _Refuse()
+        length = struct.unpack_from(">H", data, pos + 2)[0]
+        if length < 2 or pos + 2 + length > n:
+            raise _Refuse()
+        parts.append((marker, data[pos + 4:pos + 2 + length]))
+        pos += 2 + length
+        if marker == 0xDA:
+            nxt = _NEXT_MARKER.search(data, pos)
+            if nxt is None:
+                raise _Refuse()
+            parts.append((None, data[pos:nxt.start()]))
+            pos = nxt.start()
+
+
+def _icc_of_jpeg(parts):
+    """The ICC profile in the APP2 segments of a JPEG (None when there is none); raises ``_Refuse("icc")`` for a broken chain of segments."""
+    found = [p for m, p in parts if m == 0xE2 and p[:12] == b"ICC_PROFILE\x00"]
+    if not found:
+        return None
+    if any(len(p) < 14 or p[13] == 0 for p in found) or len({p[13] for p in found}) != 1:
+        raise _Refuse(ICC)
+    total = found[0][13]
+    if sorted(p[12] for p in found) != list(range(1, total + 1)):
+        raise _Refuse(ICC)
+    profile = b"".join(p[14:] for p in sorted(found, key=lambda p: p[12]))
+    _check_icc(profile)
+    return profile
+
+
+def _build_jpeg(parts):
+    _icc_of_jpeg(parts)
+    out, jfif, exif, adobe = [b"\xff\xd8"], False, False, False
+    for marker, payload in parts:
+        if marker is None:
+            out.append(payload)
+        elif marker in _STRUCTURAL:
+            out.append(_seg(marker, payload))
+        elif marker == 0xE0 and payload[:5] == b"JFIF\x00" and len(payload) >= 14 and not jfif:
+            jfif = True
+            out.append(_seg(0xE0, payload[:12] + b"\x00\x00"))
+        elif marker == 0xE1 and payload[:6] == b"Exif\x00\x00" and not exif:
+            exif = True
+            found = _orientation(payload[6:])
+            if found:
+                out.append(_seg(0xE1, b"Exif\x00\x00" + _exif_tiff(*found)))
+        elif marker == 0xE2 and payload[:12] == b"ICC_PROFILE\x00":
+            out.append(_seg(marker, payload))
+        elif marker == 0xEE and payload[:5] == b"Adobe" and len(payload) >= 12 and not adobe:
+            adobe = True
+            out.append(_seg(0xEE, payload[:12]))
+        # every other segment (XMP, IPTC, MPF, JFXX, maker data, comments...) is not in the copy
+    out.append(b"\xff\xd9")
+    return b"".join(out)
+
+
+def _scan_metadata(meta, tiffs_allowed):
+    """The checks over every metadata byte of a copy: no TIFF signature beyond the ``tiffs_allowed`` of the rebuilt Exif, no GPS or position name,
+    no location atom, no coordinate-shaped text. True when it is clean."""
+    return (len(_TIFF_SIG.findall(meta)) == tiffs_allowed and not _names_in(meta, _TOKEN_WORDS + _POSITION_WORDS) and b"gps" not in _squash(meta)
+            and b"\xa9xyz" not in meta and not _coord_value(meta))
+
+
+def _scan_picture_side(blob):
+    """The parts that are copied as they are (tables, scan data, palette, picture chunks) must not carry a position either: no GPS name, and no
+    TIFF signature that walks to a GPS position (a random signature in compressed data walks to nothing and is ignored)."""
+    try:
+        if _names_in(blob, _TOKEN_WORDS + _POSITION_WORDS) or _tiffs_have_position(blob, 0, len(blob)):
+            raise _Refuse(VERIFY_FAILED)
+    except Unreadable:
+        raise _Refuse(VERIFY_FAILED)
+
+
+def _verify_jpeg(out, parts_in):
+    """The copy, read again: only the picture-side parts of the original, and the rebuilt or checked metadata, nothing else."""
+    parts = _jpeg_parts(out)
+
+    def picture(items):
+        return [(m, p) for m, p in items if m is None or m in _STRUCTURAL]
+
+    if picture(parts) != picture(parts_in):
+        raise _Refuse(VERIFY_FAILED)
+    meta, icc_chunks, kinds = [], [], []
+    for marker, payload in parts:
+        if marker is None or marker in _STRUCTURAL:
+            continue
+        kinds.append(marker)
+        if marker == 0xE0 and len(payload) == 14 and payload[:5] == b"JFIF\x00" and payload[12:] == b"\x00\x00":
+            pass
+        elif marker == 0xEE and len(payload) == 12 and payload[:5] == b"Adobe":
+            pass
+        elif marker == 0xE1 and payload[:6] == b"Exif\x00\x00" and _exif_tiff(*(_orientation(payload[6:]) or (None, 0))) == payload[6:]:
+            pass
+        elif marker == 0xE2 and payload[:12] == b"ICC_PROFILE\x00":
+            icc_chunks.append(payload)
+            continue
+        else:
+            raise _Refuse(VERIFY_FAILED)
+        meta.append(_seg(marker, payload))
+    if any(kinds.count(k) > 1 for k in (0xE0, 0xE1, 0xEE)):
+        raise _Refuse(VERIFY_FAILED)
+    table = b"".join(_seg(m, p) for m, p in parts if m in _STRUCTURAL and m != 0xDA)
+    if not _scan_metadata(b"".join(meta) + table, 1 if 0xE1 in kinds else 0):
+        raise _Refuse(VERIFY_FAILED)
+    _scan_picture_side(b"".join(p for m, p in parts if m is None) + table)
+    profile = _icc_of_jpeg(parts)
+    if profile is not None and (_names_in(profile, _TOKEN_WORDS + _POSITION_WORDS) or _TIFF_SIG.search(profile) or b"\xa9xyz" in profile):
+        raise _Refuse(VERIFY_FAILED)
+
+
+def _png_orientation(body):
+    return _orientation(body[6:] if body[:6] == b"Exif\x00\x00" else body)
+
+
+def _png_icc(body):
+    k = body.find(b"\x00")
+    if k < 1 or k > 79 or body[k + 1:k + 2] != b"\x00":
+        raise _Refuse(ICC)
+    _icc_text(body[:k].decode("latin-1"))
+    profile = _inflate(body[k + 2:])
+    _check_icc(profile)
+    return profile
+
+
+def _png_chunk(kind, body, crc=None):
+    crc = crc if crc is not None else struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+    return struct.pack(">I", len(body)) + kind + body + crc
+
+
+def _build_png(chunks):
+    out, exif = [_PNG_SIG], False
+    for kind, body, crc in chunks:
+        if kind in _PNG_ANIMATION:
+            raise _Refuse()  # dropping the frames would change the picture
+        if kind in _PNG_COPIED:
+            if kind in _PNG_FIXED and len(body) not in _PNG_FIXED[kind] or kind == b"PLTE" and (len(body) % 3 or len(body) > 768):
+                raise _Refuse()
+            out.append(_png_chunk(kind, body, crc))
+        elif kind == b"iCCP":
+            _png_icc(body)
+            out.append(_png_chunk(kind, body, crc))
+        elif kind == b"eXIf":
+            if not exif:
+                exif = True
+                found = _png_orientation(body)
+                if found:
+                    out.append(_png_chunk(b"eXIf", _exif_tiff(*found)))
+        elif kind[0] & 0x20 == 0:
+            raise _Refuse()  # a critical chunk this does not know
+        # an ancillary chunk that is not named above (tEXt, zTXt, iTXt, tIME, sPLT, hIST, unknown) is not in the copy
+    return b"".join(out)
+
+
+def _verify_png(out, chunks_in):
+    chunks = _chunks(out)
+
+    def picture(items):
+        return [(k, b) for k, b, _c in items if k in _PNG_COPIED]
+
+    if picture(chunks) != picture(chunks_in):
+        raise _Refuse(VERIFY_FAILED)
+    meta, kinds, profile, picture = [], [], None, []
+    for kind, body, _crc in chunks:
+        if kind in _PNG_COPIED:
+            if kind not in (b"IDAT", b"PLTE", b"tRNS"):
+                meta.append(kind + body)
+            else:
+                picture.append(body)
+            continue
+        kinds.append(kind)
+        if kind == b"eXIf" and _exif_tiff(*(_orientation(body) or (None, 0))) == body:
+            meta.append(kind + body)
+        elif kind == b"iCCP":
+            profile = _png_icc(body)
+            if _names_in(profile, _TOKEN_WORDS + _POSITION_WORDS) or _TIFF_SIG.search(profile) or b"\xa9xyz" in profile:
+                raise _Refuse(VERIFY_FAILED)
+            meta.append(body[:body.find(b"\x00")])
+        else:
+            raise _Refuse(VERIFY_FAILED)
+    if any(kinds.count(k) > 1 for k in (b"eXIf", b"iCCP")) or not _scan_metadata(b"".join(meta), 1 if b"eXIf" in kinds else 0):
+        raise _Refuse(VERIFY_FAILED)
+    _scan_picture_side(b"".join(picture))
+
+
 # ------------------------------------------------------------------------------------------------------------------ the API
 
 
 def strip(data, content_type):
-    """``(bytes, "")`` with the GPS location taken out of a JPEG or PNG, or ``(None, reason)``; never raises. ``reason`` is one of
-    ``tiff`` (kept held), ``unsupported``, ``unparseable``, ``verify_failed`` and ``limit`` (more work than the budget allows)."""
+    """``(bytes, "")``: a copy of a JPEG or PNG with minimal metadata (see the module docstring), or ``(None, reason)``; never raises. ``reason``
+    is one of ``tiff`` (kept held), ``unsupported``, ``unparseable``, ``verify_failed``, ``icc`` (a colour profile it does not accept) and
+    ``limit`` (more work than the budget allows)."""
     try:
         if content_type == TIFF:
             return None, TIFF_KEPT
@@ -1116,7 +1205,14 @@ def strip(data, content_type):
             return None, UNSUPPORTED
         data = bytes(data)
         with scope():
-            out = _jpeg_copy(data) if content_type == JPEG else _png_copy(data)
+            if content_type == JPEG:
+                parts = _jpeg_parts(data)
+                out = _build_jpeg(parts)
+                _verify_jpeg(out, parts)
+            else:
+                chunks = _chunks(data)
+                out = _build_png(chunks)
+                _verify_png(out, chunks)
             try:
                 left = _residue(out, content_type)
             except _Refuse:
@@ -1125,7 +1221,7 @@ def strip(data, content_type):
             return None, VERIFY_FAILED
         return out, ""
     except _Refuse as exc:
-        return None, exc.reason if exc.reason in (TIFF_KEPT, UNSUPPORTED, VERIFY_FAILED) else UNPARSEABLE
+        return None, exc.reason if exc.reason in (TIFF_KEPT, UNSUPPORTED, VERIFY_FAILED, ICC) else UNPARSEABLE
     except ScanLimit:
         return None, LIMIT
     except Exception:  # noqa: BLE001 - a file the walkers cannot take stays held; nothing escapes (never a RecursionError or MemoryError either)

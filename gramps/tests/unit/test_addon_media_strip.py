@@ -145,7 +145,8 @@ class Upload(StripCase):
         self.assertEqual(self.tree.data[handle], obj_before, "the Gramps Media object (path, checksum, everything) is untouched")
         # the picture data of the copy is the original's
         at = LS.scan_start(data)
-        self.assertEqual(copy_bytes[at:], data[at:])
+        self.assertEqual(copy_bytes[copy_bytes.index(b"\xff\xda"):], data[at:], "the scan header, the compressed picture data and the end are the original's")
+        self.assertLess(len(copy_bytes), len(data), "the copy has minimal metadata")
         # the count, and no hold for it
         self.assertEqual(doc["counts"]["media_location_stripped"], mediafile.stripped_count(self.tree.media_files()))
         self.assertGreaterEqual(doc["counts"]["media_location_stripped"], 1)
@@ -179,7 +180,7 @@ class Upload(StripCase):
         self.push()
         self.push(dry_run=True)
         text = self.everything_written()
-        for token in (b"4242", b"5151", b"37,33", b"122,4", b"GPSLatitude", b"1234/10"):
+        for token in (b"33.4242", b"4.5151", b"37,33", b"122,4", b"GPSLatitude", b"1234/10"):
             self.assertNotIn(token.decode(), text)
         self.assertNotIn(self.base, text)
 
@@ -255,7 +256,7 @@ class StaysHeld(StripCase):
             self.assertEqual(self.holds()[handle][0], "media.exif_gps.hold")
         self.assertEqual(mediafile.inspect(tiff_path, strip_location=True)["strip_refused"], "tiff")
         self.assertIn("TIFF", self.holds()[tiff][1])
-        self.assertIn("could not remove it", self.holds()[broken][1])
+        self.assertIn("could not make a copy", self.holds()[broken][1])
         self.assertEqual(doc["counts"]["media_location_stripped"], mediafile.stripped_count(self.tree.media_files()))
         for p, b in before.items():
             self.assertEqual(self.disk(p), b)
@@ -463,7 +464,42 @@ class ScanHolds(StripCase):
         self.push()
         rule, detail = self.holds()[handle]
         self.assertEqual(rule, "media.exif_gps.hold")
-        self.assertIn("could not remove it", detail)
+        self.assertIn("could not make a copy", detail)
+
+
+class PhoneStyleCopies(StripCase):
+    """The two real-world-shaped samples go up as minimal copies that keep their Orientation and their colour profile."""
+
+    def test_a_phone_style_jpeg_and_a_png_keep_orientation_and_icc_and_nothing_else(self):
+        self.seed()
+        profile = LS.icc_profile()
+        jpg = LS.jpeg(LS.build_tiff(">"), LS.xmp_packet(), extra_segments=LS.icc_segments(profile) + LS.segment(0xFE, b"a comment") + LS.segment(0xED, b"Photoshop 3.0\x00" + b"x" * 20))
+        png = LS.png(tiff=LS.build_tiff("<"), xmp=LS.xmp_packet(), compress_xmp=True, icc=profile, text=b"Comment\x00hello")
+        hj, pj = self.add_photo(jpg, gid="O0130", name="new/phone.jpg")
+        hp, pp = self.add_photo(png, gid="O0131", mime="image/png", name="new/phone.png")
+        self.set_strip(True)
+        self.push()
+        out_j, out_p = self.cloud.blob_bytes(hj), self.cloud.blob_bytes(hp)
+        self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out_j)), profile)
+        self.assertEqual(dict(locstrip._jpeg_parts(out_j))[0xE1], b"Exif\x00\x00" + locstrip._exif_tiff(">", 6))
+        kinds = dict((k, b) for k, b, _c in locstrip._chunks(out_p))
+        self.assertEqual(kinds[b"eXIf"], locstrip._exif_tiff("<", 6))
+        self.assertIn(b"iCCP", kinds)
+        for out in (out_j, out_p):
+            self.assertFalse(mediafile.exif_gps(out, JPEG if out is out_j else "image/png"))
+            for dropped in (b"xmpmeta", b"a comment", b"Photoshop", b"hello", b"SYNTHCAM"):
+                self.assertNotIn(dropped, out)
+        self.assertEqual((self.disk(pj), self.disk(pp)), (jpg, png), "the originals are untouched")
+
+    def test_a_colour_profile_with_a_position_holds_the_photo_with_its_own_rule(self):
+        self.seed()
+        handle, _path = self.add_photo(LS.jpeg(LS.build_tiff(), extra_segments=LS.icc_segments(LS.icc_profile(desc="Shot at 12.3456, 65.4321"))), gid="O0132", name="new/icc.jpg")
+        self.set_strip(True)
+        self.push()
+        rule, detail = self.holds()[handle]
+        self.assertEqual(rule, "media_icc_text")
+        self.assertIn("colour profile", detail)
+        self.assertNotIn(handle, self.cloud.heads)
 
 
 class StrippedCommand(StripCase):
@@ -525,6 +561,42 @@ class StrippedCommand(StripCase):
         pull()
         self.assertEqual(DLView.calls, [self.handle], "now the website's file is the one the pull takes")
         self.assertEqual(self.disk(self.path), self.original, "the original file itself is still untouched")
+
+    def test_accepting_a_website_file_that_is_still_your_copy_does_nothing_and_the_pull_never_re_points(self):
+        DLView.calls = []
+        from hfygramps.addon import runner
+        before = {h: tuple(v) for h, v in self.recorded_map().items()}
+        code, out, _err = self.run_cli("--accept-website-file", "O0120", "--yes")
+        self.assertEqual(code, 0)
+        self.assertIn("still your copy", out)
+        self.assertEqual({h: tuple(v) for h, v in self.recorded_map().items()}, before, "the record is kept")
+        self.set_strip(False)
+        self.cloud.edit(self.handle, lambda o: o.update(desc="Edited on the website"))
+        obj = copy.deepcopy(self.tree.data[self.handle])
+        self.n += 1
+        runner.run(self.tree, "cli", runner.Options("pull", yes=True), run_id="r%02d" % self.n, argv=["gramps"], environ=self.env, services={"cloud": DLView(self.cloud)})
+        self.assertEqual(DLView.calls, [])
+        now = self.tree.data[self.handle]
+        self.assertEqual((now["path"], now["checksum"], now["desc"]), (obj["path"], obj["checksum"], "Edited on the website"))
+        self.assertEqual(self.disk(self.path), self.original)
+
+    def recorded_map(self):
+        con = self.sidecar()
+        try:
+            return mediaup.stripped_map(con)
+        finally:
+            con.close()
+
+    def test_a_damaged_or_hostile_sidecar_record_is_read_as_not_there(self):
+        from hfygramps.addon import sidecar
+        con = self.sidecar()
+        try:
+            for value in ("[" * 200000 + "]" * 200000, '{"a":' * 100000 + "1" + "}" * 100000, "not json"):
+                con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('media_location_stripped', ?)", (value,))
+                self.assertEqual(sidecar.meta_json(con, "media_location_stripped", {}), {})
+                self.assertEqual(mediaup.stripped_map(con), {})
+        finally:
+            con.close()
 
     def test_send_again_forgets_that_the_website_holds_the_copy_and_the_next_push_uploads_it(self):
         puts = len(self.cloud.puts)

@@ -157,7 +157,7 @@ def meta_json(con, key, default):
         return default
     try:
         return json.loads(row[0])
-    except ValueError:
+    except Exception:  # noqa: BLE001 - damaged or hostile JSON (deep nesting raises RecursionError) is "not there", never a traceback
         return default
 
 
