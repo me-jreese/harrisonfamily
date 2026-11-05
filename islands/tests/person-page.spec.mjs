@@ -10,15 +10,29 @@ const PERSON = JSON.parse(readFileSync(new URL("./fixtures/person-legacy.json", 
 const TREE = readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8");
 const URL_PATH = "/person/?id=I9001";
 const ROLES = { I9010: "grandparent", I9011: "grandparent", I9012: "parent", I9013: "parent", I9001: "focus", I9014: "sibling", I9002: "spouse", I9015: "child", I9016: "grandchild" };
+// HFY-TSK-289: a synthetic graph around I9001 (two parents, one partner, eight children so the "+N more" link shows).
+const MINI_GRAPH = {
+  schemaVersion: 1,
+  people: [
+    ...["I9001|Test Person|1950", "I9012|Parent One|1925", "I9013|Parent Two|1927", "I9002|Sam Example|1952"].map((x) => { const [id, name, b] = x.split("|"); return { id, name, birthYear: Number(b), generation: 1 }; }),
+    ...Array.from({ length: 8 }, (_, i) => ({ id: `I91${10 + i}`, name: `Child ${i + 1}`, birthYear: 1975 + i, generation: 2 }))
+  ],
+  unions: [
+    { id: "F1", partners: ["I9012", "I9013"], children: [{ id: "I9001", rel: {} }] },
+    { id: "F2", partners: ["I9001", "I9002"], children: Array.from({ length: 8 }, (_, i) => ({ id: `I91${10 + i}`, rel: {} })) }
+  ],
+  generations: []
+};
 const photo = (name) => {
   const tall = /2$/.test(name);
   const [w, h] = tall ? [600, 900] : [800, 600];
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="gray"/></svg>`;
 };
 
-async function stub(page, { shell = true, personV2 = false, familyViz = false, chat = false, hold = null, status = 200, body = PERSON } = {}) {
+async function stub(page, { shell = true, personV2 = false, familyViz = false, mini = false, chat = false, hold = null, status = 200, body = PERSON } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
-  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, familyViz, chatV1: chat } }));
+  await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, familyViz, familyVizPersonMini: mini, chatV1: chat } }));
+  await page.route("**/person/graph.json", (r) => r.fulfill({ json: MINI_GRAPH }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9002", grampsId: "I9002", label: "Sam Example" } }));
   await page.route("**/api/comments**", (r) => r.fulfill({ json: { thread: { id: "person:I9001", topic: "comments", comments: [], reactions: {} } } }));
   await page.route("**/api/**", (r) => r.fallback());
@@ -422,6 +436,40 @@ test("tree-link slot: empty with familyViz off", async ({ page }) => {
   await expect(page.locator('[data-slot="tree-link"]')).toHaveCount(1);
   await expect(page.locator('[data-slot="tree-link"] a')).toHaveCount(0);
   await expect(page.locator('[data-slot="tree-link"]')).toBeEmpty();
+});
+
+// HFY-TSK-289 (familyVizPersonMini): the mini focus view fills the tree-link slot and the Graphviz frame is not drawn; off, the frame is as before.
+for (const w of [375, 768, 1280]) {
+  test(`mini focus view at ${w}px: fills the tree-link slot, replaces the Graphviz frame, no horizontal scroll`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: 900 });
+    let svgRequested = false;
+    await page.route("**/media/tree_I9001.svg", (r) => { svgRequested = true; return r.fallback(); });
+    await openPerson(page, { personV2: true, familyViz: true, mini: true });
+    const mini = page.locator('[data-slot="tree-link"] [data-person-mini]');
+    await expect(mini).toBeVisible();
+    await expect(mini.locator('[data-mini-group="parents"] a.hfy-person-name')).toHaveCount(2);
+    await expect(mini.locator('[data-mini-group="partners"] a.hfy-person-name')).toHaveText(["Sam Example"]);
+    await expect(mini.locator('[data-mini-group="children"] a.hfy-person-name')).toHaveCount(6);
+    await expect(mini.locator("a.hfy-mini__more")).toHaveText("+2 more in the family tree");
+    await expect(mini.locator("a.hfy-person-name").first()).toHaveAttribute("href", /^\/person\/\?id=I\d+$/);
+    await expect(page.locator('[data-slot="tree-link"] a[data-tree-link]')).toHaveAttribute("href", "/tree/?focus=I9001");
+    await expect(page.locator("#person-family-visualization")).toBeHidden();
+    await expect(page.locator("#person-family-legend")).toHaveCount(0);
+    expect(svgRequested).toBe(false);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
+test("mini flag off (or familyViz off): the Graphviz frame renders and no mini view appears", async ({ page }) => {
+  await openPerson(page, { personV2: true, familyViz: true, mini: false });
+  await expect(page.locator("#person-family-visualization svg")).toHaveCount(1);
+  await expect(page.locator("[data-person-mini]")).toHaveCount(0);
+});
+
+test("mini flag on without familyViz: the Graphviz frame renders", async ({ page }) => {
+  await openPerson(page, { personV2: true, familyViz: false, mini: true });
+  await expect(page.locator("#person-family-visualization svg")).toHaveCount(1);
+  await expect(page.locator("[data-person-mini]")).toHaveCount(0);
 });
 
 // Profile presence (HFY-TSK-143, chatV1): the chat island fills only [data-slot="presence"] in the hero actions and nothing else on the page.

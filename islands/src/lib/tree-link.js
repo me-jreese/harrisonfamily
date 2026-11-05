@@ -29,11 +29,20 @@ export function mountTreeLink(win = window) {
   const doc = win.document;
   let flagOn = false;
   const idNow = () => new URLSearchParams(win.location.search).get("id");
-  const fill = (id) => fillTreeLink(doc, id, flagOn);
+  let miniOn = false;
+  const fill = (id) => {
+    const linked = fillTreeLink(doc, id, flagOn);
+    // HFY-TSK-289 (familyVizPersonMini): the mini focus view shares the host with the link. It needs familyViz too (the graph is /tree/'s).
+    const host = doc.querySelector('[data-slot="tree-link"]');
+    if (!host) return;
+    if (!(miniOn && linked)) { host.querySelector("[data-person-mini]")?.remove(); return; }
+    const fetcher = (u, i) => (win.HFYFeatureFlags?.dataFetch ? win.HFYFeatureFlags.dataFetch(u, i, { interactive: false }) : win.fetch(u, i));
+    import("./person-mini.js").then((m) => m.fillMini(doc, host, id, treeLinkHref(id), fetcher)).catch(() => {});
+  };
   const onRendered = (e) => fill(e?.detail?.personId ?? idNow());
   Promise.resolve(win.HFYFeatureFlags?.resolveFlags?.())
     .catch(() => null)
-    .then((flags) => { flagOn = Boolean(flags) && flags.familyViz === true; fill(idNow()); });
+    .then((flags) => { flagOn = Boolean(flags) && flags.familyViz === true; miniOn = flagOn && flags.familyVizPersonMini === true; fill(idNow()); });
   doc.addEventListener("hfy:person-rendered", onRendered);
   return () => doc.removeEventListener("hfy:person-rendered", onRendered);
 }

@@ -95,6 +95,10 @@
   let currentFamilyTreeMarkup = "";
   let currentPersonName = "";
   let treeState = null;
+  // HFY-TSK-289: with familyVizPersonMini (and familyViz) on, the Graphviz frame is not drawn and the mini focus view (islands, in the
+  // [data-slot="tree-link"] host) takes its place. Off, or when the flags cannot be read, the frame renders exactly as before. Set before
+  // each render by miniFlagOn(); the frame code below is the flag-off path and goes when viz-graphviz-retire-flip deletes the SVGs.
+  let personMiniOn = false;
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -123,8 +127,10 @@
         return;
       }
 
+    const miniFlag = miniFlagOn();
     fetchPerson(personId)
-        .then((person) => {
+        .then(async (person) => {
+          personMiniOn = await miniFlag;
           const merged = redirectIfMerged(person, personId);
           if (merged === "limit") {
             showError(VOICE.error, { loading, error });
@@ -418,6 +424,14 @@
     return moment && moment.place && moment.place.displayName ? moment.place.displayName : "";
   }
 
+  // Resolves true only for familyViz and familyVizPersonMini both true; any failure or a missing feature-flags.js is false.
+  function miniFlagOn() {
+    return waitForFeatureFlags(2000)
+      .then((ff) => (ff && typeof ff.resolveFlags === "function" ? ff.resolveFlags() : null))
+      .then((flags) => Boolean(flags) && flags.familyViz === true && flags.familyVizPersonMini === true)
+      .catch(() => false);
+  }
+
   function waitForFeatureFlags(timeoutMs = 6000) {
     return waitForGlobal(() => window.HFYFeatureFlags, timeoutMs);
   }
@@ -648,6 +662,15 @@
   function renderFamilyVisualization(person, personId) {
     const container = document.getElementById("person-family-visualization");
     if (!container) {
+      return false;
+    }
+
+    if (personMiniOn) {
+      treeState = null;
+      currentFamilyTreeMarkup = "";
+      container.innerHTML = "";
+      container.classList.add("d-none");
+      toggleLegend(container, false);
       return false;
     }
 
