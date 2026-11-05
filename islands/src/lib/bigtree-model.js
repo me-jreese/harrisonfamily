@@ -84,22 +84,34 @@ export function nameLines(name, max = 16) {
   return lines.map(clip);
 }
 
+const MAX_ROUTES = 64;
+const MAX_DEPTH = 40;
+
 /**
  * Where else the viewer descends from `id`: one entry per extra route, `{through}` being the first person on that route who is not on the
  * main one. Empty when `id` is not an ancestor of the viewer, or only one route reaches them.
  */
 export function collapseRoutes(graph, viewer, id) {
-  if (!viewer || viewer === id || !graph.has(viewer)) return [];
-  const paths = graph.relationPaths(viewer, id).filter((p) => p.kind === "blood" && p.ancestor === id && p.down.length === 1);
+  if (!viewer || viewer === id || !graph.has(viewer) || !graph.has(id)) return [];
+  // Every distinct up-route from the viewer to `id`, of any length (relationPaths gives only the shortest ones). The search is bounded.
+  const paths = [];
+  const walk = (node, trail) => {
+    if (paths.length >= MAX_ROUTES) return;
+    if (node === id) { paths.push(trail); return; }
+    if (trail.length > MAX_DEPTH) return;
+    for (const par of graph.parents(node)) if (!trail.includes(par.id)) walk(par.id, [...trail, par.id]);
+  };
+  walk(viewer, [viewer]);
   if (paths.length < 2) return [];
-  const main = paths[0].up;
+  paths.sort((x, y) => x.length - y.length);
+  const main = paths[0];
   const out = [];
   const seen = new Set();
-  for (const p of paths.slice(1)) {
+  for (const up of paths.slice(1)) {
     let k = 1;
-    while (k < p.up.length - 1 && p.up[k] === main[k]) k += 1;
-    const through = p.up[k];
-    if (through === id || seen.has(through)) continue;
+    while (k < up.length - 1 && k < main.length - 1 && up[k] === main[k]) k += 1;
+    const through = up[k];
+    if (through === id || seen.has(through) || main.includes(through)) continue;
     seen.add(through);
     out.push({ through });
   }

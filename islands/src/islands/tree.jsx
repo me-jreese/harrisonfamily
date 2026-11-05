@@ -436,7 +436,7 @@ export function TreeApp() {
           {shown === FAMILY_VIEW ? (
             !hasLayout ? <p className="hfy-tree__notice" role="status" data-tree-poster-prepared>{COPY.bigTreePrepared}</p>
               : bigFailed ? <p className="hfy-tree__notice" role="status" data-tree-poster-failed>{COPY.bigTreeFailed}</p>
-              : BigTree ? <BigTree graph={graph} viewer={sub} onOpen={(id) => { onView("cards"); onFocus(id, "list"); }} />
+              : BigTree ? <BigTree graph={graph} viewer={sub} onOpen={(id) => { setView("cards"); history.replaceState(null, "", viewUrl(location, "cards")); onFocus(id, "list"); }} />
               : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-poster-loading />
           ) : null}
           {shown === "cards" ? (

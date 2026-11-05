@@ -13,11 +13,11 @@ import { PersonName } from "./person-name.jsx";
 
 const AVATAR_R = 24;
 
-function Card({ p, w, h, names, onOpen, onHot }) {
+function Card({ p, index, w, h, names, onOpen, onHot }) {
   const [faceFailed, setFaceFailed] = useState(false);
   const open = () => onOpen(p.id);
   const lines = p.lines;
-  const clip = `hfy-poster-clip-${p.id}`;
+  const clip = `hfy-poster-clip-${String(p.id).replace(/[^A-Za-z0-9_-]/g, "_")}-${index}`;
   return (
     <g
       className="hfy-poster__card"
@@ -52,8 +52,8 @@ function Card({ p, w, h, names, onOpen, onHot }) {
       )}
       {p.badge ? (
         <g className="hfy-poster__badge" data-badge aria-hidden="true">
-          <rect x={w - 138} y={-12} width={134} height={24} rx={12} />
-          <text x={w - 71} y={5} textAnchor="middle" fontSize={NAME_UNITS}>also ancestor</text>
+          <rect x={w - 138} y={4} width={134} height={24} rx={12} />
+          <text x={w - 71} y={21} textAnchor="middle" fontSize={NAME_UNITS}>also ancestor</text>
         </g>
       ) : null}
     </g>
@@ -85,7 +85,7 @@ function Group({ c, count, card, names, onOpen, onHot }) {
         <g className="hfy-poster__unions" aria-hidden="true">
           {c.unions.map((u) => <circle key={u.id} className="hfy-poster__union" cx={u.x} cy={u.y} r={UNION_R} data-union={u.id} />)}
         </g>
-        {people.map((p) => <Card key={p.id} p={p} w={card[0]} h={card[1]} names={showNames} onOpen={onOpen} onHot={onHot} />)}
+        {people.map((p) => <Card key={p.id} p={p} index={c.index} w={card[0]} h={card[1]} names={showNames} onOpen={onOpen} onHot={onHot} />)}
       </svg>
     </figure>
   );

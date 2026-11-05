@@ -60,6 +60,16 @@ test("pedigree collapse: the shared ancestors appear once, each with the badge; 
   assert.equal(badgeSentence(load(), [{ through: "I9208" }]), "also your ancestor through Abe Marsh");
 });
 
+test("pedigree collapse with routes of unequal length is still found (not only the shortest ones)", () => {
+  // I9208 also becomes a child of F9201: the viewer reaches I9201 in 2 steps through I9208 and in 3 through I9207.
+  const g = load((d) => { d.unions.find((u) => u.id === "F9201").children.push({ id: "I9208", rel: { I9201: "birth", I9202: "birth" } }); });
+  const routes = collapseRoutes(g, VIEWER, "I9201");
+  // main route: I9208 directly; the others are through I9207 (3 steps) and through I9204 (3 steps, from I9208's other side)
+  assert.deepEqual(routes.map((r) => r.through).sort(), ["I9204", "I9207"]);
+  const una = posterModel(g, VIEWER).components.flatMap((c) => c.people).find((p) => p.id === "I9201");
+  assert.match(una.badge, /^also your ancestor through /);
+});
+
 test("no viewer, or a viewer who is not in the graph, means no badge", () => {
   for (const v of [null, "I0000"]) assert.equal(posterModel(load(), v).components.flatMap((c) => c.people).filter((p) => p.badge).length, 0);
   assert.deepEqual(collapseRoutes(load(), VIEWER, VIEWER), []);
