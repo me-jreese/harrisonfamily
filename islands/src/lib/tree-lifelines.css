@@ -1,0 +1,63 @@
+/* The lifelines view of /tree/ (tree-lifelines.jsx, HFY-TSK-269; viz ADR 4.3). Aliases only (theme-lint no-literal-token-values). Each lifeline is
+   a button: a name and years column, then an SVG lane whose x coordinates are percentages of the lane. Decades only: there is no era band here. */
+.hfy-life { box-sizing: border-box; grid-column: 1 / -1; min-width: 0; max-width: 100%; margin-bottom: var(--io-space-5); overflow-x: auto; }
+.hfy-life__caption { margin: 0 0 var(--io-space-2); color: var(--io-color-semantic-text-dim); }
+.hfy-life__list { list-style: none; margin: 0; padding: 0; min-width: calc(var(--io-space-9) * 7); }
+.hfy-life__head, .hfy-life .hfy-life__line {
+  display: grid;
+  grid-template-columns: calc(var(--io-space-9) * 2.5) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--io-space-3);
+}
+.hfy-life__head { min-width: calc(var(--io-space-9) * 7); }
+.hfy-life__axis { display: block; width: 100%; height: var(--io-control-h-md); grid-column: 2; overflow: visible; }
+.hfy-life__tick { stroke: var(--io-color-semantic-border); stroke-width: 1px; }
+.hfy-life__tick-label { fill: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); text-anchor: middle; dominant-baseline: hanging; }
+.hfy-life .hfy-life__line {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--io-control-tap-min);
+  padding: 0;
+  border: 0;
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.hfy-life .hfy-life__line:hover { background: var(--io-color-semantic-surface-raised); }
+.hfy-life .hfy-life__line:focus-visible, .hfy-life .hfy-life__more:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+.hfy-life__who { display: flex; flex-direction: column; min-width: 0; padding-block: var(--io-space-1); }
+.hfy-life__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--io-typography-weight-semibold); }
+.hfy-life__years { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
+.hfy-life__row[data-depth="1"] .hfy-life__who { padding-inline-start: var(--io-space-3); }
+.hfy-life__row[data-depth="2"] .hfy-life__who { padding-inline-start: calc(var(--io-space-3) * 2); }
+.hfy-life__row[data-depth="3"] .hfy-life__who { padding-inline-start: calc(var(--io-space-3) * 3); }
+.hfy-life__row[data-depth="4"] .hfy-life__who { padding-inline-start: calc(var(--io-space-3) * 4); }
+.hfy-life__lane { display: block; align-self: stretch; width: 100%; height: 100%; min-height: var(--io-control-tap-min); overflow: visible; }
+.hfy-life__grid { stroke: var(--io-color-semantic-border); stroke-width: 1px; opacity: 0.5; }
+.hfy-life__seg { stroke: var(--io-color-semantic-accent); stroke-width: var(--io-space-1); stroke-linecap: butt; }
+.hfy-life__seg--fade0 { opacity: 0.25; }
+.hfy-life__seg--fade1 { opacity: 0.5; }
+.hfy-life__seg--fade2 { opacity: 0.75; }
+.hfy-life__dot { fill: var(--io-color-semantic-accent); stroke: var(--io-color-semantic-accent); stroke-width: calc(var(--io-space-1) / 2); }
+.hfy-life__dot--hollow { fill: var(--io-color-semantic-surface-raised); }
+.hfy-life__union, .hfy-life__elbow { stroke: var(--io-color-semantic-text-dim); stroke-width: 1px; fill: none; }
+.hfy-life__elbow { stroke-dasharray: 2 2; }
+.hfy-life__node { fill: var(--io-color-semantic-surface-raised); stroke: var(--io-color-semantic-text); stroke-width: calc(var(--io-space-1) / 2); }
+.hfy-life__note { margin: var(--io-space-3) 0 0; }
+.hfy-life__more-row { list-style: none; }
+.hfy-life .hfy-life__more {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  margin-inline-start: calc(var(--io-space-3) * 2);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-life .hfy-life__more:hover { border-color: var(--io-color-semantic-accent); }

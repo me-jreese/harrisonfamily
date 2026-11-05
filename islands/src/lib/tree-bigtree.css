@@ -1,0 +1,29 @@
+/* The whole-family poster (lib/tree-bigtree.jsx, HFY-TSK-272). Aliases only (theme-lint). The SVG's sizes are layout units set as attributes;
+   colours, the font and the focus ring come from the tokens here. This file is imported by tree.css (one stylesheet for the page). */
+.hfy-tree--ready[data-tree-mode="family"] { max-width: none; }
+.hfy-poster { grid-column: 1 / -1; min-width: 0; margin-bottom: var(--io-space-5); }
+.hfy-tree .hfy-poster__title { margin: 0 0 var(--io-space-2); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-poster__label { min-height: var(--io-control-tap-min); margin: 0 0 var(--io-space-2); }
+.hfy-poster__scroll {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: auto;
+  padding: var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface);
+  /* the page scrolls under a finger; the poster never pans or zooms by touch (viz-v2-bigtree-nav tests it) */
+  touch-action: pan-x pan-y;
+}
+.hfy-poster__group { margin: 0 0 var(--io-space-5); }
+.hfy-poster__svg { display: block; max-width: none; font-family: var(--io-typography-font-ui); }
+.hfy-poster__link { stroke: var(--io-color-semantic-border-strong); stroke-width: 2; }
+.hfy-poster__union { fill: var(--io-color-semantic-border-strong); }
+.hfy-poster__card { cursor: pointer; outline: none; }
+.hfy-poster__box { fill: var(--io-color-semantic-surface-raised); stroke: var(--io-color-semantic-border); stroke-width: 1; }
+.hfy-poster__card:hover .hfy-poster__box { stroke: var(--io-color-semantic-accent); }
+.hfy-poster__card:focus-visible .hfy-poster__box { stroke: var(--io-color-semantic-accent); stroke-width: 3; }
+.hfy-poster__name, .hfy-poster__initials { fill: var(--io-color-semantic-text); }
+.hfy-poster__avatar { fill: var(--io-color-semantic-surface); stroke: var(--io-color-semantic-border-strong); stroke-width: 1; }
+.hfy-poster__badge rect { fill: var(--io-color-semantic-surface); stroke: var(--io-color-semantic-accent); stroke-width: 1; }
+.hfy-poster__badge text { fill: var(--io-color-semantic-text); }

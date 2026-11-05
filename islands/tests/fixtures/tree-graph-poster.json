@@ -1,0 +1,506 @@
+{
+ "schemaVersion": 1,
+ "minor": 2,
+ "generatedAt": "2026-01-01T00:00:00Z",
+ "counts": {
+  "people": 13
+ },
+ "people": [
+  {
+   "id": "I9201",
+   "name": "Una Fenn",
+   "given": "Una",
+   "surname": "Fenn",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1900,
+   "deathYear": 1970,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 0,
+   "face": "faces/I9201-1a2b3c4d.webp"
+  },
+  {
+   "id": "I9202",
+   "name": "Vic Fenn",
+   "given": "Vic",
+   "surname": "Fenn",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1898,
+   "deathYear": 1968,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9203",
+   "name": "Wes Fenn",
+   "given": "Wes",
+   "surname": "Fenn",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1925,
+   "deathYear": 1995,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9204",
+   "name": "Xia Fenn",
+   "given": "Xia",
+   "surname": "Fenn",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1927,
+   "deathYear": 1997,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9205",
+   "name": "Yara Holt",
+   "given": "Yara",
+   "surname": "Holt",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1926,
+   "deathYear": 1996,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9206",
+   "name": "Zoe Marsh",
+   "given": "Zoe",
+   "surname": "Marsh",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1928,
+   "deathYear": 1998,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9207",
+   "name": "Zed Fenn",
+   "given": "Zed",
+   "surname": "Fenn",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1950,
+   "deathYear": 2020,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 2,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9208",
+   "name": "Abe Marsh",
+   "given": "Abe",
+   "surname": "Marsh",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1952,
+   "deathYear": 2022,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 2,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9209",
+   "name": "Bea Marsh",
+   "given": "Bea",
+   "surname": "Marsh",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1978,
+   "deathYear": 2048,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 3,
+   "component": 0,
+   "face": null
+  },
+  {
+   "id": "I9210",
+   "name": "Eli Quay",
+   "given": "Eli",
+   "surname": "Quay",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1930,
+   "deathYear": 2000,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 1,
+   "face": null
+  },
+  {
+   "id": "I9211",
+   "name": "Fay Quay",
+   "given": "Fay",
+   "surname": "Quay",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1932,
+   "deathYear": 2002,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 1,
+   "face": null
+  },
+  {
+   "id": "I9212",
+   "name": "Gus Quay",
+   "given": "Gus",
+   "surname": "Quay",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1955,
+   "deathYear": 2025,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 1,
+   "component": 1,
+   "face": null
+  },
+  {
+   "id": "I9213",
+   "name": "Dov Quay",
+   "given": "Dov",
+   "surname": "Quay",
+   "sex": "u",
+   "living": false,
+   "birthYear": 1960,
+   "deathYear": 2030,
+   "yearApprox": false,
+   "birthPlace": null,
+   "deathPlace": null,
+   "generation": 0,
+   "component": 2,
+   "face": null
+  }
+ ],
+ "unions": [
+  {
+   "id": "F9201",
+   "type": "married",
+   "partners": [
+    "I9201",
+    "I9202"
+   ],
+   "children": [
+    {
+     "id": "I9203",
+     "rel": {
+      "I9201": "birth",
+      "I9202": "birth"
+     }
+    },
+    {
+     "id": "I9204",
+     "rel": {
+      "I9201": "birth",
+      "I9202": "birth"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9202",
+   "type": "married",
+   "partners": [
+    "I9203",
+    "I9205"
+   ],
+   "children": [
+    {
+     "id": "I9207",
+     "rel": {
+      "I9203": "birth",
+      "I9205": "birth"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9203",
+   "type": "married",
+   "partners": [
+    "I9204",
+    "I9206"
+   ],
+   "children": [
+    {
+     "id": "I9208",
+     "rel": {
+      "I9204": "birth",
+      "I9206": "birth"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9204",
+   "type": "married",
+   "partners": [
+    "I9207",
+    "I9208"
+   ],
+   "children": [
+    {
+     "id": "I9209",
+     "rel": {
+      "I9207": "birth",
+      "I9208": "birth"
+     }
+    }
+   ]
+  },
+  {
+   "id": "F9205",
+   "type": "married",
+   "partners": [
+    "I9210",
+    "I9211"
+   ],
+   "children": [
+    {
+     "id": "I9212",
+     "rel": {
+      "I9210": "birth",
+      "I9211": "birth"
+     }
+    }
+   ]
+  }
+ ],
+ "edges": [],
+ "places": [],
+ "events": [],
+ "components": [
+  {
+   "id": 0,
+   "size": 9,
+   "roots": [
+    "I9201",
+    "I9202"
+   ]
+  },
+  {
+   "id": 1,
+   "size": 3,
+   "roots": [
+    "I9210",
+    "I9211"
+   ]
+  },
+  {
+   "id": 2,
+   "size": 1,
+   "roots": [
+    "I9213"
+   ]
+  }
+ ],
+ "generations": [
+  {
+   "component": 0,
+   "levels": [
+    [
+     "I9201",
+     "I9202"
+    ],
+    [
+     "I9203",
+     "I9204",
+     "I9205",
+     "I9206"
+    ],
+    [
+     "I9207",
+     "I9208"
+    ],
+    [
+     "I9209"
+    ]
+   ]
+  },
+  {
+   "component": 1,
+   "levels": [
+    [
+     "I9210",
+     "I9211"
+    ],
+    [
+     "I9212"
+    ]
+   ]
+  }
+ ],
+ "layout": {
+  "engine": "d3-dag 1.2.2",
+  "params": {
+   "layering": "simplex+rank",
+   "decross": "twoLayer",
+   "coord": "greedy",
+   "nodeSize": [
+    180,
+    90
+   ]
+  },
+  "components": [
+   {
+    "component": 0,
+    "width": 1080,
+    "height": 630,
+    "people": [
+     {
+      "id": "I9201",
+      "x": 450,
+      "y": 45
+     },
+     {
+      "id": "I9202",
+      "x": 630,
+      "y": 45
+     },
+     {
+      "id": "I9205",
+      "x": 90,
+      "y": 225
+     },
+     {
+      "id": "I9203",
+      "x": 270,
+      "y": 225
+     },
+     {
+      "id": "I9204",
+      "x": 810,
+      "y": 225
+     },
+     {
+      "id": "I9206",
+      "x": 990,
+      "y": 225
+     },
+     {
+      "id": "I9207",
+      "x": 180,
+      "y": 405
+     },
+     {
+      "id": "I9208",
+      "x": 900,
+      "y": 405
+     },
+     {
+      "id": "I9209",
+      "x": 540,
+      "y": 585
+     }
+    ],
+    "unions": [
+     {
+      "id": "F9201",
+      "x": 540,
+      "y": 135
+     },
+     {
+      "id": "F9202",
+      "x": 180,
+      "y": 315
+     },
+     {
+      "id": "F9203",
+      "x": 900,
+      "y": 315
+     },
+     {
+      "id": "F9204",
+      "x": 540,
+      "y": 495
+     }
+    ],
+    "bends": [
+     {
+      "s": "F9201",
+      "t": "I9204",
+      "points": [
+       [
+        810,
+        135
+       ]
+      ]
+     }
+    ]
+   },
+   {
+    "component": 1,
+    "width": 360,
+    "height": 270,
+    "people": [
+     {
+      "id": "I9210",
+      "x": 90,
+      "y": 45
+     },
+     {
+      "id": "I9211",
+      "x": 270,
+      "y": 45
+     },
+     {
+      "id": "I9212",
+      "x": 180,
+      "y": 225
+     }
+    ],
+    "unions": [
+     {
+      "id": "F9205",
+      "x": 180,
+      "y": 135
+     }
+    ],
+    "bends": []
+   }
+  ]
+ }
+}

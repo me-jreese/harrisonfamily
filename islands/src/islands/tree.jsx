@@ -16,8 +16,10 @@ import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
+import { FAMILY_VIEW, LIFELINES_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { layoutOf } from "../lib/bigtree-model.js";
 import { useFlags } from "../lib/use-flags.js";
-import { initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { useMedia } from "../lib/use-media.js";
 
 export const COPY = {
   prepared: "the family tree is being prepared. you can find anyone through search.",
@@ -25,7 +27,9 @@ export const COPY = {
   signedOut: "sign in to see the family tree.",
   offline: "the family tree needs a connection.",
   notFound: "we couldn't find that person, so here is someone to start from.",
-  chartFailed: "the chart didn't load. the outline below has everything."
+  chartFailed: "the chart didn't load. the outline below has everything.",
+  bigTreePrepared: "the whole-family view is being prepared.",
+  bigTreeFailed: "the whole-family view didn't load. the outline below has everything."
 };
 
 // The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element (the chunk
@@ -40,6 +44,10 @@ export const COPY = {
 // and a reload tries again; nothing on the page offers a retry that could not give a different answer (a refused custom element re-rejects).
 let chartImport = null;
 const loadChart = () => (chartImport ||= import("../lib/tree-chart.jsx"));
+// The lifelines view (HFY-TSK-269, flag familyVizTime) is its own lazy chunk, loaded only when that view opens. If it fails to load the page
+// falls back to the cards, which hold the same people.
+let lifelinesImport = null;
+const loadLifelines = () => (lifelinesImport ||= import("../lib/tree-lifelines.jsx"));
 
 // HFY-TSK-307 (flag familyVizKinship): the "how are we related?" panel is its own lazy chunk (lib/tree-kinship.jsx), fetched when the pill is first
 // opened. Unlike the chart, a failed load is retryable: the pill says so and the next open tries again.
@@ -77,6 +85,12 @@ export function KinshipSlot({ graph, viewer, focus, onFocus }) {
     </div>
   );
 }
+
+// The whole-family poster (HFY-TSK-272, familyVizBigTree, from 64rem) is a second lazy chunk, requested only when that view is open AND the graph
+// has a usable `layout` block: without one the page says it is being prepared and loads nothing more. It is never imported otherwise.
+let bigTreeImport = null;
+const loadBigTree = () => (bigTreeImport ||= import("../lib/tree-bigtree.jsx"));
+const BIGTREE_QUERY = "(min-width: 64rem)";
 
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
@@ -221,11 +235,11 @@ export function GenerationOutline({ graph, focus, onFocus, sheet = false }) {
 }
 
 /** The cards | outline switch: two buttons in a group, the current one pressed. Both are always real buttons, 44 px at every width. */
-export function ViewToggle({ view, onChoose }) {
+export function ViewToggle({ view, onChoose, lifelines = false, whole = false }) {
   return (
     <div className="hfy-tree__views" role="group" aria-label="view" data-tree-views>
-      {["cards", "outline"].map((v) => (
-        <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v}</button>
+      {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
+        <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v === FAMILY_VIEW ? "whole family" : v}</button>
       ))}
     </div>
   );
@@ -234,9 +248,13 @@ export function ViewToggle({ view, onChoose }) {
 export function TreeApp() {
   const session = useEdgeSession();
   // familyVizFaces (HFY-TSK-271): "pictured with" chips in the details; an absent key or unresolved flags is off.
-  const faces = useFlags()?.familyVizFaces === true;
-  const sub = memberSub(session);
   const flags = useFlags();
+  const faces = flags?.familyVizFaces === true;
+  const wide = useMedia(BIGTREE_QUERY);
+  // The whole-family view is on offer from 64rem with familyVizBigTree. Below that, or with the flag off, a remembered or addressed
+  // "family" reads as the cards. While the flags are still on their way it waits (flags === undefined) instead of loading the cards.
+  const bigOffered = flags?.familyVizBigTree === true && wide;
+  const sub = memberSub(session);
   const [result, setResult] = useState(null); // null while loading, else loadGraph's answer
   const [attempt, setAttempt] = useState(0);
   const [focus, setFocus] = useState(() => focusParam(location.search));
@@ -245,12 +263,20 @@ export function TreeApp() {
   const via = useRef("list");
   // "cards" | "outline": ?view=, else what this browser remembered, else the cards (lib/tree-view.js; storage failures are survived there).
   const [view, setView] = useState(() => initialView(location.search));
+  const pendingFamily = view === FAMILY_VIEW && flags === undefined;
   const viewRef = useRef(view);
+  const fromLifeline = useRef(false);
   viewRef.current = view;
   // The cards chunk could not load (or the browser refused the element): outline-only for the rest of this page view.
   const [chartFailed, setChartFailed] = useState(false);
   // The chart component once its chunk has loaded.
   const [Chart, setChart] = useState(null);
+  // familyVizTime (HFY-TSK-269): the lifelines view. `shown` is what the page draws: "lifelines" only with the flag on and its chunk loadable;
+  // while the flags are still on their way a ?view=lifelines holds a placeholder rather than flashing the cards.
+  const timeOn = flags?.familyVizTime === true;
+  const [Lifelines, setLifelines] = useState(null);
+  const [lifelinesFailed, setLifelinesFailed] = useState(false);
+  const shown = view === LIFELINES_VIEW ? (lifelinesFailed ? "cards" : timeOn ? LIFELINES_VIEW : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -269,7 +295,7 @@ export function TreeApp() {
   }, [attempt, online]);
 
   useEffect(() => {
-    if (view !== "cards" || Chart || chartFailed) return undefined;
+    if (shown !== "cards" || pendingFamily || Chart || chartFailed) return undefined;
     let live = true;
     loadChart().then(
       (m) => { if (live) setChart(() => m.default); },
@@ -280,7 +306,34 @@ export function TreeApp() {
       }
     );
     return () => { live = false; };
-  }, [view, Chart, chartFailed]);
+  }, [shown, pendingFamily, Chart, chartFailed]);
+
+  useEffect(() => {
+    if (shown !== LIFELINES_VIEW || Lifelines) return undefined;
+    let live = true;
+    loadLifelines().then(
+      (m) => { if (live) setLifelines(() => m.default); },
+      () => {
+        if (!live) return;
+        console.error("HFY tree: LIFELINES_CHUNK_FAILED");
+        setLifelinesFailed(true);
+      }
+    );
+    return () => { live = false; };
+  }, [shown, Lifelines]);
+
+  const hasLayout = useMemo(() => Boolean(result?.state === "ready" && layoutOf(result.graph)), [result]);
+  const [BigTree, setBigTree] = useState(null);
+  const [bigFailed, setBigFailed] = useState(false);
+  useEffect(() => {
+    if (shown !== FAMILY_VIEW || !hasLayout || BigTree || bigFailed) return undefined;
+    let live = true;
+    loadBigTree().then(
+      (m) => { if (live) setBigTree(() => m.default); },
+      () => { if (live) { console.error("HFY tree: BIGTREE_CHUNK_FAILED"); setBigFailed(true); } }
+    );
+    return () => { live = false; };
+  }, [shown, hasLayout, BigTree, bigFailed]);
 
   // Back and forward restore the previous focus (the page pushes one history entry per re-centre).
   useEffect(() => {
@@ -289,6 +342,11 @@ export function TreeApp() {
       setFocus(focusParam(location.search));
       // The view is the reader's choice, not part of a history entry: an older entry's address must not flip it back.
       const v = viewParam(location.search);
+      if (fromLifeline.current && v === LIFELINES_VIEW) {
+        fromLifeline.current = false;
+        setView(LIFELINES_VIEW);
+        return;
+      }
       if (v && v !== viewRef.current) history.replaceState(null, "", viewUrl(location, viewRef.current));
     };
     addEventListener("popstate", onPop);
@@ -322,9 +380,24 @@ export function TreeApp() {
     if (resolved && resolved.id && resolved.id !== focusParam(location.search)) history.replaceState(null, "", focusUrl(location, resolved.id));
   }, [resolved]);
   const onView = useCallback((v) => {
+    fromLifeline.current = false;
     setView(v);
     writeStoredView(v);
     history.replaceState(null, "", viewUrl(location, v));
+  }, []);
+  // Choosing a lifeline opens the navigator (the cards view) on that person. The view is switched in the address without storing it: the reader's
+  // remembered view stays what they picked on the toggle.
+  // The lifelines entry in the history is left as it was and a new entry is pushed for the cards, so Back returns to the focus and the lifelines the
+  // reader was on (`fromLifeline` lets the popstate handler restore that one view change). Focus moves to the navigator's heading, because the
+  // lifeline button that was clicked is gone.
+  const onLifeline = useCallback((id) => {
+    via.current = "list";
+    fromLifeline.current = true;
+    const next = new URL(focusUrl(location, id), location.origin);
+    history.pushState(null, "", viewUrl(next, "cards"));
+    setView("cards");
+    setFocus(id);
+    setTimeout(() => document.getElementById("hfy-tree-focus-name")?.focus(), 0);
   }, []);
   const [spoken, setSpoken] = useState("");
   const announced = useRef(null);
@@ -348,14 +421,25 @@ export function TreeApp() {
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
   return (
-    <div className="hfy-tree hfy-tree--ready" data-tree-mode={chartFailed ? "outline" : view}>
+    <div className="hfy-tree hfy-tree--ready" data-tree-mode={shown === FAMILY_VIEW ? FAMILY_VIEW : chartFailed ? "outline" : shown}>
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
-      {chartFailed ? (
+      {chartFailed && shown !== FAMILY_VIEW ? (
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (
         <>
-          <ViewToggle view={view} onChoose={onView} />
-          {view === "cards" ? (
+          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || shown === "pending"} whole={bigOffered} />
+          {shown === LIFELINES_VIEW || shown === "pending" ? (
+            Lifelines && shown === LIFELINES_VIEW
+              ? <Lifelines graph={graph} focus={resolved.id} onPick={onLifeline} onRecentre={onFocus} />
+              : <div className="hfy-tree__skeleton hfy-tree__skeleton--lifelines" aria-hidden="true" data-tree-lifelines-loading />
+          ) : null}
+          {shown === FAMILY_VIEW ? (
+            !hasLayout ? <p className="hfy-tree__notice" role="status" data-tree-poster-prepared>{COPY.bigTreePrepared}</p>
+              : bigFailed ? <p className="hfy-tree__notice" role="status" data-tree-poster-failed>{COPY.bigTreeFailed}</p>
+              : BigTree ? <BigTree graph={graph} viewer={sub} onOpen={(id) => { setView("cards"); history.replaceState(null, "", viewUrl(location, "cards")); onFocus(id, "list"); }} />
+              : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-poster-loading />
+          ) : null}
+          {shown === "cards" ? (
             <ChartBoundary onFailed={() => setChartFailed(true)}>
               {Chart ? <Chart graph={graph} focus={resolved.id} onFocus={onFocus} viewer={sub} faces={faces} renderOutline={(onPick) => <GenerationOutline graph={graph} focus={resolved.id} onFocus={onPick} sheet />} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-chart-loading />}
             </ChartBoundary>
