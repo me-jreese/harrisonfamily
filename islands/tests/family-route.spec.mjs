@@ -1,8 +1,9 @@
 // The family tab is "your family": it opens the signed-in member's own page, /person/?id=<edge session sub = gramps id>, and a
 // signed-out visitor goes to the sign-in, which returns to /private/ (the stable family route, a redirect page) and then to the
 // own page. /person/ without an id does the same; the 2025 dev scaffold that /private/ used to be is gone. With navMe (HFY-TSK-091, on in
-// the build flags since its flip, HFY-TSK-223) the same own-page tab is "me", and "family" leaves the bar. Both states are pinned with the
-// ?hfy_flags preview override (-navMe for the family tab, the rollback state; navMe for "me"), so no test leans on the build value.
+// the build flags since its flip, HFY-TSK-223) the same own-page tab is "me", and "family" leaves the bar until familyViz (on in the build
+// flags since HFY-TSK-146) gives it /tree/. The own-page "family" tab is the rollback state of both flags; both states are pinned with the
+// ?hfy_flags preview override (-navMe,-familyViz for the family tab; navMe,-familyViz for "me"), so no test leans on the build values.
 // /auth and /api are stubbed; the person data answers 404 (only the shell and the redirects are under test). Run against the committed
 // site (../11ty on 8089) or a scratch build: HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/family-route.spec.mjs
 import { test, expect } from "@playwright/test";
@@ -10,7 +11,7 @@ import { test, expect } from "@playwright/test";
 const SUB = "I0042";
 const OTHER = "I0099";
 const OWN = `/person/?id=${SUB}`;
-const NONAVME = "hfy_flags=-navMe"; // the family tab is the pre-flip (navMe off) bar
+const NONAVME = "hfy_flags=-navMe,-familyViz"; // the family tab is the pre-flip (navMe off) bar
 
 async function hermetic(page, { session = "in", flags } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
@@ -109,7 +110,7 @@ test("the other sections still mark their own tab (search)", async ({ page }) =>
 
 // ------------------------------------------------------------------------------------------- navMe: "me" is the own page (HFY-TSK-091)
 // With navMe the own-page tab is "me" (lib/nav.js navItems) and "family" leaves the bar until familyViz; the rules above apply to it.
-const NAVME = "hfy_flags=navMe";
+const NAVME = "hfy_flags=navMe,-familyViz";
 for (const [name, width] of [["bottom bar", 375], ["top bar", 1024]]) {
   const me = (page) => (width < 688 ? bottom(page, "me") : top(page, "me"));
   const current = (page) => (width < 688 ? page.locator('#hfy-shell-root .io-nav__item--bar[aria-current="page"]') : page.locator('#hfy-shell-root .hfy-bar__links a[aria-current="page"]'));
