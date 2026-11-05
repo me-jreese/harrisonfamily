@@ -73,5 +73,5 @@ export function galleryItem(person, media) {
 export function photoSrc(item) {
   if (!item) return null;
   const file = typeof item.s3Key === "string" && item.s3Key ? item.s3Key.split("/").pop() : typeof item.handle === "string" && item.handle ? `${item.handle}${EXT[item.mime] || ".jpg"}` : "";
-  return /^[A-Za-z0-9._-]+$/.test(file) ? `/media/${file}` : null;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file) ? `/media/${file}` : null;
 }

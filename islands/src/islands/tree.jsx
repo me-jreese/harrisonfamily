@@ -447,11 +447,12 @@ export function TreeApp() {
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (
         <>
-          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || shown === "pending"} whole={bigOffered} facesTab={faces} />
+          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || (shown === "pending" && view !== FACES_VIEW)} whole={bigOffered} facesTab={faces} />
+          {shown === "pending" && view === FACES_VIEW ? <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading /> : null}
           {shown === FACES_VIEW ? (
             FacesTab ? <FacesTab graph={graph} fetcher={fetcher} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading />
           ) : null}
-          {shown === LIFELINES_VIEW || shown === "pending" ? (
+          {shown === LIFELINES_VIEW || (shown === "pending" && view !== FACES_VIEW) ? (
             Lifelines && shown === LIFELINES_VIEW
               ? <Lifelines graph={graph} focus={resolved.id} onPick={onLifeline} onRecentre={onFocus} />
               : <div className="hfy-tree__skeleton hfy-tree__skeleton--lifelines" aria-hidden="true" data-tree-lifelines-loading />

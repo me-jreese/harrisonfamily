@@ -63,3 +63,23 @@ test("a gallery item is found by its Gramps media id, and its image URL follows 
 test("?view=faces is a known view", () => {
   assert.equal(normalizeView("faces"), "faces");
 });
+
+test("photoSrc refuses a name made only of dots", () => {
+  assert.equal(photoSrc({ s3Key: "a/..", mime: "image/jpeg" }), null);
+  assert.equal(photoSrc({ s3Key: "a/.", mime: "image/jpeg" }), null);
+  assert.equal(photoSrc({ s3Key: "a/p1.jpg" }), "/media/p1.jpg");
+});
+
+test("the faces tab's outline toggle depends on photo-tags-ui's layer class names; a library change fails here", () => {
+  const lib = readFileSync(new URL("../src/lib/photo-tags-ui.js", import.meta.url), "utf8");
+  const tab = readFileSync(new URL("../src/lib/tree-faces.jsx", import.meta.url), "utf8");
+  for (const cls of ["photo-tags__layer--names", "photo-tags__layer"]) {
+    assert.ok(lib.includes(cls), `photo-tags-ui no longer uses ${cls}`);
+    assert.ok(tab.includes(cls), `tree-faces no longer uses ${cls}`);
+  }
+});
+
+test("choosing a face reveals every group that person is in (the status count matches the screen)", () => {
+  const tab = readFileSync(new URL("../src/lib/tree-faces.jsx", import.meta.url), "utf8");
+  assert.match(tab, /revealCount\(groups, id\)/);
+});

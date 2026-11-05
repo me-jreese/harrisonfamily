@@ -11,6 +11,8 @@ import { PersonName } from "./person-name.jsx";
 import { clearLightbox, showLightbox } from "./photo-tags-ui.js";
 import { FIRST_VIEW_FACES, TRY_PEOPLE, facePeople, facesGroups, firstViewCount, galleryItem, mediaOf, photoSrc } from "./faces-model.js";
 
+let owner = null; // the viewer that drew the shared photo-tags display last; another host's display is never cleared by a viewer that unmounts later
+
 export const COPY = {
   title: "faces",
   note: "choose a face to see every photo that person is in.",
@@ -68,10 +70,12 @@ function Viewer({ group, fetcher }) {
     })();
     return () => { live = false; ctl.abort(); };
   }, [group, fetcher]);
-  useEffect(() => () => clearLightbox(), []);
+  const mine = useRef({});
+  useEffect(() => () => { if (owner === mine.current) { owner = null; clearLightbox(); } }, []);
   const img = useRef(null);
   // The photo's tag display is surf-photo-tags-ui's (an effect, not a ref callback: a child's ref is set before its parent's, so the box would not be there yet).
   useEffect(() => {
+    if (state.phase === "ready" && img.current && box.current) owner = mine.current;
     if (state.phase === "ready" && img.current && box.current) showLightbox({ index: 0, media: state.item, img: img.current, box: box.current }, null);
   }, [state]);
   useEffect(() => {
@@ -115,6 +119,13 @@ function Group({ group, selected, hit, open, onFace, onToggle, fetcher }) {
   );
 }
 
+/** How many groups must be rendered for every photo the person is in to be on screen. */
+function revealCount(groups, id) {
+  let last = 0;
+  groups.forEach((g, i) => { if (g.people.some((p) => p.id === id)) last = i + 1; });
+  return last;
+}
+
 export default function FacesTab({ graph, fetcher }) {
   const groups = useMemo(() => facesGroups(graph), [graph]);
   const first = useMemo(() => firstViewCount(groups, FIRST_VIEW_FACES), [groups]);
@@ -133,7 +144,7 @@ export default function FacesTab({ graph, fetcher }) {
       <ol className="hfy-faces__groups">
         {visible.map((g) => (
           <Group key={g.media} group={g} selected={selected} hit={hits.has(g.media)} open={open === g.media} fetcher={fetcher}
-            onFace={(id) => setSelected((cur) => (cur === id ? null : id))} onToggle={(m) => setOpen((cur) => (cur === m ? null : m))} />
+            onFace={(id) => { setSelected((cur) => (cur === id ? null : id)); setShown((n) => Math.max(n, revealCount(groups, id))); }} onToggle={(m) => setOpen((cur) => (cur === m ? null : m))} />
         ))}
       </ol>
       {groups.length > shown ? <button type="button" className="hfy-tree__view hfy-faces__more" data-faces-more onClick={() => setShown((n) => Math.min(groups.length, n + first))}>{COPY.more} ({groups.length - shown})</button> : null}
