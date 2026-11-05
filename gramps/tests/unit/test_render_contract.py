@@ -289,6 +289,21 @@ class NoSourcePathNoSortvalNoDayOrMonth(unittest.TestCase):
         self.assertGreater(checked, 40)
         self.assertGreater(dated, 15)
 
+    def test_non_birth_days_stay_stored_but_publish_as_a_year(self):
+        # Q2-04 / HFY-R76: on this day reads the day and month of non-birth events from the store (session API only); person and event JSON stay year-only.
+        sources = {o["handle"]: o for o in rs.p_fixture() if o["_class"] == "Event"}
+        seen = 0
+        for key, data in rs.rendered().items():
+            if not key.startswith("event/"):
+                continue
+            doc = json.loads(data)
+            src = sources[doc["handle"]]
+            day, month, year = src["date"]["dateval"][:3]
+            if (src.get("type") or {}).get("value") in (1, 13) and day and month:  # marriage, death
+                seen += 1
+                self.assertEqual(doc["date"], {"text": "", "year": year}, key)
+        self.assertGreater(seen, 0)
+
     def test_the_legacy_golden_has_the_same_properties(self):
         for key, data in rs.legacy_golden().items():
             self.assertNotIn("sourcePath", data.decode("utf-8"), key)

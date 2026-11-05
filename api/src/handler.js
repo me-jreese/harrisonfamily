@@ -151,7 +151,7 @@ export function createHandler(deps) {
     // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
     const moderation = createModeration({ ddb, cmds, table, actor, content, comments, notifier, afterCommit });
     const links = createLinks(base);
-    const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, cache: onThisDayCache, log });
+    const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), cache: onThisDayCache, log });
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;

@@ -42,6 +42,7 @@ Parameters:
   GraphRenderFunctionName: { Type: String, Default: hfy-graph-render }
   SyncApiEnabled: { Type: String, Default: "0", AllowedValues: ["0", "1"], Description: "Desktop-only stop for /api/sync/* (env SYNC_API_ENABLED). 0 answers 404 not_enabled" }
   RenderMode: { Type: String, Default: "off", AllowedValues: ["off", "shadow", "live"], Description: "hfy-sync-render mode (env RENDER_MODE). off is the primary rollback" }
+  OnThisDayDayTiers: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "env OTD_DAY_TIERS: on only once io has recorded approval of Q2-04 (gate q2-04-otd-dates), which lets on this day read day and week tiers from the record store. off keeps the year tier only" }
   RenderCodeKey: { Type: String, Default: lambda/hfy-sync-render-placeholder.zip, Description: "Key of the hfy-sync-render package in CodeBucket. The placeholder is a no-op under RENDER_MODE=off" }
   GraphRenderCodeKey: { Type: String, Default: lambda/hfy-graph-render-placeholder.zip, Description: "Key of the hfy-graph-render package in CodeBucket. The placeholder is a no-op (review DL-34); hfy-sync-render starts the function only after a live pass, so nothing runs it before the real package ships (HFY-TSK-274)" }
   HfyEditing: { Type: String, Default: "off", AllowedValues: ["off", "on"], Description: "Editing routes switch (env HFY_EDITING). While off they answer 404 not_found" }
@@ -256,6 +257,8 @@ Resources:
           VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
           SYNC_API_ENABLED: !Ref SyncApiEnabled
           HFY_EDITING: !Ref HfyEditing
+          OTD_DAY_TIERS: !Ref OnThisDayDayTiers
+          RENDER_MODE: !Ref RenderMode # on this day selects the record-store source only when live (HFY-TSK-139)
           CHAT_SERVICE_PUBLIC_KEYS: !Ref ChatServicePublicKeys
           SYNC_BUCKET: !Ref SyncBucketName
           SES_FROM_ADDRESS: !Ref SesFromAddress

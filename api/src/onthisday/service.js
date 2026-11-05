@@ -23,6 +23,19 @@ export const MAX_HIDDEN = 1000;
 export const hiddenKeys = Object.freeze({ PK: "OTD#HIDDEN", SK: "META" });
 /** An item id as build.js mints it: evt:<event handle> or birth:<gramps id>. */
 export const ITEM_ID_RE = /^(?:evt|birth):[A-Za-z0-9_-]{1,64}$/;
+/**
+ * The index as the year tier only: no day or week lists, and no month or day on any year item. Served while featureOn('onThisDayDays') is off (review DL-17),
+ * so a cutover alone never opens the day and week tiers. Memoised per parsed index.
+ */
+const yearOnlyViews = new WeakMap();
+export function yearOnly(index) {
+  let v = yearOnlyViews.get(index);
+  if (!v) {
+    v = { ...index, day: {}, month: {}, year: (index.year ?? []).map(({ month, day, ...rest }) => rest) }; // eslint-disable-line no-unused-vars
+    yearOnlyViews.set(index, v);
+  }
+  return v;
+}
 export const otdAuditId = (itemId) => `otd:${itemId}`;
 
 const unavailable = () => new HttpError(503, "unavailable", "on this day is unavailable, try again later");
@@ -48,9 +61,10 @@ export function parseQuery(query) {
 /**
  * `cache` is the container-wide state `{ loading, index }` (createHandler owns one, so it outlives a request); without it the service keeps its own.
  * `source` is an OnThisDaySource (source.js); without one the index cannot be built and an empty store answers 503.
+ * `daysOn()` says whether the day and week tiers may be served for this request (featureOn('onThisDayDays')); without it they are not.
  * `sleep(ms)` and `leaseWaits` are test seams.
  */
-export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(), uid, source, cache = {}, log = console, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), leaseWaits = LEASE_WAITS }) {
+export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(), uid, source, daysOn = async () => false, cache = {}, log = console, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), leaseWaits = LEASE_WAITS }) {
   const store = createIndexStore({ ddb, cmds, table, now });
   const isoNow = () => new Date(now()).toISOString();
 
@@ -138,7 +152,8 @@ export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(
         // The archive is one tier of several: without it the module still answers from the index.
         log.warn?.("onthisday archive tier unavailable", logSafeError(e));
       }
-      return { ...selectOnThisDay(index, { date: q.date, posts, hidden }), stale };
+      const days = await Promise.resolve().then(() => daysOn()).then(Boolean, () => false);
+      return { ...selectOnThisDay(days ? index : yearOnly(index), { date: q.date, posts, hidden }), stale };
     },
 
     /** The hide and unhide rule: an admin, or a member whose own gramps id is among the item's people. 403 `forbidden` otherwise (also for an id the index does not hold). */

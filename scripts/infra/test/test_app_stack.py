@@ -441,7 +441,8 @@ class SyncInfra(unittest.TestCase):
         api = self.r["Function"]["Properties"]["Environment"]["Variables"]
         edge = self.r["AuthFunction"]["Properties"]["Environment"]["Variables"]
         for env, param in [("SYNC_API_ENABLED", "SyncApiEnabled"), ("HFY_EDITING", "HfyEditing"),
-                           ("CHAT_SERVICE_PUBLIC_KEYS", "ChatServicePublicKeys"), ("SES_CONFIGURATION_SET", "SesConfigurationSet")]:
+                           ("CHAT_SERVICE_PUBLIC_KEYS", "ChatServicePublicKeys"), ("SES_CONFIGURATION_SET", "SesConfigurationSet"),
+                           ("RENDER_MODE", "RenderMode")]:  # RENDER_MODE: on this day selects the store source only when live (HFY-TSK-139)
             self.assertEqual(api[env], {"Ref": param}, env)
         for env, param in [("ACCESS_REQUESTS", "AccessRequests"), ("FIRST_PASSWORD", "FirstPassword"), ("TURNSTILE_SITE_KEY", "TurnstileSiteKey"),
                            ("JOIN_FROM_ADDRESS", "JoinFromAddress"), ("JOIN_SES_CONFIGURATION_SET", "JoinSesConfigurationSet")]:
