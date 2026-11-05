@@ -17,23 +17,10 @@ import { WIDE_QUERY, bindNavigatorEvents, defineFamilyNavigator } from "./family
 import { isRelationWord, relationLabel } from "./family-graph.js";
 import { COPY, detailsModel, faceUrl, initials, picturedWith } from "./navigator-model.js";
 import { PersonName } from "./person-name.jsx";
+import { useMedia } from "./use-media.js";
 
 // Throws if the browser refuses the definition: the lazy import then rejects and the page keeps the outline (the boundary in tree.jsx).
 defineFamilyNavigator();
-
-/** True while `query` matches; false when matchMedia is missing. */
-function useMedia(query) {
-  const [on, setOn] = useState(() => (typeof matchMedia === "function" ? matchMedia(query).matches : false));
-  useEffect(() => {
-    if (typeof matchMedia !== "function") return undefined;
-    const mq = matchMedia(query);
-    const update = () => setOn(mq.matches);
-    update();
-    mq.addEventListener?.("change", update);
-    return () => mq.removeEventListener?.("change", update);
-  }, [query]);
-  return on;
-}
 
 // Between the two layouts' widths: the outline is behind the "generations" button here (viz.md 9.2).
 const MEDIUM_QUERY = `${WIDE_QUERY} and (max-width: 63.99rem)`;

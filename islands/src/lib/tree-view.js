@@ -11,13 +11,17 @@ export const VIEWS = ["cards", "outline"];
 // The lifelines view (HFY-TSK-269, flag familyVizTime): a third view that exists only while the flag is on. The page maps it back to "cards"
 // when the flag is off, so a stored or shared `?view=lifelines` never strands anyone.
 export const LIFELINES_VIEW = "lifelines";
+// The whole-family poster (HFY-TSK-272, familyVizBigTree, from 64rem). It is not a default and not always offered, so it is not in VIEWS: the page
+// decides whether it is on offer, and a remembered or addressed "family" that is not on offer reads as the cards.
+export const FAMILY_VIEW = "family";
 export const DEFAULT_VIEW = "cards";
 
-/** "cards" | "outline" | "lifelines" for a raw value (`chart` is an alias of `cards`), else null. */
+/** "cards" | "outline" | "lifelines" | "family" for a raw value (`chart` is an alias of `cards`), else null. */
 export function normalizeView(value) {
   if (value === "outline") return "outline";
   if (value === LIFELINES_VIEW) return LIFELINES_VIEW;
   if (value === "cards" || value === "chart") return "cards";
+  if (value === FAMILY_VIEW) return FAMILY_VIEW;
   return null;
 }
 

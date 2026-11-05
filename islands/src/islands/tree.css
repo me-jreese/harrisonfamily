@@ -5,6 +5,7 @@
 @import "@io-kit/shell/io-kit.css";
 @import "../lib/family-navigator.css";
 @import "../lib/tree-lifelines.css";
+@import "../lib/tree-bigtree.css";
 .hfy-tree {
   box-sizing: border-box;
   max-width: calc(10 * var(--io-space-9));
