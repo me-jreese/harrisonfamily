@@ -18,6 +18,7 @@
   cursor: grab;
   max-height: 80vh;
 }
+.hfy-poster__scroll[data-pressing="true"] { user-select: none; }
 .hfy-poster__scroll[data-panning="true"] { cursor: grabbing; user-select: none; }
 .hfy-poster__scroll:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
 /* Navigation (HFY-TSK-309): the buttons, the zoom readout and the minimap sit above the region, never over it. */

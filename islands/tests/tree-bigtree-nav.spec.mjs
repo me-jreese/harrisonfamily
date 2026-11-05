@@ -108,6 +108,39 @@ test("1024: the wheel zooms only with Ctrl (or Cmd); a plain wheel scrolls", asy
   await expect.poll(() => zoomOf(page)).toBeLessThan(z);
 });
 
+test("1024: minimap click maps through the drawn scale when the map is letterboxed, and minicards line up with the real cards", async ({ page }) => {
+  await open(page);
+  for (const zin of [0, 1]) {
+    if (zin) await page.locator("[data-poster-zoom-in]").click();
+    await expect.poll(async () => page.locator(".hfy-poster__minicard").count()).toBe(12);
+    const bad = await page.evaluate(() => {
+      const reg = document.querySelector("[data-poster-scroll]");
+      const rr = reg.getBoundingClientRect();
+      const out = [];
+      for (const r of document.querySelectorAll(".hfy-poster__minicard")) {
+        const x = Number(r.getAttribute("x")); const y = Number(r.getAttribute("y"));
+        let hit = false;
+        for (const c of reg.querySelectorAll("[data-person]")) {
+          const b = c.getBoundingClientRect();
+          if (Math.abs(b.left - rr.left + reg.scrollLeft - x) < 3 && Math.abs(b.top - rr.top + reg.scrollTop - y) < 3) { hit = true; break; }
+        }
+        if (!hit) out.push([x, y]);
+      }
+      return out;
+    });
+    expect(bad).toEqual([]);
+  }
+  // force a letterbox: cap the map's height so the drawing is narrower than the element
+  await page.locator(".hfy-poster__minisvg").evaluate((el) => { el.style.maxHeight = "30px"; });
+  const geo = await region(page).evaluate((el) => [el.scrollWidth, el.scrollHeight]);
+  const mini = await page.locator(".hfy-poster__minisvg").boundingBox();
+  const k = Math.min(mini.width / geo[0], mini.height / geo[1]);
+  expect(geo[0] * k).toBeLessThan(mini.width - 20);
+  await page.mouse.click(mini.x + geo[0] * k * 0.5, mini.y + Math.min(geo[1] * k * 0.5, mini.height - 2));
+  const cx = await page.locator("[data-poster-miniview]").evaluate((el) => Number(el.getAttribute("x")) + Number(el.getAttribute("width")) / 2);
+  expect(Math.abs(cx - geo[0] * 0.5)).toBeLessThan(geo[0] * 0.06);
+});
+
 test("1024: a mouse drag pans inside the poster region only", async ({ page }) => {
   await open(page);
   for (let i = 0; i < 3; i += 1) await page.locator("[data-poster-zoom-in]").click();

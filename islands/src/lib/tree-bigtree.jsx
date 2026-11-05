@@ -105,8 +105,10 @@ function Minimap({ geo, view, onGo }) {
   const drag = useRef(false);
   const go = (e) => {
     const r = ref.current.getBoundingClientRect();
-    if (!r.width || !geo.w) return;
-    onGo(((e.clientX - r.left) / r.width) * geo.w, ((e.clientY - r.top) / r.height) * geo.h);
+    if (!r.width || !r.height || !geo.w || !geo.h) return;
+    // The drawing is letterboxed (xMinYMin meet) when the element is capped in height: map with the drawn scale, not the element box.
+    const k = Math.min(r.width / geo.w, r.height / geo.h);
+    onGo((e.clientX - r.left) / k, (e.clientY - r.top) / k);
   };
   return (
     <div className="hfy-poster__mini" role="group" aria-label="minimap of the whole family: press or drag to move there" data-poster-mini>
@@ -140,6 +142,9 @@ export default function BigTree({ graph, viewer = null, onOpen }) {
   const [zoom, setZoomState] = useState(1);
   const zoomRef = useRef(1);
   const pending = useRef(null);
+  const raf = useRef(0);
+  const later = useCallback((fn) => { cancelAnimationFrame(raf.current); raf.current = requestAnimationFrame(fn); }, []);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
   const scrollRef = useRef(null);
   const [geo, setGeo] = useState({ w: 0, h: 0, cards: [] });
   const [view, setView] = useState({ x: 0, y: 0, w: 0, h: 0 });
@@ -216,8 +221,8 @@ export default function BigTree({ graph, viewer = null, onOpen }) {
     el.scrollLeft = 0;
     el.scrollTop = 0;
     pending.current = pending.current && { ...pending.current, left: 0, top: 0, ax: 0, ay: 0 };
-    requestAnimationFrame(() => { el.scrollLeft = 0; el.scrollTop = 0; readView(); });
-  }, [model, zoomTo, readView]);
+    later(() => { el.scrollLeft = 0; el.scrollTop = 0; readView(); });
+  }, [model, zoomTo, readView, later]);
 
   // Back to the real size with the viewer's own card in the middle (the top left when the viewer is not on the poster).
   const reset = useCallback(() => {
@@ -226,7 +231,7 @@ export default function BigTree({ graph, viewer = null, onOpen }) {
     zoomRef.current = 1;
     pending.current = null;
     setZoomState(1);
-    requestAnimationFrame(() => {
+    later(() => {
       const card = viewer ? el.querySelector(`[data-person="${String(viewer).replace(/["\\]/g, "")}"]`) : null;
       if (card) {
         const a = card.getBoundingClientRect();
@@ -236,7 +241,7 @@ export default function BigTree({ graph, viewer = null, onOpen }) {
       } else { el.scrollLeft = 0; el.scrollTop = 0; }
       readView();
     });
-  }, [viewer, readView]);
+  }, [viewer, readView, later]);
 
   const goTo = useCallback((x, y) => {
     const el = scrollRef.current;
@@ -251,6 +256,7 @@ export default function BigTree({ graph, viewer = null, onOpen }) {
   const onPointerDown = (e) => {
     if (e.pointerType !== "mouse" || e.button !== 0) return;
     const el = scrollRef.current;
+    el.dataset.pressing = "true";
     drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false, id: e.pointerId };
   };
   const onPointerMove = (e) => {
@@ -268,6 +274,7 @@ export default function BigTree({ graph, viewer = null, onOpen }) {
     drag.current = null;
     const el = scrollRef.current;
     delete el.dataset.panning;
+    delete el.dataset.pressing;
     if (d.moved) { el.releasePointerCapture?.(e.pointerId); const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); }; el.addEventListener("click", eat, { capture: true, once: true }); setTimeout(() => el.removeEventListener("click", eat, true), 0); }
   };
 
