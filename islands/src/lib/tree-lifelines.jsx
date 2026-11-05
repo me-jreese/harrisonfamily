@@ -206,7 +206,7 @@ function Table({ graph, focus }) {
               <th scope="row"><PersonName id={r.id} name={r.name} /></th>
               <td>{r.born}</td>
               <td>{r.died}</td>
-              <td>{r.events.length ? <ul className="hfy-life__events">{r.events.map((e) => <li key={e}>{e}</li>)}</ul> : COPY.noEvents}</td>
+              <td>{r.events.length ? <ul className="hfy-life__events">{r.events.map((e, i) => <li key={`${r.id}-${i}`}>{e}</li>)}</ul> : COPY.noEvents}</td>
             </tr>
           ))}
         </tbody>

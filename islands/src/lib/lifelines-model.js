@@ -27,6 +27,8 @@
 
 export const MAX_LINES = 40;
 
+import { placeChain } from "./navigator-model.js";
+
 const isNum = (n) => typeof n === "number" && Number.isFinite(n);
 
 /** The mark one person draws: {kind: "line"|"dot"|"none", start, end, ongoing, fuzzy}. Years are integers; `fuzzy` fades the ends. */
@@ -251,8 +253,11 @@ export function tableOf(graph, model) {
     if (r.type !== "line") continue;
     const p = r.person;
     const events = [];
-    if (p.birthPlace) events.push(`born in ${p.birthPlace}`);
-    if (p.deathPlace) events.push(`died in ${p.deathPlace}`);
+    // places are place ids: resolve them to the chain, and a living person has no place (the same rule as the navigator's placeLine)
+    const bp = p.living ? null : placeChain(graph, p.birthPlace);
+    const dp = p.living ? null : placeChain(graph, p.deathPlace);
+    if (bp) events.push(`born in ${bp}`);
+    if (dp) events.push(`died in ${dp}`);
     for (const u of orderedUnions(graph, r.id)) {
       const partner = u.partner && graph.person(u.partner);
       const kids = u.children.length;

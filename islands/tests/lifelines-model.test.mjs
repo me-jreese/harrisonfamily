@@ -139,6 +139,17 @@ test("branchesOf: parents and the focus, then one panel per partner family and p
   for (const x of b) for (const u of x.unions) for (const i of [...u.nodes, ...u.kids, u.from, u.to]) assert.ok(i >= 0 && i < x.rows.length);
 });
 
+test("branchesOf: several unions, and a partner row with no children after it, each open their own panel", () => {
+  const g = fixture();
+  const m = buildLifelines(g, "I8010", { today: TODAY });
+  const b = branchesOf(m);
+  const partners = ["I8020", "I8021", "I8022"].filter((id) => idx(m, id) >= 0);
+  assert.ok(partners.length >= 2, "the fixture has several partners of the focus person");
+  for (const id of partners) assert.equal(b.filter((x) => x.rows[0].id === id).length, 1, `${id} opens exactly one panel`);
+  // a partner whose union has no children is still a panel of its own, and the next partner starts a new one (panels are contiguous)
+  assert.deepEqual(b.flatMap((x) => x.rows.map((r) => r.at)), m.rows.map((_, i) => i));
+});
+
 test("branchesOf: a lone person is one panel, and an empty model has none", () => {
   const g = fixture();
   assert.deepEqual(branchesOf(buildLifelines(g, "nobody", { today: TODAY })), []);
@@ -155,7 +166,11 @@ test("branchesOf on a capped 2,000-person graph: the panels hold the shown rows 
 
 test("tableOf lists the same people as the lifelines, in order, with born, died and events in words", () => {
   const raw = JSON.parse(readFileSync(new URL("./fixtures/lifelines-graph.json", import.meta.url), "utf8"));
-  raw.people.find((p) => p.id === "I8010").birthPlace = "Exampleton";
+  raw.places = [{ id: "P1", name: "Exampleton", parent: "P2" }, { id: "P2", name: "Sampleshire", parent: null }];
+  raw.people.find((p) => p.id === "I8010").birthPlace = "P1";
+  raw.people.find((p) => p.id === "I8010").deathPlace = "P2";
+  raw.people.find((p) => p.id === "I8031").birthPlace = "P1";
+  raw.people.find((p) => p.id === "I8031").deathPlace = "P2";
   const g = parseGraph(JSON.stringify(raw));
   const m = buildLifelines(g, "I8010", { today: TODAY });
   const t = tableOf(g, m);
@@ -163,10 +178,13 @@ test("tableOf lists the same people as the lifelines, in order, with born, died 
   const focus = t.find((r) => r.id === "I8010");
   assert.equal(focus.born, "1908");
   assert.equal(focus.died, "1985");
-  assert.ok(focus.events.includes("born in Exampleton"));
+  assert.ok(focus.events.includes("born in Exampleton, Sampleshire"), "a place id resolves to its chain, never the raw id");
+  assert.ok(focus.events.includes("died in Sampleshire"));
+  assert.ok(!focus.events.some((e) => /P1|P2/.test(e)));
   assert.ok(focus.events.some((e) => e === "family with Wren Alder from about 1932, 2 children"));
   assert.ok(focus.events.some((e) => e === "family with Linnet Hollin, 1 child"), "an undated union has no year");
   const living = t.find((r) => r.id === "I8031");
   assert.equal(living.died, "living");
+  assert.ok(!living.events.some((e) => /^(born|died) in /.test(e)), "a living person gets no place event");
   assert.equal(t.find((r) => r.id === "I8033").born, "unknown");
 });
