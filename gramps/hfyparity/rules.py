@@ -56,6 +56,16 @@ RULES: Dict[str, Dict[str, str]] = {
                    "present on both, the checksum differing) are explained; the media beyond n stay unexplained.",
         "source": "HFY-TSK-374, sync.md 5.5, BRD2 11.1, redaction-v1.json media.exifGpsMime",
     },
+    "media-baseline-unhydrated": {
+        "summary": "A Media entry's legacy record was captured while its file was a Dropbox online-only placeholder, so the legacy export "
+                   "holds the checksum of the empty file with size 0 (or a null checksum and size with missing true), where the shadow "
+                   "output, rendered from what the add-on uploaded once the file was available, holds a real checksum, a size above 0 and "
+                   "missing false. Every other field of the record is equal. Seen on the media file, its media/index.json entry and a "
+                   "person's primaryPhoto and mediaGallery[], which must differ in the same fields only. Counted only under "
+                   "--expect-baseline-unhydrated <n>: up to n media are explained; the media beyond n stay unexplained. A media that "
+                   "media-location-stripped explains keeps that rule and does not use the allowance.",
+        "source": "HFY-TSK-376, sync.md 5.5, BRD2 11.1",
+    },
     "held-object": {
         "summary": "An object the add-on held whole (for example rule scan.phone) has a legacy file and no shadow file, and its "
                    "entry is gone from the area's index. Counted only under --expect-holds <n>, which allows up to n such "

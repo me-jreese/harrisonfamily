@@ -1,12 +1,12 @@
 """hfy-parity: the arguments, the counts-only report and the exit codes (HFY-TSK-370). Standard library only.
 
-    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--expect-stripped <n> [--stripped-sidecar <state.sqlite>]] [--json]
+    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--expect-stripped <n> [--stripped-sidecar <state.sqlite>]] [--expect-baseline-unhydrated <n>] [--json]
 
 Exit codes:
     0   no difference at all (a difference that only the normalisation of generatedAt and index order hides does not count)
     10  differences exist and every one is explained by a rule
     20  at least one difference is unexplained
-    64  usage error (a negative or non-integer --expect-holds or --expect-stripped included)
+    64  usage error (a negative or non-integer --expect-holds, --expect-stripped or --expect-baseline-unhydrated included)
     69  the shadow output is unreachable or holds none of the renderer's files
     70  an internal error (the exception class is printed, never its message)
     78  the legacy folder is missing or holds none of the files to compare
@@ -70,6 +70,11 @@ def _parser(err: TextIO) -> _Parser:
     parser.add_argument("--stripped-sidecar", default=None, metavar="STATE_SQLITE",
                         help="with --expect-stripped: the add-on's state.sqlite of the tree (read-only). Only the media it recorded as "
                              "sent without their location can be explained; no handle is printed")
+    parser.add_argument("--expect-baseline-unhydrated", type=_holds_count, default=None, metavar="N",
+                        help="the number of media whose legacy record was captured while the file was an online-only placeholder (checksum of "
+                             "the empty file and size 0, or a null checksum and size with missing true) and whose shadow record holds the real "
+                             "checksum and size, all else equal: up to N such media are explained as media-baseline-unhydrated; more stay "
+                             "unexplained")
     parser.add_argument("--json", action="store_true", help="print the counts as JSON")
     return parser
 
@@ -101,6 +106,9 @@ def format_report(result: Dict[str, Any], exit_code: int) -> str:
     if "stripped" in result:
         lines += ["", "media sent without their location: allowed %d, media explained %d" % (
             result["stripped"]["allowed"], result["stripped"]["explained"])]
+    if "baseline_unhydrated" in result:
+        lines += ["", "media whose baseline was captured before the file was available: allowed %d, media explained %d" % (
+            result["baseline_unhydrated"]["allowed"], result["baseline_unhydrated"]["explained"])]
     if result["normalised"]:
         lines += ["", "normalised, not differences: " + _pairs(result["normalised"])]
     if result["unexplained_by_area"]:
@@ -163,7 +171,8 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
             if not any(compare_mod.is_owned(key) for key in shadow):
                 return fail(EXIT_SHADOW, "shadow_empty")
             result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds,
-                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles)
+                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles,
+                                                  expect_baseline_unhydrated=args.expect_baseline_unhydrated)
         else:
             previous = None
             try:
@@ -180,7 +189,8 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
                     if not any(compare_mod.is_owned(key) for key in shadow):
                         return fail(EXIT_SHADOW, "shadow_empty")
                     result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds,
-                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles)
+                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles,
+                                                  expect_baseline_unhydrated=args.expect_baseline_unhydrated)
             finally:
                 if previous is not None:
                     signal.signal(signal.SIGTERM, previous)
