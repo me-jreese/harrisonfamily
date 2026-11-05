@@ -66,18 +66,21 @@ export default function KinshipPanel({ graph, viewer, focus, onFocus, headingRef
   const heading = headingRef || mine;
   useEffect(() => { heading.current?.focus(); }, []);
   const name = graph.person(focus)?.name || "";
+  // Re-centring re-renders the chain, so the button that was clicked may be gone; the navigator then moves focus to its own new heading
+  // (FocusNavigator in islands/tree.jsx), so the keyboard is never dropped to the body.
   const toggle = (k) => setOpen((cur) => (cur === k ? null : k));
   return (
     <section className="hfy-kin" aria-labelledby="hfy-kin-title" data-kin-panel>
       <h2 id="hfy-kin-title" tabIndex={-1} ref={heading}>{COPY.title}</h2>
-      <p className="hfy-kin__sentence" data-kin-sentence>
-        {model.state === "self" ? COPY.self : model.state === "missing" ? COPY.missing : <><PersonName id={focus} name={name} /> {model.phrase}</>}
-      </p>
       {model.routes.length ? (
         <ol className="hfy-kin__routes" aria-label="routes from you">
           {model.routes.map((r, i) => <Route key={r.key} graph={graph} route={r} index={i} total={model.routes.length} focus={focus} onFocus={onFocus} />)}
         </ol>
       ) : null}
+      {model.hidden ? <p className="hfy-tree__dim" data-kin-hidden>{COPY.moreRoutes(model.hidden)}</p> : null}
+      <p className="hfy-kin__sentence" data-kin-sentence>
+        {model.state === "self" ? COPY.self : model.state === "missing" ? COPY.missing : <><PersonName id={focus} name={name} /> {model.phrase}</>}
+      </p>
       <div className="hfy-kin__shortcuts" role="group" aria-label="jump to">
         <button type="button" className="hfy-tree__view" data-kin-shortcut="grandparents" aria-expanded={open === "grandparents" ? "true" : "false"} aria-controls="hfy-kin-grandparents" onClick={() => toggle("grandparents")}>{COPY.grandparents}</button>
         <button type="button" className="hfy-tree__view" data-kin-shortcut="cousins" aria-expanded={open === "cousins" ? "true" : "false"} aria-controls="hfy-kin-cousins" onClick={() => toggle("cousins")}>{COPY.cousins}</button>

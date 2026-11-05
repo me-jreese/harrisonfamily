@@ -6,12 +6,13 @@
 //   kinshipModel(graph, viewer, other)  {state, phrase, routes}
 //       state    "self" | "related" | "marriage" | "none" | "missing"
 //       phrase   the sentence after the person's name ("is your first cousin."); "" when state is "self" or "missing"
+//       hidden   how many routes beyond ROUTE_CAP were left out (0 almost always)
 //       routes   [{steps:[{ids:[id...], tag, cards:[{id, label}]}], key}], each from the viewer (first step) to the person (last step); two or more when
 //                the same people are related through different ancestors (pedigree collapse), most direct first
 //   grandparentsOf(graph, viewer)       [{id, name, label}] the viewer's grandparents
 //   cousinsOf(graph, viewer)            [{id, name, label}] the viewer's first cousins (children of the parents' brothers and sisters)
 
-import { NOT_CONNECTED, RELATED_BY_MARRIAGE, isRelationWord, relationLabel } from "./family-graph.js";
+import { RELATED_BY_MARRIAGE, isRelationWord, relationLabel } from "./family-graph.js";
 
 export const ROUTE_CAP = 6;
 export const COUSIN_CAP = 12;
@@ -25,6 +26,7 @@ export const COPY = {
   missing: "we couldn't find that person in the tree.",
   ancestor: "common ancestor",
   partner: "partner",
+  moreRoutes: (n) => `${n} more ${n === 1 ? "route" : "routes"} not shown.`,
   stepParent: "parent's partner",
   you: "you",
   grandparents: "my grandparents",
@@ -77,12 +79,15 @@ export function kinshipModel(graph, viewer, other) {
   if (viewer === other) return { state: "self", phrase: "", routes: [] };
   const label = relationLabel(graph, viewer, other);
   const paths = graph.relationPaths(viewer, other);
-  if (!paths.length || label === NOT_CONNECTED) return { state: "none", phrase: COPY.none, routes: [] };
-  if (label === RELATED_BY_MARRIAGE || !isRelationWord(label)) return { state: "marriage", phrase: COPY.marriage, routes: [] };
-  const groups = groupPaths(paths).slice(0, ROUTE_CAP);
+  // RELATED_BY_MARRIAGE is what relationLabel says when a longer chain of parent and partner links joins the two but no short path does.
+  if (label === RELATED_BY_MARRIAGE) return { state: "marriage", phrase: COPY.marriage, routes: [] };
+  if (!paths.length || !isRelationWord(label)) return { state: "none", phrase: COPY.none, routes: [] };
+  const all = groupPaths(paths);
+  const groups = all.slice(0, ROUTE_CAP);
   const routes = groups.map((g) => ({ key: g.key, steps: stepsOf(graph, viewer, g) }));
-  const phrase = groups.length > 1 ? `is your ${label}, through ${groups.length} different routes.` : `is your ${label}.`;
-  return { state: "related", phrase, routes };
+  // The sentence counts every route found, not only the ones drawn; `hidden` says how many the panel left out.
+  const phrase = all.length > 1 ? `is your ${label}, through ${all.length} different routes.` : `is your ${label}.`;
+  return { state: "related", phrase, routes, hidden: all.length - routes.length };
 }
 
 const entry = (graph, viewer, id) => {

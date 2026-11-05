@@ -45,6 +45,8 @@ const loadChart = () => (chartImport ||= import("../lib/tree-chart.jsx"));
 // HFY-TSK-307 (flag familyVizKinship): the "how are we related?" panel is its own lazy chunk (lib/tree-kinship.jsx), fetched when the pill is first
 // opened. Unlike the chart, a failed load is retryable: the pill says so and the next open tries again.
 let kinshipImport = null;
+// The failure line is the model's COPY.loadFailed; kept as a literal so the pill does not pull the model in eagerly (tests/kinship-ui.test.mjs pins them equal).
+const LOAD_FAILED = "this didn't load. try again.";
 const loadKinship = () => (kinshipImport ||= import("../lib/tree-kinship.jsx").catch((e) => { kinshipImport = null; throw e; }));
 
 /** The pill and, once opened, the panel. Rendered only for a signed-in member who is in the graph, with familyVizKinship on. */
@@ -69,7 +71,7 @@ export function KinshipSlot({ graph, viewer, focus, onFocus }) {
   return (
     <div className="hfy-tree__kin" data-tree-kin>
       <button type="button" ref={pill} className="hfy-tree__view hfy-kin__pill" aria-expanded={open ? "true" : "false"} aria-controls="hfy-kin-region" data-tree-kin-pill onClick={() => setOpen((v) => !v)}>how are we related?</button>
-      {failed ? <p className="hfy-tree__dim" role="status">this didn't load. try again.</p> : null}
+      {failed ? <p className="hfy-tree__dim" role="status">{LOAD_FAILED}</p> : null}
       <div id="hfy-kin-region">
         {open && Panel ? <Panel graph={graph} viewer={viewer} focus={focus} onFocus={onFocus} /> : null}
       </div>

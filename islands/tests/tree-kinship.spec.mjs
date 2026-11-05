@@ -41,7 +41,8 @@ test("the pill opens a vertical chain from the viewer up to the common ancestors
   await expect(panel(page)).toBeVisible();
   await expect(pill(page)).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("[data-kin-sentence]")).toHaveText("Sorrel Vance is your first cousin.");
-  await expect(page.locator("[data-kin-sentence] a")).toHaveAttribute("href", "/person/?id=K1004");
+  // the fixture ids are not Gramps ids, so PersonName draws the name as its span twin; a real id is a link (lib/person-name.js)
+  await expect(page.locator("[data-kin-sentence] .hfy-person-name")).toHaveText("Sorrel Vance");
   const steps = page.locator("[data-kin-route='0'] [data-kin-step]");
   await expect(steps).toHaveCount(5);
   await expect(steps.nth(0)).toContainText("Robin Mirren");
@@ -80,6 +81,30 @@ test("choosing a card re-centres the navigator", async ({ page }) => {
   await expect(page.locator("[data-tree-focus]")).toHaveAttribute("data-tree-focus", "K1001");
   await expect(panel(page)).toBeVisible();
   await expect(page.locator("[data-kin-sentence]")).toHaveText("Lark Mirren is your father.");
+  // the clicked card is gone from the chain: the navigator moves the keyboard to its own heading, never to the body
+  await expect.poll(() => page.evaluate(() => document.activeElement && document.activeElement !== document.body && document.activeElement.tagName)).toBe("H2");
+});
+
+test("the sentence comes after the chain of cards", async ({ page }) => {
+  await open(page);
+  await pill(page).click();
+  await expect(page.locator("[data-kin-sentence]")).toBeVisible();
+  const order = await page.locator("[data-kin-panel] > *").evaluateAll((els) => els.map((e) => (e.hasAttribute("data-kin-sentence") ? "sentence" : e.matches(".hfy-kin__routes") ? "routes" : e.tagName.toLowerCase())));
+  expect(order.indexOf("routes")).toBeGreaterThan(-1);
+  expect(order.indexOf("sentence")).toBeGreaterThan(order.indexOf("routes"));
+});
+
+test("a failed chunk load says so, and the next open tries again", async ({ page }) => {
+  let blocked = true;
+  await page.route(/tree-kinship[^/]*\.js/, (r) => (blocked ? r.abort() : r.continue()));
+  await open(page);
+  await pill(page).click();
+  await expect(page.getByText("this didn't load. try again.")).toBeVisible();
+  await expect(panel(page)).toHaveCount(0);
+  blocked = false;
+  await pill(page).click();
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByText("this didn't load. try again.")).toHaveCount(0);
 });
 
 test("the 'my grandparents' and 'my cousins' shortcuts re-centre the navigator", async ({ page }) => {
