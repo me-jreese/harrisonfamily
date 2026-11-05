@@ -468,7 +468,7 @@ def banner(docs, undo=True):
 
 
 NEXT_TEXT = {"resolve_conflicts": "decide the open conflicts (Check for changes shows them again)", "step_up": "sign in again to send the deletes",
-             "login": "sign in", "review_preview": "check for changes again", "retry": "run it again in a moment",
+             "login": "sign in", "cloud_bind": "bind the website to this tree (hfy-sync cloud-bind)", "review_preview": "check for changes again", "retry": "run it again in a moment",
              "close_gramps": "close Gramps", "rebase": "rebase this tree", "bind": "bind this tree", "review_incidents": "review the incident"}
 
 

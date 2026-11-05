@@ -107,6 +107,13 @@ def summary_line(doc):
         bits.append("run %s; re-based: %s, conflicts: %s, only on the website: %s, only on the desktop: %s, deleted on the desktop but still on the website: %s" % (
             doc.get("run_id"), r.get("rebased", 0), r.get("conflicts", 0), r.get("cloud_only", 0), r.get("desktop_only", 0),
             r.get("deleted_on_desktop", 0)))
+    if doc.get("action") == "cloud-bind":
+        # Field names and byte lengths, never a value (cloudbind.py).
+        cb = (doc.get("counts") or {}).get("cloud_bind") or {}
+        fields = cb.get("fields") or {}
+        if fields:
+            bits.append("POST /api/sync/bind %s: %s" % ("sent" if cb.get("sent") else "would send",
+                        ", ".join("%s (%d bytes)" % (k, fields[k]) for k in ("dbid", "fingerprint", "tree_name_sha256") if isinstance(fields.get(k), int))))
     if doc.get("action") in consts.PULL_ACTIONS:
         # What io needs to act on the run: the run id (`sync --yes --plan <run id>` names it) and the counts. Never a value.
         c = doc.get("counts") or {}

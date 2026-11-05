@@ -1,6 +1,6 @@
 # How to install and run the Gramps sync addon
 
-Use this page to put the `hfy_sync` addon into Gramps on the Mac that holds the family tree, check that it sees the tree, and bind the tree to the website. The addon is the desktop half of the sync design (HFY-PLN-002). This build is the skeleton (HFY-TSK-179) with the sign-in (HFY-TSK-180), the pull (HFY-TSK-205) and the push (HFY-TSK-206): it installs, reports status, binds a tree, signs you in to the website, shows and applies what the website changed, restores a backup, pushes the tree's changes, and refuses unsafe starts. It sends nothing until you run `push --yes` against a website whose cloud store has been bound to this tree, so installing it, and every other action on this page, changes nothing on the website.
+Use this page to put the `hfy_sync` addon into Gramps on the Mac that holds the family tree, check that it sees the tree, and bind the tree to the website. The addon is the desktop half of the sync design (HFY-PLN-002). This build is the skeleton (HFY-TSK-179) with the sign-in (HFY-TSK-180), the pull (HFY-TSK-205) and the push (HFY-TSK-206): it installs, reports status, binds a tree, signs you in to the website, shows and applies what the website changed, restores a backup, pushes the tree's changes, and refuses unsafe starts. It sends nothing until you run `push --yes` against a website whose cloud store has been bound to this tree (`cloud-bind`, step 4a), so installing it, and every other action on this page except `cloud-bind --yes`, changes nothing on the website.
 
 ## Before you start
 
@@ -51,6 +51,17 @@ gramps/bin/hfy-sync login --tree "<tree name>"
 Your browser opens the website's sign-in page. Sign in as the tree's owner and approve; the page then says you can close the tab. The addon waits five minutes. The refresh token is kept in your login Keychain, in an item that only the Python inside Gramps (and the `security` tool that created it) may read without a prompt. The short-lived access token is never stored. If macOS asks to unlock the Keychain, unlock it and run the command again (exit 77). `login --step-up` asks for a fresh sign-in and a second factor; the website requires it for deletes and rebinding. A token that has gone unused for 30 days expires, and the next run says `login`.
 
 If the sign-in fails with a certificate message (exit 78), do not work around it: the Mac's trust file is `/etc/ssl/cert.pem`, and the addon never turns verification off.
+
+### 4a. Bind the website's store to the tree
+
+`bind` (step 3) marks the tree on this Mac and sends nothing. The website's store starts with no tree bound to it, and `check`, `pull` and `push` stop with exit `78` and `cloud_unbound` until it is. With Gramps closed and after `login`:
+
+```sh
+gramps/bin/hfy-sync cloud-bind --tree "<tree name>"          # a look: exit 10, field names and byte lengths, nothing sent
+gramps/bin/hfy-sync cloud-bind --tree "<tree name>" --yes    # binds the website's store to this tree
+```
+
+Do it once. It sends the tree's folder name, the fingerprint from the local bind and the sha256 of the tree's name, as the owner. A repeat for the same tree exits `0`. Exit `69` means the website's sync is switched off or paused (wait), and `78` something to fix (another tree is bound, the sign-in is not the owner's, or the addon is too old). Every exit code and what to do about it is in [Sync Gramps with the website](sync-gramps-with-the-website.md#bind-the-websites-store-to-the-tree).
 
 ### 5. See what the website changed
 
@@ -180,7 +191,7 @@ The wrapper exits with the `exit_code` in `~/Library/Application Support/hfy_syn
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | `0` | Done, or nothing to do | None |
-| `10` | A dry run found changes (a `bind`, `pull` or `push` without `--yes`, or `check`), or `--plan` found a different plan | Read the preview; run again with `--yes` (and `--plan <run id>` for a pull) if the plan is right |
+| `10` | A dry run found changes (a `bind`, `cloud-bind`, `pull` or `push` without `--yes`, or `check`), or `--plan` found a different plan | Read the preview; run again with `--yes` (and `--plan <run id>` for a pull) if the plan is right |
 | `20` | Partial: a conflict is open, a pulled object was skipped as a privacy incident, a change was held back, a push finished with something held, blocked, parked or in conflict, or desktop changes are waiting to go (`sync` only pulls: run `push`) | `next_action` says which: `resolve_conflicts`, `review_incidents`, `review_preview`, `step_up` or none. After a push read `<dbid>/status.json` for the counts and the sidecar's `holds` for the rules; `login --step-up` for parked deletes |
 | `64` | `--force-unlock` was given, the options were wrong, or `--plan` or `restore` named something that does not exist | Run again without it. The addon never forces a lock |
 | `65` | The snapshot failed verification, a relationship check failed inside the apply (nothing was applied), or the website refused some content (privacy or integrity) in a push; the rest was pushed | Run `check` and read the preview; for a push, file a bug: the addon's rules and the website's differ |
@@ -188,7 +199,7 @@ The wrapper exits with the `exit_code` in `~/Library/Application Support/hfy_syn
 | `70` | An internal error, or `status.json` is missing or belongs to another run (D41) | Read the newest file in `<dbid>/logs/`; if a pull stopped halfway, run it again: every step is safe to repeat |
 | `75` | The tree is open in Gramps (D01), a Gramps edit window is open (D45), another run holds `state.lock` (D14), there is not enough disk space for the backup, the network or the website was unavailable after three retries, or a push met a website change made while it ran (409) | Close Gramps (and its edit windows) and run again, or wait for the other run or the network |
 | `77` | You are not signed in, the sign-in was reused, revoked or expired, a fresh sign-in is needed (`step_up`), or the Keychain is locked (D42) | `gramps/bin/hfy-sync login` (add `--step-up` when `next_action` says `step_up`); unlock the Keychain |
-| `78` | Wrong tree (D03), the website holds another cloud tree (D50: run `rebase`), unsupported schema or Gramps version (D04), sync state missing (D12) or damaged (D13), the website is not bound yet (`bind`), the addon is too old for the website (`update_addon`), or the website's certificate could not be verified | See below |
+| `78` | Wrong tree (D03), the website holds another cloud tree (D50: run `rebase`), unsupported schema or Gramps version (D04), sync state missing (D12) or damaged (D13), the website's store is not bound to this tree yet (`cloud_unbound`: run `cloud-bind`, step 4a), `cloud-bind` met another tree or a sign-in that is not the owner's, the addon is too old for the website (`update_addon`), or the website's certificate could not be verified | See below |
 
 If Gramps is closed and the command still says the tree is open, the `lock` file is left over from a crash. Open the tree once in the Gramps window and close it normally. Never use `Gramps -u` or `--force-unlock`: the wrapper and the tool both refuse it.
 

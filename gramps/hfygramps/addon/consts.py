@@ -30,8 +30,8 @@ KEYCHAIN_SERVICE = "us.harrisonfamily.hfy_sync"  # sync.md 6
 KEYCHAIN_ACCOUNT_OWNER = "owner"
 KEYCHAIN_ACCOUNT = DEFAULT_SERVER + "/auth|" + KEYCHAIN_ACCOUNT_OWNER
 
-ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind", "rebase", "restore")
-IMPLEMENTED_ACTIONS = ("status", "bind", "login", "check", "pull", "push", "sync", "rebase", "restore")  # `sync` runs the pull half only; `push` is its own action
+ACTIONS = ("status", "login", "check", "pull", "push", "sync", "bind", "cloud-bind", "rebase", "restore")
+IMPLEMENTED_ACTIONS = ("status", "bind", "login", "cloud-bind", "check", "pull", "push", "sync", "rebase", "restore")  # `sync` runs the pull half only; `push` is its own action; `cloud-bind` (HFY-TSK-369) tells the website which tree it belongs to
 PULL_ACTIONS = ("check", "pull", "sync")  # the actions that run the pull side (sync.md 8.3 steps 3 to 11)
 # Gramps classes in the order a push sends them (sync.md 8.3 step 12); the sidecar `base.class` column uses these names.
 CLASSES = ("Tag", "Place", "Note", "Source", "Repository", "Citation", "Media", "Event", "Person", "Family")
@@ -40,9 +40,10 @@ CLASSES = ("Tag", "Place", "Note", "Source", "Repository", "Citation", "Media", 
 OK, CHANGES_PENDING, PARTIAL, REFUSED, FAILED = "ok", "changes_pending", "partial", "refused", "failed"
 RESULTS = (OK, CHANGES_PENDING, PARTIAL, REFUSED, FAILED)
 
-# status.json "next_action": sync.md 4.3, plus `bind` and `rebase` (BRD2 D50) for the two binding recoveries
+# status.json "next_action": sync.md 4.3, plus `bind` and `rebase` (BRD2 D50) for the two binding recoveries, and `cloud_bind` (HFY-TSK-369)
+# for the step between `login` and `check`: the website's store is not bound to this tree yet (`hfy-sync cloud-bind`)
 NEXT_ACTIONS = ("none", "login", "step_up", "resolve_conflicts", "retry", "update_addon", "open_bound_tree", "close_gramps",
-                "bind", "rebase", "review_incidents", "review_preview")
+                "bind", "cloud_bind", "rebase", "review_incidents", "review_preview")
 
 # Exit codes of the wrapper (sync.md 8.7)
 EXIT_OK = 0
@@ -67,10 +68,14 @@ REFUSALS = {
     "D13": (EXIT_CONFIG, "rebase", "The sync state for this tree is damaged or from a newer addon. Rebase it from the Gramps window."),
     "D14": (EXIT_TEMPORARY, "retry", "Another website sync run is in progress. Wait for it to finish."),
 }
-NOT_ENABLED = (EXIT_NOT_ENABLED, "none", "This action is not in this build of the addon; status, bind, login, check, pull, push, sync (the pull half) and restore are available.")
+NOT_ENABLED = (EXIT_NOT_ENABLED, "none", "This action is not in this build of the addon; status, bind, login, cloud-bind, check, pull, push, sync (the pull half), rebase and restore are available.")
 REFUSALS["config_unreadable"] = (EXIT_CONFIG, "none", "config.json is unreadable. Fix or remove it, then bind the tree again; the tree and the website are untouched.")
 REFUSALS["usage"] = (EXIT_USAGE, "none", "Unknown action or option. See hfy-sync for the list of actions.")
 REFUSALS["unbound"] = (EXIT_CONFIG, "bind", "This tree is not bound to the website yet. Bind it first (hfy-sync bind --yes); nothing was read or sent.")
+# `cloud_unbound` (check, pull, push, rebase): the tree is bound on this Mac, but the website's store has no tree bound to it yet.
+# The step that fixes it is `hfy-sync cloud-bind` (cloudbind.py), run once after `login` and before the first `check`.
+CLOUD_UNBOUND_MESSAGE = ("The website's store is not bound to this tree yet. Run hfy-sync cloud-bind (it only looks until you add --yes), "
+                         "then run this again; nothing was changed.")
 EDITORS_OPEN_MESSAGE = "close open edit windows to sync"  # D45, verbatim in the window and in the refusal
 REFUSALS["D45"] = (EXIT_TEMPORARY, "retry", "A Gramps edit window is open: %s, then apply again." % EDITORS_OPEN_MESSAGE)
 REFUSALS["D50"] = (EXIT_CONFIG, "rebase", "The website's store is a different cloud tree than the one this tree last synced with (a re-seed or recovery). Rebase it from the Gramps window; nothing is sent automatically.")

@@ -126,6 +126,15 @@ class Wrapper(WrapperCase):
         self.wrap("status", "--tree", "Fixture Tree")
         self.assertEqual(dict(kv.split("=", 1) for kv in self.calls()[-1][5].split(","))["dry_run"], "0", "status writes nothing, so it is not a dry run")
 
+    def test_cloud_bind_is_a_dry_run_unless_yes_and_is_a_known_action(self):  # HFY-TSK-369
+        self.wrap("cloud-bind", "--tree", "Fixture Tree")
+        opts = dict(kv.split("=", 1) for kv in self.calls()[-1][5].split(","))
+        self.assertEqual((opts["action"], opts["dry_run"], opts["yes"]), ("cloud-bind", "1", "0"))
+        self.wrap("cloud-bind", "--tree", "Fixture Tree", "--yes")
+        opts = dict(kv.split("=", 1) for kv in self.calls()[-1][5].split(","))
+        self.assertEqual((opts["action"], opts["dry_run"], opts["yes"]), ("cloud-bind", "0", "1"))
+        self.assertEqual(self.wrap("cloud-bund", "--tree", "Fixture Tree").returncode, 64)
+
     def test_missing_or_stale_status_json_is_70(self):  # D41
         self.assertEqual(self.wrap("status", "--tree", "Fixture Tree", FAKE_MODE="none").returncode, 70)
         proc = self.wrap("status", "--tree", "Fixture Tree", FAKE_MODE="stale")

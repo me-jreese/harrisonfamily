@@ -19,7 +19,7 @@ It is a plain Tool, not a BatchTool, so Gramps keeps undo (sync.md 8.1). In the 
 bind an unbound tree; on the command line it runs the action named in the options string and writes status.json, because
 Gramps' cli_tool swallows exceptions and the `hfy-sync` wrapper reads only that file.
 
-    Gramps -O <tree> -a tool -p name=hfy_sync,action=<status|bind|...>,dry_run=<0|1>,yes=<0|1>,run_id=<id>
+    Gramps -O <tree> -a tool -p name=hfy_sync,action=<status|bind|cloud-bind|...>,dry_run=<0|1>,yes=<0|1>,run_id=<id>
 """
 import os
 import sys
@@ -194,7 +194,7 @@ class HfySyncOptions(tool.ToolOptions):
         tool.ToolOptions.__init__(self, name, person_id)
         self.options_dict = {"action": "status", "dry_run": 0, "allow_deletes": 0, "yes": 0, "step_up": 0, "run_id": "", "plan": "", "ui": ""}
         self.options_help = {
-            "action": ("=ACTION", "What to do", ["status", "login", "check", "pull", "push", "sync", "bind", "rebase"], False),
+            "action": ("=ACTION", "What to do", ["status", "login", "check", "pull", "push", "sync", "bind", "cloud-bind", "rebase"], False),
             "dry_run": ("=0/1", "Report what would change; write nothing to the tree or the website", ["No", "Yes"], True),
             "allow_deletes": ("=0/1", "Allow deletes (never mass deletes)", ["No", "Yes"], True),
             "yes": ("=0/1", "Do not stop at the preview", ["No", "Yes"], True),

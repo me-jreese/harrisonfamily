@@ -17,11 +17,11 @@ The wrapper `gramps/bin/hfy-sync` exits with the `exit_code` in `~/Library/Appli
 | `20` | `EXIT_PARTIAL` | Partial: a conflict is parked (a pulled change that would leave a dangling reference or a one-sided link is parked as an integrity conflict that names the class and the Gramps ID, D19), a field is held, a delete waits for a step-up, or a change was skipped as a privacy incident | `resolve_conflicts`, `review_incidents`, `step_up` |
 | `64` | `EXIT_USAGE` | Usage: a wrong option or action, `--force-unlock` (D02), or a named plan or backup that does not exist | none |
 | `65` | `EXIT_SERVER_REFUSED` | The server refused data for privacy or integrity (D24, D25), a snapshot failed verification, or the relationship check inside the pull's transaction failed (the D19 backstop; nothing was applied) | open the preview |
-| `69` | `EXIT_NOT_ENABLED` | Sync is paused (the kill switch, D27) or not enabled | none |
+| `69` | `EXIT_NOT_ENABLED` | Sync is paused (the kill switch, D27) or not enabled; `cloud-bind` answers it for `404 not_enabled` and `503 sync_paused` | none |
 | `70` | `EXIT_INTERNAL` | An internal error, or `status.json` is missing or belongs to another run (D41) | read the log |
 | `75` | `EXIT_TEMPORARY` | Temporary: the tree is open in Gramps (D01), an edit window is open (D45), another run holds the lock (D14), no disk space (D15), the network or the cloud moved (D08, D22) | `retry`, `close_gramps` |
 | `77` | `EXIT_SIGN_IN` | Sign-in or step-up is needed (D06, D07), or the Keychain is locked (D42) | `login`, `step_up` |
-| `78` | `EXIT_CONFIG` | Configuration: the wrong tree (D03), an unsupported schema (D04), an addon that is too old (D05), the sync state missing or damaged (D12, D13), the cloud tree changed (D50) | `open_bound_tree`, `update_addon`, `rebase`, `bind` |
+| `78` | `EXIT_CONFIG` | Configuration: the wrong tree (D03), an unsupported schema (D04), an addon that is too old (D05), the sync state missing or damaged (D12, D13), the cloud tree changed (D50), the website's store not bound to this tree yet (`cloud_unbound`: run `hfy-sync cloud-bind`), or `cloud-bind` meeting another tree (`bound_other_tree`) or a sign-in that is not the owner's (`not_owner`) | `open_bound_tree`, `update_addon`, `rebase`, `bind`, `cloud_bind`, `login` |
 
 <!-- sync-exit-codes:end -->
 

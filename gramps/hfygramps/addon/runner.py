@@ -12,7 +12,7 @@ import sys
 import time
 import webbrowser
 
-from . import binding, consts, keychain, oauth, paths, preflight, pull, push, rebase, sidecar, status, transport
+from . import binding, cloudbind, consts, keychain, oauth, paths, preflight, pull, push, rebase, sidecar, status, transport
 
 
 class TreeAccess:
@@ -209,6 +209,11 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
             return _bind(tree, mode, options, tp, log, config, outcome)
         if options.action == "login":
             return _login(options, config, log, services, environ)
+        if options.action == "cloud-bind":
+            if not outcome["bound"]:
+                log.line("refused: not bound")
+                return _refused("unbound")
+            return cloudbind.run(tree, mode, options, tp, log, config, outcome.get("side"), outcome, services, environ)
         if options.action == "rebase":
             if not outcome["bound"]:
                 log.line("refused: not bound")

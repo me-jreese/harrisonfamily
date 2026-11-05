@@ -76,8 +76,7 @@ def _run(ctx, dry):
     bound = handshake.get("bound")
     if not isinstance(bound, dict):
         log.line("cloud not bound")
-        return pull._fail("refused", consts.EXIT_CONFIG, "bind", "cloud_unbound",
-                          "The website has no tree bound to it yet. Bind the website's store to this tree first.")
+        return pull._fail("refused", consts.EXIT_CONFIG, "cloud_bind", "cloud_unbound", consts.CLOUD_UNBOUND_MESSAGE)
     if bound.get("dbid") != tree.dbid:
         log.line("cloud bound to another tree")
         return pull._refuse("D03")

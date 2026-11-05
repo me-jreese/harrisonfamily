@@ -40,10 +40,37 @@ This is runbook 19.2. It writes the cloud store: the Apply at the end pushes the
 1. **Wait for the orchestrator's message that sync is enabled and writes are on** (the G-seed message). Until it arrives, do not Apply. It confirms that `writes_enabled` is on, which io's G-seed approval covers and which is a `sync-admin.mjs` write the orchestrator makes after io's go-ahead.
 2. **Close every Gramps edit window, and do not edit the tree until Apply has finished.** The window refuses to apply while an editor is open (D45), and an edit made during the run is a stale-hash re-plan (D18).
 3. Mark the Dropbox media folders **Available offline**. About half the record media are online-only, and a placeholder file cannot be uploaded (D29).
-4. Open the tree. **Website sync... > Sign in...** (a passkey), then **Bind this tree**.
-5. **Check** (a dry run). Read the **To the website** list: everything is a create. Held items name the rule and the characters to edit in Gramps.
-6. **Apply.** It opens a push session, uploads the blobs and completes the session. This writes app-table items.
-7. The orchestrator runs the shadow render and sends the parity report. Approve the cutover only after you have read it ([Cut over to the cloud store](#cut-over-to-the-cloud-store)).
+4. Open the tree. **Website sync... > Sign in...** (a passkey), then **Bind this tree**. That binds the tree on this Mac only and sends nothing.
+5. **Bind the website's store to the tree, once** ([below](#bind-the-websites-store-to-the-tree)). Close the tree in Gramps, then from the command line: `gramps/bin/hfy-sync cloud-bind --tree "<tree name>"` (a look, exit `10`), then the same with `--yes`. This writes app-table items (the store's binding and its audit record), so run it only after the G-seed message in step 1; until sync is enabled it exits `69`. Without it `check` and `Apply` stop with exit `78` and `cloud_unbound`.
+6. **Check** (a dry run). Read the **To the website** list: everything is a create. Held items name the rule and the characters to edit in Gramps.
+7. **Apply.** It opens a push session, uploads the blobs and completes the session. This writes app-table items.
+8. The orchestrator runs the shadow render and sends the parity report. Approve the cutover only after you have read it ([Cut over to the cloud store](#cut-over-to-the-cloud-store)).
+
+#### Bind the website's store to the tree
+
+The website's store starts with no tree bound to it, and the Gramps window's **Bind this tree** does not change that. `hfy-sync cloud-bind` is the step that does, and it belongs between `login` and the first `check`. Run it with Gramps closed, once:
+
+```sh
+gramps/bin/hfy-sync cloud-bind --tree "<tree name>"          # a look: exit 10; prints field names and byte lengths, sends nothing
+gramps/bin/hfy-sync cloud-bind --tree "<tree name>" --yes    # sends the bind; exit 0 when it is bound
+```
+
+It needs the tree bound on this Mac (`hfy-sync bind --yes`, or the window's **Bind this tree**) and the owner's sign-in (`hfy-sync login`). Running it again is safe: for the same tree it exits `0`. Read the result in the line it prints and in the exit code:
+
+| Exit | Code word | Meaning | What to do |
+| --- | --- | --- | --- |
+| `0` | none, or `already_bound` | Bound, or already bound to this tree | Run `check` |
+| `10` | none | The look; nothing was sent | Run it again with `--yes` |
+| `65` | `validation` | The website refused the values; nothing was stored | Run `status` and `check`, and ask io |
+| `69` | `not_enabled`, `sync_paused` | The website's sync is switched off or paused | Wait for the orchestrator's message that sync is enabled; nothing is wrong on this Mac |
+| `70` | `bad_bind_answer` | The website answered in a form this addon does not read | Run `check` to see whether the bind took |
+| `75` | `network`, `retryable` and the like | The website could not be reached or was busy | Run it again |
+| `77` | `not_signed_in`, `unauthenticated`, `invalid_grant`, `keychain_unavailable`, `step_up_required` | No usable owner sign-in | `hfy-sync login` (`--step-up` when it says `step_up`); unlock the Keychain |
+| `78` | `bound_other_tree` | The website is already bound to a different tree | Open that tree. Binding another tree on purpose is a rebind, which needs a fresh sign-in and is not part of this command |
+| `78` | `not_owner` | The sign-in is not the tree owner's | `hfy-sync login` with the owner's account |
+| `78` | `unbound`, `D03`, `D13`, `config_unreadable`, `upgrade_required`, `tls_verify_failed` | This Mac's side is not ready, or the addon or the certificate check is the problem | The message names the fix |
+
+**`check` exits `78` with `cloud_unbound`: this step is missing.** Run `cloud-bind`, then `check` again. **Exit `69` and exit `78` are different.** `69` is the website's switch (sync is not enabled, or writes are paused): only the orchestrator changes it, so wait. `78` is something to fix: a different tree is bound, the sign-in is not the owner's, the addon is too old, or the store has no tree bound yet. The exit codes keep their usual meaning for every other command ([Sync errors and exit codes](../reference/sync-errors.md#exit-codes)); the command's design and what it sends are in the [Gramps README](../../gramps/README.md#binding-the-websites-store).
 
 ### Daily use
 
@@ -56,7 +83,7 @@ gramps/bin/hfy-sync check --tree "<tree name>"            # the line it prints n
 gramps/bin/hfy-sync sync --tree "<tree name>" --yes --plan <run_id>
 ```
 
-`--plan <run_id>` applies only the plan you reviewed. When the new plan's hash differs from that preview, the run applies nothing and exits `10`; run `check` again and review the new preview. The exit codes and the details in `status.json` are in [Sync errors and exit codes](../reference/sync-errors.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
+`--plan <run_id>` applies only the plan you reviewed. When the new plan's hash differs from that preview, the run applies nothing and exits `10`; run `check` again and review the new preview. The exit codes and the details in `status.json` are in [Sync errors and exit codes](../reference/sync-errors.md#exit-codes). The site shows the change after the next render, usually within a minute. If it does not, check the render state with `node api/scripts/sync-admin.mjs render --dry-run --full` ([Operate the sync store](operate-the-sync-store.md#force-a-render)).
 
 ### Conflicts and held items
 
@@ -167,7 +194,7 @@ The script is [`scripts/infra/apply-data-write-guard.sh`](../../scripts/infra/ap
 ### Then live
 
 1. Set `RenderMode` to `live` on `<app-stack>` with a parameter-only change set ([Deploy the app stack](deploy-the-app-stack.md)). Review the change set before you execute it. It must change `RenderMode` and nothing else.
-2. The first live pass writes every desired key and deletes nothing, because no live manifest exists ([The first live pass](../reference/sync-render.md#the-first-live-pass)). Watch it finish: `node api/scripts/sync-admin.mjs render --dry-run` shows `rendered_seq` reaching the head seq.
+2. The first live pass writes every desired key and deletes nothing, because no live manifest exists ([The first live pass](../reference/sync-render.md#the-first-live-pass)). Watch it finish: `node api/scripts/sync-admin.mjs render --dry-run --full` shows `rendered_seq` reaching the head seq.
 3. Read `render/reports/<seq>.json` in the sync bucket: keys and counts only. The expected number of deletes is `0`.
 
 ### Then verify
