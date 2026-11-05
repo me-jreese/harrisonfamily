@@ -13,6 +13,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1210,6 +1211,287 @@ class MediaBaselineUnhydrated(unittest.TestCase):
         self.assertEqual(with_option.stderr, "")
 
 
+# ---- HFY-TSK-376 (follow-up): the cloud stores every JPEG as .jpg, the legacy export kept the file's own suffix ---------------
+
+def with_person_index_photos(site):
+    """person/index.json carries each person's primaryPhoto as a bare s3Key text (as the renderer's search manifest does)."""
+    keys = {"I9001": load(site, PERSON1)["primaryPhoto"]["s3Key"], "I9002": load(site, SCAN_PERSON)["primaryPhoto"]["s3Key"]}
+    edit(site, "person/index.json", lambda d: [e.update(primaryPhoto=keys[e["grampsId"]]) for e in d["people"]])
+
+
+def respell(site, gid, key):
+    """Set the s3Key of O9001 or O9002 on the media file, the index entry, the person fields and the person/index.json text."""
+    set_media(site, gid, {"s3Key": key})
+    person_gid = "I9001" if gid == "O9001" else "I9002"
+    edit(site, "person/index.json", lambda d: [e.update(primaryPhoto=key) for e in d["people"] if e["grampsId"] == person_gid])
+
+
+def pair_with_jpeg_spelling(legacy_suffix=".jpeg", variants=("empty",), second_spelling=False):
+    """Legacy: O9001 (and O9002 with ``second_spelling``) is an empty capture whose s3Key ends in ``legacy_suffix``; shadow: .jpg."""
+    legacy, shadow = pair_with_unhydrated(variants)
+    for site in (legacy, shadow):
+        with_person_index_photos(site)
+    gids = ("O9001", "O9002") if second_spelling else ("O9001",)
+    for gid in gids:
+        respell(legacy, gid, "media/%s%s" % (hid(gid), legacy_suffix))
+    return legacy, shadow
+
+
+class MediaBaselineUnhydratedJpegSpelling(unittest.TestCase):
+    """The cloud stores every image/jpeg as media/<handle>.jpg (api/src/sync/media.js MEDIA_TYPES); the legacy export kept the file's suffix."""
+
+    def test_the_cloud_suffix_is_the_one_the_code_uses(self):
+        from hfygramps.addon import mediafile
+        from hfygramps.render.transform import derive_media_extension
+        with open(os.path.join(os.path.dirname(GRAMPS), "api", "src", "sync", "media.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        match = re.search(r"MEDIA_TYPES = Object\.freeze\(\{(.*?)\}\)", js, re.S)
+        self.assertIsNotNone(match)
+        cloud = dict(re.findall(r'"([a-z/]+)":\s*"(\.[a-z]+)"', match.group(1)))
+        self.assertEqual(cloud["image/jpeg"], compare_mod.CLOUD_JPEG_SUFFIX)
+        self.assertEqual(mediafile.EXTENSIONS["image/jpeg"], compare_mod.CLOUD_JPEG_SUFFIX)
+        self.assertEqual(compare_mod.JPEG_MIME, "image/jpeg")
+        # the legacy ETL keeps the file's own lower-cased suffix: that is where .jpeg comes from
+        self.assertEqual(derive_media_extension("/x/Photo.JPEG", "image/jpeg"), ".jpeg")
+        self.assertEqual(sorted(compare_mod.LEGACY_JPEG_SUFFIXES), [".jpeg"])
+
+    def test_a_jpeg_spelling_is_explained_on_all_five_places_and_counts_once(self):
+        for suffix in (".jpeg", ".JPEG", ".Jpeg"):
+            for variant in ("empty", "null"):
+                legacy, shadow = pair_with_jpeg_spelling(suffix, (variant,))
+                code, doc = report_with(legacy, shadow, OPT, "1")
+                self.assertEqual((code, doc["unexplained"], doc["verdict"]), (10, 0, "explained"), (suffix, variant))
+                row = doc["rules"][RULE]
+                self.assertEqual((row["changed"], row["areas"]), (4, {"person": 1, "media": 1, "index": 2}), (suffix, variant))
+                self.assertEqual(list(doc["rules"]), [RULE])
+                self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1}, "one media uses one unit of the allowance")
+
+    def test_without_the_option_or_beyond_the_count_the_spelling_stays_unexplained(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        code, doc = report_with(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 2})
+        self.assertEqual(set(doc["unexplained_by_field"]), {"checksum", "size", "s3Key", "primaryPhoto"})
+        code, doc = report_with(legacy, shadow, OPT, "0")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"media": 1, "person": 1, "index": 2}))
+        # two such media, one unit: the media after the first stay unexplained, person/index.json included
+        legacy, shadow = pair_with_jpeg_spelling(variants=("empty", "empty"), second_spelling=True)
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1})
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 2})
+        code, doc = report_with(legacy, shadow, OPT, "2")
+        self.assertEqual((code, doc["unexplained"], doc["baseline_unhydrated"]), (10, 0, {"allowed": 2, "explained": 2}))
+
+    def test_a_spelling_that_is_not_jpeg_to_jpg_on_the_same_stem_is_not_explained(self):
+        h = hid("O9001")
+        near_misses = (
+            ("another stem", "media/%s.jpeg" % hid("O9999")),
+            ("a stem with a suffix", "media/%sx.jpeg" % h),
+            ("a path", "media/sub/%s.jpeg" % h),
+            ("another folder", "uploads/%s.jpeg" % h),
+            ("another case of the folder", "Media/%s.jpeg" % h),
+            ("png to jpg", "media/%s.png" % h),
+            ("gif to jpg", "media/%s.gif" % h),
+            ("tif to jpg", "media/%s.tif" % h),
+            ("jpe", "media/%s.jpe" % h),
+            ("jfif", "media/%s.jfif" % h),
+            ("a double suffix", "media/%s.jpeg.jpg" % h),
+            ("a space", "media/%s.jpeg " % h),
+            ("no suffix", "media/%s" % h),
+            ("the same key", "media/%s.jpg" % h),
+            ("text that is not a key", 5))
+        for label, legacy_key in near_misses:
+            legacy, shadow = pair_with_jpeg_spelling()
+            respell(legacy, "O9001", legacy_key)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            if label == "the same key":
+                self.assertEqual((code, doc["unexplained"]), (10, 0), label)       # no spelling difference at all: the plain pattern
+                continue
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+            self.assertNotIn(RULE, doc["rules"], label)
+            self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 2}, label)
+
+    def test_the_reverse_spelling_and_another_shadow_suffix_are_not_explained(self):
+        for label, legacy_suffix, shadow_suffix in (("jpg to jpeg", ".jpg", ".jpeg"), ("jpeg to JPG", ".jpeg", ".JPG"),
+                                                    ("jpeg to jpeg", ".jpeg", ".jpeg"), ("jpeg to png", ".jpeg", ".png")):
+            legacy, shadow = pair_with_jpeg_spelling(legacy_suffix)
+            respell(shadow, "O9001", "media/%s%s" % (hid("O9001"), shadow_suffix))
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            if legacy_suffix == shadow_suffix:
+                # the same key on both sides: nothing about the key, the plain pattern applies
+                self.assertEqual((code, doc["unexplained"]), (10, 0), label)
+                continue
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+
+    def test_the_spelling_needs_a_jpeg_mime_and_every_other_field_equal(self):
+        for label, change in (
+                ("a png mime", lambda d: d.update(mime="image/png")),
+                ("no mime", lambda d: d.pop("mime")),
+                ("a null mime", lambda d: d.update(mime=None)),
+                ("an upper-case mime", lambda d: d.update(mime="IMAGE/JPEG"))):
+            legacy, shadow = pair_with_jpeg_spelling()
+            edit(legacy, MEDIA_PHOTO, change)
+            edit(shadow, MEDIA_PHOTO, change)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+            self.assertNotIn(RULE, doc["rules"], label)
+        for label, field_change in (("title", lambda d: d.update(title="Another Title")), ("regions", lambda d: d.update(regions=[{"rect": [1]}])),
+                                    ("grampsId", lambda d: d.update(grampsId="O9777")), ("an added field", lambda d: d.update(extra=1))):
+            for spelled in (True, False):          # the spelling difference present, and the same key (.jpeg both sides) with the field differing
+                legacy, shadow = pair_with_jpeg_spelling()
+                if not spelled:
+                    respell(shadow, "O9001", "media/%s.jpeg" % hid("O9001"))
+                edit(shadow, MEDIA_PHOTO, field_change)
+                code, doc = report_with(legacy, shadow, OPT, "5")
+                self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), (label, spelled))
+                self.assertNotIn(RULE, doc["rules"], (label, spelled))
+
+    def test_an_entry_that_spells_the_key_otherwise_than_its_media_file_is_not_explained(self):
+        # the media file has the pair .jpeg / .jpg, an embedded entry has the pair .JPEG / .jpg, or no spelling difference at all
+        for place in ("index", "person"):
+            for entry_legacy_key in ("media/%s.JPEG" % hid("O9001"), "media/%s.jpg" % hid("O9001")):
+                legacy, shadow = pair_with_jpeg_spelling()
+                set_media(legacy, "O9001", {"s3Key": entry_legacy_key}, places=(place,))
+                code, doc = report_with(legacy, shadow, OPT, "1")
+                self.assertEqual(code, 20, (place, entry_legacy_key))
+                self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+                bad_area = "index" if place == "index" else "person"
+                self.assertIn(bad_area, doc["unexplained_by_area"], (place, entry_legacy_key))
+                self.assertIn("checksum", doc["unexplained_by_field"], "the entry is not the pattern, so its checksum stays unexplained too")
+        # an entry whose key differs while the media file's key is the same on both sides
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        for site in (legacy, shadow):
+            with_person_index_photos(site)
+        set_media(legacy, "O9001", {"s3Key": "media/%s.jpeg" % hid("O9001")}, places=("person",))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"person": 1}))
+
+    # ---- person/index.json -------------------------------------------------------------------------------------------------
+
+    def test_the_person_index_entry_is_explained_only_with_an_explained_media(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual(doc["rules"][RULE]["areas"]["index"], 2, "media/index.json and person/index.json")
+        # the media is not explained (no option): the person index entry is not either
+        code, doc = report_with(legacy, shadow)
+        self.assertEqual(doc["unexplained_by_field"].get("primaryPhoto"), 1)
+
+    def test_a_person_index_entry_of_another_persons_photo_is_not_explained(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        # person two's photo (O9002) is not respelled; person two's index text claims O9001's pair
+        for site, key in ((legacy, "media/%s.jpeg" % hid("O9001")), (shadow, "media/%s.jpg" % hid("O9001"))):
+            edit(site, "person/index.json", lambda d: [e.update(primaryPhoto=key) for e in d["people"] if e["grampsId"] == "I9002"])
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_field"], {"primaryPhoto": 1})
+        self.assertEqual(doc["unexplained_by_area"], {"index": 1})
+
+    def test_a_person_index_text_that_is_not_the_pair_of_the_media_is_not_explained(self):
+        h = hid("O9001")
+        for label, legacy_text, shadow_text in (
+                ("another stem", "media/%s.jpeg" % hid("O9999"), "media/%s.jpg" % hid("O9999")),
+                ("png to jpg", "media/%s.png" % h, "media/%s.jpg" % h),
+                ("jpeg to png", "media/%s.jpeg" % h, "media/%s.png" % h),
+                ("JPEG to jpg (the media has jpeg)", "media/%s.JPEG" % h, "media/%s.jpg" % h),
+                ("a null text", None, "media/%s.jpg" % h),
+                ("a text that became null", "media/%s.jpeg" % h, None)):
+            legacy, shadow = pair_with_jpeg_spelling()
+            edit(legacy, "person/index.json", lambda d: [e.update(primaryPhoto=legacy_text) for e in d["people"] if e["grampsId"] == "I9001"])
+            edit(shadow, "person/index.json", lambda d: [e.update(primaryPhoto=shadow_text) for e in d["people"] if e["grampsId"] == "I9001"])
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual((code, doc["unexplained_by_area"]), (20, {"index": 1}), label)
+            self.assertEqual(doc["unexplained_by_field"], {"primaryPhoto": 1}, label)
+
+    def test_a_person_index_entry_with_any_other_difference_is_unexplained(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        edit(shadow, "person/index.json", lambda d: [e.update(displayName="Test Person Uno") for e in d["people"] if e["grampsId"] == "I9001"])
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"], doc["unexplained_by_field"]), (20, {"index": 1}, {"displayName": 1}))
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1, "index": 1}, "media/index.json is explained, person/index.json is not")
+
+    def test_the_person_files_must_name_the_same_photo_and_the_same_person(self):
+        for label, side, change in (
+                ("the legacy person file names another photo", "legacy", lambda d: d["primaryPhoto"].update(handle=hid("O9002"))),
+                ("the shadow person file names another photo", "shadow", lambda d: d["primaryPhoto"].update(handle=hid("O9002"))),
+                ("the shadow person file has no photo", "shadow", lambda d: d.pop("primaryPhoto")),
+                ("the legacy person file is another person", "legacy", lambda d: d.update(handle=hid("I9999"))),
+                ("the shadow person file is another person", "shadow", lambda d: d.update(handle=hid("I9999")))):
+            legacy, shadow = pair_with_jpeg_spelling()
+            edit(legacy if side == "legacy" else shadow, PERSON1, change)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual(code, 20, label)
+            self.assertGreaterEqual(doc["unexplained_by_field"].get("primaryPhoto", 0), 1, label)
+            self.assertEqual(doc["unexplained_by_area"].get("index"), 1, label)
+        # an entry without a person file
+        legacy, shadow = pair_with_jpeg_spelling()
+        del legacy[PERSON1]
+        del shadow[PERSON1]
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_field"], {"primaryPhoto": 1})
+
+    def test_the_person_index_text_is_not_read_by_the_other_rules_or_other_entries(self):
+        # a person/index.json primaryPhoto difference with no media involved is unexplained, with and without the option
+        legacy, shadow = build_site(), build_site()
+        for site in (legacy, shadow):
+            with_users(site)
+            with_person_index_photos(site)
+        edit(legacy, "person/index.json", lambda d: [e.update(primaryPhoto="media/%s.jpeg" % hid("O9001")) for e in d["people"] if e["grampsId"] == "I9001"])
+        for extra in ([], [OPT, "5"]):
+            code, doc = report_with(legacy, shadow, *extra)
+            self.assertEqual((code, doc["unexplained_by_field"]), (20, {"primaryPhoto": 1}), extra)
+
+    # ---- precedence and the stripped rule ---------------------------------------------------------------------------------
+
+    def test_the_stripped_rule_does_not_explain_an_s3key_and_keeps_its_behaviour(self):
+        # a real stripped copy whose key is also spelled .jpeg / .jpg: the checksum difference is stripped, the key is not
+        legacy, shadow = build_site(), build_site()
+        for site in (legacy, shadow):
+            with_users(site)
+        strip_photo(shadow)
+        for site in (legacy, shadow):
+            with_person_index_photos(site)
+        respell(legacy, "O9001", "media/%s.jpeg" % hid("O9001"))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 0})
+        self.assertEqual(set(doc["unexplained_by_field"]), {"s3Key", "primaryPhoto"})
+        self.assertNotIn(RULE, doc["rules"])
+
+    def test_a_media_the_stripped_rule_explains_keeps_that_rule_and_the_allowance(self):
+        # an empty capture with the key spelling, taken by the stripped rule (its pattern fits, no sidecar): the stripped rule wins on the
+        # checksum and size and does not explain the key, so the run is unexplained, and the allowance of this rule is not consumed
+        legacy, shadow = pair_with_jpeg_spelling()
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 0})
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(set(doc["unexplained_by_field"]), {"s3Key", "primaryPhoto"})
+        # with the stripped allowance at 0 the rule takes it
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "0", OPT, "1")
+        self.assertEqual((code, doc["unexplained"], doc["baseline_unhydrated"]), (10, 0, {"allowed": 1, "explained": 1}))
+
+    def test_the_held_object_allowance_and_the_spelling_in_one_run(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        add_held_object(legacy, "person", 0)
+        code, doc = report_with(legacy, shadow, "--expect-holds", "1", OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual((doc["holds"], doc["baseline_unhydrated"]), ({"allowed": 1, "explained": 1}, {"allowed": 1, "explained": 1}))
+
+    def test_nothing_in_the_output_names_a_handle_a_key_or_a_checksum(self):
+        for legacy, shadow in (pair_with_jpeg_spelling(), pair_with_jpeg_spelling(".png")):
+            secrets = secrets_of(legacy, shadow)
+            for extra in ([], ["--json"], [OPT, "1"], [OPT, "1", "--json"]):
+                code, cap = run_cli(legacy, shadow, extra)
+                text = cap.everything.replace(cap.tmp, "<tmp>")
+                for secret in secrets:
+                    self.assertNotIn(secret, text, "%r leaked (exit %s, %s)" % (secret[:6], code, extra))
+
+
 class HeldObjects(unittest.TestCase):
     KINDS = ("person", "family", "event", "note", "place", "media")
 
@@ -1828,6 +2110,8 @@ class Docs(unittest.TestCase):
         self.assertIsNotNone(named)
         self.assertEqual(set(re.findall(r"`([a-z_]+)`", named.group(1))), set(status.zero_counts()), "the page lists the add-on's counts as they are")
         self.assertNotIn(compare_mod.EMPTY_SHA256, text)
+        for word in ("api/src/sync/media.js", "media/<handle>.jpeg", "media/<handle>.jpg", "`person/index.json`", "The JPEG key spelling"):
+            self.assertIn(word, text, word)
 
 
 if __name__ == "__main__":
