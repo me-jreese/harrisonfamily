@@ -71,6 +71,10 @@
         "js": "14d8e947",
         "css": "be703fb4"
       },
+      "onthisday": {
+        "js": "0ac5d7d3",
+        "css": "7befbd24"
+      },
       "person": {
         "js": "3cd0995a",
         "css": "92f22fd0"
@@ -832,6 +836,12 @@
   resolveFlags().then((flags) => {
     if (flags.aboutCta !== true || !/^\/about\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("about-cta", { onError() { /* the story stands on its own */ } });
+  });
+
+  // HFY-TSK-218: onThisDay mounts the homepage module after section.home-hero (the island renders nothing signed out or on a 503).
+  resolveFlags().then((flags) => {
+    if (flags.onThisDay !== true || !/^\/(index\.html)?$/.test(window.location.pathname)) return;
+    loadIsland("onthisday", { onError() { /* the homepage stands on its own */ } });
   });
 
   // HFY-TSK-140: accessRequests mounts the three-step join island on the static, public /join/ page, and the signed-out "new here? ask to
