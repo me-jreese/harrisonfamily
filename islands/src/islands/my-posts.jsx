@@ -23,6 +23,8 @@ import { mountAt } from "../lib/mount.jsx";
 import { COPY, Ping, PostList, isSignedOut, source, usePing, usePosts } from "../lib/posts-ui.jsx";
 import { CAPABILITIES } from "../lib/content-source.js";
 import { GUARD_CODES, GUARD_COPY, learnFromRefusal, precheckAll, watchContactGuard } from "../lib/contact-guard.js";
+import { useFlags } from "../lib/use-flags.js";
+import { PHOTO_ACCEPT, PHOTO_COPY, PhotoDecodeError } from "../lib/photo.js";
 
 const ACCEPT = "image/jpeg,image/png,image/webp,image/heic";
 const MAX = 4;
@@ -93,6 +95,10 @@ function decorate(root, photos) {
 
 export function MyPosts({ id }) {
   const [me, setMe] = useState(undefined);
+  // commentPhotosV1 (HFY-TSK-187, BRD2 9.3): with it on, a post photo is re-encoded in the browser like a comment photo (upright JPEG, no EXIF or
+  // GPS, long edge at most 2560 px) and the picker drops image/heic so iOS hands over a JPEG. Off: the photo goes up as it was picked.
+  const flags = useFlags();
+  const normalizePhotos = flags?.commentPhotosV1 === true;
   const [ping, setPing] = usePing();
   const posts = usePosts({ subject: id });
   const composer = useRef(null);
@@ -143,20 +149,20 @@ export function MyPosts({ id }) {
         <PostComposer
           capabilities={COMPOSER_CAPABILITIES}
           initial={undefined}
-          accept={ACCEPT}
+          accept={normalizePhotos ? PHOTO_ACCEPT : ACCEPT}
           maxAttachments={MAX}
           labels={LABELS}
           onUpload={async (file) => {
             setPing("uploading… don't close this tab yet", 0);
             try {
-              const a = await uploadPhoto(api, file);
+              const a = await uploadPhoto(api, file, { purpose: "post", normalize: normalizePhotos });
               photos.current.push(a.url);
               setCount(photos.current.length);
               setPing(DONE);
               return a;
             } catch (e) {
               setPing("");
-              throw new Error(isSignedOut(e) ? COPY.signedOut : COPY.failed);
+              throw new Error(isSignedOut(e) ? COPY.signedOut : e instanceof PhotoDecodeError ? PHOTO_COPY.decode : COPY.failed);
             }
           }}
           onSubmit={async (input) => {

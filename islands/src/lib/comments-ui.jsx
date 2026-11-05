@@ -3,14 +3,18 @@
 import "@io-kit/comments/comments.css";
 import "../posts.css"; // the island primitives (.hfy-h, .hfy-btn, .hfy-skeleton, .hfy-ping)
 import "../comments.css"; // after the kit sheet: remaps its :where(.io-comments) defaults onto the contract (see the file)
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Thread } from "@io-kit/comments/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Thread, safeUrl } from "@io-kit/comments/react";
 import { api, getSession } from "./api.js";
 import { createHfyCommentSource } from "./comment-source.js";
 import { canModerate, getMe } from "./me.js";
 import { formatTime, watchTimeTitles } from "./time.js";
 import { watchContactGuard } from "./contact-guard.js";
 import { MENTION_SOURCE, authorHref, personPath } from "./person-name.jsx";
+import { useFlags } from "./use-flags.js";
+import { uploadPhoto } from "./upload.js";
+import { PHOTO_ACCEPT, PhotoDecodeError } from "./photo.js";
+import { FEATURES, MAX_PHOTOS, PHOTO_LABELS, commentPhotoAlt, photoUploadMessage } from "./comment-photos.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable. Every comment author's name
 // links to their page too (Thread authorHref, HFY-TSK-323, ruling P2-R46); both come from lib/person-name.jsx.
@@ -36,7 +40,25 @@ export const LABELS = {
   loading: "loading comments",
   dontNotify: "don't notify anyone",
   readOnly: "read only",
+  // Photos (commentPhotosV1, HFY-TSK-187): the picker, caption and remove labels (lib/comment-photos.js).
+  ...PHOTO_LABELS,
 };
+
+/**
+ * Thread `renderAttachment`: the kit's photo (a link to the full image around a lazy <img>) with the HFY alt and caption. Returning
+ * undefined for an unsafe url keeps the kit's own rule (the photo is dropped).
+ */
+export function renderPhoto(comment, a) {
+  const src = safeUrl(a.url);
+  if (!src) return undefined;
+  const photo = (
+    <a className="io-comments-photo-link" href={src} target="_blank" rel="noopener">
+      <img src={src} alt={commentPhotoAlt(comment)} loading="lazy" {...(a.width !== undefined ? { width: a.width } : {})} {...(a.height !== undefined ? { height: a.height } : {})} />
+    </a>
+  );
+  const caption = a.alt?.trim() ?? "";
+  return caption ? <figure className="io-comments-figure">{photo}<figcaption className="io-comments-caption">{caption}</figcaption></figure> : photo;
+}
 
 // DS Comments: the new-comment input reads "say something" (Thread `placeholder`, @io-kit/comments 0.2.0 and later).
 export const PLACEHOLDER = "say something";
@@ -125,13 +147,15 @@ export function guardCommentDeletes(root, labels = LABELS) {
 // The R-18 pre-check (privacy-guard-existing-paths AC2) on the new-comment box and every edit box: the span is marked, the DS copy
 // sits under the box, post (or save) is disabled until the hit is removed, and the text is kept (lib/contact-guard.js).
 export const COMMENT_GUARD = {
-  fields: ".io-comments-composer textarea.io-comments-input",
+  // The text box and, with commentPhotosV1, each attached photo's caption (an alt the API also guards, R-18).
+  fields: ".io-comments-composer textarea.io-comments-input, .io-comments-composer .io-comments-picked-item > input.io-comments-input",
   submitOf: (form) => form.querySelector('button[type="submit"]'),
-  // The kit's own rule (@io-kit/comments 0.3.1 Composer, with no photo picker here): enabled with some text, within the length cap, and
-  // not sending.
+  // The kit's own rule (@io-kit/comments 0.3.1 Composer): enabled with some text or at least one finished photo, within the length cap,
+  // not sending and with no photo still uploading.
   enabledOf: (form) => {
     const box = form.querySelector("textarea");
-    return Boolean(box) && !box.disabled && box.value.trim() !== "" && !form.querySelector(".io-comments-counter[data-over]");
+    const photo = form.querySelector('.io-comments-picked-item[data-status="done"]') !== null;
+    return Boolean(box) && !box.disabled && (box.value.trim() !== "" || photo) && !form.querySelector(".io-comments-counter[data-over]") && !form.querySelector('.io-comments-picked-item[data-status="uploading"]');
   },
 };
 
@@ -141,6 +165,10 @@ export function Comments({ subject }) {
   const [ping, setPing] = useState("");
   const timer = useRef(null);
   const root = useRef(null);
+  // commentPhotosV1 (default off): the photo picker in the composer and photos drawn with HFY's alt and caption. Off, the thread is
+  // exactly what it was (the kit's composer has no picker without onUpload).
+  const flags = useFlags();
+  const photosOn = flags?.commentPhotosV1 === true;
   useEffect(() => { getSession().then(setSession); }, []);
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => watchTimeTitles(root.current), []);
@@ -159,21 +187,31 @@ export function Comments({ subject }) {
   const source = useMemo(() => createHfyCommentSource(api, {
     onAdded: () => { clearTimeout(timer.current); setPing("posted"); timer.current = setTimeout(() => setPing(""), 3000); },
   }), []);
+  const onUpload = useCallback(async (file) => {
+    try {
+      const a = await uploadPhoto(api, file, { purpose: "comment" });
+      return { url: a.url, mime: a.mime, ...(a.width ? { width: a.width, height: a.height } : {}) };
+    } catch (e) {
+      if (e instanceof PhotoDecodeError) console.warn("photo could not be decoded", e.cause?.name);
+      throw new Error(photoUploadMessage(e));
+    }
+  }, []);
+  const photoProps = photosOn ? { onUpload, accept: PHOTO_ACCEPT, maxAttachments: MAX_PHOTOS } : {};
   const viewer = sid ? { id: sid, label: session.label, ...(moderator ? { roles: ["admin"] } : {}) } : null;
   const returnTo = encodeURIComponent(location.pathname + location.search);
   return (
     <section className="hfy-comments" aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
       <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>
-      {session === undefined && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
+      {(session === undefined || (viewer && flags === undefined)) && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
       {session !== undefined && !viewer && (
         <div className="hfy-comments__signin" data-hfy-signin>
           <p>sign in to leave a comment.</p>
           <a className="hfy-btn hfy-btn--primary" href={`/auth/login?returnTo=${returnTo}`}>sign in</a>
         </div>
       )}
-      {viewer && (
+      {viewer && flags !== undefined && (
         <>
-          <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} />
+          <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} {...photoProps} />
           <p className="hfy-ping" role="status" aria-live="polite">{ping}</p>
         </>
       )}

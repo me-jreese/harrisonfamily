@@ -32,7 +32,7 @@ test("uploadPhoto PUTs to the presigned S3 URL (cross-origin, no cookies, not vi
   const api = { post: async (path, body) => (asked.push(body), path === "/uploads" && body.contentType === "image/jpeg" ? { uploadUrl: UPLOAD_URL, publicUrl: PUBLIC_URL } : assert.fail("unexpected api call")) };
   const fetchImpl = async (url, init) => { puts.push({ url, init }); return { ok: true, status: 200 }; };
   const file = { name: "garden.jpg", type: "image/jpeg", size: 3 };
-  const att = await uploadPhoto(api, file, fetchImpl);
+  const att = await uploadPhoto(api, file, { fetchImpl });
   assert.equal(puts.length, 1);
   assert.equal(puts[0].url, UPLOAD_URL);
   assert.notEqual(new URL(puts[0].url).origin, new URL(PUBLIC_URL).origin, "the upload does not go through the site (CloudFront) origin");
@@ -70,7 +70,7 @@ test("uploadPhoto works against the presign live before the RG-2 change set (fil
   assert.equal(preRg2Presign({ contentType: "image/jpeg", size: 3 })[0], 400, "the frozen rule refuses a body without a filename, as the live API does");
   const api = createApi({ fetchImpl: jsonFetch((path, body) => (path === "/api/uploads" ? preRg2Presign(body) : [404, {}])) });
   for (const [type, ext] of [["image/jpeg", "jpg"], ["image/png", "png"], ["image/webp", "webp"], ["image/heic", "heic"]]) {
-    const att = await uploadPhoto(api, { name: "Garden Party 2001.jpg", type, size: 3 }, okPut);
+    const att = await uploadPhoto(api, { name: "Garden Party 2001.jpg", type, size: 3 }, { fetchImpl: okPut });
     assert.equal(att.url, `https://harrisonfamily.us/uploads/posts/01J00000000000000000000000/photo.${ext}`);
   }
 });
@@ -82,7 +82,7 @@ test("uploadPhoto works against the new presign (the real api handler), which ig
     const r = await w.call(init.method, new URL(url, "http://x").pathname, { token, body: init.body ? JSON.parse(init.body) : undefined });
     return { status: r.status, ok: r.status < 400, json: async () => r.body };
   } });
-  const att = await uploadPhoto(api, { name: "Garden Party 2001.jpg", type: "image/png", size: 3 }, okPut);
+  const att = await uploadPhoto(api, { name: "Garden Party 2001.jpg", type: "image/png", size: 3 }, { fetchImpl: okPut });
   assert.match(att.url, /^https:\/\/harrisonfamily\.us\/uploads\/posts\/[0-9A-HJKMNP-TV-Z]{26}\/photo\.png$/);
   assert.equal(w.presigned.length, 1);
   assert.doesNotMatch(JSON.stringify(w.presigned), /garden/i);

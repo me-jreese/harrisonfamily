@@ -13,7 +13,7 @@ import { hfySanitizePolicy } from "./sanitize-policy.js";
 export { useOutline } from "@io-kit/md/react";
 
 /** A markdown image is never drawn. Its alt text stays as plain text, so the sentence still reads. */
-function HfyNoImage({ alt }) {
+export function HfyNoImage({ alt }) {
   return alt ? <span data-hfy-md-image-omitted="">{alt}</span> : null;
 }
 
@@ -22,7 +22,7 @@ function HfyNoImage({ alt }) {
  * browser resolves it to another host, in the same tab. It is drawn as plain text.
  */
 const OFF_SITE_RELATIVE = /^\/\//;
-function HfyLink({ href, children, node, ...rest }) {
+export function HfyLink({ href, children, node, ...rest }) {
   // No href: the policy dropped it (mailto:, javascript:), and an anchor without one is not a link, so only its text is drawn.
   if (typeof href !== "string" || OFF_SITE_RELATIVE.test(href.trim())) return <span data-hfy-md-link-omitted="">{children}</span>;
   return <a href={href} {...rest}>{children}</a>;

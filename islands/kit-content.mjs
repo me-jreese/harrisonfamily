@@ -40,6 +40,20 @@ export const hfyContentSanitizePolicy = {
   }
 };
 
+// hfyCommentsSanitizePolicy -> esbuild plugin (HFY-TSK-187, PS-11): the same swap for "@io-kit/md/react" imported from inside
+// @io-kit/comments, to src/lib/hfy-comments-markdown.jsx. Comment, CommentBody and Thread render a comment through KitMarkdown with
+// the kit's own `policy: userContentPolicy` (https images and mailto: links) and accept no policy of their own, so unlike the content
+// kit the wrapper FORCES the HFY SanitizePolicy over whatever policy it is handed. Kit gap, for the kit backlog: Thread and Comment take
+// a `policy`; then delete this plugin and the module.
+export const HFY_COMMENTS_MARKDOWN = fileURLToPath(new URL("./src/lib/hfy-comments-markdown.jsx", import.meta.url));
+const IN_KIT_COMMENTS = /(^|[\\/])node_modules[\\/]@io-kit[\\/]comments[\\/]/;
+export const hfyCommentsSanitizePolicy = {
+  name: "hfy-comments-sanitize-policy",
+  setup(b) {
+    b.onResolve({ filter: /^@io-kit\/md\/react$/ }, (args) => (IN_KIT_COMMENTS.test(args.importer) ? { path: HFY_COMMENTS_MARKDOWN } : undefined));
+  }
+};
+
 /** `<output> <- <input>` for every island output that carries DocumentEditor or the stub; empty on a good build. */
 export function documentEditorLeaks(metafile) {
   const leaks = [];
@@ -69,6 +83,30 @@ export async function importContentReact() {
     platform: "node",
     jsx: "automatic",
     plugins: [hfyContentSanitizePolicy, hfyNoDocumentEditor, externals],
+    write: false,
+    logLevel: "silent"
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].contents).toString("base64")}`);
+}
+
+/**
+ * "@io-kit/comments/react" for a node:test suite: bundled in memory with hfyCommentsSanitizePolicy, as the build bundles it, with every
+ * other package external at its resolved file URL (React is the test's own instance).
+ */
+export async function importCommentsReact() {
+  const externals = {
+    name: "hfy-test-externals",
+    setup(b) {
+      b.onResolve({ filter: /^[^./]/ }, (args) => (args.path.startsWith("@io-kit/comments") ? undefined : { path: import.meta.resolve(args.path), external: true }));
+    }
+  };
+  const out = await build({
+    stdin: { contents: 'export * from "@io-kit/comments/react";', resolveDir: import.meta.dirname, loader: "js" },
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    jsx: "automatic",
+    plugins: [hfyCommentsSanitizePolicy, externals],
     write: false,
     logLevel: "silent"
   });

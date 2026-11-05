@@ -4,6 +4,7 @@
 import { CommentError } from "@io-kit/comments";
 import { ApiError } from "./api.js";
 import { GUARD_CODES, GUARD_COPY, learnFromRefusal, precheck } from "./contact-precheck.js";
+import { PHOTO_COPY } from "./photo.js";
 
 const CODES = new Set(["unauthenticated", "forbidden", "not_found", "validation", "step_up_required", "self_react", "cursor_invalid", "server"]);
 
@@ -19,11 +20,20 @@ const say = (code, op) => (code === "unauthenticated" ? COPY.signedOut : code ==
 
 // R-18 (privacy-guard-existing-paths): the API's 422 contact_info / dob_not_allowed is shown with its DS copy, and the text stays
 // in the composer (the kit keeps it on a failed add or save). Not "try again": the same text would be refused again.
+// HFY-TSK-187 (BRD2 9.4): a photo the API refused at post time. photo_has_location is a stored photo whose bytes still say where it was
+// taken (the browser re-encode normally prevents it); upload_missing and upload_not_owned are a HEAD mismatch or an upload that is not
+// this member's, so the photo has to be added again. The comment text stays in the composer (the kit keeps it on a failed add).
+const PHOTO_REFUSALS = { photo_has_location: PHOTO_COPY.location, upload_missing: PHOTO_COPY.missing, upload_not_owned: PHOTO_COPY.missing };
 const wrap = async (p, op) => {
   try { return await p; } catch (e) {
     if (e instanceof ApiError && GUARD_CODES.includes(e.code)) {
       learnFromRefusal(e.code);
       const err = new CommentError("validation", GUARD_COPY[e.code], "body");
+      err.cause = e;
+      throw err;
+    }
+    if (e instanceof ApiError && Object.hasOwn(PHOTO_REFUSALS, e.code)) {
+      const err = new CommentError("validation", PHOTO_REFUSALS[e.code], "attachments");
       err.cause = e;
       throw err;
     }
@@ -55,7 +65,10 @@ export function createHfyCommentSource(api, { onAdded } = {}) {
     list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit, order: opts.order } }), "list"),
     async create(threadId, input) {
       refuseContactInfo(input.body);
-      const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");
+      const photos = Array.isArray(input.attachments) && input.attachments.length ? input.attachments : null;
+      // The last client step for the photo captions too (the composer's own pre-check normally holds a hit before it gets here).
+      for (const a of photos ?? []) refuseContactInfo(a.alt);
+      const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(photos ? { attachments: photos } : {}), ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");
       if (onAdded) onAdded(c);
       return c;
     },
