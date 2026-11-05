@@ -62,11 +62,11 @@ test("the photo labels read lowercase, the caption field is 'add a caption' (P2-
 
 test("a comment photo's img alt is the who-photo line; the typed caption is never repeated as the alt", () => {
   const one = { author: { label: "Test Person" }, attachments: [{ alt: "the garden in spring" }] };
-  assert.equal(commentPhotoAlt(one, 0), "a photo from Test Person");
+  assert.equal(commentPhotoAlt(one), "a photo from Test Person");
   const three = { author: { label: "Test Person" }, attachments: [{}, {}, {}] };
-  assert.equal(commentPhotoAlt(three, 1), "photo 2 of 3 from Test Person");
-  assert.equal(commentPhotoAlt({ author: { label: "  " }, attachments: [{}] }, 0), "a photo");
-  assert.doesNotMatch(commentPhotoAlt(one, 0), /garden/);
+  assert.equal(commentPhotoAlt(three), "a photo from Test Person", "ruling P2-R47: the same fallback for every photo of a comment");
+  assert.equal(commentPhotoAlt({ author: { label: "  " }, attachments: [{}] }), "a photo");
+  assert.doesNotMatch(commentPhotoAlt(one), /garden/);
 });
 
 test("a photo upload failure shows E10 for a decode failure, the sign-in line for a 401, and 'that didn't upload' otherwise", () => {

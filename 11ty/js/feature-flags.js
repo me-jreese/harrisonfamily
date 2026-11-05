@@ -76,7 +76,7 @@
         "css": "88208200"
       },
       "person": {
-        "js": "d35593a8",
+        "js": "acac2a31",
         "css": "551c856a"
       },
       "person-links": {
@@ -92,11 +92,11 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "61c82f0c",
+        "js": "bf377712",
         "css": "4ec7e5ba"
       },
       "review": {
-        "js": "b1774e81",
+        "js": "1493ce81",
         "css": "3f6f2e2a"
       },
       "search": {

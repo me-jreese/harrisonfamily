@@ -298,7 +298,7 @@ test("comment photos: a grid of 2 columns at 375 and 4 on desktop, captions visi
   expect(rows, "four photos in two columns are two rows").toBe(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(media.locator("figcaption")).toHaveText(["the lake in june", "the cabin"]);
-  expect(await media.locator("img").evaluateAll((imgs) => imgs.map((i) => i.alt))).toEqual(["photo 1 of 4 from Ann Other", "photo 2 of 4 from Ann Other", "photo 3 of 4 from Ann Other", "photo 4 of 4 from Ann Other"]);
+  expect(await media.locator("img").evaluateAll((imgs) => imgs.map((i) => i.alt))).toEqual(Array(4).fill("a photo from Ann Other"));
   expect(await media.locator("a").evaluateAll((as) => as.map((a) => [a.target, a.rel]))).toEqual(Array(4).fill(["_blank", "noopener"]));
   await expect(media.locator("button, [aria-pressed]"), "attachment reactions are off").toHaveCount(0);
   // The comment's own reactions are still there.

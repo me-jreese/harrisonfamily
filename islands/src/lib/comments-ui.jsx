@@ -51,10 +51,9 @@ export const LABELS = {
 export function renderPhoto(comment, a) {
   const src = safeUrl(a.url);
   if (!src) return undefined;
-  const index = Math.max(0, (comment.attachments ?? []).indexOf(a));
   const photo = (
     <a className="io-comments-photo-link" href={src} target="_blank" rel="noopener">
-      <img src={src} alt={commentPhotoAlt(comment, index)} loading="lazy" {...(a.width !== undefined ? { width: a.width } : {})} {...(a.height !== undefined ? { height: a.height } : {})} />
+      <img src={src} alt={commentPhotoAlt(comment)} loading="lazy" {...(a.width !== undefined ? { width: a.width } : {})} {...(a.height !== undefined ? { height: a.height } : {})} />
     </a>
   );
   const caption = a.alt?.trim() ?? "";
@@ -203,8 +202,8 @@ export function Comments({ subject }) {
   return (
     <section className="hfy-comments" aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
       <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>
-      {(session === undefined || flags === undefined) && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
-      {session !== undefined && flags !== undefined && !viewer && (
+      {(session === undefined || (viewer && flags === undefined)) && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
+      {session !== undefined && !viewer && (
         <div className="hfy-comments__signin" data-hfy-signin>
           <p>sign in to leave a comment.</p>
           <a className="hfy-btn hfy-btn--primary" href={`/auth/login?returnTo=${returnTo}`}>sign in</a>

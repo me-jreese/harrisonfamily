@@ -23,15 +23,13 @@ export const PHOTO_LABELS = Object.freeze({
 export const FEATURES = Object.freeze({ attachmentReactions: false, photoCaptions: false });
 
 /**
- * A comment photo's img alt: "a photo from <name>", or "photo 2 of 3 from <name>" in a comment with several (the who-photo line, as
- * posts-ui photoAlt does for posts). The text the author typed in the "add a caption" field is the visible <figcaption> (ruling P2-R47),
- * so it is never repeated as the alt and is not read twice.
+ * A comment photo's img alt, ruling P2-R47: the who-photo fallback "a photo from <name>" for every photo of a comment (a post's photoAlt in
+ * posts-ui numbers a post's several photos; the ruling words the comment alt without a number). The text the author typed in the "add a
+ * caption" field is the visible <figcaption>, so it is never repeated as the alt and is not read twice.
  */
-export function commentPhotoAlt(comment, index) {
-  const total = Array.isArray(comment?.attachments) ? comment.attachments.length : 0;
-  const what = total > 1 ? `photo ${index + 1} of ${total}` : "a photo";
+export function commentPhotoAlt(comment) {
   const who = String(comment?.author?.label || "").trim();
-  return who ? `${what} from ${who}` : what;
+  return who ? `a photo from ${who}` : "a photo";
 }
 
 /** The line a failed photo upload shows under its row: copy E10 for a photo the browser cannot decode, the 9.4 lines otherwise. */

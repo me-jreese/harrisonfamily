@@ -10,7 +10,8 @@
 // required"); the site ships on merge, ahead of that API, and the new API ignores the field. Drop it once RG-2 is live.
 //
 // A presigned PUT lives 300 s. When S3 answers 403 (the signature expired, typically a slow phone upload that waited on the picker), the
-// upload is presigned again and PUT once more; a second refusal is the error. Normalization failures (PhotoDecodeError, copy E10) surface
+// upload is presigned again and PUT once more; a second refusal is the error. A 403 for another reason (a bad Content-Type, a size
+// mismatch) is retried once the same way, which costs one extra presign and PUT and is still bounded to one retry. Normalization failures (PhotoDecodeError, copy E10) surface
 // before anything is sent.
 import { normalizePhotoDetailed } from "./photo.js";
 
