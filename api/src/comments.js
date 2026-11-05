@@ -5,15 +5,18 @@ import { CommentError, DEFAULT_LIMIT, DEFAULT_TOPIC, MAX_LIMIT, auditEntry, comm
 import { ContentError } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { TxnCancelled, auditItem, transact, versionGuard } from "./txn.js";
-import { contribOps, emptyOps, getEvent, mergeOps, mergedSize, revokeOps } from "./contrib.js";
+import { contribOps, emptyOps, getEvent, hideOps, mergeOps, mergedSize, revokeOps } from "./contrib.js";
 import { createGuard, pointer } from "./guard.js";
 import { normalizeNew } from "./comment-photos.js";
+import { closeModOps, commentHidden, isAdminViewer, moderationPrivileged, normalizeModerate, openModOps, shownAttachments, targetKey } from "./moderation.js";
 
 export const SUBJECT_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26}|proposal:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const b64 = (s) => Buffer.from(s, "utf8").toString("base64url");
 const unb64 = (s) => Buffer.from(s, "base64url").toString("utf8");
 const ORDERS = ["asc", "desc"];
+/** A page of comments is read with at most this many queries when moderation hides rows from the viewer. */
+export const LIST_ROUNDS = 3;
 // A cursor is bound to the order that issued it: base64url("a:<id>") or ("d:<id>"). A pre-order cursor (the bare id) was an asc one.
 const mintCursor = (order, id) => b64(`${order === "desc" ? "d" : "a"}:${id}`);
 const threadPk = (t) => `THREAD#${t}`;
@@ -21,14 +24,23 @@ const cKey = (t, id) => ({ PK: threadPk(t), SK: `C#${id}` });
 const rKey = (t, target, by) => ({ PK: threadPk(t), SK: `R#${target}#${by}` });
 
 /**
- * The write guard of a stored comment: `edited_at` (an author's edit) and `grad_v` (a graduation write, graduate.js) must both be as they were read, so a
- * concurrent edit, delete or graduation step cancels the other's write (409) instead of dropping it. An absent field must still be absent.
+ * The write guard of a stored comment: `edited_at` (an author's edit), `grad_v` (a graduation write, graduate.js) and `mod_v` (a moderation write,
+ * moderate() below) must all be as they were read, so a concurrent edit, delete, graduation step or moderation cancels the other's write (409) instead
+ * of dropping it. An absent field must still be absent.
  */
 export function commentGuard(c) {
   const g = versionGuard("comment", "edited_at", c.edited_at);
-  return c.grad_v === undefined
-    ? { ...g, condition: `${g.condition} AND attribute_not_exists(#doc.#gv)`, names: { ...g.names, "#gv": "grad_v" } }
-    : { ...g, condition: `${g.condition} AND #doc.#gv = :gv`, names: { ...g.names, "#gv": "grad_v" }, values: { ...g.values, ":gv": c.grad_v } };
+  const names = { ...g.names, "#gv": "grad_v", "#mv": "mod_v" };
+  const values = { ...(g.values ?? {}) };
+  let condition = g.condition;
+  for (const [ph, field, val] of [["#gv", "grad_v", ":gv"], ["#mv", "mod_v", ":mv"]]) {
+    if (c[field] === undefined) condition += ` AND attribute_not_exists(#doc.${ph})`;
+    else {
+      condition += ` AND #doc.${ph} = ${val}`;
+      values[val] = c[field];
+    }
+  }
+  return { ...g, condition, names, ...(Object.keys(values).length > 0 ? { values } : {}) };
 }
 
 /** Does a photo on stored comment `c` have a graduation under way (graduate.js: reserved, not finished)? Such a comment is never deleted. */
@@ -49,11 +61,24 @@ export const toCommentPrincipal = (actor) => (actor ? { id: actor.id, label: act
 export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdrawn, now = () => Date.now(), ulid, uid, maxLength = 1000, getPost, proposalVisible, onCreated, allowSelfReact = false, guard = createGuard(), photos, via = "ui" }) {
   const canOpts = { allowSelfReact };
   const iso = () => new Date(now()).toISOString();
-  // `grad_v` is the graduation write counter (commentGuard): it never leaves the store.
+  // `grad_v` and `mod_v` are the graduation and moderation write counters (commentGuard): they never leave the store. Everyone but the author and
+  // admins gets the comment without its moderation (a visible question carries a private note) and without the photos a moderator hid.
   const view = (c) => {
-    const { grad_v: _v, ...rest } = structuredClone(c);
-    return { ...rest, can: computeCan(c, viewer, canOpts) };
+    const { grad_v: _v, mod_v: _m, ...rest } = structuredClone(c);
+    const out = { ...rest, can: computeCan(c, viewer, canOpts) };
+    if (!moderationPrivileged(c, viewer)) {
+      delete out.moderation;
+      if (out.attachments) {
+        const shown = shownAttachments(out.attachments);
+        if (shown.length > 0) out.attachments = shown;
+        else delete out.attachments;
+      }
+    }
+    return out;
   };
+  // A hidden comment does not exist for a viewer who is neither its author nor an admin: not_found on get, create (as a parent), edit, delete, react and moderate.
+  const seen = (c) => moderationPrivileged(c, viewer) || !commentHidden(c);
+  const ctx = { ddb, cmds, table };
   const need = () => {
     if (viewer == null) throw new CommentError("unauthenticated");
     if (!canWrite(viewer)) throw new CommentError("forbidden", "read-only principal");
@@ -97,9 +122,16 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
     checkThread(t);
     if (typeof id !== "string" || !ID_RE.test(id)) throw new CommentError("not_found", `comment ${id}`);
     const c = (await ddb.send(new cmds.GetCommand({ TableName: table, Key: cKey(t, id) }))).Item?.comment;
-    if (!c) throw new CommentError("not_found", `comment ${id}`);
+    if (!c || !seen(c)) throw new CommentError("not_found", `comment ${id}`);
     return c;
   }
+  /** The hideOps that move the comment's contribution event to where `after` leaves the comment (out of the feed while it is hidden), or undefined. */
+  async function eventOps(before, after) {
+    if (!before.contrib || commentHidden(before) === commentHidden(after)) return undefined;
+    const event = await getEvent(ctx, before.author.id, before.contrib.id);
+    return event ? hideOps({ actor: before.author, id: before.contrib.id }, commentHidden(after)) : undefined;
+  }
+  const photoTarget = (t, id, a) => ({ kind: "photo", parent: { kind: "comment", id, thread: t }, attachment: a.id });
   /**
    * A comment is text, a photo, or both: the trimmed body may be empty only while the comment holds at least one photo.
    * `body` is a required string on create and edit, photo or not (the kit's CreateInput/EditInput): a missing or non-string
@@ -133,7 +165,8 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
   };
   const parser = { parse: (url) => photoParser().parse(url) };
   // `graduated` is the marker of a photo's graduation into a record (graduate.js): an edit that re-describes or removes other photos keeps it.
-  const stored = ({ id, path, mime, width, height, alt, graduated }) => ({ id, kind: "image", url: path, mime, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), ...(alt ? { alt } : {}), ...(graduated ? { graduated } : {}) });
+  // `moderation` is the moderator's photo hide: an author's edit keeps it (only a moderator lifts it), and a client never supplies one (normalizeNew picks its fields).
+  const stored = ({ id, path, mime, width, height, alt, graduated, moderation }) => ({ id, kind: "image", url: path, mime, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), ...(alt ? { alt } : {}), ...(graduated ? { graduated } : {}), ...(moderation ? { moderation } : {}) });
   // `updates` are the UPLOAD# bindings of new photos (tag "upload"); `ops` is a contrib.js fragment (credit or revoke). Both ride in
   // this transaction.
   async function commit(entry, { put, deletes = [], updates = [], ops = emptyOps() }) {
@@ -174,13 +207,34 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
       // when it still exists (it may have been deleted since), and asc starts just past it ("!" sorts below every id character).
       const lo = !desc && after !== undefined ? `C#${after}!` : "C#";
       const hi = desc && after !== undefined ? `C#${after}` : "C#~";
-      const r = await ddb.send(new cmds.QueryCommand({
-        TableName: table, KeyConditionExpression: "PK = :pk AND SK BETWEEN :lo AND :hi",
-        ExpressionAttributeValues: { ":pk": threadPk(t), ":lo": lo, ":hi": hi }, Limit: limit + 2, ...(desc ? { ScanIndexForward: false } : {}),
-      }));
-      const rows = (r.Items ?? []).map((i) => i.comment).filter((c) => c && !(desc && c.id === after));
+      // A comment hidden from this viewer is left out, and the page is filled to `limit` by reading on: up to 3 queries (social.md 11.3). When the third
+      // still leaves the page short with rows unread, the cursor continues from the last row read, so a long run of hidden comments never ends the list early.
+      const rows = [];
+      let readTo;
+      let startKey;
+      let exhausted = false;
+      for (let round = 0; round < LIST_ROUNDS; round += 1) {
+        const r = await ddb.send(new cmds.QueryCommand({
+          TableName: table, KeyConditionExpression: "PK = :pk AND SK BETWEEN :lo AND :hi",
+          ExpressionAttributeValues: { ":pk": threadPk(t), ":lo": lo, ":hi": hi }, Limit: limit + 2, ...(desc ? { ScanIndexForward: false } : {}),
+          ...(startKey ? { ExclusiveStartKey: startKey } : {}),
+        }));
+        for (const item of r.Items ?? []) {
+          const c = item.comment;
+          if (!c || (desc && c.id === after)) continue;
+          readTo = c.id;
+          if (seen(c)) rows.push(c);
+        }
+        startKey = r.LastEvaluatedKey;
+        if (!startKey) {
+          exhausted = true;
+          break;
+        }
+        if (rows.length > limit) break;
+      }
       const page = rows.slice(0, limit);
-      const next = rows.length > limit ? mintCursor(order, page[page.length - 1].id) : undefined;
+      const resumeAt = rows.length > limit ? page[page.length - 1].id : readTo;
+      const next = (rows.length > limit || !exhausted) && resumeAt !== undefined ? mintCursor(order, resumeAt) : undefined;
       const targets = new Set(["root", ...page.map((c) => commentTarget(c.id))]);
       const reactions = {};
       for (const item of (await reactionRows(t)).sort((a, b) => (a.reaction.created_at < b.reaction.created_at ? -1 : 1))) {
@@ -250,8 +304,19 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
       const at = iso();
       const { attachments: _drop, ...rest } = c;
       const next = { ...rest, body: text, ...(final.length > 0 ? { attachments: final } : {}), edited_at: at };
+      // An effective author edit answers a request_changes or an ask: the moderation closes (MOD# included) and the comment shows again. A plain hide stays
+      // for a moderator to lift, a hidden photo the edit keeps stays hidden, and a hidden photo the edit removes closes its own MOD#.
+      const closing = [];
+      if (c.moderation && c.moderation.state !== "hidden") {
+        delete next.moderation;
+        closing.push(targetKey({ kind: "comment", id, thread: t }));
+      }
+      for (const a of heldAll) if (a.moderation && !final.some((f) => f.id === a.id)) closing.push(targetKey(photoTarget(t, id, a)));
+      if (closing.length > 0) next.mod_v = (c.mod_v ?? 0) + 1;
+      const resolved = closing.length > 0 ? await closeModOps(ctx, closing, { resolvedBy: "author", at }) : undefined;
       await commit(auditEntry("edit", id, who.id, structuredClone(c), next, at), {
         put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...commentGuard(c) },
+        ops: mergeOps(resolved, await eventOps(c, next)),
       });
       return view(next);
     },
@@ -267,10 +332,76 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
       const reason = opts.reason !== undefined && who.roles?.includes("admin") && c.author.id !== who.id ? opts.reason : undefined;
       // Deletes revoke the credit, whoever deletes: the event sits under the comment's author.
       const event = c.contrib ? await getEvent({ ddb, cmds, table }, c.author.id, c.contrib.id) : undefined;
-      await commit(auditEntry("delete", id, who.id, structuredClone(c), null, iso(), reason), {
+      // A moderated comment leaves its MOD# items closed in the same transaction (social.md 11.2: any delete, by the author or a moderator).
+      const at = iso();
+      const open = [...(c.moderation ? [targetKey({ kind: "comment", id, thread: t })] : []), ...(c.attachments ?? []).filter((a) => a.moderation).map((a) => targetKey(photoTarget(t, id, a)))];
+      const closed = open.length > 0 ? await closeModOps(ctx, open, { resolvedBy: who.id === c.author.id ? "author" : who.id, at }) : undefined;
+      await commit(auditEntry("delete", id, who.id, structuredClone(c), null, at, reason), {
         deletes: [{ key: cKey(t, id), ...commentGuard(c) }, ...cascade],
-        ...(event ? { ops: revokeOps(event) } : {}),
+        ops: mergeOps(event ? revokeOps(event) : undefined, closed),
       });
+    },
+    /** One comment as the viewer may see it (not_found for a hidden one): the moderation route reads the author and version from it. */
+    async get(t, id) {
+      checkThread(t);
+      await checkVisible(t);
+      return view(await getComment(t, id));
+    },
+    /**
+     * Admin moderation of another member's comment (the kit's optional moderate(); CC-24 to CC-27; social.md 11.2). `input.attachment` (not in the kit's
+     * ModerateInput) names one photo by its attachment id and hides or unhides just that photo. `opts.version` is the `edited_at` (or `created_at`)
+     * the admin saw: a stale one is 409 conflict. The inline state, the MOD# item, the AUDIT# entry (with the private reason) and the contribution
+     * event's hideOps commit in one transaction, guarded on the comment as read (commentGuard, `mod_v`). A repeated hide, or an unhide of what is not
+     * hidden, writes nothing.
+     */
+    async moderate(t, id, input, opts = {}) {
+      const who = need();
+      const c = await getComment(t, id);
+      await checkVisible(t);
+      if (!isAdminViewer(who)) throw new CommentError("forbidden", "only a moderator can moderate");
+      if (c.author.id === who.id) throw new CommentError("self_moderation", "cannot moderate your own comment");
+      if (opts.version !== undefined && opts.version !== (c.edited_at ?? c.created_at)) throw new HttpError(409, "conflict", "that comment changed since you looked");
+      const act = normalizeModerate(input, (field, message) => { throw new CommentError("validation", message, field); });
+      if (act.note !== undefined) guard("moderation", "moderate", [[pointer("note"), act.note]]); // R-18: 422 contact_info, nothing stored
+      const at = iso();
+      const by = { id: who.id, label: who.label };
+      const next = { ...structuredClone(c), mod_v: (c.mod_v ?? 0) + 1 };
+      let mod;
+      if (input.attachment !== undefined) {
+        if (act.note !== undefined) throw new CommentError("validation", "a note is for the whole comment, not one photo", "attachment");
+        const i = (c.attachments ?? []).findIndex((a) => a.id === input.attachment);
+        if (i < 0) throw new CommentError("validation", "no such attachment", "attachment");
+        const a = next.attachments[i];
+        const target = photoTarget(t, id, a);
+        if (act.action === "hide") {
+          if (a.moderation?.hidden === true) return view(c);
+          next.attachments[i] = { ...a, moderation: { hidden: true, by, at } };
+          mod = await openModOps(ctx, { target, author: c.author, state: "hidden", hidden: true, by, at });
+        } else {
+          if (a.moderation === undefined) return view(c);
+          const { moderation: _gone, ...bare } = a;
+          next.attachments[i] = bare;
+          mod = await closeModOps(ctx, [targetKey(target)], { resolvedBy: who.id, at });
+        }
+      } else {
+        const target = { kind: "comment", id, thread: t };
+        if (act.action === "unhide") {
+          if (c.moderation === undefined) return view(c);
+          delete next.moderation;
+          mod = await closeModOps(ctx, [targetKey(target)], { resolvedBy: who.id, at });
+        } else {
+          if (act.action === "hide" && c.moderation?.state === "hidden") return view(c);
+          const state = act.action === "hide" ? "hidden" : act.action === "request_changes" ? "changes_requested" : "question";
+          const hidden = act.action === "ask" ? act.hide : true;
+          next.moderation = { state, hidden, by, at, ...(act.note !== undefined ? { note: act.note } : {}), open: true };
+          mod = await openModOps(ctx, { target, author: c.author, state, hidden, by, at, note: act.note });
+        }
+      }
+      await commit(auditEntry("moderate", id, who.id, structuredClone(c), next, at, act.reason), {
+        put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...commentGuard(c) },
+        ops: mergeOps(mod, await eventOps(c, next)),
+      });
+      return view(next);
     },
     async react(t, target, emoji) {
       const who = need();
@@ -381,6 +512,10 @@ export async function purgeThread({ ddb, cmds, table, now = () => Date.now(), ui
     if (isComment) {
       const at = new Date(now()).toISOString();
       frag.puts.push({ item: auditItem(auditEntry("delete", row.comment.id, principalId, row.comment, null, at, reason), uid(), table) });
+      // The MOD# items of a moderated comment close with it (social.md 11.2).
+      const c = row.comment;
+      const open = [...(c.moderation ? [targetKey({ kind: "comment", id: c.id, thread: t })] : []), ...(c.attachments ?? []).filter((a) => a.moderation).map((a) => targetKey({ kind: "photo", parent: { kind: "comment", id: c.id, thread: t }, attachment: a.id }))];
+      if (open.length > 0) frag.puts.push(...(await closeModOps({ ddb, cmds, table }, open, { resolvedBy: principalId, at })).puts);
     }
     if (batch.length > 0 && mergedSize(...batch.flatMap((b) => [b.frag, opsFor(b.row)]), frag, opsFor(row)) > 100) await flush();
     batch.push({ frag, row });

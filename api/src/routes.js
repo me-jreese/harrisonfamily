@@ -200,6 +200,23 @@ export const ROUTES = defineRoutes([
       return ok(r.body, r.status);
     },
   },
+  // hfy-moderation-api-core (R-32; social.md 11.5): an admin hides or unhides a post, a comment or one photo, and reads the queue. Dark until moderationV1 is on
+  // (or the caller is uat). No `mcp` member and no policy row: both routes stay off MCP in v1. request_changes and ask belong to hfy-moderation-ask-api and the
+  // record kinds (note, mediaref, media) to hfy-moderation-record-targets: until then they answer 422 unsupported_action and 422 unsupported_target.
+  {
+    name: "moderation.post", method: "POST", path: "/moderation",
+    summary: "Admins only: hide or unhide an item {target: {kind: post, id} | {kind: comment, id, thread} | {kind: photo, parent: {kind: post, id} | {kind: comment, id, thread}, attachment}, action: hide|unhide, version? (the updated_at or edited_at you saw), reason? (200, private, audit only)}: 200 {target, moderation (null once closed), item (your view)}; the post (all three copies), the MOD# item, the audit entry and the contribution event change in one transaction, and the author gets moderation_hidden or moderation_unhidden. 403 forbidden (not an admin), 400 validation | self_moderation, 404 not_found, 409 conflict (stale version), 422 unsupported_target (note, mediaref, media) | unsupported_action (request_changes, ask), 503 busy (no MCP tool)",
+    gate: requireFeature("moderationV1"),
+    handler: async (c) => {
+      const r = await c.moderation.post(c.body);
+      return ok(r.body, r.status);
+    },
+  },
+  {
+    name: "moderation.list", method: "GET", path: "/moderation",
+    summary: "Admins only: the moderation queue, newest first: ?state=open (default) | closed, cursor, limit 1-50 (default 25): {items: [{target, state, hidden, by, at, note?, open, resolved_by?, resolved_at?, author: {id, label}, href}], cursor}; never the private reason (no MCP tool)",
+    gate: requireFeature("moderationV1"), handler: async (c) => ok(await c.moderation.list(c.query)),
+  },
   {
     name: "posts.list", method: "GET", path: "/posts", summary: "List posts newest first (cursor; filters type, author, subject, visibility)",
     handler: async (c) => {
@@ -424,6 +441,6 @@ export function buildCaps() {
     comments: { reactions: "one-emoji-per-principal-per-comment", threading: "parentId (reply)", max_body: 1000, subject_param: "required on PATCH/DELETE/react (query or body)" },
     mcp: { resource: MCP_RESOURCE, tools: ROUTES.filter((r) => r.mcp).map((r) => ({ name: r.mcp.tool, action: r.name, write: r.write })) },
     notifications: { types: NOTIFY_TYPES, default_level: 0 },
-    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "links.update", "links.clear", "graduate"] },
+    audit: { item: "AUDIT#", fields: ["op", "id", "principal", "at", "before", "after"], ops: ["create", "update", "delete", "visibility", "moderate", "links.update", "links.clear", "graduate"] },
   };
 }

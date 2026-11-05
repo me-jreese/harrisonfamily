@@ -181,6 +181,8 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `comments.delete` | DELETE | `/comments/:id` | query `subject` (required), optional `reason` | `204` | Author or admin. `subject` is read from the query only. |
 | `comments.react` | POST | `/comments/:id/react` | body `emoji`; `subject` in the body or the query | `200` `{removed, reaction?}` | Set or toggle off |
 | `comments.graduate` | POST | `/comments/:id/attachments/:aid/graduate` | body `subject` (the comment's thread), `person` (a gramps_id), optional `title` (200) and `description` (500) | `201` `{media: {handle, gramps_id?}, person, state: "done"}`, or `200` with the same body when it was already done for that person | Admins only (`403 not_admin`). Behind `requireFeature("graduateV1")`. Not an MCP tool. See [Graduating a comment photo](#graduating-a-comment-photo). |
+| `moderation.post` | POST | `/moderation` | body `{target, action, version?, reason?}` (see [Moderation](#moderation)) | `200` `{target, moderation, item}` | Admins only; behind `requireFeature("moderationV1")`; hides or unhides a post, a comment or one photo. `403 forbidden`, `400 validation` or `self_moderation`, `404`, `409 conflict`, `422 unsupported_target` or `unsupported_action`, `503 busy`. Not an MCP tool, no policy row. |
+| `moderation.list` | GET | `/moderation` | query `state` (`open` default, `closed`), `cursor`, `limit` (1 to 50, default 25) | `200` `{items, cursor}` | Admins only (`403`); behind `moderationV1`; the queue, newest first. Not an MCP tool. |
 | `posts.list` | GET | `/posts` | query `cursor`, `limit`, `subject`, `type`, `author`, `visibility` | `200` `{items, cursor}` | Newest first |
 | `posts.get` | GET | `/posts/:id` | none | `200` post | |
 | `posts.create` | POST | `/posts` | body `body`, optional `type`, `visibility`, `subject`, `title`, `attachments` | `201` post | Publishing sends notifications |
@@ -233,7 +235,7 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, the two `adminDeletes.post` and `adminDuplicates.list` routes, with `requireFeature("adminDelete")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, the two `moderation.*` routes, with `requireFeature("moderationV1")`, the two `adminDeletes.post` and `adminDuplicates.list` routes, with `requireFeature("adminDelete")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
 Eleven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`, and the editing routes `edit.get`, `changes.post`, `proposals.list` and `proposals.get` (HFY-TSK-211). See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the four `subscriptions.*` routes, the three `contributions.*` routes, the two records routes, `edit.schema`, the two `relationships.*` routes, the two admin routes (`adminDeletes.post`, `adminDuplicates.list`), `proposals.amend`, `proposals.withdraw` and `proposals.decide` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
@@ -635,6 +637,7 @@ What the items hold:
 - Reaction items carry `entity: "reaction"`, `target` and `reaction`. There is one per member per target, and `target` is `root` or `comment:<id>`.
 - Profile links items (`PLINKS#<gramps-id>` / `META`), one per person, carry `entity: "plinks"`, `links` (as in [Links object](#links-object)), `version`, `updatedAt` and `updatedBy` (the member id of the last writer). A person whose links were never written has no item.
 - Audit items are listed under [Audit records](#audit-records).
+- Moderation items (`MOD#<kind>:<id>` / `META`) carry `entity: "mod"` and are described under [Moderation](#moderation).
 - Upload binding items (`UPLOAD#<ulid>` / `META`) carry `entity: "upload"`, `owner` (the uploader's member id), `purpose` (`post` or `comment`), `key`, `contentType`, `size`, `created_at`, and `ttl` until a post or comment of the same purpose attaches the upload, then `attached` (the post or comment id) instead of `ttl`. See [Upload binding](#upload-binding) and [Comment photos](#comment-photos).
 - Contribution events and counters are listed under [Contributions ledger](#contributions-ledger). A credited post or comment carries `contrib: { id }`, the id of its event, on every stored copy.
 
@@ -734,12 +737,12 @@ Every post create, update, visibility change and delete, every comment create, e
 | `at` | ISO 8601 time of the change |
 | `before` | The full record before the change, or `null` on create. For profile links, `{links, version}`, which is `{links: {}, version: 0}` on the first write. |
 | `after` | The full record after the change, or `null` on delete. For profile links, the new `{links, version}`. |
-| `reason` | On an admin's delete of another member's comment, when given; `post deleted` on each comment removed with its post |
+| `reason` | On an admin's delete of another member's comment, when given; `post deleted` on each comment removed with its post; the private reason of a `moderate` entry, when given (audit only: no response, view, MOD# item or notification carries it) |
 
 | Record | `op` values |
 | --- | --- |
-| Post | `create`, `update`, `visibility`, `delete` |
-| Comment | `create`, `edit`, `delete`, `graduate` (id is the comment id; `before` and `after` hold `{attachment, graduated}`) |
+| Post | `create`, `update`, `visibility`, `moderate`, `delete` |
+| Comment | `create`, `edit`, `delete`, `moderate`, `graduate` (id is the comment id; `before` and `after` hold `{attachment, graduated}`) |
 | Profile links | `links.clear` when the body names platforms only to clear them, `links.update` for any other change |
 
 The data change and its audit item are written in a single `TransactWriteItems` call (`transact` in `txn.js`). Both land or neither does, so a failed write leaves no audit item.
@@ -865,6 +868,55 @@ hfy-comments-photos-desc-api (BRD2 9.2). Behind `commentPhotosV1` (default off; 
 4. The comment write attaches each upload in the same transaction (`SET attached = <comment id> REMOVE ttl`, conditional on owner, purpose and not attached), so a binding that changes after the read cancels the write (`403 upload_not_owned`, nothing stored).
 5. `body` may be the empty string while the comment holds a photo. It must still be sent: a missing or non-string `body` is `422 validation` "body is required" on create and edit. `body` and every `alt` run the contact-information guard (`422 contact_info`, pointer `/attachments/<n>/alt`).
 6. `comments.update` can remove attachments or change an `alt` (matched by `url`, ids kept); an unchanged body and photo list is a no-op with no audit entry. It cannot add a photo: another member's key is `403 upload_not_owned`, anything else `422 validation` on `attachments`. Deleting a comment keeps its objects.
+
+## Moderation
+
+hfy-moderation-api-core (BRD2 D2-19, R-32; design: social.md section 11). An admin hides or unhides a member's post, comment or one photo, and reads the queue. Both routes are behind `requireFeature("moderationV1")` (`false` in `flags.json`), are admins only (`403 forbidden` for anyone else, before the body is read) and are not MCP tools.
+
+`POST /api/moderation` takes:
+
+```json
+{ "target": { "kind": "post", "id": "<ulid>" }
+          | { "kind": "comment", "id": "<ulid>", "thread": "person:<gramps_id>" }
+          | { "kind": "photo", "parent": { "kind": "post", "id": "<ulid>" } | { "kind": "comment", "id": "<ulid>", "thread": "<subject>" }, "attachment": "<id>" },
+  "action": "hide" | "unhide",
+  "version": "<updated_at of the post | edited_at (or created_at) of the comment the admin saw>",
+  "reason": "optional, at most 200 characters, private" }
+```
+
+A photo's `attachment` is the attachment `id` on a comment, and on a post the ulid of its upload (`/uploads/posts/<ulid>/<name>`), which survives an edit that reorders the photos. It answers `200 {target, moderation, item}`: `moderation` is the open inline state (or `null` once unhidden) and `item` is the post or comment as the admin sees it.
+
+| Status | When |
+| --- | --- |
+| `403 forbidden` | The caller is not an admin. |
+| `400 validation` | The target, action, `reason` or `version` is malformed (`details.fields`). |
+| `400 self_moderation` | The item is the admin's own. An admin withdraws or deletes their own item instead. |
+| `404 not_found` | No such item, or no such photo on it. |
+| `409 conflict` | `version` is stale, or the item changed between the read and the write (the write is guarded on the stored version and, for a comment, on `mod_v`). |
+| `422 unsupported_target` | The kind is `note`, `mediaref` or `media` (record data; `hfy-moderation-record-targets`). |
+| `422 unsupported_action` | The action is `request_changes` or `ask` (`hfy-moderation-ask-api` turns them on in the route). |
+| `503 busy` | The transaction kept conflicting. |
+
+**One transaction.** The post's three copies (`META`, `IDX#AUTHOR`, `IDX#SUBJECT`) or the comment item, the `MOD#` item, the `AUDIT#` item (op `moderate`, the private `reason`) and the hide of the credited contribution event (`hideOps`, no count changes) commit together, through the commit of [`content.js`](../../api/src/content.js) and [`comments.js`](../../api/src/comments.js). A hide of what is already hidden, or an unhide of what is not, writes nothing and notifies nobody. A hide bumps the post's `updated_at` (a comment keeps `edited_at` and moves a private `mod_v` counter, which no response shows).
+
+**Inline state** is `post.moderation` / `comment.moderation` (`{state, hidden, by: {id, label}, at, note?, open: true}`) and, for a photo, `attachments[i].moderation` (`{hidden: true, by, at}`). The `MOD#` item (`MOD#<kind>:<id>` / `META`; a comment id is `<thread>/<ulid>`, a photo id `<parent kind>:<parent id>#<attachment id>`) holds `target`, `author_id`, `author`, `state`, `hidden`, `by`, `at`, `note?`, `open`, `resolved_by?` / `resolved_at?` and `version`, with `GSI1PK` `MODQ#open` or `MODQ#closed` and `GSI1SK` `<at>#<kind>:<id>`. There is one item per target: an unhide closes it (`resolved_by` is the admin, or `author` when the author's edit or delete closed it) and a later hide reopens it with the next `version`. The records read path already reads `MOD#note:`, `MOD#mediaref:` and `MOD#media:` items by this shape.
+
+**The queue.** `GET /api/moderation?state=open|closed&cursor=&limit=` queries `GSI1` `MODQ#<state>` newest first and returns `{items: [{target, state, hidden, by, at, note?, open, resolved_by?, resolved_at?, author: {id, label}, href}], cursor}`. `400 cursor_invalid` for a cursor it did not issue. The private reason is never in a row.
+
+**One visibility rule, in every read path.** `moderationVisible(item, viewer) = !item.moderation?.hidden || viewer.id === item.author.id || viewer.admin` ([`moderation.js`](../../api/src/moderation.js)). The author and admins also receive the `moderation` object; nobody else does (a visible `question` carries a private note), and everyone else gets the item without the photos a moderator hid.
+
+| Read path | Behavior for a viewer who is neither the author nor an admin |
+| --- | --- |
+| `posts.get`, `posts.list` (all, by author, by subject), the MCP post tools | The kit's `canView` (content 0.3.x): a hidden post, or a photo-only post whose every photo is hidden, is `404` / absent; the page is still filled to `limit`. The view drops `moderation` and hidden attachments, and `can.moderate` is true only for an admin on another author's post. |
+| `comments.list` | Hidden comments are left out; the page is filled to `limit` by reading on (up to 3 queries) and the cursor continues from the last row read. A comment with only hidden photos and no text is left out too. |
+| `comments.create` (reply), `edit`, `delete`, `react` on a hidden comment | `404 not_found`. |
+| A post's thread | A hidden post hides its thread as a withdrawn one does (`checkPostVisible` goes through `content.get`). |
+| `contributions.list` | The event is hidden by `hideOps` (the author and admins still see it), and an event on a post thread needs `canView` of the post. |
+| On this day, archive tier (`GET /api/onthisday`, `surf-onthisday-api`) | `archiveView(post, viewer)` returns the post as the viewer may see it, or `null`. The route is not part of this task. |
+
+**Closing.** An effective author edit of a `changes_requested` or `question` item closes it (inline state, `MOD#`, the event) inside the edit's transaction; a plain `hidden` stays until a moderator unhides it, and the author cannot lift a hidden photo by resubmitting it. A delete (the author's, a moderator's, or the thread purge of a deleted post) closes the item's `MOD#` items in the same transaction. A moderated photo is not graduated (`409 moderated`).
+
+The kit's `moderate()` of both sources implements all four actions (`hide`, `unhide`, `request_changes`, `ask`), so the kit contract suites run with moderation on; the route runs the first two until the ask task lands. The notices `moderation_hidden` and `moderation_unhidden` go to the item's author after the commit (`onModeration`; best effort, never fails the write). A moderated photo's bytes still serve to a signed-in member who holds the URL: hiding removes the reference, not the object.
 
 ## Graduating a comment photo
 

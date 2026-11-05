@@ -1,12 +1,13 @@
 // ContentSource over the hfy-app table. Implements the @io-kit/content contract (CS suite) with D-15 audit
 // items written in the same TransactWriteItems call as the data change.
-import { ContentError, POST_TYPES, VISIBILITIES, auditEntry, canView, computeCan, withCan, DEFAULT_LIMIT, MAX_LIMIT } from "@io-kit/content";
+import { ContentError, POST_TYPES, VISIBILITIES, auditEntry, canView, computeCan, hiddenByModeration, withCan, DEFAULT_LIMIT, MAX_LIMIT } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { postKeys, gsiPosts, gsiAuthor, gsiSubject } from "./keys.js";
 import { TxnCancelled, auditItem, transact, queryPartition, versionGuard } from "./txn.js";
 import { IMAGE_TYPES, UPLOAD_PREFIX, UPLOAD_PURPOSE_POST, uploadKeys } from "./uploads.js";
 import { createGuard, pointer } from "./guard.js";
 import { contribOps, emptyOps, getEvent, hideOps, mergeOps, revokeOps } from "./contrib.js";
+import { closeModOps, normalizeModerate, openModOps, postAttachmentId, targetKey } from "./moderation.js";
 
 const hash = (s) => {
   let h = 5381;
@@ -14,6 +15,9 @@ const hash = (s) => {
   return h.toString(16);
 };
 const filterId = (f) => hash(JSON.stringify([f?.subject ?? null, f?.type ?? null, f?.author ?? null, f?.visibility ?? null]));
+
+/** The host capabilities computeCan reads: moderation is opt-in, and this host moderates (content.moderate below). */
+export const HOST_CAPS = Object.freeze({ moderation: true });
 
 export const MAX_BODY = 20_000; // keeps post item x3 + audit before/after well under the 400KB item limit
 export const MAX_TITLE = 200;
@@ -32,6 +36,21 @@ const isDim = (v) => Number.isInteger(v) && v > 0 && v <= 100_000;
 const uploadPath = (url, base) => (base && url.startsWith(`${base}/`) ? url.slice(base.length) : url);
 const notOwned = () => new HttpError(403, "upload_not_owned", "that photo can't be attached here. add it again.");
 const notUploaded = () => new HttpError(400, "upload_missing", "that photo didn't finish uploading. add it again.");
+
+/** Is a post's contribution event out of the feed? Not published, or hidden from other viewers by moderation. */
+const eventHidden = (p) => p.visibility !== "published" || hiddenByModeration(p);
+/** A moderator's photo hide is not the author's to lift: an edit that resubmits a photo (matched by url) keeps the flag the stored one carries, and a client-sent flag never lands. */
+const keepModeration = (list, held = []) => list.map((a) => {
+  const prior = held.find((k) => k.url === a.url && k.moderation !== undefined);
+  return prior ? { ...a, moderation: structuredClone(prior.moderation) } : a;
+});
+/** The index of the photo `att` names in `post`: an integer index, or the upload id of the photo (what the route sends); -1 when there is none. */
+const attIndex = (post, att) => {
+  const list = post.attachments ?? [];
+  if (Number.isInteger(att)) return att >= 0 && att < list.length ? att : -1;
+  return typeof att === "string" ? list.findIndex((a) => postAttachmentId(a) === att) : -1;
+};
+const photoTarget = (id, a) => ({ kind: "photo", parent: { kind: "post", id }, attachment: postAttachmentId(a) });
 
 /** R-18 free-text fields of a post: body, title and every attachment alt, as [pointer, text] (src/guard.js). */
 export const postTextFields = (p, { body = true, title = true, attachments = true } = {}) => [
@@ -93,7 +112,10 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     if (!actor) throw new ContentError("forbidden", "sign in to write");
     return actor;
   };
-  const view = (p) => withCan(structuredClone(p), actor);
+  // withCan also redacts: everyone but the author and admins gets the post without its moderation and without the photos a moderator hid.
+  const view = (p) => withCan(structuredClone(p), actor, HOST_CAPS);
+  const ctx = { ddb, cmds, table };
+  const iso = () => new Date(now()).toISOString();
 
   async function fetchStored(id) {
     const r = await ddb.send(new cmds.GetCommand({ TableName: table, Key: postKeys(id) }));
@@ -181,15 +203,27 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
     contribOps({
       actor: { id: post.author.id, label: post.author.label }, kind: "post", ref: { type: "post", id: post.id },
       ...(post.subject ? { subject: post.subject } : {}), photos: (post.attachments ?? []).filter((a) => a.kind === "image").length, at, via, uid,
+      ...(hiddenByModeration(post) ? { hidden: true } : {}),
     });
+
+  /**
+   * The event is out of the feed while the post is not published or moderation hides it from other viewers (the post itself, or a photo-only
+   * post whose every photo was hidden). Returns the hideOps that moves the event to where `after` says, or undefined when it is already there
+   * (or the post has no event, or the event is missing: an orphan link the backfill repairs must not fail the write).
+   */
+  async function eventOps(before, after) {
+    if (!before.contrib || eventHidden(before) === eventHidden(after)) return undefined;
+    const event = await getEvent(ctx, before.author.id, before.contrib.id);
+    return event ? hideOps({ actor: before.author, id: before.contrib.id }, eventHidden(after)) : undefined;
+  }
 
   /**
    * `updates` are the UPLOAD# bindings (bindUploads). `ops` is a contrib.js fragment (credit, revoke or hide): its event and counter
    * writes ride in this transaction with the bindings, so the ledger never disagrees with the post.
    */
-  async function commit(op, id, before, after, at, { create = false, updates = [], ops = emptyOps() } = {}) {
+  async function commit(op, id, before, after, at, { create = false, updates = [], ops = emptyOps(), reason } = {}) {
     const who = requireActor();
-    const entry = auditEntry(op, id, who.id, before, after, at);
+    const entry = auditEntry(op, id, who.id, before, after, at, reason);
     const mainCondition = create ? { condition: "attribute_not_exists(PK)" } : versionGuard("post", "updated_at", before.updated_at);
     const puts = [];
     const deletes = [];
@@ -218,6 +252,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
 
   const self = {
     ...(audit ? { audit } : {}),
+    capabilities: { moderation: true },
     async list(args = {}) {
       if (args.signal?.aborted) throw new ContentError("unavailable", "aborted");
       const f = args.filter;
@@ -284,7 +319,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       const before = structuredClone(current);
       const next = { ...current };
       if (patch.body !== undefined) next.body = patch.body;
-      if (patch.attachments !== undefined) next.attachments = normalizeAttachments(patch.attachments, mediaPublicBase);
+      if (patch.attachments !== undefined) next.attachments = keepModeration(normalizeAttachments(patch.attachments, mediaPublicBase), current.attachments);
       // Judge the post the patch leaves behind: emptying a photo post's body is fine, removing its last photo is not.
       validateBody(next.body, next.attachments);
       for (const [k, check] of [["title", checkTitle], ["subject", checkSubject]]) {
@@ -297,7 +332,17 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       guard("posts", "update", postTextFields(next, { body: patch.body !== undefined, title: typeof patch.title === "string", attachments: patch.attachments !== undefined }));
       checkSize(next);
       const updates = patch.attachments !== undefined ? await bindUploads(id, next.attachments, current.attachments ?? []) : [];
-      await commit("update", id, before, next, next.updated_at, { updates });
+      // An effective author edit answers a request_changes or an ask: the moderation closes (MOD# included) and the post shows again. A plain hide stays
+      // for a moderator to lift, and so does a hidden photo that the edit keeps; a hidden photo the edit removes closes its own MOD#.
+      const changed = before.body !== next.body || before.title !== next.title || JSON.stringify(before.attachments) !== JSON.stringify(next.attachments);
+      const closing = [];
+      if (changed && next.moderation && next.moderation.state !== "hidden") {
+        delete next.moderation;
+        closing.push(targetKey({ kind: "post", id }));
+      }
+      for (const a of before.attachments ?? []) if (a.moderation && !next.attachments.some((n) => n.url === a.url)) closing.push(targetKey(photoTarget(id, a)));
+      const resolved = closing.length > 0 ? await closeModOps(ctx, closing, { resolvedBy: "author", at: next.updated_at }) : undefined;
+      await commit("update", id, before, next, next.updated_at, { updates, ops: mergeOps(resolved, await eventOps(before, next)) });
       return view(next);
     },
     async setVisibility(id, visibility) {
@@ -313,11 +358,10 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       if (visibility === "published" && !current.contrib) {
         ops = creditPost(next, next.updated_at);
         next.contrib = { id: ops.event.id };
-      } else if (current.contrib && (visibility === "published") !== (current.visibility === "published")) {
-        // Hide only an event that exists: a post whose event is missing (an orphan link the backfill repairs) must still withdraw and
-        // republish, not fail with a 409 on the hide's condition.
-        const event = await getEvent({ ddb, cmds, table }, current.author.id, current.contrib.id);
-        if (event) ops = hideOps({ actor: current.author, id: current.contrib.id }, visibility !== "published");
+      } else {
+        // The event follows the post: out of the feed while it is not published or moderation hides it. Only an event that exists is touched: a
+        // post whose event is missing (an orphan link the backfill repairs) must still withdraw and republish, not fail with a 409 on the hide's condition.
+        ops = await eventOps(current, next);
       }
       await commit("visibility", id, before, next, next.updated_at, ops ? { ops } : {});
       return view(next);
@@ -328,7 +372,64 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       if (beforeDelete) await beforeDelete(current);
       // Deletes revoke the credit, whoever deletes (an admin's delete takes it from the author): the event sits under the author.
       const event = current.contrib ? await getEvent({ ddb, cmds, table }, current.author.id, current.contrib.id) : undefined;
-      await commit("delete", id, structuredClone(current), null, new Date(now()).toISOString(), event ? { ops: revokeOps(event) } : {});
+      // A moderated post leaves its MOD# items closed in the same transaction (social.md 11.2: any delete, by the author or a moderator).
+      const at = iso();
+      const open = [...(current.moderation ? [targetKey({ kind: "post", id })] : []), ...(current.attachments ?? []).filter((a) => a.moderation).map((a) => targetKey(photoTarget(id, a)))];
+      const closed = open.length > 0 ? await closeModOps(ctx, open, { resolvedBy: actor.id === current.author.id ? "author" : actor.id, at }) : undefined;
+      await commit("delete", id, structuredClone(current), null, at, { ops: mergeOps(event ? revokeOps(event) : undefined, closed) });
+    },
+    /**
+     * Admin moderation of another author's post (capability `moderation`; social.md 11.2; the kit's CS-15 to CS-18). `m` is the kit's ModerateAction;
+     * its `attachment` is the photo's index or, from the route, the upload id of the photo. `opts.version` is the `updated_at` the admin saw: a stale
+     * one is ContentError conflict (409). The inline state, the MOD# item, the AUDIT# entry (with the private reason) and the contribution event's
+     * hideOps all commit in the one transaction that rewrites the post's three copies. Repeating a hide, or unhiding what is not hidden, writes nothing.
+     */
+    async moderate(id, m, opts = {}) {
+      const who = requireActor();
+      const current = await visible(id);
+      if (!computeCan(current, actor, HOST_CAPS).moderate) throw new ContentError("forbidden", "only an admin can moderate another author's post", { id });
+      if (opts.version !== undefined && opts.version !== current.updated_at) throw new ContentError("conflict", "that post changed since you looked", { id });
+      const act = normalizeModerate(m, (field, message) => { throw invalid(field, message); });
+      if (act.note !== undefined) guard("moderation", "moderate", [[pointer("note"), act.note]]); // R-18: 422 contact_info, nothing stored
+      const at = iso();
+      const by = { id: who.id, label: who.label };
+      const before = structuredClone(current);
+      const next = structuredClone(current);
+      let mod;
+      if (m.attachment !== undefined) {
+        if (act.note !== undefined) throw invalid("attachment", "a note is for the whole post, not one photo");
+        const i = attIndex(current, m.attachment);
+        if (i < 0) throw invalid("attachment", "no such attachment");
+        const a = next.attachments[i];
+        const target = photoTarget(id, a);
+        if (act.action === "hide") {
+          if (a.moderation?.hidden === true) return view(current);
+          next.attachments[i] = { ...a, moderation: { hidden: true, by, at } };
+          mod = await openModOps(ctx, { target, author: current.author, state: "hidden", hidden: true, by, at });
+        } else {
+          if (a.moderation === undefined) return view(current);
+          const { moderation: _gone, ...rest } = a;
+          next.attachments[i] = rest;
+          mod = await closeModOps(ctx, [targetKey(target)], { resolvedBy: who.id, at });
+        }
+      } else {
+        const target = { kind: "post", id };
+        if (act.action === "unhide") {
+          if (current.moderation === undefined) return view(current);
+          delete next.moderation;
+          mod = await closeModOps(ctx, [targetKey(target)], { resolvedBy: who.id, at });
+        } else {
+          if (act.action === "hide" && current.moderation?.state === "hidden") return view(current);
+          const state = act.action === "hide" ? "hidden" : act.action === "request_changes" ? "changes_requested" : "question";
+          const hidden = act.action === "ask" ? act.hide : true;
+          next.moderation = { state, hidden, by, at, ...(act.note !== undefined ? { note: act.note } : {}), open: true };
+          // An open ask the admin replaces closes and a new record opens: one MOD# item per target, its version moves on.
+          mod = await openModOps(ctx, { target, author: current.author, state, hidden, by, at, note: act.note });
+        }
+      }
+      next.updated_at = at;
+      await commit("moderate", id, before, next, at, { ops: mergeOps(mod, await eventOps(before, next)), ...(act.reason !== undefined ? { reason: act.reason } : {}) });
+      return view(next);
     },
   };
   return self;
