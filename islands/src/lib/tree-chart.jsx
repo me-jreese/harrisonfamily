@@ -40,11 +40,13 @@ const MEDIUM_QUERY = `${WIDE_QUERY} and (max-width: 63.99rem)`;
 
 // "Pictured with" (familyVizFaces, HFY-TSK-271): one re-centring button per person who shares a photoEdges entry with the person. Buttons, not
 // links, like the cards: choosing one moves the tree. Twelve show first; "show more" lists the rest. Nothing renders without a chip.
+// P2-R46 deviation, recorded: a name is a link, but a link cannot sit in a button, and a chip's job is to re-centre. The chip draws the name
+// through <PersonName> without an id (a span with the same class, colour and weight, no href); the person's page link is on the re-centred
+// details, which show that person next. The shown/expanded state is reset by a key on the component, not an effect.
 const CHIPS_FIRST = 12;
 function PicturedWith({ graph, id, idp, onPick }) {
   const chips = useMemo(() => picturedWith(graph, id), [graph, id]);
   const [all, setAll] = useState(false);
-  useEffect(() => { setAll(false); }, [id]);
   if (!chips.length) return null;
   const shown = all ? chips : chips.slice(0, CHIPS_FIRST);
   return (
@@ -53,7 +55,7 @@ function PicturedWith({ graph, id, idp, onPick }) {
       <ul className="hfy-tree-details__chips">
         {shown.map((c) => (
           <li key={c.id}>
-            <button type="button" className="hfy-tree-details__chip" data-pictured={c.id} onClick={() => onPick(c.id)}>{c.name}</button>
+            <button type="button" className="hfy-tree-details__chip" data-pictured={c.id} onClick={() => onPick(c.id)}><PersonName name={c.name} /></button>
           </li>
         ))}
       </ul>
@@ -93,7 +95,7 @@ function Details({ graph, id, idp = "hfy-tree-details", faces = false, onPick = 
           </div>
         )) : <p className="hfy-tree__dim">{COPY.noUnions}</p>}
       </section>
-      {faces && onPick ? <PicturedWith graph={graph} id={id} idp={idp} onPick={onPick} /> : null}
+      {faces && onPick ? <PicturedWith key={id} graph={graph} id={id} idp={idp} onPick={onPick} /> : null}
     </div>
   );
 }

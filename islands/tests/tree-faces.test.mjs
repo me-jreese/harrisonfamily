@@ -1,7 +1,8 @@
 // HFY-TSK-271 (viz-v2-faces): picturedWith (lib/navigator-model.js) in node, on the synthetic tests/fixtures/tree-graph-small.json (invented
 // names) with a synthetic photoEdges block. The chips read only the published graph's photoEdges: the builder leaves a private Media, a private
 // MediaRef, a private person and a RECT_INVALID tag out of the block (graph/README.md "Photo co-occurrence"), so a fixture of that output has no
-// entry for them, and the model shows no chip for that person.
+// entry for them, and the model shows no chip for that person. That exclusion is the builder contract (viz-graph-v2-data); the client cannot see a
+// private entry, so these tests pin the published shape.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -39,8 +39,8 @@ test("flag on, 1280: the panel lists a chip for each person sharing a photo, and
   await expect(page.locator("[data-tree-focus] h2")).toHaveText("Bram Example");
   await expect(page.locator("[data-tree-panel='I9004']")).toBeVisible();
   expect(new URL(page.url()).searchParams.get("focus")).toBe("I9004");
-  // Bram shares photos with Ada only
-  await expect(page.locator("[data-tree-panel='I9004'] button[data-pictured]")).toHaveText(["Ada Example"]);
+  // Bram shares O1 with Ada and Hana, and O2 with Ada: Ada first (2 photos), then Hana (1)
+  await expect(page.locator("[data-tree-panel='I9004'] button[data-pictured]")).toHaveText(["Ada Example", "Hana Sample"]);
   expect(errors).toEqual([]);
 });
 

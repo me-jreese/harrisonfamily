@@ -305,5 +305,5 @@ export function picturedWith(graph, id) {
     }
   }
   return [...shared].map(([pid, photos]) => ({ id: pid, name: graph.person(pid).name, photos }))
-    .sort((a, b) => b.photos - a.photos || a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1));
+    .sort((a, b) => b.photos - a.photos || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || (a.id < b.id ? -1 : 1));
 }
