@@ -377,12 +377,13 @@ All are expected in `us-west-2`, the region the stack and the scripts default to
 
 ## Cloudflare Worker secrets
 
-The chat Worker keeps two secrets as Cloudflare Worker secrets. Neither is in Secrets Manager, in the repository or in `dist/deploy.json`, and Cloudflare does not show a value after it is set.
+The chat Worker keeps three secrets as Cloudflare Worker secrets. None is in Secrets Manager, in the repository or in `dist/deploy.json`, and Cloudflare does not show a value after it is set.
 
 | Secret name | Holds | Read by | Created by | Rotation |
 | --- | --- | --- | --- | --- |
 | `CHAT_SERVICE_PRIVATE_KEY` | A PKCS8 PEM ES256 (P-256) private key | The chat hub, to sign its `hfy-api` service tokens. The public half is the stack parameter `ChatServicePublicKeys`, which is public. | The production deploy, through `--secrets-file` from a `0600` temporary file that is removed afterwards ([Deploy the Worker to production](../how-to/deploy-the-chat-worker.md#deploy-the-worker-to-production)) | [Rotate the chat service key](../how-to/rotate-the-chat-service-key.md) |
 | `CHAT_ADMIN_TOKEN` | A random string of at least 32 characters (`openssl rand -hex 32`) | The Worker, for `POST /chat/v1/admin/expunge` only | `wrangler secret put` ([The admin expunge route](../how-to/deploy-the-chat-worker.md#the-admin-expunge-route)); the operator keeps the same value in `CHAT_HUB_ADMIN_TOKEN` for one shell | The same page: put a new value, then update the shell |
+| `CHAT_UAT_SUBJECTS` | Comma-separated `<gramps-id>` values: the members who may chat while `CHAT_OPEN_TO` is `uat`. Absent or empty lets nobody in. | The Worker's upgrade check and the chat hub's directory | `wrangler secret put` at its prompt ([Name the UAT members](../how-to/deploy-the-chat-worker.md#name-the-uat-members)); never on a command line, in a file or in a worklog | The same page: put the full list again, or `wrangler secret delete` to close chat to everyone |
 
 ## Google Cloud (legacy, deleted)
 

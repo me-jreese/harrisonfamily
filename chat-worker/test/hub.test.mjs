@@ -98,3 +98,53 @@ test("no frame text, header or service token reaches the console, including on f
   // what is logged is event names and counts: one JSON object per line
   for (const line of spy.lines) assert.doesNotThrow(() => JSON.parse(line), `not a structured line: ${line.slice(0, 60)}`);
 });
+
+// HFY-TSK-368: CHAT_UAT_SUBJECTS is a Worker secret. The hub reads env.CHAT_UAT_SUBJECTS once, when it starts, and a secret that was never
+// put is simply missing from env. Missing must act exactly like an empty string: nobody connects, nobody is in the directory.
+const secretEnv = (value) => {
+  const env = { CHAT_OPEN_TO: "uat" };
+  Object.defineProperty(env, "CHAT_UAT_SUBJECTS", { get: () => value, enumerable: true, configurable: false });
+  return env;
+};
+
+/** What each of the six synthetic members meets: the close code of their socket, and the people the welcome lists (or null without one). */
+async function meet(env) {
+  const rig = await bundledHub({ env });
+  try {
+    const out = {};
+    for (const uid of ["I9001", "I9002", "I9003", "I9004", "I9005", "I9006"]) {
+      const c = await rig.connect(uid);
+      const welcome = c.frames().find((f) => f.t === "welcome");
+      out[uid] = { closed: c.ws.closed?.code ?? null, people: welcome ? welcome.people.map((p) => p.id) : null };
+    }
+    return out;
+  } finally {
+    rig.close();
+  }
+}
+
+test("CHAT_OPEN_TO uat with no CHAT_UAT_SUBJECTS binding: every member's socket closes 4403 and no welcome lists anyone", async () => {
+  // The rig defaults CHAT_OPEN_TO to "all", so the third case undefines it: the hub reads anything but "all" as "uat".
+  const cases = { "uat, binding missing": { CHAT_OPEN_TO: "uat" }, "uat, binding undefined": { CHAT_OPEN_TO: "uat", CHAT_UAT_SUBJECTS: undefined }, "open-to missing too": { CHAT_OPEN_TO: undefined } };
+  for (const [label, env] of Object.entries(cases)) {
+    const seen = await meet(env);
+    for (const [uid, got] of Object.entries(seen)) assert.deepEqual(got, { closed: 4403, people: null }, `${uid}: ${label}`);
+  }
+});
+
+test("a secret and a var give the hub the same list: absent equals empty, and a named list lets in exactly those members", async () => {
+  const empty = await meet({ CHAT_OPEN_TO: "uat", CHAT_UAT_SUBJECTS: "" });
+  assert.deepEqual(await meet({ CHAT_OPEN_TO: "uat" }), empty, "absent is empty");
+  assert.deepEqual(await meet(secretEnv("")), empty, "a secret that is empty is empty");
+  assert.deepEqual(await meet(secretEnv(" , ,")), empty, "a blank list names nobody");
+  for (const value of ["I9002,I9004", " I9004 , ,I9002 "]) {
+    const asVar = await meet({ CHAT_OPEN_TO: "uat", CHAT_UAT_SUBJECTS: value });
+    assert.deepEqual(await meet(secretEnv(value)), asVar, `${JSON.stringify(value)}: secret and var differ`);
+    for (const [uid, got] of Object.entries(asVar)) {
+      if (uid === "I9002" || uid === "I9004") {
+        assert.equal(got.closed, null, `${uid} is let in`);
+        assert.deepEqual(got.people, ["I9002", "I9004"], `${uid} sees only the listed members`);
+      } else assert.deepEqual(got, { closed: 4403, people: null }, `${uid} is refused`);
+    }
+  }
+});

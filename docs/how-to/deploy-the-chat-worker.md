@@ -6,7 +6,7 @@ Values in angle brackets are placeholders. The forms are listed in [Private data
 
 ## Before you start
 
-- **Chat ships dark.** The committed `wrangler.toml` sets `CHAT_OPEN_TO` to `uat` with an empty `CHAT_UAT_SUBJECTS`, so nobody can connect until a committed change names them, and the committed [`flags.json`](../../11ty/_data/flags.json) keeps the island flag `chatV1` off. What is deployed can differ: check it with [Check where the Worker stands](#check-where-the-worker-stands). Nothing on this page changes who can chat.
+- **Chat ships dark.** The committed `wrangler.toml` sets `CHAT_OPEN_TO` to `uat` and declares no `CHAT_UAT_SUBJECTS`: the tester list is a Worker secret that is not in Git, so nobody can connect until someone sets it ([Name the UAT members](#name-the-uat-members)), and the committed [`flags.json`](../../11ty/_data/flags.json) keeps the island flag `chatV1` off. What is deployed can differ: check it with [Check where the Worker stands](#check-where-the-worker-stands). Only that section changes who can chat; no other step on this page does.
 - **Node 22 or later**, and `CODEARTIFACT_AUTH_TOKEN` exported before any install, because `@io-kit/chat` comes from CodeArtifact ([Build and preview the islands](build-and-preview-the-islands.md) shows how to get a token). The AWS identity that can mint it is the `product-lead` profile.
 - **Why the bundle is committed.** CI cannot read CodeArtifact (HFY-R62) and installs no npm package (HFY-R14), so it cannot build the Worker. You build it, and commit [`chat-worker/dist/`](../../chat-worker/dist/) with the source change, exactly like the islands output (HFY-R58).
 
@@ -107,7 +107,7 @@ This deploys the committed bundle as the Worker `hfy-chat-worker`, creates its t
 
 **History.** The first production deploy ran on 2026-11-04 (HFY-TSK-199), by hand, with the procedure below: the Worker first, then the change set. Nothing on this page records what is live now. [Check where the Worker stands](#check-where-the-worker-stands) gives the checks.
 
-**The Worker is dormant until UAT members are named.** `CHAT_OPEN_TO` is `uat`, so with an empty `CHAT_UAT_SUBJECTS` no member passes the upgrade check and every signed-in socket closes `4403`. Until `ChatServicePublicKeys` holds the key's public half, every call the hub makes to `hfy-api` answers `401`. The order below deploys the Worker first for that reason: it can sit deployed with nobody able to use it.
+**The Worker is dormant until UAT members are named.** `CHAT_OPEN_TO` is `uat` and `CHAT_UAT_SUBJECTS` is a Worker secret this deploy never sets, so with it absent or empty no member passes the upgrade check and every signed-in socket closes `4403`. Until `ChatServicePublicKeys` holds the key's public half, every call the hub makes to `hfy-api` answers `401`. The order below deploys the Worker first for that reason: it can sit deployed with nobody able to use it.
 
 ### Prerequisites
 
@@ -299,7 +299,7 @@ The private half now exists in one place, the Worker secret `CHAT_SERVICE_PRIVAT
 wr secret list --name hfy-chat-worker
 ```
 
-It lists `CHAT_SERVICE_PRIVATE_KEY`, and `CHAT_ADMIN_TOKEN` once [that secret is set](#the-admin-expunge-route). Then remove everything the steps made:
+It lists `CHAT_SERVICE_PRIVATE_KEY`, `CHAT_ADMIN_TOKEN` once [that secret is set](#the-admin-expunge-route), and `CHAT_UAT_SUBJECTS` once [the UAT members are named](#name-the-uat-members). Then remove everything the steps made:
 
 ```sh
 rm -rf "$WORK"; unset WORK SECRETS_FILE PUBLIC_FILE KID TOKEN ZONE_ID CS
@@ -308,11 +308,11 @@ git worktree remove <worktree>
 
 ### Redeploy without changing the key
 
-A later deploy of a new bundle or of changed vars (the kill switch, the UAT list) runs steps 1 to 5 with step 3 shortened to the `wr deploy` line **without** `--secrets-file`. Cloudflare documents that a deploy never deletes secrets, so the key stays, and the `ChatServicePublicKeys` entry stays valid. Every deploy replaces the vars with the ones in `wrangler.toml`, so a value set only in the dashboard or by an earlier `--var` is gone after it, and `CHAT_WORKER_VERSION` must be passed again. Cloudflare defers a Durable Object's code update by default, for up to 5 minutes or until the object hibernates, and a socket accepted through the Hibernation API (the hub's) stays connected across the update unless the object is still active when that delay ends; the client reconnects if one drops. Until the object adopts the new version, the hub runs the version it had, secrets and vars included.
+A later deploy of a new bundle or of changed vars (the kill switch, `CHAT_OPEN_TO`) runs steps 1 to 5 with step 3 shortened to the `wr deploy` line **without** `--secrets-file`. Cloudflare documents that a deploy never deletes secrets, so the key stays, and the `ChatServicePublicKeys` entry stays valid; so do `CHAT_ADMIN_TOKEN` and `CHAT_UAT_SUBJECTS`. Every deploy replaces the vars with the ones in `wrangler.toml`, so a value set only in the dashboard or by an earlier `--var` is gone after it, and `CHAT_WORKER_VERSION` must be passed again. Cloudflare defers a Durable Object's code update by default, for up to 5 minutes or until the object hibernates, and a socket accepted through the Hibernation API (the hub's) stays connected across the update unless the object is still active when that delay ends; the client reconnects if one drops. Until the object adopts the new version, the hub runs the version it had, secrets and vars included.
 
 ### Check where the Worker stands
 
-None of this is recorded in the repository. Each line checks one thing (`cf_api`, `CF` and `ZONE_ID` are the ones from step 4; define them again in a new shell):
+None of this is recorded in the repository. Each line checks one thing (`cf_api`, `CF` and `ZONE_ID` are the ones from step 4 and `wr` is the one from step 2; define them again in a new shell):
 
 ```sh
 curl -sS https://<site>/chat/v1/health
@@ -321,19 +321,22 @@ aws cloudformation describe-stacks --stack-name <app-stack> \
   --query "Stacks[0].Parameters[?ParameterKey=='ChatServicePublicKeys'].ParameterValue" --output text | jq -r '.[].kid'
 curl -s https://<site>/_data/flags.json | jq .chatV1
 curl -sS -X POST -o /dev/null -w '%{http_code}\n' https://<site>/chat/v1/admin/expunge
+wr secret list --name hfy-chat-worker
 ```
 
 - **Health:** the JSON body means the routes and the Worker are there, and `version` is the deployed commit. Anything else (the site's HTML, a CloudFront error) means the routes are missing.
 - **Routes:** exactly the two lines of step 4.
 - **Kids:** the keys the API trusts. No output means the parameter is empty and every hub call answers `401`.
-- **`chatV1`:** the island flag the page serves. The Worker's own gate (`CHAT_OPEN_TO` and `CHAT_UAT_SUBJECTS`, committed in `wrangler.toml` and `dist/deploy.json`) decides who may connect, whatever the flag says.
+- **`chatV1`:** the island flag the page serves. The Worker's own gate (`CHAT_OPEN_TO`, committed in `wrangler.toml` and `dist/deploy.json`, and the Worker secret `CHAT_UAT_SUBJECTS`) decides who may connect, whatever the flag says.
 - **Admin route:** `401` means `CHAT_ADMIN_TOKEN` is set and the route is open to a bearer token. Any other code means the secret is not set and the route is closed (the request goes on to the origin).
+- **Secrets:** names only, never values. `CHAT_UAT_SUBJECTS` in the list means a tester list is set; its absence means that, while `CHAT_OPEN_TO` is `uat`, nobody can connect. The list cannot show who is on it.
 
 ### Roll back and stop
 
 Pick the smallest step that does the job. None of them deletes data.
 
 - **Stop new connections now.** Run the `wr deploy` command of step 3 without `--secrets-file`, and with `--var CHAT_ENABLED:0` added next to the `CHAT_WORKER_VERSION` var. Every new upgrade then closes `4503`; sockets that are already open are not closed by it. The config still says `"1"`, so the next deploy from `main` turns chat on again: if the stop has to last, commit `CHAT_ENABLED = "0"` and rebuild `dist/` first.
+- **Close chat to everyone but keep it deployed.** While `CHAT_OPEN_TO` is `uat`, `wr secret delete CHAT_UAT_SUBJECTS --name hfy-chat-worker` empties the tester list, with no deploy and no rebuild ([Name the UAT members](#name-the-uat-members) has the timing). Unlike the kill switch, it also closes sockets that are already open, once the hub takes the change, and it needs no commit to undo: put the list again.
 - **Take the Worker off the two paths.** Delete its routes. `/chat/ws` then falls through to CloudFront, which answers `404`, and the client backs off. The data gate, `authV2` and `HFYAppendIndex` are untouched.
 
   ```sh
@@ -355,6 +358,26 @@ Cloudflare's documentation for the Workers `tail()` handler says a tail event's 
 - The Worker keeps `[observability]` and its invocation logs off in `wrangler.toml` (a test pins it), and the hub's own log lines carry event names and counts only.
 
 Cloudflare also notes that `wrangler tail` output for a request that was upgraded to a WebSocket is delayed until the socket closes, which is one more reason not to attach it to a Worker that carries sockets. If you need to debug a socket, use staging, whose cookies and keys are synthetic.
+
+## Name the UAT members
+
+While `CHAT_OPEN_TO` is `uat`, the tester list is the Worker secret `CHAT_UAT_SUBJECTS`: comma-separated Gramps IDs, in the form `<gramps-id>,<gramps-id>`. It is a secret and not a `[vars]` entry so that no Gramps ID is in Git, so that a deploy keeps it (Cloudflare documents that a deploy never deletes secrets), and so that changing it needs no commit, rebuild or deploy. The Worker reads an absent secret exactly like an empty one, and an empty one lets nobody in: nobody connects, appears in the directory or receives a push.
+
+1. Have the Cloudflare credential and wrangler 4.145.0 from [Prerequisites](#prerequisites) in the shell (`wr` from step 2, or `chat-worker/node_modules/.bin/wrangler` after `npm ci`).
+2. Run the put. It prompts for the value, so type or paste the list at the prompt:
+
+   ```sh
+   wrangler secret put CHAT_UAT_SUBJECTS --name hfy-chat-worker
+   ```
+
+   The list is private data. Never put it on the command line, in a file in the repository, in a chat or in a worklog, and never pipe it in with `echo`, which lands it in the shell history. A put replaces the whole list, so give the full list every time.
+3. Check by name only: `wr secret list --name hfy-chat-worker` lists `CHAT_UAT_SUBJECTS`. Nobody can read the value back.
+
+**When it takes effect.** The put publishes a new Worker version with the new value, so no deploy is needed. The Worker's upgrade check applies it to the next connection. The hub adopts it when its Durable Object takes that version, which Cloudflare defers for up to 5 minutes or until the object hibernates (see [Redeploy without changing the key](#redeploy-without-changing-the-key)). When the hub next refreshes its directory (a hello refreshes a snapshot older than a minute), the directory and push delivery follow the list, and a member who is no longer on it loses their sockets with `4403`.
+
+**Clear the list.** `wrangler secret delete CHAT_UAT_SUBJECTS --name hfy-chat-worker` closes chat to everyone, with the same timing. It affects only `CHAT_OPEN_TO` being `uat`: with `all` the Worker does not read the list.
+
+**The flip to `all` is still a committed change.** Setting `CHAT_OPEN_TO` to `all` is an edit of `wrangler.toml`, a rebuilt `dist/` and a deploy, so it stays reviewed and tied to a commit. The secret does not change that, and it needs no cleanup afterwards.
 
 ## The admin expunge route
 
@@ -409,7 +432,8 @@ The design (`chat.md` section 6 and its test list) says a non-upgrade `GET /chat
 | Setting | Where | Meaning |
 | --- | --- | --- |
 | `CHAT_ENABLED` | `[vars]` | `"1"` serves chat. Anything else is the kill switch: every upgrade closes `4503`. |
-| `CHAT_OPEN_TO`, `CHAT_UAT_SUBJECTS` | `[vars]` | `uat` lets only the listed Gramps ids connect, appear in the directory or receive pushes. `all` opens chat to every eligible member. The UAT list is set only by a committed change to `wrangler.toml` followed by a rebuild of `dist/`; never set it in the Cloudflare dashboard or by an upload that keeps other bindings, because a deploy replaces the vars with the ones in `wrangler.toml` (and `dist/deploy.json`). |
+| `CHAT_OPEN_TO` | `[vars]` | `uat` lets only the Gramps ids in `CHAT_UAT_SUBJECTS` connect, appear in the directory or receive pushes. `all` opens chat to every eligible member. Only a committed change to `wrangler.toml` followed by a rebuild of `dist/` flips it; never set it in the Cloudflare dashboard or by an upload that keeps other bindings, because a deploy replaces the vars with the ones in `wrangler.toml` (and `dist/deploy.json`). |
+| `CHAT_UAT_SUBJECTS` | Worker secret | The comma-separated Gramps ids that may chat while `CHAT_OPEN_TO` is `uat`. Absent or empty lets nobody in. Never in the repository, and `dist/deploy.json` declares no secret bindings. A deploy keeps it. Set, change and clear it as in [Name the UAT members](#name-the-uat-members). |
 | `CHAT_SERVICE_KID` | `[vars]` | The `kid` in the header of the hub's service tokens. It must name an entry of `ChatServicePublicKeys` whose public half belongs to `CHAT_SERVICE_PRIVATE_KEY`. Changing it is part of [rotating the key](rotate-the-chat-service-key.md). |
 | `CHAT_LOCATION_HINT` | `[vars]` | `wnam`. Every hub object is created with it, and no jurisdiction is set. An unhinted object landed in London in the spike. |
 | `CHAT_WORKER_VERSION` | added at deploy (`--var`) | What `GET /chat/v1/health` reports. Not in `wrangler.toml` or `deploy.json`. The health route is unauthenticated and its body is exactly `{ok, version, protocol}`: the deployed commit sha and the protocol number, no env value (a test pins the key set). A deploy check compares the sha with the commit it deployed. |
@@ -428,7 +452,7 @@ The design (`chat.md` section 6 and its test list) says a non-upgrade `GET /chat
 | The smoke script times out starting `wrangler dev` | Another process holds the port, or `workerd` did not install. Run `npx wrangler dev --env staging --local` by hand to read the error. |
 | Every socket closes `4503` | `CHAT_ENABLED` is not `"1"`, or the hub has no directory: the API call failed and there is no stored snapshot. The usual cause of the second is the next row. |
 | A UAT member's socket closes `4503` although `CHAT_ENABLED` is `"1"` | The hub's call to `GET /api/chat/directory` failed. If `hfy-api` answered `401`, `ChatServicePublicKeys` is empty, has no entry whose `kid` equals `CHAT_SERVICE_KID`, or holds a public half that is not the one for `CHAT_SERVICE_PRIVATE_KEY`; the API logs `chat service token rejected` (an error code, never the token) or `ChatServicePublicKeys unusable` for a malformed value. Compare the kids from [Check where the Worker stands](#check-where-the-worker-stands) with `CHAT_SERVICE_KID`, then fix the parameter with a change set or deploy again with a matching key. |
-| Every socket closes `4403` | The `Origin` is not exactly `SITE_ORIGIN`, or `CHAT_OPEN_TO` is `uat` and the member is not in `CHAT_UAT_SUBJECTS`. An empty `CHAT_UAT_SUBJECTS` lets nobody in. |
+| Every socket closes `4403` | The `Origin` is not exactly `SITE_ORIGIN`, or `CHAT_OPEN_TO` is `uat` and the member is not in `CHAT_UAT_SUBJECTS`. An absent or empty `CHAT_UAT_SUBJECTS` secret lets nobody in: list the secrets as in [Check where the Worker stands](#check-where-the-worker-stands), then [name the members](#name-the-uat-members). |
 | `GET /chat/v1/health` returns the site's HTML or a CloudFront error, not JSON | The routes are missing, or the Worker is not deployed. List the zone's routes as in step 4 of [Deploy the Worker to production](#deploy-the-worker-to-production), then deploy again: the deploy recreates the routes from the config. |
 | `health.version` is not the commit you deployed | An older bundle or an older deploy is serving. Run the deploy again from the commit, and check that step 1 printed `bundle matches deploy.json`. |
 | `wrangler deploy` cannot choose an account | The credential reaches more than one account. Export `CLOUDFLARE_ACCOUNT_ID` in the shell; never put the id in the repository. |

@@ -110,6 +110,63 @@ test("no cookie closes 4401, the kill switch 4503, a non-UAT member 4403", async
   assert.equal(ns.calls.requests.length, 1);
 });
 
+// HFY-TSK-368: CHAT_UAT_SUBJECTS is a Worker secret, not a [vars] entry. The Worker only ever sees env.CHAT_UAT_SUBJECTS as a string
+// (or nothing, before the secret is first put), so these tests supply it the three ways a binding can arrive and assert one outcome.
+const MEMBERS = ["I9001", "I9002", "I9003"];
+/** A plain property, which is how a [vars] entry reaches the Worker. */
+const asVar = (ns, value) => baseEnv(ns, { CHAT_OPEN_TO: "uat", CHAT_UAT_SUBJECTS: value });
+/** A read-only property resolved on read, standing in for a secret binding. */
+const asSecret = (ns, value) => {
+  const env = baseEnv(ns, { CHAT_OPEN_TO: "uat" });
+  Object.defineProperty(env, "CHAT_UAT_SUBJECTS", { get: () => value, enumerable: true, configurable: false });
+  return env;
+};
+/** No such binding at all: a secret that was never put (or was deleted). */
+const absent = (ns) => baseEnv(ns, { CHAT_OPEN_TO: "uat" });
+/** What an upgrade by `sub` came to: the close code of a refusal pair, or whether the hub was reached (its own answer, here a plain 200, comes back). */
+async function outcome(env, sub) {
+  const before = pairs.length;
+  const reached = env.CHAT_HUB.calls.requests.length;
+  const res = await bundle.default.fetch(upgrade({ cookie: await keys.cookie(sub) }), env, {});
+  const refused = pairs.length > before;
+  return { status: res.status, closed: refused ? closedWith(pairs[before].server)?.code ?? null : null, reachedHub: env.CHAT_HUB.calls.requests.length > reached };
+}
+
+test("CHAT_OPEN_TO uat with no CHAT_UAT_SUBJECTS binding refuses every member with 4403 and never reaches the hub", async () => {
+  for (const make of [absent, (ns) => ({ ...absent(ns), CHAT_UAT_SUBJECTS: undefined }), (ns) => { const { CHAT_OPEN_TO, ...rest } = absent(ns); return rest; }]) {
+    for (const sub of MEMBERS) {
+      const ns = fakeNamespace();
+      const env = make(ns);
+      assert.ok(!env.CHAT_UAT_SUBJECTS, "no list is bound");
+      assert.deepEqual(await outcome(env, sub), { status: 101, closed: 4403, reachedHub: false }, sub);
+      assert.equal(ns.calls.get.length, 0, "the hub was not even looked up");
+    }
+  }
+});
+
+test("a secret and a var behave the same: the same string gives the same outcome, and absent, empty and blank give the same refusal", async () => {
+  const lists = ["I9001,I9002", " I9002 , ,I9001 ", "I9001", "", "   ", " , ,"];
+  for (const value of lists) {
+    for (const sub of MEMBERS) {
+      const fromVar = await outcome(asVar(fakeNamespace(), value), sub);
+      const fromSecret = await outcome(asSecret(fakeNamespace(), value), sub);
+      assert.deepEqual(fromSecret, fromVar, `${JSON.stringify(value)} for ${sub}`);
+    }
+  }
+  // Who is let in follows the list, and only the list.
+  assert.deepEqual(await outcome(asSecret(fakeNamespace(), "I9001,I9002"), "I9001"), { status: 200, closed: null, reachedHub: true });
+  assert.deepEqual(await outcome(asSecret(fakeNamespace(), "I9001,I9002"), "I9003"), { status: 101, closed: 4403, reachedHub: false });
+  // Absent is exactly empty, and a blank or comma-only list names nobody.
+  for (const sub of MEMBERS) {
+    const refusal = { status: 101, closed: 4403, reachedHub: false };
+    for (const value of ["", "   ", " , ,"]) {
+      assert.deepEqual(await outcome(asVar(fakeNamespace(), value), sub), refusal, `var ${JSON.stringify(value)}`);
+      assert.deepEqual(await outcome(asSecret(fakeNamespace(), value), sub), refusal, `secret ${JSON.stringify(value)}`);
+    }
+    assert.deepEqual(await outcome(absent(fakeNamespace()), sub), refusal, "absent");
+  }
+});
+
 test("non-upgrade requests on the routes pass through with fetch(request), unchanged", async () => {
   const ns = fakeNamespace();
   const cases = [
