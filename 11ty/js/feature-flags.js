@@ -84,7 +84,7 @@
         "css": "7bf60ae7"
       },
       "photo-tags": {
-        "js": "5d8ede95",
+        "js": "2f11c4e8",
         "css": "b4b1459b"
       },
       "posts": {
@@ -112,8 +112,8 @@
         "css": "8f618380"
       },
       "tree": {
-        "js": "a6b52a99",
-        "css": "4b2e417c"
+        "js": "5a6fd71c",
+        "css": "2ab494fd"
       }
     },
     "theme": "f103422b",
