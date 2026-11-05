@@ -97,13 +97,14 @@ function Prompt({ prompt, flags }) {
   );
 }
 
+// The API caps items at 3, so surfaces 4.5's "more from this week" disclosure is intentionally not built.
 function Card({ view, flags, viewer }) {
   const [hidden, setHidden] = useState(() => new Set());
   const keep = (r) => !hidden.has(r.id);
   const rows = view.rows.filter(keep);
   const remembering = view.remembering.filter(keep);
   const onHidden = (id) => setHidden((s) => new Set(s).add(id));
-  const showPrompt = view.prompt && (rows.length + remembering.length < 2) && !view.post;
+  const showPrompt = view.prompt && (rows.length + remembering.length < 2);
   if (!rows.length && !remembering.length && !view.post && !showPrompt) return null;
   const renderRows = (list) => list.map((r) => <Row key={r.id} row={r} hideable={canHide(r, viewer)} onHidden={onHidden} />);
   return (
@@ -137,8 +138,9 @@ function useOnThisDay(enabled) {
     (async () => {
       try {
         if (await edgeSignedOut()) throw new Error("signed out");
-        const [body, me] = await Promise.all([api.get("/onthisday", { query: queryFor() }), getMe()]);
-        if (live) setState({ view: viewOf(body), admin: me.admin === true });
+        // getMe is separate: a failed /api/me only drops the hide control (admin=false), never the card.
+        const [body, me] = await Promise.all([api.get("/onthisday", { query: queryFor() }), getMe().catch(() => null)]);
+        if (live) setState({ view: viewOf(body), admin: me?.admin === true });
       } catch {
         if (live) setState({ view: null, admin: false });
       }
@@ -154,13 +156,8 @@ export function OnThisDay() {
   const flags = useFlags();
   const state = useOnThisDay(Boolean(sub));
   if (!sub) return null;
-  if (state === undefined) {
-    return (
-      <section className="hfy-otd" aria-busy="true" aria-label="on this day" data-hfy-onthisday-loading>
-        <div className="container hfy-otd__inner"><div className="hfy-otd__skeleton" /></div>
-      </section>
-    );
-  }
+  // Nothing while loading (no skeleton): the card either appears or the page stays as it was, so the homepage never shifts for a signed-out or failed load.
+  if (state === undefined) return null;
   if (!state.view) return null;
   return <Card view={state.view} flags={flags ?? {}} viewer={{ admin: state.admin, sub }} />;
 }

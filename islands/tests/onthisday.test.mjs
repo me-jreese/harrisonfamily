@@ -51,6 +51,8 @@ test("an archive post is shaped, and an unsafe photo url is dropped", () => {
   assert.equal(v.post.excerpt, "<img src=x onerror=alert(1)>"); // data; the island renders it as a text node
   assert.equal(safePhoto({ url: "/uploads/a.jpg", alt: "x" }).url, "/uploads/a.jpg");
   assert.equal(safePhoto({ url: "//evil.example/a.jpg" }), null);
+  assert.equal(safePhoto({ url: "https://tracker.example/a.jpg" }), null);
+  assert.equal(safePhoto({ url: "/\\evil.example/a.jpg" }), null);
 });
 
 test("the prompt: the full ask needs recordEdit, otherwise the browse-only variant", () => {
@@ -62,6 +64,13 @@ test("the prompt: the full ask needs recordEdit, otherwise the browse-only varia
   assert.doesNotMatch(text(promptParts(add, {})), /add it/);
   assert.match(text(promptParts({ kind: "generic" }, { recordEdit: true })), /^no dates for today yet\. know when something happened/);
   assert.doesNotMatch(text(promptParts({ kind: "generic" }, {})), /add it/);
+});
+
+test("viewOf dedupes items by id; the browse-only prompt and fallback heading come from the copy deck module", () => {
+  const it = { id: "evt:a", kind: "graduation", tone: "celebrate", when: "day", n: 5, year: 2000, people: [P("I1", "Ada Example")] };
+  assert.equal(viewOf({ tier: "day", items: [it, { ...it }] }).rows.length, 1);
+  assert.equal(headingForTier("prompt"), "on this day");
+  assert.match(promptParts({ kind: "generic" }, {}).parts[0].text, /^no dates for today yet\. have a look around/);
 });
 
 test("canHide: an admin, or a person in the item", () => {

@@ -17,7 +17,6 @@
   border-radius: var(--io-radius-lg);
   background: var(--io-color-semantic-surface-raised);
 }
-.hfy-otd__skeleton { min-height: var(--io-control-h-lg); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); }
 .hfy-otd__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--io-space-2) var(--io-space-3); margin-bottom: var(--io-space-3); }
 .hfy-otd .hfy-otd__h { margin: 0; font-size: var(--io-typography-size-xl); line-height: var(--io-typography-leading-tight); }
 .hfy-otd__date { margin: 0; color: var(--io-color-semantic-text-dim); }

@@ -2,7 +2,7 @@
 // The words come from shared/onthisday-copy.mjs (the one place the voice lives); this file decides what to ask for, what to group and
 // which controls to offer. Every string the API serves (names, place, detail, excerpt, alt) is member-editable and is only ever
 // returned as data here; the island puts it in the page as text nodes, never as HTML.
-import { HEADINGS, REMEMBERING_LABEL, FOOTER_LINK, dateLine, renderItemParts, renderPostParts, renderPromptParts, yearWord } from "../../../shared/onthisday-copy.mjs";
+import { HEADINGS, FALLBACK_HEADING, REMEMBERING_LABEL, FOOTER_LINK, dateLine, renderItemParts, renderBrowsePromptParts, renderPostParts, renderPromptParts, yearWord } from "../../../shared/onthisday-copy.mjs";
 
 export { REMEMBERING_LABEL, FOOTER_LINK };
 export const HIDE_QUESTION = "hide this from on this day?";
@@ -18,7 +18,7 @@ export function queryFor(now = new Date()) {
 }
 
 /** The card's heading: the tier's own, and "on this day" for the archive and prompt tiers, which have none of their own. */
-export const headingForTier = (tier) => HEADINGS[tier] ?? HEADINGS.day;
+export const headingForTier = (tier) => HEADINGS[tier] ?? FALLBACK_HEADING;
 
 const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 
@@ -28,10 +28,12 @@ const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
  */
 export function viewOf(body) {
   if (!isObj(body)) return null;
+  const seen = new Set();
   const rows = (Array.isArray(body.items) ? body.items : [])
     .map((it) => {
-      if (!isObj(it)) return null;
+      if (!isObj(it) || seen.has(String(it.id))) return null;
       const parts = renderItemParts(it);
+      if (parts) seen.add(String(it.id));
       return parts ? { id: String(it.id), tone: it.tone, kind: it.kind, parts, year: it.year, n: it.n, people: Array.isArray(it.people) ? it.people : [] } : null;
     })
     .filter(Boolean);
@@ -44,19 +46,17 @@ export function viewOf(body) {
   return { tier: body.tier, heading: headingForTier(body.tier), dateText: dateLine(body.date), rows: main, remembering, post, prompt };
 }
 
-/** A photo whose url is a same-origin path or https, with its alt; anything else is dropped (the excerpt still shows). */
+/** A photo whose url is a same-origin path (never protocol-relative, never another host: no viewer IP or referrer leak), with its alt; anything else is dropped (the excerpt still shows). */
 export function safePhoto(photo) {
   if (!isObj(photo) || typeof photo.url !== "string") return null;
-  if (!/^(\/(?!\/)|https:\/\/)/.test(photo.url)) return null;
+  if (!/^\/(?![/\\])/.test(photo.url)) return null;
   return { url: photo.url, alt: typeof photo.alt === "string" ? photo.alt : "" };
 }
 
 /** The prompt as parts. `recordEdit` on: the full ask (add_day or generic). Off: the browse-only variant, which sends nobody to an editor. */
 export function promptParts(prompt, flags) {
   if (flags && flags.recordEdit === true) return { variant: "edit", parts: renderPromptParts(prompt) };
-  const [a, b] = prompt?.people ?? [];
-  if (prompt?.kind === "add_day" && a && b) return { variant: "browse", parts: [{ text: "have a look at " }, { name: a.name, grampsId: a.grampsId }, { text: " and " }, { name: b.name, grampsId: b.grampsId }, { text: " and the rest of the family." }] };
-  return { variant: "browse", parts: [{ text: "no dates for today yet. have a look around the family." }] };
+  return { variant: "browse", parts: renderBrowsePromptParts(prompt) };
 }
 
 /** The dim line under a row: "2006 · 20 years ago". */

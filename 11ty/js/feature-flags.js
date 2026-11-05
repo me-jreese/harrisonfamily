@@ -72,8 +72,8 @@
         "css": "be703fb4"
       },
       "onthisday": {
-        "js": "0ac5d7d3",
-        "css": "7befbd24"
+        "js": "d7b89155",
+        "css": "88208200"
       },
       "person": {
         "js": "3cd0995a",

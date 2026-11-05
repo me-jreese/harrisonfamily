@@ -73,17 +73,34 @@ test("week and year tiers carry their headings", async ({ page }) => {
   }
 });
 
-test("signed out renders nothing, and a 503 renders nothing", async ({ page }) => {
+test("signed out renders nothing and never calls the API, and a 503 renders nothing", async ({ page }) => {
+  const calls = [];
+  page.on("request", (r) => { if (/\/api\/onthisday/.test(r.url())) calls.push(r.url()); });
   await hermetic(page, { session: "out" });
-  await page.goto("/?hfy_flags=onThisDay", { waitUntil: "domcontentloaded" });
+  await page.goto("/?hfy_flags=onThisDay", { waitUntil: "networkidle" });
   await expect(page.locator("section.home-hero")).toBeVisible();
-  await page.waitForTimeout(400);
   await expect(page.locator("#hfy-onthisday")).toBeEmpty();
+  expect(calls).toEqual([]);
   await page.unrouteAll({ behavior: "ignoreErrors" });
   await hermetic(page, { status: 503 });
+  const resp = page.waitForResponse((r) => /\/api\/onthisday(\?|$)/.test(r.url()) && r.status() === 503);
   await page.goto("/?hfy_flags=onThisDay", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(400);
+  await resp;
   await expect(page.locator("#hfy-onthisday")).toBeEmpty();
+});
+
+test("a failed /api/me still shows the card, without the hide control; an archive post keeps the prompt when under two rows; the thumbnail is 96px", async ({ page }) => {
+  await hermetic(page, { body: { date: "2026-10-13", tier: "archive", items: [], prompt: { kind: "generic" }, posts: [{ id: "01POST", n: 2, author: { id: "I0009", label: "Ida Example" }, excerpt: "a day out", photo: { url: "/uploads/none.jpg", alt: "a day out" } }] } });
+  await page.route("**/api/me", (r) => r.fulfill({ status: 500, json: {} }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?hfy_flags=onThisDay", { waitUntil: "domcontentloaded" });
+  await expect(card(page)).toBeVisible();
+  await expect(card(page).locator("[data-hfy-otd-archive]")).toBeVisible();
+  await expect(card(page).locator("[data-hfy-otd-prompt]")).toBeVisible();
+  await expect(card(page).getByRole("button", { name: "hide this" })).toHaveCount(0);
+  const box = await card(page).locator(".hfy-otd__thumb").boundingBox();
+  expect(Math.round(box.width)).toBe(96);
+  expect(Math.round(box.height)).toBe(96);
 });
 
 test("the hide confirm: a person in the item may hide it (hide or keep); a stranger sees no control; an admin does", async ({ page }) => {
