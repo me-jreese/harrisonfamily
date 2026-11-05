@@ -135,9 +135,9 @@ export function createFakeDdb() {
     let items;
     let skCond; // the main-table sort-key condition (undefined = none)
     if (i.IndexName === "GSI1") {
-      const m = /^GSI1PK = :pk(?: AND GSI1SK (<=|>=|<|>) :after)?$/.exec(i.KeyConditionExpression);
+      const m = /^GSI1PK = :pk(?: AND GSI1SK (?:(<=|>=|<|>) :after|(BETWEEN) :lo AND :hi))?$/.exec(i.KeyConditionExpression);
       if (!m) throw new Error(`fake: unsupported key condition ${i.KeyConditionExpression}`);
-      items = [...rows.values()].filter((r) => r.GSI1PK === v[":pk"] && (!m[1] || compare(m[1], r.GSI1SK, v[":after"])));
+      items = [...rows.values()].filter((r) => r.GSI1PK === v[":pk"] && (!m[1] || compare(m[1], r.GSI1SK, v[":after"])) && (!m[2] || (r.GSI1SK >= v[":lo"] && r.GSI1SK <= v[":hi"])));
       items.sort((a, b) => (a.GSI1SK < b.GSI1SK ? -1 : a.GSI1SK > b.GSI1SK ? 1 : a.PK < b.PK ? -1 : 1));
     } else {
       const m = /^PK = :pk(?: AND (?:(begins)_with\(SK, :sk\)|SK (BETWEEN) :lo AND :hi|SK (<=|>=|<|>) :sk))?$/.exec(i.KeyConditionExpression);

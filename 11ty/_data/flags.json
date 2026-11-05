@@ -16,6 +16,7 @@
   "moderationV1": false,
   "navMe": true,
   "notifyV2": true,
+  "onThisDay": false,
   "personV2": true,
   "photoTagEdit": false,
   "photoTags": false,

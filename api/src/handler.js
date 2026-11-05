@@ -12,6 +12,7 @@ import { checkLocation } from "./upload-guard.js";
 import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
+import { createOnThisDay } from "./onthisday/service.js";
 import { createSubscriptions } from "./subscriptions.js";
 import { createContribReader } from "./contrib-read.js";
 import { bearerOf, unauthenticated } from "./sync/auth.js";
@@ -40,6 +41,8 @@ export function createHandler(deps) {
     memberReader: deps.directoryMemberReader ?? (deps.readEntries && ddb ? createCompositeMemberReader({ readEntries: deps.readEntries, ddb, cmds, table, now, log, strict: true }) : deps.memberReader),
     subscriptions: deps.subscriptions, preferences: deps.preferences, webpush: deps.webpush, vapid: deps.vapid,
   });
+  // HFY-TSK-194: the parsed on-this-day index and its in-flight load, shared by every request of this container (a service is built per request).
+  const onThisDayCache = {};
   // Persist first (BRD2 D2-15): with an inbox store wired (hfy-inbox-delivery-api) the producers run even without push.
   const notifyActive = pushEnabled || Boolean(deps.inbox);
   const inboxStore = deps.inbox; // the kit NotificationStore (index.js wires DynamoNotificationStore)
@@ -146,10 +149,11 @@ export function createHandler(deps) {
     // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
     const moderation = createModeration({ ddb, cmds, table, actor, content, comments, notifier, afterCommit });
     const links = createLinks(base);
+    const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, cache: onThisDayCache, log });
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, comments, moderation, graduation, links, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, comments, moderation, graduation, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**
