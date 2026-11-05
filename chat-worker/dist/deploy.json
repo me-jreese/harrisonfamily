@@ -18,7 +18,6 @@
     "SESSION_COOKIE": "io_id",
     "CHAT_ENABLED": "1",
     "CHAT_OPEN_TO": "uat",
-    "CHAT_UAT_SUBJECTS": "",
     "API_BASE": "https://harrisonfamily.us/api",
     "CHAT_SERVICE_KID": "hfy-chat-1",
     "CHAT_LOCATION_HINT": "wnam"

@@ -37,6 +37,14 @@ test("deploy.json carries no secret, no staging value and no version (CI injects
   assert.equal(deploy.vars.CHAT_ENABLED, "1");
 });
 
+test("CHAT_UAT_SUBJECTS is a Worker secret (HFY-TSK-368): no var in either environment, not in deploy.json, and no assignment in wrangler.toml", () => {
+  for (const [label, vars] of [["production", prod.vars], ["staging", staging.vars], ["deploy.json", deploy.vars]]) {
+    assert.ok(!("CHAT_UAT_SUBJECTS" in vars), `${label} declares CHAT_UAT_SUBJECTS as a var, which a deploy would overwrite and Git would hold`);
+  }
+  assert.ok(!/^\s*CHAT_UAT_SUBJECTS\s*=/m.test(read("wrangler.toml")), "wrangler.toml assigns CHAT_UAT_SUBJECTS");
+  assert.equal(prod.vars.CHAT_OPEN_TO, "uat", "CHAT_OPEN_TO stays a committed var, so the flip to all is a reviewed change");
+});
+
 test("wrangler.toml: every Durable Object class is declared in new_sqlite_classes, with no key-value class", () => {
   for (const [label, cfg] of [["production", prod], ["staging", staging]]) {
     const classes = cfg.durable_objects.bindings.map((b) => b.class_name);

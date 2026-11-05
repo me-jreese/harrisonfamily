@@ -9,6 +9,7 @@
 #   - Secrets are never in this file. CHAT_SERVICE_PRIVATE_KEY is set once with `wrangler secret put`; CI keeps it. CHAT_ADMIN_TOKEN
 #     (the bearer token of POST /chat/v1/admin/expunge, HFY-TSK-337) is a second, separate secret set the same way (whether CI's upload keeps it is
 #     checked at the first deploy); without it that route does not exist. It is never the service key and never a member session.
+#     CHAT_UAT_SUBJECTS (the tester list, HFY-TSK-368) is a third secret set the same way, so no Gramps id is in Git; without it nobody is let in.
 #   - Nothing here sets CHAT_WORKER_VERSION: CI injects the commit sha at upload, so the bundle is unchanged between merges.
 name = "hfy-chat-worker"
 main = "src/index.mjs"
@@ -52,8 +53,8 @@ SESSION_COOKIE = "io_id"
 CHAT_ENABLED = "1"
 # "uat" lets only CHAT_UAT_SUBJECTS connect, appear in the directory or receive pushes; the flip to "all" is a committed change.
 CHAT_OPEN_TO = "uat"
-# Comma-separated Gramps ids of io and the testers. Set at the first deploy; empty means nobody is let in.
-CHAT_UAT_SUBJECTS = ""
+# CHAT_UAT_SUBJECTS (comma-separated Gramps ids of io and the testers) is a Worker SECRET (HFY-TSK-368), never a var here: set it with
+# `wrangler secret put CHAT_UAT_SUBJECTS --name hfy-chat-worker`. Absent or empty means nobody is let in.
 API_BASE = "https://harrisonfamily.us/api"
 CHAT_SERVICE_KID = "hfy-chat-1"
 # Every Durable Object is created with this hint: an unhinted object landed in London in the spike (HFY-TSK-220).
@@ -95,7 +96,6 @@ SESSION_JWKS_URL = "https://chat-staging.test/auth/.well-known/jwks.json"
 SESSION_COOKIE = "io_id"
 CHAT_ENABLED = "1"
 CHAT_OPEN_TO = "all"
-CHAT_UAT_SUBJECTS = ""
 # There is no origin behind workers.dev: a non-upgrade request answers 404 instead of fetching itself.
 CHAT_PASSTHROUGH = "off"
 CHAT_SERVICE_KID = "hfy-chat-staging-1"
