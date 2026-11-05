@@ -5,14 +5,31 @@
 // page opens the navigator (the cards view) on that person. The "+N more in <name>'s family" button calls `onRecentre(id)`: the lifelines stay and
 // show that person's family. Person names here are plain text by design (a link cannot sit inside a button); the navigator the button opens
 // carries the PersonName links (P2-R46), as the cards do. Decades only: no era band renders (viz-v2-time-eras, Q2-14).
-import { useMemo } from "react";
-import { buildLifelines, fadeWidth, xOf } from "./lifelines-model.js";
+//
+// Phones and the table (HFY-TSK-305, viz-v2-time-phone): below PHONE_QUERY (43rem) time runs down the screen, one branch per panel (branchesOf), with
+// previous and next buttons and no gesture; mode "table" is the screen-reader path (person, born, died, events), the same people as the lifelines.
+import { useEffect, useMemo, useState } from "react";
+import { branchesOf, buildLifelines, fadeWidth, tableOf, xOf } from "./lifelines-model.js";
+import { PersonName } from "./person-name.jsx";
 import { yearsLabel } from "./tree-data.js";
+import { useMedia } from "./use-media.js";
+
+export const PHONE_QUERY = "(max-width: 42.999rem)";
 
 export const COPY = {
   caption: "by decade. a faded end means the date is only about right.",
   noDates: "no dates are recorded for this family yet.",
-  more: (n, name) => `+${n} more in ${name}'s family`
+  more: (n, name) => `+${n} more in ${name}'s family`,
+  phoneCaption: "time runs down the page, oldest first. a faded end means the date is only about right.",
+  branches: "branches",
+  prev: "previous branch",
+  next: "next branch",
+  position: (i, n, name) => `branch ${i} of ${n}: ${name}`,
+  unknownYears: "years unknown",
+  tableCaption: "everyone in these lifelines, with their years and events.",
+  tableLabel: "lifelines as a table",
+  cols: { person: "person", born: "born", died: "died", events: "events" },
+  noEvents: "none recorded"
 };
 
 const pct = (n) => `${n.toFixed(2)}%`;
@@ -54,7 +71,7 @@ function Lane({ model, index, row }) {
   );
 }
 
-export default function Lifelines({ graph, focus, onPick, onRecentre }) {
+function Wide({ graph, focus, onPick, onRecentre }) {
   const model = useMemo(() => buildLifelines(graph, focus), [graph, focus]);
   const { axis, rows } = model;
   const yearsOfUnion = (index) => model.unions.filter((u) => u.nodes.includes(index)).map((u) => u.year);
@@ -99,4 +116,107 @@ export default function Lifelines({ graph, focus, onPick, onRecentre }) {
       </ul>
     </section>
   );
+}
+
+const decadeOf = (r) => (r.mark.kind === "none" ? null : Math.floor(r.mark.start / 10) * 10);
+
+/** One branch down the screen: people in time order under their decade, each a button with a thin span strip. */
+function Branch({ model, branch, onPick, onRecentre }) {
+  const { axis } = model;
+  const yearsOfUnion = (at) => branch.unions.filter((u) => u.nodes.includes(at)).map((u) => u.year);
+  const lines = branch.rows.map((r, at) => ({ r, at })).filter((x) => x.r.type === "line");
+  const sorted = [...lines].sort((a, b) => (decadeOf(a.r) ?? Infinity) - (decadeOf(b.r) ?? Infinity) || a.at - b.at);
+  const items = [];
+  let last = "start";
+  for (const { r, at } of sorted) {
+    const d = decadeOf(r);
+    if (d !== last) {
+      items.push(<li key={`d-${d}`} className="hfy-life__decade">{d === null ? COPY.unknownYears : `${d}s`}</li>);
+      last = d;
+    }
+    const years = yearsLabel(r.person);
+    const meets = yearsOfUnion(at).map((y) => `, family from about ${y}`).join("");
+    items.push(
+      <li key={r.id} className="hfy-life__row" data-depth={Math.min(r.depth, 4)}>
+        <button type="button" className="hfy-life__line" data-lifeline={r.id} aria-label={`${r.name}, ${years}${meets}`} onClick={() => onPick(r.id)}>
+          <span className="hfy-life__who">
+            <span className="hfy-life__name">{r.name}</span>
+            <span className="hfy-life__years">{years}</span>
+          </span>
+          {axis && r.mark.kind !== "none" ? <Lane model={{ axis, unions: [] }} index={at} row={r} /> : null}
+        </button>
+      </li>
+    );
+  }
+  for (const r of branch.rows) {
+    if (r.type !== "more") continue;
+    items.push(
+      <li key={`more-${r.id}`} className="hfy-life__more-row">
+        <button type="button" className="hfy-life__more" data-lifeline-more={r.id} onClick={() => onRecentre(r.id)}>{COPY.more(r.count, r.name)}</button>
+      </li>
+    );
+  }
+  return <ul className="hfy-life__list" data-life-branch={branch.key}>{items}</ul>;
+}
+
+function Phone({ graph, focus, onPick, onRecentre }) {
+  const model = useMemo(() => buildLifelines(graph, focus), [graph, focus]);
+  const branches = useMemo(() => branchesOf(model), [model]);
+  const [at, setAt] = useState(0);
+  useEffect(() => setAt(0), [focus]);
+  const i = Math.min(at, Math.max(branches.length - 1, 0));
+  const branch = branches[i];
+  return (
+    <section className="hfy-life hfy-life--phone" aria-label="lifelines" data-tree-lifelines={focus} data-life-lines={model.lineCount} data-life-phone data-life-branches={branches.length}>
+      <p className="hfy-life__caption">{COPY.phoneCaption}</p>
+      {!model.axis ? <p className="hfy-life__note">{COPY.noDates}</p> : null}
+      {branch ? (
+        <>
+          <div className="hfy-life__nav" role="group" aria-label={COPY.branches}>
+            <button type="button" className="hfy-life__step" data-life-prev disabled={i === 0} onClick={() => setAt(i - 1)}>{COPY.prev}</button>
+            <button type="button" className="hfy-life__step" data-life-next disabled={i >= branches.length - 1} onClick={() => setAt(i + 1)}>{COPY.next}</button>
+          </div>
+          <p className="hfy-life__position" role="status" data-life-position>{COPY.position(i + 1, branches.length, branch.title)}</p>
+          <Branch model={model} branch={branch} onPick={onPick} onRecentre={onRecentre} />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+/** The screen-reader path: a real table of the same people the lifelines show. Names are PersonName links (P2-R46). */
+function Table({ graph, focus }) {
+  const model = useMemo(() => buildLifelines(graph, focus), [graph, focus]);
+  const rows = useMemo(() => tableOf(graph, model), [graph, model]);
+  return (
+    <section className="hfy-life hfy-life--table" aria-label={COPY.tableLabel} data-tree-lifelines={focus} data-life-table data-life-lines={model.lineCount}>
+      <table className="hfy-life__table">
+        <caption className="hfy-life__caption">{COPY.tableCaption}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{COPY.cols.person}</th>
+            <th scope="col">{COPY.cols.born}</th>
+            <th scope="col">{COPY.cols.died}</th>
+            <th scope="col">{COPY.cols.events}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} data-life-person={r.id}>
+              <th scope="row"><PersonName id={r.id} name={r.name} /></th>
+              <td>{r.born}</td>
+              <td>{r.died}</td>
+              <td>{r.events.length ? <ul className="hfy-life__events">{r.events.map((e) => <li key={e}>{e}</li>)}</ul> : COPY.noEvents}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+export default function Lifelines({ mode = "lifelines", ...props }) {
+  const phone = useMedia(PHONE_QUERY);
+  if (mode === "table") return <Table {...props} />;
+  return phone ? <Phone {...props} /> : <Wide {...props} />;
 }

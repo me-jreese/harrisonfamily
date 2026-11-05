@@ -61,3 +61,41 @@
   cursor: pointer;
 }
 .hfy-life .hfy-life__more:hover { border-color: var(--io-color-semantic-accent); }
+
+/* Phones (HFY-TSK-305, viz-v2-time-phone): below 43rem, one branch per panel, time down the page. The section never scrolls sideways: a person is a
+   full-width button (name, years, then a thin span strip under them), a decade is a heading row, and previous/next are two 44 px buttons. */
+.hfy-life--phone { overflow-x: visible; }
+.hfy-life--phone .hfy-life__list { min-width: 0; }
+.hfy-life__nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--io-space-2); margin-bottom: var(--io-space-2); }
+.hfy-life .hfy-life__step {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-life .hfy-life__step:hover:not(:disabled) { border-color: var(--io-color-semantic-accent); }
+.hfy-life .hfy-life__step:disabled { color: var(--io-color-semantic-text-dim); cursor: default; }
+.hfy-life .hfy-life__step:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+.hfy-life__position { margin: 0 0 var(--io-space-3); font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-life__decade { margin: var(--io-space-3) 0 var(--io-space-1); padding-block-end: var(--io-space-1); border-bottom: 1px solid var(--io-color-semantic-border); color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); }
+.hfy-life--phone .hfy-life__line { display: flex; flex-direction: column; align-items: stretch; gap: var(--io-space-1); padding: var(--io-space-1) var(--io-space-2); }
+.hfy-life--phone .hfy-life__name { white-space: normal; overflow-wrap: anywhere; }
+.hfy-life--phone .hfy-life__lane { flex: none; width: 100%; height: var(--io-space-4); min-height: 0; }
+.hfy-life--phone .hfy-life__more { margin-inline-start: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.hfy-life--phone .hfy-life__row[data-depth] .hfy-life__who { padding-inline-start: 0; }
+
+/* The table view: the screen-reader path. Fixed layout and wrapping cells, so it fits 320 px without a sideways scroll. */
+.hfy-life__table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.hfy-life__table caption { text-align: start; }
+.hfy-life__table :is(th, td) { padding: var(--io-space-2); border-bottom: 1px solid var(--io-color-semantic-border); text-align: start; vertical-align: top; overflow-wrap: anywhere; }
+.hfy-life__table thead th { color: var(--io-color-semantic-text-dim); font-weight: var(--io-typography-weight-semibold); }
+.hfy-life__table tbody th { font-weight: var(--io-typography-weight-semibold); }
+.hfy-life__events { list-style: none; margin: 0; padding: 0; }
+.hfy-life--table { overflow-x: visible; }
+.hfy-life__table tbody th .hfy-person-name { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); }

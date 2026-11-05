@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { MAX_LINES, axisOf, buildLifelines, fadeWidth, markOf, unionYear, xOf } from "../src/lib/lifelines-model.js";
+import { MAX_LINES, axisOf, branchesOf, buildLifelines, tableOf, fadeWidth, markOf, unionYear, xOf } from "../src/lib/lifelines-model.js";
 import { parseGraph } from "../src/lib/family-graph.js";
 import { synthGraph } from "./fixtures/graph-synth.mjs";
 
@@ -120,4 +120,53 @@ test("a focus not in the graph is empty; every person appears once", () => {
   const m = buildLifelines(g, "I8001", { today: TODAY });
   const ids = m.rows.filter((r) => r.type === "line").map((r) => r.id);
   assert.equal(new Set(ids).size, ids.length);
+});
+
+// HFY-TSK-305 (viz-v2-time-phone): branches for the phone panels, and the table equivalent.
+test("branchesOf: parents and the focus, then one panel per partner family and per child; every row lands in exactly one panel", () => {
+  const g = fixture();
+  const m = buildLifelines(g, "I8010", { today: TODAY });
+  const b = branchesOf(m);
+  assert.ok(b.length > 1);
+  assert.deepEqual(b[0].rows.map((r) => r.id), ["I8001", "I8002", "I8010"], "panel 0: the parents and the focus person");
+  assert.equal(b[0].title, "Rowan Thistle");
+  // contiguous, complete and disjoint
+  assert.deepEqual(b.flatMap((x) => x.rows.map((r) => r.at)), m.rows.map((_, i) => i));
+  // a partner opens a branch and the union's first child stays with the partner
+  const partner = b.find((x) => x.rows[0].id === "I8020");
+  assert.ok(partner && partner.rows.some((r) => r.id === "I8030"));
+  // unions are re-indexed to the panel's own rows
+  for (const x of b) for (const u of x.unions) for (const i of [...u.nodes, ...u.kids, u.from, u.to]) assert.ok(i >= 0 && i < x.rows.length);
+});
+
+test("branchesOf: a lone person is one panel, and an empty model has none", () => {
+  const g = fixture();
+  assert.deepEqual(branchesOf(buildLifelines(g, "nobody", { today: TODAY })), []);
+  const lone = branchesOf(buildLifelines(g, "I8033", { today: TODAY }));
+  assert.equal(lone.length, 1);
+});
+
+test("branchesOf on a capped 2,000-person graph: the panels hold the shown rows and every '+N more' row", () => {
+  const m = buildLifelines(parseGraph(JSON.stringify(synthGraph(2000))), "I99999", { today: TODAY });
+  const b = branchesOf(m);
+  assert.equal(b.reduce((n, x) => n + x.rows.length, 0), m.rows.length);
+  assert.equal(b.flatMap((x) => x.rows).filter((r) => r.type === "line").length, m.lineCount);
+});
+
+test("tableOf lists the same people as the lifelines, in order, with born, died and events in words", () => {
+  const raw = JSON.parse(readFileSync(new URL("./fixtures/lifelines-graph.json", import.meta.url), "utf8"));
+  raw.people.find((p) => p.id === "I8010").birthPlace = "Exampleton";
+  const g = parseGraph(JSON.stringify(raw));
+  const m = buildLifelines(g, "I8010", { today: TODAY });
+  const t = tableOf(g, m);
+  assert.deepEqual(t.map((r) => r.id), m.rows.filter((r) => r.type === "line").map((r) => r.id));
+  const focus = t.find((r) => r.id === "I8010");
+  assert.equal(focus.born, "1908");
+  assert.equal(focus.died, "1985");
+  assert.ok(focus.events.includes("born in Exampleton"));
+  assert.ok(focus.events.some((e) => e === "family with Wren Alder from about 1932, 2 children"));
+  assert.ok(focus.events.some((e) => e === "family with Linnet Hollin, 1 child"), "an undated union has no year");
+  const living = t.find((r) => r.id === "I8031");
+  assert.equal(living.died, "living");
+  assert.equal(t.find((r) => r.id === "I8033").born, "unknown");
 });
