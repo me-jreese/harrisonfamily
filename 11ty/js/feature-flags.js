@@ -72,7 +72,7 @@
         "css": "be703fb4"
       },
       "person": {
-        "js": "d432fb3f",
+        "js": "3cd0995a",
         "css": "92f22fd0"
       },
       "person-links": {
@@ -112,13 +112,13 @@
         "css": "8f618380"
       },
       "tree": {
-        "js": "5a6fd71c",
+        "js": "c2e923df",
         "css": "2ab494fd"
       }
     },
-    "theme": "f103422b",
+    "theme": "9b65fb22",
     "manifest": "c0f9b5fc",
-    "sw": "fea82f38"
+    "sw": "f5d34912"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.
