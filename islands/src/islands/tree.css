@@ -87,7 +87,7 @@
 }
 @media (min-width: 64rem) {
   .hfy-tree--ready { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--io-space-5); align-items: start; }
-  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live, .hfy-tree__views) { grid-column: 1 / -1; }
+  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live, .hfy-tree__views, .hfy-tree__kin) { grid-column: 1 / -1; }
   .hfy-tree__outline { margin-top: 0; }
 }
 
@@ -152,6 +152,24 @@
   cursor: pointer;
 }
 .hfy-tree :is(summary, .hfy-tree__more):focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+
+/* The "how are we related?" pill and panel (HFY-TSK-307, familyVizKinship): the pill is a view-toggle-style 44 px button; the panel is a raised
+   card holding the sentence, a vertical chain of re-centre buttons (a thin line joins one card to the next) and the two shortcuts. */
+.hfy-tree__kin { margin-bottom: var(--io-space-4); }
+.hfy-kin { margin-top: var(--io-space-3); padding: var(--io-space-4); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); }
+.hfy-kin h2 { margin: 0 0 var(--io-space-2); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-kin__sentence { font-size: var(--io-typography-size-md); }
+.hfy-kin ol, .hfy-kin ul { list-style: none; margin: 0; padding: 0; }
+.hfy-kin__routes { display: grid; gap: var(--io-space-4); margin-bottom: var(--io-space-4); }
+.hfy-kin__route-title { margin: 0 0 var(--io-space-2); font-weight: var(--io-typography-weight-semibold); }
+.hfy-kin__chain { display: grid; gap: var(--io-space-3); }
+.hfy-kin__step { position: relative; display: flex; flex-wrap: wrap; gap: var(--io-space-2); }
+.hfy-kin__step + .hfy-kin__step::before { content: ""; position: absolute; inset-inline-start: var(--io-space-5); bottom: 100%; height: var(--io-space-3); border-inline-start: 1px solid var(--io-color-semantic-border); }
+.hfy-tree .hfy-kin__card { background: var(--io-color-semantic-surface); }
+.hfy-kin__shortcuts { display: flex; flex-wrap: wrap; gap: var(--io-space-2); }
+.hfy-kin__list { display: flex; flex-wrap: wrap; gap: var(--io-space-2); margin-top: var(--io-space-3); }
+.hfy-kin__shortcuts + div, .hfy-kin__shortcuts + p { margin-top: var(--io-space-3); }
+.hfy-tree .hfy-kin__pill[aria-expanded="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-surface-raised); font-weight: var(--io-typography-weight-semibold); }
 
 /* Re-centring is instant under reduced motion; nothing here animates otherwise either. */
 @media (prefers-reduced-motion: reduce) { .hfy-tree, .hfy-tree * { transition: none; animation: none; scroll-behavior: auto; } }

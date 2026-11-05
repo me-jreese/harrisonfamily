@@ -18,6 +18,7 @@ import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
 import { useFlags } from "../lib/use-flags.js";
 import { initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { useFlags } from "../lib/use-flags.js";
 
 export const COPY = {
   prepared: "the family tree is being prepared. you can find anyone through search.",
@@ -40,6 +41,41 @@ export const COPY = {
 // and a reload tries again; nothing on the page offers a retry that could not give a different answer (a refused custom element re-rejects).
 let chartImport = null;
 const loadChart = () => (chartImport ||= import("../lib/tree-chart.jsx"));
+
+// HFY-TSK-307 (flag familyVizKinship): the "how are we related?" panel is its own lazy chunk (lib/tree-kinship.jsx), fetched when the pill is first
+// opened. Unlike the chart, a failed load is retryable: the pill says so and the next open tries again.
+let kinshipImport = null;
+const loadKinship = () => (kinshipImport ||= import("../lib/tree-kinship.jsx").catch((e) => { kinshipImport = null; throw e; }));
+
+/** The pill and, once opened, the panel. Rendered only for a signed-in member who is in the graph, with familyVizKinship on. */
+export function KinshipSlot({ graph, viewer, focus, onFocus }) {
+  const [open, setOpen] = useState(false);
+  const [Panel, setPanel] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const pill = useRef(null);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (!open || Panel) return undefined;
+    let live = true;
+    setFailed(false);
+    loadKinship().then((m) => { if (live) setPanel(() => m.default); }, () => { if (live) { setFailed(true); setOpen(false); } });
+    return () => { live = false; };
+  }, [open, Panel]);
+  // Closing puts the keyboard back on the pill.
+  useEffect(() => {
+    if (wasOpen.current && !open) pill.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+  return (
+    <div className="hfy-tree__kin" data-tree-kin>
+      <button type="button" ref={pill} className="hfy-tree__view hfy-kin__pill" aria-expanded={open ? "true" : "false"} aria-controls="hfy-kin-region" data-tree-kin-pill onClick={() => setOpen((v) => !v)}>how are we related?</button>
+      {failed ? <p className="hfy-tree__dim" role="status">this didn't load. try again.</p> : null}
+      <div id="hfy-kin-region">
+        {open && Panel ? <Panel graph={graph} viewer={viewer} focus={focus} onFocus={onFocus} /> : null}
+      </div>
+    </div>
+  );
+}
 
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
@@ -199,6 +235,7 @@ export function TreeApp() {
   // familyVizFaces (HFY-TSK-271): "pictured with" chips in the details; an absent key or unresolved flags is off.
   const faces = useFlags()?.familyVizFaces === true;
   const sub = memberSub(session);
+  const flags = useFlags();
   const [result, setResult] = useState(null); // null while loading, else loadGraph's answer
   const [attempt, setAttempt] = useState(0);
   const [focus, setFocus] = useState(() => focusParam(location.search));
@@ -324,6 +361,7 @@ export function TreeApp() {
           ) : null}
         </>
       )}
+      {flags?.familyVizKinship === true && sub && graph.has(sub) ? <KinshipSlot graph={graph} viewer={sub} focus={resolved.id} onFocus={onFocus} /> : null}
       <FocusNavigator graph={graph} focus={resolved.id} viewer={sub} onFocus={onFocus} via={via} />
       <GenerationOutline graph={graph} focus={resolved.id} onFocus={onFocus} />
       <p className="hfy-tree__live" aria-live="polite" data-tree-live>{spoken}</p>
