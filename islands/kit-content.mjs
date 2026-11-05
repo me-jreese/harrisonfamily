@@ -11,6 +11,7 @@
 // documentEditorLeaks(metafile) -> the island outputs that would still ship DocumentEditor, which would then render without
 //   Cloudscape; build.mjs fails on any.
 import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
 
 const IN_KIT_CONTENT = /(^|[\\/])node_modules[\\/]@io-kit[\\/]content[\\/]/;
 const KIT_DOCUMENT_EDITOR = /(^|[\\/])node_modules[\\/]@io-kit[\\/]content[\\/]dist[\\/]src[\\/]document-editor\.js$/;
@@ -24,6 +25,18 @@ export const hfyNoDocumentEditor = {
       : undefined));
     // CommonJS, so DocumentEditor's named imports (Alert, Button, ...) still bind, to undefined, and the build does not fail.
     b.onLoad({ filter: /.*/, namespace: NO_DOCUMENT_EDITOR }, () => ({ contents: "module.exports = {};", loader: "js" }));
+  }
+};
+
+// hfyContentSanitizePolicy -> esbuild plugin (HFY-TSK-171, PS-11): "@io-kit/md/react", imported from inside @io-kit/content, resolves to
+// src/lib/hfy-markdown.jsx, whose KitMarkdown defaults `policy` to the HFY SanitizePolicy (src/lib/sanitize-policy.js: no markdown
+// images, no mailto:). PostCard and ArticleView render the post body through KitMarkdown and accept no policy of their own.
+// The wrapper itself imports "@io-kit/md/react" from outside the kit, so it reaches the real KitMarkdown.
+export const HFY_MARKDOWN = fileURLToPath(new URL("./src/lib/hfy-markdown.jsx", import.meta.url));
+export const hfyContentSanitizePolicy = {
+  name: "hfy-content-sanitize-policy",
+  setup(b) {
+    b.onResolve({ filter: /^@io-kit\/md\/react$/ }, (args) => (IN_KIT_CONTENT.test(args.importer) ? { path: HFY_MARKDOWN } : undefined));
   }
 };
 
@@ -55,7 +68,7 @@ export async function importContentReact() {
     format: "esm",
     platform: "node",
     jsx: "automatic",
-    plugins: [hfyNoDocumentEditor, externals],
+    plugins: [hfyContentSanitizePolicy, hfyNoDocumentEditor, externals],
     write: false,
     logLevel: "silent"
   });
