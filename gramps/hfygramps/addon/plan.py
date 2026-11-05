@@ -302,16 +302,19 @@ def _plain(value):
 
 
 def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="cli", allow_deletes=False, files=None, pulled=None,
-          expunge_holds=None, policy=None, confirm_mass_delete=False, decisions=None, defer_deletes=False, parked=()):
+          expunge_holds=None, policy=None, confirm_mass_delete=False, decisions=None, defer_deletes=False, parked=(), stripped=None):
     """Plans one pull. `local` {handle: raw object}; `base_rows` sidecar.load_base(); `heads` a Snapshot's heads.
 
     `decisions` ({conflict id: {"choice", "confirmed"}}, the Gramps window only) are a person's answers to conflicts the first pass
     found; they are carried out in the same plan (``decide.second_pass``): the plan returned is the second pass, and
     `reviewed_hash` is the first pass's plan hash, the one the person saw. `defer_deletes` holds back every incoming delete (a person
     who declined the confirmation): each is listed as blocked, nothing is removed. `parked` are the snapshot's lines of a class this addon does
-    not know (``Snapshot.parked``, D39): they are listed as deferred and otherwise left alone."""
+    not know (``Snapshot.parked``, D39): they are listed as deferred and otherwise left alone. `stripped` is the sidecar's record of the
+    photos this desktop sent as a copy without their location (``mediaup.stripped_map``, HFY-TSK-374): a website file that is such a copy
+    is never a change to download, whatever the setting or the file on this Mac is now."""
     kw = dict(sticky=sticky, released=released, mode=mode, allow_deletes=allow_deletes, files=files, pulled=pulled,
-              expunge_holds=expunge_holds, policy=policy, confirm_mass_delete=confirm_mass_delete, defer_deletes=defer_deletes, parked=parked)
+              expunge_holds=expunge_holds, policy=policy, confirm_mass_delete=confirm_mass_delete, defer_deletes=defer_deletes, parked=parked,
+              stripped=stripped)
     first = _build_once(local, base_rows, heads, pins=pins, **kw)
     first.reviewed_hash = first.plan_hash
     if defer_deletes or confirm_mass_delete:
@@ -326,18 +329,20 @@ def build(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="c
 
 
 def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), mode="cli", allow_deletes=False, files=None, pulled=None,
-                expunge_holds=None, policy=None, confirm_mass_delete=False, defer_deletes=False, parked=()):
+                expunge_holds=None, policy=None, confirm_mass_delete=False, defer_deletes=False, parked=(), stripped=None):
     pol = policy or R.load_policy()
+    stripped = stripped or {}
     pins = pins or {}
     files = files or {}
     pulled = pulled or {}
     plan = Plan()
-    plan.media_stripped = sum(1 for i in files.values() if isinstance(i, dict) and i.get("location_stripped"))
     plan.fingerprints = {h: fingerprint(o) for h, o in local.items()}
 
     base = {h: row["obj"] for h, row in base_rows.items() if not row["deleted"] and isinstance(row["obj"], dict)}
     versions = {h: row["version"] for h, row in base_rows.items() if h in base}
     head_by = {h.handle: h for h in heads}
+    plan.media_stripped = sum(1 for h, i in files.items() if isinstance(i, dict) and i.get("location_stripped") and h in head_by
+                              and not head_by[h].deleted and isinstance(head_by[h].obj, dict) and head_by[h].obj.get("checksum") == i.get("md5"))
     cloud, exp_holds = {}, {h: list(p) for h, p in (expunge_holds or {}).items()}
     for head in heads:
         cloud[head.handle] = M.TOMBSTONE if head.deleted else head.obj
@@ -476,8 +481,14 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
             if op is not None:
                 plan.push_ops.append(op)
         if a == "update" and r.cls == "Media" and head is not None and not head.deleted:
-            if _blob_changed(local.get(h), head.obj, files.get(h)):
-                plan.media.append(h)
+            if _blob_changed(local.get(h), head.obj, files.get(h), stripped.get(h)):
+                if h in stripped:
+                    # This desktop sent a copy of that photo, and the website now has another file for it. Downloading it would put it in the
+                    # media folder and point Media.path at it, away from the original: not done. The details come over; the file is held.
+                    plan.holds.append({"handle": h, "rule": "media_stripped_replaced", "scope": "download", "pointer": "/blob",
+                                       "detail": consts.HOLD_MESSAGES["media_stripped_replaced"]})
+                else:
+                    plan.media.append(h)
         if a == "create_local" and r.cls == "Media" and head is not None and not head.deleted:
             plan.media.append(h)
     plan.expunge_holds = exp_holds
@@ -499,11 +510,16 @@ def sticky_held(local, sticky, policy):
     return out
 
 
-def _blob_changed(local_obj, cloud_obj, info=None):
+def _blob_changed(local_obj, cloud_obj, info=None, entry=None):
     """True when the website's file is not the one this Mac has. A photo the desktop sends without its location (strip_location) is on the
     website as its copy: that copy's MD5 is the website's checksum and is NOT Gramps' checksum of the original, so it is not a change, and
-    the pull never downloads it over the original or points Media.path at it (HFY-TSK-374)."""
-    if isinstance(info, dict) and info.get("location_stripped") and cloud_obj.get("checksum") == info.get("md5"):
+    the pull never downloads it over the original or points Media.path at it (HFY-TSK-374). Two witnesses, either is enough: the current
+    file's copy (``info``), and the sidecar's record of what was uploaded (``entry``: local SHA-256, uploaded SHA-256, uploaded MD5), which
+    holds when the setting is off now, the original is missing or online-only, or the strip would refuse it today."""
+    checksum = cloud_obj.get("checksum")
+    if checksum and isinstance(entry, (list, tuple)) and len(entry) > 2 and entry[2] == checksum:
+        return False
+    if isinstance(info, dict) and info.get("location_stripped") and checksum == info.get("md5"):
         return False
     return bool(cloud_obj.get("checksum")) and (not isinstance(local_obj, dict) or local_obj.get("checksum") != cloud_obj.get("checksum"))
 

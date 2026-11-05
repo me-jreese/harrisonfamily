@@ -113,7 +113,7 @@ Read it like this:
 
 With the add-on's `strip_location` setting on ([Send photos that have a location without it](sync-gramps-with-the-website.md#send-photos-that-have-a-location-without-it)), a JPEG or PNG with a GPS position reaches the website as a copy without it. The renderer takes a Media's `checksum` and `size` from the stored copy, and the legacy export holds the original, so the checksum differs. You tell the report how many media the add-on sent this way, and it explains that many.
 
-**Read the add-on's count.** `counts.media_location_stripped` of the push look (or of any run's `status.json`), from the same moment as the export:
+**Read the add-on's count.** `counts.media_location_stripped` is the number of photos whose location-free copy the website holds (an upload counts once the website acknowledged it; `counts.media_location_stripped_pending` is what is still to send, and must be 0 for the review). Take it from a push look or any run's `status.json`, from the same moment as the export:
 
 ```sh
 cd ~/harrisonfamily
@@ -132,6 +132,18 @@ echo "exit code: $?"
 ```
 
 Replace `<n>` with the number from the add-on. The value must be a whole number of 0 or more, or the command exits `64` and does not echo it. `--expect-holds` and `--expect-stripped` can be given together.
+
+Add `--stripped-sidecar` to restrict the allowance to the media the add-on recorded as uploaded without their location. It reads the add-on's `state.sqlite` of the tree read-only (`~/Library/Application Support/hfy_sync/<dbid>/state.sqlite`), takes only the handles of its `media_location_stripped` record, and prints none of them:
+
+```sh
+AWS_PROFILE=product-lead gramps/bin/hfy-parity \
+  --legacy <project>/workspace-local/harrisonfamily-frontend \
+  --shadow s3://<sync-bucket>/render-shadow/ \
+  --expect-stripped <n> \
+  --stripped-sidecar ~/Library/Application\ Support/hfy_sync/<dbid>/state.sqlite
+```
+
+Without it the allowance is the first `<n>` media in sorted order whose checksum differs, whatever the reason. With it, a media that differs but was never recorded as sent without its location stays unexplained, and so does every media beyond `<n>`. The option needs `--expect-stripped`, and an unreadable file exits `64`.
 
 The report explains the checksum and size differences of up to `<n>` media (the first `<n>` handles in sorted order; only the totals mean anything) and adds a line, `media sent without their location: allowed <n>, media explained <k>`, a `media-location-stripped` row to the rule table and, with `--json`, the same two counts under `stripped`. A media whose checksum differs from the legacy one beyond `<n>`, or whose size differs while the checksum does not, stays unexplained and the exit code is `20`. A photo the add-on held (`media-held-binary`) keeps its own rule and does not use the allowance.
 

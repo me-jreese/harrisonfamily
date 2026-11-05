@@ -1,6 +1,6 @@
 """hfy-parity: the arguments, the counts-only report and the exit codes (HFY-TSK-370). Standard library only.
 
-    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--expect-stripped <n>] [--json]
+    hfy-parity --legacy <dir> --shadow <dir | s3://<bucket>/render-shadow/> [--expect-holds <n>] [--expect-stripped <n> [--stripped-sidecar <state.sqlite>]] [--json]
 
 Exit codes:
     0   no difference at all (a difference that only the normalisation of generatedAt and index order hides does not count)
@@ -67,6 +67,9 @@ def _parser(err: TextIO) -> _Parser:
                         help="the add-on's own count of media it sent without their GPS location (counts.media_location_stripped of "
                              "`hfy-sync push`): up to N media whose checksum differs from the legacy export's are explained as "
                              "media-location-stripped; more stay unexplained")
+    parser.add_argument("--stripped-sidecar", default=None, metavar="STATE_SQLITE",
+                        help="with --expect-stripped: the add-on's state.sqlite of the tree (read-only). Only the media it recorded as "
+                             "sent without their location can be explained; no handle is printed")
     parser.add_argument("--json", action="store_true", help="print the counts as JSON")
     return parser
 
@@ -127,6 +130,15 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else EXIT_USAGE
 
+    stripped_handles = None
+    if args.stripped_sidecar is not None:
+        if args.expect_stripped is None:
+            return fail(EXIT_USAGE, "stripped_sidecar_needs_expect_stripped")
+        try:
+            stripped_handles = source.read_stripped_handles(args.stripped_sidecar)
+        except source.StrippedSidecarUnreadable:
+            return fail(EXIT_USAGE, "stripped_sidecar_unreadable")
+
     prefix = None
     if args.shadow.startswith("s3://"):
         prefix = source.normalise_prefix(args.shadow)
@@ -151,7 +163,7 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
             if not any(compare_mod.is_owned(key) for key in shadow):
                 return fail(EXIT_SHADOW, "shadow_empty")
             result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds,
-                                                  expect_stripped=args.expect_stripped)
+                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles)
         else:
             previous = None
             try:
@@ -168,7 +180,7 @@ def main(argv: Optional[List[str]] = None, run: Callable = subprocess.run,
                     if not any(compare_mod.is_owned(key) for key in shadow):
                         return fail(EXIT_SHADOW, "shadow_empty")
                     result = compare_mod.compare(legacy, shadow, policy, expect_holds=args.expect_holds,
-                                                  expect_stripped=args.expect_stripped)
+                                                  expect_stripped=args.expect_stripped, stripped_handles=stripped_handles)
             finally:
                 if previous is not None:
                     signal.signal(signal.SIGTERM, previous)

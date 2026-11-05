@@ -180,7 +180,7 @@ Each rule has an id, a class, the Gramps classes it applies to, a path pattern, 
 
 - Held until io releases them, by mime type: `application/pdf`.
 - Held when the file has EXIF GPS latitude or longitude, by mime type: `image/jpeg`, `image/png`, `image/tiff`.
-- The addon's per-tree setting `strip_location` (default off, a key of its `config.json`; HFY-TSK-374) changes what the addon hands the projection for such a JPEG or PNG: the numbers of a copy without the GPS position, which is what it uploads. The policy is unchanged, the file on disk and the Gramps database are never written, and a TIFF, or a file the addon cannot strip with certainty, is still held. See [Photos with a location](../how-to/install-the-gramps-sync-addon.md#9-push-the-trees-changes).
+- The addon's per-tree setting `strip_location` (default off, a key of its `config.json`; HFY-TSK-374) changes what the addon hands the projection for such a JPEG or PNG: the numbers of a copy without the GPS position, which is what it uploads. The policy is unchanged, the file on disk and the Gramps database are never written, and a TIFF, or a file the addon cannot strip with certainty, is still held. The addon's reading of a file's position (`mediafile.exif_gps`) covers every IFD of every TIFF structure in the metadata, deflated and UTF-16 XMP, hex raw profiles and other vendors' GPS names, so a position the older reading missed is held too. See [Photos with a location](../how-to/install-the-gramps-sync-addon.md#9-push-the-trees-changes).
 - A media reference rectangle is four integers from 0 to 100 with x1 < x2 and y1 < y2. `[0, 0, 100, 100]` is normalised to null; any other shape is held.
 
 ### Free-text scan

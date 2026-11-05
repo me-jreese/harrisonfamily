@@ -272,7 +272,11 @@ class Fuzz(Checks):
 
     def bases(self):
         thumb = thumbnail()
+        scan2 = LS.segment(0xFE, b"between the scans") + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + b"\x11\x22\x33"
+        progressive = LS.jpeg(LS.build_tiff(), LS.xmp_packet())[:-2] + scan2 + b"\xff\xd9"
+        icc = LS.segment(0xE2, b"ICC_PROFILE\x00\x01\x01" + b"acsp" * 16) + LS.segment(0xEE, b"Adobe\x00\x64\x00\x00\x00\x00\x01")
         return [(LS.jpeg(LS.build_tiff(), LS.xmp_packet()), JPEG), (LS.jpeg(LS.build_tiff(">", thumb=thumb), LS.xmp_packet(style="element")), JPEG),
+                (progressive, JPEG), (LS.jpeg(LS.build_tiff(">"), LS.xmp_packet(), extra_segments=icc), JPEG),
                 (LS.png(tiff=LS.build_tiff(), xmp=LS.xmp_packet(), compress_xmp=True), PNG), (LS.png(tiff=LS.build_tiff(">"), xmp=LS.xmp_packet()), PNG)]
 
     def test_every_truncation_is_refused_or_clean(self):
@@ -284,7 +288,7 @@ class Fuzz(Checks):
         rng = random.Random(374)
         bases = self.bases()
         kept = 0
-        for _ in range(4000):
+        for _ in range(6000):
             data, ct = rng.choice(bases)
             buf = bytearray(data)
             for _k in range(rng.randint(1, 8)):

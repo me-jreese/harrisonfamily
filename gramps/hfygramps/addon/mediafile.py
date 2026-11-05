@@ -225,8 +225,10 @@ def _png_has_gps(b):
             return True
         if kind == b"zTXt":
             try:
-                if _xmp_has_gps(zlib.decompress(body.split(b"\x00", 1)[1][1:], 15, 1024 * 1024)):
+                if _xmp_has_gps(locstrip.inflate_bounded(body.split(b"\x00", 1)[1][1:])):
                     return True
+            except locstrip.TooBig:
+                return True  # more text than any camera writes: not examined, so not known to be free of a position
             except (zlib.error, IndexError):
                 pass
         if kind == b"IEND":
@@ -236,19 +238,25 @@ def _png_has_gps(b):
 
 
 def exif_gps(data, content_type=None):
-    """True when the bytes of a JPEG, PNG or TIFF carry a GPS position in EXIF (or XMP). ``content_type`` defaults to the sniffed type;
-    other types are not read (a PDF or GIF has no EXIF)."""
+    """True when the bytes of a JPEG, PNG or TIFF carry a GPS position in EXIF (or XMP), by this module's own reading or by
+    ``locstrip.has_location_signal`` (HFY-TSK-374). ``content_type`` defaults to the sniffed type; other types are not read (a PDF or GIF
+    has no EXIF)."""
     ct = content_type or sniff(data[:16])
     try:
         if ct == "image/jpeg":
-            return _jpeg_has_gps(data) or _generic_has_gps(data)
-        if ct == "image/png":
-            return _png_has_gps(data) or _generic_has_gps(data)
-        if ct == "image/tiff":
-            return tiff_has_gps(data) or _xmp_has_gps(data)
+            found = _jpeg_has_gps(data) or _generic_has_gps(data)
+        elif ct == "image/png":
+            found = _png_has_gps(data) or _generic_has_gps(data)
+        elif ct == "image/tiff":
+            found = tiff_has_gps(data) or _xmp_has_gps(data)
+        else:
+            return False
+        # HFY-TSK-374: the checks above read the IFD0 chain, an Exif header and four plain-text names. The signal walks every IFD of every
+        # TIFF structure in the metadata (the Exif sub-IFD, a raw block behind any header), deflated and UTF-16 text, hex raw profiles and
+        # the GPS names of other vendors, so a photo they miss is held (setting off) or stripped and checked (setting on), not sent as it is.
+        return found or locstrip.has_location_signal(data, ct)
     except (struct.error, IndexError, ValueError):
         return True  # an image whose metadata cannot be walked is not known to be free of a position
-    return False
 
 
 def strip_copy(data, content_type=None):

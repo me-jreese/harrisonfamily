@@ -9,9 +9,11 @@ caller's own AWS profile into a folder, and only ever with ``aws s3 sync <s3 uri
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -24,6 +26,30 @@ _ALLOWED_OPTIONS = frozenset({"--only-show-errors"})
 
 class ShadowUnreachable(Exception):
     """The shadow output could not be read. Carries no message: the aws output can name keys."""
+
+
+class StrippedSidecarUnreadable(Exception):
+    """The add-on's sidecar could not be read. Carries no message."""
+
+
+_HANDLE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def read_stripped_handles(path: str) -> "set[str]":
+    """The Media handles the add-on's sidecar (``state.sqlite``) records as sent without their location (meta ``media_location_stripped``,
+    HFY-TSK-374), read-only. Only the handles are used, as the set the explained media must belong to; none is ever printed."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % Path(path).resolve().as_posix().replace("?", "%3f").replace("#", "%23"), uri=True, timeout=2)
+        try:
+            row = con.execute("SELECT value FROM meta WHERE key = 'media_location_stripped'").fetchone()
+        finally:
+            con.close()
+        table = json.loads(row[0]) if row else {}
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        raise StrippedSidecarUnreadable()
+    if not isinstance(table, dict):
+        raise StrippedSidecarUnreadable()
+    return {h for h in table if isinstance(h, str) and _HANDLE.match(h)}
 
 
 def scan_dir(root: str) -> Dict[str, Path]:

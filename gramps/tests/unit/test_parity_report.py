@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -721,6 +722,40 @@ class MediaLocationStripped(unittest.TestCase):
             self.assertEqual(code, 64, repr(bad))
         code, cap = run_cli(legacy, shadow, ["--expect-stripped", "secret-count-7"])
         self.assertNotIn("secret-count-7", cap.out.getvalue() + cap.err.getvalue())
+
+    def sidecar_with(self, handles, dropped=None):
+        import sqlite3
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="hfy-parity-sidecar-")
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "state.sqlite")
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        if handles is not None:
+            con.execute("INSERT INTO meta VALUES ('media_location_stripped', ?)", (json.dumps({h: ["a" * 64, "b" * 64, "c" * 32] for h in handles}),))
+        con.commit()
+        con.close()
+        return path
+
+    def test_the_sidecar_limits_the_explained_media_to_the_ones_it_recorded(self):
+        legacy, shadow = pair_with_stripped_photo()
+        handle = load(legacy, MEDIA_PHOTO)["handle"]
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "5", "--stripped-sidecar", self.sidecar_with([handle]))
+        self.assertEqual((code, doc["stripped"]), (10, {"allowed": 5, "explained": 1}))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "5", "--stripped-sidecar", self.sidecar_with(["someOtherHandle"]))
+        self.assertEqual((code, doc["stripped"], set(doc["unexplained_by_field"])), (20, {"allowed": 5, "explained": 0}, {"checksum"}),
+                         "a media that differs but was never recorded as stripped is not explained, whatever the count says")
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "5", "--stripped-sidecar", self.sidecar_with(None))
+        self.assertEqual((code, doc["stripped"]["explained"]), (20, 0), "a sidecar that recorded none explains none")
+
+    def test_a_bad_sidecar_or_one_without_the_count_is_a_usage_error_that_prints_no_path(self):
+        legacy, shadow = pair_with_stripped_photo()
+        for extra in (["--expect-stripped", "1", "--stripped-sidecar", "/nonexistent/secret-folder/state.sqlite"],
+                      ["--stripped-sidecar", self.sidecar_with([])]):
+            code, cap = run_cli(legacy, shadow, extra)
+            self.assertEqual(code, 64)
+            self.assertNotIn("secret-folder", cap.out.getvalue() + cap.err.getvalue())
+            self.assertNotIn("state.sqlite", cap.out.getvalue() + cap.err.getvalue())
 
     def test_the_text_report_shows_the_rule_and_the_allowance(self):
         legacy, shadow = pair_with_stripped_photo()

@@ -8,10 +8,12 @@ class, and explains it by a rule from ``rules.RULES`` or leaves it unexplained:
 * ``only_in_render``: the shadow has the key and the legacy export does not;
 * ``changed``: both have it, with different bytes; each JSON difference must be explained, or the file is unexplained.
 
-``expect_stripped`` (``--expect-stripped <n>``, HFY-TSK-374) is the add-on's own ``counts.media_location_stripped``: the number of media it
-sends as a copy without their GPS location. Up to n media whose legacy and shadow entries both carry a checksum and a size, with the
-checksum differing, are explained under ``media-location-stripped`` (the first n handles in sorted order; the report only counts). A media
-beyond n stays unexplained. Without the option the rule never fires.
+``expect_stripped`` (``--expect-stripped <n>``, HFY-TSK-374) is the add-on's own ``counts.media_location_stripped``: the number of media the
+website holds as a copy without their GPS location. Up to n media whose legacy and shadow entries both carry a checksum and a size, with
+the checksum differing, are explained under ``media-location-stripped`` (the first n handles in sorted order; the report only counts). A
+media beyond n stays unexplained. With ``stripped_handles`` (``--stripped-sidecar``: the handles the add-on's sidecar recorded as uploaded
+without their location) only those media can be explained, so a media that differs for another reason is never taken for one. Without the
+option the rule never fires.
 
 ``expect_holds`` (``--expect-holds <n>``) is the one input that is not in the two trees: the add-on's own count of objects it held
 whole. Up to n whole-object absences (``only_in_legacy`` person, family, event, note, place and media files that no other rule
@@ -287,8 +289,10 @@ def _stripped_entry(ctx: _Context, key: str, doc_a: Any, doc_b: Any, path: tuple
     return handle is not None and handle in ctx.stripped
 
 
-def _take_stripped(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str, Source], allowed: int) -> Set[str]:
-    """The first ``allowed`` media handles (sorted) whose media file differs from the legacy one by the media-location-stripped pattern."""
+def _take_stripped(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str, Source], allowed: int,
+                   only: Optional[Set[str]] = None) -> Set[str]:
+    """The first ``allowed`` media handles (sorted) whose media file differs from the legacy one by the media-location-stripped pattern.
+    With ``only`` (the handles the add-on's sidecar records as sent without their location) no other media is explained."""
     found: Set[str] = set()
     for key in sorted(legacy_owned):
         if len(found) >= allowed:
@@ -298,7 +302,7 @@ def _take_stripped(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str
         ok_a, doc_a = _parse(legacy_owned[key])
         ok_b, doc_b = _parse(shadow_owned[key])
         handle = _stripped_pair(doc_a, doc_b) if ok_a and ok_b else None
-        if handle is not None:
+        if handle is not None and (only is None or handle in only):
             found.add(handle)
     return found
 
@@ -540,7 +544,8 @@ def _take_holds(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str, S
 
 
 def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: Policy,
-            expect_holds: Optional[int] = None, expect_stripped: Optional[int] = None) -> Dict[str, Any]:
+            expect_holds: Optional[int] = None, expect_stripped: Optional[int] = None,
+            stripped_handles: Optional[Set[str]] = None) -> Dict[str, Any]:
     """The counts. ``legacy`` and ``shadow`` map a site key to its bytes or to a file path. ``expect_holds`` is the add-on's own
     count of objects it held whole (None: absences no policy rule explains stay unexplained). ``expect_stripped`` is its count of media
     sent without their location (None: a media whose checksum differs stays unexplained)."""
@@ -578,11 +583,11 @@ def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: 
     if expect_holds is not None:
         held_keys, held_objects = _take_holds(legacy_owned, shadow_owned, excluded, held_media, expect_holds)
         tally.holds = {"allowed": expect_holds, "explained": len(held_keys)}
-    stripped_handles: Set[str] = set()
+    explained_stripped: Set[str] = set()
     if expect_stripped is not None:
-        stripped_handles = _take_stripped(legacy_owned, shadow_owned, expect_stripped)
-        tally.stripped = {"allowed": expect_stripped, "explained": len(stripped_handles)}
-    ctx = _Context(policy, excluded, held_media, held_objects, stripped_handles)
+        explained_stripped = _take_stripped(legacy_owned, shadow_owned, expect_stripped, stripped_handles)
+        tally.stripped = {"allowed": expect_stripped, "explained": len(explained_stripped)}
+    ctx = _Context(policy, excluded, held_media, held_objects, explained_stripped)
 
     for key in sorted(set(legacy_owned) | set(shadow_owned)):
         area = area_of(key)

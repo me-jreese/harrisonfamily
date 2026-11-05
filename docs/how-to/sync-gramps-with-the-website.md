@@ -91,14 +91,14 @@ Runbook 19.4. Open the Website sync window and pick per field. Held items name t
 
 ### Send photos that have a location without it
 
-By default a JPEG, PNG or TIFF photo with a GPS position is held: the website gets the Media's details and not the photo (`media.exif_gps.hold`), and you remove the location from the file before it can go. To keep the location in your files and in Gramps and still put the photo on the website, turn on the per-tree setting `strip_location`. The push then uploads a COPY of each JPEG or PNG that is held only for its position, with the position taken out; your file, `Media.path` and the Gramps database are never written, and the setting never leaves this Mac. A TIFF, or a photo the add-on cannot read with certainty, stays held.
+By default a JPEG, PNG or TIFF photo with a GPS position is held: the website gets the Media's details and not the photo (`media.exif_gps.hold`), and you remove the location from the file before it can go. To keep the location in your files and in Gramps and still put the photo on the website, turn on the per-tree setting `strip_location`. The push then uploads a COPY of each JPEG or PNG that is held only for its position, with the position taken out; your file, `Media.path` and the Gramps database are never written, and the setting never leaves this Mac. A TIFF, or a photo the add-on cannot read with certainty (a depth map or a motion clip after the image, an application segment it does not know, extended XMP), stays held.
 
 ```sh
 cd ~/harrisonfamily
 gramps/bin/hfy-sync settings --tree "<tree name>"                         # shows: strip_location off
 gramps/bin/hfy-sync settings --tree "<tree name>" --strip-location on      # looks only, exit 10
 gramps/bin/hfy-sync settings --tree "<tree name>" --strip-location on --yes
-gramps/bin/hfy-sync push --tree "<tree name>"                              # the look: counts.media_location_stripped is the number of photos that would go without a location
+gramps/bin/hfy-sync push --tree "<tree name>" --json                       # the look: counts.media_location_stripped_pending is the number of photos that would go without a location
 ```
 
 `hfy-sync settings ... --strip-location off --yes` turns it off again. What it removes, how the check works and what stays held are in [Install and run the Gramps sync addon](install-the-gramps-sync-addon.md#9-push-the-trees-changes). When you review the shadow render against the legacy export, give the report the same count: [Account for media sent without their location](review-the-shadow-parity-report.md#account-for-media-sent-without-their-location).

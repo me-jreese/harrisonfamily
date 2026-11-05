@@ -24,7 +24,7 @@ classification and changes nothing, the sidecar included. Counts only in status.
 import json
 
 from . import backup as backup_mod
-from . import consts, pull, sidecar, status
+from . import consts, mediaup, pull, sidecar, status
 from . import plan as plan_mod
 
 SETTLED = ("converged", "unchanged")
@@ -100,7 +100,7 @@ def _run(ctx, dry):
     plan = plan_mod.build(
         local, {}, snap.heads, pins={}, sticky=set(sidecar.meta_json(side, "birthlike_sticky", [])),
         released=set(sidecar.meta_json(side, "released", [])), mode=ctx.mode, allow_deletes=False, files=tree.media_files(), pulled={},
-        expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy, parked=snap.parked)
+        expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy, parked=snap.parked, stripped=mediaup.stripped_map(side))
     summary = _summary(plan, sidecar.load_base(side), local)
     log.line("classified rebased=%(rebased)d conflicts=%(conflicts)d cloud_only=%(cloud_only)d desktop_only=%(desktop_only)d "
              "deleted_on_desktop=%(deleted_on_desktop)d" % summary)

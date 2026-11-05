@@ -26,7 +26,7 @@ from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
 from . import backup as backup_mod
-from . import consts, decisions, delta, errors, faults, media, paths, sidecar, snapshot, status, transport
+from . import consts, decisions, delta, errors, faults, media, mediaup, paths, sidecar, snapshot, status, transport
 from . import plan as plan_mod
 
 MAX_REPLANS = 3
@@ -384,7 +384,7 @@ def _plan(ctx):
         expunge_holds=sidecar.load_expunge_holds(side), policy=ctx.policy,
         confirm_mass_delete=bool(ctx.services.get("confirm_mass_delete")) or (ctx.mode == "gui" and ctx.options.confirm_mass_delete),
         decisions=ctx.options.decisions if ctx.mode == "gui" and not ctx.dry else None,
-        defer_deletes=ctx.mode == "gui" and ctx.options.confirm_deletes is False, parked=ctx.snap.parked)
+        defer_deletes=ctx.mode == "gui" and ctx.options.confirm_deletes is False, parked=ctx.snap.parked, stripped=mediaup.stripped_map(side))
     plan.local = local
     if ctx.decisions is not None and ctx.decisions.overrides:
         ctx.decisions.settle(plan)

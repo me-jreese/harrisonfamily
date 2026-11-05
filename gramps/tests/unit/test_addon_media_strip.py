@@ -160,7 +160,7 @@ class Upload(StripCase):
         copy_bytes = self.cloud.blob_bytes(handle)
         con = self.sidecar()
         try:
-            self.assertEqual(mediaup.stripped_map(con)[handle], (sha(data), sha(copy_bytes)))
+            self.assertEqual(mediaup.stripped_map(con)[handle], (sha(data), sha(copy_bytes), hashlib.md5(copy_bytes).hexdigest()))
         finally:
             con.close()
         self.assertEqual(self.rows("SELECT md5, sha256, size, origin FROM media_local WHERE handle = ?", handle),
@@ -279,6 +279,161 @@ class StaysHeld(StripCase):
         data = LS.jpeg(LS.build_tiff())
         self.assertEqual(mediafile.hold_for_bytes(data), mediafile.GPS_RULE)
         self.assertEqual(consts.DOWNLOAD_HOLD_RULES[0], "media.exif_gps.hold")
+
+
+class BlobChanged(unittest.TestCase):
+    """plan._blob_changed: the sidecar's record of an uploaded copy is a witness that holds whatever the file or the setting is now."""
+
+    def test_the_witnesses(self):
+        from hfygramps.addon import plan
+        cloud, local = {"checksum": "a" * 32}, {"checksum": "b" * 32}
+        self.assertTrue(plan._blob_changed(local, cloud), "another file on the website is a change")
+        self.assertFalse(plan._blob_changed(local, cloud, None, ("x", "y", "a" * 32)), "the sidecar says that checksum is a copy this desktop sent")
+        self.assertTrue(plan._blob_changed(local, cloud, None, ("x", "y", "c" * 32)), "but not another one")
+        self.assertTrue(plan._blob_changed(local, cloud, None, ("x", "y")), "an older record has no checksum: the held-back layer applies")
+        self.assertFalse(plan._blob_changed(local, cloud, {"location_stripped": True, "md5": "a" * 32}), "the copy of the file as it is now")
+        self.assertFalse(plan._blob_changed(local, {"checksum": ""}), "no checksum on the website: nothing to download")
+
+
+class DLView(PS.PullView):
+    """A pull view that really serves the website's blob, and records every download."""
+
+    calls = []
+
+    def media_download(self, handle):
+        data = self.cloud.blob_bytes(handle)
+        DLView.calls.append(handle)
+        blob = self.cloud.blobs[handle]
+        url = "https://blob.invalid/%s" % handle
+        self.cloud.snapshot_files[url] = data
+        return {"url": url, "sha256": blob["sha256"], "md5": blob["md5"], "size": blob["size"], "content_type": blob["content_type"]}
+
+
+class PullNeverRepoints(StripCase):
+    """A review found that a pull downloaded the copy and pointed Media.path at it once the setting was off, the original was missing or
+    online-only, or the strip refused: the sidecar's record of what was uploaded now says the website's file is ours, whatever the file is."""
+
+    def setUp(self):
+        StripCase.setUp(self)
+        cfg = paths.read_json(paths.config_path(self.env))
+        cfg["media_root"] = os.path.join(self.tmp, "mroot")
+        paths.atomic_write_json(paths.config_path(self.env), cfg)
+        DLView.calls = []
+
+    def dlpull(self):
+        from hfygramps.addon import runner
+        self.n += 1
+        return runner.run(self.tree, "cli", runner.Options("pull", yes=True), run_id="r%02d" % self.n, argv=["gramps"], environ=self.env,
+                          services={"cloud": DLView(self.cloud)})
+
+    def scenario(self, after_push, website_edit=None):
+        self.seed()
+        data = LS.jpeg(LS.build_tiff(), LS.xmp_packet())
+        handle, path = self.add_photo(data)
+        self.set_strip(True)
+        self.push()
+        before = copy.deepcopy(self.tree.data[handle])
+        after_push(handle, path)
+        self.cloud.edit(handle, website_edit or (lambda o: o.update(desc="Edited on the website")))
+        doc = self.dlpull()
+        now = self.tree.data[handle]
+        self.assertNotEqual(doc["result"], "failed", doc)
+        self.assertEqual(DLView.calls, [], "nothing is downloaded")
+        self.assertEqual((now["path"], now["checksum"]), (before["path"], before["checksum"]), "Media.path and Media.checksum are the original's")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "mroot")) and os.listdir(os.path.join(self.tmp, "mroot")), "nothing was written to the media folder")
+        if os.path.exists(path):
+            self.assertEqual(self.disk(path), data)
+        return now, doc
+
+    def test_control_the_setting_stays_on(self):
+        now, _doc = self.scenario(lambda h, p: None)
+        self.assertEqual(now["desc"], "Edited on the website", "the website's other changes do come over")
+
+    def test_the_setting_was_turned_off(self):
+        now, _doc = self.scenario(lambda h, p: self.set_strip(False))
+        self.assertEqual(now["desc"], "Edited on the website")
+
+    def test_the_original_was_moved_away(self):
+        self.scenario(lambda h, p: os.rename(p, p + ".moved"))
+
+    def test_the_original_is_a_dropbox_online_only_file(self):
+        def placeholder(handle, path):
+            original = mediafile.xattr_names
+            mediafile.xattr_names = lambda p, _o=original, _path=path: [mediafile.PLACEHOLDER_XATTR] if p == _path else _o(p)
+            self.addCleanup(setattr, mediafile, "xattr_names", original)
+        self.scenario(placeholder)
+
+    def test_the_strip_refuses_the_file_today(self):
+        def refuse(handle, path):
+            patch = mock.patch.object(mediafile, "strip_copy", return_value=(None, "verify_failed"))
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.scenario(refuse)
+
+    def test_another_file_on_the_website_is_held_not_downloaded(self):
+        now, doc = self.scenario(lambda h, p: None, website_edit=lambda o: o.update(checksum="e" * 32))
+        self.assertGreaterEqual(doc["counts"]["holds"], 1, "the replaced file is listed as held back")
+
+
+class CountsFollowTheWebsite(StripCase):
+    """counts.media_location_stripped is what the website holds: a copy counts after its upload is acknowledged, never while it is deferred."""
+
+    def test_a_deferred_upload_is_pending_not_counted_and_not_remembered(self):
+        self.seed()
+        data = LS.jpeg(LS.build_tiff(), LS.xmp_packet())
+        handle, _path = self.add_photo(data)
+        self.set_strip(True)
+        with mock.patch.object(mediaup, "upload", side_effect=mediaup.Deferred("media_upload_failed")):
+            doc = self.push()
+        wanted = mediafile.stripped_count(self.tree.media_files())
+        self.assertEqual((doc["counts"]["media_location_stripped"], doc["counts"]["media_location_stripped_pending"]), (0, wanted))
+        con = self.sidecar()
+        try:
+            self.assertEqual(mediaup.stripped_map(con), {})
+        finally:
+            con.close()
+        look = self.push(dry_run=True)
+        self.assertEqual((look["counts"]["media_location_stripped"], look["counts"]["media_location_stripped_pending"]), (0, wanted))
+        done = self.push()
+        self.assertEqual((done["counts"]["media_location_stripped"], done["counts"]["media_location_stripped_pending"]), (wanted, 0))
+        again = self.push(dry_run=True)
+        self.assertEqual((again["counts"]["media_location_stripped"], again["counts"]["media_location_stripped_pending"]), (wanted, 0))
+        self.assertIn(handle, self.stripped_handles())
+
+    def stripped_handles(self):
+        con = self.sidecar()
+        try:
+            return set(mediaup.stripped_map(con))
+        finally:
+            con.close()
+
+
+class DetectorInThePush(StripCase):
+    """A photo whose position sits only where the older detector did not look (the Exif sub-IFD) is held with the setting off and stripped with it on."""
+
+    def photo(self):
+        self.seed()
+        tiff = LS.assemble("<", [("ifd0", [LS.asc("<", 0x010F, LS.MAKE), LS.ref(0x8769, "ifd", "exif")], None),
+                                 ("exif", [(0x9003, 2, len(LS.DATE) + 1, LS.DATE + b"\x00"), LS.ref(0x8825, "ifd", "gps")], None),
+                                 ("gps", LS.gps_entries("<"), None)], {})
+        return self.add_photo(LS.jpeg(tiff))
+
+    def test_it_is_held_with_the_setting_off_with_the_same_message(self):
+        handle, _path = self.photo()
+        self.push()
+        rule, detail = self.holds()[handle]
+        self.assertEqual(rule, "media.exif_gps.hold")
+        self.assertIn("remove the location info, then sync", detail)
+        self.assertNotIn(handle, self.cloud.heads)
+
+    def test_it_is_stripped_with_the_setting_on(self):
+        handle, path = self.photo()
+        original = self.disk(path)
+        self.set_strip(True)
+        self.push()
+        self.assertIn(handle, self.cloud.heads)
+        self.assertFalse(mediafile.exif_gps(self.cloud.blob_bytes(handle), JPEG))
+        self.assertEqual(self.disk(path), original)
 
 
 @unittest.skipIf(NODE is None, "node is not installed")

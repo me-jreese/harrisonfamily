@@ -144,6 +144,7 @@ HOLD_MESSAGES.update({
     "media_file_changed": "The file for this photo or document changed while the sync ran, so it was not sent. Run the push again.",
     "media_cloud_copy_differs": "The file for this photo or document changed on this Mac and can no longer be sent, so the website keeps the copy it has. Check the file, then sync again.",
     "media_location_not_removed": "The location could not be removed from a copy of this photo with certainty, so it was not sent. Nothing on this Mac changed.",
+    "media_stripped_replaced": "The website has another file for this photo than the copy this Mac sent. It was not downloaded, so your original and its link in Gramps stay as they are.",
     "media_dependency_deferred": "This record refers to a photo or document whose file could not be uploaded, so it was not sent. Run the push again.",
 })
 
