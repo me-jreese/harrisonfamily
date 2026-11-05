@@ -6,7 +6,9 @@
 //   - the content kit's canView(post, viewer) and moderationVisible(post, viewer) (a post a moderator hid is not shown to anyone but its author and admins),
 //   - attachments with moderation.hidden stripped for everyone else (the kit's redactModeration),
 //   - privacy-guard's BIRTHDAY_KEYWORDS: a post whose title, body or photo text names a birthday (or a birth) is skipped, so the module never resurfaces one,
-//   - the hidden list (OTD#HIDDEN), which holds post ids too.
+//   - the hidden list (OTD#HIDDEN). The hide routes only take on-this-day item ids (evt: and birth:, surfaces.md 4.4), so no route puts a post id there today;
+//     the filter is kept so a later record-level post hide needs no change here.
+// The photo url is served only as an https URL or a root-relative /uploads/ path (safePhotoUrl); anything else is not shown.
 // The served post is { id, n, author: {id, label}, excerpt, photo?: {url, alt} }: text only, for the island to render as text nodes.
 import { canView, redactModeration } from "@io-kit/content";
 import { BIRTHDAY_KEYWORDS } from "../shared/privacy-guard.mjs";
@@ -16,7 +18,7 @@ import { gsiPosts } from "../keys.js";
 export const FIRST_POST_YEAR = 2025;
 /** At most this many past years are queried for one request. */
 export const MAX_YEARS = 25;
-/** Per-year page: a family posts a handful of times on any one day; the page is not walked further. */
+/** Per-year page: a family posts a handful of times on any one day; the page is not walked further, and the Query runs newest first so a cut page drops the oldest. */
 export const PAGE_LIMIT = 50;
 export const EXCERPT_MAX = 140;
 const QUERY_CONCURRENCY = 8;
@@ -58,6 +60,14 @@ const postTexts = (p) => [p.title, p.body, ...(Array.isArray(p.attachments) ? p.
 /** The moderation rule of social.md 11.3: a hidden item is visible to its author and to admins only. */
 export const moderationVisible = (item, viewer) => !item?.moderation?.hidden || (viewer != null && (viewer.id === item.author?.id || viewer.admin === true));
 
+/** A photo url the island may put in an img: https, or a root-relative /uploads/ path with plain path characters. Otherwise null. */
+export function safePhotoUrl(url) {
+  if (typeof url !== "string" || url.length > 2048 || /[\u0000-\u0020\u007f\\]/.test(url)) return null;
+  if (/^\/uploads\/[A-Za-z0-9._~\/-]+$/.test(url)) return url.split("/").includes("..") ? null : url;
+  if (!/^https:\/\/[^/?#]+(?:\/[^?#]*)?$/i.test(url)) return null;
+  try { return new URL(url).protocol === "https:" ? url : null; } catch { return null; }
+}
+
 const clean = (v) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim() : "");
 export function excerptOf(post) {
   const text = clean(post.body) || clean(post.title);
@@ -75,7 +85,7 @@ export function archiveEntry(stored, viewer, { n, hidden }) {
   if (!canView(post, viewer) || !moderationVisible(post, viewer)) return null;
   if (postTexts(post).some(mentionsBirthday)) return null;
   const view = redactModeration({ ...post, attachments: Array.isArray(post.attachments) ? post.attachments : [] }, viewer);
-  const photo = view.attachments.find((a) => a?.kind === "image" && typeof a.url === "string" && a.moderation?.hidden !== true);
+  const photo = view.attachments.map((a) => (a?.kind === "image" && a.moderation?.hidden !== true ? { url: safePhotoUrl(a.url), alt: a.alt } : null)).find((a) => a?.url);
   const excerpt = excerptOf(view);
   if (!excerpt && !photo) return null;
   return {
@@ -104,6 +114,7 @@ export async function pastYearPosts({ ddb, cmds, table, viewer, today, tzOffset,
         KeyConditionExpression: "GSI1PK = :pk AND GSI1SK BETWEEN :lo AND :hi",
         ExpressionAttributeValues: { ":pk": gsiPosts, ":lo": ulidFloor(yr.start), ":hi": ulidCeil(yr.end) },
         Limit: PAGE_LIMIT,
+        ScanIndexForward: false, // a page that is cut keeps the newest posts of the day
       }));
       return { yr, items: r.Items ?? [] };
     }))));

@@ -7,7 +7,7 @@ import { createFakeDdb, cmds, makeApi, signToken } from "./world.js";
 import { TYPE } from "../src/onthisday/build.js";
 import { createOnThisDay, parseQuery, hiddenKeys } from "../src/onthisday/service.js";
 import { OTD_INDEX_KEYS, POLICY_VERSION, encodeBody } from "../src/onthisday/store.js";
-import { archiveEntry, dayRange, mentionsBirthday, moderationVisible, pastYearPosts, ulidCeil, ulidFloor } from "../src/onthisday/posts.js";
+import { PAGE_LIMIT, archiveEntry, dayRange, mentionsBirthday, moderationVisible, pastYearPosts, safePhotoUrl, ulidCeil, ulidFloor } from "../src/onthisday/posts.js";
 import { collectSource, createInterimSource, mapLimit, rowsFromPerson, s3InterimSource } from "../src/onthisday/source.js";
 import { buildCaps } from "../src/routes.js";
 import { BIRTHDAY_KEYWORDS } from "../src/shared/privacy-guard.mjs";
@@ -513,6 +513,28 @@ describe("past-year posts (AC4)", () => {
     for (const t of ["", "unborn", "borne", "birthright", "doberman", "a lovely day", undefined, 5]) expect(mentionsBirthday(t), String(t)).toBe(false);
   });
 
+  it("serves a photo url only as https or a root-relative /uploads/ path", async () => {
+    for (const ok of ["/uploads/posts/01J00000000000000000000000/p1.jpg", "https://media.example.test/uploads/posts/x/p1.jpg"]) expect(safePhotoUrl(ok), ok).toBe(ok);
+    for (const bad of ["javascript:alert(1)", "data:image/png;base64,AAAA", "http://media.example.test/p.jpg", "//media.example.test/p.jpg", "/other/p.jpg", "/uploads/../x.jpg", "/uploads/a b.jpg", "https://", "https://a.test/a b", "", null, 5]) {
+      expect(safePhotoUrl(bad), String(bad)).toBeNull();
+    }
+    const bad = await addPost(at(2026, 10, 13), { body: "odd photo", attachments: [photo(1, { url: "javascript:alert(1)" }), photo(2)] }, "BADURLFIRST00001");
+    const only = await addPost(at(2026, 10, 13), { body: "", attachments: [photo(3, { url: "data:image/png;base64,AAAA" })] }, "BADURLONLY000001");
+    const byId = Object.fromEntries((await find({ id: "ITEST1" })).map((p) => [p.id, p]));
+    expect(byId[bad].photo).toEqual({ url: photo(2).url, alt: "alt 2" }); // the unsafe photo is passed over for the next one
+    expect(byId).not.toHaveProperty(only); // no text and no safe photo: nothing to show
+  });
+
+  it("queries each year newest first, so a page that is cut keeps the newest posts of the day", async () => {
+    const ids = [];
+    for (let i = 0; i < PAGE_LIMIT + 5; i += 1) ids.push(await addPost(at(2026, 10, 13, 0) + i * 60_000, { body: `post ${i}` }, `P${String(i).padStart(15, "0")}`));
+    const out = await find({ id: "ITEST1" });
+    expect(out).toHaveLength(PAGE_LIMIT);
+    expect(out[0].id).toBe(ids.at(-1)); // the newest
+    expect(out.map((p) => p.id)).not.toContain(ids[0]); // the oldest are the ones dropped
+    expect(ddb.calls.filter((c) => c === "QueryCommand")).toHaveLength(2);
+  });
+
   it("skips ids on the hidden list, and a post with no text and no photo", async () => {
     const a = await addPost(at(2026, 10, 13), { body: "one" }, "ONE0000000000001");
     const b = await addPost(at(2026, 10, 13), { body: "two" }, "TWO0000000000001");
@@ -622,6 +644,24 @@ describe("POST /api/onthisday/hide and DELETE /api/onthisday/hide/:itemId (AC5)"
     expect(audits()).toHaveLength(2);
     expect((await unhide(admin, "evt:never-hidden")).status).toBe(204);
     expect((await unhide(member, "bad id")).status).toBe(400);
+  });
+
+  it("an id that has left the index: an admin can still clear it, a member cannot (hide is 404 for an admin, 403 for a member)", async () => {
+    let t = T0;
+    const own = makeApi({ admins: [ADMIN], flags: { onThisDay: true }, clock: () => t, extraDeps: { onThisDaySource: source } });
+    const del = (token) => own.call("DELETE", `/api/onthisday/hide/${ITEM}`, { token, ct: undefined });
+    expect((await own.call("POST", "/api/onthisday/hide", { token: admin, body: { itemId: ITEM } })).status).toBe(204);
+    // the source loses the event (a changed source or a policy rebuild) and the parsed copy ages out: the id stays on the hidden list
+    source.events = [];
+    source.v = "etag-2";
+    t += 6 * 60_000;
+    const hiddenOf = () => own.ddb.rows.get(`${hiddenKeys.PK}\u0000${hiddenKeys.SK}`)?.ids;
+    expect((await del(member)).status).toBe(403);
+    expect((await del(stranger)).status).toBe(403);
+    expect(hiddenOf()).toEqual([ITEM]);
+    expect((await del(admin)).status).toBe(204);
+    expect(hiddenOf()).toEqual([]);
+    expect((await own.call("POST", "/api/onthisday/hide", { token: admin, body: { itemId: ITEM } })).status).toBe(404);
   });
 
   it("the list and the audit item are written in one transaction", async () => {
