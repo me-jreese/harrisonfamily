@@ -404,7 +404,8 @@ let namesOn = null; // the header toggle's state; null until chosen, then it car
 let toggleBtn = null;
 let closeWatch = false;
 
-function clearLightbox() {
+/** Removes the layer and names list of the photo now shown (the lightbox closing, or a host that shows the photo inline, like the /tree/ faces tab). */
+export function clearLightbox() {
   if (!lightbox) return;
   if (lightbox.built && lightbox.built.stop) lightbox.built.stop();
   if (lightbox.layer) lightbox.layer.remove();

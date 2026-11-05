@@ -6,6 +6,8 @@
 @import "../lib/family-navigator.css";
 @import "../lib/tree-lifelines.css";
 @import "../lib/tree-bigtree.css";
+@import "../photo-tags.css";
+@import "../lib/tree-faces.css";
 .hfy-tree {
   box-sizing: border-box;
   max-width: calc(10 * var(--io-space-9));

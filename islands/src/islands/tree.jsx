@@ -16,7 +16,7 @@ import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
-import { FAMILY_VIEW, LIFELINES_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 import { layoutOf } from "../lib/bigtree-model.js";
 import { useFlags } from "../lib/use-flags.js";
 import { useMedia } from "../lib/use-media.js";
@@ -90,6 +90,10 @@ export function KinshipSlot({ graph, viewer, focus, onFocus }) {
 // has a usable `layout` block: without one the page says it is being prepared and loads nothing more. It is never imported otherwise.
 let bigTreeImport = null;
 const loadBigTree = () => (bigTreeImport ||= import("../lib/tree-bigtree.jsx"));
+// The faces tab (HFY-TSK-308, familyVizFaces) is a lazy chunk too (lib/tree-faces.jsx), loaded only when that view opens. If it fails to load the
+// page falls back to the cards, which hold the same people.
+let facesImport = null;
+const loadFaces = () => (facesImport ||= import("../lib/tree-faces.jsx"));
 const BIGTREE_QUERY = "(min-width: 64rem)";
 
 class ChartBoundary extends Component {
@@ -235,10 +239,10 @@ export function GenerationOutline({ graph, focus, onFocus, sheet = false }) {
 }
 
 /** The cards | outline switch: two buttons in a group, the current one pressed. Both are always real buttons, 44 px at every width. */
-export function ViewToggle({ view, onChoose, lifelines = false, whole = false }) {
+export function ViewToggle({ view, onChoose, lifelines = false, whole = false, facesTab = false }) {
   return (
     <div className="hfy-tree__views" role="group" aria-label="view" data-tree-views>
-      {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
+      {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW] : []), ...(facesTab ? [FACES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
         <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v === FAMILY_VIEW ? "whole family" : v}</button>
       ))}
     </div>
@@ -276,7 +280,9 @@ export function TreeApp() {
   const timeOn = flags?.familyVizTime === true;
   const [Lifelines, setLifelines] = useState(null);
   const [lifelinesFailed, setLifelinesFailed] = useState(false);
-  const shown = view === LIFELINES_VIEW ? (lifelinesFailed ? "cards" : timeOn ? LIFELINES_VIEW : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
+  const [FacesTab, setFacesTab] = useState(null);
+  const [facesFailed, setFacesFailed] = useState(false);
+  const shown = view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW ? (lifelinesFailed ? "cards" : timeOn ? LIFELINES_VIEW : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -321,6 +327,20 @@ export function TreeApp() {
     );
     return () => { live = false; };
   }, [shown, Lifelines]);
+
+  useEffect(() => {
+    if (shown !== FACES_VIEW || FacesTab) return undefined;
+    let live = true;
+    loadFaces().then(
+      (m) => { if (live) setFacesTab(() => m.default); },
+      () => {
+        if (!live) return;
+        console.error("HFY tree: FACES_CHUNK_FAILED");
+        setFacesFailed(true);
+      }
+    );
+    return () => { live = false; };
+  }, [shown, FacesTab]);
 
   const hasLayout = useMemo(() => Boolean(result?.state === "ready" && layoutOf(result.graph)), [result]);
   const [BigTree, setBigTree] = useState(null);
@@ -427,7 +447,10 @@ export function TreeApp() {
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (
         <>
-          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || shown === "pending"} whole={bigOffered} />
+          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || shown === "pending"} whole={bigOffered} facesTab={faces} />
+          {shown === FACES_VIEW ? (
+            FacesTab ? <FacesTab graph={graph} fetcher={fetcher} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading />
+          ) : null}
           {shown === LIFELINES_VIEW || shown === "pending" ? (
             Lifelines && shown === LIFELINES_VIEW
               ? <Lifelines graph={graph} focus={resolved.id} onPick={onLifeline} onRecentre={onFocus} />

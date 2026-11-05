@@ -1,0 +1,51 @@
+/* The faces tab (lib/tree-faces.jsx, HFY-TSK-308). Aliases only (theme-lint). Imported by tree.css (one stylesheet for the page). A face crop is the
+   builder's 160 px square; two columns below 43rem, as many as fit above it. The photo's regions are lib/photo-tags-ui.js and src/photo-tags.css. */
+.hfy-faces { grid-column: 1 / -1; min-width: 0; margin-bottom: var(--io-space-5); }
+.hfy-tree .hfy-faces__title { margin: 0 0 var(--io-space-2); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-faces__note, .hfy-faces__status { min-height: var(--io-control-tap-min); margin: 0 0 var(--io-space-2); font-size: var(--io-typography-size-md); }
+.hfy-faces__note { min-height: 0; color: var(--io-color-semantic-text-dim); }
+.hfy-faces__groups { display: grid; gap: var(--io-space-4); margin: 0; padding: 0; list-style: none; }
+.hfy-faces__group {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface);
+}
+.hfy-faces__group[data-hit="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-surface-raised); box-shadow: 0 0 0 var(--io-control-focus-ring) var(--io-color-semantic-accent); }
+.hfy-faces__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2) var(--io-space-3); margin-bottom: var(--io-space-3); }
+.hfy-tree .hfy-faces__head h3 { margin: 0; font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-faces__count { color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-md); }
+.hfy-faces__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--io-space-3); margin: 0; padding: 0; list-style: none; }
+@media (min-width: 43rem) { .hfy-faces__grid { grid-template-columns: repeat(auto-fill, minmax(calc(10 * var(--io-space-5)), 1fr)); } }
+.hfy-faces__face { display: flex; flex-direction: column; align-items: center; gap: var(--io-space-1); min-width: 0; }
+.hfy-tree .hfy-faces__crop, .hfy-tree .hfy-faces__open, .hfy-tree .hfy-faces__outline {
+  box-sizing: border-box;
+  min-width: var(--io-control-tap-min);
+  min-height: var(--io-control-tap-min);
+  padding: 0;
+  border: var(--io-control-focus-ring) solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface);
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  font-size: var(--io-typography-size-md);
+  cursor: pointer;
+}
+.hfy-tree .hfy-faces__open, .hfy-tree .hfy-faces__outline { padding-inline: var(--io-space-3); }
+.hfy-tree .hfy-faces__crop { display: block; inline-size: 100%; max-inline-size: calc(10 * var(--io-space-5)); aspect-ratio: 1; overflow: hidden; }
+.hfy-tree .hfy-faces__crop[aria-pressed="true"], .hfy-tree .hfy-faces__open[aria-expanded="true"], .hfy-tree .hfy-faces__outline[aria-pressed="true"] { border-color: var(--io-color-semantic-accent); font-weight: var(--io-typography-weight-semibold); }
+.hfy-faces__crop:focus-visible, .hfy-faces__open:focus-visible, .hfy-faces__outline:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-faces__img { display: block; inline-size: 100%; block-size: 100%; object-fit: cover; }
+.hfy-faces__lazy { display: block; inline-size: 100%; block-size: 100%; }
+.hfy-faces__initials { display: flex; align-items: center; justify-content: center; inline-size: 100%; block-size: 100%; font-size: var(--io-typography-size-xl); font-weight: var(--io-typography-weight-semibold); }
+.hfy-faces__name { display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-tap-min); font-size: var(--io-typography-size-md); text-align: center; overflow-wrap: anywhere; }
+.hfy-faces__more { margin-top: var(--io-space-4); }
+.hfy-faces__viewer { margin-top: var(--io-space-3); }
+.hfy-faces__bar { display: flex; flex-wrap: wrap; gap: var(--io-space-2); margin-bottom: var(--io-space-2); }
+.hfy-faces__box { position: relative; display: block; max-inline-size: 100%; inline-size: max-content; }
+.hfy-faces__photo { display: block; max-inline-size: 100%; block-size: auto; max-block-size: 70vh; }
+/* Regions show on request (the "people in this photo" button) and on hover or keyboard focus, so a photo is not covered by rings at rest. */
+.hfy-faces__viewer:not(.hfy-faces__viewer--outlined) .photo-tags__region:not(:hover, :focus-visible, .is-active) { border-color: transparent; box-shadow: none; }
+.hfy-faces__viewer .photo-tags__layer--names:not(.photo-tags__layer--dense) .photo-tags__label { visibility: visible; }

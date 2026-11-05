@@ -29,7 +29,10 @@ export const BUDGET = {
   kinshipJs: 10 * KB,
   // HFY-TSK-269 (viz-v2-time, ADR 11 / viz-v2-time AC1): the lazy lifelines chunk, loaded only when the familyVizTime view opens.
   lifelinesJs: 25 * KB,
-  lifelinesCss: 5 * KB
+  lifelinesCss: 5 * KB,
+  // HFY-TSK-308 (viz-v2-faces-tab, viz ADR 11 / viz-v2-faces-tab AC4): the lazy faces tab chunk, loaded only when the familyVizFaces view opens.
+  facesJs: 15 * KB,
+  facesCss: 5 * KB
 };
 
 const read = (f) => readFileSync(f, "utf8");
@@ -115,8 +118,8 @@ test("the old 120 KB chart-chunk budget line is gone from the tests", () => {
   }
 });
 
-test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk, 25 and 5 KB for the lifelines)", () => {
-  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024, lifelinesJs: 25 * 1024, lifelinesCss: 5 * 1024 });
+test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk, 25 and 5 KB for the lifelines, 15 and 5 KB for the faces tab)", () => {
+  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024, lifelinesJs: 25 * 1024, lifelinesCss: 5 * 1024, facesJs: 15 * 1024, facesCss: 5 * 1024 });
 });
 
 // The lifelines chunk (lib/tree-lifelines.jsx): a lazy import of tree.js beside the navigator's, never a static one. Its own stylesheet source is
@@ -167,4 +170,25 @@ test("the poster chunk is lazy, at most 30 KB gzip JS and 5 KB gzip CSS, and no 
   for (const f of walk(out)) assert.doesNotMatch(read(f), /d3-dag|javascript-lp-solver|\bsugiyama\b|layeringSimplex|decrossTwoLayer/, `${f.slice(out.length + 1)} carries layout-engine code`);
   const pkg = read(join(testsDir, "..", "package.json")) + read(join(testsDir, "..", "package-lock.json"));
   assert.doesNotMatch(pkg, /d3-dag/, "d3-dag is in the islands' package.json or lockfile");
+});
+
+// HFY-TSK-308 (viz-v2-faces-tab): the faces tab chunk (lib/tree-faces.jsx) is lazy, at most 15 KB gzip JS and 5 KB gzip CSS. It reuses surf-photo-tags-ui
+// (lib/photo-tags-ui.js) rather than carrying a second tag display, so the chunk's closure includes that module; the chunk adds only what the shell and the
+// entry do not already load. Its own stylesheet source is lib/tree-faces.css, which tree.css imports (the region rules are src/photo-tags.css, shared).
+test("the faces tab chunk is lazy and at most 15 KB gzip JS and 5 KB gzip CSS", async (t) => {
+  const entry = join(out, "tree.js");
+  const shellSet = staticClosure(join(out, "shell.js"));
+  const entrySet = staticClosure(entry);
+  const faces = dynamicTargets(entry).filter((f) => /\/chunks\/tree-faces-[A-Za-z0-9_-]+\.js$/.test(f.split("\\").join("/")));
+  assert.equal(faces.length, 1, "tree.js must import exactly one tree-faces chunk dynamically");
+  assert.ok(!entrySet.has(faces[0]), "the faces chunk is a static import of the entry: it is not lazy");
+  const own = minus(minus(staticClosure(faces[0]), shellSet), entrySet);
+  const js = sum(own);
+  const srcCss = read(join(testsDir, "..", "src", "lib", "tree-faces.css"));
+  const css = gzipSync((await transform(srcCss, { loader: "css", minify: true })).code).length;
+  t.diagnostic(`faces JS ${kb(js)} of ${kb(BUDGET.facesJs)} (${[...own].map((f) => f.slice(out.length + 1)).join(", ")}); CSS ${kb(css)} of ${kb(BUDGET.facesCss)}`);
+  assert.ok(js > 1024, "the faces chunk measured as nearly empty: the test is not looking at the chunk");
+  assert.ok(js <= BUDGET.facesJs, `faces JS is ${kb(js)} gzip, over the 15 KB budget`);
+  assert.ok(css > 256 && css <= BUDGET.facesCss, `faces CSS is ${kb(css)} gzip, over the 5 KB budget`);
+  assert.match(read(join(out, "tree.css")), /hfy-faces__grid/);
 });
