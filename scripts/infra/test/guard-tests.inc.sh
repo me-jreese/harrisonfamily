@@ -200,7 +200,7 @@ eq "a raced policy aborts" "$RC" 1
 contains "...with a clear message" "$OUT" "the bucket policy changed while the guard was being merged"
 eq "...and no put was made" "$(writes)" 0
 
-CURRENT="runbook: sync-gramps-with-the-website.md (cutover order and rollback)"
+CURRENT="runbook: sync-gramps-with-the-website.md (guard and live render order, and rollback)"
 DOC="$ROOT/docs/how-to/sync-gramps-with-the-website.md"
 check "the replacement doc exists" test -s "$DOC"
 check "the old refresh doc is gone" test ! -e "$ROOT/docs/how-to/refresh-the-family-data.md"
@@ -208,7 +208,7 @@ cat > "$T/runbook-check.py" <<'PY'
 import os, re, sys
 t = open(sys.argv[1]).read(); script = open(sys.argv[2]).read()
 at = t.find
-order = ["## Cut over to the cloud store", "### Deny first", "### Then live", "### Then verify", "## Roll back"]
+order = ["## Check the render mode and the write guard", "## Put the write guard and the live render back on", "### Deny first", "### Then live", "### Then verify", "## Roll back"]
 print("cutover headings in order:", all(at(a) >= 0 for a in order) and [at(a) for a in order] == sorted(at(a) for a in order))
 rb = t[at("## Roll back"):]
 nxt = rb.find("\n## ", 5)

@@ -72,6 +72,16 @@ node scripts/sync-admin.mjs render --apply --full --region <region>
 
 The dry run reads `SYNC#HEAD` and `SYNC#RENDER` (head seq, `rendered_seq`, mode, `last_error`) and prints the payload; it invokes nothing. `--apply` calls `aws lambda invoke` (pass `--function <name>` if the function is not `hfy-sync-render`) and reads the response from a temporary file and fails (exit 1) if the CLI reports a `FunctionError` or the body is an error (for example `RenderFailed`), so a refused pass is never reported as success. It passes `--cli-read-timeout 0` so the CLI waits for a full pass; if the call is interrupted anyway, check `SYNC#RENDER` before retrying, so two full passes do not overlap. A render in `RENDER_MODE=off` returns at once. See [The render Lambda](../reference/sync-render.md#operator-payloads).
 
+## Stop and restart the render
+
+Use this to freeze the site on its last good render, or to start the render again. The cloud render cutover ran on 2026-11-05 (HFY-TSK-153); read the current mode before you change it, because this page does not state it. `RenderMode` is `off`, `shadow` or `live` ([The render Lambda](../reference/sync-render.md)). Both directions are a parameter-only change set on `<app-stack>` and need io's go-ahead.
+
+1. Read the state. `node scripts/sync-admin.mjs render --dry-run --full --region <region>` prints the mode, the head seq, `rendered_seq` and `last_error`. `aws cloudformation describe-stacks --stack-name <app-stack> --region <region> --query "Stacks[0].Parameters[?ParameterKey=='RenderMode'].ParameterValue" --output text` prints the stack's value.
+2. Create the change set with `--use-previous-template`, the new `RenderMode` (`off` to stop, `live` to start) and `UsePreviousValue=true` for every other parameter, as in [Deploy the app stack](deploy-the-app-stack.md#ship-the-real-renderer-hfy-tsk-176), step 3.
+3. Review it. The only change is `RenderMode`: no `Remove` action, no `Replacement`, and the `FunctionUrl` and `AuthFunctionUrl` outputs unchanged. Post the `describe-change-set` summary for io, wait for the go-ahead, then execute it.
+4. Check it. The `describe-stacks` command in step 1 prints the new value. After a stop, the site keeps serving the last good render and nothing is deleted. After a start, wait for the first pass and read `render/reports/<seq>.json`: keys and counts only, and `0` deletes ([The first live pass](../reference/sync-render.md#the-first-live-pass)).
+5. Before you start `live`, check the write guard is on, and put it on first if it is not: [Put the write guard and the live render back on](sync-gramps-with-the-website.md#put-the-write-guard-and-the-live-render-back-on). The policy-level rollback, which takes the guard off, is [Take the write guard off](sync-gramps-with-the-website.md#take-the-write-guard-off).
+
 ## Resurrect a batch of deletes or withdraws
 
 A delete or withdraw tombstones the head at once, but the log still holds the version before it. `resurrect` re-creates the heads of one batch from that log, within the 72-hour grace that a withdraw keeps before its history is expunged (a withdraw writes an `EXPUNGE#<Class>#<handle>` item due 72 hours later; `resurrect` deletes it, so a record that came back is never expunged).

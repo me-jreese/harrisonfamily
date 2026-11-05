@@ -646,14 +646,14 @@ Facts:
 
 ## Outside the repository
 
-Paths: `<eleventy-source>`; `<project>/scripts/etl/`; `<project>/scripts/search/build_search_index.js`; `<project>/scripts/infra/publish_allowlists.sh`; `<project>/scripts/auth/mint_test_id_token.py`; `<project>/workspace-local/`.
+Paths: `<eleventy-source>`; `<project>/scripts/etl/` (break-glass only); `<project>/scripts/search/build_search_index.js`; `<project>/scripts/infra/publish_allowlists.sh`; `<project>/scripts/auth/mint_test_id_token.py`; `<project>/workspace-local/`.
 
 Facts:
 
 - They are named here so you know they exist. These docs do not reproduce their contents.
 - `<eleventy-source>` builds `11ty/`.
 - The source's `partials/head.njk` already emits head blocks A and B, with a hard-coded theme `?v` and font file name that the islands build overwrites in the output. The base layout does not emit the `auth-v2.js` tag, and neither the Voice copy nor the asset versions are ported, so `copy.mjs` and `assets.mjs` are still needed. The source's layout still emits the retired Google client, `auth.js`, the navbar search and the `gateway` entry, and its `public/js/` still holds `auth.js`, `search-navbar.js` and `search-results.js`, until it is ported ([Refresh the Eleventy output](../how-to/refresh-the-eleventy-output.md)).
-- The ETL scripts turn the Gramps export into person JSON and family-tree media.
+- The ETL scripts (`export_person_data.py`, `build_family_tree_media.py`, `sync_to_s3.py`) turned the Gramps export into person JSON and family-tree media and published it. They are break-glass only since the cloud render cutover on 2026-11-05 (HFY-TSK-153): each refuses to run without `--legacy-break-glass`, which needs io's explicit approval. `hfy-sync-render` renders the data now. The retired P1 graph publish wrapper, `<project>/scripts/io/p1-publish-family-graph.sh`, calls `sync_to_s3.py` and refuses too; `hfy-graph-render` produces the graph. The last-resort procedure is [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md#the-legacy-etl-publish-break-glass-only).
 - `build_search_index.js` builds the person manifest and search index. The source's `build:search` step runs it.
 - `publish_allowlists.sh` publishes the email-to-gramps_id map to the config bucket as `config/userGrampsID.json`, the file the auth edge reads, and does nothing else. Its hashed-allowlist and Google Secret Manager steps were removed on 2026-10-14 (ruling P2-R51).
 - `mint_test_id_token.py` mints Google ID tokens for the retired legacy sign-in. Nothing in the repository runs it any more.
