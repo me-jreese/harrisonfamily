@@ -5,6 +5,8 @@
 // learn identity and capabilities before it knows which flags are on. routes.js declares it with gateExempt, the only exemption
 // test/features.test.js allows.
 
+import { logSafeError } from "./http.js";
+
 /** Pending access requests: GSI1 partition ACCESSREQS#pending, counted (Select COUNT) across every page. An empty partition is 0.
  * `pageSize` (optional) sets the query Limit; production leaves it to DynamoDB's own 1 MB page. */
 export async function countPendingAccessRequests({ ddb, cmds, table, pageSize }) {
@@ -36,7 +38,7 @@ export async function buildMe(actor, { accessRequestCount, log, extras }) {
     try {
       badges = { accessRequests: await accessRequestCount() };
     } catch (e) {
-      log?.error?.("me: access-request badge failed, omitted", e instanceof Error ? e.message : String(e));
+      log?.error?.("me: access-request badge failed, omitted", logSafeError(e));
     }
   }
   return {

@@ -108,7 +108,7 @@ export function createCompositeMemberReader({ readEntries, ddb, cmds, table, ttl
       }
       file = { at: now(), bySub };
     } catch (e) {
-      log.error?.("allowlist unavailable", e instanceof Error ? e.message : String(e));
+      log.error?.("allowlist unavailable", e instanceof Error ? e.name : "error"); // the name only: a message may quote a store value (PS-20)
       if (file.at === -Infinity) return { bySub: new Map(), error: e };
       file = { ...file, at: now() - ttlMs + 5_000 }; // keep serving the last good copy, retry in 5 s
     }

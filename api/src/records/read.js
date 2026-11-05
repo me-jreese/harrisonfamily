@@ -13,7 +13,7 @@
 //
 // No write, no MCP tool. The routes sit behind the HFY_EDITING stack switch (recordsGate): off, only admins and a member reading their own
 // record reach them; everyone else gets 404 not_found.
-import { HttpError, json } from "../http.js";
+import { HttpError, json, logSafeError } from "../http.js";
 import { serverSwitch } from "../features.js";
 import { CLASSES, getAlias } from "../sync/store.js";
 import { backrefs, byGrampsId, get } from "./index.js";
@@ -230,7 +230,7 @@ export const recordsGate = (env = () => process.env) => serverSwitch("HFY_EDITIN
     const key = { Note: "note_list", Media: "media_list" }[cls];
     return key !== undefined && arr(own.obj[key]).some((r) => (isObj(r) ? r.ref : r) === handle);
   } catch (e) {
-    console.error("records gate: own-record lookup failed, answering 404 (fail closed):", e?.message ?? e);
+    console.error("records gate: own-record lookup failed, answering 404 (fail closed)", logSafeError(e));
     return false; // fail closed
   }
 });
