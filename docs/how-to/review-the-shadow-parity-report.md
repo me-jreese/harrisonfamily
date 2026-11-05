@@ -1,13 +1,13 @@
 # Review the shadow parity report
 
-Compare what the render Lambda wrote in shadow mode with a legacy export staged at the same moment, on your own Mac, and read the difference as counts. This is the parity review of the migration ([The first time](sync-gramps-with-the-website.md#the-first-time-the-migration), step 8) and a precondition of the cutover ([Cut over to the cloud store](sync-gramps-with-the-website.md#cut-over-to-the-cloud-store)). The tool is [`gramps/bin/hfy-parity`](../../gramps/bin/hfy-parity) (HFY-TSK-370). It is an operator tool: it is never deployed, and no workflow runs it.
+Compare what the render Lambda wrote in shadow mode with a legacy export staged at the same moment, on your own Mac, and read the difference as counts. This is the parity review of the migration ([The first time](sync-gramps-with-the-website.md#the-first-time-the-migration), step 8). It preceded the render cutover on 2026-11-05 (HFY-TSK-153). Use it again only when the render returns to `shadow` before going `live` ([Put the write guard and the live render back on](sync-gramps-with-the-website.md#put-the-write-guard-and-the-live-render-back-on)). The tool is [`gramps/bin/hfy-parity`](../../gramps/bin/hfy-parity) (HFY-TSK-370). It is an operator tool: it is never deployed, and no workflow runs it.
 
 The report holds counts only. It never prints a key, a Gramps ID, a name, a path or a value, on screen or in an error, so what it prints can be sent back as it is. The real family data stays on your Mac.
 
 ## Before you start
 
 - **A shadow render exists.** The orchestrator has told you that the seed finished and the shadow render ran. The renderer writes its shadow output under `render-shadow/` in the sync bucket (`<sync-bucket>`; [The render Lambda](../reference/sync-render.md#modes)). If there is nothing there, the report exits `69` and says so.
-- **A legacy export was staged at the same moment.** Run steps 1 to 3 of [the legacy procedure](sync-gramps-with-the-website.md#1-export-from-gramps) (export, family trees, search manifests) into the usual local folder, `<project>/workspace-local/harrisonfamily-frontend`, with no edit in Gramps between the seed's Apply and the export, so both sides describe the same tree. **Do not run step 4, the sync**: it publishes, and the legacy publish is not to run during the migration window. The folder is the one that holds `person/`, `event/`, `family/`, `note/`, `place/` and `media/` at its top.
+- **A legacy export was staged at the same moment.** Run steps 1 to 3 of [the legacy procedure](sync-gramps-with-the-website.md#1-export-from-gramps) (export, family trees, search manifests) into the usual local folder, with `--legacy-break-glass` on the two Python scripts (they refuse without it, and it needs io's explicit approval; both write only the local folder), `<project>/workspace-local/harrisonfamily-frontend`, with no edit in Gramps between the seed's Apply and the export, so both sides describe the same tree. **Do not run step 4, the sync**: it publishes, and the legacy publish is not to run beside the renderer. The folder is the one that holds `person/`, `event/`, `family/`, `note/`, `place/` and `media/` at its top.
 - **Your AWS profile can read the shadow prefix.** Use `AWS_PROFILE=product-lead`. The tool only downloads: it runs `aws s3 sync s3://<sync-bucket>/render-shadow/ <temporary folder>` and nothing else, never `--delete`, never an upload, and it removes the temporary folder when it ends, also after an error or an interrupt. It needs the `aws` command-line tool, and Python 3.9 or later (the macOS `python3` is enough; nothing to install).
 
 ## Run the report
@@ -205,7 +205,7 @@ A media counts under one rule only. A media that `media-location-stripped` expla
 
 Send the report as printed: the whole output of the command (the verdict line, the tables and the counts), together with the exit code. Nothing else. Do not send the legacy folder, the shadow output, file names or screenshots of records.
 
-The report is the evidence for the parity item of the seed task. Whether to approve the cutover is your decision, recorded as the G-prod approval ([Cut over to the cloud store](sync-gramps-with-the-website.md#cut-over-to-the-cloud-store)); `10` with no surprising exposure counts is the expected result, and `20` is a blocking finding to record.
+The report is the evidence for the parity item of the seed task. Whether to approve the cutover is your decision, recorded as the G-prod approval ([Put the write guard and the live render back on](sync-gramps-with-the-website.md#put-the-write-guard-and-the-live-render-back-on)); `10` with no surprising exposure counts is the expected result, and `20` is a blocking finding to record.
 
 ## Related pages
 

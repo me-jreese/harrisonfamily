@@ -50,14 +50,14 @@ Every doc uses these forms in place of deployment-specific values.
 
 ## Family data and uploads in `<site-bucket>`
 
-The static site, the family data and member uploads share one bucket. Three writers touch it. The two that sync do so with `--delete`, and each stays off the other prefixes through excludes or a fixed prefix list.
+The static site, the family data and member uploads share one bucket. Three kinds of writer touch it. The site deploy syncs with `--delete` and stays off the data prefixes and `uploads/` through excludes. Since the render cutover on 2026-11-05 (HFY-TSK-153), the render Lambda `hfy-sync-render` writes the rendered data prefixes, and `hfy-graph-render` writes `person/graph.json` and `media/faces/` ([The render Lambda](sync-render.md)). The legacy ETL sync is break-glass only: it refuses without `--legacy-break-glass`.
 
 | Prefix | Holds | Written by | Deleted by |
 | --- | --- | --- | --- |
 | Everything outside the prefixes below, including `person/index.html` | Eleventy output from `11ty/` | Site deploy: the `s3_static` target in [`ci.manifest.yaml`](../../ci.manifest.yaml), which [`io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml) runs as `aws s3 sync 11ty/ s3://<site-bucket>/ --delete` with the manifest's `exclude` globs. Its rollback job resyncs the previous release artifact the same way. | Site deploy, for any key that no exclude covers |
-| `person/` | `<gramps-id>.json` person records; `index.json`, the person manifest; `search-index.json` | ETL sync (`sync_to_s3.py`, prefix `person`), which excludes `index.html` | ETL sync, by default. The site deploy excludes `person/*.json`. |
-| `family/`, `event/`, `note/`, `place/` | One `<handle>.json` per Gramps record, named by handle, not Gramps ID. `place/` also holds `index.json`. | ETL sync | ETL sync, by default. The site deploy excludes each prefix. |
-| `media/` | Media binaries named `<handle><ext>`; `<handle>.json` media records; `index.json`; family-tree SVGs named `tree_<gramps-id>.svg` | ETL sync | ETL sync, by default. The site deploy excludes `media/*`. |
+| `person/` | `<gramps-id>.json` person records; `index.json`, the person manifest; `search-index.json` | The render Lambda. Break-glass only: ETL sync (`sync_to_s3.py`, prefix `person`), which excludes `index.html` | The render Lambda, for the keys it wrote. A break-glass ETL sync deletes by default. The site deploy excludes `person/*.json`. |
+| `family/`, `event/`, `note/`, `place/` | One `<handle>.json` per Gramps record, named by handle, not Gramps ID. `place/` also holds `index.json`. | The render Lambda. Break-glass only: ETL sync | The render Lambda, for the keys it wrote. A break-glass ETL sync deletes by default. The site deploy excludes each prefix. |
+| `media/` | Media binaries named `<handle><ext>`; `<handle>.json` media records; `index.json`; family-tree SVGs named `tree_<gramps-id>.svg` | The render Lambda. Break-glass only: ETL sync | The render Lambda, for the keys it wrote. A break-glass ETL sync deletes by default. The site deploy excludes `media/*`. |
 | `uploads/posts/<ulid>/photo.<ext>` | Member post photos. Runtime data, not ETL output, and the only copy. | Members' browsers, by presigned `PUT` from `POST /api/uploads` ([`api/src/uploads.js`](../../api/src/uploads.js), [`api/src/presign.js`](../../api/src/presign.js)). The `hfy-api` role may put objects under `uploads/posts/*` (the `PostPhotoUploads` statement in `app-stack.yaml`) and `uploads/comments/*` (`CommentPhotoUploads`), may read both prefixes (`UploadReads`), and cannot delete them. | Nothing. The ETL sync has no `uploads` prefix. The site deploy excludes `uploads/*`, and the deploy role in [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) is denied `s3:PutObject` and `s3:DeleteObject` on `uploads/*` as a backstop. The API has no delete path, so deleting a post leaves its photo. |
 | `uploads/comments/<ulid>/<name>` | Member comment photos. Runtime data, not ETL output, and the only copy. | The same `hfy-api` role puts and reads objects here (`CommentPhotoUploads`, `UploadReads`), and cannot delete them. A `HEAD` or copy of a missing key answers `403`, not `404`, because the role has no `s3:ListBucket`; callers must treat both as "upload missing". | Nothing. The ETL sync has no `uploads` prefix. The site deploy excludes `uploads/*`, and the deploy role in [`github-roles.yaml`](../../infrastructure/cloudformation/github-roles.yaml) is denied `s3:PutObject` and `s3:DeleteObject` on `uploads/*` as a backstop. The API has no delete path, so deleting a post leaves its photo. |
 
@@ -94,7 +94,7 @@ The ETL writes the files below, and the site reads them in the browser after sig
 
 ### Person record: `person/<gramps-id>.json`
 
-Written by `export_person_data.py`. `familyTreeMedia` is added afterwards by `build_family_tree_media.py --attach`.
+Written by the render Lambda. Before the cutover `export_person_data.py` wrote it, and it does again only in a break-glass run; `familyTreeMedia` was added afterwards by `build_family_tree_media.py --attach`, also break-glass only.
 
 | Key | Shape | Notes |
 | --- | --- | --- |
@@ -194,8 +194,8 @@ The same shape appears in a person's `mediaGallery` and `primaryPhoto`.
 | --- | --- | --- |
 | `person/index.json` | `{count, generatedAt, people: [...]}`. Each entry: `handle`, `grampsId`, `displayName`, `givenName`, `surname`, `isLiving`, `birthYear`, `deathYear`, `lifespanSummary`, `primaryPhoto` (a string: the `s3Key`, else the `placeholderImage`). | `build_search_index.js`. `export_person_data.py` first writes the same entries as a bare array, and both readers accept either form. |
 | `person/search-index.json` | `{generatedAt, documents: [{grampsId, searchText}]}`. `searchText` is the lowercased display name, given name, surname, Gramps ID, birth year and lifespan summary. | `build_search_index.js` |
-| `media/index.json` | Array of `{handle, grampsId, s3Key, checksum, size, missing}` | `export_person_data.py` |
-| `place/index.json` | Array of `{handle, grampsId, displayName}` | `export_person_data.py` |
+| `media/index.json` | Array of `{handle, grampsId, s3Key, checksum, size, missing}` | The render Lambda (legacy: `export_person_data.py`) |
+| `place/index.json` | Array of `{handle, grampsId, displayName}` | The render Lambda (legacy: `export_person_data.py`) |
 
 `lifespanSummary` exists only in the manifest. The person record carries `lifespan.summary`.
 
@@ -213,12 +213,14 @@ The committed [`11ty/_data/flags.json`](../../11ty/_data/flags.json) ships `auth
 
 ## Out-of-repo tooling
 
-These scripts live under `<project>/scripts/`, outside the repository. The synopses below come from each script's argument parser, and the parser is authoritative where the two drift apart. Older notes show flags these scripts do not accept, including `--gramps-db`, `--force`, `--skip-media`, `--verbose`, `--bucket` and `--include-relatives`. The run order is in [Sync Gramps with the website](../how-to/sync-gramps-with-the-website.md).
+These scripts live under `<project>/scripts/`, outside the repository. The synopses below come from each script's argument parser, and the parser is authoritative where the two drift apart. Older notes show flags these scripts do not accept, including `--gramps-db`, `--force`, `--skip-media`, `--verbose`, `--bucket` and `--include-relatives`.
+
+`export_person_data.py`, `build_family_tree_media.py` and `sync_to_s3.py` are break-glass only since the cloud render cutover on 2026-11-05 (HFY-TSK-153). Each refuses to run without `--legacy-break-glass`: one line on stderr, exit `2`. The flag needs io's explicit approval. The render Lambda writes the data they used to publish. The retired P1 graph publish wrapper, `<project>/scripts/io/p1-publish-family-graph.sh`, calls `sync_to_s3.py` and so refuses too; `hfy-graph-render` produces `person/graph.json` and the face crops. The last-resort procedure is [The legacy ETL publish](../how-to/sync-gramps-with-the-website.md#the-legacy-etl-publish-break-glass-only).
 
 ### export_person_data.py
 
 ```text
-python3 <project>/scripts/etl/export_person_data.py --output DIR [--db PATH] [--person-id ID]... [--limit N] [--dry-run]
+python3 <project>/scripts/etl/export_person_data.py --legacy-break-glass --output DIR [--db PATH] [--person-id ID]... [--limit N] [--dry-run]
 ```
 
 - Reads the Gramps SQLite database. `--db` defaults to the first of these paths that exists, in this order (`_discover_db_candidates` in `<project>/scripts/etl/common.py`):
@@ -233,7 +235,7 @@ python3 <project>/scripts/etl/export_person_data.py --output DIR [--db PATH] [--
 ### build_family_tree_media.py
 
 ```text
-python3 <project>/scripts/etl/build_family_tree_media.py [--db PATH] [--person-dir DIR] [--media-dir DIR] [--only ID...] [--attach]
+python3 <project>/scripts/etl/build_family_tree_media.py --legacy-break-glass [--db PATH] [--person-dir DIR] [--media-dir DIR] [--only ID...] [--attach]
 ```
 
 - Needs Graphviz `dot` on the `PATH`.
@@ -253,7 +255,7 @@ python3 <project>/scripts/export_person_bundle.py [--db PATH] [--glob-root DIR] 
 ### sync_to_s3.py
 
 ```text
-python3 <project>/scripts/etl/sync_to_s3.py [--source DIR] [--destination s3://BUCKET[/PREFIX]] [--prefix NAME]... [--profile NAME] [--dry-run] [--quiet] [--no-delete]
+python3 <project>/scripts/etl/sync_to_s3.py --legacy-break-glass [--source DIR] [--destination s3://BUCKET[/PREFIX]] [--prefix NAME]... [--profile NAME] [--dry-run] [--quiet] [--no-delete]
 ```
 
 - `--source` defaults to `<project>/workspace-local/harrisonfamily-frontend`, and `--destination` to `s3://<site-bucket>`.
@@ -343,7 +345,7 @@ Every path below is outside the repository. Docs name these files and directorie
 | Asset | Private location | Published to |
 | --- | --- | --- |
 | Gramps database | The Gramps database directory on the maintainer's machine | Never published |
-| Family data | `<project>/workspace-local/harrisonfamily-frontend/` | `<site-bucket>` data prefixes, by `sync_to_s3.py` |
+| Family data | `<project>/workspace-local/harrisonfamily-frontend/` | `<site-bucket>` data prefixes, by the render Lambda from the cloud store. This local folder is the legacy ETL's output, and `sync_to_s3.py` publishes it only in a break-glass run |
 | ETL working output | `<project>/workspace-local/etl-output/`, by convention | Not published directly |
 | Raw Gramps exports and inspection bundles | `<project>/reports/`, the default `--glob-root` of `export_person_bundle.py` when run from `<project>`. It also holds Gramps metadata reports. | Never published |
 | Email-to-Gramps-ID map and email array | `<project>/docs/dev/userGrampsID.json`, `<project>/docs/dev/harrisonfamily-allowlist.json`; a second copy of the array in `<project>/workspace-local/docs-dev/` | The map only: `config/userGrampsID.json`, by `publish_allowlists.sh` (from `<project>/docs/dev/` only). The array is not published; the script only checks that it exists. |

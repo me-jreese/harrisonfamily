@@ -20,7 +20,7 @@ So the store is the source of truth for what the website has changed or approved
 
 ## What the website serves
 
-The site's data files (`person/*.json` and the others) are rendered from the store by one writer, the render Lambda. The old publish from the tree is retired at the cutover, and the bucket policy refuses it, so no second writer can overwrite the render. A change on either side reaches the site only through the store, and the site shows the change after the next render. If the renderer fails, the site stays on the last good render; it is stale, never wrong.
+The site's data files (`person/*.json` and the others) are rendered from the store by one writer, the render Lambda. The old publish from the tree was retired at the cutover on 2026-11-05 (HFY-TSK-153): its scripts refuse without a break-glass flag, and while the write guard is applied the bucket policy refuses it too, so no second writer can overwrite the render ([check the guard](../how-to/sync-gramps-with-the-website.md#check-the-render-mode-and-the-write-guard)). A change on either side reaches the site only through the store, and the site shows the change after the next render. If the renderer fails, the site stays on the last good render; it is stale, never wrong.
 
 ## Identity is permanent
 
@@ -34,7 +34,7 @@ Because the store is an append-only log, removing a record from the site (a with
 
 The family-tree pictures on the old person pages are SVG files that a Graphviz script drew from the tree. They are a legacy feature, and they are not owned by the renderer (the sync design, section 11.5, and decision D2-25).
 
-- **The SVGs are frozen.** They stop changing at the cutover, because the script that makes them belongs to the retired publish.
+- **The SVGs are frozen.** They stopped changing at the cutover, because the script that makes them belongs to the retired publish.
 - **A person created in the cloud has none.** Nothing draws a picture for them. With the `familyViz` flag on, their page shows the **see in the family tree** link, which opens the `/tree/` page, and that page draws the tree from `person/graph.json`, which covers every person, however they were created. With `familyViz` off, the link is absent and `/tree/` says the tree is not turned on yet.
 - **They will go.** The task `viz-v2-retire-graphviz` retires the SVGs, and the link, once `familyViz` is on, becomes the only tree entry point.
 
