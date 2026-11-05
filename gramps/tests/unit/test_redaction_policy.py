@@ -413,6 +413,15 @@ class RulesHelpers(unittest.TestCase):
         self.assertTrue(R.load_policy()["birthLike"]["eventTypes"])
 
 
+def is_calendar_date(yyyymmdd):
+    """True when the eight digits are a real calendar date, by the standard library (independent of the scanner)."""
+    try:
+        datetime.date(int(yyyymmdd[:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:]))
+    except ValueError:
+        return False
+    return True
+
+
 class Vectors(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -525,6 +534,8 @@ class Vectors(unittest.TestCase):
         bad, checked = fictional_violations(objs)
         # an ISO or year-first date is a run of eight digits to the plain phone rule; it is a date, not a number
         bad = [b for b in bad if not re.fullmatch(r"[0-9]{4}[-/][0-9]{2}[-/][0-9]{2}", b[1])]
+        # so is an unseparated YYYYMMDD that the standard library calls a calendar date (HFY-TSK-375, a camera-style stamp)
+        bad = [b for b in bad if not (re.fullmatch(r"(?:1[0-9]{3}|20[0-9]{2})[0-9]{4}", b[1]) and is_calendar_date(b[1]))]
         self.assertEqual(bad, [])
         self.assertGreater(checked, 20)
 

@@ -192,7 +192,8 @@ test("100k-character inputs finish in under 1 s (linear URL, keyword and box sca
   const inputs = [
     "x.org/?" + fill("a=1234567&amp;"), fill("#1234567"), fill("born 5/12 "), fill("d. 5 May born "), fill("😀 born 5 May "),
     fill("\u200b1"), fill("01 23 45 67 89 "), fill("in 1850 Main Street "), fill("RR 2 Box 15 "), "p" + " ".repeat(N) + "x",
-    "pmb" + " ".repeat(N) + "x", "01-".repeat(N / 3) + "01",
+    "pmb" + " ".repeat(N) + "x", "01-".repeat(N / 3) + "01", fill("20130519 172413 "), fill("20130519-172413 "), fill("20130519_172413 "),
+    fill("20130519 172413 5 "), fill("born 20130519172413 "),
   ];
   for (const s of inputs) {
     const t0 = Date.now();

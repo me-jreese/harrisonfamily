@@ -168,6 +168,29 @@ def _day_month(a, b):
     return a >= 1 and b >= 1 and ((a <= 12 and b <= 31) or (a <= 31 and b <= 12))
 
 
+def _month_days(y, m):
+    """Days in month m of year y (Gregorian leap rule: 2024-02 has 29, 2023-02 and 1900-02 have 28)."""
+    if m == 2:
+        return 29 if y % 4 == 0 and (y % 100 != 0 or y % 400 == 0) else 28
+    return 30 if m in (4, 6, 9, 11) else 31
+
+
+def _is_date8(d):
+    """Eight digits that are a calendar-valid YYYYMMDD: a year-like year (1000-2099), month 01-12, a day that exists in that month."""
+    return (len(d) == 8 and _year_like(d[:4]) and 1 <= int(d[4:6]) <= 12
+            and 1 <= int(d[6:]) <= _month_days(int(d[:4]), int(d[4:6])))
+
+
+def _is_time6(d):
+    """Six digits that are a valid HHMMSS: hour 00-23, minute 00-59, second 00-59 (no leap second 60: a stricter reading holds more)."""
+    return len(d) == 6 and int(d[:2]) <= 23 and int(d[2:4]) <= 59 and int(d[4:]) <= 59
+
+
+def _is_date_like(d):
+    """A digit group that is a date or a timestamp, not a number: YYYYMMDD (20130519) or YYYYMMDDHHMMSS (20130519172413)."""
+    return _is_date8(d) or (len(d) == 14 and _is_date8(d[:8]) and _is_time6(d[8:]))
+
+
 def _phone_shaped(lens):
     """Group lengths laid out like a phone number: 555-010-0123, 1-800-555-0199, 0207 946 0123, 01 23 45 67 89."""
     return len(lens) <= 5 and lens[0] <= 4 and all(2 <= x <= 4 for x in lens[1:])
@@ -239,8 +262,6 @@ def _phone_verdict(t, s, run, groups, in_url):
     n = sum(len(g[1]) for g in groups)
     frm = 0
     while True:
-        if frm > 0:
-            n -= len(groups[frm - 3][1]) + len(groups[frm - 2][1]) + len(groups[frm - 1][1])
         if n < 7:
             return None
         off = groups[frm][0]
@@ -250,13 +271,25 @@ def _phone_verdict(t, s, run, groups, in_url):
         if len(groups) - frm == 1:
             if n > 15 or in_url(s + off) or _REFERENCE.search(before):
                 return None
+            # an unseparated date or timestamp (20130519, 20130519172413) is not a number, unless a phone word labels it
+            # (tel 20130519)
+            if _is_date_like(groups[frm][1]) and not _PHONE_WORD.search(before):
+                return None
             return off, "run"
         if not _AREA_CODE.match(run[(0 if frm == 0 else off):off + 9]) and not _PHONE_WORD.search(before):
             # a date followed by more digits (5/12/2020 10:30): judge what follows the date on its own, unless the groups
             # are five two-digit groups (01 23 45 67 89 is a phone number)
             if (len(groups) - frm > 3 and _is_date_triple(groups[frm:frm + 3], seps[frm:frm + 2])
                     and not _five_twos(groups, seps, frm)):
+                n -= len(groups[frm][1]) + len(groups[frm + 1][1]) + len(groups[frm + 2][1])
                 frm += 3
+                continue
+            # a camera-style stamp joined by one dash or one space (20130519-172413, 20130519 172413): a YYYYMMDD group and
+            # a valid HHMMSS group are a timestamp; judge what follows them on its own. _ and T end the run, so the date
+            # stands alone there.
+            if _is_date8(groups[frm][1]) and seps[frm] in ("-", " ") and _is_time6(groups[frm + 1][1]):
+                n -= len(groups[frm][1]) + len(groups[frm + 1][1])
+                frm += 2
                 continue
             if _phone_excluded(groups[frm:], seps[frm:], before):
                 return None
@@ -522,6 +555,11 @@ def _date_candidates(t):
                 if check == "md" and not _day_month(int(m.group(1)), int(m.group(2))):
                     continue
             found.append((s, e, rule))
+    # an unseparated calendar-valid date or timestamp (19450312, 19450312000000) is a numeric date: the phone detector no longer
+    # holds it as a number, so a birth keyword beside it must still hold it here
+    for m in _DIGIT_GROUP.finditer(t):
+        if _is_date_like(m.group(0)):
+            found.append((m.start(), m.end(), "numeric"))
     found.sort(key=lambda c: (c[0], -c[1], _RULE_ORDER.index(c[2])))
     out = []
     for c in found:
