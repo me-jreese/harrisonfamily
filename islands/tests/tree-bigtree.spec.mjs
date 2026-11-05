@@ -51,7 +51,7 @@ test("1280: 'whole family' draws the layout as SVG: cards as buttons, union conn
   await expect(page).toHaveURL(/view=family/);
   const svgs = poster(page).locator("svg.hfy-poster__svg");
   await expect(svgs).toHaveCount(2);
-  await expect(poster(page).getByRole("button")).toHaveCount(12);
+  await expect(poster(page).locator("[data-person]")).toHaveCount(12);
   await expect(poster(page).locator("circle.hfy-poster__union")).toHaveCount(5);
   await expect(poster(page).locator("path.hfy-poster__link")).toHaveCount(16);
   expect(await poster(page).locator("path.hfy-poster__link").first().getAttribute("d")).toMatch(/^M\d+ \d+ V\d+ H\d+ V\d+$/);

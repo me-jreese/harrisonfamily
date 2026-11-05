@@ -14,7 +14,42 @@
   background: var(--io-color-semantic-surface);
   /* the page scrolls under a finger; the poster never pans or zooms by touch (viz-v2-bigtree-nav tests it) */
   touch-action: pan-x pan-y;
+  position: relative;
+  cursor: grab;
+  max-height: 80vh;
 }
+.hfy-poster__scroll[data-pressing="true"] { user-select: none; }
+.hfy-poster__scroll[data-panning="true"] { cursor: grabbing; user-select: none; }
+.hfy-poster__scroll:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+/* Navigation (HFY-TSK-309): the buttons, the zoom readout and the minimap sit above the region, never over it. */
+.hfy-poster__tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2); margin-bottom: var(--io-space-2); }
+.hfy-poster .hfy-poster__btn {
+  box-sizing: border-box;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-poster .hfy-poster__btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.hfy-poster__zoom { min-width: var(--io-control-tap-min); text-align: center; color: var(--io-color-semantic-text); }
+.hfy-poster__mini {
+  box-sizing: border-box;
+  max-width: 100%;
+  width: calc(var(--io-control-tap-min) * 6);
+  margin-bottom: var(--io-space-2);
+  padding: var(--io-space-1);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: var(--io-color-semantic-surface);
+}
+.hfy-poster__minisvg { display: block; width: 100%; max-height: calc(var(--io-control-tap-min) * 3); cursor: crosshair; touch-action: pan-x pan-y; }
+.hfy-poster__minicard { fill: var(--io-color-semantic-border-strong); }
+.hfy-poster__miniview { fill: none; stroke: var(--io-color-semantic-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .hfy-poster__group { margin: 0 0 var(--io-space-5); }
 .hfy-poster__svg { display: block; max-width: none; font-family: var(--io-typography-font-ui); }
 .hfy-poster__link { stroke: var(--io-color-semantic-border-strong); stroke-width: 2; }
