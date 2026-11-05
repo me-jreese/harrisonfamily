@@ -234,6 +234,24 @@ family-navigator { display: block; min-width: 0; max-width: 100%; touch-action: 
 .hfy-tree-details dt { color: var(--io-color-semantic-text-dim); }
 .hfy-tree-details dd { margin: 0 0 var(--io-space-2); }
 .hfy-tree-details .hfy-tree__dim { color: var(--io-color-semantic-text-dim); }
+.hfy-tree-details__chips { display: flex; flex-wrap: wrap; gap: var(--io-space-2); }
+.hfy-tree-details__chips li { margin: 0; }
+.hfy-tree-details__chip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  min-width: var(--io-control-tap-min);
+  padding: 0 var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background: transparent;
+  color: var(--io-color-semantic-text);
+  font: inherit;
+  cursor: pointer;
+}
+.hfy-tree-details__chip:hover { background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-link-hover); }
+.hfy-tree-details__chip:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
 .hfy-tree-details .hfy-tree__link { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }
 /* A name in the Sheet, the panel and its lists is a link, so it is a 44 px target (the panel is inside .hfy-tree, the Sheet is not). */
 .hfy-tree-details .hfy-person-name, .hfy-tree__panel-name .hfy-person-name { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); }

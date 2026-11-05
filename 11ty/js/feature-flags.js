@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "e1fcf641",
+        "js": "210f1ef5",
         "css": "4cd750ae"
       },
       "family": {
@@ -92,7 +92,7 @@
         "css": "890fde1c"
       },
       "review": {
-        "js": "c0c07eef",
+        "js": "31e27270",
         "css": "f6c66152"
       },
       "search": {
@@ -112,8 +112,8 @@
         "css": "8f618380"
       },
       "tree": {
-        "js": "e7936e67",
-        "css": "373d5410"
+        "js": "bc191011",
+        "css": "1bf327db"
       }
     },
     "theme": "f103422b",
