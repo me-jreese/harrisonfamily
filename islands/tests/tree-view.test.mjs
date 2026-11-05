@@ -14,6 +14,7 @@ test("normalizeView: outline, cards and the ADR's 'chart' alias; anything else i
   assert.equal(normalizeView("outline"), "outline");
   assert.equal(normalizeView("cards"), "cards");
   assert.equal(normalizeView("chart"), "cards");
+  assert.equal(normalizeView("table"), "table", "the table view of the lifelines (HFY-TSK-305)");
   for (const v of ["", "Outline", "list", null, undefined, 3]) assert.equal(normalizeView(v), null);
 });
 

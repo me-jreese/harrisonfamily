@@ -16,7 +16,7 @@ import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
-import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 import { layoutOf } from "../lib/bigtree-model.js";
 import { useFlags } from "../lib/use-flags.js";
 import { useMedia } from "../lib/use-media.js";
@@ -242,7 +242,7 @@ export function GenerationOutline({ graph, focus, onFocus, sheet = false }) {
 export function ViewToggle({ view, onChoose, lifelines = false, whole = false, facesTab = false }) {
   return (
     <div className="hfy-tree__views" role="group" aria-label="view" data-tree-views>
-      {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW] : []), ...(facesTab ? [FACES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
+      {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW, TABLE_VIEW] : []), ...(facesTab ? [FACES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
         <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v === FAMILY_VIEW ? "whole family" : v}</button>
       ))}
     </div>
@@ -282,7 +282,7 @@ export function TreeApp() {
   const [lifelinesFailed, setLifelinesFailed] = useState(false);
   const [FacesTab, setFacesTab] = useState(null);
   const [facesFailed, setFacesFailed] = useState(false);
-  const shown = view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW ? (lifelinesFailed ? "cards" : timeOn ? LIFELINES_VIEW : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
+  const shown = view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW || view === TABLE_VIEW ? (lifelinesFailed ? "cards" : timeOn ? view : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -315,7 +315,7 @@ export function TreeApp() {
   }, [shown, pendingFamily, Chart, chartFailed]);
 
   useEffect(() => {
-    if (shown !== LIFELINES_VIEW || Lifelines) return undefined;
+    if ((shown !== LIFELINES_VIEW && shown !== TABLE_VIEW) || Lifelines) return undefined;
     let live = true;
     loadLifelines().then(
       (m) => { if (live) setLifelines(() => m.default); },
@@ -362,9 +362,9 @@ export function TreeApp() {
       setFocus(focusParam(location.search));
       // The view is the reader's choice, not part of a history entry: an older entry's address must not flip it back.
       const v = viewParam(location.search);
-      if (fromLifeline.current && v === LIFELINES_VIEW) {
+      if (fromLifeline.current && (v === LIFELINES_VIEW || v === TABLE_VIEW)) {
         fromLifeline.current = false;
-        setView(LIFELINES_VIEW);
+        setView(v);
         return;
       }
       if (v && v !== viewRef.current) history.replaceState(null, "", viewUrl(location, viewRef.current));
@@ -452,9 +452,9 @@ export function TreeApp() {
           {shown === FACES_VIEW ? (
             FacesTab ? <FacesTab graph={graph} fetcher={fetcher} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading />
           ) : null}
-          {shown === LIFELINES_VIEW || (shown === "pending" && view !== FACES_VIEW) ? (
-            Lifelines && shown === LIFELINES_VIEW
-              ? <Lifelines graph={graph} focus={resolved.id} onPick={onLifeline} onRecentre={onFocus} />
+          {shown === LIFELINES_VIEW || shown === TABLE_VIEW || (shown === "pending" && view !== FACES_VIEW) ? (
+            Lifelines && (shown === LIFELINES_VIEW || shown === TABLE_VIEW)
+              ? <Lifelines mode={shown} graph={graph} focus={resolved.id} onPick={onLifeline} onRecentre={onFocus} />
               : <div className="hfy-tree__skeleton hfy-tree__skeleton--lifelines" aria-hidden="true" data-tree-lifelines-loading />
           ) : null}
           {shown === FAMILY_VIEW ? (

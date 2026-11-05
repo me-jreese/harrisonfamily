@@ -27,6 +27,8 @@
 
 export const MAX_LINES = 40;
 
+import { placeChain } from "./navigator-model.js";
+
 const isNum = (n) => typeof n === "number" && Number.isFinite(n);
 
 /** The mark one person draws: {kind: "line"|"dot"|"none", start, end, ongoing, fuzzy}. Years are integers; `fuzzy` fades the ends. */
@@ -194,4 +196,77 @@ export function fadeWidth(axis, mark) {
   const decade = (10 / (axis.max - axis.min)) * (100 - 2 * LANE_PAD);
   const span = xOf(axis, mark.end) - xOf(axis, mark.start);
   return Math.min(decade, span / 3);
+}
+
+// ---- Phones and the table (HFY-TSK-305, viz-v2-time-phone; viz ADR 9.2) --------------------------------------------------------------------
+// Below 43rem time runs down the screen: the rows are cut into BRANCHES, one panel each, and the page shows one panel with previous and next
+// buttons. A branch is: the focus person with their parents (panel 0); then, for each union of the focus person, the partner with the first child's
+// family, and every other child with their own descendants. "+N more" rows stay with the branch they hang under. Pure, so node tests cover it.
+
+/**
+ * @param model  the result of buildLifelines
+ * @returns {Array<{key, title, rows: Array, unions: Array, from, to}>}  panels in display order; `rows` carry their model index as `at`.
+ *   `unions` are re-indexed to the panel's own rows and clipped to the rows the panel holds.
+ */
+export function branchesOf(model) {
+  const { rows } = model;
+  if (!rows.length) return [];
+  const focusAt = rows.findIndex((r) => r.id === model.focus && r.type === "line");
+  const focusDepth = focusAt >= 0 ? rows[focusAt].depth : 0;
+  const starts = [0];
+  for (let i = Math.max(focusAt, 0) + 1; i < rows.length; i += 1) {
+    const r = rows[i];
+    if (r.type !== "line") continue;
+    const prev = rows[i - 1];
+    // A child directly under a partner who just opened a branch stays in that branch (the union's first child).
+    const afterPartner = prev.type === "line" && prev.depth === focusDepth && i - 1 > focusAt;
+    if (r.depth === focusDepth) starts.push(i);
+    else if (r.depth === focusDepth + 1 && !afterPartner) starts.push(i);
+  }
+  return starts.map((from, k) => {
+    const to = k + 1 < starts.length ? starts[k + 1] : rows.length;
+    const slice = rows.slice(from, to).map((r, j) => ({ ...r, at: from + j }));
+    const inside = (i) => i >= from && i < to;
+    const unions = [];
+    for (const u of model.unions) {
+      const nodes = u.nodes.filter(inside).map((i) => i - from);
+      const kids = u.kids.filter(inside).map((i) => i - from);
+      const all = [...nodes, ...kids];
+      if (all.length < 2) continue;
+      unions.push({ ...u, nodes, kids, from: Math.min(...all), to: Math.max(...all) });
+    }
+    const root = slice.find((r) => r.type === "line");
+    return { key: `b${from}`, title: root ? root.name : "", rows: slice, unions, from, to };
+  });
+}
+
+const born = (p) => (p.birthYear == null ? "unknown" : `${p.yearApprox ? "about " : ""}${p.birthYear}`);
+const died = (p) => (p.living ? "living" : p.deathYear == null ? "unknown" : String(p.deathYear));
+
+/**
+ * The table equivalent of the lifelines (the screen-reader path): one entry per line row, in the lifelines' own order, so the table lists exactly
+ * the people the lifelines show.   {id, name, born, died, events: [string]}
+ */
+export function tableOf(graph, model) {
+  const out = [];
+  for (const r of model.rows) {
+    if (r.type !== "line") continue;
+    const p = r.person;
+    const events = [];
+    // places are place ids: resolve them to the chain, and a living person has no place (the same rule as the navigator's placeLine)
+    const bp = p.living ? null : placeChain(graph, p.birthPlace);
+    const dp = p.living ? null : placeChain(graph, p.deathPlace);
+    if (bp) events.push(`born in ${bp}`);
+    if (dp) events.push(`died in ${dp}`);
+    for (const u of orderedUnions(graph, r.id)) {
+      const partner = u.partner && graph.person(u.partner);
+      const kids = u.children.length;
+      const withWho = partner ? `family with ${partner.name}` : "family";
+      const when = u.year !== null ? ` from about ${u.year}` : "";
+      const n = kids ? `, ${kids} ${kids === 1 ? "child" : "children"}` : "";
+      events.push(`${withWho}${when}${n}`);
+    }
+    out.push({ id: r.id, name: r.name, born: born(p), died: died(p), events });
+  }
+  return out;
 }
