@@ -71,8 +71,8 @@ test("a photo still reaches a post as an attachment (the kit draws it), whatever
   assert.match(html, /<img[^>]+src="\/uploads\/posts\/01J00000000000000000000000\/photo\.jpg"/);
 });
 
-test("the build wires the policy: build.mjs lists hfyContentSanitizePolicy and the wrapper imports the real KitMarkdown", () => {
-  assert.match(readFileSync(new URL("../build.mjs", import.meta.url), "utf8"), /plugins: \[hfyCloudscape, hfyNoDocumentEditor, hfyContentSanitizePolicy\]/);
+test("the build wires the policy: build.mjs lists hfyContentSanitizePolicy and hfyCommentsSanitizePolicy and the wrapper imports the real KitMarkdown", () => {
+  assert.match(readFileSync(new URL("../build.mjs", import.meta.url), "utf8"), /plugins: \[hfyCloudscape, hfyNoDocumentEditor, hfyContentSanitizePolicy, hfyCommentsSanitizePolicy\]/);
   const wrapper = readFileSync(new URL("../src/lib/hfy-markdown.jsx", import.meta.url), "utf8");
   assert.match(wrapper, /import \{ KitMarkdown as KitMarkdownBase \} from "@io-kit\/md\/react"/);
   assert.match(wrapper, /hfySanitizePolicy/);
@@ -100,6 +100,14 @@ test("the posts islands' built bundles carry the HFY sanitize policy (no externa
   }
 });
 
+test("the comments islands' built bundles carry the HFY policy wrapper too (the kit's own comment policy allows https images and mailto:)", () => {
+  for (const name of ["person", "posts"]) {
+    const code = reachable(`${name}.js`).map((f) => readFileSync(f, "utf8")).join("\n");
+    assert.match(code, /data-hfy-md-image-omitted/, `${name}.js: the img mapping is not in the bundle`);
+    assert.match(code, /noopener noreferrer nofollow ugc/, `${name}.js: the HFY policy is not in the bundle`);
+  }
+});
+
 test("a protocol-relative link is plain text (it would open another host in the same tab); https, http and relative links stay", () => {
   const body = "[off](//other.example/a) [ok](https://example.test/ok) [here](/posts/?id=1)";
   const html = card(createElement(PostCard, { post: post({ body }) }));
@@ -113,7 +121,9 @@ test("a protocol-relative link is plain text (it would open another host in the 
 test("guard: only lib/hfy-markdown.jsx imports @io-kit/md/react in the HFY source, apart from the Notes card that sets its own policy", () => {
   // The esbuild plugin reroutes only imports from inside @io-kit/content, so a direct import elsewhere would not get the wrapper's
   // img mapping. person.jsx is the one known exception: it passes userContentPolicy itself, and moves onto the wrapper in hfy-person-sections-capped.
-  const ALLOWED = new Set(["lib/hfy-markdown.jsx", "islands/person.jsx"]);
+  // lib/hfy-comments-markdown.jsx is the comments twin of the wrapper (HFY-TSK-187): the plugin that reroutes @io-kit/comments' import
+  // resolves to it, and it forces the HFY policy over the kit's own.
+  const ALLOWED = new Set(["lib/hfy-markdown.jsx", "lib/hfy-comments-markdown.jsx", "islands/person.jsx"]);
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
   const found = [];
   const walk = (dir) => {

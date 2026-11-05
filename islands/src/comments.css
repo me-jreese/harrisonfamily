@@ -86,7 +86,59 @@
   outline: var(--io-comments-focus-ring) solid var(--io-comments-focus);
   outline-offset: var(--io-comments-focus-offset);
 }
-.hfy-comments .io-comments-media img { border-radius: var(--io-comments-radius-md); }
+/* Comment photos (commentPhotosV1, HFY-TSK-187; BRD2 9.4): a grid, 2 columns at 375 and up to 4 from 688, each photo a square that opens
+   the full image in a new tab; a photo's caption (ruling P2-R47: a visible <figcaption>, comments-ui renderPhoto) sits under it. */
+.hfy-comments .io-comments-media {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--io-comments-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 43rem) { .hfy-comments .io-comments-media { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.hfy-comments .io-comments-photo { min-inline-size: 0; align-content: start; }
+.hfy-comments .io-comments-figure { margin: 0; }
+.hfy-comments .io-comments-photo-link { display: block; }
+.hfy-comments .io-comments-media img {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  block-size: auto;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--io-comments-radius-md);
+  background: var(--io-comments-surface-sunken);
+}
+.hfy-comments .io-comments-caption { color: var(--io-comments-text-dim); font-size: var(--io-comments-font-size-sm); overflow-wrap: anywhere; }
+
+/* The composer's photo row: "add a photo" is a 44px square with a line icon under 688 (its name stays "add a photo"; the label's text is
+   zero-size, not removed), the icon and the words from 688. Each picked photo is a 44px thumbnail, its caption field, and a 44px remove. */
+.hfy-comments .io-comments-composer .io-comments-add-photo {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--io-comments-space-2);
+  padding-inline: 0;
+  font-size: 0;
+}
+.hfy-comments .io-comments-composer .io-comments-add-photo::before {
+  content: "";
+  flex: none;
+  inline-size: var(--io-comments-space-6);
+  block-size: var(--io-comments-space-6);
+  background: currentColor;
+  -webkit-mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='10' r='1.5'/%3E%3Cpath d='m21 16-5-5-8 8'/%3E%3C/svg%3E");
+  mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='10' r='1.5'/%3E%3Cpath d='m21 16-5-5-8 8'/%3E%3C/svg%3E");
+}
+@media (min-width: 43rem) {
+  .hfy-comments .io-comments-composer .io-comments-add-photo { padding-inline: var(--io-comments-space-3); font-size: var(--io-comments-font-size-sm); }
+}
+.hfy-comments .io-comments-picked-item { position: relative; flex-wrap: wrap; gap: var(--io-comments-space-2); }
+.hfy-comments .io-comments-picked-item > .io-comments-input { flex: 1 1 0; min-inline-size: 0; }
+.hfy-comments .io-comments-picked-item > .hfy-guard__msg { flex: 1 0 100%; margin-block: 0; }
+.hfy-comments .io-comments-thumb { inline-size: var(--io-comments-control-h); block-size: var(--io-comments-control-h); border-radius: var(--io-comments-radius-md); }
 .hfy-comments .io-comments-empty { color: var(--io-comments-text-dim); }
 
 /* Loading never paints blank: while the thread is busy its "loading comments" line becomes a skeleton block (text kept for AT). */
