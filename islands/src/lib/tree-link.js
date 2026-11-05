@@ -24,16 +24,35 @@ export function fillTreeLink(doc, personId, familyViz) {
   return true;
 }
 
+/** Event dispatched when the mini focus view is wanted but not drawn; person-page.js then draws the Graphviz frame it had held back. */
+export const MINI_UNAVAILABLE = "hfy:person-mini-unavailable";
+
 /** Wire it to the page: now (the page may have rendered already) and after every render. Returns the stop function. */
 export function mountTreeLink(win = window) {
   const doc = win.document;
   let flagOn = false;
+  let miniOn = false;
+  let resolved = false;
+  const cache = {}; // the graph, loaded once for this mount
   const idNow = () => new URLSearchParams(win.location.search).get("id");
-  const fill = (id) => fillTreeLink(doc, id, flagOn);
-  const onRendered = (e) => fill(e?.detail?.personId ?? idNow());
+  const unavailable = (id) => doc.dispatchEvent(new CustomEvent(MINI_UNAVAILABLE, { detail: { personId: id } }));
+  const fill = (id) => {
+    const linked = fillTreeLink(doc, id, flagOn);
+    // HFY-TSK-289 (familyVizPersonMini): the mini focus view shares the host with the link. It needs familyViz too (the graph is /tree/'s).
+    const host = doc.querySelector('[data-slot="tree-link"]');
+    if (!host) { unavailable(id); return; }
+    if (!(miniOn && linked)) { host.querySelector("[data-person-mini]")?.remove(); unavailable(id); return; }
+    const fetcher = (u, i) => (win.HFYFeatureFlags?.dataFetch ? win.HFYFeatureFlags.dataFetch(u, i, { interactive: false }) : win.fetch(u, i));
+    import("./person-mini.js")
+      .then((m) => m.fillMini(doc, host, id, treeLinkHref(id), fetcher, cache))
+      .then((shown) => { if (!shown && idNow() === id) unavailable(id); })
+      .catch(() => unavailable(id));
+  };
+  // Before the flags are read nothing is wanted or signalled: the first fill below runs once they are.
+  const onRendered = (e) => { if (resolved) fill(e?.detail?.personId ?? idNow()); };
   Promise.resolve(win.HFYFeatureFlags?.resolveFlags?.())
     .catch(() => null)
-    .then((flags) => { flagOn = Boolean(flags) && flags.familyViz === true; fill(idNow()); });
+    .then((flags) => { flagOn = Boolean(flags) && flags.familyViz === true; miniOn = flagOn && flags.familyVizPersonMini === true; resolved = true; fill(idNow()); });
   doc.addEventListener("hfy:person-rendered", onRendered);
   return () => doc.removeEventListener("hfy:person-rendered", onRendered);
 }

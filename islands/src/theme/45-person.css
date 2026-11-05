@@ -587,4 +587,24 @@
 /* "see in the family tree" (familyViz, lib/tree-link.js): a 44px-high link, link colour, no underline in any state, a focus ring. */
 [data-slot="tree-link"] > a[data-tree-link] { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); text-decoration: none; }
 [data-slot="tree-link"] > a[data-tree-link]:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+/* Mini focus view (familyVizPersonMini, lib/person-mini.js): rows of small cards, parents above, the person, then partners and children.
+   Cards wrap, so 375px needs no horizontal scroll. Names are .hfy-person-name links (src/theme/20-base.css). */
+.hfy-mini { display: flex; flex-direction: column; gap: var(--io-space-3); }
+.hfy-mini__row { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--io-space-2); }
+.hfy-mini__title { flex: 0 0 100%; margin: 0; font-weight: 400; color: var(--io-color-semantic-text-dim); }
+.hfy-mini__card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--io-space-2) var(--io-space-3);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-md);
+  background-color: var(--io-color-semantic-surface-raised);
+}
+.hfy-mini__card .hfy-person-name { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); overflow-wrap: anywhere; }
+.hfy-mini__card--focus { border-color: var(--io-color-semantic-border-strong); background-color: var(--io-color-semantic-surface-sunken); }
+.hfy-mini__years { color: var(--io-color-semantic-text-dim); }
+.hfy-mini__more { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); text-decoration: none; }
+.hfy-mini__more:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+[data-slot="tree-link"] > .hfy-mini { margin-bottom: var(--io-space-3); }
 #hfy-person-social[hidden] { display: none; }
