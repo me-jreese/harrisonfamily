@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createFakeDdb, cmds } from "./world.js";
 import { applyBatch } from "../src/sync/apply.js";
-import { headItem, headKey, objectJson } from "../src/sync/store.js";
+import { headItem, headKey, logItem, objectJson } from "../src/sync/store.js";
 import { StoreView, GRAPH_TTL_MS, backrefs, byGrampsId, customTypes, get, graph, invalidateGraph, rebuildStoreView, resetStoreView, storeView } from "../src/records/index.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
@@ -258,4 +258,73 @@ describe("store view = full rebuild", () => {
       expect(flat(fresh)).toEqual(flat(cold));
     });
   }
+});
+
+// HFY-TSK-371: the log fold pages one Query by ExclusiveStartKey. DynamoDB rejects a start key that does not satisfy the key condition
+// (ValidationException), so the lower bound (SK > :sk) must not move while one Query is paged; the shared fake enforces that rule.
+describe("log paging (HFY-TSK-371)", () => {
+  /** A table whose SYNC#LOG holds `n` create entries (seq 1..n) and whose SYNC#HEAD says `headSeq`; every Query the ctx sends is recorded. */
+  function pagedWorld(n, headSeq = n) {
+    const ddb = createFakeDdb();
+    ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: headSeq, seeded: true, writes_enabled: true });
+    for (let seq = 1; seq <= n; seq++) {
+      const obj = person(seq);
+      const item = logItem({ seq, batch_id: `b${seq}`, op: "create", class: "Person", handle: obj.handle, gramps_id: obj.gramps_id, version: 1, objJson: objectJson(obj), principal: "svc-test", origin: "seed", at: "2026-10-14T00:00:00Z" });
+      ddb.rows.set(`${item.PK}\u0000${item.SK}`, item);
+    }
+    const queries = [];
+    const spy = { send: (cmd) => { if (cmd.constructor.name === "QueryCommand") queries.push(structuredClone(cmd.input)); return ddb.send(cmd); } };
+    const ctx = { ddb: spy, cmds, table: "hfy-app", log: { warn() {}, error() {} } };
+    return { ddb, ctx, queries };
+  }
+
+  it("the fake refuses a start key outside the key condition, as DynamoDB does", async () => {
+    const w = pagedWorld(5);
+    const q = (esk) => w.ddb.send(new cmds.QueryCommand({ TableName: "hfy-app", KeyConditionExpression: "PK = :pk AND SK > :sk", ExpressionAttributeValues: { ":pk": "SYNC#LOG", ":sk": "000000000003" }, Limit: 1, ExclusiveStartKey: esk }));
+    await expect(q({ PK: "SYNC#LOG", SK: "000000000003" })).rejects.toMatchObject({ name: "ValidationException" });
+    await expect(q({ PK: "SYNC#LOG", SK: "000000000002" })).rejects.toMatchObject({ name: "ValidationException" });
+    await expect(q({ PK: "SYNC#OTHER", SK: "000000000004" })).rejects.toMatchObject({ name: "ValidationException" });
+    expect((await q({ PK: "SYNC#LOG", SK: "000000000004" })).Items.map((r) => r.seq)).toEqual([5]);
+  });
+
+  for (const n of [100, 101, 250, 251, 536]) {
+    it(`storeView and rebuildStoreView fold ${n} log entries (${Math.ceil(n / 100)} page${n > 100 ? "s" : ""}) from an empty view`, async () => {
+      const w = pagedWorld(n);
+      const view = await storeView(w.ctx);
+      expect(view.seq).toBe(n);
+      expect(view.heads.size).toBe(n);
+      expect(w.queries).toHaveLength(Math.ceil(n / 100)); // one Query, paged by its start key, ending when no LastEvaluatedKey comes back
+      // every page of the one Query asks for the same lower bound
+      expect(new Set(w.queries.map((q) => q.ExpressionAttributeValues[":sk"]))).toEqual(new Set(["000000000000"]));
+      expect(w.queries.map((q) => q.ExclusiveStartKey?.SK)).toEqual(Array.from({ length: w.queries.length }, (_, k) => (k === 0 ? undefined : String(k * 100).padStart(12, "0"))));
+      const cold = await rebuildStoreView(w.ctx);
+      expect(cold.seq).toBe(n);
+      expect(flat(cold)).toEqual(flat(view));
+    });
+  }
+
+  it("a warm view catches up over several pages from where it stopped", async () => {
+    const w = pagedWorld(120, 120);
+    const view = await storeView(w.ctx);
+    expect(view.seq).toBe(120);
+    for (let seq = 121; seq <= 400; seq++) {
+      const obj = person(seq);
+      const item = logItem({ seq, batch_id: `b${seq}`, op: "create", class: "Person", handle: obj.handle, gramps_id: obj.gramps_id, version: 1, objJson: objectJson(obj), principal: "svc-test", origin: "seed", at: "2026-10-14T00:00:00Z" });
+      w.ddb.rows.set(`${item.PK}\u0000${item.SK}`, item);
+    }
+    w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 400, seeded: true, writes_enabled: true });
+    w.queries.length = 0;
+    const warm = await storeView(w.ctx);
+    expect(warm.seq).toBe(400);
+    expect(warm.heads.size).toBe(400);
+    expect(w.queries.map((q) => q.ExpressionAttributeValues[":sk"])).toEqual(["000000000120", "000000000120", "000000000120"]);
+  });
+
+  it("a head ahead of the visible log ends the fold without throwing (a fresh Query takes the new bound, finds nothing, stops)", async () => {
+    const w = pagedWorld(250, 300);
+    const view = await storeView(w.ctx);
+    expect(view.seq).toBe(250);
+    expect(view.heads.size).toBe(250);
+    expect(w.queries.map((q) => q.ExpressionAttributeValues[":sk"]).at(-1)).toBe("000000000250");
+  });
 });
