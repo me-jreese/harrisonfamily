@@ -7,13 +7,14 @@ caller uploads the copy. The copy is BUILT from an allowlist, not cleaned: whate
            the quantisation and Huffman tables the frame and the scans name (a table nothing uses, and DHP, EXP, DAC, DNL, are refused). Rebuilt:
            APP0 JFIF (its first 12 bytes, thumbnail size 0), APP14 Adobe (its first 12 bytes, a transform that fits the components), and an APP1
            Exif that holds ONE tag, Orientation (0x0112, in the byte order the original had), if the original had a valid one. Kept after a check:
-           the APP2 ICC profile, if it is clean (see ``_check_icc``). Dropped: every other APPn (XMP, standard and extended, IPTC/APP13, MPF, maker
+           the APP2 ICC profile, if it is clean (``_check_icc``), written again in a fixed form (``_rewrite_icc``: every text tag a neutral
+           string, the colour tags byte for byte, the profile ID and the header's text fields zero). Dropped: every other APPn (XMP, standard and extended, IPTC/APP13, MPF, maker
            data, JFXX, thumbnails), every comment, every other Exif tag (MakerNote, UserComment, ImageDescription, the GPS IFD...).
            Every scan is read to its real end with a syntax-only Huffman decoder (``_validate_scan``): only 0xFF00 stuffing and RSTn in sequence
            inside it, the number of MCUs and blocks the frame asks for, the padding of 1-bits, the next real marker straight after: a byte more or
            less, text before EOI, a second scan that carries a payload, are ``structure``. Several scans only in a progressive frame.
     PNG    kept: IHDR, PLTE (colour type 3 only), tRNS, IDAT, IEND, gAMA, cHRM, sRGB, sBIT, bKGD, pHYs, all of fixed sizes that fit the header, a
-           checked iCCP, and an eXIf rebuilt with Orientation only. The IDAT chunks must be one zlib stream that inflates to exactly the scanlines
+           iCCP written the same way (a fixed keyword and a new zlib stream), and an eXIf rebuilt with Orientation only. The IDAT chunks must be one zlib stream that inflates to exactly the scanlines
            of the header (Adam7 too, filter bytes 0 to 4), with no unused input and no chunk after the end of the stream. Dropped: tEXt, zTXt, iTXt
            (XMP included), tIME, sPLT, hIST, cICP, mDCV, cLLI, every other eXIf tag, every unknown ancillary chunk. The copy is image-lossless and
            NOT metadata-lossless.
@@ -30,7 +31,8 @@ coordinate-shaped text. ``has_location_residue`` (the earlier, stricter list-bas
 
 Not detectable: the coded picture itself. A scan or a zlib stream that decodes and has the right size can hide any payload an adversary
 encoded into the image (steganography), and a table (quantisation values, Huffman symbols, ICC numbers) holds numbers by design; the checks
-refuse a table that spells a decimal number and everything outside the picture, not a picture that was made to carry bytes.
+refuse a table that spells a decimal number or a run of digits and everything outside the picture, not a picture that was made to carry bytes.
+The bit-level choices of the compressed data (the unused bits of a deflate block, empty stored blocks) are not examined either.
 
 Reading a position (the add-on holds, or copies, a photo that HAS one): ``assess_signal`` reads every IFD of every TIFF structure in the metadata
 (a count that lies is read as far as the data goes), deflated and UTF-16 text, hex raw profiles, a location atom in a trailer, and in XMP any
@@ -45,6 +47,7 @@ Nothing here logs, prints or returns a value of the file: the reasons are code w
 import array
 import collections
 import hashlib
+import itertools
 import re
 import struct
 import threading
@@ -882,14 +885,26 @@ def _parse_sof(marker, payload):
             "hmax": max(c[1] for c in comps), "vmax": max(c[2] for c in comps)}
 
 
-_TABLE_TEXT = re.compile(rb"\d\.\d\d")  # a decimal number spelled in the 64 bytes of a quantisation table
+# A quantisation table is 64 bytes of numbers, and a real one has stretches whose values happen to be ASCII digits (the libjpeg table at quality
+# 53 to 57 has eight in a row, the one at 55 has "4.763", and one real encoder's table has "3.4444"), so only what a real table does not do is
+# refused: a number with a point, four or more decimals and four different digits, eleven digits in a row with five different values, or four
+# numbers of two digits or more with separators between them ("12 20 44 / 65 25 55").
+_TABLE_POINT = re.compile(rb"[0-9]{1,3}\.[0-9]{4,}")
+_TABLE_DIGITS = re.compile(rb"[0-9]{11,}")
+_TABLE_PAIRS = re.compile(rb"(?:[0-9]{2,6}[ ,/;.-]{1,3}){3,}[0-9]{2,6}")
+
+
+def _table_spells_text(values):
+    values = bytes(values)
+    return (any(len(set(m.group())) >= 5 for m in _TABLE_POINT.finditer(values))      # the point itself is one of the values
+            or any(len(set(m.group())) >= 5 for m in _TABLE_DIGITS.finditer(values)) or bool(_TABLE_PAIRS.search(values)))
 
 
 def _parse_dqt(payload):
     ids, pos = [], 0
     while pos < len(payload):
         pq, tq = payload[pos] >> 4, payload[pos] & 15
-        if pq != 0 or tq > 3 or pos + 65 > len(payload) or 0 in payload[pos + 1:pos + 65] or _TABLE_TEXT.search(bytes(payload[pos + 1:pos + 65])):
+        if pq != 0 or tq > 3 or pos + 65 > len(payload) or 0 in payload[pos + 1:pos + 65] or _table_spells_text(payload[pos + 1:pos + 65]):
             _bad()
         ids.append(tq)
         pos += 65
@@ -1301,22 +1316,23 @@ _SBIT_LEN = {0: 1, 2: 3, 3: 3, 4: 2, 6: 4}
 
 
 def _png_row_groups(width, height, depth, ctype, interlace):
-    """[(number of scanlines, length of each with its filter byte)] of the decompressed data: one group, or one per non-empty Adam7 pass."""
+    """[(number of scanlines, length of each with its filter byte, unused bits at the end of each)] of the decompressed data: one group, or one
+    per non-empty Adam7 pass."""
     bits = depth * _PNG_CHANNELS[ctype]
     if not interlace:
-        return [(height, 1 + _ceil(width * bits, 8))]
+        return [(height, 1 + _ceil(width * bits, 8), -width * bits % 8)]
     out = []
     for xo, yo, dx, dy in _ADAM7:
         pw = _ceil(width - xo, dx) if width > xo else 0
         ph = _ceil(height - yo, dy) if height > yo else 0
         if pw and ph:
-            out.append((ph, 1 + _ceil(pw * bits, 8)))
+            out.append((ph, 1 + _ceil(pw * bits, 8), -pw * bits % 8))
     return out
 
 
 def _png_row_starts(groups):
     pos = 0
-    for rows, length in groups:
+    for rows, length, _pad in groups:
         for _ in range(rows):
             yield pos
             pos += length
@@ -1326,9 +1342,11 @@ def _png_check_idat(blob, width, height, depth, ctype, interlace):
     """The picture data must be one complete zlib stream that inflates to exactly the scanlines the header says (each starting with a filter byte of
     0 to 4) and ends at the last byte of the last IDAT: no byte after the stream, no data in an IDAT that the stream does not use."""
     groups = _png_row_groups(width, height, depth, ctype, interlace)
-    expected = sum(rows * length for rows, length in groups)
+    expected = sum(rows * length for rows, length, _pad in groups)
     budget().take("scan", expected)
-    budget().take("blocks", sum(rows for rows, _length in groups))
+    budget().take("blocks", sum(rows for rows, _length, _pad in groups))
+    padded = depth < 8 and any(pad for _rows, _length, pad in groups)      # unused bits at the end of a row of 1, 2 or 4 bit pixels
+    kept = bytearray() if padded else None
     it = _png_row_starts(groups)
     next_start = next(it, expected + 1)
     d, total, pos = zlib.decompressobj(), 0, 0
@@ -1339,6 +1357,8 @@ def _png_check_idat(blob, width, height, depth, ctype, interlace):
             while pending:
                 out = d.decompress(pending, 1 << 20)
                 pending = d.unconsumed_tail
+                if padded:
+                    kept += out
                 base = total
                 total += len(out)
                 if total > expected:
@@ -1353,6 +1373,39 @@ def _png_check_idat(blob, width, height, depth, ctype, interlace):
         _bad()
     if not d.eof or d.unused_data or pos < len(blob) or total != expected:
         _bad()
+    if padded:
+        _png_padding_zero(kept, groups)
+
+
+def _png_padding_zero(data, groups):
+    """The unused bits at the end of every row of a 1, 2 or 4 bit image must be zero in the rows as they are rebuilt (after the filter is
+    undone): they are no pixel, and 7 bits per row would carry a payload. Only the last byte of a row matters; a row is rebuilt from the one before."""
+    pos = 0
+    for rows, length, pad in groups:
+        prior, mask = bytes(length - 1), (1 << pad) - 1
+        for _ in range(rows):
+            ftype, row = data[pos], data[pos + 1:pos + length]
+            pos += length
+            if ftype == 0 or not pad:
+                cur = row
+            elif ftype == 1:
+                cur = bytes(itertools.accumulate(row, lambda a, b: (a + b) & 255))
+            elif ftype == 2:
+                cur = bytes((a + b) & 255 for a, b in zip(row, prior))
+            else:
+                cur, left, corner = bytearray(row), 0, 0
+                for i, up in enumerate(prior):
+                    if ftype == 3:
+                        guess = (left + up) >> 1
+                    else:
+                        base = left + up - corner
+                        da, db, dc = abs(base - left), abs(base - up), abs(base - corner)
+                        guess = left if da <= db and da <= dc else (up if db <= dc else corner)
+                    left = cur[i] = (cur[i] + guess) & 255
+                    corner = up
+            if pad and cur[-1] & mask:
+                _bad()
+            prior = cur
 
 
 def _png_values(kind, body, depth, ctype, plte_entries):
@@ -1444,12 +1497,16 @@ def _validate_png(chunks):
 
 # ------------------------------------------------------------------------------------------------------------ the minimal copy
 
-_ICC_CHARS = re.compile(r"^[A-Za-z0-9 \-_.,():/%*]*$")
-_ICC_WORDS = frozenset(["lat", "latitude", "lon", "long", "longitude", "lng", "gps", "geo", "coord", "coords", "coordinate", "coordinates", "position"])
 _ICC_MAX = 4 * 1024 * 1024
 _ICC_TAG_MAX = 1024 * 1024
 _ICC_LUT = (b"mft1", b"mft2", b"mAB ", b"mBA ")
 _ICC_TEXT_TYPES = (b"desc", b"mluc")
+_ICC_TECH = frozenset([b"fscn", b"dcam", b"rscn", b"ijet", b"twax", b"epho", b"esta", b"dsub", b"rpho", b"fprn", b"vidm", b"vidc", b"pjtv", b"CRT ",
+                       b"PMD ", b"AMD ", b"KPCD", b"imgs", b"grav", b"offs", b"silk", b"flex"])    # the technology signatures of the ICC specification
+_ICC_NAME = b"Profile"                 # what every description of a kept profile says
+_ICC_COPYRIGHT = b"No copyright"       # and its copyright
+_PNG_ICC_NAME = b"ICC Profile"         # the keyword of the iCCP chunk of a copy
+_D50 = struct.pack(">iii", 63190, 65536, 54061)
 _ICC_TAGS = {
     b"A2B0": _ICC_LUT, b"A2B1": _ICC_LUT, b"A2B2": _ICC_LUT, b"B2A0": _ICC_LUT, b"B2A1": _ICC_LUT, b"B2A2": _ICC_LUT, b"gamt": _ICC_LUT,
     b"pre0": _ICC_LUT, b"pre1": _ICC_LUT, b"pre2": _ICC_LUT,
@@ -1470,72 +1527,27 @@ def _seg(marker, payload):
     return b"\xff" + bytes([marker]) + struct.pack(">H", len(payload) + 2) + payload
 
 
-def _icc_text(text, unicode_ok=False):
-    """A text of an ICC tag must be short, in a conservative alphabet (a localised name may use letters of any script, nothing else beyond the
-    ASCII set), and carry no coordinate and no position word."""
-    text = text.rstrip("\x00")
-    if len(text) > 200 or not _ICC_CHARS.match("".join(c if c.isascii() else ("a" if unicode_ok and unicodedata.category(c)[0] in "LM" else "\x00") for c in text)):
-        raise _Refuse(ICC)
-    if any(w in _ICC_WORDS for w in re.findall(r"[a-z]+", text.lower())) or re.search(r"\d{7,}", text):
-        raise _Refuse(ICC)
-    if _coord_value(text.encode("utf-8")):
-        raise _Refuse(ICC)
-
-
 def _icc_zero(data):
     if data.strip(b"\x00"):
         raise _Refuse(ICC)
 
 
 def _icc_tag_text(data):
+    """A text tag (``text``, ``desc``, ``mluc``) is followed only far enough to know it is one: its words are NEVER kept, ``_rewrite_icc`` writes
+    a fixed neutral string in its place, so nothing in it (a name, a number, spaced digits, words, gap bytes) reaches the copy."""
     typ = data[:4]
-    if typ == b"text":
-        text, _nul, rest = data[8:].partition(b"\x00")
-        _icc_zero(rest)
-        _icc_text(text.decode("latin-1"))
-    elif typ == b"desc":
+    if typ == b"desc":
         count = struct.unpack_from(">I", data, 8)[0] if len(data) >= 12 else 1 << 30
-        ascii_, rest = data[12:12 + count], data[12 + count:]
-        if len(ascii_) != count:
+        if 12 + count > len(data):
             raise _Refuse(ICC)
-        head, _nul, tail = ascii_.partition(b"\x00")
-        _icc_zero(tail)
-        _icc_text(head.decode("latin-1"))
-        if not rest.strip(b"\x00"):
-            return
-        if len(rest) < 8 or rest[:4].strip(b"\x00abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"):
-            raise _Refuse(ICC)
-        ucount = struct.unpack_from(">I", rest, 4)[0]
-        ustr, rest2 = rest[8:8 + 2 * ucount], rest[8 + 2 * ucount:]
-        if len(ustr) != 2 * ucount:
-            raise _Refuse(ICC)
-        try:
-            _icc_text(ustr.decode("utf-16-be"), True)
-        except UnicodeDecodeError:
-            raise _Refuse(ICC)
-        if not rest2.strip(b"\x00"):
-            return
-        if len(rest2) < 3 or rest2[2] > 67:
-            raise _Refuse(ICC)
-        mac = rest2[3:3 + 67]
-        head, _nul, tail = mac[:rest2[2]].partition(b"\x00")
-        _icc_zero(tail + mac[rest2[2]:] + rest2[3 + 67:])
-        _icc_text(head.decode("latin-1"))
-    else:  # mluc
+    elif typ == b"mluc":
         n, size = struct.unpack_from(">II", data, 8) if len(data) >= 16 else (1 << 30, 0)
         if size != 12 or n > 64 or 16 + 12 * n > len(data):
             raise _Refuse(ICC)
-        used = [(0, 16 + 12 * n)]
         for i in range(n):
-            lang, country, length, off = struct.unpack_from(">2s2sII", data, 16 + 12 * i)
-            if length % 2 or off < 16 + 12 * n or off + length > len(data) or (lang + country).strip(b"\x00abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+            length, off = struct.unpack_from(">II", data, 20 + 12 * i)
+            if length % 2 or off < 16 + 12 * n or off + length > len(data):
                 raise _Refuse(ICC)
-            try:
-                _icc_text(data[off:off + length].decode("utf-16-be"), True)
-            except UnicodeDecodeError:
-                raise _Refuse(ICC)
-            used.append((off, off + length))
-        _icc_unaccounted(data, used)
 
 
 def _icc_unaccounted(data, used):
@@ -1748,7 +1760,7 @@ def _icc_tag(sig, data):
         for off in range(8, 32, 4):
             _s15(data, off, 1000.0)
     elif typ == b"sig ":
-        if len(data) != 12 or not all(c in _SIG_CHARS for c in data[8:12]):
+        if len(data) != 12 or data[8:12] not in _ICC_TECH:
             _ibad()
     elif typ == b"dtim":
         if len(data) != 20:
@@ -1787,6 +1799,65 @@ def _check_icc(profile):
         _icc_unaccounted(profile, [(0, table_end)] + ordered)
     except (struct.error, ValueError, IndexError, UnicodeDecodeError):
         _ibad()
+
+
+def _icc_text_tag(typ, text):
+    """A text tag of the same type as the one it replaces, with the fixed layout of that type and ``text`` (ASCII) as its only words."""
+    if typ == b"text":
+        return b"text" + bytes(4) + text + b"\x00"
+    if typ == b"desc":              # ASCII count and string, empty Unicode part (language 0, count 0), empty ScriptCode part, 67 zero bytes
+        return b"desc" + bytes(4) + struct.pack(">I", len(text) + 1) + text + b"\x00" + bytes(4 + 4 + 2 + 1 + 67)
+    wide = text.decode("ascii").encode("utf-16-be")
+    return b"mluc" + bytes(4) + struct.pack(">II", 1, 12) + b"enUS" + struct.pack(">II", len(wide), 28) + wide      # one record, one language
+
+
+def _rewrite_icc(profile):
+    """The profile as it is sent. ``profile`` has passed ``_check_icc``. Every text-bearing tag (desc, cprt, dmnd, dmdd, vued, dscm; textType,
+    textDescriptionType and multiLocalizedUnicode) is written again with a fixed neutral string, in its own type and a fixed layout, and only the
+    first language of an mluc survives (and it is en-US); every other tag is carried over byte for byte (data that two tags share stays shared).
+    The tag table is laid out again (4-byte aligned, zero padding), the size field is set, the profile ID, the reserved bytes and the
+    free-text signatures and the date of the header (preferred CMM, platform, manufacturer, model, creator, creation date) are zeroed, the flags keep only the two bits the
+    ICC defines and the illuminant is D50. Nothing of the original's words, header text or padding is in the result, so it reads as the same
+    colours and as nothing else; ``_rewrite_icc(_rewrite_icc(p)) == _rewrite_icc(p)``."""
+    count = struct.unpack_from(">I", profile, 128)[0]
+    table_end = 132 + 12 * count
+    entries = [struct.unpack_from(">4sII", profile, 132 + 12 * i) for i in range(count)]
+    blobs, shared, refs = [], {}, []         # blobs: (offset in the original, index of the first tag, data)
+    for i, (sig, off, size) in enumerate(entries):
+        data = profile[off:off + size]
+        if data[:4] in (b"text", b"desc", b"mluc"):
+            blobs.append((off, i, _icc_text_tag(data[:4], _ICC_COPYRIGHT if sig == b"cprt" else _ICC_NAME)))
+            refs.append(len(blobs) - 1)
+        else:
+            if (off, size) not in shared:
+                blobs.append((off, i, data))
+                shared[(off, size)] = len(blobs) - 1
+            refs.append(shared[(off, size)])
+    placed, cursor = {}, table_end
+    for j in sorted(range(len(blobs)), key=lambda j: blobs[j][:2]):
+        placed[j] = cursor
+        cursor += len(blobs[j][2]) + (-len(blobs[j][2])) % 4
+    body = bytearray(cursor - table_end)
+    for j, at in placed.items():
+        body[at - table_end:at - table_end + len(blobs[j][2])] = blobs[j][2]
+    table = b"".join(struct.pack(">4sII", sig, placed[refs[i]], len(blobs[refs[i]][2])) for i, (sig, _off, _size) in enumerate(entries))
+    head = bytearray(profile[:128])
+    head[0:4] = struct.pack(">I", cursor)
+    for lo, hi in ((4, 8), (24, 36), (40, 44), (44, 48), (48, 56), (80, 84), (84, 100), (100, 128)):
+        head[lo:hi] = bytes(hi - lo)
+    head[47] = profile[47] & 3
+    head[68:80] = _D50
+    return bytes(head) + struct.pack(">I", count) + table + bytes(body)
+
+
+def _icc_segments(profile):
+    """The payloads of the APP2 segments that carry ``profile``, in the order of a JPEG."""
+    parts = [profile[i:i + 65519] for i in range(0, len(profile), 65519)]
+    return [b"ICC_PROFILE\x00" + bytes([n + 1, len(parts)]) + part for n, part in enumerate(parts)]
+
+
+def _png_icc_body(profile):
+    return _PNG_ICC_NAME + b"\x00\x00" + zlib.compress(profile, 9)
 
 
 def _orientation(tiff):
@@ -1889,7 +1960,7 @@ def _adobe_ok(payload):
 
 def _build_jpeg(parts):
     _validate_jpeg(parts)
-    _icc_of_jpeg(parts)
+    profile = _icc_of_jpeg(parts)
     out, jfif, exif, adobe = [b"\xff\xd8"], False, False, False
     for marker, payload in parts:
         if marker is None:
@@ -1907,7 +1978,9 @@ def _build_jpeg(parts):
             if found:
                 out.append(_seg(0xE1, b"Exif\x00\x00" + _exif_tiff(*found)))
         elif marker == 0xE2 and payload[:12] == b"ICC_PROFILE\x00":
-            out.append(_seg(marker, payload))
+            if profile is not None:          # the profile is written once, where its first segment was, with fixed words
+                out.extend(_seg(0xE2, chunk) for chunk in _icc_segments(_rewrite_icc(profile)))
+                profile = None
         elif marker == 0xEE and payload[:5] == b"Adobe" and len(payload) >= 12 and not adobe:
             adobe = True
             if not _adobe_ok(payload[:12]):
@@ -1968,7 +2041,8 @@ def _verify_jpeg(out, parts_in):
         raise _Refuse(VERIFY_FAILED)
     _scan_picture_side(b"".join(p for m, p in parts if m is None) + table)
     profile = _icc_of_jpeg(parts)
-    if profile is not None and (_names_in(profile, _TOKEN_WORDS + _POSITION_WORDS) or _TIFF_SIG.search(profile) or b"\xa9xyz" in profile):
+    if profile is not None and (_names_in(profile, _TOKEN_WORDS + _POSITION_WORDS) or _TIFF_SIG.search(profile) or b"\xa9xyz" in profile
+                                or _rewrite_icc(profile) != profile or icc_chunks != _icc_segments(profile)):     # the sent profile is the fixed form
         raise _Refuse(VERIFY_FAILED)
 
 
@@ -1980,7 +2054,6 @@ def _png_icc(body):
     k = body.find(b"\x00")
     if k < 1 or k > 79 or body[k + 1:k + 2] != b"\x00":
         raise _Refuse(ICC)
-    _icc_text(body[:k].decode("latin-1"))
     try:
         profile = _inflate(body[k + 2:])
     except _Refuse as exc:
@@ -2005,8 +2078,7 @@ def _build_png(chunks):
                 raise _Refuse()
             out.append(_png_chunk(kind, body, crc))
         elif kind == b"iCCP":
-            _png_icc(body)
-            out.append(_png_chunk(kind, body, crc))
+            out.append(_png_chunk(kind, _png_icc_body(_rewrite_icc(_png_icc(body)))))
         elif kind == b"eXIf":
             if not exif:
                 exif = True
@@ -2040,7 +2112,8 @@ def _verify_png(out, chunks_in):
             meta.append(kind + body)
         elif kind == b"iCCP":
             profile = _png_icc(body)
-            if _names_in(profile, _TOKEN_WORDS + _POSITION_WORDS) or _TIFF_SIG.search(profile) or b"\xa9xyz" in profile:
+            if (_names_in(profile, _TOKEN_WORDS + _POSITION_WORDS) or _TIFF_SIG.search(profile) or b"\xa9xyz" in profile
+                    or _rewrite_icc(profile) != profile or body != _png_icc_body(profile)):         # the sent profile is the fixed form
                 raise _Refuse(VERIFY_FAILED)
             meta.append(body[:body.find(b"\x00")])
         else:

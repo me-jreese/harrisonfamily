@@ -143,7 +143,7 @@ class JpegScans(Held):
                 parts[i] = (0xDB, bytes(payload))
             return edit
         self.held(jpeg_of(LS.BASELINE, spell(b"65.4321")), JPEG, "structure")
-        self.held(jpeg_of(LS.PROGRESSIVE, spell(b"7.123")), JPEG, "structure")
+        self.held(jpeg_of(LS.PROGRESSIVE, spell(b"12.3456")), JPEG, "structure")
         self.copied(jpeg_of(LS.BASELINE, spell(b"654321")), JPEG)         # digits alone are a legal table, and are not a number
 
     def test_table_and_frame_values_that_do_not_hold(self):
@@ -316,7 +316,7 @@ class IccProfiles(Held):
     def test_standard_profiles_are_kept_in_a_jpeg_and_in_a_png(self):
         for profile in (LS.icc_profile(), LS.icc_profile(text_kind="text"), LS.icc_profile(text_kind="desc")):
             out = self.copied(icc_in_jpeg(profile), JPEG)
-            self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out)), profile)
+            self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out)), locstrip._rewrite_icc(profile))
             self.copied(icc_in_png(profile), PNG)
         monotone = curv([i * 16 for i in range(256)])
         self.copied(icc_in_jpeg(LS.icc_profile(replace={b"rTRC": monotone, b"gTRC": monotone, b"bTRC": monotone})), JPEG)
@@ -370,7 +370,19 @@ class IccProfiles(Held):
         self.held(LS.jpeg(GPS_EXIF, extra_segments=LS.segment(0xE2, b"ICC_PROFILE\x00\x01\x02" + LS.icc_profile())), JPEG, "icc")
         iccp = LS.chunk(b"iCCP", b"prof\x00\x00" + zlib.compress(LS.icc_profile()) + zlib.compress(TXT))
         self.held(LS.png_image(pre=iccp), PNG, "icc")
-        self.held(LS.png_image(pre=LS.chunk(b"iCCP", b"12.3456,65.4321\x00\x00" + zlib.compress(LS.icc_profile()))), PNG, "icc")
+        out = self.copied(LS.png_image(pre=LS.chunk(b"iCCP", b"12.3456,65.4321\x00\x00" + zlib.compress(LS.icc_profile()))), PNG)      # the keyword is written again
+        self.assertNotIn(b"65.4321", out)
+
+    def test_the_free_text_fields_of_the_header_are_zero_in_the_profile_that_is_sent(self):
+        """The free-text fields of the header are zero in the profile that is sent, whatever the original had in them."""
+        profile = LS.icc_profile()
+        out = self.copied(icc_in_jpeg(profile), JPEG)
+        sent = locstrip._icc_of_jpeg(locstrip._jpeg_parts(out))
+        for lo, hi in ((4, 8), (24, 36), (40, 44), (44, 48), (48, 56), (80, 84), (84, 100), (100, 128)):
+            self.assertEqual(sent[lo:hi], bytes(hi - lo), (lo, hi))
+        self.assertEqual(sent[68:80], struct.pack(">iii", 63190, 65536, 54061))
+        self.assertEqual(struct.unpack_from(">I", sent, 0)[0], len(sent))
+        self.assertEqual(locstrip._rewrite_icc(sent), sent, "the form is a fixed point")
 
     def test_real_profiles_of_this_mac_are_accepted_if_the_system_has_them(self):
         found = 0

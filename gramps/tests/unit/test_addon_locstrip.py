@@ -102,21 +102,16 @@ class Jpeg(Checks):
     def test_trailing_zero_padding_is_not_a_second_picture(self):
         self.strip_ok(LS.jpeg(LS.build_tiff()) + b"\x00" * 9, JPEG)
 
-    def test_an_icc_profile_is_kept_byte_for_byte_also_in_pieces(self):
+    def test_an_icc_profile_is_kept_in_its_fixed_form_also_in_pieces(self):
         for profile, size in ((LS.icc_profile(), 65000), (LS.icc_profile(text_kind="text"), 65000), (LS.icc_profile(text_kind="desc"), 65000),
                               (LS.icc_profile(), 200)):
             data = LS.jpeg(LS.build_tiff(), extra_segments=LS.icc_segments(profile, size))
             out = self.strip_ok(data, JPEG)
             self.assertIn(0xE2, self.jpeg_kinds(out))
-            self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out)), profile)
+            self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out)), locstrip._rewrite_icc(profile))
 
     def test_an_icc_profile_the_add_on_does_not_accept_holds_the_photo(self):
         bad = {
-            "a coordinate in the description": LS.icc_profile(desc="Shot at 12.3456, 65.4321"),
-            "a position word": LS.icc_profile(desc="Latitude profile"),
-            "a long number": LS.icc_profile(desc="Profile 1234567890"),
-            "a text outside the alphabet": LS.icc_profile(cprt="by <someone>; 12 N"),
-            "a coordinate in a text tag": LS.icc_profile(text_kind="text", cprt="N12.3460 E65.4330"),
             "an unknown tag type": LS.icc_profile(extra_tag=(b"zzzz", b"data\x00\x00\x00\x00" + b"II*\x00" + b"x" * 20)),
             "an xml dict": LS.icc_profile(extra_tag=(b"meta", b"dict\x00\x00\x00\x00" + b"x" * 12)),
             "bytes between the tags": LS.icc_profile(gap=b"\x00\x00\x00\x00hidden text 12.3456"),
@@ -142,7 +137,8 @@ class Jpeg(Checks):
         image = Image.open(io.BytesIO(out))
         exif = image.getexif()
         self.assertEqual((exif.get(0x0112), dict(exif.get_ifd(0x8825)), exif.get(0x010F)), (6, {}, None), "Orientation only")
-        self.assertEqual(image.info.get("icc_profile"), profile, "the colour profile is the original's")
+        self.assertEqual(image.info.get("icc_profile"), locstrip._rewrite_icc(profile), "the colour profile is the original's, with fixed words")
+        self.assertEqual(ImageCms.ImageCmsProfile(io.BytesIO(image.info["icc_profile"])).profile.profile_description, "Profile")
         self.assertEqual(list(image.convert("RGB").getdata()), list(Image.open(io.BytesIO(plain)).convert("RGB").getdata()), "the same pixels")
         self.assertNotIn("xmp", image.info)
 
@@ -171,11 +167,14 @@ class Png(Checks):
         self.assertNotIn(b"eXIf", self.kinds(self.strip_ok(LS.png(tiff=no_orientation), PNG)))
 
     def test_an_iccp_that_is_not_accepted_holds_the_photo(self):
-        for profile in (LS.icc_profile(desc="Shot at 12.3456, 65.4321"), LS.icc_profile(extra_tag=(b"zzzz", b"data\x00\x00\x00\x00" + b"x" * 12))):
-            self.assertEqual(locstrip.strip(LS.png(tiff=LS.build_tiff(), icc=profile), PNG), (None, "icc"))
+        profile = LS.icc_profile(extra_tag=(b"zzzz", b"data\x00\x00\x00\x00" + b"x" * 12))
+        self.assertEqual(locstrip.strip(LS.png(tiff=LS.build_tiff(), icc=profile), PNG), (None, "icc"))
+        # the keyword of the chunk is words too: it is written again, not checked
         bad_keyword = LS.chunk(b"iCCP", b"12.3456, 65.4321\x00\x00" + zlib.compress(LS.icc_profile()))
         data = LS.png(tiff=LS.build_tiff())
-        self.assertEqual(locstrip.strip(data[:33] + bad_keyword + data[33:], PNG), (None, "icc"))
+        out = self.strip_ok(data[:33] + bad_keyword + data[33:], PNG)
+        self.assertEqual(dict((k, b) for k, b, _c in locstrip._chunks(out))[b"iCCP"][:12], b"ICC Profile\x00")
+        self.assertNotIn(b"65.4321", out)
 
     @unittest.skipIf(Image is None, "Pillow is not installed")
     def test_pillow_decodes_the_copy_and_reads_the_orientation(self):
@@ -183,7 +182,7 @@ class Png(Checks):
         image = Image.open(io.BytesIO(out))
         image.load()
         self.assertEqual((image.size, image.getexif().get(0x0112), dict(image.getexif().get_ifd(0x8825))), ((1, 1), 6, {}))
-        self.assertEqual(image.info.get("icc_profile"), LS.icc_profile())
+        self.assertEqual(image.info.get("icc_profile"), locstrip._rewrite_icc(LS.icc_profile()))
 
 
 class FailsClosed(Checks):

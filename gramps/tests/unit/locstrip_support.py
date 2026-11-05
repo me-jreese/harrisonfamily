@@ -243,6 +243,20 @@ def icc_profile(desc="Test sRGB", cprt="No copyright, use freely", extra_tag=Non
     return header + struct.pack(">I", len(tags)) + table + body + gap
 
 
+def icc_text_tag(kind, text):
+    """A text tag of an ICC profile in one of the three layouts: ``text`` (textType), ``desc`` (textDescriptionType, v2) or ``mluc`` (v4); ``text``
+    is a str. The layouts are those of the specification, so a reader sees what a camera's profile has."""
+    def pad(b):
+        return b + b"\x00" * (-len(b) % 4)
+    if kind == "mluc":
+        u = text.encode("utf-16-be")
+        return pad(b"mluc\x00\x00\x00\x00" + struct.pack(">II", 1, 12) + b"enUS" + struct.pack(">II", len(u), 28) + u)
+    if kind == "text":
+        return pad(b"text\x00\x00\x00\x00" + text.encode("latin-1") + b"\x00")
+    a = text.encode("latin-1") + b"\x00"
+    return pad(b"desc\x00\x00\x00\x00" + struct.pack(">I", len(a)) + a + struct.pack(">II", 0, 0) + struct.pack(">HB", 0, 0) + b"\x00" * 67)
+
+
 def icc_segments(profile, chunk_size=65000):
     """The APP2 segments that carry an ICC profile."""
     chunks = [profile[i:i + chunk_size] for i in range(0, len(profile), chunk_size)] or [b""]

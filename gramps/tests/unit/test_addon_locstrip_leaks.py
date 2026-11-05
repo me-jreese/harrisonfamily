@@ -412,8 +412,11 @@ class VendorXmp(unittest.TestCase):
         for text in (b"Nikon sRGB 4.0.0.3001", b"IEC61966-2.1", b"1/125", b"2001:02:03 04:05:06", b"a plain comment, 1951", b"f/2.8"):
             self.assertFalse(locstrip._coord_value(text), text)
 
-    def test_icc_text_with_a_position_holds_the_photo_and_the_free_text_chunk_is_found(self):
-        self.assertEqual(locstrip.strip(LS.jpeg(tiff_main(), extra_segments=LS.icc_segments(LS.icc_profile(desc="12.3456, 65.4321"))), JPEG), (None, "icc"))
+    def test_icc_text_with_a_position_is_written_again_and_the_free_text_chunk_is_found(self):
+        out, _why = locstrip.strip(LS.jpeg(tiff_main(), extra_segments=LS.icc_segments(LS.icc_profile(desc="12.3456, 65.4321"))), JPEG)
+        self.assertIsNotNone(out)
+        self.assertNotIn(b"12.3456", out)
+        self.assertNotIn("12.3456".encode("utf-16-be"), out)
         data = LS.png(text=b"Comment\x00at 12.3456, 65.4321")
         self.assertEqual(mediafile.assess(data, PNG), "location")
         out, _why = mediafile.strip_copy(data, PNG)

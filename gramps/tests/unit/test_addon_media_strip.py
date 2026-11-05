@@ -480,7 +480,7 @@ class PhoneStyleCopies(StripCase):
         self.set_strip(True)
         self.push()
         out_j, out_p = self.cloud.blob_bytes(hj), self.cloud.blob_bytes(hp)
-        self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out_j)), profile)
+        self.assertEqual(locstrip._icc_of_jpeg(locstrip._jpeg_parts(out_j)), locstrip._rewrite_icc(profile))
         self.assertEqual(dict(locstrip._jpeg_parts(out_j))[0xE1], b"Exif\x00\x00" + locstrip._exif_tiff(">", 6))
         kinds = dict((k, b) for k, b, _c in locstrip._chunks(out_p))
         self.assertEqual(kinds[b"eXIf"], locstrip._exif_tiff("<", 6))
@@ -491,9 +491,21 @@ class PhoneStyleCopies(StripCase):
                 self.assertNotIn(dropped, out)
         self.assertEqual((self.disk(pj), self.disk(pp)), (jpg, png), "the originals are untouched")
 
-    def test_a_colour_profile_with_a_position_holds_the_photo_with_its_own_rule(self):
+    def test_a_colour_profile_with_a_position_is_sent_with_fixed_words(self):
         self.seed()
         handle, _path = self.add_photo(LS.jpeg(LS.build_tiff(), extra_segments=LS.icc_segments(LS.icc_profile(desc="Shot at 12.3456, 65.4321"))), gid="O0132", name="new/icc.jpg")
+        self.set_strip(True)
+        self.push()
+        self.assertNotIn(handle, self.holds())
+        out = self.cloud.blob_bytes(handle)
+        self.assertNotIn(b"65.4321", out)
+        self.assertNotIn("65.4321".encode("utf-16-be"), out)
+        self.assertIn("Profile".encode("utf-16-be"), out)
+
+    def test_a_colour_profile_the_add_on_cannot_follow_holds_the_photo_with_its_own_rule(self):
+        self.seed()
+        profile = LS.icc_profile(extra_tag=(b"zzzz", b"data\x00\x00\x00\x00" + b"x" * 12))
+        handle, _path = self.add_photo(LS.jpeg(LS.build_tiff(), extra_segments=LS.icc_segments(profile)), gid="O0133", name="new/icc2.jpg")
         self.set_strip(True)
         self.push()
         rule, detail = self.holds()[handle]
