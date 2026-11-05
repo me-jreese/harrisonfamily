@@ -1,6 +1,6 @@
 # Synthetic data samples allowed in the repository (HFY-PLN-002 D-03).
 # Format: <sha256>  <path>. Checked by scripts/ci/check-no-family-data.sh.
-d456e68041f6701f0904dd9ead466791e468ae085025fd104686eb7531303190  etl-output/README.md
+dc28e1f841b043c2f4da6d62eeda471f65fbf9de9123a5c5b4e8aae5a6ef7ee0  etl-output/README.md
 4127298a8c0b4e3735bb1b5d235f023d0f8d4879c9c33ac9b502a78636cb587a  etl-output/sample_bundle/README.md
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  gramps_exports/.gitkeep
 cfbd835e904076d54b134691b2de137c07569ef4a135c38abe0550422f180487  harrisonfamily-frontend/README.md
