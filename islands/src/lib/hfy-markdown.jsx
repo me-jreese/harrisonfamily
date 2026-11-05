@@ -17,6 +17,17 @@ function HfyNoImage({ alt }) {
   return alt ? <span data-hfy-md-image-omitted="">{alt}</span> : null;
 }
 
+/**
+ * A protocol-relative href ("//other.example/x") has no scheme, so the policy reads it as a relative path and keeps it, yet the
+ * browser resolves it to another host, in the same tab. It is drawn as plain text.
+ */
+const OFF_SITE_RELATIVE = /^\/\//;
+function HfyLink({ href, children, node, ...rest }) {
+  // No href: the policy dropped it (mailto:, javascript:), and an anchor without one is not a link, so only its text is drawn.
+  if (typeof href !== "string" || OFF_SITE_RELATIVE.test(href.trim())) return <span data-hfy-md-link-omitted="">{children}</span>;
+  return <a href={href} {...rest}>{children}</a>;
+}
+
 export function KitMarkdown(props) {
-  return <KitMarkdownBase {...props} policy={props.policy ?? hfySanitizePolicy} components={{ ...props.components, img: HfyNoImage }} />;
+  return <KitMarkdownBase {...props} policy={props.policy ?? hfySanitizePolicy} components={{ ...props.components, img: HfyNoImage, a: HfyLink }} />;
 }

@@ -3,7 +3,7 @@
 // kit-content.mjs hfyContentSanitizePolicy (they take no policy prop). Synthetic hosts and addresses only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
@@ -98,4 +98,37 @@ test("the posts islands' built bundles carry the HFY sanitize policy (no externa
     assert.match(code, /data-hfy-md-image-omitted/, `${name}.js: the img mapping is not in the bundle`);
     assert.match(code, /noopener noreferrer nofollow ugc/, `${name}.js: the HFY policy is not in the bundle`);
   }
+});
+
+test("a protocol-relative link is plain text (it would open another host in the same tab); https, http and relative links stay", () => {
+  const body = "[off](//other.example/a) [ok](https://example.test/ok) [here](/posts/?id=1)";
+  const html = card(createElement(PostCard, { post: post({ body }) }));
+  assert.doesNotMatch(html, /href="[\\/]{2}/, "no href starts with two slashes");
+  assert.doesNotMatch(html, /other\.example/, "the off-site target is not in the markup");
+  assert.match(html, /<span data-hfy-md-link-omitted="">off<\/span>/, "its text stays");
+  assert.match(html, /href="https:\/\/example\.test\/ok"/);
+  assert.match(html, /href="\/posts\/\?id=1"/);
+});
+
+test("guard: only lib/hfy-markdown.jsx imports @io-kit/md/react in the HFY source, apart from the Notes card that sets its own policy", () => {
+  // The esbuild plugin reroutes only imports from inside @io-kit/content, so a direct import elsewhere would not get the wrapper's
+  // img mapping. person.jsx is the one known exception: it passes userContentPolicy itself, and moves onto the wrapper in hfy-person-sections-capped.
+  const ALLOWED = new Set(["lib/hfy-markdown.jsx", "islands/person.jsx"]);
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const found = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const f = join(dir, e.name);
+      if (e.isDirectory()) walk(f);
+      else if (/\.(jsx?|mjs|tsx?)$/.test(e.name) && /from\s+["']@io-kit\/md\/react["']/.test(readFileSync(f, "utf8"))) found.push(f.slice(root.length + 1).split("\\").join("/"));
+    }
+  };
+  walk(root);
+  assert.deepEqual(found.filter((f) => !ALLOWED.has(f)), [], "import KitMarkdown from lib/hfy-markdown.jsx instead");
+});
+
+test("a link whose href the policy dropped (mailto:, javascript:) is its text alone, with no anchor", () => {
+  const html = card(createElement(PostCard, { post: post({ body: "[write me](mailto:someone@example.test) [run](javascript:void(0))" }) }));
+  assert.doesNotMatch(html, /<a[ >]/, "no anchor at all");
+  assert.match(html, /<span data-hfy-md-link-omitted="">write me<\/span>/);
 });

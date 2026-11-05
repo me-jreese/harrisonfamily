@@ -65,7 +65,9 @@ for (const [name, url, scope] of [
     await page.goto(url, { waitUntil: "domcontentloaded" });
     const row = scope(page);
     await expect(row.getByText("hello from the garden")).toBeVisible();
-    await expect(row.locator("figure img").first(), "the attachment photo still draws").toBeVisible();
+    const photo = row.locator("figure img").first();
+    await photo.scrollIntoViewIfNeeded(); // the kit lazy-loads it
+    await expect(photo, "the attachment photo still draws").toBeVisible();
     await page.waitForTimeout(700); // an image request would have started by now
     const b = await body(row);
     expect(b.bodyImages, "no <img> inside the markdown body").toBe(0);
