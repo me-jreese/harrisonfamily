@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:aa1c6c0c56385694058ac85611ad69bc43b1f736948d1ec18bb79abf5f18c6d1
+# @io-kit/ci 0.2.0 rendered — do not edit; sha256:758dde464a1e8bd528c4f6a9c235c1a4befeb7747d9d13ad0ba1d726efabec86
 name: io-kit package
 description: Upload the release artifact (build output, extra artifacts, release.json) named io-kit-release-<sha>; rollback redeploys it later.
 inputs:
@@ -7,7 +7,7 @@ inputs:
     default: 11ty
   artifacts:
     description: JSON array of extra artifact paths (artifacts).
-    default: "[]"
+    default: '["chat-worker/dist"]'
 runs:
   using: composite
   steps:

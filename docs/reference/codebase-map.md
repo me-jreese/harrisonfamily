@@ -27,7 +27,7 @@ Each capability has a section below with its paths, the facts that change how yo
 | [MCP server](#mcp-server) | `api/src/mcp.js`, `api/src/policy.js`, `api/src/labels.js`, `api/src/mcp-caps.js`, `api/parity/`, `scripts/ci/mcp-conformance.sh`, `infrastructure/mcp-edge401.us-east-1.yaml`, `scripts/infra/add-mcp-behavior.sh` | [MCP server](mcp-server.md) |
 | [Auth edge and MCP authorization server](#auth-edge-and-mcp-authorization-server) | `auth/` | [Identity services](identity-services.md) |
 | [Private data gate](#private-data-gate) | `edge-gate/`, `infrastructure/cloudformation/edge-gate-stack.yaml`, `scripts/ci/package-edge-gate.sh`, `scripts/infra/add-data-gate-behaviors.sh` | [Identity services](identity-services.md#private-data-gate-hfy-edge-gate), [Architecture](architecture.md#hfy-edge-gate) |
-| [Chat Worker](#chat-worker) | `chat-worker/` | [The chat Worker](architecture.md#the-chat-worker) in the architecture reference; [Build, test, stage and deploy the chat Worker](../how-to/deploy-the-chat-worker.md); [Rotate the chat service key](../how-to/rotate-the-chat-service-key.md) |
+| [Chat Worker](#chat-worker) | `chat-worker/` | [The chat Worker](architecture.md#the-chat-worker) in the architecture reference; [Build, test, stage and deploy the chat Worker](../how-to/deploy-the-chat-worker.md); [Rotate the chat service key](../how-to/rotate-the-chat-service-key.md); [Rotate the Cloudflare deploy token](../how-to/rotate-the-cloudflare-deploy-token.md) |
 | [Family graph builder](#family-graph-builder) | `graph/` | [Graph builder README](../../graph/README.md) |
 | [CloudFront Function](#cloudfront-function) | `scripts/cloudfront/`, `scripts/infra/publish-append-index.sh` | [Architecture](architecture.md#hfyappendindex) |
 | [Retired legacy sign-in](#retired-legacy-sign-in) | None: its last code was deleted (HFY-TSK-325, HFY-TSK-326) | [Identity services](identity-services.md#retired-legacy-sign-in) |
@@ -384,8 +384,8 @@ Paths:
 - [`chat-worker/src/common.mjs`](../../chat-worker/src/common.mjs): the guard adapter and the front door that answers only the upgrade on `/chat/ws`, `GET /chat/v1/health` and (when `CHAT_ADMIN_TOKEN` is set) `POST /chat/v1/admin/expunge`, and sends everything else on with `fetch(request)`.
 - [`chat-worker/src/admin.mjs`](../../chat-worker/src/admin.mjs) and [`chat-worker/src/expunge.mjs`](../../chat-worker/src/expunge.mjs): `POST /chat/v1/admin/expunge` (HFY-TSK-337), the bearer-token check and body parser shared by the Worker and the hub, and the `withExpunge` mixin that nulls one message's text in the hub and makes later reads show it as removed. Closed unless the `CHAT_ADMIN_TOKEN` secret is set.
 - [`chat-worker/src/staging.mjs`](../../chat-worker/src/staging.mjs): the staging entry only (a test JWKS and a stand-in API). It is not part of `dist/`.
-- [`chat-worker/dist/`](../../chat-worker/dist/): the committed bundle (`index.js`) and `deploy.json` (bindings, migration, compatibility date, vars, routes) that the production deploy uploads (the bundle with `--no-bundle`, the rest from `wrangler.toml`) and that the planned `cloudflare-worker` CI target would read.
-- [`chat-worker/scripts/`](../../chat-worker/scripts/): `build.mjs` (build and `--check`), `staging-keys.mjs` and `staging-deploy.mjs`. There is no production deploy script: the production deploy and the key rotation are the procedures in the two how-tos above.
+- [`chat-worker/dist/`](../../chat-worker/dist/): the committed bundle (`index.js`) and `deploy.json` (bindings, migration, compatibility date, vars, routes) that the `cloudflare-worker` CI target uploads as they are (and that the by-hand deploy uploads, the bundle with `--no-bundle` and the rest from `wrangler.toml`).
+- [`chat-worker/scripts/`](../../chat-worker/scripts/): `build.mjs` (build and `--check`), `staging-keys.mjs` and `staging-deploy.mjs`. There is no production deploy script: CI deploys, and the first deploy and the key rotation are the procedures in the how-tos above.
 - [`chat-worker/test/`](../../chat-worker/test/): the `node:test` suites and `smoke.mjs`. See [Tests](#tests).
 - [`chat-worker/package.json`](../../chat-worker/package.json), `package-lock.json`, `.npmrc`: exact pins of `@io-kit/chat` and `wrangler`, a lockfile generated with a CodeArtifact token.
 
@@ -396,7 +396,7 @@ Facts:
 - The only paths that leave CloudFront are the two routes. The production deploy creates them from `wrangler.toml`; this repository's pipeline does not, and does not record whether they exist.
 - The committed config ships chat dark: `CHAT_OPEN_TO` is `uat` and the tester list `CHAT_UAT_SUBJECTS` is a Worker secret that is not in the repository (absent means nobody is let in), and `11ty/_data/flags.json` has `chatV1` off. Whether a Worker is deployed, which routes exist and which keys the API trusts are not recorded in the repository: [Check where the Worker stands](../how-to/deploy-the-chat-worker.md#check-where-the-worker-stands) gives the checks.
 - The Worker's service key is a Worker secret, and its public half is the app-stack parameter `ChatServicePublicKeys` (env `CHAT_SERVICE_PUBLIC_KEYS` on `hfy-api`, [`api/src/chat.js`](../../api/src/chat.js)).
-- No workflow builds, tests or deploys `chat-worker/`. The production deploy is by hand from the committed bundle ([Build, test, stage and deploy the chat Worker](../how-to/deploy-the-chat-worker.md)), and so is the key rotation ([Rotate the chat service key](../how-to/rotate-the-chat-service-key.md)).
+- No workflow builds or tests `chat-worker/` (its install needs CodeArtifact, so the bundle is committed). The `worker` job of `io-kit-deploy.yml` uploads the committed `dist/` with the scoped token `CLOUDFLARE_API_TOKEN`, verifies the routes read-only and rolls the Worker back on a failed smoke ([Deploy through CI](../how-to/deploy-the-chat-worker.md#deploy-through-ci-the-normal-path)). The token's rotation is [Rotate the Cloudflare deploy token](../how-to/rotate-the-cloudflare-deploy-token.md). The first deploy, the routes, the service key and staging are by hand, and so is the key rotation ([Rotate the chat service key](../how-to/rotate-the-chat-service-key.md)).
 
 ## Family graph builder
 
@@ -526,8 +526,8 @@ Facts:
 Paths:
 
 - [`ci.manifest.yaml`](../../ci.manifest.yaml): the pipeline definition.
-- [`.github/workflows/io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml), [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml): rendered from `ci.manifest.yaml` by `@io-kit/ci` 0.1.3. Each carries a "do not edit" header.
-- [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/): the composite actions those workflows call. They are `build`, `package`, `deploy-static`, `invalidate`, `smoke`, `rollback`, `parity-report` and `secret-scan`. The manifest has no Lambda target, so the kit renders no `deploy-lambda` action.
+- [`.github/workflows/io-kit-ci.yml`](../../.github/workflows/io-kit-ci.yml), [`.github/workflows/io-kit-deploy.yml`](../../.github/workflows/io-kit-deploy.yml): rendered from `ci.manifest.yaml` by `@io-kit/ci` 0.2.0. Each carries a "do not edit" header.
+- [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/): the composite actions those workflows call. They are `build`, `package`, `deploy-static`, `deploy-worker` (the chat Worker, HFY-TSK-200), `invalidate`, `smoke`, `rollback`, `parity-report` and `secret-scan`. The manifest has no Lambda target, so the kit renders no `deploy-lambda` action.
 - [`.github/workflows/post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml): checks the kit's smoke job cannot express, run after each successful deploy run. Hand-maintained.
 - [`scripts/ci/`](../../scripts/ci/):
   - None is the manifest build command any more: it only echoes, because `11ty/` is committed output.

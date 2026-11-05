@@ -1,4 +1,4 @@
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:468654ffc6320fc380be8a669a8c5b3fe60d692c556824cd1230cef029a60dcb
+# @io-kit/ci 0.2.0 rendered — do not edit; sha256:468654ffc6320fc380be8a669a8c5b3fe60d692c556824cd1230cef029a60dcb
 name: io-kit build
 description: Run the manifest build command and verify the output directory exists.
 inputs:

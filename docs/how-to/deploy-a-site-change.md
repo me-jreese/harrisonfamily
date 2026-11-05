@@ -1,6 +1,6 @@
 # How to deploy a change to the static site
 
-Use this page to ship a change to `11ty/` (the pages, the committed output of the islands build and [`flags.json`](../../11ty/_data/flags.json)), and to confirm that it is live. The pipeline deploys the static site only: no Lambda (HFY-TSK-317). The legacy `getAllowlist` Cloud Function and its workflow are gone (deleted on 2026-10-14, HFY-TSK-325).
+Use this page to ship a change to `11ty/` (the pages, the committed output of the islands build and [`flags.json`](../../11ty/_data/flags.json)), and to confirm that it is live. The pipeline deploys the static site: no Lambda (HFY-TSK-317). Its one other target is the chat Worker, in a separate `worker` job that a site-only merge leaves unchanged ([Deploy through CI](deploy-the-chat-worker.md#deploy-through-ci-the-normal-path)). The legacy `getAllowlist` Cloud Function and its workflow are gone (deleted on 2026-10-14, HFY-TSK-325).
 
 Some changes do not ship this way:
 

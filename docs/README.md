@@ -75,7 +75,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Change the theme or brand fonts](how-to/change-the-theme-or-brand-fonts.md) — change the colours, a theme partial or a font with the theme lint passing, and ship it.
 - [Refresh `11ty/` from the Eleventy source without losing E5 files](how-to/refresh-the-eleventy-output.md) — promote new Eleventy output while keeping the repo-owned files, then rebuild the islands over it.
 - [Publish a change to the HFYAppendIndex CloudFront Function](how-to/publish-the-cloudfront-function.md) — test, dry-run, publish and roll back `scripts/cloudfront/append-index.js`.
-- [Build, test, stage and deploy the chat Worker](how-to/deploy-the-chat-worker.md) — rebuild the committed `chat-worker/dist/` bundle, run its checks and tests, smoke it with real sockets and on a staging Worker, deploy it to production by hand with its service key and the `ChatServicePublicKeys` change set, check where it stands, and roll back.
+- [Build, test, stage and deploy the chat Worker](how-to/deploy-the-chat-worker.md) — rebuild the committed `chat-worker/dist/` bundle, run its checks and tests, smoke it with real sockets and on a staging Worker, deploy it through CI with the scoped token (or by hand with its service key and the `ChatServicePublicKeys` change set), check where it stands, and roll back.
 - [Run the test suites](how-to/run-the-tests.md) — run each suite with its prerequisites, and know which ones reach production.
 - [Regenerate the Gramps goldens](how-to/regenerate-the-gramps-goldens.md) — rebuild the values Gramps 6.0.6 computes for dates, birth and death indexes, and the relationship scenarios, compare them byte for byte, and check them without Gramps.
 - [Install and run the Gramps sync addon](how-to/install-the-gramps-sync-addon.md) — put the `hfy_sync` addon into Gramps, check it from the command line, bind the tree, and read its exit codes.
@@ -91,6 +91,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Rotate the session signing key](how-to/rotate-the-session-signing-key.md) — replace the auth edge's signing key, which invalidates every outstanding `io_id` and MCP access token.
 - [Rehearse the break-glass sign-in](how-to/rehearse-the-break-glass-sign-in.md) — io's dry run of the `hfy-data-breakglass` role with MFA, with the agent's read-only pre- and post-checks.
 - [Rotate the origin-verify secret](how-to/rotate-the-origin-verify-secret.md) — replace the CloudFront-to-Lambda shared secret with the shortest possible `403` window.
+- [Rotate the Cloudflare deploy token](how-to/rotate-the-cloudflare-deploy-token.md) — replace the 90-day token the CI `worker` job deploys the chat Worker with, prove it with a run and delete the old one.
 - [Rotate the chat service key](how-to/rotate-the-chat-service-key.md) — replace the key the chat Worker signs its `hfy-api` calls with, with both keys trusted until the new one is proven.
 - [Rotate the Google sign-in client](how-to/rotate-the-google-client.md) — move both sign-in paths to a new Google OAuth web client.
 - [Diagnose sign-in and API failures](how-to/diagnose-sign-in-and-api-failures.md) — symptom-first checks and fixes for sign-in, `/api/*`, `/auth/*`, the private data gate and the MCP server.

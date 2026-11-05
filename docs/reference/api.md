@@ -99,7 +99,7 @@ Development dependencies, which `package-api.sh` leaves out of the zip (`npm ci 
 
 | Package | Version | Used for |
 | --- | --- | --- |
-| `@io-kit/ci` | 0.1.3 | The `io-kit-ci render` command that renders the CI workflows and actions from `ci.manifest.yaml` ([Repository operations](repository-operations.md#kit-manifest-cimanifestyaml)) |
+| `@io-kit/ci` | 0.2.0 | The `io-kit-ci render` command that renders the CI workflows and actions from `ci.manifest.yaml` ([Repository operations](repository-operations.md#kit-manifest-cimanifestyaml)) |
 | `@io-kit/parity` | 0.3.0 | The `io-kit parity diff` check in [`scripts/ci/mcp-conformance.sh`](../../scripts/ci/mcp-conformance.sh), against [`api/parity/`](../../api/parity/) and the generated `dist/mcp/` files |
 | `vitest` | 3.2.4 | The test suites |
 

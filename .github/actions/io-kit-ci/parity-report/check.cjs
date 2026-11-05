@@ -1,4 +1,4 @@
-// @io-kit/ci 0.1.3 rendered — do not edit; sha256:eb8ec699518d101de8d21c857929ac1c07848943da32a125b5961f49caa8fe1f
+// @io-kit/ci 0.2.0 rendered — do not edit; sha256:a082b87c4e66d0227084f9269e5381e4f37b8ee971023f824bf586c519f2000f
 "use strict";
 // io-kit-ci pipeline-drift check. Zero dependencies (Node built-ins only) so a consumer can run the vendored copy
 // with no CI-time npm/registry access. This file is the single source: the io-kit-ci CLI requires it, and
@@ -15,6 +15,7 @@ const DEPLOY_PATTERNS = [
   /\baws\s+s3\s+sync\b/,
   /\baws\s+lambda\s+(update-function-code|update-function-configuration|publish-version|update-alias)\b/,
   /\baws\s+cloudfront\s+(create-invalidation|update-function|publish-function)\b/,
+  /api\.cloudflare\.com\/client\/v4\/(accounts\/\S+\/workers\/scripts|zones\/\S+\/workers\/routes)/,
 ];
 
 const hashBody = (body) => createHash("sha256").update(body, "utf8").digest("hex");

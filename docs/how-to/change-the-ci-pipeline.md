@@ -8,13 +8,13 @@ Values in angle brackets are placeholders. The forms are listed in [Private data
 
 ## What the manifest cannot add
 
-The manifest can turn on only what `@io-kit/ci` 0.1.3 renders, and the rendered pipeline can do only what the deploy role allows. Three kinds of change are out of reach today. Do not work around any of them by editing the rendered files.
+The manifest can turn on only what `@io-kit/ci` 0.2.0 renders, and the rendered pipeline can do only what the deploy role allows. Three kinds of change are out of reach today. Do not work around any of them by editing the rendered files.
 
 ### Edge and CloudFormation deploys
 
-The rendered actions under [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/) build, package, sync static files, update Lambda code, invalidate, smoke-test, roll back, scan for secrets and report drift. None of them deploys a CloudFormation stack or a Lambda@Edge function, and the kit has no target that would add one:
+The rendered actions under [`.github/actions/io-kit-ci/`](../../.github/actions/io-kit-ci/) build, package, sync static files, update Lambda code, upload a Cloudflare Worker, invalidate, smoke-test, roll back, scan for secrets and report drift. None of them deploys a CloudFormation stack or a Lambda@Edge function, and the kit has no target that would add one:
 
-- In `@io-kit/ci` 0.1.3, `deploy.targets` accepts four kinds: `s3_static`, `lambda`, `cloudfront_function` and `codeartifact`.
+- In `@io-kit/ci` 0.2.0, `deploy.targets` accepts five kinds: `s3_static`, `lambda`, `cloudfront_function`, `codeartifact` and `cloudflare-worker`. The manifest uses two: `s3_static` and the chat Worker's `cloudflare-worker` ([Deploy through CI](deploy-the-chat-worker.md#deploy-through-ci-the-normal-path)). It carries the Cloudflare account and zone ids as values, like the distribution id, because the kit renders them into the `deploy-worker` action; they are not secrets.
 - A `lambda` target names its function by bare name, in the manifest's single `deploy.region`, which is `us-west-2`. It cannot reach a function in `us-east-1`, the only Region where Lambda@Edge functions are created. With an `alias` it publishes a version, but no kit step points a CloudFront behavior at a version.
 - A `cloudfront_function` target publishes a CloudFront Function, not a Lambda@Edge function. The site's one CloudFront Function does not ship that way either ([The CloudFront Function](#the-cloudfront-function)).
 - `stack` changes nothing that is rendered. The kit validates the field but never reads it, so `stack: edge` or `stack: mcp` adds no job and no target.
@@ -23,7 +23,7 @@ The deploy role in [`github-roles.yaml`](../../infrastructure/cloudformation/git
 
 ### The CloudFront Function
 
-`HFYAppendIndex`, built from [`scripts/cloudfront/append-index.js`](../../scripts/cloudfront/append-index.js), is the viewer-request function of the distribution's default behavior. It rewrites clean URLs, and it answers `404` with `cache-control: private, no-store` to case and suffix variants of the private data prefixes, which the case-sensitive gated patterns miss ([Why the CloudFront Function also denies](../explanation/edge-and-origin-design.md#why-the-cloudfront-function-also-denies)). `@io-kit/ci` 0.1.3 has a `cloudfront_function` target kind, but the manifest declares no such target, and adding one is not how this function ships:
+`HFYAppendIndex`, built from [`scripts/cloudfront/append-index.js`](../../scripts/cloudfront/append-index.js), is the viewer-request function of the distribution's default behavior. It rewrites clean URLs, and it answers `404` with `cache-control: private, no-store` to case and suffix variants of the private data prefixes, which the case-sensitive gated patterns miss ([Why the CloudFront Function also denies](../explanation/edge-and-origin-design.md#why-the-cloudfront-function-also-denies)). `@io-kit/ci` 0.2.0 has a `cloudfront_function` target kind, but the manifest declares no such target, and adding one is not how this function ships:
 
 - **The role cannot run it.** The `deploy-edge` action that the kind renders calls `aws cloudfront describe-function`, `update-function` and `publish-function`. The deploy role's only CloudFront grants are `CreateInvalidation` and `GetInvalidation`.
 - **The action skips the checks that keep the function safe.** It updates the `DEVELOPMENT` stage and publishes it to `LIVE` on every deploy run, and again in the rollback job, with no `test-function` run and no check of which behaviors the function is attached to. The function may sit only on the default behavior. On any other behavior it would answer `404` to the gated data itself.
@@ -44,7 +44,7 @@ No workflow can install the `@io-kit/*` packages, because none has a `CODEARTIFA
 Neither manifest field that adds CI work changes that:
 
 - **`tests`** renders a `test` job that runs each command after `build`. Its step receives neither `build.env` nor AWS credentials, so the conformance script stops at its token check, and `npm ci` in `islands/` cannot authenticate to the registry. The job runs on the manifest's Node version, `22`, which `api/` and `islands/` require. Add only commands that need no registry token. `tests` holds the three suites listed in [Run the tests: Where each suite runs](run-the-tests.md#where-each-suite-runs), and a later task that adds a CodeArtifact-free suite adds its command there and re-renders.
-- **`workflows.ci_jobs_file`** names a repo-relative YAML file holding a map of jobs. In `@io-kit/ci` 0.1.3 those jobs replace every generated job in `io-kit-ci.yml` rather than being added to them, and the triggers become `pull_request` and a push to `main`, without `workflow_dispatch`. The kit then stops rendering the `parity-report` and `secret-scan` actions, so the render removes them, together with the vendored `check.cjs` that [step 4](#4-check-for-drift) runs. Adding one job this way means writing the build and secret-scan jobs by hand and losing the vendored drift check, and the new job still has no token.
+- **`workflows.ci_jobs_file`** names a repo-relative YAML file holding a map of jobs. In `@io-kit/ci` 0.2.0 those jobs replace every generated job in `io-kit-ci.yml` rather than being added to them, and the triggers become `pull_request` and a push to `main`, without `workflow_dispatch`. The kit then stops rendering the `parity-report` and `secret-scan` actions, so the render removes them, together with the vendored `check.cjs` that [step 4](#4-check-for-drift) runs. Adding one job this way means writing the build and secret-scan jobs by hand and losing the vendored drift check, and the new job still has no token.
 
 Run the checks by hand instead, from the repository root, with Node 22 and the token from [step 2](#2-get-a-codeartifact-token) set:
 
@@ -111,7 +111,7 @@ Do not echo the token or write it to a file. It expires after 12 hours by defaul
 The repository has no root `package.json`, so run the CLI with `npx`, taking the `@io-kit` registry settings from `api/.npmrc`. From the repository root:
 
 ```sh
-npx --yes --userconfig api/.npmrc --package @io-kit/ci@0.1.3 -- \
+npx --yes --userconfig api/.npmrc --package @io-kit/ci@0.2.0 -- \
   io-kit-ci render --manifest ci.manifest.yaml --out .
 ```
 

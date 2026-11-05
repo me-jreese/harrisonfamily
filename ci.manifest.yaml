@@ -31,6 +31,22 @@ deploy:
         - "uploads/*"
         - "README.md"
       invalidate: ["/*"]
+    - kind: cloudflare-worker
+      name: hfy-chat-worker
+      dir: chat-worker
+      environment: production
+      account_id: 4dbb07786ea4d917308f19e59d17f91e
+      zone_id: 8121f1dc80f316f24e974588ee7e8385
+      routes_from: dist/deploy.json
+      smoke:
+        url: https://harrisonfamily.us/chat/v1/health
+        expected_version: commit_sha
+        version_var: CHAT_WORKER_VERSION
+        checks:
+          - url: https://harrisonfamily.us/person/index.json
+            status: 401
+          - url: https://harrisonfamily.us/
+            status: 200
   smoke:
     - https://harrisonfamily.us/
     - https://harrisonfamily.us/family-login/

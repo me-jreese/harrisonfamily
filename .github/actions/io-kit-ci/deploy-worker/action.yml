@@ -1,0 +1,162 @@
+# @io-kit/ci 0.2.0 rendered — do not edit; sha256:49ad3df4b99f63f884c27356c9ef8437f10daedaa2498d1b74d4026964195338
+name: io-kit deploy worker
+description: Deploy Cloudflare Workers with curl and jq only. Skips every write when the deploy.json sha256 and the bundle digest both equal the active deployment's; otherwise uploads, verifies this Worker's zone routes read-only, smokes, and rolls back only the Worker on a route drift or smoke failure.
+inputs:
+  targets:
+    description: JSON array of cloudflare-worker targets.
+    default: '[{"kind":"cloudflare-worker","name":"hfy-chat-worker","dir":"chat-worker","environment":"production","account_id":"4dbb07786ea4d917308f19e59d17f91e","zone_id":"8121f1dc80f316f24e974588ee7e8385","routes_from":"dist/deploy.json","smoke":{"url":"https://harrisonfamily.us/chat/v1/health","expected_version":"commit_sha","version_var":"CHAT_WORKER_VERSION","checks":[{"url":"https://harrisonfamily.us/person/index.json","status":401},{"url":"https://harrisonfamily.us/","status":200}]}}]'
+  api-token:
+    description: Cloudflare API token. Needs Account > Workers Scripts Edit, plus Zone > Workers Routes Read (read-only) for the route check. Pass secrets.CLOUDFLARE_API_TOKEN; GitHub masks it and the script never prints it.
+    default: ""
+  api-base:
+    description: Cloudflare API base URL.
+    default: https://api.cloudflare.com/client/v4
+  smoke-retry-delay:
+    description: Seconds between smoke retries (3 retries on a transient failure).
+    default: "5"
+runs:
+  using: composite
+  steps:
+    - name: Deploy Worker (upload, route check, smoke, Worker-only rollback)
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.api-token }}
+        CF_API_BASE: ${{ inputs.api-base }}
+        SMOKE_RETRY_DELAY: ${{ inputs.smoke-retry-delay }}
+      run: |
+        set -euo pipefail
+        [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo "::error::deploy-worker: CLOUDFLARE_API_TOKEN is empty"; exit 1; }
+        umask 077
+        work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+        # The token travels in a curl config file, never on a command line, in a URL or in a log.
+        case "$CLOUDFLARE_API_TOKEN" in *[!A-Za-z0-9_-]*) echo "::error::deploy-worker: CLOUDFLARE_API_TOKEN has characters outside [A-Za-z0-9_-]"; exit 1 ;; esac
+        printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" > "$work/auth.cfg"
+        unset CLOUDFLARE_API_TOKEN
+
+        # cf METHOD PATH [curl args]: body -> $work/resp.json; fails (printing only API error messages) unless HTTP 2xx and success=true.
+        # CF_OK_404=1 tolerates a 404 (treated as an empty result).
+        cf() {
+          local method=$1 path=$2; shift 2
+          local code
+          code=$(curl -sS -K "$work/auth.cfg" -X "$method" -o "$work/resp.json" -w '%{http_code}' --max-time 60 "$@" "$CF_API_BASE$path" || echo 000)
+          if [ "$code" = 404 ] && [ "${CF_OK_404:-0}" = 1 ]; then echo '{"success":true,"result":null}' > "$work/resp.json"; return 0; fi
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ] || [ "$(jq -r '.success // false' "$work/resp.json" 2>/dev/null || echo false)" != true ]; then
+            echo "::error::cloudflare $method ${path%%\?*} failed: http $code $(jq -rc '[.errors[]? | "\(.code): \(.message)"] | join("; ")' "$work/resp.json" 2>/dev/null || true)"
+            return 1
+          fi
+        }
+
+        sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+        sha256_stdin() { if command -v sha256sum >/dev/null; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
+        commit="${GITHUB_SHA:-unknown}"
+        fail=0
+
+        # rollback NAME ACCT: redeploy the previous deployment of this Worker only.
+        rollback() {
+          local n=$1 a=$2 prev
+          CF_OK_404=1 cf GET "/accounts/$a/workers/scripts/$n/deployments" || return 1
+          prev=$(jq -c '.result.deployments[1].versions // empty' "$work/resp.json")
+          if [ -z "$prev" ]; then echo "::error::$n: no previous deployment to roll back to"; return 1; fi
+          jq -n --argjson v "$prev" '{strategy: "percentage", versions: $v, annotations: {"workers/message": "io-kit-ci rollback after failed verification"}}' > "$work/rollback.json"
+          cf POST "/accounts/$a/workers/scripts/$n/deployments" -H 'Content-Type: application/json' --data-binary "@$work/rollback.json" || return 1
+          echo "::error::$n: rolled back to the previous deployment"
+        }
+
+        while IFS= read -r target; do
+          name=$(jq -r '.name' <<<"$target"); dir=$(jq -r '.dir' <<<"$target")
+          acct=$(jq -r '.account_id' <<<"$target"); zone=$(jq -r '.zone_id' <<<"$target")
+          desc="$dir/$(jq -r '.routes_from // "dist/deploy.json"' <<<"$target")"
+          [ -f "$desc" ] || { echo "::error::$name: $desc not found"; exit 1; }
+          bundle=$(dirname "$desc")
+          hash=$(sha256 "$desc")
+          tag="sha256:$hash"
+          # Digest of every uploaded file (path + sha256, sorted), so a code change is never skipped when deploy.json is unchanged.
+          bhash=$(cd "$bundle" && find . -type f ! -name deploy.json ! -name '*.map' -print0 | LC_ALL=C sort -z | while IFS= read -r -d '' f; do printf '%s %s\n' "${f#./}" "$(sha256 "$f")"; done | sha256_stdin)
+          smoke_expect=$(jq -r '.smoke.expected_version // "commit_sha"' <<<"$target")
+
+          # 1. Is the active deployment already this bundle? (An untagged active deployment counts as changed.)
+          CF_OK_404=1 cf GET "/accounts/$acct/workers/scripts/$name/deployments"
+          active_note=$(jq -r '.result.deployments[0] // {} | ((.annotations["workers/tag"] // "") + " " + (.annotations["workers/message"] // ""))' "$work/resp.json" 2>/dev/null || true)
+          uploaded=0
+          if [[ " $active_note " == *" $tag "* && " $active_note " == *" bundle:$bhash "* ]]; then
+            echo "$name: bundle unchanged ($tag, bundle:$bhash is the active deployment); no Cloudflare write"
+            active_commit=$(grep -o 'commit:[0-9a-f]\{7,40\}' <<<"$active_note" | head -n1 | cut -d: -f2 || true)
+          else
+            # 2. Upload: bindings, vars, compatibility date, existing secrets kept, migrations only when the tag changes.
+            main=$(jq -r '.main_module' "$desc"); [ -f "$bundle/$main" ] || { echo "::error::$name: main_module '$main' missing in $bundle"; exit 1; }
+            version_var=$(jq -r '.smoke.version_var // empty' <<<"$target")
+            if [ "$smoke_expect" = deploy_hash ]; then version_value=$hash; else version_value=$commit; fi
+            cf GET "/accounts/$acct/workers/scripts"
+            cur_tag=$(jq -r --arg n "$name" '[.result[]? | select(.id == $n) | .migration_tag // empty][0] // empty' "$work/resp.json")
+            jq -n --slurpfile d "$desc" --arg tag "$tag" --arg msg "io-kit-ci $tag bundle:$bhash commit:$commit" --arg vv "$version_var" --arg val "$version_value" --arg cur "$cur_tag" '
+              $d[0] as $x
+              | { main_module: $x.main_module,
+                  compatibility_date: $x.compatibility_date,
+                  compatibility_flags: ($x.compatibility_flags // []),
+                  bindings: (($x.bindings // [])
+                    + (($x.vars // {}) | to_entries | map({type: "plain_text", name: .key, text: (.value | tostring)}))
+                    + (if $vv != "" then [{type: "plain_text", name: $vv, text: $val}] else [] end)),
+                  keep_bindings: ["secret_text", "secret_key"],
+                  annotations: {"workers/tag": $tag, "workers/message": $msg} }
+              + (if ($x.migrations // null) != null and $x.migrations.new_tag != $cur
+                 then {migrations: ($x.migrations + (if $cur != "" then {old_tag: $cur} else {} end))} else {} end)' > "$work/metadata.json"
+            parts=(-F "metadata=<$work/metadata.json;type=application/json")
+            while IFS= read -r -d '' f; do
+              rel=${f#"$bundle"/}
+              case "$rel" in deploy.json|*.map) continue ;; esac
+              case "$rel" in *.mjs|*.js|*.cjs) mime=application/javascript+module ;; *.wasm) mime=application/wasm ;; *) mime=application/octet-stream ;; esac
+              parts+=(-F "$rel=@$f;type=$mime;filename=$rel")
+            done < <(find "$bundle" -type f -print0 | sort -z)
+            cf PUT "/accounts/$acct/workers/scripts/$name" "${parts[@]}"
+            uploaded=1
+            active_commit=$commit
+            echo "$name: uploaded $tag"
+            CF_OK_404=1 cf GET "/accounts/$acct/workers/scripts/$name/deployments"
+            [ -n "$(jq -r '.result.deployments[0].annotations["workers/tag"] // empty' "$work/resp.json")" ] || echo "::warning::$name: the active deployment carries no workers/tag annotation; the unchanged-bundle skip will not work until the API echoes it"
+          fi
+
+          # 3. Routes: read-only (needs Zone > Workers Routes: Read). This Worker's routes must equal deploy.json exactly; other scripts' routes are never a failure
+          #    (a warning when one shares a pattern). This action never writes routes. A drift after an upload rolls the Worker back.
+          cf GET "/zones/$zone/workers/routes"
+          want=$(jq -c '[.routes[]? | (if type == "string" then . else .pattern end)] | sort' "$desc")
+          have=$(jq -c --arg n "$name" '[.result[]? | select(.script == $n) | .pattern] | sort' "$work/resp.json")
+          foreign=$(jq -c --arg n "$name" --argjson w "$want" '[.result[]? | select(.script != $n and (.pattern as $p | $w | index($p) != null)) | .pattern] | sort' "$work/resp.json")
+          [ "$foreign" = "[]" ] || echo "::warning::$name: another script owns route(s) $foreign that deploy.json also lists"
+          if [ "$want" != "$have" ]; then
+            echo "::error::ROUTE DRIFT on the zone for $name: deploy.json routes $want; zone routes for this Worker $have. Routes are created once by the orchestrator, never by CI."
+            fail=1
+            if [ "$uploaded" = 1 ]; then rollback "$name" "$acct" || true; fi
+            continue
+          fi
+          echo "$name: zone routes match deploy.json $want"
+
+          # 4. Smoke: health reports the expected version, plus any exact-status checks.
+          url=$(jq -r '.smoke.url' <<<"$target"); field=$(jq -r '.smoke.version_field // "version"' <<<"$target")
+          case "$smoke_expect" in commit_sha) expect=${active_commit:-} ;; deploy_hash) expect=$hash ;; *) expect=$smoke_expect ;; esac
+          ok=1
+          code=$(curl -sS -o "$work/smoke.json" -w '%{http_code}' --max-time 20 --retry 3 --retry-delay "$SMOKE_RETRY_DELAY" --retry-all-errors "$url" || echo 000)
+          got=$(jq -r --arg f "$field" '.[$f] // empty' "$work/smoke.json" 2>/dev/null || true)
+          if [ "$code" != 200 ] || [ -z "$got" ] || { [ -n "$expect" ] && [ "$got" != "$expect" ]; }; then
+            echo "::error::smoke FAIL $name: http $code, $field='${got:-<none>}', expected '${expect:-<any>}'"; ok=0
+          else
+            echo "ok   $name smoke: $field=$got"
+          fi
+          while IFS= read -r chk; do
+            [ -n "$chk" ] || continue
+            chk_url=$(jq -r '.url' <<<"$chk"); chk_status=$(jq -r '.status' <<<"$chk")
+            st=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 --retry 3 --retry-delay "$SMOKE_RETRY_DELAY" --retry-all-errors "$chk_url" || echo 000)
+            if [ "$st" = "$chk_status" ]; then echo "ok   $name check $st $chk_url"; else echo "::error::smoke FAIL $name: $chk_url answered $st, expected $chk_status"; ok=0; fi
+          done < <(jq -c '.smoke.checks[]?' <<<"$target")
+
+          # 5. Roll back only this Worker (never the site deploy), and only when this run changed it.
+          if [ "$ok" = 0 ]; then
+            fail=1
+            if [ "$uploaded" = 1 ]; then
+              rollback "$name" "$acct" || true
+            else
+              echo "::error::$name: smoke failed on an unchanged bundle; nothing was uploaded, so nothing is rolled back"
+            fi
+          fi
+        done < <(jq -c '.[]' <<<"$TARGETS")
+        exit "$fail"

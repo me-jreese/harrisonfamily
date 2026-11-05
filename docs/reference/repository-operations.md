@@ -41,7 +41,7 @@ A push to `main` starts `io-kit-deploy.yml`. When the `io-kit-deploy.yml` run su
 
 ### Kit manifest: `ci.manifest.yaml`
 
-[`ci.manifest.yaml`](../../ci.manifest.yaml) is the source of the two rendered workflows and the composite actions, rendered by `@io-kit/ci` 0.1.3.
+[`ci.manifest.yaml`](../../ci.manifest.yaml) is the source of the two rendered workflows and the composite actions, rendered by `@io-kit/ci` 0.2.0.
 
 | Field | Value | Meaning |
 |---|---|---|
@@ -55,10 +55,11 @@ A push to `main` starts `io-kit-deploy.yml`. When the `io-kit-deploy.yml` run su
 | `deploy.aws_role_secret` | `AWS_DEPLOY_ROLE_TO_ASSUME` | Secret that holds the OIDC deploy role ARN. |
 | `deploy.region` | `us-west-2` | AWS region. |
 | `deploy.targets[0]` | `kind: s3_static`, `bucket: <site-bucket>`, `distribution: <distribution-id>`, `invalidate: ["/*"]`, and seven `exclude` patterns: `person/*.json`, `media/*`, `family/*`, `event/*`, `note/*`, `place/*`, `uploads/*` | Static site target. The sync never deletes or overwrites objects under the excluded patterns: the family data prefixes and member uploads. |
+| `deploy.targets[1]` | `kind: cloudflare-worker`, `name: hfy-chat-worker`, `dir: chat-worker`, `environment: production`, `account_id: <cloudflare-account-id>`, `zone_id: <cloudflare-zone-id>`, `routes_from: dist/deploy.json`, and a `smoke` block: `url: https://<site>/chat/v1/health`, `expected_version: commit_sha`, `version_var: CHAT_WORKER_VERSION`, and two `checks` (a signed-out `https://<site>/person/index.json` answers `401`, `https://<site>/` answers `200`) | The chat Worker (HFY-TSK-200). It uploads the committed `chat-worker/dist/` with `curl`, verifies the two routes read-only, smokes and rolls back the Worker alone. See [the `worker` job](#io-kit-deployyml) and [Deploy the chat Worker through CI](../how-to/deploy-the-chat-worker.md#deploy-through-ci-the-normal-path). |
 | `deploy.smoke` | `https://<site>/`, `https://<site>/family-login/` | URLs checked after a deploy. Both are HTML pages, and the second is the redirect page to `/auth/login`. |
 | `deploy.rollback.strategy` | `previous_artifact` | Rollback redeploys the release artifact of the previous successful deploy run. |
 
-The manifest has no `lambda` target (ruling P2-R41: API, auth and edge ship through app-stack change sets, so the manifest keeps the static site target only) and no `cloudfront_function` target. `@io-kit/ci` 0.1.3 supports that kind, but `HFYAppendIndex` is published by hand ([CloudFront Function](#cloudfront-function-scriptscloudfrontappend-indexjs)).
+The manifest has no `lambda` target (ruling P2-R41: API, auth and edge ship through app-stack change sets, so the manifest's AWS targets are the static site only; the one other target is the chat Worker's `cloudflare-worker`) and no `cloudfront_function` target. `@io-kit/ci` 0.2.0 supports that kind, but `HFYAppendIndex` is published by hand ([CloudFront Function](#cloudfront-function-scriptscloudfrontappend-indexjs)).
 
 ### `io-kit-ci.yml`
 
@@ -77,12 +78,13 @@ Workflow **io-kit deploy**, run name `io-kit deploy <target_environment or branc
 - `target_environment`: a label that appears only in the run name.
 - `smoke_url`: one `http://` or `https://` URL that replaces the manifest smoke URLs for that run, for a rollback drill without a manifest change. Any other value fails the smoke job, which starts the rollback.
 
-Top-level permissions: `contents: read`. Concurrency group `io-kit-deploy-<ref>`, which does not cancel an in-progress run. A new run waits for the running one, and GitHub keeps only the newest waiting run in the group.
+Top-level permissions: `contents: read`. Concurrency group `io-kit-deploy-<ref>`, which does not cancel an in-progress run. A new run waits for the running one, and GitHub keeps only the newest waiting run in the group. The `worker` job waits for the `production` environment's required reviewer on every run of this workflow, a site-only merge included, and the run stays in the waiting state until the job is approved or rejected, so the next run queues behind it. Once approved, an unchanged bundle makes no Cloudflare write.
 
 | Job | Needs | Extra permissions | Steps |
 |---|---|---|---|
 | `build` | | | Checkout; `build`; `package`, which uploads artifact `io-kit-release-<sha>` |
 | `deploy` | `build` | `id-token: write` | Checkout; download `io-kit-release-<sha>` into the checkout; OIDC with `AWS_DEPLOY_ROLE_TO_ASSUME`; `deploy-static` |
+| `worker` | `build` | | Runs in the GitHub environment `production`. Checkout; download `io-kit-release-<sha>`; `deploy-worker` with `secrets.CLOUDFLARE_API_TOKEN`. It has no AWS step and no other job needs it: it never gates, and is never part of, the site's deploy, invalidate, smoke or rollback. |
 | `invalidate` | `deploy` | `id-token: write` | Checkout; OIDC; `invalidate` (creates `/*` and waits for completion) |
 | `smoke` | `invalidate` | | Checkout; `smoke`, with `override-url` from the `smoke_url` input |
 | `rollback_on_smoke_fail` | `smoke` | `actions: read`, `id-token: write` | Runs only when `smoke` failed. Checkout; OIDC; `rollback` |
@@ -103,6 +105,7 @@ Each action lives in its own directory under [`.github/actions/io-kit-ci/`](../.
 | `invalidate` | For each target with a distribution: `create-invalidation` on the target's paths, then `aws cloudfront wait invalidation-completed`. It invalidates CloudFront only. |
 | `smoke` | Runs `curl` on each URL without following redirects (20 s timeout, 3 retries 5 s apart). A 2xx or 3xx status passes. Any other status, or no response, fails. Every URL is checked before the step fails. |
 | `rollback` | Uses `gh run list` with the job's `github.token` to find the most recent successful run of `io-kit-deploy.yml` on the same branch, deletes `11ty/`, and downloads that run's `io-kit-release-<sha>`. It then runs `deploy-static` and `invalidate`. It fails when no earlier successful run exists, as on the first run, or when that run's artifact has expired. |
+| `deploy-worker` | Cloudflare Workers with `curl` and `jq` only (no npm, no wrangler). It compares the SHA-256 of `chat-worker/dist/deploy.json` and a digest of the uploaded files with the tag and note of the Worker's active deployment, and on a match makes no Cloudflare write. Otherwise it uploads the bundle with the bindings, the vars, the compatibility date and the `v1` migration (sent only when the Worker's migration tag differs), keeps the existing Worker secrets, and injects the commit sha as the plain-text var `CHAT_WORKER_VERSION` that `GET /chat/v1/health` reports. It then reads the zone's Worker routes and fails on any difference from `deploy.json` (it never writes a route), smokes the health URL and the two status checks, and on a failure after an upload redeploys the previous deployment of this Worker through the deployments API. [`scripts/ci/test/deploy-worker.test.mjs`](../../scripts/ci/test/deploy-worker.test.mjs) runs this action against a mock Cloudflare API. |
 | `parity-report` | Runs the vendored, dependency-free `check.cjs` and writes the result to the step summary. If `parity.baseline` is set, it also runs `npx --no-install io-kit-parity baseline check`. With no baseline, it reports "no baseline" and passes. |
 | `secret-scan` | `trufflesecurity/trufflehog@v3.88.0` with `--results=verified,unknown` over the pushed or pull-request commit range. |
 
@@ -136,7 +139,7 @@ The reasoning is in [static files and versioned URLs](../explanation/edge-and-or
 Each rendered file starts with a header line of this form:
 
 ```
-# @io-kit/ci 0.1.3 rendered — do not edit; sha256:<hash of the rest of the file>
+# @io-kit/ci 0.2.0 rendered — do not edit; sha256:<hash of the rest of the file>
 ```
 
 Rendered files are not edited by hand. A pipeline change is made in `ci.manifest.yaml` and re-rendered with the `io-kit-ci render` command of `@io-kit/ci` ([Change the CI pipeline](../how-to/change-the-ci-pipeline.md)). The `parity` job reports a hand edit as `hand_edit` drift.
@@ -175,7 +178,7 @@ The role has no CloudFormation, IAM or Secrets Manager permissions, no CloudFron
 
 Workflow **post-deploy checks**, one job, `site-bucket-cors`, on `ubuntu-latest`, with permission `contents: read` and no AWS credentials. It is triggered by `workflow_run` when a run of the workflow named `io-kit deploy`, the rendered name of `io-kit-deploy.yml`, completes on `main`, the manifest's `branch`. The job runs only when that run's conclusion is `success`. It can also be started by hand. It checks out the commit the deploy run built, `github.event.workflow_run.head_sha`, and runs `bash scripts/infra/check-site-bucket-cors.sh`.
 
-It exists because the kit's smoke job cannot express the check. `deploy.smoke` in `@io-kit/ci` 0.1.3 takes URLs only, requests each with `GET`, and passes any `2xx` or `3xx`. A preflight needs `OPTIONS` with request headers, and one of its expected answers is `403`. A failed smoke job also redeploys the previous release, which cannot repair a bucket CORS rule. A failure here rolls nothing back. A `workflow_run` trigger names the workflow, not the file, so renaming the deploy workflow through `workflows.deploy` in `ci.manifest.yaml`, or changing its `branch`, needs the same change here: `scripts/infra/test/run.sh` fails until they agree.
+It exists because the kit's smoke job cannot express the check. `deploy.smoke` in `@io-kit/ci` 0.2.0 takes URLs only, requests each with `GET`, and passes any `2xx` or `3xx`. A preflight needs `OPTIONS` with request headers, and one of its expected answers is `403`. A failed smoke job also redeploys the previous release, which cannot repair a bucket CORS rule. A failure here rolls nothing back. A `workflow_run` trigger names the workflow, not the file, so renaming the deploy workflow through `workflows.deploy` in `ci.manifest.yaml`, or changing its `branch`, needs the same change here: `scripts/infra/test/run.sh` fails until they agree.
 
 No workflow uses `CODEARTIFACT_AUTH_TOKEN`; it is a local shell variable for the build scripts, the islands build and the MCP conformance gate. The rollback uses the automatic `github.token` with `actions: read`, not a repository secret. Where each value comes from, and who can read it, is in [private data and secrets](private-data-and-secrets.md).
 
