@@ -8,10 +8,12 @@ Standard library only. Run: python3 -m unittest discover gramps/tests/unit
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -254,7 +256,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(sorted(rules.RULES), sorted(["excluded-place", "media-held-mime", "birth-date-scrub",
                                                       "place-coordinates-rounded", "place-code-local", "note-newly-visible",
                                                       "text-gate-withheld", "tree-svg-frozen", "merged-person-stub",
-                                                      "media-held-binary", "held-object", "media-location-stripped"]))
+                                                      "media-held-binary", "held-object", "media-location-stripped",
+                                                      "media-baseline-unhydrated"]))
 
     def test_excluded_place(self):
         legacy, shadow = build_site(), build_site()
@@ -781,6 +784,712 @@ class MediaLocationStripped(unittest.TestCase):
         self.assertIn("media-location-stripped", text)
         self.assertIn("media sent without their location: allowed 1, media explained 1", text)
         self.assertNotIn(hid("O9001"), text)
+
+
+# ---- HFY-TSK-376: a legacy record captured while the file was online-only ---------------------------------------------------
+
+EMPTY_HASH = hashlib.sha256(b"").hexdigest()
+REAL_HASH = "ab12" * 16
+UNHYDRATED = {"empty": dict(checksum=EMPTY_HASH, size=0, missing=False), "null": dict(checksum=None, size=None, missing=True)}
+HYDRATED = dict(checksum=REAL_HASH, size=2048, missing=False)
+SCAN_PERSON = "person/I9002.json"
+
+
+def with_users(site):
+    """Person one shows O9001 as primaryPhoto and in mediaGallery[], person two shows O9002 the same way, and media/index.json carries
+    the same fields for both."""
+    entries = {}
+    for gid, key in (("O9001", MEDIA_PHOTO), ("O9002", MEDIA_SCAN)):
+        media = load(site, key)
+        entries[gid] = {k: media[k] for k in PHOTO_FIELDS}
+
+    def index(doc):
+        doc[:] = [dict(entries[e["grampsId"]]) if e["grampsId"] in entries else e for e in doc]
+    edit(site, "media/index.json", index)
+    for key, gid in ((PERSON1, "O9001"), (SCAN_PERSON, "O9002")):
+        edit(site, key, lambda d: d.update(primaryPhoto=dict(entries[gid]), mediaGallery=[dict(entries[gid])]))
+
+
+def set_media(site, gid, fields, places=("media", "index", "person")):
+    """Set ``fields`` on the media file, its index entry and the person fields of O9001 or O9002 (``places`` limits where)."""
+    key, person = (MEDIA_PHOTO, PERSON1) if gid == "O9001" else (MEDIA_SCAN, SCAN_PERSON)
+    if "media" in places:
+        edit(site, key, lambda d: d.update(fields))
+    if "index" in places:
+        edit(site, "media/index.json", lambda d: [e.update(fields) for e in d if e["grampsId"] == gid])
+    if "person" in places:
+        edit(site, person, lambda d: (d["primaryPhoto"].update(fields), d["mediaGallery"][0].update(fields)))
+
+
+def pair_with_unhydrated(variants=("empty",), shadow_fields=None, legacy_fields=None):
+    """Legacy: the first media (O9001, then O9002) are unhydrated captures of the given variants. Shadow: the real checksum and size."""
+    legacy, shadow = build_site(), build_site()
+    with_users(legacy)
+    with_users(shadow)
+    for gid, variant in zip(("O9001", "O9002"), variants):
+        set_media(legacy, gid, dict(UNHYDRATED[variant], **(legacy_fields or {})))
+        set_media(shadow, gid, dict(HYDRATED, **(shadow_fields or {})))
+    return legacy, shadow
+
+
+OPT = "--expect-baseline-unhydrated"
+RULE = "media-baseline-unhydrated"
+
+
+class MediaBaselineUnhydrated(unittest.TestCase):
+    """HFY-TSK-376: the legacy export was taken while a photo was a Dropbox online-only placeholder. Explained only up to the count."""
+
+    def test_the_empty_hash_is_the_sha256_of_the_empty_file(self):
+        self.assertEqual(compare_mod.EMPTY_SHA256, hashlib.sha256(b"").hexdigest())
+
+    def test_each_variant_is_explained_on_the_file_the_index_entry_and_the_person_fields(self):
+        for variant in ("empty", "null"):
+            legacy, shadow = pair_with_unhydrated((variant,))
+            code, doc = report_with(legacy, shadow, OPT, "1")
+            self.assertEqual((code, doc["unexplained"], doc["verdict"]), (10, 0, "explained"), variant)
+            row = doc["rules"][RULE]
+            self.assertEqual((row["changed"], row["only_in_legacy"], row["only_in_render"]), (3, 0, 0), variant)
+            self.assertEqual(row["areas"], {"person": 1, "media": 1, "index": 1}, variant)
+            self.assertEqual(list(doc["rules"]), [RULE], variant)
+            self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1}, variant)
+            self.assertNotIn("stripped", doc)
+            self.assertNotIn("holds", doc)
+
+    def test_both_variants_at_once_with_a_count_of_two(self):
+        legacy, shadow = pair_with_unhydrated(("empty", "null"))
+        code, doc = report_with(legacy, shadow, OPT, "2")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        row = doc["rules"][RULE]
+        self.assertEqual((row["changed"], row["areas"]), (5, {"person": 2, "media": 2, "index": 1}))
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 2, "explained": 2})
+        code, doc = report_with(legacy, shadow, OPT, "9")
+        self.assertEqual((code, doc["baseline_unhydrated"]), (10, {"allowed": 9, "explained": 2}), "an allowance above the need is only an allowance")
+
+    def test_without_the_option_nothing_is_explained(self):
+        for variant, fields in (("empty", {"checksum", "size"}), ("null", {"checksum", "size", "missing"})):
+            legacy, shadow = pair_with_unhydrated((variant,))
+            code, doc = report_with(legacy, shadow)
+            self.assertEqual((code, doc["verdict"]), (20, "unexplained"), variant)
+            self.assertNotIn("baseline_unhydrated", doc)
+            self.assertNotIn(RULE, doc["rules"])
+            self.assertEqual(set(doc["unexplained_by_field"]), fields, variant)
+            self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 1}, variant)
+
+    def test_more_media_than_the_count_stay_unexplained(self):
+        legacy, shadow = pair_with_unhydrated(("empty", "null"))
+        first = sorted([MEDIA_PHOTO, MEDIA_SCAN])[0]
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1}, "the index file still holds an unexplained entry")
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 1})
+        again = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual(again, (code, doc), "the same media are taken every time")
+        # the media taken is the first handle in sorted key order: the other one is the unexplained one
+        self.assertIn("checksum", doc["unexplained_by_field"])
+        self.assertEqual("missing" in doc["unexplained_by_field"], first == MEDIA_PHOTO, "only the null capture (O9002) differs in missing")
+        code, doc = report_with(legacy, shadow, OPT, "0")
+        self.assertEqual((code, doc["baseline_unhydrated"]), (20, {"allowed": 0, "explained": 0}))
+        self.assertNotIn(RULE, doc["rules"])
+
+    def test_a_legacy_side_that_is_not_an_unhydrated_capture_is_not_explained(self):
+        for label, legacy_fields in (
+                ("a real different checksum", dict(checksum="c" * 64, size=12, missing=False)),
+                ("the empty hash with a size", dict(checksum=EMPTY_HASH, size=12, missing=False)),
+                ("the empty hash and size 0 but missing", dict(checksum=EMPTY_HASH, size=0, missing=True)),
+                ("the empty hash with a null size", dict(checksum=EMPTY_HASH, size=None, missing=False)),
+                ("the empty hash with a size of 0.0", dict(checksum=EMPTY_HASH, size=0.0, missing=False)),
+                ("the empty hash with a size of false", dict(checksum=EMPTY_HASH, size=False, missing=False)),
+                ("the empty hash, size 0, missing null", dict(checksum=EMPTY_HASH, size=0, missing=None)),
+                ("the empty hash upper-cased", dict(checksum=EMPTY_HASH.upper(), size=0, missing=False)),
+                ("a null checksum with a size", dict(checksum=None, size=0, missing=True)),
+                ("a null checksum and size, not missing", dict(checksum=None, size=None, missing=False)),
+                ("a blank checksum, null size, missing", dict(checksum="", size=None, missing=True)),
+                ("a checksum, null size, missing", dict(checksum="d" * 64, size=None, missing=True))):
+            legacy, shadow = pair_with_unhydrated(("empty",), legacy_fields=None)
+            set_media(legacy, "O9001", legacy_fields)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+            self.assertNotIn(RULE, doc["rules"], label)
+            self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 1}, label)
+
+    def test_a_shadow_side_that_is_not_hydrated_is_not_explained(self):
+        for variant in ("empty", "null"):
+            for label, shadow_fields in (
+                    ("the shadow also holds the empty hash", dict(checksum=EMPTY_HASH)),
+                    ("a shadow size of 0", dict(size=0)),
+                    ("a negative shadow size", dict(size=-5)),
+                    ("a shadow that is missing", dict(missing=True)),
+                    ("a shadow missing flag that is null", dict(missing=None)),
+                    ("a null shadow checksum", dict(checksum=None)),
+                    ("a null shadow size", dict(size=None)),
+                    ("a blank shadow checksum", dict(checksum="")),
+                    ("a 63 digit checksum", dict(checksum="a" * 63)),
+                    ("a 65 digit checksum", dict(checksum="a" * 65)),
+                    ("a checksum that is not hex", dict(checksum="g" * 64)),
+                    ("an upper-case checksum", dict(checksum="A" * 64)),
+                    ("a checksum with a trailing newline", dict(checksum="a" * 64 + "\n")),
+                    ("a size that is a float", dict(size=2048.0)),
+                    ("a size that is true", dict(size=True)),
+                    ("a size that is text", dict(size="2048"))):
+                legacy, shadow = pair_with_unhydrated((variant,), shadow_fields=shadow_fields)
+                code, doc = report_with(legacy, shadow, OPT, "5")
+                self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), (variant, label))
+                self.assertNotIn(RULE, doc["rules"], (variant, label))
+
+    def test_a_media_that_differs_in_another_field_is_not_explained(self):
+        changes = (
+            ("title", lambda d: d.update(title="Another Title")),
+            ("title falling back to the Gramps id", lambda d: d.update(title="O9001")),
+            ("s3Key", lambda d: d.update(s3Key="media/other.png")),
+            ("mime", lambda d: d.update(mime="image/png")),
+            ("grampsId", lambda d: d.update(grampsId="O9777")),
+            ("regions", lambda d: d.update(regions=[{"rect": [1, 2, 3, 4]}])),
+            ("an added field", lambda d: d.update(extra="x")),
+            ("a removed field", lambda d: d.pop("regions")))
+        for label, change in changes:
+            legacy, shadow = pair_with_unhydrated(("empty",))
+            edit(shadow, MEDIA_PHOTO, change)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+            self.assertNotIn(RULE, doc["rules"], label)
+            self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 1},
+                             label + ": the index entry and the person fields embed a media the rule did not take")
+        legacy, shadow = pair_with_unhydrated(("null",))
+        edit(shadow, MEDIA_PHOTO, lambda d: d.update(mime="image/png"))
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0))
+
+    def test_another_handle_is_not_the_same_media(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        edit(shadow, MEDIA_PHOTO, lambda d: d.update(handle=hid("O9999")))
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0))
+        self.assertIn("handle", doc["unexplained_by_field"])
+
+    def test_an_embedded_entry_that_differs_in_another_field_is_not_explained(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        edit(shadow, PERSON1, lambda d: d["primaryPhoto"].update(s3Key="media/other.png"))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["unexplained_by_area"], {"person": 1})
+        self.assertEqual(doc["unexplained_by_field"], {"s3Key": 1, "checksum": 1, "size": 1},
+                         "the entry is not the pattern, so its checksum and size stay unexplained too; the gallery entry is the pattern")
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "index": 1})
+        # the gallery entry alone is fine, the primary photo alone is fine
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        edit(shadow, PERSON1, lambda d: d["mediaGallery"][0].update(handle=hid("O9999")))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"person": 1}))
+
+    def test_an_index_entry_that_differs_in_another_field_is_not_explained(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        edit(shadow, "media/index.json", lambda d: [e.update(s3Key="media/other.png") for e in d if e["grampsId"] == "O9001"])
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"index": 1}))
+        self.assertEqual(doc["unexplained_by_field"], {"s3Key": 1, "checksum": 1, "size": 1})
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1})
+
+    def test_a_person_file_with_another_unexplained_difference_is_unexplained_as_a_whole(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        edit(shadow, PERSON1, lambda d: d.update(displayName="Test Person Uno"))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"], doc["unexplained_by_field"]), (20, {"person": 1}, {"displayName": 1}))
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "index": 1})
+
+    def test_an_embedded_entry_of_a_media_whose_file_is_not_explained_is_not_explained(self):
+        # O9002's media file is the same on both sides, but a person field still holds the empty capture: no media file, no explanation
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        set_media(legacy, "O9002", UNHYDRATED["empty"], places=("person",))
+        set_media(shadow, "O9002", HYDRATED, places=("person",))
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, doc["baseline_unhydrated"]), (20, {"allowed": 5, "explained": 1}))
+        self.assertEqual(doc["unexplained_by_area"], {"person": 1})
+        # and the index entry alone
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        set_media(legacy, "O9002", UNHYDRATED["empty"], places=("index",))
+        set_media(shadow, "O9002", HYDRATED, places=("index",))
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"index": 1}))
+
+    def test_a_second_gallery_entry_of_the_same_media_is_explained_too(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        for site, fields in ((legacy, UNHYDRATED["empty"]), (shadow, HYDRATED)):
+            edit(site, PERSON1, lambda d: d["mediaGallery"].append(dict(d["mediaGallery"][0])))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+
+    def test_a_pattern_on_a_file_that_is_not_a_media_object_is_not_explained(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        edit(legacy, PLACE_CITY, lambda d: d.update(handle=load(legacy, MEDIA_PHOTO)["handle"], **UNHYDRATED["empty"]))
+        edit(shadow, PLACE_CITY, lambda d: d.update(handle=load(legacy, MEDIA_PHOTO)["handle"], **HYDRATED))
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"place": 1}))
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1, "index": 1})
+
+    def test_a_held_binary_and_a_stripped_pair_keep_their_own_rules(self):
+        legacy, shadow = pair_with_held_photo()
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, list(doc["rules"]), doc["baseline_unhydrated"]), (10, ["media-held-binary"], {"allowed": 5, "explained": 0}))
+        legacy, shadow = pair_with_stripped_photo()
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual((code, doc["baseline_unhydrated"], set(doc["unexplained_by_field"])), (20, {"allowed": 5, "explained": 0}, {"checksum"}))
+
+    # ---- precedence and the other allowances ------------------------------------------------------------------------------
+
+    def test_a_media_that_media_location_stripped_explains_does_not_use_this_allowance(self):
+        # an empty capture also fits the stripped pattern (two checksums, two sizes, neither missing): the stripped rule wins
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", OPT, "1")
+        self.assertEqual(code, 10)
+        self.assertEqual(list(doc["rules"]), ["media-location-stripped"])
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 0}, "the allowance is not consumed")
+        self.assertEqual(doc["rules"]["media-location-stripped"]["areas"], {"person": 1, "media": 1, "index": 1})
+
+    def test_the_allowance_not_consumed_by_a_stripped_media_goes_to_the_next_one(self):
+        # O9001 (empty capture) is taken by the stripped rule, O9002 (null capture, which cannot be a stripped pair) uses this allowance
+        legacy, shadow = pair_with_unhydrated(("empty", "null"))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["rules"]["media-location-stripped"]["areas"], {"person": 1, "media": 1, "index": 1})
+        self.assertEqual(doc["rules"][RULE]["areas"], {"person": 1, "media": 1, "index": 1})
+
+    def test_with_a_zero_stripped_allowance_the_stripped_rule_takes_nothing(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "0", OPT, "1")
+        self.assertEqual((code, list(doc["rules"])), (10, [RULE]))
+        self.assertEqual((doc["stripped"], doc["baseline_unhydrated"]), ({"allowed": 0, "explained": 0}, {"allowed": 1, "explained": 1}))
+
+    def sidecar_with(self, handles):
+        import sqlite3
+        folder = tempfile.mkdtemp(prefix="hfy-parity-sidecar-")
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "state.sqlite")
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        con.execute("INSERT INTO meta VALUES ('media_location_stripped', ?)", (json.dumps({h: ["a" * 64, "b" * 64, "c" * 32] for h in handles}),))
+        con.commit()
+        con.close()
+        return path
+
+    def test_a_stripped_media_and_an_unhydrated_one_each_keep_their_own_rule_in_one_run(self):
+        # O9002 is a real stripped copy (a real legacy checksum, another real shadow checksum); O9001 is an empty capture
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        set_media(legacy, "O9002", dict(checksum="0" * 64, size=12, missing=False))
+        set_media(shadow, "O9002", dict(checksum="c" * 64, size=12, missing=False))
+        sidecar = self.sidecar_with([load(legacy, MEDIA_SCAN)["handle"]])
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", "--stripped-sidecar", sidecar, OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(sorted(doc["rules"]), sorted(["media-location-stripped", RULE]))
+        for rule in ("media-location-stripped", RULE):
+            self.assertEqual(doc["rules"][rule]["areas"], {"person": 1, "media": 1, "index": 1}, rule)
+        # each allowance is its own: a stripped count of 0 leaves the stripped media unexplained and does not hand it to this rule
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "0", OPT, "2")
+        self.assertEqual((code, doc["baseline_unhydrated"]), (20, {"allowed": 2, "explained": 1}))
+        self.assertEqual(doc["rules"][RULE]["areas"], {"person": 1, "media": 1})
+
+    def test_with_the_held_object_allowance_in_the_same_run(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        add_held_object(legacy, "person", 0)
+        add_held_object(legacy, "media", 1)
+        code, doc = report_with(legacy, shadow, "--expect-holds", "2", "--expect-stripped", "0", OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual(doc["holds"], {"allowed": 2, "explained": 2})
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["rules"]["held-object"]["only_in_legacy"], 2)
+        self.assertEqual(doc["rules"][RULE]["only_in_legacy"], 0)
+        self.assertEqual(doc["classes"]["changed"]["explained"], 5, "the media file, the person file and the three index files (media/index.json is shared by both rules)")
+        self.assertEqual(doc["rules"]["held-object"]["areas"]["index"], 3)
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1, "index": 1})
+        # without the media allowance the held objects are still explained and the capture is not
+        code, doc = report_with(legacy, shadow, "--expect-holds", "2")
+        self.assertEqual((code, doc["holds"]), (20, {"allowed": 2, "explained": 2}))
+        self.assertNotIn(RULE, doc["rules"])
+
+    # ---- the option ------------------------------------------------------------------------------------------------------
+
+    def test_a_bad_count_is_a_usage_error_that_never_echoes_it(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        for bad in ("-1", "-0", "abc", "1.5", "3.0", "1e3", "+1", "0x10", " 1", "1 ", "٣", "secret-count-7", "", "9" * 5000):
+            code, cap = run_cli(legacy, shadow, [OPT, bad])
+            self.assertEqual(code, 64, repr(bad)[:20])
+            self.assertEqual(cap.out.getvalue(), "")
+            self.assertIn("usage_error", cap.err.getvalue())
+            self.assertNotIn("secret-count-7", cap.out.getvalue() + cap.err.getvalue())
+            self.assertNotIn("1.5", cap.err.getvalue())
+            self.assertNotIn("9999", cap.err.getvalue())
+            self.assertEqual(cap.logs, [])
+        code, cap = run_cli(legacy, shadow, ["--expect-baseline", "1"])
+        self.assertEqual(code, 64, "an abbreviation of the option is not accepted")
+
+    def test_a_missing_value_is_a_usage_error_and_nothing_is_read_first(self):
+        cap = Capture()
+        self.assertEqual(cli.main(["--legacy", "a", "--shadow", "b", OPT], out=cap.out, err=cap.err), 64)
+        runner = mock.Mock()
+        cap = Capture()
+        code = cli.main(["--legacy", "a", "--shadow", PREFIX, OPT, "-3"], run=runner, out=cap.out, err=cap.err)
+        self.assertEqual(code, 64)
+        runner.assert_not_called()
+
+    def test_a_plain_count_is_accepted_in_both_spellings_with_leading_zeros_and_when_large(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        for args in ([OPT, "1"], [OPT + "=1"], [OPT, "001"], [OPT, "1" + "0" * 30]):
+            code, doc = report_with(legacy, shadow, *args)
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (10, 1), args)
+
+    def test_compare_refuses_a_negative_or_non_integer_allowance(self):
+        site = build_site()
+        for bad in (-1, 1.5, "2", True):
+            with self.assertRaises(ValueError):
+                compare_mod.compare(site, copy.deepcopy(site), rules.load_policy(), expect_baseline_unhydrated=bad)
+
+    # ---- the report ------------------------------------------------------------------------------------------------------
+
+    def test_the_text_report_shows_the_rule_and_the_allowance_and_no_handle_or_checksum(self):
+        legacy, shadow = pair_with_unhydrated(("empty", "null"))
+        code, cap = run_cli(legacy, shadow, [OPT, "2"])
+        text = cap.out.getvalue()
+        self.assertEqual(code, 10)
+        self.assertIn(RULE, text)
+        self.assertIn("media whose baseline was captured before the file was available: allowed 2, media explained 2", text)
+        for secret in (hid("O9001"), hid("O9002"), EMPTY_HASH, REAL_HASH, "Test Photo", "I9001"):
+            self.assertNotIn(secret, text)
+        self.assertEqual(cap.err.getvalue(), "")
+
+    def test_the_line_is_absent_without_the_option(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        code, cap = run_cli(legacy, shadow)
+        self.assertNotIn("captured before the file was available", cap.out.getvalue())
+
+    def test_the_json_carries_the_rule_and_a_closed_vocabulary(self):
+        legacy, shadow = pair_with_unhydrated(("empty", "null"))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertLessEqual(set(doc["rules"]), set(rules.RULES))
+        self.assertIn(RULE, doc["rules"])
+        self.assertEqual(set(doc["baseline_unhydrated"]), {"allowed", "explained"})
+        self.assertTrue(all(isinstance(v, int) for v in doc["baseline_unhydrated"].values()))
+        self.assertLessEqual(set(doc["unexplained_by_field"]), compare_mod.FIELD_VOCABULARY | set(compare_mod.CODE_WORDS))
+
+    def test_no_key_id_name_value_handle_or_checksum_appears_in_any_output(self):
+        pairs = [pair_with_unhydrated(("empty", "null")),
+                 pair_with_unhydrated(("empty",), shadow_fields=dict(size=0)),                       # a near miss
+                 pair_with_unhydrated(("empty",), shadow_fields=dict(checksum=EMPTY_HASH))]
+        for legacy, shadow in pairs:
+            secrets = secrets_of(legacy, shadow)
+            for extra in ([], ["--json"], [OPT, "1"], [OPT, "1", "--json"], [OPT, "9"], [OPT, "9", "--json"],
+                          [OPT, "1", "--expect-stripped", "1", "--expect-holds", "1"]):
+                code, cap = run_cli(legacy, shadow, extra)
+                text = cap.everything.replace(cap.tmp, "<tmp>")
+                for secret in secrets:
+                    self.assertNotIn(secret, text, "%r leaked (exit %s, %s)" % (secret[:6], code, extra))
+                self.assertEqual(cap.logs, [])
+
+    def test_a_failure_with_the_option_prints_a_code_word_only(self):
+        site = build_site()
+        with mock.patch.object(compare_mod, "compare", side_effect=ValueError("I9001 Test Person One")):
+            code, cap = run_cli(site, copy.deepcopy(site), [OPT, "3"])
+        self.assertEqual((code, cap.err.getvalue()), (70, "hfy-parity: internal_error (ValueError)\n"))
+
+    def test_the_command_line_entry_point_takes_the_option(self):
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, site in (("legacy", legacy), ("shadow", shadow)):
+                os.makedirs(os.path.join(tmp, name))
+                write_tree(os.path.join(tmp, name), site)
+            base = [sys.executable, "-I", BIN, "--legacy", os.path.join(tmp, "legacy"), "--shadow", os.path.join(tmp, "shadow")]
+            without = subprocess.run(base, capture_output=True, text=True)
+            with_option = subprocess.run(base + [OPT, "1"], capture_output=True, text=True)
+            bad = subprocess.run(base + [OPT, "-1"], capture_output=True, text=True)
+        self.assertEqual((without.returncode, with_option.returncode, bad.returncode), (20, 10, 64))
+        self.assertIn(RULE, with_option.stdout)
+        self.assertEqual(with_option.stderr, "")
+
+
+# ---- HFY-TSK-376 (follow-up): the cloud stores every JPEG as .jpg, the legacy export kept the file's own suffix ---------------
+
+def with_person_index_photos(site):
+    """person/index.json carries each person's primaryPhoto as a bare s3Key text (as the renderer's search manifest does)."""
+    keys = {"I9001": load(site, PERSON1)["primaryPhoto"]["s3Key"], "I9002": load(site, SCAN_PERSON)["primaryPhoto"]["s3Key"]}
+    edit(site, "person/index.json", lambda d: [e.update(primaryPhoto=keys[e["grampsId"]]) for e in d["people"]])
+
+
+def respell(site, gid, key):
+    """Set the s3Key of O9001 or O9002 on the media file, the index entry, the person fields and the person/index.json text."""
+    set_media(site, gid, {"s3Key": key})
+    person_gid = "I9001" if gid == "O9001" else "I9002"
+    edit(site, "person/index.json", lambda d: [e.update(primaryPhoto=key) for e in d["people"] if e["grampsId"] == person_gid])
+
+
+def pair_with_jpeg_spelling(legacy_suffix=".jpeg", variants=("empty",), second_spelling=False):
+    """Legacy: O9001 (and O9002 with ``second_spelling``) is an empty capture whose s3Key ends in ``legacy_suffix``; shadow: .jpg."""
+    legacy, shadow = pair_with_unhydrated(variants)
+    for site in (legacy, shadow):
+        with_person_index_photos(site)
+    gids = ("O9001", "O9002") if second_spelling else ("O9001",)
+    for gid in gids:
+        respell(legacy, gid, "media/%s%s" % (hid(gid), legacy_suffix))
+    return legacy, shadow
+
+
+class MediaBaselineUnhydratedJpegSpelling(unittest.TestCase):
+    """The cloud stores every image/jpeg as media/<handle>.jpg (api/src/sync/media.js MEDIA_TYPES); the legacy export kept the file's suffix."""
+
+    def test_the_cloud_suffix_is_the_one_the_code_uses(self):
+        from hfygramps.addon import mediafile
+        from hfygramps.render.transform import derive_media_extension
+        with open(os.path.join(os.path.dirname(GRAMPS), "api", "src", "sync", "media.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        match = re.search(r"MEDIA_TYPES = Object\.freeze\(\{(.*?)\}\)", js, re.S)
+        self.assertIsNotNone(match)
+        cloud = dict(re.findall(r'"([a-z/]+)":\s*"(\.[a-z]+)"', match.group(1)))
+        self.assertEqual(cloud["image/jpeg"], compare_mod.CLOUD_JPEG_SUFFIX)
+        self.assertEqual(mediafile.EXTENSIONS["image/jpeg"], compare_mod.CLOUD_JPEG_SUFFIX)
+        self.assertEqual(compare_mod.JPEG_MIME, "image/jpeg")
+        # the legacy ETL keeps the file's own lower-cased suffix: that is where .jpeg comes from
+        self.assertEqual(derive_media_extension("/x/Photo.JPEG", "image/jpeg"), ".jpeg")
+        self.assertEqual(sorted(compare_mod.LEGACY_JPEG_SUFFIXES), [".jpeg"])
+
+    def test_a_jpeg_spelling_is_explained_on_all_five_places_and_counts_once(self):
+        for suffix in (".jpeg", ".JPEG", ".Jpeg"):
+            for variant in ("empty", "null"):
+                legacy, shadow = pair_with_jpeg_spelling(suffix, (variant,))
+                code, doc = report_with(legacy, shadow, OPT, "1")
+                self.assertEqual((code, doc["unexplained"], doc["verdict"]), (10, 0, "explained"), (suffix, variant))
+                row = doc["rules"][RULE]
+                self.assertEqual((row["changed"], row["areas"]), (4, {"person": 1, "media": 1, "index": 2}), (suffix, variant))
+                self.assertEqual(list(doc["rules"]), [RULE])
+                self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1}, "one media uses one unit of the allowance")
+
+    def test_without_the_option_or_beyond_the_count_the_spelling_stays_unexplained(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        code, doc = report_with(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 2})
+        self.assertEqual(set(doc["unexplained_by_field"]), {"checksum", "size", "s3Key", "primaryPhoto"})
+        code, doc = report_with(legacy, shadow, OPT, "0")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"media": 1, "person": 1, "index": 2}))
+        # two such media, one unit: the media after the first stay unexplained, person/index.json included
+        legacy, shadow = pair_with_jpeg_spelling(variants=("empty", "empty"), second_spelling=True)
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1})
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 2})
+        code, doc = report_with(legacy, shadow, OPT, "2")
+        self.assertEqual((code, doc["unexplained"], doc["baseline_unhydrated"]), (10, 0, {"allowed": 2, "explained": 2}))
+
+    def test_a_spelling_that_is_not_jpeg_to_jpg_on_the_same_stem_is_not_explained(self):
+        h = hid("O9001")
+        near_misses = (
+            ("another stem", "media/%s.jpeg" % hid("O9999")),
+            ("a stem with a suffix", "media/%sx.jpeg" % h),
+            ("a path", "media/sub/%s.jpeg" % h),
+            ("another folder", "uploads/%s.jpeg" % h),
+            ("another case of the folder", "Media/%s.jpeg" % h),
+            ("png to jpg", "media/%s.png" % h),
+            ("gif to jpg", "media/%s.gif" % h),
+            ("tif to jpg", "media/%s.tif" % h),
+            ("jpe", "media/%s.jpe" % h),
+            ("jfif", "media/%s.jfif" % h),
+            ("a double suffix", "media/%s.jpeg.jpg" % h),
+            ("a space", "media/%s.jpeg " % h),
+            ("no suffix", "media/%s" % h),
+            ("the same key", "media/%s.jpg" % h),
+            ("text that is not a key", 5))
+        for label, legacy_key in near_misses:
+            legacy, shadow = pair_with_jpeg_spelling()
+            respell(legacy, "O9001", legacy_key)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            if label == "the same key":
+                self.assertEqual((code, doc["unexplained"]), (10, 0), label)       # no spelling difference at all: the plain pattern
+                continue
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+            self.assertNotIn(RULE, doc["rules"], label)
+            self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 2}, label)
+
+    def test_the_reverse_spelling_and_another_shadow_suffix_are_not_explained(self):
+        for label, legacy_suffix, shadow_suffix in (("jpg to jpeg", ".jpg", ".jpeg"), ("jpeg to JPG", ".jpeg", ".JPG"),
+                                                    ("jpeg to jpeg", ".jpeg", ".jpeg"), ("jpeg to png", ".jpeg", ".png")):
+            legacy, shadow = pair_with_jpeg_spelling(legacy_suffix)
+            respell(shadow, "O9001", "media/%s%s" % (hid("O9001"), shadow_suffix))
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            if legacy_suffix == shadow_suffix:
+                # the same key on both sides: nothing about the key, the plain pattern applies
+                self.assertEqual((code, doc["unexplained"]), (10, 0), label)
+                continue
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+
+    def test_the_spelling_needs_a_jpeg_mime_and_every_other_field_equal(self):
+        for label, change in (
+                ("a png mime", lambda d: d.update(mime="image/png")),
+                ("no mime", lambda d: d.pop("mime")),
+                ("a null mime", lambda d: d.update(mime=None)),
+                ("an upper-case mime", lambda d: d.update(mime="IMAGE/JPEG"))):
+            legacy, shadow = pair_with_jpeg_spelling()
+            edit(legacy, MEDIA_PHOTO, change)
+            edit(shadow, MEDIA_PHOTO, change)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), label)
+            self.assertNotIn(RULE, doc["rules"], label)
+        for label, field_change in (("title", lambda d: d.update(title="Another Title")), ("regions", lambda d: d.update(regions=[{"rect": [1]}])),
+                                    ("grampsId", lambda d: d.update(grampsId="O9777")), ("an added field", lambda d: d.update(extra=1))):
+            for spelled in (True, False):          # the spelling difference present, and the same key (.jpeg both sides) with the field differing
+                legacy, shadow = pair_with_jpeg_spelling()
+                if not spelled:
+                    respell(shadow, "O9001", "media/%s.jpeg" % hid("O9001"))
+                edit(shadow, MEDIA_PHOTO, field_change)
+                code, doc = report_with(legacy, shadow, OPT, "5")
+                self.assertEqual((code, doc["baseline_unhydrated"]["explained"]), (20, 0), (label, spelled))
+                self.assertNotIn(RULE, doc["rules"], (label, spelled))
+
+    def test_an_entry_that_spells_the_key_otherwise_than_its_media_file_is_not_explained(self):
+        # the media file has the pair .jpeg / .jpg, an embedded entry has the pair .JPEG / .jpg, or no spelling difference at all
+        for place in ("index", "person"):
+            for entry_legacy_key in ("media/%s.JPEG" % hid("O9001"), "media/%s.jpg" % hid("O9001")):
+                legacy, shadow = pair_with_jpeg_spelling()
+                set_media(legacy, "O9001", {"s3Key": entry_legacy_key}, places=(place,))
+                code, doc = report_with(legacy, shadow, OPT, "1")
+                self.assertEqual(code, 20, (place, entry_legacy_key))
+                self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 1})
+                bad_area = "index" if place == "index" else "person"
+                self.assertIn(bad_area, doc["unexplained_by_area"], (place, entry_legacy_key))
+                self.assertIn("checksum", doc["unexplained_by_field"], "the entry is not the pattern, so its checksum stays unexplained too")
+        # an entry whose key differs while the media file's key is the same on both sides
+        legacy, shadow = pair_with_unhydrated(("empty",))
+        for site in (legacy, shadow):
+            with_person_index_photos(site)
+        set_media(legacy, "O9001", {"s3Key": "media/%s.jpeg" % hid("O9001")}, places=("person",))
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"person": 1}))
+
+    # ---- person/index.json -------------------------------------------------------------------------------------------------
+
+    def test_the_person_index_entry_is_explained_only_with_an_explained_media(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual(doc["rules"][RULE]["areas"]["index"], 2, "media/index.json and person/index.json")
+        # the media is not explained (no option): the person index entry is not either
+        code, doc = report_with(legacy, shadow)
+        self.assertEqual(doc["unexplained_by_field"].get("primaryPhoto"), 1)
+
+    def test_a_person_index_entry_of_another_persons_photo_is_not_explained(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        # person two's photo (O9002) is not respelled; person two's index text claims O9001's pair
+        for site, key in ((legacy, "media/%s.jpeg" % hid("O9001")), (shadow, "media/%s.jpg" % hid("O9001"))):
+            edit(site, "person/index.json", lambda d: [e.update(primaryPhoto=key) for e in d["people"] if e["grampsId"] == "I9002"])
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_field"], {"primaryPhoto": 1})
+        self.assertEqual(doc["unexplained_by_area"], {"index": 1})
+
+    def test_a_person_index_text_that_is_not_the_pair_of_the_media_is_not_explained(self):
+        h = hid("O9001")
+        for label, legacy_text, shadow_text in (
+                ("another stem", "media/%s.jpeg" % hid("O9999"), "media/%s.jpg" % hid("O9999")),
+                ("png to jpg", "media/%s.png" % h, "media/%s.jpg" % h),
+                ("jpeg to png", "media/%s.jpeg" % h, "media/%s.png" % h),
+                ("JPEG to jpg (the media has jpeg)", "media/%s.JPEG" % h, "media/%s.jpg" % h),
+                ("a null text", None, "media/%s.jpg" % h),
+                ("a text that became null", "media/%s.jpeg" % h, None)):
+            legacy, shadow = pair_with_jpeg_spelling()
+            edit(legacy, "person/index.json", lambda d: [e.update(primaryPhoto=legacy_text) for e in d["people"] if e["grampsId"] == "I9001"])
+            edit(shadow, "person/index.json", lambda d: [e.update(primaryPhoto=shadow_text) for e in d["people"] if e["grampsId"] == "I9001"])
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual((code, doc["unexplained_by_area"]), (20, {"index": 1}), label)
+            self.assertEqual(doc["unexplained_by_field"], {"primaryPhoto": 1}, label)
+
+    def test_a_person_index_entry_with_any_other_difference_is_unexplained(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        edit(shadow, "person/index.json", lambda d: [e.update(displayName="Test Person Uno") for e in d["people"] if e["grampsId"] == "I9001"])
+        code, doc = report_with(legacy, shadow, OPT, "1")
+        self.assertEqual((code, doc["unexplained_by_area"], doc["unexplained_by_field"]), (20, {"index": 1}, {"displayName": 1}))
+        self.assertEqual(doc["rules"][RULE]["areas"], {"media": 1, "person": 1, "index": 1}, "media/index.json is explained, person/index.json is not")
+
+    def test_the_person_files_must_name_the_same_photo_and_the_same_person(self):
+        for label, side, change in (
+                ("the legacy person file names another photo", "legacy", lambda d: d["primaryPhoto"].update(handle=hid("O9002"))),
+                ("the shadow person file names another photo", "shadow", lambda d: d["primaryPhoto"].update(handle=hid("O9002"))),
+                ("the shadow person file has no photo", "shadow", lambda d: d.pop("primaryPhoto")),
+                ("the legacy person file is another person", "legacy", lambda d: d.update(handle=hid("I9999"))),
+                ("the shadow person file is another person", "shadow", lambda d: d.update(handle=hid("I9999")))):
+            legacy, shadow = pair_with_jpeg_spelling()
+            edit(legacy if side == "legacy" else shadow, PERSON1, change)
+            code, doc = report_with(legacy, shadow, OPT, "5")
+            self.assertEqual(code, 20, label)
+            self.assertGreaterEqual(doc["unexplained_by_field"].get("primaryPhoto", 0), 1, label)
+            self.assertEqual(doc["unexplained_by_area"].get("index"), 1, label)
+        # an entry without a person file
+        legacy, shadow = pair_with_jpeg_spelling()
+        del legacy[PERSON1]
+        del shadow[PERSON1]
+        code, doc = report_with(legacy, shadow, OPT, "5")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_field"], {"primaryPhoto": 1})
+
+    def test_the_person_index_text_is_not_read_by_the_other_rules_or_other_entries(self):
+        # a person/index.json primaryPhoto difference with no media involved is unexplained, with and without the option
+        legacy, shadow = build_site(), build_site()
+        for site in (legacy, shadow):
+            with_users(site)
+            with_person_index_photos(site)
+        edit(legacy, "person/index.json", lambda d: [e.update(primaryPhoto="media/%s.jpeg" % hid("O9001")) for e in d["people"] if e["grampsId"] == "I9001"])
+        for extra in ([], [OPT, "5"]):
+            code, doc = report_with(legacy, shadow, *extra)
+            self.assertEqual((code, doc["unexplained_by_field"]), (20, {"primaryPhoto": 1}), extra)
+
+    # ---- precedence and the stripped rule ---------------------------------------------------------------------------------
+
+    def test_the_stripped_rule_does_not_explain_an_s3key_and_keeps_its_behaviour(self):
+        # a real stripped copy whose key is also spelled .jpeg / .jpg: the checksum difference is stripped, the key is not
+        legacy, shadow = build_site(), build_site()
+        for site in (legacy, shadow):
+            with_users(site)
+        strip_photo(shadow)
+        for site in (legacy, shadow):
+            with_person_index_photos(site)
+        respell(legacy, "O9001", "media/%s.jpeg" % hid("O9001"))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 0})
+        self.assertEqual(set(doc["unexplained_by_field"]), {"s3Key", "primaryPhoto"})
+        self.assertNotIn(RULE, doc["rules"])
+
+    def test_a_media_the_stripped_rule_explains_keeps_that_rule_and_the_allowance(self):
+        # an empty capture with the key spelling, taken by the stripped rule (its pattern fits, no sidecar): the stripped rule wins on the
+        # checksum and size and does not explain the key, so the run is unexplained, and the allowance of this rule is not consumed
+        legacy, shadow = pair_with_jpeg_spelling()
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1", OPT, "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["baseline_unhydrated"], {"allowed": 1, "explained": 0})
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertEqual(set(doc["unexplained_by_field"]), {"s3Key", "primaryPhoto"})
+        # with the stripped allowance at 0 the rule takes it
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "0", OPT, "1")
+        self.assertEqual((code, doc["unexplained"], doc["baseline_unhydrated"]), (10, 0, {"allowed": 1, "explained": 1}))
+
+    def test_the_held_object_allowance_and_the_spelling_in_one_run(self):
+        legacy, shadow = pair_with_jpeg_spelling()
+        add_held_object(legacy, "person", 0)
+        code, doc = report_with(legacy, shadow, "--expect-holds", "1", OPT, "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual((doc["holds"], doc["baseline_unhydrated"]), ({"allowed": 1, "explained": 1}, {"allowed": 1, "explained": 1}))
+
+    def test_nothing_in_the_output_names_a_handle_a_key_or_a_checksum(self):
+        for legacy, shadow in (pair_with_jpeg_spelling(), pair_with_jpeg_spelling(".png")):
+            secrets = secrets_of(legacy, shadow)
+            for extra in ([], ["--json"], [OPT, "1"], [OPT, "1", "--json"]):
+                code, cap = run_cli(legacy, shadow, extra)
+                text = cap.everything.replace(cap.tmp, "<tmp>")
+                for secret in secrets:
+                    self.assertNotIn(secret, text, "%r leaked (exit %s, %s)" % (secret[:6], code, extra))
 
 
 class HeldObjects(unittest.TestCase):
@@ -1387,6 +2096,22 @@ class Docs(unittest.TestCase):
         self.assertIn("counts.holds", text)
         self.assertIn("status.json", text)
         self.assertNotRegex(text, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}")      # no email address
+
+    def test_the_how_to_gives_the_baseline_unhydrated_command_and_names_only_real_add_on_counts(self):
+        import re
+        from hfygramps.addon import status
+        with open(DOC, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("AWS_PROFILE=product-lead gramps/bin/hfy-parity \\\n  --legacy <project>/workspace-local/harrisonfamily-frontend \\\n"
+                      "  --shadow s3://<sync-bucket>/render-shadow/ \\\n  --expect-baseline-unhydrated <n>", text)
+        self.assertIn("media whose baseline was captured before the file was available: allowed <n>, media explained <k>", text)
+        self.assertIn("`baseline_unhydrated`", text)
+        named = re.search(r"\(its `counts` are (.*?)\)", text, re.S)
+        self.assertIsNotNone(named)
+        self.assertEqual(set(re.findall(r"`([a-z_]+)`", named.group(1))), set(status.zero_counts()), "the page lists the add-on's counts as they are")
+        self.assertNotIn(compare_mod.EMPTY_SHA256, text)
+        for word in ("api/src/sync/media.js", "media/<handle>.jpeg", "media/<handle>.jpg", "`person/index.json`", "The JPEG key spelling"):
+            self.assertIn(word, text, word)
 
 
 if __name__ == "__main__":

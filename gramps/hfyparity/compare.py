@@ -15,6 +15,17 @@ media beyond n stays unexplained. With ``stripped_handles`` (``--stripped-sideca
 without their location) only those media can be explained, so a media that differs for another reason is never taken for one. Without the
 option the rule never fires.
 
+``expect_baseline_unhydrated`` (``--expect-baseline-unhydrated <n>``, HFY-TSK-376) counts media whose legacy record was captured while the
+file was not yet available (a Dropbox online-only placeholder): the legacy checksum is the SHA-256 of the empty file with size 0, or checksum
+and size are null with missing true, while the shadow holds a real checksum, a size above 0 and missing false, and every other field of the
+record is equal. Up to n such media (the first n handles in sorted order; a media that ``media-location-stripped`` explains is never taken, and
+does not use the allowance) are explained under ``media-baseline-unhydrated``, on the media file, its index entry and the primaryPhoto and
+mediaGallery[] entries that embed it (which must differ in the same three fields only). A media beyond n stays unexplained. Without the option
+the rule never fires. The one other difference the rule tolerates is the spelling of a JPEG's ``s3Key``: the cloud stores every image/jpeg as
+``media/<handle>.jpg`` (api/src/sync/media.js ``MEDIA_TYPES``), the legacy ETL kept the file's own suffix (``derive_media_extension``), so a
+legacy ``media/<handle>.jpeg`` against the shadow's ``media/<handle>.jpg`` (same stem, the record's mime ``image/jpeg``) is part of the pattern, and
+so is the same pair on the index entry, the person entries and the ``primaryPhoto`` text of the same person's ``person/index.json`` entry.
+
 ``expect_holds`` (``--expect-holds <n>``) is the one input that is not in the two trees: the add-on's own count of objects it held
 whole. Up to n whole-object absences (``only_in_legacy`` person, family, event, note, place and media files that no other rule
 explains) are explained under ``held-object``, together with the index entries that left the area's index with them. A file
@@ -183,10 +194,18 @@ _HELD_BINARY_FIELDS = ("missing", "checksum", "size")
 
 class _Context:
     def __init__(self, policy: Policy, excluded_places: Set[str], held_media: Set[str],
-                 held_objects: Optional[Dict[str, Set[str]]] = None, stripped: Optional[Set[str]] = None):
+                 held_objects: Optional[Dict[str, Set[str]]] = None, stripped: Optional[Set[str]] = None,
+                 unhydrated: Optional[Dict[str, Tuple[Any, Any]]] = None,
+                 legacy_owned: Optional[Mapping[str, Source]] = None, shadow_owned: Optional[Mapping[str, Source]] = None):
         self.policy = policy
         #: the media handles the --expect-stripped allowance explains
         self.stripped: Set[str] = stripped or set()
+        #: {media handle: (legacy s3Key, shadow s3Key) of its media file} for the media the --expect-baseline-unhydrated allowance explains
+        #: (never one of ``stripped``). The two keys are equal, or the .jpeg / .jpg pair.
+        self.unhydrated: Dict[str, Tuple[Any, Any]] = unhydrated or {}
+        self.legacy_owned: Mapping[str, Source] = legacy_owned or {}
+        self.shadow_owned: Mapping[str, Source] = shadow_owned or {}
+        self._primary_photo: Dict[str, Optional[str]] = {}
         self.excluded = excluded_places
         self.held_media = held_media
         #: {area: the names (file stem, handle, Gramps ID) of the whole objects the --expect-holds allowance explained}
@@ -307,6 +326,125 @@ def _take_stripped(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str
     return found
 
 
+#: SHA-256 of the empty file: what a legacy export recorded for a photo that was a Dropbox online-only placeholder (HFY-TSK-376).
+EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_UNHYDRATED_FIELDS = ("checksum", "size", "missing")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+#: The cloud names every image/jpeg binary ``media/<handle>.jpg`` whatever the file was called (api/src/sync/media.js ``MEDIA_TYPES``, the
+#: add-on's ``mediafile.EXTENSIONS``); the legacy ETL kept the file's own lower-cased suffix (``transform.derive_media_extension``). The one
+#: legacy spelling the rule accepts is ``.jpeg``, the one the evidence shows; a pinned test keeps the cloud's suffix equal to the code's.
+CLOUD_JPEG_SUFFIX = ".jpg"
+LEGACY_JPEG_SUFFIXES = frozenset({".jpeg"})
+JPEG_MIME = "image/jpeg"
+
+
+def _jpeg_key_spelling(handle: str, key_a: Any, key_b: Any) -> bool:
+    """True when ``key_a`` is ``media/<handle>`` + a legacy JPEG suffix (any case) and ``key_b`` is ``media/<handle>.jpg``: the same stem,
+    nothing else."""
+    if not (isinstance(key_a, str) and isinstance(key_b, str)):
+        return False
+    stem = "media/" + handle
+    return key_b == stem + CLOUD_JPEG_SUFFIX and key_a.startswith(stem) and key_a[len(stem):].lower() in LEGACY_JPEG_SUFFIXES
+
+
+def _unhydrated_pair(obj_a: Any, obj_b: Any, jpeg_ok: bool = False) -> Optional[str]:
+    """The media handle when two media-like objects are the media-baseline-unhydrated pattern (HFY-TSK-376): the same handle; on the
+    legacy side an unhydrated capture (checksum of the empty file, size 0 and missing false; or checksum and size null with missing
+    true); in the shadow a real checksum (64 lowercase hex digits, not the empty file's), an integer size above 0 and missing false; and
+    every other field equal (the only differences are in checksum, size and missing). With ``jpeg_ok`` the ``s3Key`` may also differ by
+    the JPEG suffix spelling (``_jpeg_key_spelling``); nothing else of it may."""
+    if not (isinstance(obj_a, dict) and isinstance(obj_b, dict)):
+        return None
+    handle = obj_a.get("handle")
+    if not (isinstance(handle, str) and handle != "" and obj_b.get("handle") == handle):
+        return None
+    empty_file = (obj_a.get("checksum") == EMPTY_SHA256 and _int(obj_a.get("size")) and obj_a["size"] == 0
+                  and obj_a.get("missing") is False)
+    never_read = ("checksum" in obj_a and obj_a["checksum"] is None and "size" in obj_a and obj_a["size"] is None
+                  and obj_a.get("missing") is True)
+    cb = obj_b.get("checksum")
+    if not ((empty_file or never_read) and isinstance(cb, str) and _SHA256_HEX.fullmatch(cb) and cb != EMPTY_SHA256
+            and _int(obj_b.get("size")) and obj_b["size"] > 0 and obj_b.get("missing") is False):
+        return None
+    allowed = _UNHYDRATED_FIELDS
+    if jpeg_ok and _jpeg_key_spelling(handle, obj_a.get("s3Key"), obj_b.get("s3Key")):
+        allowed = allowed + ("s3Key",)
+    for path, _a, _b in json_diff(obj_a, obj_b):
+        if len(path) != 1 or path[0] not in allowed:
+            return None
+    return handle
+
+
+def _unhydrated_entry(ctx: "_Context", key: str, doc_a: Any, doc_b: Any, path: tuple) -> bool:
+    """A differing checksum, size, missing or (the JPEG spelling of an) s3Key of a media-like object whose handle the
+    --expect-baseline-unhydrated allowance explains. The entry's two s3Keys must be the pair its media file has: an entry that spells the key
+    in another way than the media file is not the pattern."""
+    if not ctx.unhydrated or not path or path[-1] not in _UNHYDRATED_FIELDS + ("s3Key",) or not _media_object_path(key, path[:-1]):
+        return False
+    obj_a, obj_b = _node(doc_a, path[:-1]), _node(doc_b, path[:-1])
+    handle = _unhydrated_pair(obj_a, obj_b, jpeg_ok=True)
+    return handle is not None and handle in ctx.unhydrated and (obj_a.get("s3Key"), obj_b.get("s3Key")) == ctx.unhydrated[handle]
+
+
+def _primary_photo_handle(ctx: "_Context", gramps_id: str, person_handle: str) -> Optional[str]:
+    """The handle of the primaryPhoto of ``person/<gramps_id>.json``, when the legacy and the shadow person file name the same one and both are
+    the person ``person_handle`` (the index entry's). Read from the two trees once per person."""
+    cache_key = gramps_id + "\0" + person_handle
+    if cache_key in ctx._primary_photo:
+        return ctx._primary_photo[cache_key]
+    found: Optional[str] = None
+    key = "person/%s.json" % gramps_id
+    if is_owned(key) and key not in INDEX_KEYS and key in ctx.legacy_owned and key in ctx.shadow_owned:
+        ok_a, doc_a = _parse(ctx.legacy_owned[key])
+        ok_b, doc_b = _parse(ctx.shadow_owned[key])
+        if ok_a and ok_b and isinstance(doc_a, dict) and isinstance(doc_b, dict):
+            photo_a, photo_b = doc_a.get("primaryPhoto"), doc_b.get("primaryPhoto")
+            if (isinstance(photo_a, dict) and isinstance(photo_b, dict) and isinstance(photo_a.get("handle"), str)
+                    and photo_a["handle"] != "" and photo_a["handle"] == photo_b.get("handle")
+                    and doc_a.get("handle") == person_handle and doc_b.get("handle") == person_handle):
+                found = photo_a["handle"]
+    ctx._primary_photo[cache_key] = found
+    return found
+
+
+def _unhydrated_person_index(ctx: "_Context", key: str, doc_a: Any, doc_b: Any, path: tuple, a: Any, b: Any) -> bool:
+    """The ``primaryPhoto`` text (a bare s3Key) of a ``person/index.json`` entry when it differs by the JPEG spelling and the same person's
+    primary photo is a media this rule explains with that very pair of keys. Any other difference of the entry is not read."""
+    if (not ctx.unhydrated or key != "person/index.json" or path != ("primaryPhoto",) or not isinstance(a, str) or not isinstance(b, str)
+            or a == b or not (isinstance(doc_a, dict) and isinstance(doc_b, dict))):
+        return False
+    gramps_id, handle = doc_a.get("grampsId"), doc_a.get("handle")
+    if not (isinstance(gramps_id, str) and gramps_id != "" and doc_b.get("grampsId") == gramps_id and isinstance(handle, str)
+            and doc_b.get("handle") == handle):
+        return False
+    photo = _primary_photo_handle(ctx, gramps_id, handle)
+    return photo is not None and photo in ctx.unhydrated and ctx.unhydrated[photo] == (a, b)
+
+
+def _take_unhydrated(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str, Source], allowed: int,
+                     taken_by_stripped: Set[str]) -> Dict[str, Tuple[Any, Any]]:
+    """The first ``allowed`` media (sorted by key) whose media file is the media-baseline-unhydrated pattern, as ``{handle: (legacy s3Key,
+    shadow s3Key)}``. A media that media-location-stripped explains (``taken_by_stripped``) is skipped without using this allowance: a media
+    is explained by one rule only, and the stripped rule wins. A media that merely fits the stripped pattern while that rule explained
+    nothing for it (no --expect-stripped, the allowance spent, or the sidecar not listing it) is not skipped."""
+    found: Dict[str, Tuple[Any, Any]] = {}
+    for key in sorted(legacy_owned):
+        if len(found) >= allowed:
+            break
+        if not key.startswith("media/") or key in INDEX_KEYS or key not in shadow_owned:
+            continue
+        ok_a, doc_a = _parse(legacy_owned[key])
+        ok_b, doc_b = _parse(shadow_owned[key])
+        if not (ok_a and ok_b):
+            continue
+        handle = _unhydrated_pair(doc_a, doc_b, jpeg_ok=isinstance(doc_a, dict) and doc_a.get("mime") == JPEG_MIME)
+        if handle is not None and handle not in taken_by_stripped:
+            found[handle] = (doc_a.get("s3Key"), doc_b.get("s3Key"))
+    return found
+
+
 def explain(ctx: _Context, key: str, doc_a: Any, doc_b: Any, path: tuple, a: Any, b: Any) -> Optional[str]:
     """The rule id that explains one JSON difference, or None."""
     policy = ctx.policy
@@ -331,6 +469,8 @@ def explain(ctx: _Context, key: str, doc_a: Any, doc_b: Any, path: tuple, a: Any
         return "media-held-binary"
     if _stripped_entry(ctx, key, doc_a, doc_b, path):
         return "media-location-stripped"
+    if _unhydrated_entry(ctx, key, doc_a, doc_b, path) or _unhydrated_person_index(ctx, key, doc_a, doc_b, path, a, b):
+        return "media-baseline-unhydrated"
     if len(path) >= 2 and path[-2:] == ("date", "text") and isinstance(a, str) and isinstance(b, str) and a != b:
         event = _node(doc_a, path[:-2])
         if isinstance(event, dict) and policy.event_birth_like(event.get("type")):
@@ -471,6 +611,7 @@ class _Tally:
         self.shadow_files = 0
         self.holds: Optional[Dict[str, int]] = None
         self.stripped: Optional[Dict[str, int]] = None
+        self.unhydrated: Optional[Dict[str, int]] = None
 
     def explain(self, cls: str, area: str, rules: Set[str]) -> None:
         self.explained[cls] += 1
@@ -507,6 +648,8 @@ class _Tally:
             out["holds"] = dict(self.holds)
         if self.stripped is not None:    # likewise for --expect-stripped
             out["stripped"] = dict(self.stripped)
+        if self.unhydrated is not None:  # likewise for --expect-baseline-unhydrated
+            out["baseline_unhydrated"] = dict(self.unhydrated)
         return out
 
 
@@ -545,11 +688,12 @@ def _take_holds(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str, S
 
 def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: Policy,
             expect_holds: Optional[int] = None, expect_stripped: Optional[int] = None,
-            stripped_handles: Optional[Set[str]] = None) -> Dict[str, Any]:
+            stripped_handles: Optional[Set[str]] = None, expect_baseline_unhydrated: Optional[int] = None) -> Dict[str, Any]:
     """The counts. ``legacy`` and ``shadow`` map a site key to its bytes or to a file path. ``expect_holds`` is the add-on's own
     count of objects it held whole (None: absences no policy rule explains stay unexplained). ``expect_stripped`` is its count of media
-    sent without their location (None: a media whose checksum differs stays unexplained)."""
-    for count in (expect_holds, expect_stripped):
+    sent without their location (None: a media whose checksum differs stays unexplained). ``expect_baseline_unhydrated`` is the number of media
+    whose legacy record was captured before the file was available (None: such a media stays unexplained)."""
+    for count in (expect_holds, expect_stripped, expect_baseline_unhydrated):
         if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 0):
             raise ValueError("expect")
     tally = _Tally()
@@ -587,7 +731,11 @@ def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: 
     if expect_stripped is not None:
         explained_stripped = _take_stripped(legacy_owned, shadow_owned, expect_stripped, stripped_handles)
         tally.stripped = {"allowed": expect_stripped, "explained": len(explained_stripped)}
-    ctx = _Context(policy, excluded, held_media, held_objects, explained_stripped)
+    explained_unhydrated: Dict[str, Tuple[Any, Any]] = {}
+    if expect_baseline_unhydrated is not None:
+        explained_unhydrated = _take_unhydrated(legacy_owned, shadow_owned, expect_baseline_unhydrated, explained_stripped)
+        tally.unhydrated = {"allowed": expect_baseline_unhydrated, "explained": len(explained_unhydrated)}
+    ctx = _Context(policy, excluded, held_media, held_objects, explained_stripped, explained_unhydrated, legacy_owned, shadow_owned)
 
     for key in sorted(set(legacy_owned) | set(shadow_owned)):
         area = area_of(key)
