@@ -12,6 +12,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gzipSync } from "node:zlib";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { transform } from "esbuild";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,7 +26,10 @@ export const BUDGET = {
   navigatorJs: 35 * KB,
   navigatorCss: 15 * KB,
   entryJs: 60 * KB,
-  kinshipJs: 10 * KB
+  kinshipJs: 10 * KB,
+  // HFY-TSK-269 (viz-v2-time, ADR 11 / viz-v2-time AC1): the lazy lifelines chunk, loaded only when the familyVizTime view opens.
+  lifelinesJs: 25 * KB,
+  lifelinesCss: 5 * KB
 };
 
 const read = (f) => readFileSync(f, "utf8");
@@ -111,6 +115,32 @@ test("the old 120 KB chart-chunk budget line is gone from the tests", () => {
   }
 });
 
-test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk)", () => {
-  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024 });
+test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk, 25 and 5 KB for the lifelines)", () => {
+  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024, lifelinesJs: 25 * 1024, lifelinesCss: 5 * 1024 });
+});
+
+// The lifelines chunk (lib/tree-lifelines.jsx): a lazy import of tree.js beside the navigator's, never a static one. Its own stylesheet source is
+// lib/tree-lifelines.css, which tree.css imports, so the CSS is measured as that source minified (the same esbuild minify the build applies).
+test("the lifelines chunk is lazy and at most 25 KB gzip JS and 5 KB gzip CSS, with no d3-scale", async (t) => {
+  const entry = join(out, "tree.js");
+  const shellSet = staticClosure(join(out, "shell.js"));
+  const entrySet = staticClosure(entry);
+  const lifelines = dynamicTargets(entry).filter((f) => /\/chunks\/tree-lifelines-[A-Za-z0-9_-]+\.js$/.test(f.split("\\").join("/")));
+  assert.equal(lifelines.length, 1, "tree.js must import exactly one tree-lifelines chunk dynamically");
+  assert.ok(!entrySet.has(lifelines[0]), "the lifelines chunk is a static import of the entry: it is not lazy");
+  // Everything it statically needs, minus the shell's chunks and the chunks the entry itself already carries (it adds only its own bytes).
+  const own = minus(minus(staticClosure(lifelines[0]), shellSet), entrySet);
+  const js = sum(own);
+  const srcCss = read(join(testsDir, "..", "src", "lib", "tree-lifelines.css"));
+  const css = gzipSync((await transform(srcCss, { loader: "css", minify: true })).code).length;
+  t.diagnostic(`lifelines JS ${kb(js)} of ${kb(BUDGET.lifelinesJs)} (${[...own].map((f) => f.slice(out.length + 1)).join(", ")}); CSS ${kb(css)} of ${kb(BUDGET.lifelinesCss)}`);
+  assert.ok(js > 1024, "the lifelines chunk measured as nearly empty: the test is not looking at the chunk");
+  assert.ok(js <= BUDGET.lifelinesJs, `lifelines JS is ${kb(js)} gzip, over the 25 KB budget`);
+  assert.ok(css > 256 && css <= BUDGET.lifelinesCss, `lifelines CSS is ${kb(css)} gzip, over the 5 KB budget`);
+  // the rules really ship in tree.css
+  assert.match(read(join(out, "tree.css")), /hfy-life__line/);
+  // ADR: no d3-scale (7.9 KB for one linear scale); d3-shape is optional and not needed for straight lines.
+  assert.doesNotMatch(read(join(testsDir, "..", "package.json")), /"d3-scale"/);
+  const pkg = JSON.parse(read(join(testsDir, "..", "package.json")));
+  if (pkg.dependencies["d3-shape"]) assert.equal(pkg.dependencies["d3-shape"], "3.2.0", "d3-shape is exact-pinned at 3.2.0");
 });
