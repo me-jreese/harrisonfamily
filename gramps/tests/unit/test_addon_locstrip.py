@@ -90,11 +90,13 @@ class Jpeg(Checks):
         self.assertEqual(parts[0xEE], b"Adobe\x00\x64\x00\x00\x00\x00\x01")
 
     def test_a_progressive_file_keeps_every_scan(self):
-        body, eoi = LS.jpeg(LS.build_tiff())[:-2], b"\xff\xd9"
-        scan2 = LS.segment(0xFE, b"between") + LS.segment(0xC4, b"\x00" + bytes(16) + b"") + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + b"\x11\x22\x33"
-        data = body + scan2 + eoi
+        plain = LS.jpeg(LS.build_tiff(), body=LS.PROGRESSIVE)
+        first = plain.index(b"\xff\xda")
+        second = plain.index(b"\xff\xda", first + 2)
+        data = plain[:second] + LS.segment(0xFE, b"between") + plain[second:]
         out = self.strip_ok(data, JPEG)
         self.assertEqual(PICTURE_JPEG(locstrip._jpeg_parts(out)), PICTURE_JPEG(locstrip._jpeg_parts(data)))
+        self.assertGreater(len([1 for m, _p in locstrip._jpeg_parts(out) if m == 0xDA]), 3, "every scan of the progressive file is in the copy")
         self.assertNotIn(b"between", out)
 
     def test_trailing_zero_padding_is_not_a_second_picture(self):
@@ -173,8 +175,7 @@ class Png(Checks):
             self.assertEqual(locstrip.strip(LS.png(tiff=LS.build_tiff(), icc=profile), PNG), (None, "icc"))
         bad_keyword = LS.chunk(b"iCCP", b"12.3456, 65.4321\x00\x00" + zlib.compress(LS.icc_profile()))
         data = LS.png(tiff=LS.build_tiff())
-        iend = data.rindex(b"IEND") - 4
-        self.assertEqual(locstrip.strip(data[:iend] + bad_keyword + data[iend:], PNG), (None, "icc"))
+        self.assertEqual(locstrip.strip(data[:33] + bad_keyword + data[33:], PNG), (None, "icc"))
 
     @unittest.skipIf(Image is None, "Pillow is not installed")
     def test_pillow_decodes_the_copy_and_reads_the_orientation(self):

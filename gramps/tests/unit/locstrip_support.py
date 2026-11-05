@@ -4,6 +4,7 @@
 IFD with a version, latitude and longitude with their out-of-line rationals, an altitude and a processing method, and optionally an IFD1
 with a thumbnail JPEG) in either byte order. ``jpeg`` and ``png`` wrap it with XMP and a stand-in for the picture data. Standard library only.
 """
+import base64
 import struct
 import zlib
 
@@ -13,7 +14,6 @@ LON = ((122, 1), (4, 1), (5151, 100))
 MAKE = b"SYNTHCAM"
 DATE = b"2001:02:03 04:05:06"
 MAKER_NOTE = b"SYNTHMAKERNOTE0"
-SCAN = bytes((i * 37 + 11) % 251 for i in range(729)) + b"\x12\x34\x56"      # the stand-in for the entropy-coded picture data (no 0xFF bytes in it)
 JFIF = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
 
 
@@ -146,19 +146,18 @@ def segment(marker, payload):
     return b"\xff" + bytes([marker]) + struct.pack(">H", len(payload) + 2) + payload
 
 
-def jpeg(tiff=None, xmp=None, extra_segments=b"", scan=SCAN):
-    """SOI, JFIF, [APP1 Exif], [APP1 XMP], a stand-in for a quantisation table and frame header, the scan and EOI."""
+def jpeg(tiff=None, xmp=None, extra_segments=b"", body=None):
+    """SOI, JFIF, [APP1 Exif], [APP1 XMP], ``extra_segments``, then a small valid JPEG (tables, frame, scan, EOI): ``BASELINE`` unless ``body`` is given."""
     out = JFIF
     if tiff is not None:
         out += segment(0xE1, b"Exif\x00\x00" + tiff)
     if xmp is not None:
         out += segment(0xE1, b"http://ns.adobe.com/xap/1.0/\x00" + xmp)
-    out += extra_segments + segment(0xDB, b"\x00" + bytes((i * 7 + 3) % 200 + 1 for i in range(64))) + segment(0xC0, b"\x08\x00\x10\x00\x10\x01\x01\x11\x00")
-    return out + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + scan + b"\xff\xd9"
+    return out + extra_segments + (BASELINE if body is None else body)
 
 
 def scan_start(data):
-    return data.index(b"\xff\xda")
+    return data.rindex(b"\xff\xda")
 
 
 def chunk(kind, body):
@@ -198,8 +197,10 @@ def coordinate_bytes():
     return out + [b"37,33.4242N", b"122,4.5151W", b"1234/10"]
 
 
-def icc_profile(desc="Test sRGB", cprt="No copyright, use freely", extra_tag=None, text_kind="mluc", size_lie=0, gap=b""):
-    """A small valid ICC profile: header, tag table, desc, cprt, wtpt, the three colorants and three gamma curves. ``extra_tag`` is (signature, data)."""
+def icc_profile(desc="Test sRGB", cprt="No copyright, use freely", extra_tag=None, text_kind="mluc", size_lie=0, gap=b"", replace=None, header_patch=None,
+                tags_extra=()):
+    """A small valid ICC profile: header, tag table, desc, cprt, wtpt, the three colorants and three gamma curves. ``extra_tag`` is (signature, data);
+    ``replace`` {signature: data} changes a tag; ``header_patch`` (offset, bytes) changes the header after it is built; ``tags_extra`` adds tags."""
     def pad(b):
         return b + b"\x00" * (-len(b) % 4)
 
@@ -219,10 +220,13 @@ def icc_profile(desc="Test sRGB", cprt="No copyright, use freely", extra_tag=Non
 
     curve = pad(b"curv\x00\x00\x00\x00" + struct.pack(">IH", 1, 0x0233))
     make = {"mluc": mluc, "text": text_tag, "desc": desc_tag}[text_kind]
-    tags = [(b"desc", make(desc)), (b"cprt", make(cprt)), (b"wtpt", xyz(63190, 65536, 54061)), (b"rXYZ", xyz(28484, 14319, 904)),
+    tags = [(b"desc", make(desc) if text_kind != "text" else desc_tag(desc)), (b"cprt", make(cprt) if text_kind != "desc" else text_tag(cprt)), (b"wtpt", xyz(63190, 65536, 54061)), (b"rXYZ", xyz(28484, 14319, 904)),
             (b"gXYZ", xyz(25360, 46088, 6522)), (b"bXYZ", xyz(9404, 5120, 46737)), (b"rTRC", curve), (b"gTRC", curve), (b"bTRC", curve)]
+    if replace:
+        tags = [(sig, replace.get(sig, data)) for sig, data in tags]
     if extra_tag:
         tags.append(extra_tag)
+    tags.extend(tags_extra)
     table_end = 132 + 12 * len(tags)
     pos, table, body = table_end, b"", b""
     for sig, data in tags:
@@ -233,6 +237,9 @@ def icc_profile(desc="Test sRGB", cprt="No copyright, use freely", extra_tag=Non
     size = pos + len(gap)
     header = (struct.pack(">I", size + size_lie) + b"lcms" + b"\x02\x10\x00\x00" + b"mntrRGB XYZ " + b"\x00" * 12 + b"acsp" + b"APPL" + b"\x00" * 24
               + struct.pack(">3i", 63190, 65536, 54061) + b"lcms" + b"\x00" * 16 + b"\x00" * 28)
+    if header_patch:
+        at, value = header_patch
+        header = header[:at] + value + header[at + len(value):]
     return header + struct.pack(">I", len(tags)) + table + body + gap
 
 
@@ -240,3 +247,77 @@ def icc_segments(profile, chunk_size=65000):
     """The APP2 segments that carry an ICC profile."""
     chunks = [profile[i:i + chunk_size] for i in range(0, len(profile), chunk_size)] or [b""]
     return b"".join(segment(0xE2, b"ICC_PROFILE\x00" + bytes([i + 1, len(chunks)]) + c) for i, c in enumerate(chunks))
+
+
+# Small valid JPEGs (from the first quantisation table to EOI), made once with an encoder: the structure the strip reads to the end.
+BASELINE = base64.b64decode(
+    "/9sAQwAIBgYHBgUIBwcHCQkICgwUDQwLCwwZEhMPFB0aHx4dGhwcICQuJyAiLCMcHCg3KSwwMTQ0NB8nOT04MjwuMzQy/9sAQwEJCQkMCwwYDQ"
+    "0YMiEcITIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy/8AAEQgAEAAYAwEiAAIRAQMRAf/EAB8AAAEF"
+    "AQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNico"
+    "IJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1"
+    "tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAA"
+    "IBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNU"
+    "VVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+"
+    "jp6vLz9PX29/j5+v/aAAwDAQACEQMRAD8A8us9MYgcHHYelb1ppfPA4Har9npuRjHOMV0Nppueozz/AJ/lWUJG+VZjtqYV1pqHTZFPlq21lQuO"
+    "ASCOpIxwSMk9/wAKK66800No1yGCqNnVgMeuOfXoPc8UV7mXyfs3buLiTMoKtTU/5ejS6+j/AEP/2Q==")
+BASELINE2 = base64.b64decode(
+    "/9sAQwAKBwcIBwYKCAgICwoKCw4YEA4NDQ4dFRYRGCMfJSQiHyIhJis3LyYpNCkhIjBBMTQ5Oz4+PiUuRElDPEg3PT47/9sAQwEKCwsODQ4cEB"
+    "AcOygiKDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7/8AAEQgAEAAYAwERAAIRAQMRAf/EAB8AAAEF"
+    "AQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNico"
+    "IJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1"
+    "tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAA"
+    "IBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNU"
+    "VVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+"
+    "jp6vLz9PX29/j5+v/aAAwDAQACEQMRAD8A89tbE4UYzxniskXhqyZs2thwAR074rRM+hw9fUtXunuNPbyoUd1O750BCgZJPII6Z/P8K7MM17RX"
+    "eh05lXf1NuEU2tdUna2reqa2vvbfvZN9lYA4+TPpXmXPzvD1zZtdPPBI645FaJn0OGr9C7d6dG1kEdAdxKqDjqVIBwefy5rrwzandf1/XnodmN"
+    "qwnhuSerei23adt9f/AAG8uyex/9k=")
+PROGRESSIVE = base64.b64decode(
+    "/9sAQwAIBgYHBgUIBwcHCQkICgwUDQwLCwwZEhMPFB0aHx4dGhwcICQuJyAiLCMcHCg3KSwwMTQ0NB8nOT04MjwuMzQy/9sAQwEJCQkMCwwYDQ"
+    "0YMiEcITIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy/8IAEQgAGAAYAwEiAAIRAQMRAf/EABgAAQEB"
+    "AQEAAAAAAAAAAAAAAAAEBQMG/8QAGAEAAwEBAAAAAAAAAAAAAAAAAgQFAAP/2gAMAwEAAhADEAAAAfLX03gcDXP5oE2N2Dvb/8QAFxABAQEBAA"
+    "AAAAAAAAAAAAAAAwIAI//aAAgBAQABBQKD0nrPlBaD1nyg9J5C5//EABwRAAMAAQUAAAAAAAAAAAAAAAACBAEFERMhUf/aAAgBAwEBPwGWg1Gr"
+    "Kuu3hK+StOR+z//EABoRAAICAwAAAAAAAAAAAAAAAAABAgMEETL/2gAIAQIBAT8BTMfkRTLUT//EABsQAAIBBQAAAAAAAAAAAAAAAAEQEQIgIT"
+    "FB/9oACAEBAAY/AkTEurA12z//xAAZEAEAAwEBAAAAAAAAAAAAAAABABEhMUH/2gAIAQEAAT8hjvaQrRocWppNSKkJ1Ghkq8YC7N82p//aAAwD"
+    "AQACAAMAAAAQXCiC/8QAHBEBAAIBBQAAAAAAAAAAAAAAAQAhETFBUWFx/9oACAEDAQE/ENO5WD0HPZK9wAUmDaf/xAAXEQEBAQEAAAAAAAAAAA"
+    "AAAAAAASFx/9oACAECAQE/EBqurUwf/8QAHhABAAIDAQADAQAAAAAAAAAAAREhADFBUWGBoeH/2gAIAQEAAT8QuFA1T5iH4ODBHCPLvkzHoReI"
+    "igZxpAYNp36y0kFwBchd1X8y00NA5EOEU9+ctZDemWRV0EKXTMbTP//Z")
+RESTART = base64.b64decode(
+    "/9sAQwAIBgYHBgUIBwcHCQkICgwUDQwLCwwZEhMPFB0aHx4dGhwcICQuJyAiLCMcHCg3KSwwMTQ0NB8nOT04MjwuMzQy/9sAQwEJCQkMCwwYDQ"
+    "0YMiEcITIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy/8AAEQgAGAAYAwEiAAIRAQMRAf/EAB8AAAEF"
+    "AQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNico"
+    "IJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1"
+    "tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAA"
+    "IBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNU"
+    "VVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+"
+    "jp6vLz9PX29/j5+v/dAAQAAv/aAAwDAQACEQMRAD8A8utNLyyjB3YrftNNX5cp2rQstN6cA84x61vWWmfMFbj1HasoSN8qzHbU56/0tG0qYSxp"
+    "J8hMe7+9g8j37/TrxRXcS6ZI2n3HlsUk8slSCBjA9e1Fe5l9W0GtPvNOIMT7SrTlrt0jfr1d0f/Qu2enA4yOex963rHTtoBx3PaiiuSB8plNeb"
+    "tqak+kh7B0ZnVduWC9x6Hp8vryPcgUUUV6uEqSUNGevmMlOpHmSenX5n//2Q==")
+GRAY = base64.b64decode(
+    "/9sAQwAIBgYHBgUIBwcHCQkICgwUDQwLCwwZEhMPFB0aHx4dGhwcICQuJyAiLCMcHCg3KSwwMTQ0NB8nOT04MjwuMzQy/8AACwgAEAAQAQERAP"
+    "/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEV"
+    "UtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpq"
+    "eoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAAgBAQAAPwDyzSbXgEc9uldvpVrnaApPPrXP6Nah"
+    "gAR1PQdq7nSrdsocce39K//Z")
+
+
+def png_image(width=7, height=5, ctype=2, depth=8, interlace=0, before=b"", idat_chunks=1, palette=None, filler=0, pre=b""):
+    """A valid PNG of the given kind: every scanline has filter byte 0 and ``filler`` pixels, the zlib stream is complete; ``pre`` is a string of chunks put before the palette (gAMA, iCCP...) and ``before`` after it, both before the picture data; the data is split into ``idat_chunks`` IDATs. Palette images get a palette of ``palette`` entries."""
+    bits = depth * {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+    if interlace:
+        lens = []
+        for xo, yo, dx, dy in ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)):
+            pw = -(-(width - xo) // dx) if width > xo else 0
+            ph = -(-(height - yo) // dy) if height > yo else 0
+            if pw and ph:
+                lens += [1 + -(-pw * bits // 8)] * ph
+    else:
+        lens = [1 + -(-width * bits // 8)] * height
+    raw = b"".join(b"\x00" + bytes([filler]) * (n - 1) for n in lens)
+    stream = zlib.compress(raw, 9)
+    pieces = [stream[i:i + max(1, len(stream) // idat_chunks + 1)] for i in range(0, len(stream), max(1, len(stream) // idat_chunks + 1))]
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, depth, ctype, 0, 0, interlace))
+    out += pre
+    if ctype == 3:
+        out += chunk(b"PLTE", bytes((i * 37) % 256 for i in range(3 * (palette or 4))))
+    out += before + b"".join(chunk(b"IDAT", p) for p in pieces)
+    return out + chunk(b"IEND", b"")

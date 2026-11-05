@@ -3,26 +3,34 @@
 The Gramps tree and the file on this Mac are never changed: ``strip`` takes the bytes of a file and returns the bytes of a COPY, and the
 caller uploads the copy. The copy is BUILT from an allowlist, not cleaned: whatever is not named below is not in it.
 
-    JPEG   kept, byte for byte: SOI, EOI, the frame, scan, restart, Huffman, quantisation and arithmetic tables and the compressed image data
-           (never decoded or encoded), and the later scans of a progressive file. Rebuilt: APP0 JFIF (its first 12 bytes, thumbnail size 0),
-           APP14 Adobe (its first 12 bytes, the colour transform), and an APP1 Exif that holds ONE tag, Orientation (0x0112, in the byte order the
-           original had), if the original had a valid one. Kept after a check: the APP2 ICC profile, if it parses, every tag has a type from a
-           list of numeric types or a short text from a conservative alphabet, and no byte is unaccounted for (see ``_check_icc``).
-           Dropped: every other APPn (XMP, standard and extended, IPTC/APP13, MPF, maker data, JFXX, thumbnails), every comment, every other Exif tag
-           (MakerNote, UserComment, ImageDescription, the GPS IFD...).
-    PNG    kept: IHDR, PLTE, tRNS, IDAT, IEND, gAMA, cHRM, sRGB, sBIT, bKGD, pHYs, cICP, mDCV, cLLI (fixed sizes), a checked iCCP, and an eXIf
-           rebuilt with Orientation only. Dropped: tEXt, zTXt, iTXt (XMP included), tIME, sPLT, hIST, every other eXIf tag, every unknown ancillary
-           chunk. The copy is image-lossless and NOT metadata-lossless.
+    JPEG   kept, byte for byte, after a structural check: SOI, EOI, the frame (SOF0, SOF1 or SOF2, 8 bit), the scans, the restart interval, and
+           the quantisation and Huffman tables the frame and the scans name (a table nothing uses, and DHP, EXP, DAC, DNL, are refused). Rebuilt:
+           APP0 JFIF (its first 12 bytes, thumbnail size 0), APP14 Adobe (its first 12 bytes, a transform that fits the components), and an APP1
+           Exif that holds ONE tag, Orientation (0x0112, in the byte order the original had), if the original had a valid one. Kept after a check:
+           the APP2 ICC profile, if it is clean (see ``_check_icc``). Dropped: every other APPn (XMP, standard and extended, IPTC/APP13, MPF, maker
+           data, JFXX, thumbnails), every comment, every other Exif tag (MakerNote, UserComment, ImageDescription, the GPS IFD...).
+           Every scan is read to its real end with a syntax-only Huffman decoder (``_validate_scan``): only 0xFF00 stuffing and RSTn in sequence
+           inside it, the number of MCUs and blocks the frame asks for, the padding of 1-bits, the next real marker straight after: a byte more or
+           less, text before EOI, a second scan that carries a payload, are ``structure``. Several scans only in a progressive frame.
+    PNG    kept: IHDR, PLTE (colour type 3 only), tRNS, IDAT, IEND, gAMA, cHRM, sRGB, sBIT, bKGD, pHYs, all of fixed sizes that fit the header, a
+           checked iCCP, and an eXIf rebuilt with Orientation only. The IDAT chunks must be one zlib stream that inflates to exactly the scanlines
+           of the header (Adam7 too, filter bytes 0 to 4), with no unused input and no chunk after the end of the stream. Dropped: tEXt, zTXt, iTXt
+           (XMP included), tIME, sPLT, hIST, cICP, mDCV, cLLI, every other eXIf tag, every unknown ancillary chunk. The copy is image-lossless and
+           NOT metadata-lossless.
     TIFF   is not rewritten: the strip returns the reason ``tiff`` and the file stays held.
 
 Fail closed: ``strip`` never raises, and holds (``(None, reason)``) a file whose structure it cannot follow with certainty: a marker or
 critical chunk it does not know, an animation (acTL), a wrong CRC, a missing or repeated IHDR/IEND, any byte after the end of the image but
-NULs, an Exif it cannot read to the Orientation tag (an IFD whose entry count does not fit), an ICC profile it does not accept (``icc``),
-and a file over the work budget (``limit``). Then the copy is checked as a structure, not by a list of bad words (``_verify_jpeg``,
-``_verify_png``): it is read again, its marker or chunk sequence must be a subset of the allowlist, the picture-side parts must equal the
-original's, the rebuilt parts must be exactly what was built, and over every metadata byte there must be no TIFF signature but the rebuilt
-Exif, no GPS or position name (UTF-8, UTF-16, UTF-32), no location atom and no coordinate-shaped text. ``has_location_residue`` (the earlier,
-stricter list-based reading) is run on the copy as well.
+NULs, an Exif it cannot read to the Orientation tag (an IFD whose entry count does not fit), a picture side it cannot account for
+(``structure``), an ICC profile it does not accept (``icc``), and a file over the work budget (``limit``). Then the copy is checked as a
+structure, not by a list of bad words (``_verify_jpeg``, ``_verify_png``): it is read again, its marker or chunk sequence must be a subset of
+the allowlist, the picture-side parts must equal the original's, the rebuilt parts must be exactly what was built, and over every metadata
+byte there must be no TIFF signature but the rebuilt Exif, no GPS or position name (UTF-8, UTF-16, UTF-32), no location atom and no
+coordinate-shaped text. ``has_location_residue`` (the earlier, stricter list-based reading) is run on the copy as well.
+
+Not detectable: the coded picture itself. A scan or a zlib stream that decodes and has the right size can hide any payload an adversary
+encoded into the image (steganography), and a table (quantisation values, Huffman symbols, ICC numbers) holds numbers by design; the checks
+refuse a table that spells a decimal number and everything outside the picture, not a picture that was made to carry bytes.
 
 Reading a position (the add-on holds, or copies, a photo that HAS one): ``assess_signal`` reads every IFD of every TIFF structure in the metadata
 (a count that lies is read as far as the data goes), deflated and UTF-16 text, hex raw profiles, a location atom in a trailer, and in XMP any
@@ -34,9 +42,13 @@ much to check" (``limit``).
 
 Nothing here logs, prints or returns a value of the file: the reasons are code words.
 """
+import array
+import collections
+import hashlib
 import re
 import struct
 import threading
+import unicodedata
 import zlib
 
 JPEG = "image/jpeg"
@@ -50,6 +62,7 @@ UNPARSEABLE = "unparseable"
 VERIFY_FAILED = "verify_failed"
 LIMIT = "limit"
 ICC = "icc"
+STRUCTURE = "structure"  # the picture side of the file has a part the add-on cannot account for (rule media_structure)
 
 _GPS_POINTER = 0x8825
 _EXIF_POINTER = 0x8769
@@ -65,6 +78,8 @@ _BUDGET_SIGNATURES = 256     # TIFF signatures walked in one file
 _BUDGET_INFLATED = 16 * 1024 * 1024   # bytes inflated in one file, all chunks together
 _BUDGET_XMP = 2 * 1024 * 1024         # XMP bytes blanked or checked in one file
 _BUDGET_PARTS = 20000        # segments and chunks of one file
+_BUDGET_SCAN = 192 * 1024 * 1024      # bytes of entropy-coded JPEG data, or of inflated PNG picture data, read to their end in one file
+_BUDGET_BLOCKS = 16 * 1024 * 1024     # JPEG blocks and PNG scanlines walked in one file
 _MAX_INFLATED = 8 * 1024 * 1024
 _MAX_SIGNATURES = 64    # TIFF signatures walked in one part of a file
 _XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -106,8 +121,8 @@ class Budget:
     """The work one file may cost, over every check together: past a limit the check raises ``ScanLimit`` and the photo is held."""
 
     def __init__(self):
-        self.entries, self.signatures, self.inflated, self.xmp, self.parts = (_BUDGET_ENTRIES, _BUDGET_SIGNATURES, _BUDGET_INFLATED,
-                                                                              _BUDGET_XMP, _BUDGET_PARTS)
+        self.entries, self.signatures, self.inflated, self.xmp, self.parts, self.scan, self.blocks = (
+            _BUDGET_ENTRIES, _BUDGET_SIGNATURES, _BUDGET_INFLATED, _BUDGET_XMP, _BUDGET_PARTS, _BUDGET_SCAN, _BUDGET_BLOCKS)
 
     def take(self, name, n=1):
         left = getattr(self, name) - n
@@ -830,16 +845,624 @@ def has_location_signal(data, content_type):
     return bool(assess_signal(data, content_type))
 
 
+# ------------------------------------------------------------------------------------------------------- the picture side of a JPEG
+
+# The bytes a copy takes over as they are (tables, scan data) are walked to their real end, so nothing can ride along in them: a frame with
+# valid fields, tables that parse exactly and that a scan uses, and every scan decoded as far as its syntax goes (the Huffman symbols are read,
+# no pixel is made) up to the last bit of the last MCU, the padding being ones, the restart markers in sequence. Only baseline and extended
+# sequential (SOF0, SOF1) and progressive (SOF2) Huffman JPEGs of 8 bits are accepted; DAC, DHP, EXP, DNL and every other frame type are held.
+# What this cannot tell from the picture: the values of a table or of the picture itself (a quantisation table is 64 bytes that scale the
+# picture, a Huffman table lists its symbols, the scan is the coded coefficients). A table that spells a decimal number is refused (a real
+# table has no "." between digits, and a Huffman symbol can never be 0x2e); a crafted scan that decodes can still spell bytes, and the
+# picture it makes shows it. That is steganography in the pixels, which no metadata filter can see.
+
+
+def _bad():
+    raise _Refuse(STRUCTURE)
+
+
+def _ceil(a, b):
+    return -(-a // b)
+
+
+def _parse_sof(marker, payload):
+    if marker not in (0xC0, 0xC1, 0xC2) or len(payload) < 6:
+        _bad()
+    prec, height, width, nf = struct.unpack(">BHHB", payload[:6])
+    if prec != 8 or height < 1 or width < 1 or not 1 <= nf <= 4 or len(payload) != 6 + 3 * nf:
+        _bad()
+    comps, seen = [], set()
+    for i in range(nf):
+        cid, hv, tq = payload[6 + 3 * i:9 + 3 * i]
+        if not (1 <= hv >> 4 <= 4 and 1 <= hv & 15 <= 4 and tq <= 3) or cid in seen:
+            _bad()
+        seen.add(cid)
+        comps.append((cid, hv >> 4, hv & 15, tq))
+    return {"progressive": marker == 0xC2, "height": height, "width": width, "comps": comps,
+            "hmax": max(c[1] for c in comps), "vmax": max(c[2] for c in comps)}
+
+
+_TABLE_TEXT = re.compile(rb"\d\.\d\d")  # a decimal number spelled in the 64 bytes of a quantisation table
+
+
+def _parse_dqt(payload):
+    ids, pos = [], 0
+    while pos < len(payload):
+        pq, tq = payload[pos] >> 4, payload[pos] & 15
+        if pq != 0 or tq > 3 or pos + 65 > len(payload) or 0 in payload[pos + 1:pos + 65] or _TABLE_TEXT.search(bytes(payload[pos + 1:pos + 65])):
+            _bad()
+        ids.append(tq)
+        pos += 65
+    if not ids or pos != len(payload):
+        _bad()
+    return ids
+
+
+def _parse_dht(payload):
+    tables, pos = [], 0
+    while pos < len(payload):
+        tc, th = payload[pos] >> 4, payload[pos] & 15
+        if tc > 1 or th > 3 or pos + 17 > len(payload):
+            _bad()
+        counts = payload[pos + 1:pos + 17]
+        n = sum(counts)
+        symbols = payload[pos + 17:pos + 17 + n]
+        if n == 0 or n > 256 or len(symbols) != n or len(set(symbols)) != n or sum(c << (15 - i) for i, c in enumerate(counts)) > 0xFFFF:
+            _bad()  # no symbols, more than 256, a repeated symbol, or a set of codes that overfills (or uses the all-ones code)
+        if tc == 0 and max(symbols) > 11 or tc == 1 and any((v & 15) > 10 for v in symbols):
+            _bad()
+        tables.append((tc, th, bytes(counts), bytes(symbols)))
+        pos += 17 + n
+    if not tables:
+        _bad()
+    return tables
+
+
+def _huffman_lut(counts, symbols, entry):
+    """A 16-bit lookup table: ``entry(code length, symbol)`` for every 16 bits that start with the code (0 where no valid code starts)."""
+    lut, code, k = [0] * 65536, 0, 0
+    for length in range(1, 17):
+        for _ in range(counts[length - 1]):
+            e = entry(length, symbols[k])
+            k += 1
+            if e:
+                lo, hi = code << (16 - length), (code + 1) << (16 - length)
+                lut[lo:hi] = [e] * (hi - lo)
+            code += 1
+        code <<= 1
+    return lut
+
+
+# Entry layouts: the bits consumed (the code and the extra bits after it) in the high half; the low half says what the symbol does.
+_EOB = 0x1000
+_ZRL = 0x8000
+
+
+def _e_dc(length, sym):
+    return (length + sym) << 16 if sym <= 11 else 0
+
+
+def _e_seq_ac(length, sym):
+    r, s = sym >> 4, sym & 15
+    if s:
+        return (length + s) << 16 | (r + 1)
+    if sym == 0x00:
+        return length << 16 | _EOB
+    return length << 16 | 16 if sym == 0xF0 else 0
+
+
+def _e_prog_first(length, sym):
+    r, s = sym >> 4, sym & 15
+    if s:
+        return (length + s) << 16 | (r + 1)
+    if sym == 0xF0:
+        return length << 16 | _ZRL | 16
+    return length << 16 | r << 8 | 0xFF           # an end-of-band run of 2**r blocks, r more bits follow
+
+
+def _e_prog_refine(length, sym):
+    r, s = sym >> 4, sym & 15
+    if s > 1:
+        return 0
+    if s:
+        return (length + 1) << 16 | r << 8 | 1      # a new coefficient, its sign bit follows
+    return length << 16 | r << 8 | (2 if r == 15 else 3)   # sixteen zeros, or an end-of-band run
+
+
+def _end_of_bits(chunk, real_bits, consumed):
+    """True when what is left of ``chunk`` after ``consumed`` bits is fewer than eight bits, all ones (the padding)."""
+    left = real_bits - consumed
+    if left < 0 or left > 7:
+        return False
+    return not left or (chunk[real_bits // 8 - 1] & ((1 << left) - 1)) == (1 << left) - 1
+
+
+def _dec_sequential(chunk, nmcu, sched):
+    """One restart interval of a sequential scan: ``nmcu`` MCUs, each the blocks of ``sched`` ([(DC table, AC table)]). True when the data is
+    exactly those MCUs and the padding."""
+    real = len(chunk) * 8
+    data = chunk + bytes(16)
+    rb = len(chunk) + 4
+    fb = int.from_bytes
+    acc = nb = ip = 0
+    for _ in range(nmcu):
+        for dc, ac in sched:
+            if nb < 32:
+                if ip > rb:
+                    return False
+                acc, nb, ip = ((acc & ((1 << nb) - 1)) << 32) | fb(data[ip:ip + 4], "big"), nb + 32, ip + 4
+            e = dc[(acc >> (nb - 16)) & 0xFFFF]
+            if not e:
+                return False
+            nb -= e >> 16
+            k = 1
+            while k < 64:
+                if nb < 32:
+                    if ip > rb:
+                        return False
+                    acc, nb, ip = ((acc & ((1 << nb) - 1)) << 32) | fb(data[ip:ip + 4], "big"), nb + 32, ip + 4
+                e = ac[(acc >> (nb - 16)) & 0xFFFF]
+                if not e:
+                    return False
+                nb -= e >> 16
+                k += e & 0xFFFF
+            if 64 < k < _EOB:
+                return False
+    return _end_of_bits(data, real, ip * 8 - nb)
+
+
+def _dec_dc_first(chunk, nblocks, sched):
+    real = len(chunk) * 8
+    data = chunk + bytes(16)
+    rb = len(chunk) + 4
+    fb = int.from_bytes
+    acc = nb = ip = 0
+    for _ in range(nblocks):
+        for dc in sched:
+            if nb < 32:
+                if ip > rb:
+                    return False
+                acc, nb, ip = ((acc & ((1 << nb) - 1)) << 32) | fb(data[ip:ip + 4], "big"), nb + 32, ip + 4
+            e = dc[(acc >> (nb - 16)) & 0xFFFF]
+            if not e:
+                return False
+            nb -= e >> 16
+    return _end_of_bits(data, real, ip * 8 - nb)
+
+
+def _more(data, acc, nb, ip, need):
+    """The bit buffer refilled until it holds ``need`` bits."""
+    while nb < need and ip <= len(data):
+        acc, nb, ip = ((acc & ((1 << nb) - 1)) << 32) | int.from_bytes(data[ip:ip + 4], "big"), nb + 32, ip + 4
+    return acc, nb, ip
+
+
+def _dec_ac_first(chunk, nblocks, lut, ss, se, nz, first):
+    """One interval of a progressive AC scan, first pass: ``nblocks`` blocks from block ``first``. ``nz`` keeps, per block, which coefficients are
+    nonzero (a later refinement scan reads correction bits for them)."""
+    real = len(chunk) * 8
+    data = chunk + bytes(16)
+    rb = len(chunk) + 4
+    fb = int.from_bytes
+    acc = nb = ip = 0
+    eobrun = 0
+    bi, end = first, first + nblocks
+    while bi < end:
+        if eobrun:
+            take = min(eobrun, end - bi)        # the blocks an end-of-band run covers carry no data
+            eobrun -= take
+            bi += take
+            continue
+        k = ss
+        mask = nz[bi]
+        while k <= se:
+            if nb < 32:
+                if ip > rb:
+                    return False
+                acc, nb, ip = ((acc & ((1 << nb) - 1)) << 32) | fb(data[ip:ip + 4], "big"), nb + 32, ip + 4
+            e = lut[(acc >> (nb - 16)) & 0xFFFF]
+            if not e:
+                return False
+            nb -= e >> 16
+            low = e & 0xFFFF
+            if low & 0xFF == 0xFF:
+                r = (low >> 8) & 15
+                eobrun = (1 << r) - 1
+                if r:
+                    eobrun += (acc >> (nb - r)) & ((1 << r) - 1)
+                    nb -= r
+                break
+            if low & _ZRL:
+                k += 16
+            else:
+                k += low
+                if k - 1 > se:
+                    return False
+                mask |= 1 << (k - 1)
+        else:
+            if k > se + 1:
+                return False
+        nz[bi] = mask
+        bi += 1
+    return eobrun == 0 and _end_of_bits(data, real, ip * 8 - nb)
+
+
+def _dec_ac_refine(chunk, nblocks, lut, ss, se, nz, first):
+    real = len(chunk) * 8
+    data = chunk + bytes(16)
+    rb = len(chunk) + 4
+    fb = int.from_bytes
+    acc = nb = ip = 0
+    eobrun = 0
+    for bi in range(first, first + nblocks):
+        k = ss
+        mask = nz[bi]
+        corrections = 0
+        if not eobrun:
+            while k <= se:
+                if nb < 32:
+                    if ip > rb:
+                        return False
+                    acc, nb, ip = ((acc & ((1 << nb) - 1)) << 32) | fb(data[ip:ip + 4], "big"), nb + 32, ip + 4
+                e = lut[(acc >> (nb - 16)) & 0xFFFF]
+                if not e:
+                    return False
+                nb -= e >> 16
+                typ, r = e & 3, (e >> 8) & 15
+                if typ == 3:
+                    eobrun = 1 << r
+                    if r:
+                        eobrun += (acc >> (nb - r)) & ((1 << r) - 1)
+                        nb -= r
+                    break
+                while k <= se:                  # over the coefficients that are already nonzero, to the (r+1)th zero one
+                    if (mask >> k) & 1:
+                        corrections += 1
+                    else:
+                        if r == 0:
+                            break
+                        r -= 1
+                    k += 1
+                if typ == 1:
+                    if k > se:
+                        return False
+                    mask |= 1 << k
+                k += 1
+                if corrections:                 # the correction bits sit before the next symbol
+                    acc, nb, ip = _more(data, acc, nb, ip, corrections + 32)
+                    nb -= corrections
+                    corrections = 0
+        if eobrun:
+            while k <= se:
+                if (mask >> k) & 1:
+                    corrections += 1
+                k += 1
+            if corrections:
+                acc, nb, ip = _more(data, acc, nb, ip, corrections + 32)
+                nb -= corrections
+            eobrun -= 1
+        nz[bi] = mask
+    return eobrun == 0 and _end_of_bits(data, real, ip * 8 - nb)
+
+
+def _entropy_chunks(entropy):
+    """The restart intervals of one scan's entropy-coded bytes, unstuffed; ``None`` when an 0xFF is anything but stuffing or a restart marker, or the
+    restart markers are not in sequence."""
+    pieces = re.split(rb"\xff([\xd0-\xd7])", entropy)
+    chunks = pieces[0::2]
+    if [p[0] for p in pieces[1::2]] != [0xD0 + (i % 8) for i in range(len(chunks) - 1)]:
+        return None
+    out = []
+    for chunk in chunks:
+        if b"\xff" in chunk.replace(b"\xff\x00", b""):
+            return None
+        out.append(chunk.replace(b"\xff\x00", b"\xff"))
+    return out
+
+
+def _validate_jpeg(parts):
+    """Walks the segments of a JPEG (``_jpeg_parts``) and the entropy-coded data of every scan; raises ``_Refuse(STRUCTURE)`` for anything it cannot
+    account for. See the comment above."""
+    frame, scans, restart = None, 0, 0
+    qdef, hdef, hluts, nz, coverage = {}, {}, {}, {}, {}
+    for index, (marker, payload) in enumerate(parts):
+        if marker is None:
+            continue
+        budget().take("parts")
+        if marker in (0xC0, 0xC1, 0xC2):
+            if frame is not None:
+                _bad()
+            frame = _parse_sof(marker, payload)
+        elif marker == 0xDB:
+            for tq in _parse_dqt(payload):
+                if qdef.get(tq) is False:
+                    _bad()          # a table replaced before anything used it
+                qdef[tq] = False
+        elif marker == 0xC4:
+            for tc, th, counts, symbols in _parse_dht(payload):
+                if hdef.get((tc, th), (None, True))[1] is False:
+                    _bad()
+                hdef[(tc, th)] = ((counts, symbols), False)
+                for key in [k for k in hluts if k[:2] == (tc, th)]:
+                    del hluts[key]
+        elif marker == 0xDD:
+            if len(payload) != 2:
+                _bad()
+            restart = struct.unpack(">H", payload)[0]
+        elif marker == 0xDA:
+            if frame is None or index + 1 >= len(parts) or parts[index + 1][0] is not None:
+                _bad()
+            _validate_scan(frame, payload, parts[index + 1][1], restart, qdef, hdef, hluts, nz, coverage)
+            scans += 1
+        elif marker in _STRUCTURAL:
+            _bad()   # DAC, DHP, EXP, DNL, any other frame type: not accounted for
+    if frame is None or not scans or any(v is False for v in qdef.values()) or any(v[1] is False for v in hdef.values()):
+        _bad()
+    cids = [c[0] for c in frame["comps"]]
+    if frame["progressive"]:
+        if any(coverage.get((cid, "dc")) != 1 for cid in cids):
+            _bad()
+    elif any(coverage.get(cid) != 1 for cid in cids):
+        _bad()
+
+
+def _validate_scan(frame, payload, entropy, restart, qdef, hdef, hluts, nz, coverage):
+    ns = payload[0] if payload else 0
+    if not 1 <= ns <= len(frame["comps"]) or len(payload) != 4 + 2 * ns:
+        _bad()
+    ss, se, ahl = payload[1 + 2 * ns], payload[2 + 2 * ns], payload[3 + 2 * ns]
+    ah, al = ahl >> 4, ahl & 15
+    by_id = {c[0]: c for c in frame["comps"]}
+    comps = []
+    for i in range(ns):
+        cs, tdta = payload[1 + 2 * i], payload[2 + 2 * i]
+        if cs not in by_id or cs in [c[0][0] for c in comps] or tdta >> 4 > 3 or tdta & 15 > 3:
+            _bad()
+        comps.append((by_id[cs], tdta >> 4, tdta & 15))
+    if frame["progressive"]:
+        if ss == 0:
+            ok = se == 0 and (ah == 0 or ah == al + 1) and al <= 13
+        else:
+            ok = ns == 1 and 1 <= ss <= se <= 63 and (ah == 0 or ah == al + 1) and al <= 13
+        kind = "dc" if ss == 0 else "ac"
+    else:
+        ok = (ss, se, ah, al) == (0, 63, 0, 0)
+        kind = "seq"
+    if not ok:
+        _bad()
+    hmax, vmax, width, height = frame["hmax"], frame["vmax"], frame["width"], frame["height"]
+    if ns > 1:
+        if sum(c[0][1] * c[0][2] for c in comps) > 10:
+            _bad()
+        nmcu = _ceil(width, 8 * hmax) * _ceil(height, 8 * vmax)
+        sched_blocks = [c for c in comps for _ in range(c[0][1] * c[0][2])]
+    else:
+        (_cid, h, v, _tq), _td, _ta = comps[0]
+        nmcu = _ceil(_ceil(width * h, hmax), 8) * _ceil(_ceil(height * v, vmax), 8)
+        sched_blocks = [comps[0]]
+    for (_cid, _h, _v, tq), _td, _ta in comps:
+        if tq not in qdef:
+            _bad()
+        qdef[tq] = True
+    need_dc = kind == "seq" or (kind == "dc" and ah == 0)
+    need_ac = kind == "seq" or kind == "ac"
+    luts = {}
+    for (_c, _h, _v, _tq), td, ta in comps:
+        for need, tc, th in ((need_dc, 0, td), (need_ac, 1, ta)):
+            if not need:
+                continue
+            if (tc, th) not in hdef:
+                _bad()
+            (counts, symbols), _used = hdef[(tc, th)]
+            hdef[(tc, th)] = ((counts, symbols), True)
+            flavour = 0 if tc == 0 else (1 if kind == "seq" else (2 if ah == 0 else 3))
+            key = (tc, th, flavour)
+            if key not in hluts:
+                hluts[key] = _huffman_lut(counts, symbols, (_e_dc, _e_seq_ac, _e_prog_first, _e_prog_refine)[flavour])
+            luts[(tc, th)] = hluts[key]
+    budget().take("scan", len(entropy))
+    budget().take("blocks", nmcu * len(sched_blocks))
+    chunks = _entropy_chunks(entropy)
+    per = restart or nmcu
+    if chunks is None or len(chunks) != _ceil(nmcu, per):
+        _bad()
+    done = 0
+    for chunk in chunks:
+        n = min(per, nmcu - done)
+        if kind == "seq":
+            ok = _dec_sequential(chunk, n, [(luts[(0, td)], luts[(1, ta)]) for (_c, td, ta) in sched_blocks])
+        elif kind == "dc" and ah == 0:
+            ok = _dec_dc_first(chunk, n, [luts[(0, td)] for (_c, td, _ta) in sched_blocks])
+        elif kind == "dc":
+            ok = _end_of_bits(chunk, len(chunk) * 8, n * len(sched_blocks))
+        else:
+            (cid, h, v, _tq), _td, ta = comps[0]
+            if cid not in nz:
+                nz[cid] = array.array("Q", bytes(8 * _ceil(_ceil(width * h, hmax), 8) * _ceil(_ceil(height * v, vmax), 8)))
+            ok = (_dec_ac_first if ah == 0 else _dec_ac_refine)(chunk, n, luts[(1, ta)], ss, se, nz[cid], done)
+        if not ok:
+            _bad()
+        done += n
+    for (cid, _h, _v, _tq), _td, _ta in comps:
+        if kind == "seq":
+            coverage[cid] = coverage.get(cid, 0) + 1
+        elif kind == "dc" and ah == 0:
+            coverage[(cid, "dc")] = coverage.get((cid, "dc"), 0) + 1
+
+
+# ----------------------------------------------------------------------------------------------------------- the picture side of a PNG
+
+_PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
+_PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+_ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+_PNG_SINGLE = frozenset([b"PLTE", b"tRNS", b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"bKGD", b"pHYs", b"iCCP"])
+_PNG_BEFORE_PLTE = frozenset([b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"iCCP"])
+_SBIT_LEN = {0: 1, 2: 3, 3: 3, 4: 2, 6: 4}
+
+
+def _png_row_groups(width, height, depth, ctype, interlace):
+    """[(number of scanlines, length of each with its filter byte)] of the decompressed data: one group, or one per non-empty Adam7 pass."""
+    bits = depth * _PNG_CHANNELS[ctype]
+    if not interlace:
+        return [(height, 1 + _ceil(width * bits, 8))]
+    out = []
+    for xo, yo, dx, dy in _ADAM7:
+        pw = _ceil(width - xo, dx) if width > xo else 0
+        ph = _ceil(height - yo, dy) if height > yo else 0
+        if pw and ph:
+            out.append((ph, 1 + _ceil(pw * bits, 8)))
+    return out
+
+
+def _png_row_starts(groups):
+    pos = 0
+    for rows, length in groups:
+        for _ in range(rows):
+            yield pos
+            pos += length
+
+
+def _png_check_idat(blob, width, height, depth, ctype, interlace):
+    """The picture data must be one complete zlib stream that inflates to exactly the scanlines the header says (each starting with a filter byte of
+    0 to 4) and ends at the last byte of the last IDAT: no byte after the stream, no data in an IDAT that the stream does not use."""
+    groups = _png_row_groups(width, height, depth, ctype, interlace)
+    expected = sum(rows * length for rows, length in groups)
+    budget().take("scan", expected)
+    budget().take("blocks", sum(rows for rows, _length in groups))
+    it = _png_row_starts(groups)
+    next_start = next(it, expected + 1)
+    d, total, pos = zlib.decompressobj(), 0, 0
+    try:
+        while pos < len(blob) and not d.eof:
+            pending = blob[pos:pos + 65536]
+            pos += len(pending)
+            while pending:
+                out = d.decompress(pending, 1 << 20)
+                pending = d.unconsumed_tail
+                base = total
+                total += len(out)
+                if total > expected:
+                    _bad()
+                while next_start < total:
+                    if out[next_start - base] > 4:
+                        _bad()
+                    next_start = next(it, expected + 1)
+                if d.eof:
+                    break
+    except zlib.error:
+        _bad()
+    if not d.eof or d.unused_data or pos < len(blob) or total != expected:
+        _bad()
+
+
+def _png_values(kind, body, depth, ctype, plte_entries):
+    """The values of a chunk that is copied must be ones the specification allows, in sane ranges."""
+    top = 1 << depth
+    if kind == b"PLTE":
+        if ctype != 3 or len(body) % 3 or not 3 <= len(body) <= 768 or len(body) // 3 > top:
+            _bad()          # a palette belongs to a palette image; a "suggested palette" on any other is a carrier and not needed
+    elif kind == b"tRNS":
+        if ctype == 0:
+            ok = len(body) == 2 and struct.unpack(">H", body)[0] < top
+        elif ctype == 2:
+            ok = len(body) == 6 and all(v < top for v in struct.unpack(">3H", body))
+        elif ctype == 3:
+            ok = 1 <= len(body) <= plte_entries
+        else:
+            ok = False
+        if not ok:
+            _bad()
+    elif kind == b"gAMA":
+        if len(body) != 4 or not 1 <= struct.unpack(">I", body)[0] <= 1000000:
+            _bad()
+    elif kind == b"cHRM":
+        if len(body) != 32 or max(struct.unpack(">8I", body)) > 200000:
+            _bad()
+    elif kind == b"sRGB":
+        if len(body) != 1 or body[0] > 3:
+            _bad()
+    elif kind == b"sBIT":
+        if len(body) != _SBIT_LEN[ctype] or not all(1 <= v <= (8 if ctype == 3 else depth) for v in body):
+            _bad()
+    elif kind == b"bKGD":
+        if ctype == 3:
+            ok = len(body) == 1 and body[0] < plte_entries
+        elif ctype in (0, 4):
+            ok = len(body) == 2 and struct.unpack(">H", body)[0] < top
+        else:
+            ok = len(body) == 6 and all(v < top for v in struct.unpack(">3H", body))
+        if not ok:
+            _bad()
+    elif kind == b"pHYs":
+        if len(body) != 9:
+            _bad()
+        x, y, unit = struct.unpack(">IIB", body)
+        if not (1 <= x <= 10000000 and 1 <= y <= 10000000 and unit <= 1):
+            _bad()
+
+
+def _validate_png(chunks):
+    """The header, the order of the chunks, the values of those that are copied, and the picture data to its real end (see ``_png_check_idat``)."""
+    try:
+        width, height, depth, ctype, comp, filt, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
+    except struct.error:
+        _bad()
+    if not (1 <= width <= 0x7FFFFFFF and 1 <= height <= 0x7FFFFFFF) or depth not in _PNG_DEPTHS.get(ctype, ()) or comp or filt or interlace > 1:
+        _bad()
+    seen, idat, state, entries = set(), [], "before", None
+    for kind, body, _crc in chunks[1:]:
+        if kind == b"IDAT":
+            if state == "after":
+                _bad()
+            state = "in"
+            idat.append(body)
+            continue
+        if state == "in":
+            state = "after"
+        if kind == b"IEND":
+            continue
+        if kind in _PNG_SINGLE:
+            if kind in seen or state != "before":
+                _bad()
+            seen.add(kind)
+            if kind == b"PLTE":
+                if {b"bKGD", b"tRNS"} & seen:
+                    _bad()
+                entries = len(body) // 3
+            elif kind in _PNG_BEFORE_PLTE and b"PLTE" in seen:
+                _bad()
+            elif kind in (b"bKGD", b"tRNS") and ctype == 3 and b"PLTE" not in seen:
+                _bad()
+            if kind == b"iCCP":
+                _png_icc(body)
+            else:
+                _png_values(kind, body, depth, ctype, entries)
+    if not idat or (ctype == 3 and b"PLTE" not in seen) or (b"iCCP" in seen and b"sRGB" in seen):
+        _bad()
+    _png_check_idat(b"".join(idat), width, height, depth, ctype, interlace)
+
+
 # ------------------------------------------------------------------------------------------------------------ the minimal copy
 
-_ICC_TYPES = frozenset([b"XYZ ", b"curv", b"para", b"sf32", b"mft1", b"mft2", b"mAB ", b"mBA ", b"chrm", b"cicp", b"dtim", b"meas", b"sig ",
-                        b"view", b"text", b"desc", b"mluc", b"vcgt", b"ui08", b"ui16", b"ui32", b"uf32"])
-_ICC_CHARS = re.compile(r"^[A-Za-z0-9 \-_.,():/%]*$")
+_ICC_CHARS = re.compile(r"^[A-Za-z0-9 \-_.,():/%*]*$")
 _ICC_WORDS = frozenset(["lat", "latitude", "lon", "long", "longitude", "lng", "gps", "geo", "coord", "coords", "coordinate", "coordinates", "position"])
 _ICC_MAX = 4 * 1024 * 1024
-_PNG_FIXED = {b"IHDR": (13,), b"gAMA": (4,), b"cHRM": (32,), b"sRGB": (1,), b"pHYs": (9,), b"cICP": (4,), b"mDCV": (24,), b"cLLI": (8,),
-              b"sBIT": (1, 2, 3, 4), b"bKGD": (1, 2, 6), b"IEND": (0,)}
-_PNG_COPIED = frozenset([b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND", b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"bKGD", b"pHYs", b"cICP", b"mDCV", b"cLLI"])
+_ICC_TAG_MAX = 1024 * 1024
+_ICC_LUT = (b"mft1", b"mft2", b"mAB ", b"mBA ")
+_ICC_TEXT_TYPES = (b"desc", b"mluc")
+_ICC_TAGS = {
+    b"A2B0": _ICC_LUT, b"A2B1": _ICC_LUT, b"A2B2": _ICC_LUT, b"B2A0": _ICC_LUT, b"B2A1": _ICC_LUT, b"B2A2": _ICC_LUT, b"gamt": _ICC_LUT,
+    b"pre0": _ICC_LUT, b"pre1": _ICC_LUT, b"pre2": _ICC_LUT,
+    b"rXYZ": (b"XYZ ",), b"gXYZ": (b"XYZ ",), b"bXYZ": (b"XYZ ",), b"wtpt": (b"XYZ ",), b"bkpt": (b"XYZ ",), b"lumi": (b"XYZ ",),
+    b"rTRC": (b"curv", b"para"), b"gTRC": (b"curv", b"para"), b"bTRC": (b"curv", b"para"), b"kTRC": (b"curv", b"para"),
+    b"chad": (b"sf32",), b"chrm": (b"chrm",), b"cicp": (b"cicp",), b"meas": (b"meas",), b"view": (b"view",), b"tech": (b"sig ",), b"calt": (b"dtim",),
+    b"cprt": (b"text", b"mluc"), b"dscm": (b"mluc",), b"desc": _ICC_TEXT_TYPES, b"dmnd": _ICC_TEXT_TYPES, b"dmdd": _ICC_TEXT_TYPES, b"vued": _ICC_TEXT_TYPES,
+}
+_ICC_CLASSES = (b"scnr", b"mntr", b"prtr", b"link", b"spac", b"abst", b"nmcl")
+_ICC_SPACES = (b"XYZ ", b"Lab ", b"Luv ", b"YCbr", b"Yxy ", b"RGB ", b"GRAY", b"HSV ", b"HLS ", b"CMYK", b"CMY ")
+_SIG_CHARS = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ")
+_PNG_FIXED = {b"IHDR": (13,), b"gAMA": (4,), b"cHRM": (32,), b"sRGB": (1,), b"pHYs": (9,), b"IEND": (0,)}
+_PNG_COPIED = frozenset([b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND", b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"bKGD", b"pHYs"])
 _PNG_ANIMATION = frozenset([b"acTL", b"fcTL", b"fdAT"])
 
 
@@ -847,14 +1470,15 @@ def _seg(marker, payload):
     return b"\xff" + bytes([marker]) + struct.pack(">H", len(payload) + 2) + payload
 
 
-def _icc_text(text):
-    """A text of an ICC tag must be short, in a conservative alphabet, and carry no coordinate and no position word."""
+def _icc_text(text, unicode_ok=False):
+    """A text of an ICC tag must be short, in a conservative alphabet (a localised name may use letters of any script, nothing else beyond the
+    ASCII set), and carry no coordinate and no position word."""
     text = text.rstrip("\x00")
-    if len(text) > 200 or not _ICC_CHARS.match(text):
+    if len(text) > 200 or not _ICC_CHARS.match("".join(c if c.isascii() else ("a" if unicode_ok and unicodedata.category(c)[0] in "LM" else "\x00") for c in text)):
         raise _Refuse(ICC)
     if any(w in _ICC_WORDS for w in re.findall(r"[a-z]+", text.lower())) or re.search(r"\d{7,}", text):
         raise _Refuse(ICC)
-    if _coord_value(text.encode("ascii")):
+    if _coord_value(text.encode("utf-8")):
         raise _Refuse(ICC)
 
 
@@ -886,7 +1510,7 @@ def _icc_tag_text(data):
         if len(ustr) != 2 * ucount:
             raise _Refuse(ICC)
         try:
-            _icc_text(ustr.decode("utf-16-be"))
+            _icc_text(ustr.decode("utf-16-be"), True)
         except UnicodeDecodeError:
             raise _Refuse(ICC)
         if not rest2.strip(b"\x00"):
@@ -907,7 +1531,7 @@ def _icc_tag_text(data):
             if length % 2 or off < 16 + 12 * n or off + length > len(data) or (lang + country).strip(b"\x00abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"):
                 raise _Refuse(ICC)
             try:
-                _icc_text(data[off:off + length].decode("utf-16-be"))
+                _icc_text(data[off:off + length].decode("utf-16-be"), True)
             except UnicodeDecodeError:
                 raise _Refuse(ICC)
             used.append((off, off + length))
@@ -924,33 +1548,245 @@ def _icc_unaccounted(data, used):
     _icc_zero(data[cursor:])
 
 
+def _ibad():
+    raise _Refuse(ICC)
+
+
+def _s15(data, off, limit=8.0):
+    value = struct.unpack_from(">i", data, off)[0]
+    if abs(value) > limit * 65536:
+        _ibad()
+    return value
+
+
+def _sig4(four):
+    if four != bytes(4) and not all(c in _SIG_CHARS for c in four):
+        _ibad()
+
+
+def _icc_date(data, off):
+    year, month, day, hour, minute, second = struct.unpack_from(">6H", data, off)
+    if (year, month, day, hour, minute, second) != (0,) * 6 and not (1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31 and hour < 24
+                                                                    and minute < 60 and second < 61):
+        _ibad()
+
+
+def _icc_header(p):
+    if struct.unpack_from(">I", p, 0)[0] != len(p) or p[36:40] != b"acsp":
+        _ibad()
+    _sig4(p[4:8])
+    if p[8] not in (2, 4) or p[9] >> 4 > 9 or p[9] & 15 > 9 or p[10:12] != bytes(2):
+        _ibad()
+    if p[12:16] not in _ICC_CLASSES or p[16:20] not in _ICC_SPACES or p[20:24] not in (b"XYZ ", b"Lab "):
+        _ibad()
+    _icc_date(p, 24)
+    _sig4(p[40:44])
+    if p[44:46] != bytes(2) or p[56:63] != bytes(7) or p[63] > 15 or struct.unpack_from(">I", p, 64)[0] > 3:
+        _ibad()
+    _sig4(p[48:52])
+    _sig4(p[52:56])
+    for off, want in ((68, 63190), (72, 65536), (76, 54061)):          # the illuminant is D50
+        if abs(struct.unpack_from(">i", p, off)[0] - want) > 3000:
+            _ibad()
+    _sig4(p[80:84])
+    if p[84:100] != bytes(16):
+        zeroed = bytearray(p)
+        zeroed[44:48] = bytes(4)
+        zeroed[64:68] = bytes(4)
+        zeroed[84:100] = bytes(16)
+        if hashlib.md5(bytes(zeroed)).digest() != p[84:100]:
+            _ibad()                    # a profile ID is the MD5 of the profile, or zero
+    if p[100:128] != bytes(28):
+        _ibad()
+
+
+def _icc_xyz(data, limit=3.0):
+    if len(data) != 20:
+        _ibad()
+    for off in (8, 12, 16):
+        _s15(data, off, limit)
+
+
+def _icc_curv_len(data, off=0):
+    n = struct.unpack_from(">I", data, off + 8)[0]
+    if n > 4096:
+        _ibad()
+    return 12 + 2 * n, n
+
+
+def _icc_curve(data, off=0):
+    """Checks a 'curv' or 'para' element at ``off`` and returns its length."""
+    typ = data[off:off + 4]
+    if data[off + 4:off + 8] != bytes(4):
+        _ibad()
+    if typ == b"curv":
+        length, n = _icc_curv_len(data, off)
+        if off + length > len(data):
+            _ibad()
+        if n == 1 and struct.unpack_from(">H", data, off + 12)[0] > 0x0A00:
+            _ibad()                    # a gamma above 10
+        if n > 1:
+            values = struct.unpack_from(">%dH" % n, data, off + 12)
+            if not (all(a <= b for a, b in zip(values, values[1:])) or all(a >= b for a, b in zip(values, values[1:]))):
+                _ibad()                # a transfer curve is monotone; bytes that are not a curve do not make one
+        return length
+    if typ == b"para":
+        ftype, reserved = struct.unpack_from(">HH", data, off + 8)
+        if ftype > 4 or reserved:
+            _ibad()
+        length = 12 + 4 * (1, 3, 4, 5, 7)[ftype]
+        if off + length > len(data):
+            _ibad()
+        for i in range((length - 12) // 4):
+            _s15(data, off + 12 + 4 * i)
+        return length
+    _ibad()
+
+
+def _icc_pad_zero(data, end):
+    if len(data) - end > 3 or data[end:].strip(b"\x00"):
+        _ibad()
+
+
+def _icc_clut(data, off, nin, nout):
+    """A multi-dimensional table of an 'mAB ' / 'mBA ' element at ``off``; returns its length."""
+    grid = data[off:off + 16]
+    prec = data[off + 16]
+    if len(grid) != 16 or prec not in (1, 2) or data[off + 17:off + 20] != bytes(3) or grid[nin:].strip(b"\x00"):
+        _ibad()
+    size = 1
+    for g in grid[:nin]:
+        if not 2 <= g <= 64:
+            _ibad()
+        size *= g
+    length = 20 + size * nout * prec
+    if length > _ICC_TAG_MAX or off + length > len(data):
+        _ibad()
+    return length
+
+
+def _icc_lut(data):
+    typ = data[:4]
+    nin, nout = data[8], data[9]
+    if not (1 <= nin <= 4 and 1 <= nout <= 4):
+        _ibad()
+    if typ in (b"mft1", b"mft2"):
+        grid = data[10]
+        if not 2 <= grid <= 64 or data[11]:
+            _ibad()
+        for i in range(9):
+            _s15(data, 12 + 4 * i)
+        if typ == b"mft1":
+            size = 48 + 256 * nin + grid ** nin * nout + 256 * nout
+        else:
+            n, m = struct.unpack_from(">HH", data, 48)
+            if not (2 <= n <= 4096 and 2 <= m <= 4096):
+                _ibad()
+            size = 52 + 2 * nin * n + 2 * grid ** nin * nout + 2 * nout * m
+        if size > _ICC_TAG_MAX or len(data) < size:
+            _ibad()
+        _icc_pad_zero(data, size)
+        return
+    if data[10:12] != bytes(2):
+        _ibad()
+    offsets = struct.unpack_from(">5I", data, 12)       # B curves, matrix, M curves, CLUT, A curves
+    counts = (nout, 0, nout, 0, nin) if typ == b"mAB " else (nin, 0, nin, 0, nout)
+    used = [(0, 32)]
+    for which, off in enumerate(offsets):
+        if not off:
+            continue
+        if off < 32 or off % 4 or off >= len(data):
+            _ibad()
+        if which == 1:
+            for i in range(12):
+                _s15(data, off + 4 * i)
+            used.append((off, off + 48))
+        elif which == 3:
+            used.append((off, off + _icc_clut(data, off, nin, nout)))
+        else:
+            pos = off
+            for _ in range(counts[which]):
+                length = _icc_curve(data, pos)
+                pos += length + (-length) % 4
+            used.append((off, pos))
+    _icc_unaccounted(data, used)
+
+
+def _icc_tag(sig, data):
+    typ = data[:4]
+    if typ not in _ICC_TAGS[sig] or data[4:8] != bytes(4) or len(data) > _ICC_TAG_MAX:
+        _ibad()
+    if typ in (b"text", b"desc", b"mluc"):
+        _icc_tag_text(data)
+    elif typ == b"XYZ ":
+        _icc_xyz(data, 1000.0 if sig == b"lumi" else 3.0)   # the luminance tag is in cd/m2
+    elif typ in (b"curv", b"para"):
+        _icc_pad_zero(data, _icc_curve(data))
+    elif typ == b"sf32":
+        if len(data) != 44:
+            _ibad()
+        for i in range(9):
+            _s15(data, 8 + 4 * i)
+    elif typ == b"chrm":
+        n, colorant = struct.unpack_from(">HH", data, 8)
+        if n > 4 or colorant > 4 or len(data) != 12 + 8 * n:
+            _ibad()
+        for i in range(2 * n):
+            _s15(data, 12 + 4 * i, 2.0)
+    elif typ == b"cicp":
+        if len(data) != 12 or max(data[8:12]) > 31:
+            _ibad()
+    elif typ == b"meas":
+        if len(data) != 36 or struct.unpack_from(">I", data, 8)[0] > 2 or struct.unpack_from(">I", data, 24)[0] > 2 \
+                or struct.unpack_from(">I", data, 28)[0] > 0x10000 or struct.unpack_from(">I", data, 32)[0] > 8:
+            _ibad()
+        for off in (12, 16, 20):
+            _s15(data, off, 3.0)
+    elif typ == b"view":
+        if len(data) != 36 or struct.unpack_from(">I", data, 32)[0] > 8:
+            _ibad()
+        for off in range(8, 32, 4):
+            _s15(data, off, 1000.0)
+    elif typ == b"sig ":
+        if len(data) != 12 or not all(c in _SIG_CHARS for c in data[8:12]):
+            _ibad()
+    elif typ == b"dtim":
+        if len(data) != 20:
+            _ibad()
+        _icc_date(data, 8)
+    else:
+        _icc_lut(data)
+
+
 def _check_icc(profile):
-    """Accepts an ICC profile only when it parses end to end and holds nothing it does not name: the size field is the length, the header's
-    reserved bytes are zero, the tag table fits, every tag has a type from ``_ICC_TYPES`` (numbers, curves, matrices, short texts), the text tags
-    ('text', 'desc', 'mluc') are short and in a conservative alphabet with no coordinate or position word, no byte lies outside the header, the
-    table and the tags unless it is zero. Anything else raises ``_Refuse("icc")``."""
+    """Accepts an ICC profile only when it is clean as a structure: the header fields have valid values (size, version, class, spaces, date, D50
+    illuminant, printable signatures, the profile ID zero or the MD5, reserved bytes zero); the tag table has only standard colour tags, each once,
+    4-byte aligned, with a type that belongs to the tag and a size and values that fit the type (numbers in range, monotone curves, tables whose
+    sizes add up, short plain texts); tags do not overlap (equal tags may share data); and every byte outside the header, the table and the tags is
+    zero. A tag it does not know, a private signature, ui08, vcgt, dict and anything else: ``_Refuse("icc")``."""
     n = len(profile)
     try:
-        if n < 132 or n > _ICC_MAX or struct.unpack_from(">I", profile, 0)[0] != n or profile[36:40] != b"acsp" or profile[100:128].strip(b"\x00"):
-            raise _Refuse(ICC)
+        if n < 132 or n > _ICC_MAX:
+            _ibad()
+        _icc_header(profile)
         count = struct.unpack_from(">I", profile, 128)[0]
         table_end = 132 + 12 * count
-        if count > 200 or table_end > n:
-            raise _Refuse(ICC)
-        used = [(0, table_end)]
+        if not 1 <= count <= 64 or table_end > n:
+            _ibad()
+        seen, ranges = set(), set()
         for i in range(count):
-            _sig, off, size = struct.unpack_from(">4sII", profile, 132 + 12 * i)
-            if size < 8 or off < table_end or off + size > n:
-                raise _Refuse(ICC)
-            data = profile[off:off + size]
-            if data[:4] not in _ICC_TYPES or data[4:8] != b"\x00\x00\x00\x00":
-                raise _Refuse(ICC)
-            if data[:4] in (b"text", b"desc", b"mluc"):
-                _icc_tag_text(data)
-            used.append((off, off + size))
-        _icc_unaccounted(profile, used)
-    except (struct.error, ValueError):
-        raise _Refuse(ICC)
+            sig, off, size = struct.unpack_from(">4sII", profile, 132 + 12 * i)
+            if sig not in _ICC_TAGS or sig in seen or off % 4 or size < 8 or off < table_end or off + size > n:
+                _ibad()
+            seen.add(sig)
+            _icc_tag(sig, profile[off:off + size])
+            ranges.add((off, off + size))
+        ordered = sorted(ranges)
+        if any(b[0] < a[1] for a, b in zip(ordered, ordered[1:])):
+            _ibad()                    # two tags overlap but are not the same
+        _icc_unaccounted(profile, [(0, table_end)] + ordered)
+    except (struct.error, ValueError, IndexError, UnicodeDecodeError):
+        _ibad()
 
 
 def _orientation(tiff):
@@ -1037,7 +1873,22 @@ def _icc_of_jpeg(parts):
     return profile
 
 
+def _jfif_ok(payload):
+    """A JFIF header of the copy: a known version, units 0 to 2, densities up to 9999, no thumbnail."""
+    return (len(payload) == 14 and payload[:5] == b"JFIF\x00" and payload[5:7] in (b"\x01\x00", b"\x01\x01", b"\x01\x02") and payload[7] <= 2
+            and max(struct.unpack(">HH", payload[8:12])) <= 9999 and payload[12:] == b"\x00\x00")
+
+
+def _adobe_ok(payload):
+    """An Adobe header: version 100 or 101, the two flag words 0, 0x4000 or 0x8000, a transform of 0, 1 or 2."""
+    if len(payload) != 12 or payload[:5] != b"Adobe":
+        return False
+    version, flags0, flags1, transform = struct.unpack(">HHHB", payload[5:12])
+    return version in (100, 101) and flags0 in (0, 0x4000, 0x8000) and flags1 in (0, 0x4000, 0x8000) and transform <= 2
+
+
 def _build_jpeg(parts):
+    _validate_jpeg(parts)
     _icc_of_jpeg(parts)
     out, jfif, exif, adobe = [b"\xff\xd8"], False, False, False
     for marker, payload in parts:
@@ -1047,6 +1898,8 @@ def _build_jpeg(parts):
             out.append(_seg(marker, payload))
         elif marker == 0xE0 and payload[:5] == b"JFIF\x00" and len(payload) >= 14 and not jfif:
             jfif = True
+            if not _jfif_ok(payload[:12] + b"\x00\x00"):
+                _bad()
             out.append(_seg(0xE0, payload[:12] + b"\x00\x00"))
         elif marker == 0xE1 and payload[:6] == b"Exif\x00\x00" and not exif:
             exif = True
@@ -1057,6 +1910,8 @@ def _build_jpeg(parts):
             out.append(_seg(marker, payload))
         elif marker == 0xEE and payload[:5] == b"Adobe" and len(payload) >= 12 and not adobe:
             adobe = True
+            if not _adobe_ok(payload[:12]):
+                _bad()
             out.append(_seg(0xEE, payload[:12]))
         # every other segment (XMP, IPTC, MPF, JFXX, maker data, comments...) is not in the copy
     out.append(b"\xff\xd9")
@@ -1094,9 +1949,9 @@ def _verify_jpeg(out, parts_in):
         if marker is None or marker in _STRUCTURAL:
             continue
         kinds.append(marker)
-        if marker == 0xE0 and len(payload) == 14 and payload[:5] == b"JFIF\x00" and payload[12:] == b"\x00\x00":
+        if marker == 0xE0 and _jfif_ok(payload):
             pass
-        elif marker == 0xEE and len(payload) == 12 and payload[:5] == b"Adobe":
+        elif marker == 0xEE and _adobe_ok(payload):
             pass
         elif marker == 0xE1 and payload[:6] == b"Exif\x00\x00" and _exif_tiff(*(_orientation(payload[6:]) or (None, 0))) == payload[6:]:
             pass
@@ -1126,7 +1981,10 @@ def _png_icc(body):
     if k < 1 or k > 79 or body[k + 1:k + 2] != b"\x00":
         raise _Refuse(ICC)
     _icc_text(body[:k].decode("latin-1"))
-    profile = _inflate(body[k + 2:])
+    try:
+        profile = _inflate(body[k + 2:])
+    except _Refuse as exc:
+        raise _Refuse(ICC) if exc.reason == UNPARSEABLE else exc      # a stream that is cut, or with more data after it
     _check_icc(profile)
     return profile
 
@@ -1137,6 +1995,7 @@ def _png_chunk(kind, body, crc=None):
 
 
 def _build_png(chunks):
+    _validate_png(chunks)
     out, exif = [_PNG_SIG], False
     for kind, body, crc in chunks:
         if kind in _PNG_ANIMATION:
@@ -1194,7 +2053,7 @@ def _verify_png(out, chunks_in):
 # ------------------------------------------------------------------------------------------------------------------ the API
 
 
-def strip(data, content_type):
+def _strip(data, content_type):
     """``(bytes, "")``: a copy of a JPEG or PNG with minimal metadata (see the module docstring), or ``(None, reason)``; never raises. ``reason``
     is one of ``tiff`` (kept held), ``unsupported``, ``unparseable``, ``verify_failed``, ``icc`` (a colour profile it does not accept) and
     ``limit`` (more work than the budget allows)."""
@@ -1221,8 +2080,30 @@ def strip(data, content_type):
             return None, VERIFY_FAILED
         return out, ""
     except _Refuse as exc:
-        return None, exc.reason if exc.reason in (TIFF_KEPT, UNSUPPORTED, VERIFY_FAILED, ICC) else UNPARSEABLE
+        return None, exc.reason if exc.reason in (TIFF_KEPT, UNSUPPORTED, VERIFY_FAILED, ICC, STRUCTURE) else UNPARSEABLE
     except ScanLimit:
         return None, LIMIT
     except Exception:  # noqa: BLE001 - a file the walkers cannot take stays held; nothing escapes (never a RecursionError or MemoryError either)
         return None, UNPARSEABLE
+
+
+_MEMO = collections.OrderedDict()
+
+
+def strip(data, content_type):
+    """``(bytes, "")``: a copy of a JPEG or PNG with minimal metadata (see the module docstring), or ``(None, reason)``; never raises. ``reason``
+    is one of ``tiff`` (kept held), ``unsupported``, ``unparseable``, ``verify_failed``, ``icc`` (a colour profile it does not accept),
+    ``structure`` (the picture side has a part it cannot account for) and ``limit`` (more work than the budget allows). The answer for the
+    same bytes is remembered for a few files (reading the picture data to its end takes seconds for a large photo, and the push asks again)."""
+    try:
+        key = (hashlib.sha256(bytes(data)).digest(), content_type)
+    except (TypeError, ValueError):
+        return None, UNSUPPORTED
+    if key in _MEMO:
+        _MEMO.move_to_end(key)
+        return _MEMO[key]
+    result = _strip(data, content_type)
+    _MEMO[key] = result
+    while len(_MEMO) > 6:
+        _MEMO.popitem(last=False)
+    return result

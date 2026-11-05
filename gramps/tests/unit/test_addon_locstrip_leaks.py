@@ -38,19 +38,12 @@ def raw_tiff():
     return LS.build_tiff(">")
 
 
-def eoi_split(data):
-    """(everything before EOI, EOI): a JPEG built by LS.jpeg ends with EOI."""
-    assert data.endswith(b"\xff\xd9")
-    return data[:-2], b"\xff\xd9"
-
-
-SOS = b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00"
-
-
-def second_scan(extra_segment, scan=b"\x11\x22\x33"):
-    """A progressive file: the first scan, a segment between the scans, and a second scan."""
-    body, eoi = eoi_split(LS.jpeg(tiff_main()))
-    return body + extra_segment + SOS + scan + eoi
+def second_scan(extra_segment):
+    """A progressive file with ``extra_segment`` put between its first and its second scan."""
+    data = LS.jpeg(tiff_main(), body=LS.PROGRESSIVE)
+    first = data.index(b"\xff\xda")
+    second = data.index(b"\xff\xda", first + 2)
+    return data[:second] + extra_segment + data[second:]
 
 
 def mp4_with_location():
@@ -125,8 +118,10 @@ class Safe(unittest.TestCase):
         self.held(LS.jpeg(tiff_main()) + xmp, JPEG)
 
     def test_a_progressive_file_keeps_its_scans_and_drops_what_sits_between_them(self):
-        out = self.copy(second_scan(LS.segment(0xE1, b"Exif\x00\x00" + raw_tiff())), JPEG)
-        self.assertEqual(len([1 for m, _p in locstrip._jpeg_parts(out) if m == 0xDA]), 2)
+        data = second_scan(LS.segment(0xE1, b"Exif\x00\x00" + raw_tiff()))
+        out = self.copy(data, JPEG)
+        scans = lambda d: len([1 for m, _p in locstrip._jpeg_parts(d) if m == 0xDA])  # noqa: E731
+        self.assertEqual((scans(out), scans(out) > 2), (scans(data), True), "every scan of the progressive file is in the copy")
 
     # ---- JPEG: extended XMP and XMP forms
     def test_extended_xmp_whole_or_split_inside_a_name_is_dropped(self):
@@ -178,12 +173,11 @@ class Safe(unittest.TestCase):
             self.copy(LS.png(tiff=tiff_main(), text=text), PNG)
 
     def test_the_standard_png_chunks_are_kept(self):
-        data = LS.png(tiff=tiff_main(), xmp=LS.xmp_packet())
-        iend = data.rindex(b"IEND") - 4
         extra = (LS.chunk(b"gAMA", struct.pack(">I", 45455)) + LS.chunk(b"sRGB", b"\x00") + LS.chunk(b"pHYs", struct.pack(">IIB", 2835, 2835, 1))
-                 + LS.chunk(b"bKGD", b"\x80") + LS.chunk(b"cICP", b"\x01\x0d\x00\x01"))
-        out = self.copy(data[:iend] + extra + data[iend:], PNG)
-        self.assertEqual([k for k, _b, _c in locstrip._chunks(out)], [b"IHDR", b"eXIf", b"IDAT", b"gAMA", b"sRGB", b"pHYs", b"bKGD", b"cICP", b"IEND"])
+                 + LS.chunk(b"cICP", b"\x01\x0d\x00\x01") + LS.chunk(b"mDCV", b"\x00" * 24))
+        out = self.copy(LS.png(tiff=tiff_main(), xmp=LS.xmp_packet(), extra=extra), PNG)
+        self.assertEqual([k for k, _b, _c in locstrip._chunks(out)], [b"IHDR", b"gAMA", b"sRGB", b"pHYs", b"eXIf", b"IDAT", b"IEND"],
+                         "the HDR signalling chunks (cICP, mDCV) are not copied")
 
     # ---- bounded work
     def test_a_regular_expression_bomb_costs_nothing(self):

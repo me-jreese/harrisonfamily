@@ -147,6 +147,8 @@ HOLD_MESSAGES.update({
     "media_stripped_replaced": "The website has another file for this photo than the copy this Mac sent. It was not downloaded, so your original and its link in Gramps stay as they are, "
                                "and this stays listed on every sync until you choose. To take the website's file instead: hfy-sync stripped --accept-website-file <Gramps ID of the photo> --yes. "
                                "To send your copy again: hfy-sync stripped --send-again <Gramps ID> --yes (then push).",
+    "media_structure": "This photo's file has a part the add-on cannot account for in a copy (extra bytes inside the picture data or after it, tables nothing uses, a chunk or header "
+                       "with odd values, or an unusual layout), so the photo was not sent. Nothing on this Mac changed. Save a copy of the photo (any editor's Save As), then sync.",
     "media_icc_text": "This photo's colour profile has something this add-on does not accept in a copy (a text that is not a plain name, a number that looks like a position, "
                       "or a part it cannot read), so the photo was not sent. Nothing on this Mac changed. Save the photo without its colour profile, or with a standard one, then sync.",
     "media_scan_unreadable": "The photo's metadata could not be read with certainty (a damaged or unusual structure), so it was not checked for a location and the photo was not sent. "

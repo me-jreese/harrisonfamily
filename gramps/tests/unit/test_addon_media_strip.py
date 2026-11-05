@@ -209,14 +209,14 @@ class Upload(StripCase):
         self.set_strip(True)
         self.push()
         first = self.cloud.blob_bytes(handle)
-        newer = LS.jpeg(LS.build_tiff(">"), None, scan=LS.SCAN[::-1])
+        newer = LS.jpeg(LS.build_tiff(">"), None, body=LS.BASELINE2)
         with open(path, "wb") as fh:
             fh.write(newer)
         self.push()
         second = self.cloud.blob_bytes(handle)
         self.assertEqual(second, locstrip.strip(newer, JPEG)[0])
         self.assertNotEqual(first, second)
-        clean = LS.jpeg(LS.build_tiff(gps=False), scan=LS.SCAN[::-1] + b"clean")
+        clean = LS.jpeg(LS.build_tiff(gps=False), body=LS.GRAY)
         with open(path, "wb") as fh:
             fh.write(clean)
         self.push()
