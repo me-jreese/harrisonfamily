@@ -50,7 +50,6 @@ export function renderMini(doc, model, treeHref) {
   const cardOf = (c, extra) => {
     const el = doc.createElement("div");
     el.className = extra ? `hfy-mini__card ${extra}` : "hfy-mini__card";
-    if (extra) el.setAttribute("aria-current", "true");
     const years = doc.createElement("span");
     years.className = "hfy-mini__years";
     years.textContent = c.years;
@@ -61,7 +60,9 @@ export function renderMini(doc, model, treeHref) {
   const mid = doc.createElement("div");
   mid.className = "hfy-mini__row";
   mid.setAttribute("data-mini-group", "focus");
-  const label = doc.createElement("h3");
+  mid.setAttribute("role", "group");
+  mid.setAttribute("aria-label", MINI_COPY.focus);
+  const label = doc.createElement("span");
   label.className = "hfy-mini__title";
   label.textContent = MINI_COPY.focus;
   mid.append(label, cardOf(model.focus, "hfy-mini__card--focus"));
@@ -74,7 +75,10 @@ function groupEl(doc, g, cardOf, treeHref) {
   const row = doc.createElement("div");
   row.className = "hfy-mini__row";
   row.setAttribute("data-mini-group", g.key);
-  const title = doc.createElement("h3");
+  row.setAttribute("role", "group");
+  row.setAttribute("aria-label", g.title);
+  // A span, not a heading: the mini view sits inside the person page's family section, whose own heading level is not known here.
+  const title = doc.createElement("span");
   title.className = "hfy-mini__title";
   title.textContent = g.title;
   row.append(title);
@@ -89,18 +93,28 @@ function groupEl(doc, g, cardOf, treeHref) {
   return row;
 }
 
-let graphPromise = null;
+/** Newest request per host, so a slow earlier fill (person-rendered fired twice with different ids) cannot overwrite a later one. */
+const latest = new WeakMap();
 
-/** Fill (or refill) the host's mini view for `personId`. Resolves true when a view is shown; any failure leaves the host as it was. */
-export async function fillMini(doc, host, personId, treeHref, fetcher) {
+/**
+ * Fill (or refill) the host's mini view for `personId`. Resolves true when a view is shown; false when it is not (no id, graph not
+ * loaded or gated, person not in the graph, or a newer fill superseded this one). `cache` holds the graph promise for one page mount
+ * ({} per mount, so a long session does not keep an old graph); a failed load is never cached.
+ */
+export async function fillMini(doc, host, personId, treeHref, fetcher, cache = {}) {
   host.querySelector("[data-person-mini]")?.remove();
+  const mine = Symbol("fill");
+  latest.set(host, mine);
   if (!personId) return false;
-  if (!graphPromise) graphPromise = loadGraph(fetcher).then((r) => { if (r.state !== "ready") graphPromise = null; return r; });
-  const res = await graphPromise;
-  if (res.state !== "ready") return false;
-  const model = miniModel(res.graph, personId);
-  if (!model) return false;
-  host.querySelector("[data-person-mini]")?.remove(); // a second render may have finished first
-  host.insertBefore(renderMini(doc, model, treeHref), host.firstChild);
-  return true;
+  try {
+    if (!cache.promise) cache.promise = loadGraph(fetcher).then((r) => { if (r.state !== "ready") cache.promise = null; return r; }, (e) => { cache.promise = null; throw e; });
+    const res = await cache.promise;
+    if (res.state !== "ready" || latest.get(host) !== mine) return false;
+    const model = miniModel(res.graph, personId);
+    if (!model) return false;
+    host.insertBefore(renderMini(doc, model, treeHref), host.firstChild);
+    return true;
+  } catch {
+    return false;
+  }
 }

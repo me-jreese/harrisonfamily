@@ -99,6 +99,17 @@
   // [data-slot="tree-link"] host) takes its place. Off, or when the flags cannot be read, the frame renders exactly as before. Set before
   // each render by miniFlagOn(); the frame code below is the flag-off path and goes when viz-graphviz-retire-flip deletes the SVGs.
   let personMiniOn = false;
+  let lastRendered = null;
+  // The islands signal (tree-link.js) when the mini view is wanted but not drawn: graph.json missing, gated or without this person,
+  // the chunk failing, or the two flag reads disagreeing. The frame held back above is then drawn, so the slot is never blank.
+  document.addEventListener("hfy:person-mini-unavailable", (event) => {
+    const detail = event && event.detail;
+    if (!personMiniOn || !lastRendered || !detail || detail.personId !== lastRendered.personId) {
+      return;
+    }
+    personMiniOn = false;
+    renderFamilyVisualization(lastRendered.person, lastRendered.personId);
+  });
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -265,6 +276,7 @@
       throw new Error("No person data returned.");
     }
 
+    lastRendered = { person, personId };
     currentPersonName = person.displayName || "";
     updateDocumentTitle(person);
     renderHero(person);
@@ -424,7 +436,8 @@
     return moment && moment.place && moment.place.displayName ? moment.place.displayName : "";
   }
 
-  // Resolves true only for familyViz and familyVizPersonMini both true; any failure or a missing feature-flags.js is false.
+  // Starts with fetchPerson and is awaited after it. fetchPerson's dataFetch already waits for feature-flags.js and resolveFlags caches its
+  // promise, so by then this adds no delay (flag off included). Resolves true only for familyViz and familyVizPersonMini both true; any failure or a missing feature-flags.js is false.
   function miniFlagOn() {
     return waitForFeatureFlags(2000)
       .then((ff) => (ff && typeof ff.resolveFlags === "function" ? ff.resolveFlags() : null))

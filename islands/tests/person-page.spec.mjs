@@ -5,7 +5,8 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { chatHub } from "./fixtures/chat-hub.mjs";
-
+import { MEASURE } from "./d11-measure.mjs";
+import { axeViolations } from "./axe.mjs";
 const PERSON = JSON.parse(readFileSync(new URL("./fixtures/person-legacy.json", import.meta.url), "utf8"));
 const TREE = readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8");
 const URL_PATH = "/person/?id=I9001";
@@ -29,10 +30,10 @@ const photo = (name) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="gray"/></svg>`;
 };
 
-async function stub(page, { shell = true, personV2 = false, familyViz = false, mini = false, chat = false, hold = null, status = 200, body = PERSON } = {}) {
+async function stub(page, { shell = true, personV2 = false, familyViz = false, mini = false, graph = MINI_GRAPH, graphStatus = 200, chat = false, hold = null, status = 200, body = PERSON } = {}) {
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: shell, personV2, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, familyViz, familyVizPersonMini: mini, chatV1: chat } }));
-  await page.route("**/person/graph.json", (r) => r.fulfill({ json: MINI_GRAPH }));
+  await page.route("**/person/graph.json", (r) => r.fulfill({ status: graphStatus, json: graph }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: "I9002", grampsId: "I9002", label: "Sam Example" } }));
   await page.route("**/api/comments**", (r) => r.fulfill({ json: { thread: { id: "person:I9001", topic: "comments", comments: [], reactions: {} } } }));
   await page.route("**/api/**", (r) => r.fallback());
@@ -457,6 +458,31 @@ for (const w of [375, 768, 1280]) {
     await expect(page.locator("#person-family-legend")).toHaveCount(0);
     expect(svgRequested).toBe(false);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
+// D-11 audit (evidence for viz-graphviz-retire-flip) at 375/768/1280 with the mini view on: 16px inputs, 44px targets, one control height per row,
+// no horizontal scroll, and axe clean. Whole page measured (it is clean at all three widths); axe is scoped to the tree-link slot.
+for (const w of [375, 768, 1280]) {
+  test(`D-11 audit at ${w}px, familyVizPersonMini on: 44px targets, no horizontal scroll, axe clean`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: 900 });
+    await openPerson(page, { personV2: true, familyViz: true, mini: true });
+    await expect(page.locator("[data-person-mini]")).toBeVisible();
+    const findings = await page.evaluate(`(${MEASURE.toString()})()`);
+    expect(findings).toEqual([]);
+    const violations = await axeViolations(page, { include: ["[data-slot=\"tree-link\"]"] });
+    expect(violations).toEqual([]);
+  });
+}
+
+// The mini view cannot be drawn (graph.json 404 or 500, or no entry for this person): the Graphviz frame is drawn instead, never a blank slot.
+for (const [name, opts] of [["graph.json 404", { graphStatus: 404 }], ["graph.json 500", { graphStatus: 500 }], ["person missing from graph.json", { graph: { ...MINI_GRAPH, people: MINI_GRAPH.people.filter((p) => p.id !== "I9001"), unions: [] } }]]) {
+  test(`mini flag on, ${name}: falls back to the Graphviz frame`, async ({ page }) => {
+    await openPerson(page, { personV2: true, familyViz: true, mini: true, ...opts });
+    await expect(page.locator("#person-family-visualization svg")).toHaveCount(1);
+    await expect(page.locator("#person-family-visualization")).toBeVisible();
+    await expect(page.locator("[data-person-mini]")).toHaveCount(0);
+    await expect(page.locator('[data-slot="tree-link"] a[data-tree-link]')).toHaveAttribute("href", "/tree/?focus=I9001");
   });
 }
 
