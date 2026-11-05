@@ -218,11 +218,11 @@ export const ROUTES = defineRoutes([
     },
   },
   // hfy-moderation-api-core (R-32; social.md 11.5): an admin hides or unhides a post, a comment or one photo, and reads the queue. Dark until moderationV1 is on
-  // (or the caller is uat). No `mcp` member and no policy row: both routes stay off MCP in v1. request_changes and ask belong to hfy-moderation-ask-api and the
-  // record kinds (note, mediaref, media) to hfy-moderation-record-targets: until then they answer 422 unsupported_action and 422 unsupported_target.
+  // (or the caller is uat). No `mcp` member and no policy row: both routes stay off MCP in v1. hfy-moderation-ask-api adds request_changes and ask (a note of 1 to 1000
+  // characters); the record kinds (note, mediaref, media) belong to hfy-moderation-record-targets and answer 422 unsupported_target until then.
   {
     name: "moderation.post", method: "POST", path: "/moderation",
-    summary: "Admins only: hide or unhide an item {target: {kind: post, id} | {kind: comment, id, thread} | {kind: photo, parent: {kind: post, id} | {kind: comment, id, thread}, attachment}, action: hide|unhide, version? (the updated_at or edited_at you saw), reason? (200, private, audit only)}: 200 {target, moderation (null once closed), item (your view)}; the post (all three copies), the MOD# item, the audit entry and the contribution event change in one transaction, and the author gets moderation_hidden or moderation_unhidden. 403 forbidden (not an admin), 400 validation | self_moderation, 404 not_found, 409 conflict (stale version), 422 unsupported_target (note, mediaref, media) | unsupported_action (request_changes, ask), 503 busy (no MCP tool)",
+    summary: "Admins only: moderate an item {target: {kind: post, id} | {kind: comment, id, thread} | {kind: photo, parent: {kind: post, id} | {kind: comment, id, thread}, attachment}, action: hide|unhide|request_changes|ask, note (required for request_changes and ask, 1-1000, contact-info guarded; refused for hide and unhide and for a photo), hide? (ask only, default false: true keeps the item hidden), version? (the updated_at or edited_at you saw), reason? (200, private, audit only)}: 200 {target, moderation (null once closed), item (your view)}; the post (all three copies), the MOD# item, the audit entry and the contribution event change in one transaction, and the author gets moderation_hidden, moderation_request or moderation_question (detail = the note) or moderation_unhidden; the author's own effective edit of a request_changes or ask item closes it and the asking admin gets moderation_resolved. 403 forbidden (not an admin), 400 validation | self_moderation, 404 not_found, 409 conflict (stale version), 422 contact_info (the note) | unsupported_target (note, mediaref, media), 503 busy (no MCP tool)",
     gate: requireFeature("moderationV1"),
     handler: async (c) => {
       const r = await c.moderation.post(c.body);

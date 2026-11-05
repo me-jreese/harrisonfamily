@@ -7,7 +7,7 @@ import { TxnCancelled, auditItem, transact, queryPartition, versionGuard } from 
 import { IMAGE_TYPES, UPLOAD_PREFIX, UPLOAD_PURPOSE_POST, uploadKeys } from "./uploads.js";
 import { createGuard, pointer } from "./guard.js";
 import { contribOps, emptyOps, getEvent, hideOps, mergeOps, revokeOps } from "./contrib.js";
-import { closeModOps, normalizeModerate, openModOps, postAttachmentId, targetKey } from "./moderation.js";
+import { closeModOps, hrefOf, normalizeModerate, openModOps, postAttachmentId, targetKey } from "./moderation.js";
 
 const hash = (s) => {
   let h = 5381;
@@ -111,7 +111,7 @@ function checkSize(post) {
  * `beforeDelete(post)` runs after a delete is allowed and before anything is written; what it throws is the answer (handler.js: comments.js
  * refusePendingGraduation, 409 graduation_pending while a photo in the post's thread is being added to a family page).
  */
-export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload, via = "ui", beforeDelete }) {
+export function createContentSource({ ddb, cmds, table, actor, audit, now = () => Date.now(), ulid, uid, mediaPublicBase = "https://harrisonfamily.us", guard = createGuard(), checkUpload, via = "ui", beforeDelete, onModerationResolved }) {
   const base = String(mediaPublicBase ?? "").replace(/\/+$/, "");
   const requireActor = () => {
     if (!actor) throw new ContentError("forbidden", "sign in to write");
@@ -348,6 +348,10 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       for (const a of before.attachments ?? []) if (a.moderation && !next.attachments.some((n) => n.url === a.url)) closing.push(targetKey(photoTarget(id, a)));
       const resolved = closing.length > 0 ? await closeModOps(ctx, closing, { resolvedBy: "author", at: next.updated_at }) : undefined;
       await commit("update", id, before, next, next.updated_at, { updates, ops: mergeOps(resolved, await eventOps(before, next)) });
+      // The edit answered an ask: the asking admin hears of it once the transaction has committed (the hook never fails the edit).
+      if (before.moderation && !next.moderation && before.moderation.state !== "hidden") {
+        await onModerationResolved?.({ target: targetKey({ kind: "post", id }), item: before.subject ? "story" : "post", authorId: before.author.id, askedBy: before.moderation.by?.id, by: { id: actor.id, label: actor.label }, navigate: hrefOf({ kind: "post", id }) });
+      }
       return view(next);
     },
     async setVisibility(id, visibility) {

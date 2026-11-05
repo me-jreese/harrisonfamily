@@ -6,13 +6,17 @@
 //   The inline state, the MOD# item, the AUDIT# entry (op "moderate", with the private reason) and the contribution event's hideOps all commit in
 //   ONE transaction, through content.js commit() and comments.js commit(): this file only builds the pieces and the two routes.
 //
-//   POST /api/moderation  {target, action, version?, reason?}   hide | unhide, for post, comment and photo targets (admins only)
+//   POST /api/moderation  {target, action, note?, hide?, version?, reason?}   hide | unhide | request_changes | ask, for post, comment and photo targets (admins only)
 //   GET  /api/moderation  ?state=open|closed&cursor=&limit=     the queue, newest first (admins only)
 //
 // Queue order: GET state=open is newest-opened first; GET state=closed is newest-resolved first (closedItem rewrites GSI1SK to resolved_at).
 //
-// Not here (other tasks): request_changes and ask through the route, their notifications and the author-edit resolution notice
-// (hfy-moderation-ask-api), and the record targets note, mediaref and media (hfy-moderation-record-targets: 422 unsupported_target until it lands).
+// request_changes and ask (hfy-moderation-ask-api): a note of 1 to 1000 characters, run through the R-18 guard by the source (422 contact_info, nothing
+// stored), kept on the inline state and on the MOD# item and delivered as the notice's `detail`. `ask` keeps the item visible unless `hide:true`.
+// An effective author edit of an item in changes_requested or question state closes the state, the MOD# item and the hide inside the edit's own
+// transaction (content.js update, comments.js edit) and tells the asking admin (onModerationResolved -> moderation_resolved).
+//
+// Not here (another task): the record targets note, mediaref and media (hfy-moderation-record-targets: 422 unsupported_target until it lands).
 import { canView, redactModeration } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { emptyOps } from "./contrib.js";
@@ -24,8 +28,8 @@ export const CONTENT_KINDS = Object.freeze(["post", "comment", "photo"]);
 /** Record kinds (records domain): the route answers 422 unsupported_target until hfy-moderation-record-targets lands. */
 export const RECORD_KINDS = Object.freeze(["note", "mediaref", "media"]);
 export const ACTIONS = Object.freeze(["hide", "unhide", "request_changes", "ask"]);
-/** The actions the route runs in this task. */
-export const ROUTE_ACTIONS = Object.freeze(["hide", "unhide"]);
+/** The actions that carry the admin's note to the author. */
+export const NOTE_ACTIONS = Object.freeze(["request_changes", "ask"]);
 export const MAX_REASON = 200;
 export const MAX_NOTE = 1000;
 export const DEFAULT_LIMIT = 25;
@@ -118,17 +122,32 @@ export function parseTarget(raw) {
   return { kind, parent, attachment: a };
 }
 
-/** The route body's action, note and reason, shape-checked. `reason` is optional and private (audit only). */
+/**
+ * The route body's action, note, hide flag, reason and version, shape-checked. `note` is required (1..1000 after trimming) for request_changes and ask and
+ * refused for hide and unhide (null, absent and "" count as absent); `hide` is a boolean that only `ask` reads (request_changes always hides, a plain hide hides);
+ * `reason` is optional and private (audit only). The contact-info guard on the note runs in the source, which stores nothing when it refuses.
+ */
 export function parseAction(body) {
   const action = body?.action;
   if (typeof action !== "string" || !ACTIONS.includes(action)) throw bad("action", "action must be hide, unhide, request_changes or ask");
+  let note;
+  const given = body.note !== undefined && body.note !== null && body.note !== "";
+  if (NOTE_ACTIONS.includes(action)) {
+    note = typeof body.note === "string" ? body.note.trim() : "";
+    if (note === "") throw bad("note", "a note is required");
+    if (note.length > MAX_NOTE) throw bad("note", `note must be at most ${MAX_NOTE} characters`);
+  } else if (given) throw bad("note", "a note goes with request_changes or ask");
+  if (body.hide !== undefined && body.hide !== null && typeof body.hide !== "boolean") throw bad("hide", "hide must be true or false");
   let reason;
   if (body.reason !== undefined && body.reason !== null) {
     if (typeof body.reason !== "string" || body.reason.trim().length > MAX_REASON) throw bad("reason", `reason must be text of at most ${MAX_REASON} characters`);
     reason = body.reason.trim() || undefined;
   }
   if (body.version !== undefined && (typeof body.version !== "string" || body.version === "" || body.version.length > 64)) throw bad("version", "version must be the updated_at or edited_at you saw");
-  return { action, ...(reason !== undefined ? { reason } : {}), ...(body.version !== undefined ? { version: body.version } : {}) };
+  return {
+    action, ...(note !== undefined ? { note } : {}), ...(action === "ask" ? { hide: body.hide === true } : {}),
+    ...(reason !== undefined ? { reason } : {}), ...(body.version !== undefined ? { version: body.version } : {}),
+  };
 }
 
 /**
@@ -215,7 +234,7 @@ export async function closeModOps(ctx, keys, { resolvedBy, at }) {
 // ---- the queue ---------------------------------------------------------------------------------------------------------------------------
 
 const enc = encodeURIComponent;
-function hrefOf(target) {
+export function hrefOf(target) {
   const to = target.kind === "photo" ? target.parent : target;
   const anchor = target.kind === "photo" ? "#photos" : "";
   if (to.kind === "post") return `/posts/?id=${enc(to.id)}${anchor}`;
@@ -248,6 +267,8 @@ function decodeCursor(cursor) {
 
 // ---- the routes --------------------------------------------------------------------------------------------------------------------------
 
+/** The notice each route action sends the author (notify.js MODERATION_KINDS). */
+const NOTICE_KIND = Object.freeze({ hide: "hidden", unhide: "unhidden", request_changes: "request", ask: "question" });
 const forbidden = () => new HttpError(403, "forbidden", "only a moderator can do that");
 const notFound = () => new HttpError(404, "not_found", "no such item");
 
@@ -289,9 +310,10 @@ export function createModeration({ ddb, cmds, table, actor, content, comments, n
     async post(body) {
       admin(); // before anything is read or validated: a member learns nothing about the route
       const target = parseTarget(body.target);
-      const { action, reason, version } = parseAction(body);
+      const { action, note, hide, reason, version } = parseAction(body);
       if (RECORD_KINDS.includes(target.kind)) throw new HttpError(422, "unsupported_target", "that kind of item can't be moderated yet.");
-      if (!ROUTE_ACTIONS.includes(action)) throw new HttpError(422, "unsupported_action", "that action isn't available yet. hide and unhide are.");
+      // A note is for the whole item: a photo is hidden or unhidden, never asked about (the source refuses it too).
+      if (target.kind === "photo" && note !== undefined) throw bad("note", "a note is for the whole post or comment, not one photo");
       const found = await locate(target);
       if (found.item.author?.id === actor.id) throw new HttpError(400, "self_moderation", "you can't moderate your own item. withdraw or delete it instead.");
       const before = stateOf(target, found.item);
@@ -299,7 +321,7 @@ export function createModeration({ ddb, cmds, table, actor, content, comments, n
       // hide, or an unhide of what is not hidden) leaves it false, so this caller sends no duplicate notice for a change it did not make.
       let wrote = false;
       const opts = { ...(version !== undefined ? { version } : {}), onWrite: () => { wrote = true; } };
-      const input = { action, ...(reason !== undefined ? { reason } : {}) };
+      const input = { action, ...(note !== undefined ? { note } : {}), ...(hide !== undefined ? { hide } : {}), ...(reason !== undefined ? { reason } : {}) };
       let item;
       if (target.kind === "post") item = await content.moderate(target.id, input, opts);
       else if (target.kind === "comment") item = await comments.moderate(target.thread, target.id, input, opts);
@@ -309,7 +331,7 @@ export function createModeration({ ddb, cmds, table, actor, content, comments, n
       if (wrote && JSON.stringify(before) !== JSON.stringify(after)) {
         await afterCommit("moderation notification", () =>
           notifier.onModeration({
-            kind: action === "hide" ? "hidden" : "unhidden", item: target.kind === "photo" ? "photo" : found.itemKind, target: targetKey(target),
+            kind: NOTICE_KIND[action], ...(note !== undefined ? { note } : {}), item: target.kind === "photo" ? "photo" : found.itemKind, target: targetKey(target),
             authorId: found.item.author.id, by: { id: actor.id, label: actor.label }, navigate: hrefOf(target),
           }));
       }

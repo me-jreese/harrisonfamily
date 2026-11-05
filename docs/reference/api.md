@@ -182,7 +182,7 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `comments.delete` | DELETE | `/comments/:id` | query `subject` (required), optional `reason` | `204` | Author or admin. `subject` is read from the query only. |
 | `comments.react` | POST | `/comments/:id/react` | body `emoji`; `subject` in the body or the query | `200` `{removed, reaction?}` | Set or toggle off |
 | `comments.graduate` | POST | `/comments/:id/attachments/:aid/graduate` | body `subject` (the comment's thread), `person` (a gramps_id), optional `title` (200) and `description` (500) | `201` `{media: {handle, gramps_id?}, person, state: "done"}`, or `200` with the same body when it was already done for that person | Admins only (`403 not_admin`). Behind `requireFeature("graduateV1")`. Not an MCP tool. See [Graduating a comment photo](#graduating-a-comment-photo). |
-| `moderation.post` | POST | `/moderation` | body `{target, action, version?, reason?}` (see [Moderation](#moderation)) | `200` `{target, moderation, item}` | Admins only; behind `requireFeature("moderationV1")`; hides or unhides a post, a comment or one photo. `403 forbidden`, `400 validation` or `self_moderation`, `404`, `409 conflict`, `422 unsupported_target` or `unsupported_action`, `503 busy`. Not an MCP tool, no policy row. |
+| `moderation.post` | POST | `/moderation` | body `{target, action, note?, hide?, version?, reason?}` (see [Moderation](#moderation)) | `200` `{target, moderation, item}` | Admins only; behind `requireFeature("moderationV1")`; hides, unhides, asks for changes or asks a question about a post or a comment (a photo only hides or unhides). `403 forbidden`, `400 validation` or `self_moderation`, `404`, `409 conflict`, `422 contact_info` or `unsupported_target`, `503 busy`. Not an MCP tool, no policy row. |
 | `moderation.list` | GET | `/moderation` | query `state` (`open` default, `closed`), `cursor`, `limit` (1 to 50, default 25) | `200` `{items, cursor}` | Admins only (`403`); behind `moderationV1`; the queue, newest first. Not an MCP tool. |
 | `posts.list` | GET | `/posts` | query `cursor`, `limit`, `subject`, `type`, `author`, `visibility` | `200` `{items, cursor}` | Newest first |
 | `posts.get` | GET | `/posts/:id` | none | `200` post | |
@@ -918,7 +918,7 @@ hfy-comments-photos-desc-api (BRD2 9.2). Behind `commentPhotosV1` (default off; 
 
 ## Moderation
 
-hfy-moderation-api-core (BRD2 D2-19, R-32; design: social.md section 11). An admin hides or unhides a member's post, comment or one photo, and reads the queue. Both routes are behind `requireFeature("moderationV1")` (`false` in `flags.json`), are admins only (`403 forbidden` for anyone else, before the body is read) and are not MCP tools.
+hfy-moderation-api-core (BRD2 D2-19, R-32; design: social.md section 11). An admin hides, unhides, asks for changes or asks a question about a member's post or comment (a photo only hides or unhides), and reads the queue. Both routes are behind `requireFeature("moderationV1")` (`false` in `flags.json`), are admins only (`403 forbidden` for anyone else, before the body is read) and are not MCP tools.
 
 `POST /api/moderation` takes:
 
@@ -926,22 +926,24 @@ hfy-moderation-api-core (BRD2 D2-19, R-32; design: social.md section 11). An adm
 { "target": { "kind": "post", "id": "<ulid>" }
           | { "kind": "comment", "id": "<ulid>", "thread": "person:<gramps_id>" }
           | { "kind": "photo", "parent": { "kind": "post", "id": "<ulid>" } | { "kind": "comment", "id": "<ulid>", "thread": "<subject>" }, "attachment": "<id>" },
-  "action": "hide" | "unhide",
+  "action": "hide" | "unhide" | "request_changes" | "ask",
+  "note": "required for request_changes and ask, 1 to 1000 characters, contact-info guarded; refused otherwise",
+  "hide": false,
   "version": "<updated_at of the post | edited_at (or created_at) of the comment the admin saw>",
   "reason": "optional, at most 200 characters, private" }
 ```
 
-A photo's `attachment` is the attachment `id` on a comment, and on a post the ulid of its upload (`/uploads/posts/<ulid>/<name>`), which survives an edit that reorders the photos. It answers `200 {target, moderation, item}`: `moderation` is the open inline state (or `null` once unhidden) and `item` is the post or comment as the admin sees it.
+`hide` is read by `ask` only (default `false`: the item stays visible while the question is open; `true` hides it). `request_changes` always hides, and a note on a photo target is `400`. A photo's `attachment` is the attachment `id` on a comment, and on a post the ulid of its upload (`/uploads/posts/<ulid>/<name>`), which survives an edit that reorders the photos. It answers `200 {target, moderation, item}`: `moderation` is the open inline state (or `null` once unhidden) and `item` is the post or comment as the admin sees it.
 
 | Status | When |
 | --- | --- |
 | `403 forbidden` | The caller is not an admin. |
-| `400 validation` | The target, action, `reason` or `version` is malformed (`details.fields`). |
+| `400 validation` | The target, action, `note`, `hide`, `reason` or `version` is malformed (`details.fields`): `note` is required (1 to 1000 characters after trimming) for `request_changes` and `ask`, and refused for `hide`, `unhide` and any photo target. |
 | `400 self_moderation` | The item is the admin's own. An admin withdraws or deletes their own item instead. |
 | `404 not_found` | No such item, or no such photo on it. |
 | `409 conflict` | `version` is stale, or the item changed between the read and the write (the write is guarded on the stored version and, for a comment, on `mod_v`). |
 | `422 unsupported_target` | The kind is `note`, `mediaref` or `media` (record data; `hfy-moderation-record-targets`). |
-| `422 unsupported_action` | The action is `request_changes` or `ask`. A temporary code, not in the social.md 11.5 error list: the sources already implement both actions, but the route opens them with `hfy-moderation-ask-api`, which also adds their notices, and the code goes away then. |
+| `422 contact_info` | The `note` of `request_changes` or `ask` holds contact information (the R-18 guard, as for a comment body). Nothing is stored. |
 | `503 busy` | The transaction kept conflicting. |
 
 **One transaction.** The post's three copies (`META`, `IDX#AUTHOR`, `IDX#SUBJECT`) or the comment item, the `MOD#` item, the `AUDIT#` item (op `moderate`, the private `reason`) and the hide of the credited contribution event (`hideOps`, no count changes) commit together, through the commit of [`content.js`](../../api/src/content.js) and [`comments.js`](../../api/src/comments.js). A hide of what is already hidden, or an unhide of what is not, writes nothing and notifies nobody. A hide bumps the post's `updated_at` (a comment keeps `edited_at` and moves a private `mod_v` counter, which no response shows).
@@ -965,7 +967,9 @@ A photo's `attachment` is the attachment `id` on a comment, and on a post the ul
 
 **Closing.** An effective author edit of a `changes_requested` or `question` item closes it (inline state, `MOD#`, the event) inside the edit's transaction; a plain `hidden` stays until a moderator unhides it, and the author cannot lift a hidden photo by resubmitting it. A delete (the author's, a moderator's, or the thread purge of a deleted post) closes the item's `MOD#` items in the same transaction. A moderated photo is not graduated (`409 moderated`).
 
-The kit's `moderate()` of both sources implements all four actions (`hide`, `unhide`, `request_changes`, `ask`), so the kit contract suites run with moderation on; the route runs the first two until the ask task lands. The notices `moderation_hidden` and `moderation_unhidden` go to the item's author after the commit (`onModeration`; best effort, never fails the write). A moderated photo's bytes still serve to a signed-in member who holds the URL: hiding removes the reference, not the object.
+The kit's `moderate()` of both sources implements all four actions (`hide`, `unhide`, `request_changes`, `ask`), so the kit contract suites run with moderation on, and the route runs all four (hfy-moderation-ask-api).
+
+**Notes and notices** (hfy-moderation-ask-api; social.md 11.2). The note is stored on the inline state and on the `MOD#` item, shown to the author and admins only, and delivered as the `detail` of the notice: `moderation_request` for `request_changes`, `moderation_question` for `ask`. A hide's `reason` never leaves the audit. A new action on an item with an open ask replaces it (the `MOD#` item keeps one record per target and its `version` moves on). The author's effective edit of the item (`PATCH /api/posts/:id`, `PATCH /api/comments/:id` with a changed body, title or photos) clears the state, closes the `MOD#` item and unhides the post's contribution event in the edit's own transaction, and after the commit the asking admin gets `moderation_resolved` (grouped `mod:<target>`; the producer never notifies the author who edited). The asking admin is the most recent one: if admin B replaces admin A's ask, only B hears the resolution. Sending the same `ask` or `request_changes` with the same note again is a new admin action (a new `at`), so the author gets one notice per action, not per distinct note. After a plain hide an edit leaves the item hidden. The notices `moderation_hidden`, `moderation_request`, `moderation_question` and `moderation_unhidden` go to the item's author after the commit (`onModeration`; best effort, never fails the write). A moderated photo's bytes still serve to a signed-in member who holds the URL: hiding removes the reference, not the object.
 
 ## Graduating a comment photo
 
