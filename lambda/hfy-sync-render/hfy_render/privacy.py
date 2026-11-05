@@ -59,7 +59,7 @@ _CACHE_LIMIT = 50_000
 
 
 def _date_text_has_day_or_month(text: str) -> bool:
-    return bool(_MONTH_WORD.search(text) or _NUMERIC_DAY.search(text) or _NUMERIC_MONTH.search(text) or text_scan.blocking_hits(text))
+    return bool(_MONTH_WORD.search(text) or _NUMERIC_DAY.search(text) or _NUMERIC_MONTH.search(text) or text_scan.blocking_hits(text, strict=True))  # a date.text keeps every day, a camera timestamp too
 
 
 class PrivacyChecker:

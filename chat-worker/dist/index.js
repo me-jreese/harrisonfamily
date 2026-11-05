@@ -2895,6 +2895,10 @@ var sepCore = /* @__PURE__ */ __name((sep) => sep.replace(/[ \t()]/g, ""), "sepC
 var dayMonth = /* @__PURE__ */ __name((a, b) => a >= 1 && b >= 1 && (a <= 12 && b <= 31 || a <= 31 && b <= 12), "dayMonth");
 var phoneShaped = /* @__PURE__ */ __name((lens) => lens.length <= 5 && lens[0] <= 4 && lens.slice(1).every((l) => l >= 2 && l <= 4), "phoneShaped");
 var fiveTwos = /* @__PURE__ */ __name((groups, seps, from) => groups.length - from === 5 && groups.slice(from).every((g) => g.d.length === 2) && seps.slice(from).every((s) => s === seps[from]), "fiveTwos");
+var monthDays = /* @__PURE__ */ __name((y, m) => m === 2 ? y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28 : [4, 6, 9, 11].includes(m) ? 30 : 31, "monthDays");
+var isDate8 = /* @__PURE__ */ __name((d) => d.length === 8 && YEAR_LIKE.test(d.slice(0, 4)) && +d.slice(4, 6) >= 1 && +d.slice(4, 6) <= 12 && +d.slice(6) >= 1 && +d.slice(6) <= monthDays(+d.slice(0, 4), +d.slice(4, 6)), "isDate8");
+var isTime6 = /* @__PURE__ */ __name((d) => d.length === 6 && +d.slice(0, 2) <= 23 && +d.slice(2, 4) <= 59 && +d.slice(4) <= 59, "isTime6");
+var isDateLike = /* @__PURE__ */ __name((d) => isDate8(d) || d.length === 14 && isDate8(d.slice(0, 8)) && isTime6(d.slice(8)), "isDateLike");
 function isDateTriple(groups, seps) {
   const [ca, cb] = seps.map(sepCore);
   if (ca !== cb) return false;
@@ -2936,18 +2940,28 @@ __name(phoneExcluded, "phoneExcluded");
 function phoneVerdict(t, s, run, groups, inUrl) {
   const seps = groups.slice(1).map((g, i) => run.slice(groups[i].at + groups[i].d.length, g.at));
   let n = groups.reduce((x, g) => x + g.d.length, 0);
-  for (let from = 0; ; from += 3) {
-    if (from > 0) n -= groups[from - 3].d.length + groups[from - 2].d.length + groups[from - 1].d.length;
+  let from = 0;
+  for (; ; ) {
     if (n < 7) return null;
     const off = groups[from].at;
     if (from === 0 && run[0] === "+") return { off: 0, rule: "plus" };
     const before = t.slice(Math.max(0, s + off - 24), s + off);
     if (groups.length - from === 1) {
       if (n > 15 || inUrl(s + off) || REFERENCE.test(before)) return null;
+      if (isDateLike(groups[from].d) && !PHONE_WORD.test(before)) return null;
       return { off, rule: "run" };
     }
     if (!AREA_CODE.test(run.slice(from === 0 ? 0 : off, off + 9)) && !PHONE_WORD.test(before)) {
-      if (groups.length - from > 3 && isDateTriple(groups.slice(from, from + 3), seps.slice(from, from + 2)) && !fiveTwos(groups, seps, from)) continue;
+      if (groups.length - from > 3 && isDateTriple(groups.slice(from, from + 3), seps.slice(from, from + 2)) && !fiveTwos(groups, seps, from)) {
+        n -= groups[from].d.length + groups[from + 1].d.length + groups[from + 2].d.length;
+        from += 3;
+        continue;
+      }
+      if (isDate8(groups[from].d) && (seps[from] === "-" || seps[from] === " ") && isTime6(groups[from + 1].d)) {
+        n -= groups[from].d.length + groups[from + 1].d.length;
+        from += 2;
+        continue;
+      }
       if (phoneExcluded(groups.slice(from), seps.slice(from), before)) return null;
     }
     return { off: from === 0 ? 0 : off, rule: "grouped" };
@@ -3266,6 +3280,7 @@ function dateCandidates(t) {
       found.push({ start: s, end: e, rule });
     }
   }
+  for (const m of t.matchAll(DIGIT_GROUP)) if (isDateLike(m[0])) found.push({ start: m.index, end: m.index + m[0].length, rule: "numeric" });
   found.sort((a, b) => a.start - b.start || b.end - a.end || RULE_ORDER.indexOf(a.rule) - RULE_ORDER.indexOf(b.rule));
   const out = [];
   for (const c of found) if (!out.length || c.start >= out[out.length - 1].end) out.push(c);

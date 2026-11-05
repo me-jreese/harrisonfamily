@@ -172,6 +172,16 @@ const phoneShaped = (lens) => lens.length <= 5 && lens[0] <= 4 && lens.slice(1).
 const fiveTwos = (groups, seps, from) => groups.length - from === 5 &&
   groups.slice(from).every((g) => g.d.length === 2) && seps.slice(from).every((s) => s === seps[from]);
 
+/** Days in month m of year y (Gregorian leap rule: 2024-02 has 29, 2023-02 and 1900-02 have 28). */
+const monthDays = (y, m) => (m === 2 ? (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31);
+/** Eight digits that are a calendar-valid YYYYMMDD: a year-like year (1000-2099), month 01-12, a day that exists in that month. */
+const isDate8 = (d) => d.length === 8 && YEAR_LIKE.test(d.slice(0, 4)) && +d.slice(4, 6) >= 1 && +d.slice(4, 6) <= 12 &&
+  +d.slice(6) >= 1 && +d.slice(6) <= monthDays(+d.slice(0, 4), +d.slice(4, 6));
+/** Six digits that are a valid HHMMSS: hour 00-23, minute 00-59, second 00-59 (no leap second 60: a stricter reading holds more). */
+const isTime6 = (d) => d.length === 6 && +d.slice(0, 2) <= 23 && +d.slice(2, 4) <= 59 && +d.slice(4) <= 59;
+/** A digit group that is a date or a timestamp, not a number: YYYYMMDD (20130519) or YYYYMMDDHHMMSS (20130519172413). */
+const isDateLike = (d) => isDate8(d) || (d.length === 14 && isDate8(d.slice(0, 8)) && isTime6(d.slice(8)));
+
 /** Three digit groups that read as a date: 12-05-1950, 5.12.50, 1950-05-12 (one separator kind throughout). */
 function isDateTriple(groups, seps) {
   const [ca, cb] = seps.map(sepCore);
@@ -220,21 +230,34 @@ function phoneVerdict(t, s, run, groups, inUrl) {
   // seps[i] is the text between groups[i] and groups[i + 1]
   const seps = groups.slice(1).map((g, i) => run.slice(groups[i].at + groups[i].d.length, g.at));
   let n = groups.reduce((x, g) => x + g.d.length, 0);
-  for (let from = 0; ; from += 3) {
-    if (from > 0) n -= groups[from - 3].d.length + groups[from - 2].d.length + groups[from - 1].d.length;
+  let from = 0;
+  for (;;) {
     if (n < 7) return null;
     const off = groups[from].at;
     if (from === 0 && run[0] === "+") return { off: 0, rule: "plus" };
     const before = t.slice(Math.max(0, s + off - 24), s + off);
     if (groups.length - from === 1) {
       if (n > 15 || inUrl(s + off) || REFERENCE.test(before)) return null;
+      // an unseparated date or timestamp (20130519, 20130519172413) is not a number, unless a phone word labels it (tel 20130519)
+      if (isDateLike(groups[from].d) && !PHONE_WORD.test(before)) return null;
       return { off, rule: "run" };
     }
     if (!AREA_CODE.test(run.slice(from === 0 ? 0 : off, off + 9)) && !PHONE_WORD.test(before)) {
       // a date followed by more digits (5/12/2020 10:30): judge what follows the date on its own, unless the groups are five
       // two-digit groups (01 23 45 67 89 is a phone number, not 01/23/45 and more)
       if (groups.length - from > 3 && isDateTriple(groups.slice(from, from + 3), seps.slice(from, from + 2)) &&
-          !fiveTwos(groups, seps, from)) continue;
+          !fiveTwos(groups, seps, from)) {
+        n -= groups[from].d.length + groups[from + 1].d.length + groups[from + 2].d.length;
+        from += 3;
+        continue;
+      }
+      // a camera-style stamp joined by one dash or one space (20130519-172413, 20130519 172413): a YYYYMMDD group and a valid
+      // HHMMSS group are a timestamp; judge what follows them on its own. _ and T end the run, so the date stands alone there.
+      if (isDate8(groups[from].d) && (seps[from] === "-" || seps[from] === " ") && isTime6(groups[from + 1].d)) {
+        n -= groups[from].d.length + groups[from + 1].d.length;
+        from += 2;
+        continue;
+      }
       if (phoneExcluded(groups.slice(from), seps.slice(from), before)) return null;
     }
     return { off: from === 0 ? 0 : off, rule: "grouped" };
@@ -456,6 +479,9 @@ function dateCandidates(t) {
       found.push({ start: s, end: e, rule });
     }
   }
+  // an unseparated calendar-valid date or timestamp (19450312, 19450312000000) is a numeric date: the phone detector no longer
+  // holds it as a number, so a birth keyword beside it must still hold it here
+  for (const m of t.matchAll(DIGIT_GROUP)) if (isDateLike(m[0])) found.push({ start: m.index, end: m.index + m[0].length, rule: "numeric" });
   found.sort((a, b) => a.start - b.start || b.end - a.end || RULE_ORDER.indexOf(a.rule) - RULE_ORDER.indexOf(b.rule));
   const out = [];
   for (const c of found) if (!out.length || c.start >= out[out.length - 1].end) out.push(c);

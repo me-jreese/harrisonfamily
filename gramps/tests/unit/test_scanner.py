@@ -193,7 +193,8 @@ class GuaranteesTest(unittest.TestCase):
         inputs = [
             "x.org/?" + fill("a=1234567&amp;"), fill("#1234567"), fill("born 5/12 "), fill("d. 5 May born "),
             fill("😀 born 5 May "), fill("\u200b1"), fill("01 23 45 67 89 "), fill("in 1850 Main Street "), fill("RR 2 Box 15 "),
-            "p" + " " * n + "x", "pmb" + " " * n + "x", "01-" * (n // 3) + "01",
+            "p" + " " * n + "x", "pmb" + " " * n + "x", "01-" * (n // 3) + "01", fill("20130519 172413 "), fill("20130519-172413 "),
+            fill("20130519_172413 "), fill("20130519 172413 5 "), fill("born 20130519172413 "),
         ]
         for s in inputs:
             t0 = time.process_time()

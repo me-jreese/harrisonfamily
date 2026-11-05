@@ -38,6 +38,6 @@
   "workers_dev": false,
   "bundle": {
     "file": "index.js",
-    "sha256": "e4a31e202aabe2efe3b358758f87a1f1b6719801c5fa813959f6815e4249e876"
+    "sha256": "236cee3f747eb0134f715f3e1b64a8417c62a17d82af2025409b350034030cdb"
   }
 }

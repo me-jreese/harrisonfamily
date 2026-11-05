@@ -549,6 +549,7 @@ A refusal is `422` and stores nothing:
 ```
 
 - `errors` lists every hit across the fields: its JSON pointer, its `kind` (`phone`, `email`, `street_address`, `po_box`, `contact_url` or `dob_heuristic`) and its `span`, `[start, end)` in UTF-16 code units of the field as sent. The matched text is never in the response.
+- A calendar-valid date or timestamp (`20130519`, `20130519_172413`) is a date, not a phone number, so it is not a `phone` hit; a phone word before it, an impossible date or any other length still is one, and a birth keyword beside it is a `dob_heuristic` hit. The rules are in [Redaction policy v1](redaction-policy.md#free-text-scan).
 - `error` is `dob_not_allowed`, with the message "we only keep the birth year on the site.", only when every hit is `dob_heuristic`. Any contact hit makes it `contact_info`.
 - An MCP tool call gets the message as its tool error text.
 - There is no override. The same text is refused until the member removes the hit.

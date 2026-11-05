@@ -999,6 +999,12 @@ vec("scan", "scan.clean_and_local_only", "Clean text passes, and a street addres
     ["contact.address_list"], [p, n], {"p1": C(p, address_list=[]), "n1": copy.deepcopy(n)},
     server=[V("contact.address_list", "p1", "/address_list/0")])
 
+# HFY-TSK-375: a calendar-valid date or timestamp is not a phone number (shared/privacy-guard.vectors.json holds the full case
+# list, the impossible dates and the phone-word cases included).
+n = NOTE("n1", "Photo 20130519_172413 and IMG_20130519_172413 from the reunion.")
+vec("scan", "scan.camera_stamp_is_a_date", "A camera-style date and time stamp in a note is a date, not a phone number: the note is not held",
+    [], [n], {"n1": copy.deepcopy(n)})
+
 # a held new note is filtered out of the references
 n = NOTE("n1", "Phone 555-0123")
 p = PE("p1", note_list=["n1"])
