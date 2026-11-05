@@ -5,6 +5,9 @@ ids and their sources come from the design, and the first one keeps the name it 
 ``gramps/tests/fixtures/render/deltas.py`` (``RULES``). Nothing else is invented: a difference no rule names is
 ``unexplained``, which is the safe direction (io looks at it).
 
+``held-object`` is the one rule that cannot be told from the output alone: the add-on's own held-object count is given with
+``--expect-holds <n>``, and up to n whole-object absences are explained under it (see ``compare.compare``).
+
 ``NORMALISED`` are not differences. They are the run-to-run noise ``deltas.py`` lists under ``NORMALISED``: the ``generatedAt``
 stamp and the order of index entries. They are counted on their own line and never change the exit code.
 
@@ -35,8 +38,21 @@ RULES: Dict[str, Dict[str, str]] = {
     },
     "birth-date-scrub": {
         "summary": "A birth-like event carries no day or month in the shadow output: the date text is a bare year or empty "
-                   "where the legacy export had more.",
+                   "where the legacy export had more, or empty where it had a bare year (the year field is kept, unchanged). "
+                   "Seen on the event file and on the matching person.events[] entry.",
         "source": "Q2-02 item 1, sync.md 5.2, redaction-v1.json birthLike",
+    },
+    "media-held-binary": {
+        "summary": "A Media object whose binary the add-on held, or whose original is missing, reads missing=true with a null "
+                   "checksum and size in the shadow output, where the legacy export had a checksum (same handle, other fields "
+                   "equal). Seen on the media file, its media/index.json entry and a person's primaryPhoto and mediaGallery[].",
+        "source": "sync.md 5.5, BRD2 11.1",
+    },
+    "held-object": {
+        "summary": "An object the add-on held whole (for example rule scan.phone) has a legacy file and no shadow file, and its "
+                   "entry is gone from the area's index. Counted only under --expect-holds <n>, which allows up to n such "
+                   "absences (person, family, event, note, place or media files); more than n stay unexplained.",
+        "source": "sync.md 5.4 (a new object is held whole), 5.5, BRD2 11.1",
     },
     "place-coordinates-rounded": {
         "summary": "A place's latitude and longitude are rounded to two decimals in the shadow output (a value that is not a "

@@ -8,6 +8,12 @@ class, and explains it by a rule from ``rules.RULES`` or leaves it unexplained:
 * ``only_in_render``: the shadow has the key and the legacy export does not;
 * ``changed``: both have it, with different bytes; each JSON difference must be explained, or the file is unexplained.
 
+``expect_holds`` (``--expect-holds <n>``) is the one input that is not in the two trees: the add-on's own count of objects it held
+whole. Up to n whole-object absences (``only_in_legacy`` person, family, event, note, place and media files that no other rule
+explains) are explained under ``held-object``, together with the index entries that left the area's index with them. A file
+beyond n stays unexplained. Which files are the first n is the sorted order of their keys: the report only counts, so it only
+means something as a total.
+
 The classification is ported from ``gramps/tests/fixtures/render/deltas.py`` (``compare``, one rule: excluded-place), widened to
 the other rules the design documents. Nothing here returns, prints or logs a key, an id, a name or a value: results are counters
 keyed by class, rule id, area (a fixed vocabulary) and field (a fixed vocabulary of schema names).
@@ -162,11 +168,20 @@ def _subsequence(small: list, big: list) -> bool:
 
 # ---- the rules --------------------------------------------------------------------------------------------------------
 
+#: The area each index file lists (a held object leaves its area's index files with it).
+INDEX_AREA = {"person/index.json": "person", "person/search-index.json": "person", "place/index.json": "place",
+              "media/index.json": "media"}
+_HELD_BINARY_FIELDS = ("missing", "checksum", "size")
+
+
 class _Context:
-    def __init__(self, policy: Policy, excluded_places: Set[str], held_media: Set[str]):
+    def __init__(self, policy: Policy, excluded_places: Set[str], held_media: Set[str],
+                 held_objects: Optional[Dict[str, Set[str]]] = None):
         self.policy = policy
         self.excluded = excluded_places
         self.held_media = held_media
+        #: {area: the names (file stem, handle, Gramps ID) of the whole objects the --expect-holds allowance explained}
+        self.held_objects: Dict[str, Set[str]] = held_objects or {}
 
 
 def _is_excluded_dict(ctx: _Context, value: Any) -> bool:
@@ -203,6 +218,41 @@ def _coordinate_rounded(policy: Policy, a: Any, b: Any) -> bool:
     return rounded != before and after == rounded
 
 
+def _same_year(doc_a: Any, doc_b: Any, date_path: tuple) -> bool:
+    """True when the ``date`` object at ``date_path`` keeps the same ``year`` (or has none) on both sides."""
+    date_a, date_b = _node(doc_a, date_path), _node(doc_b, date_path)
+    if not (isinstance(date_a, dict) and isinstance(date_b, dict)):
+        return False
+    year_a, year_b = date_a.get("year", MISSING), date_b.get("year", MISSING)
+    return type(year_a) is type(year_b) and year_a == year_b
+
+
+def _media_object_path(key: str, parent: tuple) -> bool:
+    """True when ``parent`` is a media-like object the rule covers: a media file, a media/index.json entry, or a person's
+    primaryPhoto or mediaGallery[] entry."""
+    if key.startswith("media/"):
+        return parent == ()
+    if key.startswith("person/") and key not in INDEX_KEYS:
+        return parent == ("primaryPhoto",) or (len(parent) == 2 and parent[0] == "mediaGallery" and isinstance(parent[1], int))
+    return False
+
+
+def _held_binary(key: str, doc_a: Any, doc_b: Any, path: tuple) -> bool:
+    """The whole media-held-binary pattern, read on the object that holds the differing field: the same handle on both sides, a
+    legacy checksum, and in the shadow missing=true with a null checksum and a null size."""
+    if not path or path[-1] not in _HELD_BINARY_FIELDS or not _media_object_path(key, path[:-1]):
+        return False
+    obj_a, obj_b = _node(doc_a, path[:-1]), _node(doc_b, path[:-1])
+    if not (isinstance(obj_a, dict) and isinstance(obj_b, dict)):
+        return False
+    handle = obj_a.get("handle")
+    return (isinstance(handle, str) and handle != "" and obj_b.get("handle") == handle
+            and isinstance(obj_a.get("checksum"), str) and obj_a["checksum"] != ""
+            and obj_b.get("missing") is True
+            and "checksum" in obj_b and obj_b["checksum"] is None
+            and "size" in obj_b and obj_b["size"] is None)
+
+
 def explain(ctx: _Context, key: str, doc_a: Any, doc_b: Any, path: tuple, a: Any, b: Any) -> Optional[str]:
     """The rule id that explains one JSON difference, or None."""
     policy = ctx.policy
@@ -223,11 +273,15 @@ def explain(ctx: _Context, key: str, doc_a: Any, doc_b: Any, path: tuple, a: Any
         code = place_type.get("code") if isinstance(place_type, dict) else None
         if isinstance(code, int) and not isinstance(code, bool) and code not in policy.administrative_codes:
             return "place-code-local"
-    if len(path) >= 2 and path[-2:] == ("date", "text") and isinstance(a, str) and isinstance(b, str):
+    if _held_binary(key, doc_a, doc_b, path):
+        return "media-held-binary"
+    if len(path) >= 2 and path[-2:] == ("date", "text") and isinstance(a, str) and isinstance(b, str) and a != b:
         event = _node(doc_a, path[:-2])
-        if (isinstance(event, dict) and policy.event_birth_like(event.get("type")) and a != b
-                and not _BARE_YEAR.fullmatch(a) and (b == "" or (_BARE_YEAR.fullmatch(b) and b in a))):
-            return "birth-date-scrub"
+        if isinstance(event, dict) and policy.event_birth_like(event.get("type")):
+            if b == "" and _same_year(doc_a, doc_b, path[:-1]):
+                return "birth-date-scrub"      # a bare year (or a day and month) blanked, the year field kept
+            if not _BARE_YEAR.fullmatch(a) and _BARE_YEAR.fullmatch(b) and b in a:
+                return "birth-date-scrub"      # the day and month dropped, the bare year kept
     if leaf in ("raw", "html"):
         parent = _node(doc_a, path[:-1])
         if isinstance(parent, dict) and "raw" in parent and "html" in parent:
@@ -277,13 +331,17 @@ def _identities(entries: list) -> List[str]:
 
 
 def _removed_entry_rule(ctx: _Context, key: str, entry: Any) -> Optional[str]:
-    handle = entry.get("handle") if isinstance(entry, dict) else None
-    if not isinstance(handle, str):
+    if not isinstance(entry, dict):
         return None
-    if key == "place/index.json" and handle in ctx.excluded:
-        return "excluded-place"
-    if key == "media/index.json" and handle in ctx.held_media:
-        return "media-held-mime"
+    handle = entry.get("handle")
+    if isinstance(handle, str):
+        if key == "place/index.json" and handle in ctx.excluded:
+            return "excluded-place"
+        if key == "media/index.json" and handle in ctx.held_media:
+            return "media-held-mime"
+    names = ctx.held_objects.get(INDEX_AREA.get(key, ""))
+    if names and any(isinstance(entry.get(f), str) and entry[f] in names for f in ("handle", "grampsId")):
+        return "held-object"
     return None
 
 
@@ -355,6 +413,7 @@ class _Tally:
         self.not_compared: Counter = Counter()
         self.legacy_files = 0
         self.shadow_files = 0
+        self.holds: Optional[Dict[str, int]] = None
 
     def explain(self, cls: str, area: str, rules: Set[str]) -> None:
         self.explained[cls] += 1
@@ -372,7 +431,7 @@ class _Tally:
     def result(self) -> Dict[str, Any]:
         explained, unexplained = sum(self.explained.values()), sum(self.unexplained.values())
         verdict = "unexplained" if unexplained else ("explained" if explained else "identical")
-        return {
+        out = {
             "verdict": verdict,
             "files": {"legacy": self.legacy_files, "shadow": self.shadow_files, "identical": self.identical,
                       "normalised_only": self.normalised_only},
@@ -387,10 +446,50 @@ class _Tally:
             "unexplained_by_field": {f: n for f, n in sorted(self.unexplained_fields.items())},
             "not_compared": {c: self.not_compared[c] for c in sorted(NOT_COMPARED) if self.not_compared[c]},
         }
+        if self.holds is not None:       # only when --expect-holds was given: without it the report is as it was
+            out["holds"] = dict(self.holds)
+        return out
 
 
-def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: Policy) -> Dict[str, Any]:
-    """The counts. ``legacy`` and ``shadow`` map a site key to its bytes or to a file path."""
+def _absence_rule(key: str, source: Source, excluded: Set[str], held_media: Set[str]) -> Optional[str]:
+    """The rule that explains a legacy file the shadow output lacks, from the policy alone (not the held-object allowance)."""
+    ok, doc = _parse(source)
+    if ok and isinstance(doc, dict) and key not in INDEX_KEYS:
+        stem = key.split("/", 1)[1][:-5]
+        if key.startswith("place/") and stem in excluded:
+            return "excluded-place"
+        if key.startswith("media/") and stem in held_media:
+            return "media-held-mime"
+    return None
+
+
+def _take_holds(legacy_owned: Mapping[str, Source], shadow_owned: Mapping[str, Source], excluded: Set[str],
+                held_media: Set[str], allowed: int) -> Tuple[Set[str], Dict[str, Set[str]]]:
+    """The whole-object absences the --expect-holds allowance explains: the first ``allowed`` legacy data files (in key order)
+    that the shadow output lacks and that no policy rule explains, and the names (file stem, handle, Gramps ID) by area that
+    let their index entries be matched."""
+    keys: Set[str] = set()
+    names_by_area: Dict[str, Set[str]] = {}
+    for key in sorted(legacy_owned):
+        if len(keys) >= allowed:
+            break
+        if key in shadow_owned or key in INDEX_KEYS or _absence_rule(key, legacy_owned[key], excluded, held_media):
+            continue
+        keys.add(key)
+        names = {key.split("/", 1)[1][:-5]}
+        ok, doc = _parse(legacy_owned[key])
+        if ok and isinstance(doc, dict):
+            names.update(doc[f] for f in ("handle", "grampsId") if isinstance(doc.get(f), str))
+        names_by_area.setdefault(area_of(key), set()).update(names)
+    return keys, names_by_area
+
+
+def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: Policy,
+            expect_holds: Optional[int] = None) -> Dict[str, Any]:
+    """The counts. ``legacy`` and ``shadow`` map a site key to its bytes or to a file path. ``expect_holds`` is the add-on's own
+    count of objects it held whole (None: absences no policy rule explains stay unexplained)."""
+    if expect_holds is not None and (isinstance(expect_holds, bool) or not isinstance(expect_holds, int) or expect_holds < 0):
+        raise ValueError("expect_holds")
     tally = _Tally()
     legacy_owned = {k: v for k, v in legacy.items() if is_owned(k)}
     shadow_owned = {k: v for k, v in shadow.items() if is_owned(k)}
@@ -417,19 +516,19 @@ def compare(legacy: Mapping[str, Source], shadow: Mapping[str, Source], policy: 
             excluded |= names
         if key.startswith("media/") and doc.get("mime") in policy.held_mimes:
             held_media |= names
-    ctx = _Context(policy, excluded, held_media)
+    held_keys: Set[str] = set()
+    held_objects: Dict[str, Set[str]] = {}
+    if expect_holds is not None:
+        held_keys, held_objects = _take_holds(legacy_owned, shadow_owned, excluded, held_media, expect_holds)
+        tally.holds = {"allowed": expect_holds, "explained": len(held_keys)}
+    ctx = _Context(policy, excluded, held_media, held_objects)
 
     for key in sorted(set(legacy_owned) | set(shadow_owned)):
         area = area_of(key)
         if key not in shadow_owned:
-            ok, doc = _parse(legacy_owned[key])
-            rule = None
-            if ok and isinstance(doc, dict) and key not in INDEX_KEYS:
-                stem = key.split("/", 1)[1][:-5]
-                if key.startswith("place/") and stem in excluded:
-                    rule = "excluded-place"
-                elif key.startswith("media/") and stem in held_media:
-                    rule = "media-held-mime"
+            rule = _absence_rule(key, legacy_owned[key], excluded, held_media)
+            if rule is None and key in held_keys:
+                rule = "held-object"
             if rule:
                 tally.explain("only_in_legacy", area, {rule})
             else:

@@ -252,7 +252,8 @@ class Rules(unittest.TestCase):
         # the cases below, by rule id; adding a rule to RULES without a case fails this
         self.assertEqual(sorted(rules.RULES), sorted(["excluded-place", "media-held-mime", "birth-date-scrub",
                                                       "place-coordinates-rounded", "place-code-local", "note-newly-visible",
-                                                      "text-gate-withheld", "tree-svg-frozen", "merged-person-stub"]))
+                                                      "text-gate-withheld", "tree-svg-frozen", "merged-person-stub",
+                                                      "media-held-binary", "held-object"]))
 
     def test_excluded_place(self):
         legacy, shadow = build_site(), build_site()
@@ -395,6 +396,416 @@ class Rules(unittest.TestCase):
         self.assertEqual(doc["rules"]["merged-person-stub"]["only_in_render"], 1)
         shadow["person/I9004.json"] = dumps({"mergedInto": "I9001", "displayName": "Test Person Four"})
         self.assertEqual(report(legacy, shadow)[0], 20)
+
+
+# ---- HFY-TSK-372: bare-year scrub, held binaries and held objects --------------------------------------------------------
+
+PHOTO_FIELDS = ("checksum", "grampsId", "handle", "missing", "s3Key", "size")
+
+
+def with_photo_users(site):
+    """Person one shows photo O9001 as primaryPhoto and in mediaGallery[]; media/index.json carries the same fields."""
+    media = load(site, MEDIA_PHOTO)
+    entry = {k: media[k] for k in PHOTO_FIELDS}
+
+    def index(doc):
+        doc[:] = [dict(entry) if e["grampsId"] == "O9001" else e for e in doc]
+    edit(site, PERSON1, lambda d: d.update(primaryPhoto=dict(entry), mediaGallery=[dict(entry)]))
+    edit(site, "media/index.json", index)
+
+
+def hold_photo_binary(site, **overrides):
+    """The shadow side of a held binary: missing=true, null checksum and size, on the media file, the index entry and both
+    person fields. ``overrides`` replace a field on all four places (the near misses)."""
+    held = dict(missing=True, checksum=None, size=None)
+    held.update(overrides)
+
+    def index(doc):
+        for e in doc:
+            if e["grampsId"] == "O9001":
+                e.update(held)
+    edit(site, MEDIA_PHOTO, lambda d: d.update(held))
+    edit(site, PERSON1, lambda d: (d["primaryPhoto"].update(held), d["mediaGallery"][0].update(held)))
+    edit(site, "media/index.json", index)
+
+
+def pair_with_held_photo(**overrides):
+    legacy, shadow = build_site(), build_site()
+    with_photo_users(legacy)
+    with_photo_users(shadow)
+    hold_photo_binary(shadow, **overrides)
+    return legacy, shadow
+
+
+def add_held_object(legacy, kind, n):
+    """A whole object only the legacy side has (the add-on held it back), with its index entry. Returns its site key."""
+    gid = {"person": "I", "family": "F", "event": "E", "note": "N", "place": "P", "media": "O"}[kind] + str(9100 + n)
+    if kind == "person":
+        key = "person/%s.json" % gid
+        put(legacy, key, {"handle": hid(gid), "grampsId": gid, "displayName": "Test Held Person %d" % n, "events": [],
+                          "notes": [], "mediaGallery": []})
+        edit(legacy, "person/index.json", lambda d: (d["people"].append({"handle": hid(gid), "grampsId": gid, "displayName": "Test Held Person"}),
+                                                     d.update(count=len(d["people"]))))
+        edit(legacy, "person/search-index.json", lambda d: d["documents"].append({"grampsId": gid, "searchText": "test held person"}))
+        return key
+    key = "%s/%s.json" % (kind, hid(gid))
+    if kind == "family":
+        put(legacy, key, {"grampsId": gid, "handle": hid(gid), "children": []})
+    elif kind == "event":
+        put(legacy, key, event_doc(gid, "Residence", 33, "Residence", "1970", 1970))
+    elif kind == "note":
+        put(legacy, key, note_doc(gid, "", ""))
+    elif kind == "place":
+        put(legacy, key, place_doc(gid, "Heldtown", 4, "City"))
+        edit(legacy, "place/index.json", lambda d: d.append({"displayName": "Heldtown", "grampsId": gid, "handle": hid(gid)}))
+    else:
+        media = media_doc(gid, "image/jpeg", "jpg", "Test Held Photo")
+        put(legacy, key, media)
+        edit(legacy, "media/index.json", lambda d: d.append({"grampsId": gid, "handle": hid(gid), "s3Key": media["s3Key"], "size": 12}))
+    return key
+
+
+def pair_with_holds(kinds):
+    legacy, shadow = build_site(), build_site()
+    keys = [add_held_object(legacy, kind, n) for n, kind in enumerate(kinds)]
+    return legacy, shadow, keys
+
+
+def report_with(legacy, shadow, *extra):
+    code, cap = run_cli(legacy, shadow, ["--json"] + list(extra))
+    return code, json.loads(cap.out.getvalue())
+
+
+class BirthDateScrubOfABareYear(unittest.TestCase):
+    def blank_text(self, site, text="", year=None):
+        def fn(date):
+            date.update(text=text)
+            if year is not None:
+                date.update(year=year)
+        edit(site, EVENT_BIRTH, lambda d: fn(d["date"]))
+        edit(site, PERSON1, lambda d: fn(d["events"][0]["date"]))
+
+    def test_a_bare_year_blanked_with_the_year_kept_is_a_scrub_on_the_event_and_the_person_entry(self):
+        legacy, shadow = build_site(), build_site()
+        self.assertEqual(load(legacy, EVENT_BIRTH)["date"], {"text": "1950", "year": 1950})
+        self.blank_text(shadow)
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        row = doc["rules"]["birth-date-scrub"]
+        self.assertEqual((row["changed"], row["areas"]), (2, {"person": 1, "event": 1}))
+        self.assertEqual(list(doc["rules"]), ["birth-date-scrub"])
+
+    def test_any_other_non_empty_text_blanked_with_the_year_kept_is_a_scrub_too(self):
+        for text in ("about 1950", "12 March 1950", "1950-03-12"):
+            legacy, shadow = build_site(), build_site()
+            self.blank_text(legacy, text)
+            self.blank_text(shadow)
+            code, doc = report(legacy, shadow)
+            self.assertEqual((code, doc["unexplained"]), (10, 0), text)
+
+    def test_the_year_changing_as_well_is_not_a_scrub(self):
+        legacy, shadow = build_site(), build_site()
+        self.blank_text(shadow, "", year=1951)
+        code, doc = report(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_field"], {"text": 2, "year": 2})
+        self.assertNotIn("birth-date-scrub", doc["rules"])
+
+    def test_the_year_dropped_from_the_event_is_not_a_scrub(self):
+        legacy, shadow = build_site(), build_site()
+        edit(shadow, EVENT_BIRTH, lambda d: (d["date"].update(text=""), d["date"].pop("year")))
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained_by_field"]), (20, {"text": 1, "year": 1}))
+
+    def test_a_non_birth_event_keeps_its_text(self):
+        legacy, shadow = build_site(), build_site()
+        edit(shadow, EVENT_MOVE, lambda d: d["date"].update(text=""))
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained_by_field"]), (20, {"text": 1}))
+
+    def test_a_blank_that_becomes_another_text_is_not_a_scrub(self):
+        legacy, shadow = build_site(), build_site()
+        edit(shadow, EVENT_BIRTH, lambda d: d["date"].update(text="1951"))          # a bare year, but not the legacy one
+        edit(legacy, PERSON1, lambda d: d["events"][0]["date"].update(text="12 March 1950"))
+        edit(shadow, PERSON1, lambda d: d["events"][0]["date"].update(text="1951"))
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained_by_field"]), (20, {"text": 2}))
+
+
+class MediaHeldBinary(unittest.TestCase):
+    def test_the_whole_pattern_is_explained_on_the_file_the_index_and_the_person_fields(self):
+        legacy, shadow = pair_with_held_photo()
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        row = doc["rules"]["media-held-binary"]
+        self.assertEqual((row["changed"], row["only_in_legacy"], row["only_in_render"]), (3, 0, 0))
+        self.assertEqual(row["areas"], {"person": 1, "media": 1, "index": 1})
+        self.assertEqual(list(doc["rules"]), ["media-held-binary"])
+
+    def test_each_place_alone_is_explained(self):
+        for place in ("media", "person", "index"):
+            legacy, shadow = pair_with_held_photo()
+            full = copy.deepcopy(legacy)
+            # only one place carries the held pattern; the other two stay as the legacy export had them
+            held = copy.deepcopy(shadow)
+            shadow = copy.deepcopy(legacy)
+            if place == "media":
+                shadow[MEDIA_PHOTO] = held[MEDIA_PHOTO]
+            elif place == "person":
+                shadow[PERSON1] = held[PERSON1]
+            else:
+                shadow["media/index.json"] = held["media/index.json"]
+            code, doc = report(full, shadow)
+            self.assertEqual((code, doc["unexplained"]), (10, 0), place)
+            self.assertEqual(doc["rules"]["media-held-binary"]["changed"], 1, place)
+
+    def test_only_the_checksum_differing_while_missing_is_false_is_not_explained(self):
+        legacy, shadow = pair_with_held_photo(missing=False, size=12)
+        code, doc = report(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(set(doc["unexplained_by_field"]), {"checksum"})
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1, "person": 1, "index": 1})
+        self.assertNotIn("media-held-binary", doc["rules"])
+
+    def test_a_size_that_is_not_null_is_not_explained(self):
+        legacy, shadow = pair_with_held_photo(size=12)
+        code, doc = report(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(set(doc["unexplained_by_field"]), {"missing", "checksum"})
+        self.assertNotIn("media-held-binary", doc["rules"])
+
+    def test_a_checksum_that_is_another_string_is_not_explained(self):
+        legacy, shadow = pair_with_held_photo(checksum="f" * 64)
+        code, doc = report(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(set(doc["unexplained_by_field"]), {"missing", "checksum", "size"})
+
+    def test_a_legacy_entry_without_a_checksum_is_not_explained(self):
+        legacy, shadow = pair_with_held_photo()
+        for key in (MEDIA_PHOTO,):
+            edit(legacy, key, lambda d: d.update(checksum=None))
+        code, doc = report(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(set(doc["unexplained_by_field"]), {"missing", "size"})
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1})
+        self.assertEqual(doc["rules"]["media-held-binary"]["areas"], {"person": 1, "index": 1})
+
+    def test_another_field_that_differs_stays_unexplained(self):
+        legacy, shadow = pair_with_held_photo()
+        edit(shadow, MEDIA_PHOTO, lambda d: d.update(mime="image/png"))
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained_by_field"]), (20, {"mime": 1}))
+        self.assertEqual(doc["unexplained_by_area"], {"media": 1})
+        self.assertEqual(doc["rules"]["media-held-binary"]["areas"], {"person": 1, "index": 1})
+
+    def test_another_handle_is_not_the_same_media(self):
+        legacy, shadow = pair_with_held_photo()
+        edit(shadow, PERSON1, lambda d: d["mediaGallery"][0].update(handle=hid("O9999")))
+        code, doc = report(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertEqual(set(doc["unexplained_by_field"]), {"handle", "missing", "checksum", "size"})
+
+    def test_the_pattern_on_a_file_that_is_not_a_media_object_is_not_explained(self):
+        legacy, shadow = build_site(), build_site()
+        edit(legacy, PLACE_CITY, lambda d: d.update(checksum="a" * 32, missing=False, size=3))
+        edit(shadow, PLACE_CITY, lambda d: d.update(checksum=None, missing=True, size=None))
+        code, doc = report(legacy, shadow)
+        self.assertEqual((code, doc["unexplained_by_area"]), (20, {"place": 1}))
+        self.assertNotIn("media-held-binary", doc["rules"])
+
+
+class HeldObjects(unittest.TestCase):
+    KINDS = ("person", "family", "event", "note", "place", "media")
+
+    def test_every_kind_of_whole_object_and_its_index_entry_is_explained_under_the_allowance(self):
+        legacy, shadow, keys = pair_with_holds(self.KINDS)
+        self.assertEqual(len(keys), 6)
+        code, doc = report_with(legacy, shadow, "--expect-holds", "6")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        row = doc["rules"]["held-object"]
+        self.assertEqual((row["only_in_legacy"], row["changed"], row["only_in_render"]), (6, 4, 0))
+        self.assertEqual(row["areas"], {"person": 1, "family": 1, "event": 1, "note": 1, "place": 1, "media": 1, "index": 4})
+        self.assertEqual(doc["holds"], {"allowed": 6, "explained": 6})
+        self.assertEqual(list(doc["rules"]), ["held-object"])
+
+    def test_the_boundary_n_minus_one_n_and_n_plus_one(self):
+        legacy, shadow, _ = pair_with_holds(["person"] * 3)
+        for n, code, explained in ((2, 20, 2), (3, 10, 3), (4, 10, 3)):
+            got, doc = report_with(legacy, shadow, "--expect-holds", str(n))
+            self.assertEqual(got, code, n)
+            self.assertEqual(doc["holds"], {"allowed": n, "explained": explained}, n)
+            self.assertEqual(doc["classes"]["only_in_legacy"], {"explained": explained, "unexplained": 3 - explained}, n)
+            if n < 3:
+                # the index entries follow the same count: the person index and the search index each lose one entry too many
+                self.assertEqual(doc["unexplained_by_field"], {"entry_removed": 2})
+                self.assertEqual(doc["unexplained_by_area"], {"person": 1, "index": 2})
+            else:
+                self.assertEqual(doc["unexplained_by_field"], {})
+
+    def test_the_boundary_with_a_mix_of_areas(self):
+        legacy, shadow, _ = pair_with_holds(["event", "place", "media", "person"])
+        for n, code in ((3, 20), (4, 10), (5, 10)):
+            got, doc = report_with(legacy, shadow, "--expect-holds=%d" % n)
+            self.assertEqual(got, code, n)
+        got, doc = report_with(legacy, shadow, "--expect-holds", "3")
+        self.assertEqual(doc["classes"]["only_in_legacy"], {"explained": 3, "unexplained": 1})
+        self.assertEqual(doc["unexplained"], 2)       # the file, and the one index it left (the person index and the search index)
+
+    def test_without_the_option_nothing_changes(self):
+        legacy, shadow, _ = pair_with_holds(["person", "note"])
+        code, doc = report_with(legacy, shadow)
+        self.assertEqual(code, 20)
+        self.assertNotIn("holds", doc)
+        self.assertNotIn("held-object", doc["rules"])
+        self.assertEqual(doc["classes"]["only_in_legacy"], {"explained": 0, "unexplained": 2})
+        self.assertEqual(doc["unexplained_by_field"], {"entry_removed": 2})
+        code, cap = run_cli(legacy, shadow)
+        self.assertNotIn("held objects", cap.out.getvalue())
+
+    def test_a_zero_allowance_explains_nothing(self):
+        legacy, shadow, _ = pair_with_holds(["person"])
+        code, doc = report_with(legacy, shadow, "--expect-holds", "0")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["holds"], {"allowed": 0, "explained": 0})
+        self.assertEqual(doc["classes"]["only_in_legacy"], {"explained": 0, "unexplained": 1})
+
+    def test_the_text_report_shows_the_rule_and_the_allowance(self):
+        legacy, shadow, _ = pair_with_holds(["person", "media"])
+        code, cap = run_cli(legacy, shadow, ["--expect-holds", "5"])
+        text = cap.out.getvalue()
+        self.assertEqual(code, 10)
+        self.assertRegex(text, r"(?m)^held-object +2 +3 +0 ")
+        self.assertIn("held objects: allowed 5, whole-object absences explained 2", text)
+
+    def test_policy_rules_are_applied_first_and_do_not_use_the_allowance(self):
+        legacy, shadow, _ = pair_with_holds(["person"])
+        del shadow[PLACE_STREET]                    # an excluded place: its own rule
+        edit(shadow, "place/index.json", lambda d: d.__setitem__(slice(None), [e for e in d if e["grampsId"] != "P9002"]))
+        edit(legacy, MEDIA_SCAN, lambda d: d.update(mime="application/pdf"))
+        del shadow[MEDIA_SCAN]                      # a held type: its own rule
+        edit(shadow, "media/index.json", lambda d: d.__setitem__(slice(None), [e for e in d if e["grampsId"] != "O9002"]))
+        code, doc = report_with(legacy, shadow, "--expect-holds", "1")
+        self.assertEqual((code, doc["unexplained"]), (10, 0))
+        self.assertEqual(doc["holds"], {"allowed": 1, "explained": 1})
+        self.assertEqual(doc["rules"]["held-object"]["only_in_legacy"], 1)
+        self.assertEqual(doc["rules"]["excluded-place"]["only_in_legacy"], 1)
+        self.assertEqual(doc["rules"]["media-held-mime"]["only_in_legacy"], 1)
+
+    def test_the_allowance_does_not_reach_anything_but_a_missing_data_file(self):
+        legacy, shadow = build_site(), build_site()
+        edit(shadow, PERSON1, lambda d: d.update(displayName="Test Person Uno"))                # a changed value
+        shadow["event/%s.json" % hid("E9009")] = dumps({"grampsId": "E9009"})                    # a file only in the shadow
+        del shadow["place/index.json"]                                                          # an index file missing
+        edit(shadow, "media/index.json", lambda d: d.pop())                                      # an index entry, its file still there
+        code, doc = report_with(legacy, shadow, "--expect-holds", "50")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["holds"], {"allowed": 50, "explained": 0})
+        self.assertEqual(doc["classes"]["only_in_legacy"], {"explained": 0, "unexplained": 1})
+        self.assertEqual(doc["classes"]["only_in_render"], {"explained": 0, "unexplained": 1})
+        self.assertEqual(doc["unexplained_by_field"], {"displayName": 1, "entry_removed": 1})
+        self.assertNotIn("held-object", doc["rules"])
+
+    def test_an_index_entry_of_another_area_is_not_matched_to_a_held_object(self):
+        legacy, shadow, keys = pair_with_holds(["person"])
+        # a place index entry whose id equals the held person's id is not that person's entry
+        edit(legacy, "place/index.json", lambda d: d.append({"displayName": "Test", "grampsId": "I9100", "handle": hid("I9100")}))
+        code, doc = report_with(legacy, shadow, "--expect-holds", "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["unexplained_by_field"], {"entry_removed": 1})
+        self.assertEqual(doc["unexplained_by_area"], {"index": 1})
+
+    def test_the_selection_is_stable_and_the_report_is_the_same_twice(self):
+        legacy, shadow, _ = pair_with_holds(["note", "person", "family"])
+        first = report_with(legacy, shadow, "--expect-holds", "2")
+        second = report_with(copy.deepcopy(legacy), copy.deepcopy(shadow), "--expect-holds", "2")
+        self.assertEqual(first, second)
+        self.assertEqual(first[0], 20)
+
+
+class ExpectHoldsUsage(unittest.TestCase):
+    def test_a_negative_or_non_integer_count_is_a_usage_error_and_is_never_echoed(self):
+        for value in ("-1", "-0", "2.5", "3.0", "1e2", "", " 3", "3 ", "+3", "0x10", "٣", "Test Person Secret", "9" * 3 + "x"):
+            cap = Capture()
+            code = cli.main(["--legacy", "a", "--shadow", "b", "--expect-holds", value], out=cap.out, err=cap.err)
+            self.assertEqual(code, 64, repr(value))
+            self.assertEqual(cap.out.getvalue(), "")
+            self.assertIn("usage_error", cap.err.getvalue())
+            for echoed in ("Secret", "2.5", "0x10", "1e2", "999"):
+                self.assertNotIn(echoed, cap.err.getvalue(), repr(value))
+
+    def test_a_missing_value_is_a_usage_error(self):
+        cap = Capture()
+        code = cli.main(["--legacy", "a", "--shadow", "b", "--expect-holds"], out=cap.out, err=cap.err)
+        self.assertEqual(code, 64)
+
+    def test_the_usage_error_comes_before_anything_is_read_or_downloaded(self):
+        runner = mock.Mock()
+        cap = Capture()
+        code = cli.main(["--legacy", "a", "--shadow", PREFIX, "--expect-holds", "-3"], run=runner, out=cap.out, err=cap.err)
+        self.assertEqual(code, 64)
+        runner.assert_not_called()
+
+    def test_a_plain_count_is_accepted_in_both_spellings_and_with_leading_zeros(self):
+        legacy, shadow, _ = pair_with_holds(["person"])
+        for args in (["--expect-holds", "1"], ["--expect-holds=1"], ["--expect-holds", "001"]):
+            code, doc = report_with(legacy, shadow, *args)
+            self.assertEqual((code, doc["holds"]), (10, {"allowed": 1, "explained": 1}), args)
+
+    def test_compare_refuses_a_negative_or_non_integer_allowance(self):
+        site = build_site()
+        for bad in (-1, 1.5, "2", True):
+            with self.assertRaises(ValueError):
+                compare_mod.compare(site, copy.deepcopy(site), rules.load_policy(), expect_holds=bad)
+
+    def test_the_command_line_entry_point_takes_the_option(self):
+        legacy, shadow, _ = pair_with_holds(["person"])
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, site in (("legacy", legacy), ("shadow", shadow)):
+                os.makedirs(os.path.join(tmp, name))
+                write_tree(os.path.join(tmp, name), site)
+            base = [sys.executable, "-I", BIN, "--legacy", os.path.join(tmp, "legacy"), "--shadow", os.path.join(tmp, "shadow")]
+            without = subprocess.run(base, capture_output=True, text=True)
+            with_option = subprocess.run(base + ["--expect-holds", "1"], capture_output=True, text=True)
+            bad = subprocess.run(base + ["--expect-holds", "-1"], capture_output=True, text=True)
+        self.assertEqual((without.returncode, with_option.returncode, bad.returncode), (20, 10, 64))
+        self.assertIn("held-object", with_option.stdout)
+        self.assertEqual(with_option.stderr, "")
+
+
+class NoLeaksOfTheNewRules(unittest.TestCase):
+    def scenarios(self):
+        legacy, shadow = pair_with_held_photo()
+        keys = [add_held_object(legacy, kind, n) for n, kind in enumerate(HeldObjects.KINDS)]
+        for site, text in ((legacy, "12 March 1950"), (shadow, "")):
+            edit(site, EVENT_BIRTH, lambda d: d["date"].update(text=text))
+            edit(site, PERSON1, lambda d: d["events"][0]["date"].update(text=text))
+        bad_legacy, bad_shadow = pair_with_held_photo(size=12)       # a near miss: unexplained
+        return [(legacy, shadow), (bad_legacy, bad_shadow)], keys
+
+    def test_no_key_id_name_or_value_appears_for_the_new_rules(self):
+        pairs, _ = self.scenarios()
+        for legacy, shadow in pairs:
+            secrets = secrets_of(legacy, shadow)
+            for extra in ([], ["--json"], ["--expect-holds", "2"], ["--expect-holds", "2", "--json"], ["--expect-holds", "9"]):
+                code, cap = run_cli(legacy, shadow, extra)
+                text = cap.everything.replace(cap.tmp, "<tmp>")
+                for secret in secrets:
+                    self.assertNotIn(secret, text, "%r leaked (exit %s, %s)" % (secret[:6], code, extra))
+                self.assertEqual(cap.logs, [])
+
+    def test_the_report_vocabulary_stays_closed_with_the_option(self):
+        pairs, _ = self.scenarios()
+        code, doc = report_with(pairs[0][0], pairs[0][1], "--expect-holds", "2")
+        self.assertLessEqual(set(doc["rules"]), set(rules.RULES))
+        self.assertLessEqual(set(doc["unexplained_by_field"]), compare_mod.FIELD_VOCABULARY | set(compare_mod.CODE_WORDS))
+        self.assertEqual(set(doc["holds"]), {"allowed", "explained"})
+        self.assertTrue(all(isinstance(v, int) for v in doc["holds"].values()))
+
+    def test_a_failure_with_the_option_prints_a_code_word_only(self):
+        site = build_site()
+        with mock.patch.object(compare_mod, "compare", side_effect=ValueError("I9001 Test Person One")):
+            code, cap = run_cli(site, copy.deepcopy(site), ["--expect-holds", "3"])
+        self.assertEqual((code, cap.err.getvalue()), (70, "hfy-parity: internal_error (ValueError)\n"))
 
 
 # ---- unexplained differences ------------------------------------------------------------------------------------------
@@ -797,6 +1208,16 @@ class Docs(unittest.TestCase):
         self.assertIn("AWS_PROFILE=product-lead", text)
         self.assertIn("gramps/bin/hfy-parity", text)
         self.assertIn("s3://<sync-bucket>/render-shadow/", text)
+
+    def test_the_how_to_gives_the_exact_expect_holds_command_and_where_the_count_comes_from(self):
+        with open(DOC, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("AWS_PROFILE=product-lead gramps/bin/hfy-parity \\\n  --legacy <project>/workspace-local/harrisonfamily-frontend \\\n"
+                      "  --shadow s3://<sync-bucket>/render-shadow/ \\\n  --expect-holds <n>", text)
+        self.assertIn("gramps/bin/hfy-sync check --json", text)
+        self.assertIn("counts.holds", text)
+        self.assertIn("status.json", text)
+        self.assertNotRegex(text, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}")      # no email address
 
 
 if __name__ == "__main__":
