@@ -151,12 +151,30 @@ def has_table(con, name):
     return con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
 
 
+def _too_deep(value, limit=16):
+    """True when ``value`` nests deeper than ``limit`` (checked without recursion: newer Pythons parse very deep JSON without raising)."""
+    stack = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, dict):
+            children = item.values()
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+        if depth >= limit:
+            return True
+        stack.extend((child, depth + 1) for child in children)
+    return False
+
+
 def meta_json(con, key, default):
     row = con.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     if row is None:
         return default
     try:
-        return json.loads(row[0])
+        value = json.loads(row[0])
+        return default if _too_deep(value) else value
     except Exception:  # noqa: BLE001 - damaged or hostile JSON (deep nesting raises RecursionError) is "not there", never a traceback
         return default
 

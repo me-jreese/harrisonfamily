@@ -45,6 +45,13 @@ def read_stripped_handles(path: str) -> "set[str]":
         finally:
             con.close()
         table = json.loads(row[0]) if row else {}
+        stack = [(table, 0)]  # newer Pythons parse very deep JSON without raising, so the depth is checked here, without recursion
+        while stack:
+            item, depth = stack.pop()
+            if isinstance(item, (dict, list)):
+                if depth >= 16:
+                    raise ValueError("too deep")
+                stack.extend((child, depth + 1) for child in (item.values() if isinstance(item, dict) else item))
     except Exception:  # noqa: BLE001 - a hostile or damaged file (deeply nested JSON raises RecursionError) is "unreadable", never a traceback
         raise StrippedSidecarUnreadable()
     try:
