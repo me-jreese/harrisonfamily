@@ -740,8 +740,8 @@ It returns `200 { target, moderation | null, item: <viewer-specific view> }`.
 
 Errors:
 
-- `400 validation` (field `note`, `action` or `target`);
-- `400 contact_info` (the R-18 guard on `note`);
+- `400 validation` (field `note`, `action` or `target`; a `note` on `hide` or `unhide`, or on a photo target, is refused here too, because only a whole post or comment is asked about);
+- `422 contact_info` (the R-18 guard on `note`; amended from 400 by HFY-TSK-159 to match the one R-18 error contract of BRD2 section 5, `422 {error: "contact_info"}`, which every guarded write path in `api/src/guard.js` uses);
 - `400 self_moderation`;
 - `403 forbidden` (not an admin);
 - `404 not_found`;
@@ -901,7 +901,7 @@ All pins are exact, which replaces today's `^0.1.0` and `^0.4.0` (`api/package.j
 | E10 | Photo cannot decode in this browser | `createImageBitmap` rejects | No upload | "that photo type didn't work here. try a jpeg or a screenshot." | client console only |
 | E11 | Follow a missing page | Person JSON 404 | 404 | "that page wasn't found." | — |
 | E12 | Moderation by a non-admin | `actor.admin` false | 403 | (no control is shown) | `mod_forbidden` |
-| E13 | Moderation note contains contact info | R-18 guard | 400 `contact_info` | the privacy domain's line | — |
+| E13 | Moderation note contains contact info | R-18 guard | 422 `contact_info` (amended from 400, see 11.5) | the privacy domain's line | — |
 | E14 | Record-target moderation before the records domain ships | No adapter | 422 `unsupported_target` | "that can't be hidden yet." | — |
 | E15 | Graduation copy fails | S3 error | 503; reservation stays pending | "couldn't add it to the page right now. try again in a minute." | `graduate_copy_failed` |
 | E16 | Graduation rejected by sync validation | `SyncError validation` | Reservation set to `failed`; 400 with pointer | inline under the field | `graduate_invalid` |

@@ -263,6 +263,21 @@ describe.each(Object.entries(KINDS))("the 11.2 transition table, %s", (kindName,
     expect((await w.inboxOf(ADMIN2)).map((i) => i.type)).toEqual(["moderation_resolved"]);
     expect((await w.inboxOf(ADMIN)).map((i) => i.type)).toEqual([]);
   });
+
+  it.each(["request_changes", "ask"])("resending an identical %s with the same note is a real write: a new at, one more notice (one notice per admin action, not per distinct note)", async (action) => {
+    const w = await world();
+    const it = await K.make(w);
+    const extra = { note: NOTE };
+    const first = await w.act("admin", it.target, action, extra);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    const again = await w.act("admin", it.target, action, extra);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body.moderation.at).not.toBe(first.body.moderation.at);
+    expect(w.mod(it.key)).toMatchObject({ state: STATE_OF[action], note: NOTE, open: true });
+    expect((await w.inboxOf(AUTHOR)).map((i) => i.type)).toEqual(Array(2).fill(action === "ask" ? "moderation_question" : "moderation_request"));
+    // still one record per target
+    expect(w.rows("MOD#")).toHaveLength(1);
+  });
 });
 
 describe("the note and the other fields", () => {
