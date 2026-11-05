@@ -62,6 +62,14 @@ class Checker(unittest.TestCase):
         for text in ("", "1840", "about 1840", "between 1830 and 1840"):
             self.assertEqual(self.check({"date": {"text": text, "year": 1840}}), [], text)
 
+    def test_a_camera_timestamp_is_free_text_but_never_a_date_text(self):
+        """HFY-TSK-375: 20130519_172413 in a description is not a birth date; in a date.text it is a day, and blocks."""
+        for stamp in ("20130519_172413", "IMG_20130519_172413", "20130519T172413", "19450312 143000"):
+            self.assertEqual(self.check({"description": stamp}), [], stamp)
+            self.assertEqual(self.check({"date": {"text": stamp, "year": 1945}}), [errors.RULE_DATE_TEXT], stamp)
+        for text in ("born 19450312_143000", "19450312", "19450312_1430"):
+            self.assertTrue(self.check({"description": text}), text)
+
     def test_the_detectors_run_on_every_free_string(self):
         self.assertIn("privacy.detector.phone", self.check({"displayName": "Cedar " + PLANTED_PHONE}))
         self.assertIn("privacy.detector.email", self.check({"x": {"y": ["write to a.b@example.org"]}}))

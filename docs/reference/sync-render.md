@@ -102,9 +102,9 @@ Never touched: `person/index.html` and every other shell file, `person/graph.jso
 |---|---|
 | `privacy.sort_value` | A `sortValue` or `sortval` key anywhere (the exact Julian day of a full date). |
 | `privacy.source_path` | A `sourcePath` key anywhere. |
-| `privacy.date_text` | A `date.text` with a day or a month: a month name, `d/m`, `y/m`, or a day-precise date. |
+| `privacy.date_text` | A `date.text` with a day or a month: a month name, `d/m`, `y/m`, or a day-precise date. This check has no timestamp exception: `20130519_172413` in a `date.text` is a day. |
 | `privacy.detector.<kind>` | The R-18 detector (`hfygramps.scanner`) found a `phone`, `email`, `street_address`, `po_box`, `contact_url` or `dob_heuristic` in any string value. |
-| `privacy.text.<class>` | The live ETL's generic scanner found a `date_day`, `phone`, `email` or `address`. |
+| `privacy.text.<class>` | The live ETL's generic scanner found a `date_day`, `phone`, `email` or `address`. Any day-precise date is a `date_day`, with one exception: a calendar-valid unseparated `YYYYMMDD` directly followed by exactly one of `_`, `-`, `T` or a space and a valid six-digit `HHMMSS` (`20130519_172413`) is a camera timestamp, unless a birth keyword of the R-18 detector is within its window on either side. A bare `YYYYMMDD`, a four-digit time, an impossible date or time and any separated date stay a `date_day`. |
 | `privacy.identifier_shape` | An identifier field is not shaped like one: `handle` (hex, 16 to 64, or a letter-led slug of 16 to 64 characters), `grampsId` (`^[A-Z]{1,3}[0-9]{1,6}$`), `s3Key` (`media/<hex>.<ext>`), `checksum` (64 hex), `mime` (`type/subtype`), `generatedAt` (an ISO-8601 UTC time). These fields reach the published JSON and the S3 key names, so a phone-like Gramps ID is blocked rather than published. |
 | `output.not_json` | The output does not parse. |
 | `key.unowned` | The renderer produced a key it does not own (a Gramps ID that is not a file name). |
