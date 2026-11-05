@@ -86,6 +86,7 @@ For a new environment, for this family or another, in this order. The first page
 - [Connect an MCP client and run an admin delete](how-to/connect-an-mcp-client.md) — add the site's MCP server to a client, check your tools, and step up with a passkey before a delete.
 - [Refresh the sanitized samples](how-to/refresh-the-sanitized-samples.md) — update the synthetic samples the repo carries in place of private files.
 - [Backfill the contributions ledger](how-to/backfill-the-contributions-ledger.md) — credit the posts and comments written before the ledger, rebuild the counters, and check a second run changes nothing.
+- [Review the shadow parity report](how-to/review-the-shadow-parity-report.md) — compare the shadow render with a legacy export staged at the same moment, on your own Mac, and read the difference as counts only.
 - [Operate the sync store](how-to/operate-the-sync-store.md) — pause and resume store writes, force a render (`--full`, `--allow-mass-delete`, `--prune-foreign`) and resurrect a mistaken delete or withdraw, each with a dry run and only with io's go-ahead.
 - [Rotate the session signing key](how-to/rotate-the-session-signing-key.md) — replace the auth edge's signing key, which invalidates every outstanding `io_id` and MCP access token.
 - [Rehearse the break-glass sign-in](how-to/rehearse-the-break-glass-sign-in.md) — io's dry run of the `hfy-data-breakglass` role with MFA, with the agent's read-only pre- and post-checks.
