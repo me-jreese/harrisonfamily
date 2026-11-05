@@ -26,6 +26,8 @@ import { registerRecordContributor } from "./record-contributor.js";
 import { memberCheckFrom, registerRekeyHook } from "./identity-rekey.js";
 import { defaultHooks } from "./sync/hooks.js";
 import { s3InterimSource } from "./onthisday/source.js";
+import { createSelectingSource, createStoreSource, daysApprovedFromEnv } from "./onthisday/store-source.js";
+import { getSyncHead } from "./sync/store.js";
 import { createFanoutNotifier, createRecordFanout, isReplayEvent, isStreamEvent } from "./record-change-fanout.js";
 
 const env = process.env;
@@ -238,8 +240,16 @@ export const handler = async (event, context) => {
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
-      // HFY-TSK-194: the on-this-day index is built from the published person data (the interim year-tier source) until the record-store source is selected (RG-5).
-      onThisDaySource: s3InterimSource({ s3, cmds: { GetObjectCommand, HeadObjectCommand }, bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", log: console }),
+      // HFY-TSK-194 and HFY-TSK-139: the on-this-day index is built from the published person data (the interim year-tier source) until RENDER_MODE=live and
+      // SYNC#HEAD.seq > 0, then from the record store (day and week tiers, non-birth dates only, per Q2-04). OTD_DAY_TIERS=off records a Q2-04 decline.
+      onThisDaySource: createSelectingSource({
+        interim: s3InterimSource({ s3, cmds: { GetObjectCommand, HeadObjectCommand }, bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", log: console }),
+        store: createStoreSource({ ctx: { ddb, cmds, table }, log: console }),
+        renderMode: () => String(env.RENDER_MODE ?? "off").trim().toLowerCase(),
+        headSeq: async () => (await getSyncHead({ ddb, cmds, table }))?.seq ?? 0,
+        daysApproved: daysApprovedFromEnv(env),
+        log: console,
+      }),
       features, isOwner, mailer, requesterMailer, personFacts, readEntries, idPolicy,
       ...p,
     });

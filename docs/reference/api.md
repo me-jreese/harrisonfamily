@@ -567,7 +567,18 @@ One item holds the index: `OTD#INDEX` / `V1`, with `schema`, `sourceVersion`, `p
 - A person with no file is skipped; any other read failure fails the build, and the stale index serves.
 - Published JSON holds nothing Gramps-private, so every row is `private: false`.
 
-The record-store adapter that gives the day and week tiers is a later task (`surf-onthisday-store-source`); it implements the same interface.
+### The record-store source
+
+`createStoreSource` (`store-source.js`, HFY-TSK-139) implements the same interface over the cloud record store. `snapshot()` reads the store view (`storeView`, every `REC#` head brought up to `SYNC#HEAD.seq`) and returns `store:<seq>` as the version, so the `OTD#INDEX` rebuilds after each committed batch. `version()` is one consistent read of `SYNC#HEAD`. It gives the day and month of non-birth events (Q2-04), which the interim adapter cannot. Its rules:
+
+- A birth event keeps its year only. The adapter drops a stored birth day and month before the builder sees it, logs a count, and the builder drops one again by assertion. A test plants a stored birth day and checks it is not in the index.
+- A person's own event is one whose reference has the primary role; a marriage comes from the Family head (father as groom, mother as bride). A spouse who is missing or private stays in the pair as an unknown id, so the builder skips the marriage.
+- An event, person or family is private unless its `private` flag is explicitly `false`. A place name or description that matches an R-18 pattern (`scanText`) is dropped whole.
+- A date in another calendar or a dual date takes modifier ABOUT, so the builder skips it. Living status is a strict hint from the stored events: a death means deceased, no birth year means unknown.
+
+`createSelectingSource` chooses per call. The store serves only while `RENDER_MODE=live` (the `hfy-api` function receives the stack's `RenderMode`) and `SYNC#HEAD.seq > 0`; otherwise, and when the seq read fails, the interim adapter serves, so an early flip never ships empty day or week tiers. `OTD_DAY_TIERS=off` records a decline of Q2-04: the interim adapter always serves, which is the year tier only.
+
+The day and week tiers are served only while `featureOn('onThisDayDays')` is true for the caller. With it off, `GET /api/onthisday` selects from `yearOnly(index)`: no day or week lists and no month or day on any item. The day and month are served only through this session-checked route; person JSON stays year-only (HFY-R76), pinned by `gramps/tests/unit/test_render_contract.py`. Cutover alone never opens the day tier.
 
 ### Past-year posts
 

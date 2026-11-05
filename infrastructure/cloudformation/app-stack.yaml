@@ -256,6 +256,7 @@ Resources:
           VAPID_SECRET: !If [HasVapid, !Ref VapidSecretName, !Ref "AWS::NoValue"]
           SYNC_API_ENABLED: !Ref SyncApiEnabled
           HFY_EDITING: !Ref HfyEditing
+          RENDER_MODE: !Ref RenderMode # on this day selects the record-store source only when live (HFY-TSK-139)
           CHAT_SERVICE_PUBLIC_KEYS: !Ref ChatServicePublicKeys
           SYNC_BUCKET: !Ref SyncBucketName
           SES_FROM_ADDRESS: !Ref SesFromAddress
