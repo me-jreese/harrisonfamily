@@ -133,6 +133,7 @@ export function createFakeDdb() {
   function query(i) {
     const v = i.ExpressionAttributeValues ?? {};
     let items;
+    let skCond; // the main-table sort-key condition (undefined = none)
     if (i.IndexName === "GSI1") {
       const m = /^GSI1PK = :pk(?: AND GSI1SK (<=|>=|<|>) :after)?$/.exec(i.KeyConditionExpression);
       if (!m) throw new Error(`fake: unsupported key condition ${i.KeyConditionExpression}`);
@@ -141,12 +142,17 @@ export function createFakeDdb() {
     } else {
       const m = /^PK = :pk(?: AND (?:(begins)_with\(SK, :sk\)|SK (BETWEEN) :lo AND :hi|SK (<=|>=|<|>) :sk))?$/.exec(i.KeyConditionExpression);
       if (!m) throw new Error(`fake: unsupported key condition ${i.KeyConditionExpression}`);
-      const sk = m[1] ? { begins: true } : m[2] ? { between: true } : m[3] ? { op: m[3] } : undefined;
+      const sk = (skCond = m[1] ? { begins: true } : m[2] ? { between: true } : m[3] ? { op: m[3] } : undefined);
       items = [...rows.values()].filter((r) => r.PK === v[":pk"] && sortKeyMatch(sk, v, r.SK));
       items.sort((a, b) => (a.SK < b.SK ? -1 : 1));
     }
     if (i.ScanIndexForward === false) items.reverse();
     if (i.ExclusiveStartKey) {
+      // Like DynamoDB (HFY-TSK-371): the start key must satisfy the key condition, or the call fails with a ValidationException. A paged query
+      // that moves its sort-key bound as it goes (SK > a value derived from the last page) therefore fails here, as it does in production.
+      if (i.IndexName !== "GSI1" && (i.ExclusiveStartKey.PK !== v[":pk"] || !sortKeyMatch(skCond, v, i.ExclusiveStartKey.SK))) {
+        throw err("ValidationException", "The provided starting key does not match the range key predicate");
+      }
       const at = items.findIndex((r) => kk(r) === kk(i.ExclusiveStartKey));
       if (at === -1 && i.IndexName === "GSI1" && typeof i.ExclusiveStartKey.GSI1SK === "string") {
         // like DynamoDB, a start key whose item is gone (it moved to another partition meanwhile) resumes at that key's position in the index order

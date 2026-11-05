@@ -112,11 +112,15 @@ export class StoreView {
 
 async function foldSince(ctx, view, headSeq) {
   let start;
+  let after = seqKey(view.seq);
   while (view.seq < headSeq) {
+    // The lower bound is fixed for every page of one Query: DynamoDB rejects an ExclusiveStartKey that does not satisfy the key condition
+    // (ValidationException), and folding a page moves view.seq up to that key. Only a fresh Query (no start key) takes the new bound.
+    if (start === undefined) after = seqKey(view.seq);
     const res = await ctx.ddb.send(new ctx.cmds.QueryCommand({
       TableName: ctx.table,
       KeyConditionExpression: "PK = :pk AND SK > :sk",
-      ExpressionAttributeValues: { ":pk": logKey(1).PK, ":sk": seqKey(view.seq) },
+      ExpressionAttributeValues: { ":pk": logKey(1).PK, ":sk": after },
       ConsistentRead: true,
       Limit: LOG_PAGE,
       ...(start ? { ExclusiveStartKey: start } : {}),
