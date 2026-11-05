@@ -9,7 +9,7 @@ Values in angle brackets are placeholders. The forms are listed in [Private data
 Everything in CI is bounded by this one credential, which is why it is narrow:
 
 - **Account Workers Scripts: Edit** on the one account, `<cloudflare-account-id>`. It covers uploading the script, its Durable Object classes and its migrations, and reading and changing its deployments (the rollback).
-- **Zone Workers Routes: Read** on the one zone, `<cloudflare-zone-id>`. The `deploy-worker` action lists the zone's routes to check that this Worker has exactly the two routes in `chat-worker/dist/deploy.json`. It never writes a route.
+- **Zone Workers Routes: Read** on the one zone, `<cloudflare-zone-id>`. The `deploy-worker` action of `@io-kit/ci` 0.2.0 lists the zone's routes to check that this Worker has exactly the two routes in `chat-worker/dist/deploy.json`. It never writes a route. This is the one permission beyond account Workers Scripts: Edit, and it is there only because the kit's route check cannot be turned off. Without it the action's route read fails with `403` after an upload, and the job ends with no smoke and no rollback. Dropping it needs a kit change (a route check that is optional or reads through another path), and io's decision.
 - **Nothing else.** No Workers Routes: Edit, no DNS, cache, WAF, SSL, Pages, R2, Workers KV or user permission, and no other zone or account.
 - **A lifetime of 90 days**, set when the token is created (`expires_on`).
 
@@ -87,7 +87,8 @@ The `worker` job pauses for the `production` environment: approve it. Then read 
 
 - `hfy-chat-worker: bundle unchanged (...); no Cloudflare write` when `main`'s bundle is already live, or `uploaded sha256:...` when it is not.
 - `hfy-chat-worker: zone routes match deploy.json [...]`, which is the read-only route check and proves the Routes: Read permission.
-- `ok   hfy-chat-worker smoke: version=<sha>` and the two `ok ... check` lines.
+- `ok   hfy-chat-worker smoke: version=<sha>`.
+- No `::warning::` line about a missing `workers/tag` annotation. On the first upload this is a blocking check: if it appears, the unchanged-bundle skip does not work against the real API, and every later site-only merge would re-upload the Worker. Reject the `worker` job of later runs and raise it as a kit follow-up ([Limits of the kit worker job](deploy-the-chat-worker.md#limits-of-the-kit-worker-job-in-020)).
 
 An unchanged bundle makes no write, so a green run with the first line proves the token can read the deployments, the script list and the routes. It does not prove the upload permission. To prove that too, run it in the window of the next real Worker change, which uploads. If you must prove the upload now, rebuild nothing and merge nothing: a deliberate re-upload is a Worker deploy, which closes every open chat socket, so it needs io's chosen window and go-ahead like any other Worker deploy.
 

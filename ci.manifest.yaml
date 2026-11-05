@@ -42,11 +42,6 @@ deploy:
         url: https://harrisonfamily.us/chat/v1/health
         expected_version: commit_sha
         version_var: CHAT_WORKER_VERSION
-        checks:
-          - url: https://harrisonfamily.us/person/index.json
-            status: 401
-          - url: https://harrisonfamily.us/
-            status: 200
   smoke:
     - https://harrisonfamily.us/
     - https://harrisonfamily.us/family-login/

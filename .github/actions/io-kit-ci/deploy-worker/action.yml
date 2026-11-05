@@ -1,10 +1,10 @@
-# @io-kit/ci 0.2.0 rendered — do not edit; sha256:49ad3df4b99f63f884c27356c9ef8437f10daedaa2498d1b74d4026964195338
+# @io-kit/ci 0.2.0 rendered — do not edit; sha256:4aee15941c66f6f638652737ecfa4c52ae7d041c69de172a5b19ff55574114ed
 name: io-kit deploy worker
 description: Deploy Cloudflare Workers with curl and jq only. Skips every write when the deploy.json sha256 and the bundle digest both equal the active deployment's; otherwise uploads, verifies this Worker's zone routes read-only, smokes, and rolls back only the Worker on a route drift or smoke failure.
 inputs:
   targets:
     description: JSON array of cloudflare-worker targets.
-    default: '[{"kind":"cloudflare-worker","name":"hfy-chat-worker","dir":"chat-worker","environment":"production","account_id":"4dbb07786ea4d917308f19e59d17f91e","zone_id":"8121f1dc80f316f24e974588ee7e8385","routes_from":"dist/deploy.json","smoke":{"url":"https://harrisonfamily.us/chat/v1/health","expected_version":"commit_sha","version_var":"CHAT_WORKER_VERSION","checks":[{"url":"https://harrisonfamily.us/person/index.json","status":401},{"url":"https://harrisonfamily.us/","status":200}]}}]'
+    default: '[{"kind":"cloudflare-worker","name":"hfy-chat-worker","dir":"chat-worker","environment":"production","account_id":"4dbb07786ea4d917308f19e59d17f91e","zone_id":"8121f1dc80f316f24e974588ee7e8385","routes_from":"dist/deploy.json","smoke":{"url":"https://harrisonfamily.us/chat/v1/health","expected_version":"commit_sha","version_var":"CHAT_WORKER_VERSION"}}]'
   api-token:
     description: Cloudflare API token. Needs Account > Workers Scripts Edit, plus Zone > Workers Routes Read (read-only) for the route check. Pass secrets.CLOUDFLARE_API_TOKEN; GitHub masks it and the script never prints it.
     default: ""

@@ -94,8 +94,6 @@ function mockCloudflare({ routes, migrationTag = 'v1', untaggedActive = true }) 
         return ok(res, { id: 'rolled' });
       }
       if (!isApi && url.pathname === '/chat/v1/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, version: state.healthVersion ?? state.versionVar, protocol: 1 })); return; }
-      if (!isApi && url.pathname === '/person/index.json') { res.writeHead(401); res.end('{}'); return; }
-      if (!isApi && url.pathname === '/') { res.writeHead(200); res.end('ok'); return; }
       res.writeHead(404); res.end('{"success":false,"errors":[{"code":404,"message":"not found"}]}');
     });
   });
@@ -112,7 +110,7 @@ function workdir() {
 function runAction({ dir, base, commit, token = TOKEN }) {
   const targets = renderedTargets().map((t) => ({
     ...t,
-    smoke: { ...t.smoke, url: `${base}/chat/v1/health`, checks: t.smoke.checks.map((c) => ({ ...c, url: `${base}${new URL(c.url).pathname}` })) },
+    smoke: { ...t.smoke, url: `${base}/chat/v1/health` },
   }));
   return new Promise((done) => {
     const child = spawn('bash', [join(dir, 'step.sh')], {
@@ -153,7 +151,7 @@ test('the manifest target renders to the deploy-worker action, with the version 
   assert.equal(t.smoke.url, 'https://harrisonfamily.us/chat/v1/health');
   assert.equal(t.smoke.expected_version, 'commit_sha');
   assert.equal(t.smoke.version_var, 'CHAT_WORKER_VERSION');
-  assert.deepEqual(t.smoke.checks.map((c) => [new URL(c.url).pathname, c.status]), [['/person/index.json', 401], ['/', 200]]);
+  assert.equal(t.smoke.checks, undefined, 'the Worker smoke is the health URL alone: a site check (the data gate, the home page) never rolls the Worker back');
   const deploy = readFileSync(join(ROOT, '.github/workflows/io-kit-deploy.yml'), 'utf8');
   assert.match(deploy, /^ {2}worker:\n(?: {4}.*\n)*? {4}environment: production$/m, 'the worker job runs in the production environment');
   assert.match(deploy, /api-token: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
