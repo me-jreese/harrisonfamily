@@ -133,6 +133,19 @@ describe("a stored birth day never reaches the index (AC2)", () => {
     expect(buildIndex({ events, persons }).day).toEqual({});
   });
 
+  it("the event at birth_ref_index is a birth whatever its type: its planted day and month are dropped", () => {
+    const v = new StoreView();
+    const misfiled = event(1, 42, date(13, 10, 1990)); // a Residence the person's birth index points at
+    const other = event(2, 42, date(14, 10, 1995)); // an ordinary Residence keeps its day
+    v.put({ class: "Person", handle: h(1), version: 1, seq: 1, obj: person(1, { event_ref_list: [ref(misfiled.handle), ref(other.handle)], birth_ref_index: 0 }) });
+    v.put({ class: "Event", handle: misfiled.handle, version: 1, seq: 2, obj: misfiled });
+    v.put({ class: "Event", handle: other.handle, version: 1, seq: 3, obj: other });
+    const { events } = rowsFromView(v, { nowYear: 2027 });
+    const by = (hd) => events.find((e) => e.handle === hd).date;
+    expect(by(misfiled.handle)).toEqual({ year: 1990, modifier: 0, quality: 0 });
+    expect(by(other.handle)).toMatchObject({ year: 1995, month: 10, day: 14 });
+  });
+
   it("a date in another calendar is not read as a Gregorian day", () => {
     const v = new StoreView();
     const d = event(1, 13, date(12, 10, 2002, { calendar: 1 }));
@@ -155,14 +168,26 @@ describe("source selection (AC4, AC5)", () => {
     expect((await pick({ headSeq: async () => 0 }).snapshot()).version).toBe("etag");
   });
 
-  it("falls back to the interim adapter when the seq read fails", async () => {
-    expect(await pick({ headSeq: async () => { throw new Error("down"); } }).version()).toBe("etag");
+  it("rethrows a failed seq read while live, and does not switch sources", async () => {
+    await expect(pick({ headSeq: async () => { throw new Error("down"); } }).version()).rejects.toThrow("down");
+    // not live: the seq is never read, so a broken head cannot matter
+    expect(await pick({ renderMode: () => "off", headSeq: async () => { throw new Error("down"); } }).version()).toBe("etag");
   });
 
-  it("with Q2-04 declined the interim adapter always serves (the year tier only)", async () => {
+  it("picks once per build: collectSource never mixes sources", async () => {
+    let n = 0;
+    const sel = pick({ headSeq: async () => { n += 1; return n === 1 ? 5 : 0; } });
+    const snap = await collectSource(sel);
+    expect(snap.version).toBe("store:7");
+    expect(n).toBe(1);
+  });
+
+  it("without a recorded Q2-04 approval the interim adapter always serves (the year tier only)", async () => {
     expect(await pick({ daysApproved: false }).version()).toBe("etag");
     expect(daysApprovedFromEnv({ OTD_DAY_TIERS: "off" })).toBe(false);
-    expect(daysApprovedFromEnv({})).toBe(true);
+    expect(daysApprovedFromEnv({})).toBe(false);
+    expect(daysApprovedFromEnv({ OTD_DAY_TIERS: "yes" })).toBe(false);
+    expect(daysApprovedFromEnv({ OTD_DAY_TIERS: " ON " })).toBe(true);
   });
 });
 
@@ -192,6 +217,31 @@ describe("the day and week tiers follow featureOn('onThisDayDays') (AC6)", () =>
     expect((await get(async () => { throw new Error("flags down"); })).tier).not.toBe("day");
     const svc = createOnThisDay({ ddb: w.ddb, cmds, table: "hfy-app", actor: { id: "ITEST1" }, now: () => NOW, uid: () => "u", source, cache: {}, log: { warn() {}, error() {}, info() {} } });
     expect((await svc.get({ date: "2027-10-12" })).tier).not.toBe("day");
+  });
+
+  it("a store-built index stays served (day tier) when the seq read fails afterwards", async () => {
+    let fail = false;
+    const sel = createSelectingSource({
+      interim: { kind: "interim", version: async () => "etag", snapshot: async () => ({ version: "etag", events: [], persons: [] }) },
+      store: source, renderMode: () => "live", log: { warn() {} },
+      headSeq: async () => { if (fail) throw new Error("down"); return 5; },
+    });
+    let t = NOW;
+    const cache = {};
+    const svc = () => createOnThisDay({ ddb: w.ddb, cmds, table: "hfy-app", actor: { id: "ITEST1" }, now: () => t, uid: () => "u", source: sel, daysOn: async () => true, cache, log: { warn() {}, error() {}, info() {} } });
+    expect((await svc().get({ date: "2027-10-12" })).tier).toBe("day");
+    fail = true;
+    t += 10 * 60_000; // past the parsed-copy lifetime, so the version is read again
+    const r = await svc().get({ date: "2027-10-12" });
+    expect(r.tier).toBe("day");
+    expect(r.stale).toBe(true);
+  });
+
+  it("the hide route returns no index item, and the index rows are served without month or day while the flag is off", async () => {
+    const svc = createOnThisDay({ ddb: w.ddb, cmds, table: "hfy-app", actor: { id: "ITEST1", admin: true }, now: () => NOW, uid: () => "u", source, daysOn: async () => false, cache: {}, log: { warn() {}, error() {}, info() {} } });
+    const id = (await get(async () => true)).items[0].id;
+    expect(await svc.hide(id)).toBeUndefined();
+    expect(await svc.unhide(id)).toBeUndefined();
   });
 
   it("yearOnly strips the day lists and the month and day of year items", () => {

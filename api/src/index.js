@@ -241,7 +241,7 @@ export const handler = async (event, context) => {
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
       // HFY-TSK-194 and HFY-TSK-139: the on-this-day index is built from the published person data (the interim year-tier source) until RENDER_MODE=live and
-      // SYNC#HEAD.seq > 0, then from the record store (day and week tiers, non-birth dates only, per Q2-04). OTD_DAY_TIERS=off records a Q2-04 decline.
+      // SYNC#HEAD.seq > 0, then from the record store (day and week tiers, non-birth dates only, per Q2-04). OTD_DAY_TIERS=on records io's Q2-04 approval; off by default.
       onThisDaySource: createSelectingSource({
         interim: s3InterimSource({ s3, cmds: { GetObjectCommand, HeadObjectCommand }, bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", log: console }),
         store: createStoreSource({ ctx: { ddb, cmds, table }, log: console }),

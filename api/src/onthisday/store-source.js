@@ -8,8 +8,8 @@
 // What it never gives (Q2-18, HFY-R76): a birth event's day or month. The source drops them here, the builder drops them again by assertion, and
 // the day and month reach members only through the session-checked GET /api/onthisday; person JSON stays year-only.
 //
-// Selection (createSelectingSource): the store serves only while RENDER_MODE=live, SYNC#HEAD.seq > 0 and Q2-04 allows it; otherwise the interim adapter
-// serves, so an early flip never ships empty day or week tiers. With Q2-04 declined the interim adapter always serves (the year tier only).
+// Selection (createSelectingSource): the store serves only while RENDER_MODE=live, SYNC#HEAD.seq > 0 and Q2-04 is approved (OTD_DAY_TIERS=on); otherwise the interim adapter
+// serves, so an early flip never ships empty day or week tiers. With Q2-04 unanswered or declined the interim adapter always serves (the year tier only).
 import { storeView } from "../records/index.js";
 import { getSyncHead } from "../sync/store.js";
 import { scanText } from "../shared/privacy-guard.mjs";
@@ -110,6 +110,14 @@ export function rowsFromView(view, { nowYear }) {
   }
   persons.sort((a, b) => byText(a.grampsId, b.grampsId));
 
+  // The event a person's birth_ref_index points at is a birth whatever its type says (D2-32 isBirthLike): it keeps its year only.
+  const birthHandles = new Set();
+  for (const p of personById.values()) {
+    const i = p.birth_ref_index;
+    const r = Number.isInteger(i) && i >= 0 ? arr(p.event_ref_list)[i] : undefined;
+    if (isObj(r) && typeof r.ref === "string") birthHandles.add(r.ref);
+  }
+
   const owners = new Map(); // event handle -> [gramps id]
   for (const [handle, p] of personById) {
     const row = personByHandle.get(handle);
@@ -125,7 +133,7 @@ export function rowsFromView(view, { nowYear }) {
   const rows = new Map();
   const base = (handle, ev) => {
     const typeCode = ev.type?.value;
-    const birth = typeCode === TYPE.BIRTH;
+    const birth = typeCode === TYPE.BIRTH || birthHandles.has(handle);
     if (birth && isObj(ev.date) && Array.isArray(ev.date.dateval) && (ev.date.dateval[0] || ev.date.dateval[1])) counts.birthPrecisionDropped += 1;
     return { handle, typeCode, date: dateRow(ev.date, { birth }), participants: [], place: placeName(ev), description: cleanText(ev.description), private: isPrivate(ev) };
   };
@@ -185,7 +193,8 @@ export function createStoreSource({ ctx, log = console }) {
  *   renderMode()  -> "off" | "shadow" | "live"   the stack's RENDER_MODE
  *   headSeq()     -> Promise<number>             SYNC#HEAD.seq (0 when there is no head)
  *   daysApproved  -> boolean                      io's Q2-04 answer; false (declined) means the year tier only, so the store is never selected
- * The store serves only while RENDER_MODE=live and seq > 0; every other state serves the interim adapter. A failed seq read serves the interim adapter too.
+ * The store serves only while RENDER_MODE=live and seq > 0; every other state serves the interim adapter. A failed seq read while live rethrows (the service then serves its stale index).
+ * `snapshot()` picks once and reads through that one source, so a build never mixes a version from one source with rows from another.
  */
 export function createSelectingSource({ interim, store, renderMode, headSeq, daysApproved = true, log = console }) {
   async function pick() {
@@ -193,8 +202,9 @@ export function createSelectingSource({ interim, store, renderMode, headSeq, day
     try {
       return (await headSeq()) > 0 ? store : interim;
     } catch (e) {
-      log.warn?.("onthisday source selection fell back to the interim adapter", { name: e?.name ?? "Error" });
-      return interim;
+      // A transient read error must not flip the source (that would rebuild OTD#INDEX year-only): rethrow, so the service serves the stale index.
+      log.warn?.("onthisday source selection failed, not switching sources", { name: e?.name ?? "Error" });
+      throw e;
     }
   }
   return {
@@ -207,5 +217,8 @@ export function createSelectingSource({ interim, store, renderMode, headSeq, day
   };
 }
 
-/** The Q2-04 switch: `OTD_DAY_TIERS=off` records a decline (year tier only); anything else keeps the recommended default (yes, non-birth dates). */
-export const daysApprovedFromEnv = (env) => String(env?.OTD_DAY_TIERS ?? "").trim().toLowerCase() !== "off";
+/**
+ * The Q2-04 switch (gate q2-04-otd-dates). Fail closed: the store source (day and week tiers) is selected only when `OTD_DAY_TIERS=on`, which the stack's
+ * OnThisDayDayTiers parameter sets once io's approval is recorded; unset or anything else means the year tier only.
+ */
+export const daysApprovedFromEnv = (env) => String(env?.OTD_DAY_TIERS ?? "").trim().toLowerCase() === "on";
