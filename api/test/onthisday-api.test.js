@@ -7,7 +7,8 @@ import { createFakeDdb, cmds, makeApi, signToken } from "./world.js";
 import { TYPE } from "../src/onthisday/build.js";
 import { createOnThisDay, parseQuery, hiddenKeys } from "../src/onthisday/service.js";
 import { OTD_INDEX_KEYS, POLICY_VERSION, encodeBody } from "../src/onthisday/store.js";
-import { PAGE_LIMIT, archiveEntry, dayRange, mentionsBirthday, moderationVisible, pastYearPosts, safePhotoUrl, ulidCeil, ulidFloor } from "../src/onthisday/posts.js";
+import { archiveView, moderationVisible } from "../src/moderation.js";
+import { PAGE_LIMIT, archiveEntry, dayRange, mentionsBirthday, pastYearPosts, safePhotoUrl, ulidCeil, ulidFloor } from "../src/onthisday/posts.js";
 import { collectSource, createInterimSource, mapLimit, rowsFromPerson, s3InterimSource } from "../src/onthisday/source.js";
 import { buildCaps } from "../src/routes.js";
 import { BIRTHDAY_KEYWORDS } from "../src/shared/privacy-guard.mjs";
@@ -471,7 +472,7 @@ describe("past-year posts (AC4)", () => {
     expect((await find({ id: "ITEST5", admin: true })).map((p) => p.id)).toEqual([ok]);
   });
 
-  it("applies canView and moderationVisible: a moderated-hidden post reaches only its author and admins", async () => {
+  it("applies the shared archiveView (HFY-TSK-258): a moderated-hidden post reaches only its author and admins", async () => {
     const hid = await addPost(at(2026, 10, 13), { body: "hidden by a moderator", moderation: { hidden: true, by: "I0099" } }, "HIDDEN0000000001");
     const ok = await addPost(at(2026, 10, 13), { body: "fine" }, "FINE000000000001");
     expect((await find({ id: "ITEST1" })).map((p) => p.id)).toEqual([ok]);
@@ -479,6 +480,11 @@ describe("past-year posts (AC4)", () => {
     expect((await find({ id: "I0099", admin: true })).map((p) => p.id).sort()).toEqual([hid, ok].sort());
     expect(moderationVisible({ author: { id: "a" }, moderation: { hidden: true } }, { id: "b" })).toBe(false);
     expect(moderationVisible({ author: { id: "a" } }, { id: "b" })).toBe(true);
+    // the archive filter is 258's archiveView: a hidden post is null for a stranger, and its moderation fields are dropped for nobody but the author and admins
+    const stored = { id: "P", visibility: "published", author: { id: "a" }, body: "x", moderation: { hidden: true } };
+    expect(archiveView(stored, { id: "b" })).toBeNull();
+    expect(archiveView(stored, { id: "a" })).not.toBeNull();
+    expect(archiveView(stored, { id: "z", admin: true })).not.toBeNull();
   });
 
   it("strips attachments with moderation.hidden; a photo-only post whose photos are all hidden is skipped", async () => {

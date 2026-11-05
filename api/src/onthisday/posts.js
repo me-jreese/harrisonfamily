@@ -3,14 +3,14 @@
 // Posts are indexed under GSI1PK=POSTS with GSI1SK=<ulid> (content.js itemsFor), and a ULID starts with its creation time, so one local calendar day of a past
 // year is one key range. For each past year back to 2025 there is one Query: GSI1SK BETWEEN ulidFloor(dayStart) AND ulidCeil(dayEnd). Every candidate then passes:
 //   - visibility = published (drafts and withdrawn posts are never an archive),
-//   - the content kit's canView(post, viewer) and moderationVisible(post, viewer) (a post a moderator hid is not shown to anyone but its author and admins),
-//   - attachments with moderation.hidden stripped for everyone else (the kit's redactModeration),
+//   - moderation.js archiveView(post, viewer): the kit's canView plus the moderation rule (a post a moderator hid is not shown to anyone but its author and admins),
+//   - attachments with moderation.hidden stripped for everyone else (archiveView redacts them),
 //   - privacy-guard's BIRTHDAY_KEYWORDS: a post whose title, body or photo text names a birthday (or a birth) is skipped, so the module never resurfaces one,
 //   - the hidden list (OTD#HIDDEN). The hide routes only take on-this-day item ids (evt: and birth:, surfaces.md 4.4), so no route puts a post id there today;
 //     the filter is kept so a later record-level post hide needs no change here.
 // The photo url is served only as an https URL or a root-relative /uploads/ path (safePhotoUrl); anything else is not shown.
 // The served post is { id, n, author: {id, label}, excerpt, photo?: {url, alt} }: text only, for the island to render as text nodes.
-import { canView, redactModeration } from "@io-kit/content";
+import { archiveView } from "../moderation.js";
 import { BIRTHDAY_KEYWORDS } from "../shared/privacy-guard.mjs";
 import { gsiPosts } from "../keys.js";
 
@@ -57,9 +57,6 @@ const KEYWORD_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${[...BIRTHDAY_KEYWORDS].so
 export const mentionsBirthday = (text) => typeof text === "string" && KEYWORD_RE.test(text.normalize("NFKC").replace(/[‘’ʼ]/g, "'"));
 const postTexts = (p) => [p.title, p.body, ...(Array.isArray(p.attachments) ? p.attachments.map((a) => a?.alt) : [])];
 
-/** The moderation rule of social.md 11.3: a hidden item is visible to its author and to admins only. */
-export const moderationVisible = (item, viewer) => !item?.moderation?.hidden || (viewer != null && (viewer.id === item.author?.id || viewer.admin === true));
-
 /** A photo url the island may put in an img: https, or a root-relative /uploads/ path with plain path characters. Otherwise null. */
 export function safePhotoUrl(url) {
   if (typeof url !== "string" || url.length > 2048 || /[\u0000-\u0020\u007f\\]/.test(url)) return null;
@@ -82,9 +79,10 @@ export function archiveEntry(stored, viewer, { n, hidden }) {
   const post = stored?.post ?? stored;
   if (!post || typeof post !== "object" || typeof post.id !== "string" || !post.author || typeof post.author.id !== "string") return null;
   if (post.visibility !== "published" || hidden.has(post.id)) return null;
-  if (!canView(post, viewer) || !moderationVisible(post, viewer)) return null;
   if (postTexts(post).some(mentionsBirthday)) return null;
-  const view = redactModeration({ ...post, attachments: Array.isArray(post.attachments) ? post.attachments : [] }, viewer);
+  // HFY-TSK-258: the shared archive rule (canView, then the moderation fields and hidden photos dropped for everyone but the author and admins).
+  const view = archiveView({ ...post, attachments: Array.isArray(post.attachments) ? post.attachments : [] }, viewer);
+  if (!view) return null;
   const photo = view.attachments.map((a) => (a?.kind === "image" && a.moderation?.hidden !== true ? { url: safePhotoUrl(a.url), alt: a.alt } : null)).find((a) => a?.url);
   const excerpt = excerptOf(view);
   if (!excerpt && !photo) return null;
