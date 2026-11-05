@@ -2,9 +2,10 @@
 // entry and the contribution event in one transaction, and the same visibility rule in every read path. Synthetic ids and text only.
 import { describe, expect, it } from "vitest";
 import { InMemoryNotificationStore } from "@io-kit/notify/server";
-import { makeApi, signToken } from "./world.js";
+import { TABLE, cmds, makeApi, signToken, ticker } from "./world.js";
+import { createContentSource } from "../src/content.js";
 import { ROUTES, buildCaps } from "../src/routes.js";
-import { archiveView, closedItem, commentHidden, modItem, moderationVisible, parseTarget, postAttachmentId, targetKey } from "../src/moderation.js";
+import { archiveView, closedItem, commentHidden, createModeration, modItem, moderationVisible, parseTarget, postAttachmentId, targetKey } from "../src/moderation.js";
 import { commentGuard } from "../src/comments.js";
 
 const AUTHOR = "I0001"; // writes the items
@@ -591,6 +592,53 @@ describe("the queue and the notices", () => {
     expect(closed.body.items[0]).toMatchObject({ target: { kind: "post", id: p1.id }, open: false, hidden: false, resolved_by: ADMIN });
   });
 
+  it("orders the closed queue by when each item was resolved, newest first, and pages through it by cursor", async () => {
+    const w = await world();
+    const a = await w.post({ body: "first opened" });
+    const b = await w.post({ body: "second opened" });
+    const c = await w.post({ body: "third opened" });
+    const ta = { kind: "post", id: a.id };
+    const tb = { kind: "post", id: b.id };
+    const tc = { kind: "post", id: c.id };
+    for (const t of [ta, tb, tc]) await w.hide("admin", t);
+    // resolved in the order b, a, c: the opening order (a, b, c) must not decide the closed queue
+    for (const t of [tb, ta, tc]) await w.unhide("admin", t);
+    const ids = (r) => r.body.items.map((i) => i.target.id);
+    const closed = await w.call("admin", "GET", "/api/moderation", { query: { state: "closed" } });
+    expect(ids(closed)).toEqual([c.id, a.id, b.id]);
+    expect(w.mod(`post:${a.id}`).GSI1SK).toBe(`${w.mod(`post:${a.id}`).resolved_at}#post:${a.id}`);
+    const first = await w.call("admin", "GET", "/api/moderation", { query: { state: "closed", limit: "2" } });
+    expect(ids(first)).toEqual([c.id, a.id]);
+    const rest = await w.call("admin", "GET", "/api/moderation", { query: { state: "closed", limit: "2", cursor: first.body.cursor } });
+    expect(ids(rest)).toEqual([b.id]);
+    expect(rest.body.cursor).toBeNull();
+  });
+
+  it("sends no notice when the source reports no write (another admin changed the item between the read and the write)", async () => {
+    const author = { id: AUTHOR, label: "Ann" };
+    const sent = [];
+    let writes = true;
+    const post = { id: "01J00000000000000000000001", author, updated_at: "2026-01-01T00:00:00.000Z" };
+    const content = {
+      async get() { return post; },
+      // a source that found the post already hidden by someone else: it returns that state and never calls onWrite
+      async moderate(_id, _m, opts) {
+        if (writes) opts.onWrite();
+        return { ...post, moderation: { state: "hidden", hidden: true, by: { id: "I0098" }, at: "2026-01-02T00:00:00.000Z" } };
+      },
+    };
+    const mod = createModeration({
+      ddb: null, cmds: null, table: TABLE, actor: { id: ADMIN, label: "Admin", admin: true }, content, comments: {},
+      notifier: { async onModeration(n) { sent.push(n); } },
+    });
+    await mod.post({ target: { kind: "post", id: post.id }, action: "hide" });
+    expect(sent).toHaveLength(1);
+    writes = false;
+    const r = await mod.post({ target: { kind: "post", id: post.id }, action: "hide" });
+    expect(r.status).toBe(200);
+    expect(sent).toHaveLength(1);
+  });
+
   it("the author gets moderation_hidden and moderation_unhidden in the inbox, once per change, and the admin gets nothing", async () => {
     const w = await world();
     const p = await w.post({ subject: "person:I0042" });
@@ -622,6 +670,19 @@ describe("the queue and the notices", () => {
   });
 });
 
+describe("a post photo without an upload id", () => {
+  it("is refused with a validation error instead of keying a MOD# item '#undefined', and writes nothing", async () => {
+    const w = await world();
+    const p = await w.post({ attachments: [await w.photo()] });
+    for (const r of w.postRows(p.id)) r.post.attachments[0].url = "/uploads/posts/not-a-ulid/photo.jpg";
+    expect(postAttachmentId(w.postRows(p.id)[0].post.attachments[0])).toBeUndefined();
+    const src = createContentSource({ ddb: w.api.ddb, cmds, table: TABLE, actor: { id: ADMIN, label: "Admin", admin: true }, now: ticker(), uid: () => "x" });
+    await expect(src.moderate(p.id, { action: "hide", attachment: 0 })).rejects.toMatchObject({ code: "validation", details: { field: "attachment" } });
+    expect(w.rows("MOD#")).toHaveLength(0);
+    expect(w.postRows(p.id)[0].post.attachments[0].moderation).toBeUndefined();
+  });
+});
+
 describe("the pieces", () => {
   it("target keys follow the design and a record target is recognised", () => {
     expect(targetKey({ kind: "post", id: "P" })).toBe("post:P");
@@ -637,7 +698,8 @@ describe("the pieces", () => {
     const open = modItem(base);
     expect(open).toMatchObject({ GSI1PK: "MODQ#open", open: true, version: 1, author_id: AUTHOR });
     const closed = closedItem(open, { resolvedBy: ADMIN, at: "2026-01-02T00:00:00.000Z" });
-    expect(closed).toMatchObject({ GSI1PK: "MODQ#closed", open: false, hidden: false, version: 2, resolved_by: ADMIN });
+    expect(closed).toMatchObject({ GSI1PK: "MODQ#closed", GSI1SK: "2026-01-02T00:00:00.000Z#post:01J00000000000000000000000", open: false, hidden: false, version: 2, resolved_by: ADMIN });
+    expect(open.GSI1SK).toBe("2026-01-01T00:00:00.000Z#post:01J00000000000000000000000");
     expect(modItem({ ...base, prior: closed }).version).toBe(3);
   });
 });

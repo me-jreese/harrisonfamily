@@ -9,6 +9,8 @@
 //   POST /api/moderation  {target, action, version?, reason?}   hide | unhide, for post, comment and photo targets (admins only)
 //   GET  /api/moderation  ?state=open|closed&cursor=&limit=     the queue, newest first (admins only)
 //
+// Queue order: GET state=open is newest-opened first; GET state=closed is newest-resolved first (closedItem rewrites GSI1SK to resolved_at).
+//
 // Not here (other tasks): request_changes and ask through the route, their notifications and the author-edit resolution notice
 // (hfy-moderation-ask-api), and the record targets note, mediaref and media (hfy-moderation-record-targets: 422 unsupported_target until it lands).
 import { canView, redactModeration } from "@io-kit/content";
@@ -173,9 +175,13 @@ export function modItem({ target, author, state, hidden, by, at, note, prior }) 
   };
 }
 
-/** The same item closed: not hidden, queued under MODQ#closed, with who closed it (an admin's id, or "author" for an author's edit or delete). */
+/**
+ * The same item closed: not hidden, queued under MODQ#closed, with who closed it (an admin's id, or "author" for an author's edit or delete).
+ * The closed queue is ordered by when the item was resolved (GSI1SK = `<resolved_at>#<key>`), so the newest resolution comes first; the open
+ * queue keeps the time the item was opened.
+ */
 export function closedItem(prior, { resolvedBy, at }) {
-  return { ...prior, GSI1PK: MODQ_CLOSED, open: false, hidden: false, resolved_by: resolvedBy, resolved_at: at, version: (prior.version ?? 0) + 1 };
+  return { ...prior, GSI1PK: MODQ_CLOSED, GSI1SK: `${at}#${prior.PK.slice("MOD#".length)}`, open: false, hidden: false, resolved_by: resolvedBy, resolved_at: at, version: (prior.version ?? 0) + 1 };
 }
 
 /** One MOD# item as it is stored now (consistent read), or undefined. */
@@ -289,7 +295,10 @@ export function createModeration({ ddb, cmds, table, actor, content, comments, n
       const found = await locate(target);
       if (found.item.author?.id === actor.id) throw new HttpError(400, "self_moderation", "you can't moderate your own item. withdraw or delete it instead.");
       const before = stateOf(target, found.item);
-      const opts = { ...(version !== undefined ? { version } : {}) };
+      // `wrote` flips only when the source's transaction committed a change. A no-op (another admin got there between locate and moderate: a repeated
+      // hide, or an unhide of what is not hidden) leaves it false, so this caller sends no duplicate notice for a change it did not make.
+      let wrote = false;
+      const opts = { ...(version !== undefined ? { version } : {}), onWrite: () => { wrote = true; } };
       const input = { action, ...(reason !== undefined ? { reason } : {}) };
       let item;
       if (target.kind === "post") item = await content.moderate(target.id, input, opts);
@@ -297,7 +306,7 @@ export function createModeration({ ddb, cmds, table, actor, content, comments, n
       else if (target.parent.kind === "post") item = await content.moderate(target.parent.id, { ...input, attachment: target.attachment }, opts);
       else item = await comments.moderate(target.parent.thread, target.parent.id, { ...input, attachment: target.attachment }, opts);
       const after = stateOf(target, item);
-      if (JSON.stringify(before) !== JSON.stringify(after)) {
+      if (wrote && JSON.stringify(before) !== JSON.stringify(after)) {
         await afterCommit("moderation notification", () =>
           notifier.onModeration({
             kind: action === "hide" ? "hidden" : "unhidden", item: target.kind === "photo" ? "photo" : found.itemKind, target: targetKey(target),

@@ -50,7 +50,12 @@ const attIndex = (post, att) => {
   if (Number.isInteger(att)) return att >= 0 && att < list.length ? att : -1;
   return typeof att === "string" ? list.findIndex((a) => postAttachmentId(a) === att) : -1;
 };
-const photoTarget = (id, a) => ({ kind: "photo", parent: { kind: "post", id }, attachment: postAttachmentId(a) });
+/** The MOD# target of a post photo. A photo whose url names no upload ulid has no stable id to key a MOD# item by: refuse it rather than key `#undefined`. */
+const photoTarget = (id, a) => {
+  const attachment = postAttachmentId(a);
+  if (attachment === undefined) throw invalid("attachment", "that photo can't be moderated: it has no upload id");
+  return { kind: "photo", parent: { kind: "post", id }, attachment };
+};
 
 /** R-18 free-text fields of a post: body, title and every attachment alt, as [pointer, text] (src/guard.js). */
 export const postTextFields = (p, { body = true, title = true, attachments = true } = {}) => [
@@ -429,6 +434,7 @@ export function createContentSource({ ddb, cmds, table, actor, audit, now = () =
       }
       next.updated_at = at;
       await commit("moderate", id, before, next, at, { ops: mergeOps(mod, await eventOps(before, next)), ...(act.reason !== undefined ? { reason: act.reason } : {}) });
+      opts.onWrite?.();
       return view(next);
     },
   };

@@ -401,6 +401,7 @@ export function createCommentSource({ ddb, cmds, table, viewer, audit, isWithdra
         put: { item: { ...cKey(t, id), GSI1PK: "COMMENTS", GSI1SK: id, entity: "comment", comment: next }, ...commentGuard(c) },
         ops: mergeOps(mod, await eventOps(c, next)),
       });
+      opts.onWrite?.();
       return view(next);
     },
     async react(t, target, emoji) {
