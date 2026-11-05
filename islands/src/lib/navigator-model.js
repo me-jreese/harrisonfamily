@@ -20,7 +20,9 @@ export const COPY = {
   noUnions: "no partner or children recorded yet",
   viewPage: "view page",
   grandparentMissing: "grandparent not recorded",
-  grandparentsNone: "grandparents not recorded yet"
+  grandparentsNone: "grandparents not recorded yet",
+  picturedWith: "pictured with",
+  picturedMore: "show more"
 };
 
 /** Text badges for a parent link (the per-parent `rel` of graph.json v1): adopted, step and foster. Birth, sponsored, unknown, none and custom show none. */
@@ -279,4 +281,29 @@ export function detailsModel(graph, id) {
     counts: countLines(graph, id),
     href: `/person/?id=${encodeURIComponent(id)}`
   };
+}
+
+/**
+ * "Pictured with" (familyVizFaces, HFY-TSK-271): the people who share a `photoEdges` entry with `id`, most shared photos first, then by name.
+ * Reads only the published graph's `photoEdges` ([{media, people}], graph.json schema minor 2): the builder has already left out a private
+ * Media or MediaRef, a private person and a tag with an invalid rect, so nothing here asks for more. A graph without the block (an older
+ * one) gives []; an entry that is malformed, a person the graph does not hold, the person themselves and a repeated id are skipped, never a
+ * guess. Returns [{id, name, photos}] where `photos` is the count of distinct shared media.
+ */
+export function picturedWith(graph, id) {
+  const edges = graph.data && graph.data.photoEdges;
+  if (!Array.isArray(edges) || !graph.person(id)) return [];
+  const shared = new Map();
+  const seen = new Set();
+  for (const e of edges) {
+    if (!e || typeof e.media !== "string" || !Array.isArray(e.people)) continue;
+    if (seen.has(e.media) || !e.people.includes(id)) continue;
+    seen.add(e.media);
+    for (const pid of new Set(e.people)) {
+      if (pid === id || typeof pid !== "string" || !graph.person(pid)) continue;
+      shared.set(pid, (shared.get(pid) || 0) + 1);
+    }
+  }
+  return [...shared].map(([pid, photos]) => ({ id: pid, name: graph.person(pid).name, photos }))
+    .sort((a, b) => b.photos - a.photos || a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1));
 }

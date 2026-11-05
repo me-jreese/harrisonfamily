@@ -16,6 +16,7 @@ import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
+import { useFlags } from "../lib/use-flags.js";
 import { initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 
 export const COPY = {
@@ -195,6 +196,8 @@ export function ViewToggle({ view, onChoose }) {
 
 export function TreeApp() {
   const session = useEdgeSession();
+  // familyVizFaces (HFY-TSK-271): "pictured with" chips in the details; an absent key or unresolved flags is off.
+  const faces = useFlags()?.familyVizFaces === true;
   const sub = memberSub(session);
   const [result, setResult] = useState(null); // null while loading, else loadGraph's answer
   const [attempt, setAttempt] = useState(0);
@@ -316,7 +319,7 @@ export function TreeApp() {
           <ViewToggle view={view} onChoose={onView} />
           {view === "cards" ? (
             <ChartBoundary onFailed={() => setChartFailed(true)}>
-              {Chart ? <Chart graph={graph} focus={resolved.id} onFocus={onFocus} viewer={sub} renderOutline={(onPick) => <GenerationOutline graph={graph} focus={resolved.id} onFocus={onPick} sheet />} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-chart-loading />}
+              {Chart ? <Chart graph={graph} focus={resolved.id} onFocus={onFocus} viewer={sub} faces={faces} renderOutline={(onPick) => <GenerationOutline graph={graph} focus={resolved.id} onFocus={onPick} sheet />} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-chart-loading />}
             </ChartBoundary>
           ) : null}
         </>

@@ -15,7 +15,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Sheet, useBreakpoint } from "@io-kit/shell/react";
 import { WIDE_QUERY, bindNavigatorEvents, defineFamilyNavigator } from "./family-navigator.js";
 import { isRelationWord, relationLabel } from "./family-graph.js";
-import { COPY, detailsModel, faceUrl, initials } from "./navigator-model.js";
+import { COPY, detailsModel, faceUrl, initials, picturedWith } from "./navigator-model.js";
 import { PersonName } from "./person-name.jsx";
 
 // Throws if the browser refuses the definition: the lazy import then rejects and the page keeps the outline (the boundary in tree.jsx).
@@ -38,7 +38,31 @@ function useMedia(query) {
 // Between the two layouts' widths: the outline is behind the "generations" button here (viz.md 9.2).
 const MEDIUM_QUERY = `${WIDE_QUERY} and (max-width: 63.99rem)`;
 
-function Details({ graph, id, idp = "hfy-tree-details" }) {
+// "Pictured with" (familyVizFaces, HFY-TSK-271): one re-centring button per person who shares a photoEdges entry with the person. Buttons, not
+// links, like the cards: choosing one moves the tree. Twelve show first; "show more" lists the rest. Nothing renders without a chip.
+const CHIPS_FIRST = 12;
+function PicturedWith({ graph, id, idp, onPick }) {
+  const chips = useMemo(() => picturedWith(graph, id), [graph, id]);
+  const [all, setAll] = useState(false);
+  useEffect(() => { setAll(false); }, [id]);
+  if (!chips.length) return null;
+  const shown = all ? chips : chips.slice(0, CHIPS_FIRST);
+  return (
+    <section aria-labelledby={`${idp}-pictured`} data-tree-pictured>
+      <h3 id={`${idp}-pictured`}>{COPY.picturedWith}</h3>
+      <ul className="hfy-tree-details__chips">
+        {shown.map((c) => (
+          <li key={c.id}>
+            <button type="button" className="hfy-tree-details__chip" data-pictured={c.id} onClick={() => onPick(c.id)}>{c.name}</button>
+          </li>
+        ))}
+      </ul>
+      {chips.length > shown.length ? <button type="button" className="hfy-tree-details__chip" data-pictured-more onClick={() => setAll(true)}>{COPY.picturedMore} ({chips.length - shown.length})</button> : null}
+    </section>
+  );
+}
+
+function Details({ graph, id, idp = "hfy-tree-details", faces = false, onPick = null }) {
   const d = useMemo(() => detailsModel(graph, id), [graph, id]);
   if (!d) return null;
   const places = [d.born ? ["born", d.born] : null, d.died ? ["died", d.died] : null].filter(Boolean);
@@ -69,12 +93,13 @@ function Details({ graph, id, idp = "hfy-tree-details" }) {
           </div>
         )) : <p className="hfy-tree__dim">{COPY.noUnions}</p>}
       </section>
+      {faces && onPick ? <PicturedWith graph={graph} id={id} idp={idp} onPick={onPick} /> : null}
     </div>
   );
 }
 
 /** The detail panel (viz.md 9.1): the focus person at a glance, then the same lists the Sheet shows. Rendered from 43rem only. */
-function Panel({ graph, id, viewer, headingRef }) {
+function Panel({ graph, id, viewer, headingRef, faces, onPick }) {
   const p = graph.person(id);
   const d = useMemo(() => detailsModel(graph, id), [graph, id]);
   const [faceFailed, setFaceFailed] = useState(false);
@@ -93,7 +118,7 @@ function Panel({ graph, id, viewer, headingRef }) {
       </div>
       {d.counts.map((line) => <p key={line} className="hfy-tree__panel-counts">{line}</p>)}
       {rel ? <p className="hfy-tree__panel-counts" data-tree-panel-relation>{rel}</p> : null}
-      <Details graph={graph} id={id} idp="hfy-tree-panel" />
+      <Details graph={graph} id={id} idp="hfy-tree-panel" faces={faces} onPick={onPick} />
     </section>
   );
 }
@@ -102,7 +127,7 @@ function Panel({ graph, id, viewer, headingRef }) {
  * The cards view: <family-navigator>, the detail panel (from 43rem) or the details sheet (below it), and between 43rem and 64rem the
  * "generations" Sheet. `onFocus(id, "cards")` re-centres the page; `renderOutline(onPick)` draws the page's outline for that Sheet.
  */
-export default function ChartView({ graph, focus, onFocus, viewer = null, renderOutline = null }) {
+export default function ChartView({ graph, focus, onFocus, viewer = null, renderOutline = null, faces = false }) {
   const el = useRef(null);
   const bp = useBreakpoint();
   const [detailsId, setDetailsId] = useState(null);
@@ -139,14 +164,14 @@ export default function ChartView({ graph, focus, onFocus, viewer = null, render
         </div>
       ) : null}
       <family-navigator ref={el} />
-      {wide ? <Panel graph={graph} id={focus} viewer={viewer} headingRef={panelHeading} /> : null}
+      {wide ? <Panel graph={graph} id={focus} viewer={viewer} headingRef={panelHeading} faces={faces} onPick={(pid) => onFocusRef.current(pid, "cards")} /> : null}
       {medium && renderOutline ? (
         <Sheet open={gens} onClose={() => setGens(false)} side="right" title="generations" closeLabel="close" className="hfy-tree-sheet">
           <div className="hfy-tree hfy-tree__sheet-outline">{renderOutline((id) => { setGens(false); onFocusRef.current(id, "cards"); })}</div>
         </Sheet>
       ) : null}
       <Sheet open={Boolean(detailsId)} onClose={() => setDetailsId(null)} side={bp === "compact" ? "bottom" : "right"} title={<PersonName id={detailsId || focus} name={graph.person(detailsId || focus)?.name || name} />} closeLabel="close" className="hfy-tree-sheet">
-        {detailsId ? <Details graph={graph} id={detailsId} /> : null}
+        {detailsId ? <Details graph={graph} id={detailsId} faces={faces} onPick={(pid) => onFocusRef.current(pid, "cards")} /> : null}
       </Sheet>
     </div>
   );
