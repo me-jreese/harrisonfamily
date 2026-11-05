@@ -10,6 +10,9 @@
 // and asserts that no needle appears in any log line (every console method and the injected `log`), in any error body or header, or in
 // SYNC#RENDER.last_error.
 //
+// The renderer half spawns python3 (stdlib unittest only), so the runner that runs `cd api && npm test` needs python3 on PATH; the test fails
+// with a named message when it is missing, rather than skipping, so a runner without it cannot report the renderer as proven.
+//
 // It lives in the api suite, not in ci.manifest.yaml `tests`, because it imports api code that needs CodeArtifact (HFY-R62, BRD2 10.2).
 // It fails when a route in ROUTES has no case: add the route to FAMILIES below, with a body shape if the default does not reach its parser.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
